@@ -1,0 +1,109 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Grep",
+      "Glob",
+      "LS",
+      "Bash(npm test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run build:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(npm install:*)",
+      "Bash(npm init:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npx:*)",
+      "Bash(npx drizzle-kit:*)",
+      "Bash(psql:*)",
+      "Bash(cat:*)",
+      "Bash(echo:*)",
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(node:*)",
+      "Bash(tsx:*)",
+      "Bash(ts-node:*)",
+      "Write(**/*.ts)",
+      "Write(**/*.json)",
+      "Write(**/*.js)",
+      "Write(**/*.tsx)",
+      "Write(**/*.jsx)",
+      "Write(**/*.md)",
+      "Write(**/*.sql)",
+      "Write(**/*.sh)",
+      "Write(.env.example)",
+      "Write(drizzle.config.ts)",
+      "MultiEdit(**/*.ts)",
+      "MultiEdit(**/*.json)",
+      "Edit",
+      "MultiEdit"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.production)",
+      "Read(./secrets/**)",
+      "Read(./node_modules/**)",
+      "Bash(rm -rf:*)",
+      "Bash(git push:*)",
+      "Write(./.env)",
+      "Write(./.env.local)",
+      "Write(./.env.production)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "env": {
+    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",
+    "NODE_ENV": "development",
+    "DATABASE_URL": "postgresql://user:pass@host/dbname?sslmode=require",
+    "OPENAI_API_KEY": "sk-your-openai-api-key-here",
+    "MCP_SERVER_PORT": "3000",
+    "LOG_LEVEL": "info",
+    "VECTOR_SEARCH_LIMIT": "10",
+    "SIMILARITY_THRESHOLD": "0.7",
+    "MEMORY_EXPIRATION_DAYS": "90",
+    "MAX_MEMORIES_PER_USER": "10000",
+    "IMPORTANCE_DECAY_RATE": "0.1"
+  },
+  "cleanupPeriodDays": 30,
+  "includeCoAuthoredBy": false,
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "date '+File modified at %Y-%m-%d %H:%M:%S'",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/typescript-dev.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Command logged' >> ~/.claude/command-log.txt"
+          }
+        ]
+      }
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["evmauth", "timestamp"]
+}
