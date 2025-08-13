@@ -14,11 +14,11 @@ For the UI configuration, you can set up the Apache VirtualHost as follows:
     ServerName server.com
     DocumentRoot /home/server/public_html
 
-    ProxyPass / http://server.com:3000/ nocanon
-    ProxyPassReverse / http://server.com:3000/
+    ProxyPass / http://server.com:3100/ nocanon
+    ProxyPassReverse / http://server.com:3100/
     # Needed after 0.5
-    ProxyPass / ws://server.com:3000/ nocanon
-    ProxyPassReverse / ws://server.com:3000/
+    ProxyPass / ws://server.com:3100/ nocanon
+    ProxyPassReverse / ws://server.com:3100/
 
 </VirtualHost>
 ```
@@ -33,11 +33,11 @@ Enable the site first before you can request SSL:
     ServerName server.com
     DocumentRoot /home/server/public_html
 
-    ProxyPass / http://server.com:3000/ nocanon
-    ProxyPassReverse / http://server.com:3000/
+    ProxyPass / http://server.com:3100/ nocanon
+    ProxyPassReverse / http://server.com:3100/
     # Needed after 0.5
-    ProxyPass / ws://server.com:3000/ nocanon
-    ProxyPassReverse / ws://server.com:3000/
+    ProxyPass / ws://server.com:3100/ nocanon
+    ProxyPassReverse / ws://server.com:3100/
 
     SSLEngine on
     SSLCertificateFile /etc/ssl/virtualmin/170514456861234/ssl.cert

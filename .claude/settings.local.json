@@ -3,7 +3,12 @@
     "allow": [
       "Bash(mkdir:*)",
       "WebFetch(domain:openwebui.com)",
-      "Bash(open:*)"
+      "Bash(open:*)",
+      "mcp__context7-global__get-library-docs",
+      "WebFetch(domain:docs.openwebui.com)",
+      "mcp__context7-global__resolve-library-id",
+      "Bash(docker-compose:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

@@ -678,7 +678,7 @@
 							<input
 								class="w-full rounded-lg py-2 px-4 text-sm bg-gray-50 dark:text-gray-300 dark:bg-gray-850 outline-hidden"
 								type="text"
-								placeholder={`e.g.) "http://localhost:3000"`}
+								placeholder={`e.g.) "http://localhost:3100"`}
 								bind:value={adminConfig.WEBUI_URL}
 							/>
 						</div>

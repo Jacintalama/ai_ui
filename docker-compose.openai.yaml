@@ -8,7 +8,7 @@ services:
     volumes:
       - open-webui:/app/backend/data
     ports:
-      - "3000:8080"
+      - "3100:8080"
     environment:
       # OpenAI Configuration (from your .env file)
       - OPENAI_API_BASE_URL=https://api.openai.com/v1/
