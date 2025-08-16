@@ -8,7 +8,9 @@
       "WebFetch(domain:docs.openwebui.com)",
       "mcp__context7-global__resolve-library-id",
       "Bash(docker-compose:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge:*)"
     ],
     "deny": [],
     "ask": []
