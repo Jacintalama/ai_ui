@@ -24,6 +24,13 @@ services:
       - 'OLLAMA_BASE_URL=http://ollama:11434'
       - 'WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}'
       - 'WEBUI_URL=${WEBUI_URL:-http://localhost:3100}'
+      # Microsoft OAuth
+      - 'MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}'
+      - 'MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}'
+      - 'MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_CLIENT_TENANT_ID}'
+      - 'ENABLE_OAUTH_SIGNUP=${ENABLE_OAUTH_SIGNUP:-true}'
+      - 'OPENID_PROVIDER_URL=${OPENID_PROVIDER_URL:-}'
+      - 'WEBUI_AUTH_SIGNOUT_REDIRECT_URL=${WEBUI_AUTH_SIGNOUT_REDIRECT_URL:-}'
     extra_hosts:
       - host.docker.internal:host-gateway
     restart: unless-stopped
