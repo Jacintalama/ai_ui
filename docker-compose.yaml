@@ -23,7 +23,7 @@ services:
     environment:
       - 'OLLAMA_BASE_URL=http://ollama:11434'
       - 'WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}'
-      - 'WEBUI_URL=${WEBUI_URL:-http://localhost:3100}'
+      - 'WEBUI_URL=${WEBUI_URL:-http://localhost:3000}'
       # Microsoft OAuth
       - 'MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}'
       - 'MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}'
