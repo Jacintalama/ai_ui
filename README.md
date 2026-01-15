@@ -421,3 +421,169 @@ kubectl apply -f kubernetes/vllm-deployment.yaml
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Multi-Tenant MCP Authentication (Entra ID)
+
+This feature enables **group-based access control** for MCP servers using Microsoft Entra ID (Azure AD) authentication.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        AUTHENTICATION FLOW                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  1. User logs in via Microsoft Entra ID (OAuth)                             │
+│                         │                                                    │
+│                         ▼                                                    │
+│  2. Open WebUI receives OAuth token with user info & groups                 │
+│                         │                                                    │
+│                         ▼                                                    │
+│  3. User sends chat message with MCP tool request                           │
+│                         │                                                    │
+│                         ▼                                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  MCP Entra Token Auth Function (open-webui-functions/)              │    │
+│  │  ─────────────────────────────────────────────────────              │    │
+│  │  • Receives __oauth_token__ from Open WebUI                         │    │
+│  │  • Decodes JWT to extract: email, name, groups                      │    │
+│  │  • Sends request to MCP Proxy with headers:                         │    │
+│  │    - X-Auth-Source: entra-token                                     │    │
+│  │    - X-OpenWebUI-User-Email: user@company.com                       │    │
+│  │    - X-Entra-Groups: MCP-GitHub,MCP-Admin                           │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                         │                                                    │
+│                         ▼                                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  MCP Proxy (mcp-proxy/)                                             │    │
+│  │  ─────────────────────                                              │    │
+│  │  • auth.py: Validates headers, extracts user info                   │    │
+│  │  • db.py: Queries PostgreSQL for access permissions                 │    │
+│  │  • tenants.py: Filters servers based on user's groups               │    │
+│  │  • Returns ONLY authorized MCP servers/tools                        │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                         │                                                    │
+│                         ▼                                                    │
+│  4. User sees only their authorized tools (e.g., GitHub, Filesystem)        │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **MCP Entra Token Auth** | `open-webui-functions/mcp_entra_token_auth.py` | Open WebUI function that reads `__oauth_token__` and forwards user info to MCP Proxy |
+| **Auth Module** | `mcp-proxy/auth.py` | Validates JWT tokens, extracts user info from headers |
+| **Database Module** | `mcp-proxy/db.py` | PostgreSQL queries for `user_tenant_access` and `group_tenant_mapping` tables |
+| **Tenants Module** | `mcp-proxy/tenants.py` | Server definitions and access control logic |
+
+### Database Tables
+
+```sql
+-- User-based access (direct assignment)
+CREATE TABLE user_tenant_access (
+    user_email VARCHAR(255) NOT NULL,
+    tenant_id VARCHAR(100) NOT NULL,
+    access_level VARCHAR(50) DEFAULT 'read',
+    PRIMARY KEY (user_email, tenant_id)
+);
+
+-- Group-based access (Entra ID groups)
+CREATE TABLE group_tenant_mapping (
+    group_name VARCHAR(255) NOT NULL,
+    tenant_id VARCHAR(100) NOT NULL,
+    PRIMARY KEY (group_name, tenant_id)
+);
+
+-- Example data
+INSERT INTO group_tenant_mapping (group_name, tenant_id) VALUES
+    ('MCP-GitHub', 'github'),
+    ('MCP-Filesystem', 'filesystem'),
+    ('MCP-Admin', 'github'),
+    ('MCP-Admin', 'filesystem'),
+    ('MCP-Admin', 'atlassian');
+
+INSERT INTO user_tenant_access (user_email, tenant_id, access_level) VALUES
+    ('kimcalicoy24@gmail.com', 'github', 'read'),
+    ('kimcalicoy24@gmail.com', 'filesystem', 'read');
+```
+
+### Access Control Priority
+
+1. **MCP-Admin Group**: Users in this group have access to ALL MCP servers
+2. **Group-based Access**: Check `group_tenant_mapping` table for user's Entra ID groups
+3. **User-based Access**: Check `user_tenant_access` table for direct email assignment
+
+### Setup Instructions
+
+#### 1. Configure Entra ID Groups (Azure Portal)
+
+1. Go to Azure Portal → Microsoft Entra ID → Groups
+2. Create groups:
+   - `MCP-GitHub` - Access to GitHub MCP server
+   - `MCP-Filesystem` - Access to Filesystem MCP server
+   - `MCP-Admin` - Access to ALL MCP servers
+3. Assign users to appropriate groups
+
+#### 2. Configure Token Claims
+
+1. Azure Portal → App Registrations → Your App → Token Configuration
+2. Add optional claim: `groups`
+3. If >200 groups, configure "groups overage" to use Graph API
+
+#### 3. Create Database Tables
+
+```bash
+# Connect to PostgreSQL
+kubectl exec -it postgresql-0 -n open-webui -- psql -U openwebui -d openwebui
+
+# Run the CREATE TABLE statements above
+```
+
+#### 4. Enable the Function in Open WebUI
+
+1. Login as Admin
+2. Go to Workspace → Functions
+3. Find "MCP Entra Token Auth"
+4. Click Access → Change to "Public"
+5. Save
+
+### Testing
+
+```bash
+# Check user's authorized servers
+curl -H "Authorization: Bearer <token>" \
+     -H "X-OpenWebUI-User-Email: user@company.com" \
+     -H "X-Entra-Groups: MCP-GitHub" \
+     http://localhost:30800/servers
+
+# Expected: Only servers the user has access to
+```
+
+### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://openwebui:password@postgresql:5432/openwebui` |
+| `WEBUI_SECRET_KEY` | JWT signing key (must match Open WebUI) | `your-secret-key` |
+| `API_GATEWAY_MODE` | Trust external gateway headers | `false` |
+| `DEBUG` | Enable debug logging | `true` |
+
+### Troubleshooting
+
+```bash
+# Check MCP Proxy logs for auth issues
+kubectl logs -n open-webui deployment/mcp-proxy | grep -E "\[AUTH\]|\[DB\]|\[TENANTS\]"
+
+# Verify database connection
+kubectl exec -it postgresql-0 -n open-webui -- psql -U openwebui -d openwebui -c "SELECT * FROM group_tenant_mapping;"
+
+# Test with specific user
+curl -H "X-Auth-Source: entra-token" \
+     -H "X-OpenWebUI-User-Email: test@company.com" \
+     -H "X-Entra-Groups: MCP-GitHub" \
+     http://localhost:30800/servers
+```
