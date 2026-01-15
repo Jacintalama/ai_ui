@@ -1,0 +1,130 @@
+# kubernetes/mcpo-stdio-deployment.yaml
+# =============================================================================
+# TIER 3: STDIO MCP Servers (via Docker/mcpo)
+# =============================================================================
+# These MCP servers use stdio protocol and require specific credentials.
+#
+# IMPORTANT: These servers REQUIRE valid credentials to start:
+#   - SonarQube: SONARQUBE_TOKEN + (SONARQUBE_URL or SONARQUBE_ORG)
+#   - Sentry: SENTRY_AUTH_TOKEN
+#
+# If credentials are not configured, scale replicas to 0.
+#
+# Access from MCP Proxy:
+#   - http://mcpo-stdio:8020 (SonarQube)
+#   - http://mcpo-stdio:8021 (Sentry - placeholder, use HTTP endpoint instead)
+#
+# NOTE: Sentry has a direct HTTP endpoint at https://mcp.sentry.dev/sse
+#       which is configured in tenants.py as a Tier 1 server.
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpo-stdio
+  namespace: open-webui
+  labels:
+    app: mcpo-stdio
+    tier: "3"
+    protocol: "stdio"
+spec:
+  # Set to 0 if credentials are not configured
+  # Scale up with: kubectl scale deployment/mcpo-stdio --replicas=1 -n open-webui
+  replicas: 0
+  selector:
+    matchLabels:
+      app: mcpo-stdio
+  template:
+    metadata:
+      labels:
+        app: mcpo-stdio
+        tier: "3"
+    spec:
+      containers:
+        # =====================================================================
+        # SONARQUBE (Code Quality Analysis)
+        # =====================================================================
+        # Uses official SonarSource Docker image (Java-based, not npm)
+        # Requires: SONARQUBE_TOKEN + (SONARQUBE_URL or SONARQUBE_ORG)
+        # Docs: https://docs.sonarsource.com/sonarqube-mcp-server/
+        # =====================================================================
+        - name: sonarqube
+          image: mcp/sonarqube:latest
+          stdin: true
+          stdinOnce: false
+          tty: false
+          ports:
+            - containerPort: 8020
+              name: sonarqube
+          env:
+            # For SonarQube Server (self-hosted):
+            - name: SONARQUBE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: SONARQUBE_URL
+                  optional: true
+            # For SonarQube Cloud:
+            - name: SONARQUBE_ORG
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: SONARQUBE_ORG
+                  optional: true
+            # Required for both:
+            - name: SONARQUBE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: SONARQUBE_TOKEN
+                  optional: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+        # =====================================================================
+        # PLACEHOLDER for additional stdio servers
+        # =====================================================================
+        # Sentry is now configured as HTTP (Tier 1) in tenants.py
+        # using https://mcp.sentry.dev/sse endpoint directly
+        # =====================================================================
+        - name: placeholder
+          image: busybox:latest
+          command: ["sh", "-c", "echo 'Placeholder for stdio servers. Scale to 0 if not needed.' && sleep infinity"]
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "10m"
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
+
+---
+# =============================================================================
+# SERVICE: ClusterIP for internal access from MCP Proxy
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpo-stdio
+  namespace: open-webui
+  labels:
+    app: mcpo-stdio
+    tier: "3"
+spec:
+  type: ClusterIP
+  ports:
+    - name: sonarqube
+      port: 8020
+      targetPort: 8020
+      protocol: TCP
+    - name: sentry
+      port: 8021
+      targetPort: 8021
+      protocol: TCP
+  selector:
+    app: mcpo-stdio

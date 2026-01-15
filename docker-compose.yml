@@ -1,0 +1,191 @@
+services:
+  # ==========================================================================
+  # Redis - Session & Cache Management
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # PostgreSQL + PGVector - Unified Database
+  # ==========================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=openwebui
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui-secret}
+      - POSTGRES_DB=openwebui
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================================================
+  # Ollama - Local LLM Server
+  # ==========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Open WebUI v0.7 - Main Application
+  # ==========================================================================
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.7.2
+    container_name: open-webui
+    ports:
+      - "3000:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # Ollama connection (local LLMs)
+      - OLLAMA_BASE_URL=http://ollama:11434
+      # OpenAI connection (cloud LLMs)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # User headers for MCP Proxy
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      - BYPASS_MODEL_ACCESS_CONTROL=true
+      # Redis for sessions and caching
+      - REDIS_URL=redis://redis:6379/0
+      - ENABLE_REDIS=true
+      # PostgreSQL Database (replaces SQLite)
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      # Vector Database (PGVector instead of ChromaDB)
+      - VECTOR_DB=pgvector
+      - PGVECTOR_CONNECTION_STRING=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      # Microsoft Entra ID OAuth
+      - ENABLE_OAUTH_SIGNUP=true
+      - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+      - MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_CLIENT_TENANT_ID}
+      # Group Management for Multi-Tenant
+      - ENABLE_OAUTH_GROUP_MANAGEMENT=true
+      - ENABLE_OAUTH_GROUP_CREATION=true
+      - OAUTH_GROUP_CLAIM=groups
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  # ==========================================================================
+  # MCP Proxy Gateway - Multi-Tenant Tool Filtering
+  # ==========================================================================
+  mcp-proxy:
+    build: ./mcp-proxy
+    container_name: mcp-proxy
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+    restart: unless-stopped
+
+  # ==========================================================================
+  # MCP Filesystem Server - File Access Tools
+  # ==========================================================================
+  mcp-filesystem:
+    image: node:20-slim
+    container_name: mcp-filesystem
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8001 --api-key test-key -- npx -y @modelcontextprotocol/server-filesystem /data"
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./mcp-poc/test-data:/data
+    restart: unless-stopped
+
+  # ==========================================================================
+  # MCP GitHub Server - GitHub API Tools
+  # ==========================================================================
+  mcp-github:
+    build: ./mcp-servers/github
+    container_name: mcp-github
+    environment:
+      - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+    ports:
+      - "8002:8000"
+    restart: unless-stopped
+
+  # ==========================================================================
+  # TIER 2: SSE MCP Servers
+  # ==========================================================================
+  mcpo-sse-atlassian:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    container_name: mcpo-sse-atlassian
+    command: ["--transport", "streamable-http", "--port", "8010", "-vv"]
+    ports:
+      - "8010:8010"
+    environment:
+      - ATLASSIAN_OAUTH_ENABLE=true
+      - ATLASSIAN_API_TOKEN=${ATLASSIAN_TOKEN}
+    restart: unless-stopped
+
+  mcpo-sse-asana:
+    image: python:3.11-slim
+    container_name: mcpo-sse-asana
+    command: >
+      bash -c "apt-get update && apt-get install -y curl nodejs npm --no-install-recommends &&
+               pip install mcpo mcp-remote --quiet &&
+               mcpo --host 0.0.0.0 --port 8011 --api-key ${MCP_API_KEY:-test-key} -- npx -y mcp-remote https://mcp.asana.com/sse"
+    ports:
+      - "8011:8011"
+    environment:
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+      - ASANA_TOKEN=${ASANA_TOKEN}
+    restart: unless-stopped
+
+  # ==========================================================================
+  # TIER 3: STDIO MCP Servers
+  # ==========================================================================
+  mcpo-stdio-sonarqube:
+    image: node:20-slim
+    container_name: mcpo-stdio-sonarqube
+    command: >
+      bash -c "apt-get update && apt-get install -y python3 python3-pip --no-install-recommends &&
+               pip3 install --break-system-packages mcpo &&
+               mcpo --host 0.0.0.0 --port 8020 --api-key ${MCP_API_KEY:-test-key} -- npx -y @anthropic/mcp-sonarqube"
+    ports:
+      - "8020:8020"
+    environment:
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+      - SONARQUBE_URL=${SONARQUBE_URL}
+      - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  postgres-data:
+  ollama-data:
+  open-webui-data:

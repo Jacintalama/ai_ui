@@ -1,239 +1,423 @@
-# Open WebUI 👋
+# Open WebUI Local Setup
 
-![GitHub stars](https://img.shields.io/github/stars/open-webui/open-webui?style=social)
-![GitHub forks](https://img.shields.io/github/forks/open-webui/open-webui?style=social)
-![GitHub watchers](https://img.shields.io/github/watchers/open-webui/open-webui?style=social)
-![GitHub repo size](https://img.shields.io/github/repo-size/open-webui/open-webui)
-![GitHub language count](https://img.shields.io/github/languages/count/open-webui/open-webui)
-![GitHub top language](https://img.shields.io/github/languages/top/open-webui/open-webui)
-![GitHub last commit](https://img.shields.io/github/last-commit/open-webui/open-webui?color=red)
-[![Discord](https://img.shields.io/badge/Discord-Open_WebUI-blue?logo=discord&logoColor=white)](https://discord.gg/5rJgQTnV4s)
-[![](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/tjbck)
-
-![Open WebUI Banner](./banner.png)
-
-**Open WebUI is an [extensible](https://docs.openwebui.com/features/plugin/), feature-rich, and user-friendly self-hosted AI platform designed to operate entirely offline.** It supports various LLM runners like **Ollama** and **OpenAI-compatible APIs**, with **built-in inference engine** for RAG, making it a **powerful AI deployment solution**.
-
-Passionate about open-source AI? [Join our team →](https://careers.openwebui.com/)
-
-![Open WebUI Demo](./demo.png)
-
-> [!TIP]  
-> **Looking for an [Enterprise Plan](https://docs.openwebui.com/enterprise)?** – **[Speak with Our Sales Team Today!](https://docs.openwebui.com/enterprise)**
->
-> Get **enhanced capabilities**, including **custom theming and branding**, **Service Level Agreement (SLA) support**, **Long-Term Support (LTS) versions**, and **more!**
-
-For more information, be sure to check out our [Open WebUI Documentation](https://docs.openwebui.com/).
-
-## Key Features of Open WebUI ⭐
-
-- 🚀 **Effortless Setup**: Install seamlessly using Docker or Kubernetes (kubectl, kustomize or helm) for a hassle-free experience with support for both `:ollama` and `:cuda` tagged images.
-
-- 🤝 **Ollama/OpenAI API Integration**: Effortlessly integrate OpenAI-compatible APIs for versatile conversations alongside Ollama models. Customize the OpenAI API URL to link with **LMStudio, GroqCloud, Mistral, OpenRouter, and more**.
-
-- 🛡️ **Granular Permissions and User Groups**: By allowing administrators to create detailed user roles and permissions, we ensure a secure user environment. This granularity not only enhances security but also allows for customized user experiences, fostering a sense of ownership and responsibility amongst users.
-
-- 📱 **Responsive Design**: Enjoy a seamless experience across Desktop PC, Laptop, and Mobile devices.
-
-- 📱 **Progressive Web App (PWA) for Mobile**: Enjoy a native app-like experience on your mobile device with our PWA, providing offline access on localhost and a seamless user interface.
-
-- ✒️🔢 **Full Markdown and LaTeX Support**: Elevate your LLM experience with comprehensive Markdown and LaTeX capabilities for enriched interaction.
-
-- 🎤📹 **Hands-Free Voice/Video Call**: Experience seamless communication with integrated hands-free voice and video call features using multiple Speech-to-Text providers (Local Whisper, OpenAI, Deepgram, Azure) and Text-to-Speech engines (Azure, ElevenLabs, OpenAI, Transformers, WebAPI), allowing for dynamic and interactive chat environments.
-
-- 🛠️ **Model Builder**: Easily create Ollama models via the Web UI. Create and add custom characters/agents, customize chat elements, and import models effortlessly through [Open WebUI Community](https://openwebui.com/) integration.
-
-- 🐍 **Native Python Function Calling Tool**: Enhance your LLMs with built-in code editor support in the tools workspace. Bring Your Own Function (BYOF) by simply adding your pure Python functions, enabling seamless integration with LLMs.
-
-- 💾 **Persistent Artifact Storage**: Built-in key-value storage API for artifacts, enabling features like journals, trackers, leaderboards, and collaborative tools with both personal and shared data scopes across sessions.
-
-- 📚 **Local RAG Integration**: Dive into the future of chat interactions with groundbreaking Retrieval Augmented Generation (RAG) support using your choice of 9 vector databases and multiple content extraction engines (Tika, Docling, Document Intelligence, Mistral OCR, External loaders). Load documents directly into chat or add files to your document library, effortlessly accessing them using the `#` command before a query.
-
-- 🔍 **Web Search for RAG**: Perform web searches using 15+ providers including `SearXNG`, `Google PSE`, `Brave Search`, `Kagi`, `Mojeek`, `Tavily`, `Perplexity`, `serpstack`, `serper`, `Serply`, `DuckDuckGo`, `SearchApi`, `SerpApi`, `Bing`, `Jina`, `Exa`, `Sougou`, `Azure AI Search`, and `Ollama Cloud`, injecting results directly into your chat experience.
-
-- 🌐 **Web Browsing Capability**: Seamlessly integrate websites into your chat experience using the `#` command followed by a URL. This feature allows you to incorporate web content directly into your conversations, enhancing the richness and depth of your interactions.
-
-- 🎨 **Image Generation & Editing Integration**: Create and edit images using multiple engines including OpenAI's DALL-E, Gemini, ComfyUI (local), and AUTOMATIC1111 (local), with support for both generation and prompt-based editing workflows.
-
-- ⚙️ **Many Models Conversations**: Effortlessly engage with various models simultaneously, harnessing their unique strengths for optimal responses. Enhance your experience by leveraging a diverse set of models in parallel.
-
-- 🔐 **Role-Based Access Control (RBAC)**: Ensure secure access with restricted permissions; only authorized individuals can access your Ollama, and exclusive model creation/pulling rights are reserved for administrators.
-
-- 🗄️ **Flexible Database & Storage Options**: Choose from SQLite (with optional encryption), PostgreSQL, or configure cloud storage backends (S3, Google Cloud Storage, Azure Blob Storage) for scalable deployments.
-
-- 🔍 **Advanced Vector Database Support**: Select from 9 vector database options including ChromaDB, PGVector, Qdrant, Milvus, Elasticsearch, OpenSearch, Pinecone, S3Vector, and Oracle 23ai for optimal RAG performance.
-
-- 🔐 **Enterprise Authentication**: Full support for LDAP/Active Directory integration, SCIM 2.0 automated provisioning, and SSO via trusted headers alongside OAuth providers. Enterprise-grade user and group provisioning through SCIM 2.0 protocol, enabling seamless integration with identity providers like Okta, Azure AD, and Google Workspace for automated user lifecycle management.
-
-- ☁️ **Cloud-Native Integration**: Native support for Google Drive and OneDrive/SharePoint file picking, enabling seamless document import from enterprise cloud storage.
-
-- 📊 **Production Observability**: Built-in OpenTelemetry support for traces, metrics, and logs, enabling comprehensive monitoring with your existing observability stack.
-
-- ⚖️ **Horizontal Scalability**: Redis-backed session management and WebSocket support for multi-worker and multi-node deployments behind load balancers.
-
-- 🌐🌍 **Multilingual Support**: Experience Open WebUI in your preferred language with our internationalization (i18n) support. Join us in expanding our supported languages! We're actively seeking contributors!
-
-- 🧩 **Pipelines, Open WebUI Plugin Support**: Seamlessly integrate custom logic and Python libraries into Open WebUI using [Pipelines Plugin Framework](https://github.com/open-webui/pipelines). Launch your Pipelines instance, set the OpenAI URL to the Pipelines URL, and explore endless possibilities. [Examples](https://github.com/open-webui/pipelines/tree/main/examples) include **Function Calling**, User **Rate Limiting** to control access, **Usage Monitoring** with tools like Langfuse, **Live Translation with LibreTranslate** for multilingual support, **Toxic Message Filtering** and much more.
-
-- 🌟 **Continuous Updates**: We are committed to improving Open WebUI with regular updates, fixes, and new features.
-
-Want to learn more about Open WebUI's features? Check out our [Open WebUI documentation](https://docs.openwebui.com/features) for a comprehensive overview!
+Self-hosted AI interface running locally via Docker.
 
 ---
 
-We are incredibly grateful for the generous support of our sponsors. Their contributions help us to maintain and improve our project, ensuring we can continue to deliver quality work to our community. Thank you!
+## ⚠️ IMPORTANT RULES FOR CLAUDE/AI ASSISTANTS ⚠️
 
-## How to Install 🚀
+**DO NOT COMMIT OR PUSH ANYTHING UNTIL I SAY "GO"**
 
-### Installation via Python pip 🐍
+1. **NO commits** to any repository without explicit approval
+2. **NO pushing** to remote/origin without explicit approval
+3. **NEVER touch** `C:\Users\alama\Desktop\Lukas Work\ai_ui\ai_ui` - this is the **CLIENT'S REPOSITORY**
+4. Only make changes to the `IO` repository (this repo)
+5. When in doubt, **ASK FIRST**
 
-Open WebUI can be installed using pip, the Python package installer. Before proceeding, ensure you're using **Python 3.11** to avoid compatibility issues.
+**Safe repositories:**
+- ✅ `C:\Users\alama\Desktop\Lukas Work\IO` - OK to edit (but ask before commit)
 
-1. **Install Open WebUI**:
-   Open your terminal and run the following command to install Open WebUI:
+**OFF LIMITS:**
+- ❌ `C:\Users\alama\Desktop\Lukas Work\ai_ui\ai_ui` - CLIENT REPO, DO NOT TOUCH
 
-   ```bash
-   pip install open-webui
-   ```
+---
 
-2. **Running Open WebUI**:
-   After installation, you can start Open WebUI by executing:
+## Quick Start
 
-   ```bash
-   open-webui serve
-   ```
+```bash
+docker compose up -d
+```
 
-This will start the Open WebUI server, which you can access at [http://localhost:8080](http://localhost:8080)
+Access: http://localhost:3000
 
-### Quick Start with Docker 🐳
+## Credentials
 
-> [!NOTE]  
-> Please note that for certain Docker environments, additional configurations might be needed. If you encounter any connection issues, our detailed guide on [Open WebUI Documentation](https://docs.openwebui.com/) is ready to assist you.
+### Admin Account
+| Field | Value |
+|-------|-------|
+| **Email** | alamajacintg04@gmail.com |
+| **Password** | Jacintalama123! |
+| **Name** | Jacint Alama |
+| **Role** | Admin |
 
-> [!WARNING]
-> When using Docker to install Open WebUI, make sure to include the `-v open-webui:/app/backend/data` in your Docker command. This step is crucial as it ensures your database is properly mounted and prevents any loss of data.
+### Test User Account (Google Tenant)
+| Field | Value |
+|-------|-------|
+| **Email** | joelalama@google.com |
+| **Password** | 123456 |
+| **Name** | Joel Alama |
+| **Role** | User |
+| **Tenant Access** | Google, GitHub |
 
-> [!TIP]  
-> If you wish to utilize Open WebUI with Ollama included or CUDA acceleration, we recommend utilizing our official images tagged with either `:cuda` or `:ollama`. To enable CUDA, you must install the [Nvidia CUDA container toolkit](https://docs.nvidia.com/dgx/nvidia-container-runtime-upgrade/) on your Linux/WSL system.
+### Test User Account (Microsoft Tenant)
+| Field | Value |
+|-------|-------|
+| **Email** | miketest@microsoft.com |
+| **Password** | 123456 |
+| **Name** | Mike Test |
+| **Role** | User |
+| **Tenant Access** | Microsoft only |
 
-### Installation with Default Configuration
+## OpenAI API Configuration
 
-- **If Ollama is on your computer**, use this command:
+- **URL**: `https://api.openai.com/v1`
+- **API Key**: `<YOUR_OPENAI_API_KEY>` (set in environment variables)
 
-  ```bash
-  docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
-  ```
+## Available Models
 
-- **If Ollama is on a Different Server**, use this command:
+- gpt-4o, gpt-4o-mini (recommended)
+- gpt-4, gpt-4-turbo
+- gpt-3.5-turbo
+- o1, o3, o3-mini, o4-mini
+- gpt-5, gpt-5.1, gpt-5.2
+- sora-2 (video generation)
+- And 100+ more models
 
-  To connect to Ollama on another server, change the `OLLAMA_BASE_URL` to the server's URL:
+## Environment Variables
 
-  ```bash
-  docker run -d -p 3000:8080 -e OLLAMA_BASE_URL=https://example.com -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
-  ```
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `BYPASS_MODEL_ACCESS_CONTROL` | `true` | Allows all users to see all models |
+| `ENABLE_FORWARD_USER_INFO_HEADERS` | `true` | Forwards user identity to MCP servers |
 
-- **To run Open WebUI with Nvidia GPU support**, use this command:
+## Commands
 
-  ```bash
-  docker run -d -p 3000:8080 --gpus all --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:cuda
-  ```
+```bash
+# Start
+docker compose up -d
 
-### Installation for OpenAI API Usage Only
+# Stop
+docker compose down
 
-- **If you're only using OpenAI API**, use this command:
+# View logs
+docker compose logs -f
 
-  ```bash
-  docker run -d -p 3000:8080 -e OPENAI_API_KEY=your_secret_key -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main
-  ```
+# Update
+docker compose pull && docker compose up -d
+```
 
-### Installing Open WebUI with Bundled Ollama Support
+## Multi-Tenant MCP Proxy Gateway
 
-This installation method uses a single container image that bundles Open WebUI with Ollama, allowing for a streamlined setup via a single command. Choose the appropriate command based on your hardware setup:
+The MCP Proxy Gateway filters tools based on user's tenant access:
 
-- **With GPU Support**:
-  Utilize GPU resources by running the following command:
+- **Joel** (`joelalama@google.com`) → Sees only `google_*` tools (14 tools)
+- **Admin** (`alamajacintg04@gmail.com`) → Sees all tenant tools (42 tools)
 
-  ```bash
-  docker run -d -p 3000:8080 --gpus=all -v ollama:/root/.ollama -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:ollama
-  ```
+See `mcp-proxy/` directory for implementation.
 
-- **For CPU Only**:
-  If you're not using a GPU, use this command instead:
+## Kubernetes Deployment
 
-  ```bash
-  docker run -d -p 3000:8080 -v ollama:/root/.ollama -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:ollama
-  ```
+### Unified MCP Proxy (Lukas's Requirement)
 
-Both commands facilitate a built-in, hassle-free installation of both Open WebUI and Ollama, ensuring that you can get everything up and running swiftly.
+One URL to access all MCP servers:
 
-After installation, you can access Open WebUI at [http://localhost:3000](http://localhost:3000). Enjoy! 😄
+```
+http://localhost:30800/github      → GitHub tools (40)
+http://localhost:30800/filesystem  → Filesystem tools (14)
+http://localhost:30800/linear      → Linear (needs API key)
+http://localhost:30800/notion      → Notion (needs API key)
+http://localhost:30800/sentry      → Sentry (needs API key)
+http://localhost:30800/servers     → List all 11 servers
+```
 
-### Other Installation Methods
+### Quick Start (Kubernetes)
 
-We offer various installation alternatives, including non-Docker native installation methods, Docker Compose, Kustomize, and Helm. Visit our [Open WebUI Documentation](https://docs.openwebui.com/getting-started/) or join our [Discord community](https://discord.gg/5rJgQTnV4s) for comprehensive guidance.
+#### Step 1: Start Docker Desktop
+```
+1. Open Docker Desktop
+2. Wait for it to start (whale icon stops animating)
+```
 
-Look at the [Local Development Guide](https://docs.openwebui.com/getting-started/advanced-topics/development) for instructions on setting up a local development environment.
+#### Step 2: Enable Kubernetes
+```
+1. Docker Desktop → Settings (gear icon)
+2. Kubernetes → Check "Enable Kubernetes"
+3. Click "Apply & Restart"
+4. Wait for green "Kubernetes running" status
+```
+
+#### Step 3: Run Deploy Script
+
+**Windows (PowerShell):**
+```powershell
+cd kubernetes
+.\deploy.ps1
+```
+
+**Mac/Linux/WSL:**
+```bash
+cd kubernetes
+chmod +x deploy.sh
+./deploy.sh
+```
+
+#### Step 4: Verify Deployment
+```bash
+# Check all pods are running
+kubectl get pods -n open-webui
+
+# Test the MCP Proxy
+curl http://localhost:30800/health
+curl http://localhost:30800/servers
+```
+
+### Access URLs
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| **MCP Proxy** | http://localhost:30800 | Unified API for all MCP servers |
+| **Open WebUI** | http://localhost:30080 | Chat interface |
+
+### Deploy Script Options
+
+```bash
+# Full deployment (builds Docker image)
+.\deploy.ps1
+
+# Skip Docker build (faster, if image exists)
+.\deploy.ps1 -SkipBuild
+
+# Remove all resources
+.\deploy.ps1 -Teardown
+```
+
+### Test Commands
+
+```bash
+# Health check
+curl http://localhost:30800/health
+
+# List all servers
+curl http://localhost:30800/servers
+
+# List GitHub tools
+curl http://localhost:30800/github
+
+# List Filesystem tools
+curl http://localhost:30800/filesystem
+
+# Execute a tool
+curl -X POST http://localhost:30800/github/search_repositories \
+  -H "Content-Type: application/json" \
+  -d '{"query": "mcp"}'
+```
+
+### Configure API Keys (Optional)
+
+To enable external servers (Linear, Notion, Sentry, etc.):
+
+1. Edit `kubernetes/mcp-secrets.yaml`
+2. Replace placeholder values with real API keys
+3. Apply changes:
+```bash
+kubectl apply -f kubernetes/mcp-secrets.yaml -n open-webui
+kubectl rollout restart deployment/mcp-proxy -n open-webui
+```
 
 ### Troubleshooting
 
-Encountering connection issues? Our [Open WebUI Documentation](https://docs.openwebui.com/troubleshooting/) has got you covered. For further assistance and to join our vibrant community, visit the [Open WebUI Discord](https://discord.gg/5rJgQTnV4s).
-
-#### Open WebUI: Server Connection Error
-
-If you're experiencing connection issues, it’s often due to the WebUI docker container not being able to reach the Ollama server at 127.0.0.1:11434 (host.docker.internal:11434) inside the container . Use the `--network=host` flag in your docker command to resolve this. Note that the port changes from 3000 to 8080, resulting in the link: `http://localhost:8080`.
-
-**Example Docker Command**:
-
 ```bash
-docker run -d --network=host -v open-webui:/app/backend/data -e OLLAMA_BASE_URL=http://127.0.0.1:11434 --name open-webui --restart always ghcr.io/open-webui/open-webui:main
+# Check pod status
+kubectl get pods -n open-webui
+
+# View MCP Proxy logs
+kubectl logs -n open-webui deployment/mcp-proxy
+
+# Restart MCP Proxy
+kubectl rollout restart deployment/mcp-proxy -n open-webui
+
+# Port forward if NodePort not working
+kubectl port-forward svc/mcp-proxy 8080:8000 -n open-webui
 ```
-
-### Keeping Your Docker Installation Up-to-Date
-
-Check our Updating Guide available in our [Open WebUI Documentation](https://docs.openwebui.com/getting-started/updating).
-
-### Using the Dev Branch 🌙
-
-> [!WARNING]
-> The `:dev` branch contains the latest unstable features and changes. Use it at your own risk as it may have bugs or incomplete features.
-
-If you want to try out the latest bleeding-edge features and are okay with occasional instability, you can use the `:dev` tag like this:
-
-```bash
-docker run -d -p 3000:8080 -v open-webui:/app/backend/data --name open-webui --add-host=host.docker.internal:host-gateway --restart always ghcr.io/open-webui/open-webui:dev
-```
-
-### Offline Mode
-
-If you are running Open WebUI in an offline environment, you can set the `HF_HUB_OFFLINE` environment variable to `1` to prevent attempts to download models from the internet.
-
-```bash
-export HF_HUB_OFFLINE=1
-```
-
-## What's Next? 🌟
-
-Discover upcoming features on our roadmap in the [Open WebUI Documentation](https://docs.openwebui.com/roadmap/).
-
-## License 📜
-
-This project contains code under multiple licenses. The current codebase includes components licensed under the Open WebUI License with an additional requirement to preserve the "Open WebUI" branding, as well as prior contributions under their respective original licenses. For a detailed record of license changes and the applicable terms for each section of the code, please refer to [LICENSE_HISTORY](./LICENSE_HISTORY). For complete and updated licensing details, please see the [LICENSE](./LICENSE) and [LICENSE_HISTORY](./LICENSE_HISTORY) files.
-
-## Support 💬
-
-If you have any questions, suggestions, or need assistance, please open an issue or join our
-[Open WebUI Discord community](https://discord.gg/5rJgQTnV4s) to connect with us! 🤝
-
-## Star History
-
-<a href="https://star-history.com/#open-webui/open-webui&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=open-webui/open-webui&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=open-webui/open-webui&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=open-webui/open-webui&type=Date" />
-  </picture>
-</a>
 
 ---
 
-Created by [Timothy Jaeryang Baek](https://github.com/tjbck) - Let's make Open WebUI even more amazing together! 💪
+### Legacy: Manual Kubernetes Deployment
+
+```bash
+# Deploy all components manually
+kubectl apply -f kubernetes/
+
+# Port forward to access
+kubectl port-forward svc/open-webui 8080:8080 -n open-webui
+kubectl port-forward svc/postgresql 5433:5432 -n open-webui
+```
+
+Access: http://localhost:8080
+
+### Kubernetes PostgreSQL Database
+
+| Field | Value |
+|-------|-------|
+| **Host** | `127.0.0.1` |
+| **Port** | `5433` (forwarded from K8s) |
+| **Database** | `openwebui` |
+| **Username** | `openwebui` |
+| **Password** | `localdevpassword` |
+| **Connection URL** | `postgresql://openwebui:localdevpassword@postgresql:5432/openwebui` |
+
+### pgAdmin (Database GUI)
+
+| Field | Value |
+|-------|-------|
+| **URL** | http://localhost:5050 |
+| **Email** | admin@openwebui.local |
+| **Password** | admin123 |
+
+**To connect to PostgreSQL from pgAdmin:**
+| Setting | Value |
+|---------|-------|
+| **Host** | `host.docker.internal` (Docker) or `127.0.0.1` |
+| **Port** | `5433` (forwarded) or `5432` (internal) |
+| **Database** | `openwebui` |
+| **Username** | `openwebui` |
+| **Password** | `localdevpassword` |
+
+**Start pgAdmin (Docker):**
+```bash
+docker run -d -p 5050:80 \
+  -e PGADMIN_DEFAULT_EMAIL=admin@openwebui.local \
+  -e PGADMIN_DEFAULT_PASSWORD=admin123 \
+  --name pgadmin \
+  dpage/pgadmin4
+```
+
+### Kubernetes Pods
+
+| Pod | Port | Purpose |
+|-----|------|---------|
+| open-webui | 8080 | Main application |
+| postgresql | 5432 | Database (27 tables) |
+| mcp-proxy | 8000 | Multi-tenant MCP gateway |
+| mcp-filesystem | 8001 | Filesystem tools |
+| mcp-github | 8002 | GitHub tools |
+| open-webui-redis | 6379 | Session cache |
+| open-webui-pipelines | 9099 | AI pipelines |
+| open-webui-ollama | 11434 | Ollama LLM server |
+| llama-cpp | 8080 | Llama.cpp server (CPU) |
+
+### Kubernetes Test Accounts
+
+| User | Email | Password | Role | Tenant Access |
+|------|-------|----------|------|---------------|
+| **Jacint (Admin)** | alamajacintg04@gmail.com | 123456 | Admin | ALL servers |
+| **Joel (Google)** | joelalama@google.com | 123456 | User | Google, GitHub |
+| **Mike (Microsoft)** | miketest@microsoft.com | 123456 | User | Microsoft only |
+
+**Multi-Tenant Test:**
+- Joel can access: `/github` ✅, `/filesystem` ❌
+- Mike can access: `/github` ❌, `/filesystem` ❌
+- Admin can access: ALL servers ✅
+
+### Kubernetes Ollama (Local LLMs)
+
+| Setting | Value |
+|---------|-------|
+| **Status** | Enabled |
+| **Model** | llama3.2:latest (3.2B, 2GB) |
+| **Service** | open-webui-ollama.open-webui.svc.cluster.local:11434 |
+
+To pull additional models:
+```bash
+kubectl exec -it $(kubectl get pods -n open-webui -l app.kubernetes.io/name=ollama -o jsonpath='{.items[0].metadata.name}') -n open-webui -- ollama pull <model-name>
+```
+
+### Kubernetes Llama.cpp (Lightweight Local LLMs)
+
+| Setting | Value |
+|---------|-------|
+| **Status** | Enabled |
+| **Model** | Qwen2.5-0.5B-Instruct (Q4_K_M, 469MB) |
+| **Service** | llama-cpp.open-webui.svc.cluster.local:8080 |
+| **API** | OpenAI-compatible |
+
+Deploy llama.cpp:
+```bash
+kubectl apply -f kubernetes/llama-cpp-deployment.yaml
+```
+
+### Kubernetes vLLM (High-Throughput GPU Inference)
+
+| Setting | Value |
+|---------|-------|
+| **Status** | Requires NVIDIA GPU |
+| **Model** | Qwen2.5-0.5B-Instruct (configurable) |
+| **Service** | vllm.open-webui.svc.cluster.local:8000 |
+| **API** | OpenAI-compatible |
+
+Deploy vLLM (GPU required):
+```bash
+kubectl apply -f kubernetes/vllm-deployment.yaml
+```
+
+### Local LLM Engines Comparison
+
+| Engine | GPU Required | Best For |
+|--------|-------------|----------|
+| **Ollama** | Optional | Easy setup, model management |
+| **Llama.cpp** | No (CPU OK) | Lightweight, low memory |
+| **vLLM** | Yes (NVIDIA) | High throughput, production |
+
+### Two Environments
+
+| Environment | URL | Database |
+|-------------|-----|----------|
+| Docker Compose | localhost:3000 | SQLite |
+| Kubernetes | localhost:8080 | PostgreSQL |
+
+## Files
+
+```
+├── docker-compose.yml    # Docker Compose configuration
+├── .env                  # Secret key (DO NOT COMMIT)
+├── .gitignore            # Ignores .env
+├── README.md             # This file
+│
+├── mcp-proxy/            # Unified MCP Proxy Gateway
+│   ├── main.py           # FastAPI server with /{server}/{tool} routing
+│   ├── tenants.py        # Server configs (11 servers, 3 tiers)
+│   ├── auth.py           # User extraction from headers
+│   ├── Dockerfile        # Docker build file
+│   └── requirements.txt  # Python dependencies
+│
+├── kubernetes/           # Kubernetes deployment files
+│   ├── deploy.ps1        # Windows deployment script
+│   ├── deploy.sh         # Mac/Linux deployment script
+│   ├── namespace.yaml    # open-webui namespace
+│   ├── mcp-secrets.yaml  # API keys (edit before deploy)
+│   ├── mcp-proxy-deployment.yaml      # Unified MCP Proxy (port 30800)
+│   ├── mcp-filesystem-deployment.yaml # Filesystem MCP server
+│   ├── mcp-github-deployment.yaml     # GitHub MCP server
+│   ├── mcpo-sse-deployment.yaml       # Tier 2: SSE servers
+│   ├── mcpo-stdio-deployment.yaml     # Tier 3: stdio servers
+│   ├── postgresql-deployment.yaml     # PostgreSQL database
+│   ├── llama-cpp-deployment.yaml      # Llama.cpp server (CPU)
+│   └── values-local.yaml              # Helm values for local testing
+│
+└── docs/
+    ├── plans/                         # Design documents
+    │   └── 2026-01-09-unified-mcp-proxy-implementation.md
+    └── *.png                          # Screenshots
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Open WebUI (localhost:30080)                 │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Unified MCP Proxy (localhost:30800)                │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │  /github ────► mcp-github (local, 40 tools)             │    │
+│  │  /filesystem ► mcp-filesystem (local, 14 tools)         │    │
+│  │  /linear ────► https://mcp.linear.app (external)        │    │
+│  │  /notion ────► https://mcp.notion.com (external)        │    │
+│  │  /sentry ────► https://mcp.sentry.dev (external)        │    │
+│  │  /atlassian ─► mcpo-sse proxy (Tier 2)                  │    │
+│  │  /sonarqube ─► mcpo-stdio proxy (Tier 3)                │    │
+│  └─────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
+```

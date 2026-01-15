@@ -1,0 +1,131 @@
+# kubernetes/mcpo-sse-deployment.yaml
+# =============================================================================
+# TIER 2: SSE MCP Servers (via mcpo proxy)
+# =============================================================================
+# These MCP servers use Server-Sent Events (SSE) protocol.
+#
+# IMPORTANT: These servers require OAuth or API tokens to function.
+# - Atlassian: Needs ATLASSIAN_TOKEN or OAuth setup
+# - Asana: Requires OAuth browser authorization (not possible in container)
+#
+# For now, these are disabled until proper auth is configured.
+# The MCP Proxy will show these as available but tools won't work without auth.
+#
+# Access from MCP Proxy:
+#   - http://mcpo-sse:8010 (Atlassian)
+#   - http://mcpo-sse:8011 (Asana - placeholder)
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpo-sse
+  namespace: open-webui
+  labels:
+    app: mcpo-sse
+    tier: "2"
+    protocol: "sse"
+spec:
+  # Scale to 0 until OAuth/tokens are configured
+  # Enable with: kubectl scale deployment/mcpo-sse --replicas=1 -n open-webui
+  replicas: 0
+  selector:
+    matchLabels:
+      app: mcpo-sse
+  template:
+    metadata:
+      labels:
+        app: mcpo-sse
+        tier: "2"
+    spec:
+      containers:
+        # =====================================================================
+        # ATLASSIAN (Jira/Confluence)
+        # =====================================================================
+        # Uses sooperset image with native streamable-http support
+        # Docs: https://github.com/sooperset/mcp-atlassian
+        # =====================================================================
+        - name: atlassian
+          image: ghcr.io/sooperset/mcp-atlassian:latest
+          args:
+            - "--transport"
+            - "streamable-http"
+            - "--port"
+            - "8010"
+            - "-vv"
+          ports:
+            - containerPort: 8010
+              name: atlassian
+          env:
+            # OAuth mode for Atlassian Cloud
+            - name: ATLASSIAN_OAUTH_ENABLE
+              value: "true"
+            - name: ATLASSIAN_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: ATLASSIAN_TOKEN
+                  optional: true
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          # Use TCP probe - Atlassian MCP doesn't have /health
+          readinessProbe:
+            tcpSocket:
+              port: 8010
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: 8010
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 5
+
+        # =====================================================================
+        # PLACEHOLDER for Asana
+        # =====================================================================
+        # Asana requires OAuth browser authorization which can't be done
+        # in a container. Use the HTTP endpoint directly instead.
+        # =====================================================================
+        - name: placeholder
+          image: busybox:latest
+          command: ["sh", "-c", "echo 'Asana requires OAuth. Configure in tenants.py' && sleep infinity"]
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "10m"
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
+
+---
+# =============================================================================
+# SERVICE: ClusterIP for internal access from MCP Proxy
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpo-sse
+  namespace: open-webui
+  labels:
+    app: mcpo-sse
+    tier: "2"
+spec:
+  type: ClusterIP
+  ports:
+    - name: atlassian
+      port: 8010
+      targetPort: 8010
+      protocol: TCP
+    - name: asana
+      port: 8011
+      targetPort: 8011
+      protocol: TCP
+  selector:
+    app: mcpo-sse

@@ -1,0 +1,144 @@
+# kubernetes/llama-cpp-deployment.yaml
+# Llama.cpp Server - Lightweight local LLM inference
+# Supports CPU and GPU (CUDA/ROCm/Vulkan)
+# OpenAI-compatible API on port 8080
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llama-cpp-models
+  namespace: open-webui
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: hostpath
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-cpp
+  namespace: open-webui
+  labels:
+    app: llama-cpp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llama-cpp
+  template:
+    metadata:
+      labels:
+        app: llama-cpp
+    spec:
+      containers:
+        - name: llama-cpp
+          # CPU-only image (works on Docker Desktop)
+          # For GPU: use ghcr.io/ggml-org/llama.cpp:server-cuda
+          image: ghcr.io/ggml-org/llama.cpp:server
+          args:
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8080"
+            - "-m"
+            - "/models/model.gguf"
+            - "-c"
+            - "4096"
+            - "-n"
+            - "512"
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+          # Uncomment for NVIDIA GPU support
+          # resources:
+          #   limits:
+          #     nvidia.com/gpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llama-cpp-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-cpp
+  namespace: open-webui
+  labels:
+    app: llama-cpp
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app: llama-cpp
+---
+# Init job to download a model (Qwen2.5-0.5B for testing - smaller, reliable)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llama-cpp-model-download
+  namespace: open-webui
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: downloader
+          image: alpine:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              apk add --no-cache wget
+              echo "Removing old model if exists..."
+              rm -f /models/model.gguf
+              echo "Downloading Qwen2.5-0.5B-Instruct Q4_K_M model (394MB)..."
+              wget --progress=bar:force:noscroll -O /models/model.gguf \
+                "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+              echo "Verifying download..."
+              ls -la /models/
+              FILESIZE=$(stat -c%s "/models/model.gguf" 2>/dev/null || echo "0")
+              echo "File size: $FILESIZE bytes"
+              if [ "$FILESIZE" -lt 100000000 ]; then
+                echo "ERROR: File too small, download may have failed"
+                exit 1
+              fi
+              echo "Download complete and verified!"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llama-cpp-models

@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-proxy-config
+  namespace: open-webui
+data:
+  tenants.json: |
+    {
+      "google": {
+        "tenant_id": "google",
+        "display_name": "Google",
+        "mcp_endpoint": "http://mcp-filesystem:8001",
+        "enabled": true,
+        "allowed_users": ["*@google.com"],
+        "allowed_groups": ["google-employees"]
+      },
+      "microsoft": {
+        "tenant_id": "microsoft",
+        "display_name": "Microsoft",
+        "mcp_endpoint": "http://mcp-filesystem:8001",
+        "enabled": true,
+        "allowed_users": ["*@microsoft.com"],
+        "allowed_groups": ["microsoft-employees"]
+      },
+      "github": {
+        "tenant_id": "github",
+        "display_name": "GitHub",
+        "mcp_endpoint": "http://mcp-github:8002",
+        "enabled": true,
+        "allowed_users": ["*"],
+        "allowed_groups": ["developers"]
+      }
+    }

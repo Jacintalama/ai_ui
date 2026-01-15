@@ -1,0 +1,170 @@
+# kubernetes/values-production.yaml
+# Open WebUI Production Configuration for Azure
+# Helm Chart: https://helm.openwebui.com
+
+# Replica count for high availability
+replicaCount: 3
+
+image:
+  repository: ghcr.io/open-webui/open-webui
+  tag: "v0.7.2"
+  pullPolicy: Always
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+
+# Ingress configuration (Azure Application Gateway or NGINX)
+ingress:
+  enabled: true
+  className: nginx  # or azure-application-gateway
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+  hosts:
+    - host: chat.company.com  # Replace with actual domain
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: open-webui-tls
+      hosts:
+        - chat.company.com
+
+# Persistence - using external PostgreSQL, so minimal local storage
+persistence:
+  enabled: true
+  size: 10Gi  # For uploaded files only
+  accessModes:
+    - ReadWriteMany  # Required for multiple replicas
+  storageClass: azurefile-csi  # Azure Files for RWX
+
+# External PostgreSQL (Azure Database for PostgreSQL)
+postgresql:
+  enabled: false  # Disable in-cluster PostgreSQL
+
+# Redis for WebSocket sessions (required for multiple replicas)
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    existingSecret: open-webui-secrets
+    existingSecretPasswordKey: REDIS_PASSWORD
+
+# Ollama - disable if using external LLM APIs only
+ollama:
+  enabled: false
+
+# Pipelines
+pipelines:
+  enabled: true
+
+# Environment variables
+env:
+  # Database connection (PostgreSQL)
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: open-webui-secrets
+        key: DATABASE_URL
+
+  # Vector Database (PGVector instead of ChromaDB)
+  - name: VECTOR_DB
+    value: "pgvector"
+  - name: PGVECTOR_CONNECTION_STRING
+    valueFrom:
+      secretKeyRef:
+        name: open-webui-secrets
+        key: DATABASE_URL
+
+  # Redis for sessions and caching
+  - name: REDIS_URL
+    valueFrom:
+      secretKeyRef:
+        name: open-webui-secrets
+        key: REDIS_URL
+  - name: ENABLE_REDIS
+    value: "true"
+
+  # Security
+  - name: WEBUI_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: open-webui-secrets
+        key: WEBUI_SECRET_KEY
+
+  # User info forwarding for MCP Proxy
+  - name: ENABLE_FORWARD_USER_INFO_HEADERS
+    value: "true"
+
+  # Model access
+  - name: BYPASS_MODEL_ACCESS_CONTROL
+    value: "false"
+
+  # Enable workspaces for multi-tenant
+  - name: ENABLE_WORKSPACE
+    value: "true"
+
+  # Microsoft Entra ID OAuth
+  - name: ENABLE_OAUTH_SIGNUP
+    value: "true"
+  - name: OAUTH_MERGE_ACCOUNTS_BY_EMAIL
+    value: "true"
+  - name: MICROSOFT_CLIENT_ID
+    valueFrom:
+      secretKeyRef:
+        name: open-webui-secrets
+        key: MICROSOFT_CLIENT_ID
+  - name: MICROSOFT_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: open-webui-secrets
+        key: MICROSOFT_CLIENT_SECRET
+  - name: MICROSOFT_CLIENT_TENANT_ID
+    valueFrom:
+      secretKeyRef:
+        name: open-webui-secrets
+        key: MICROSOFT_CLIENT_TENANT_ID
+
+  # Group Management for Multi-Tenant
+  - name: ENABLE_OAUTH_GROUP_MANAGEMENT
+    value: "true"
+  - name: ENABLE_OAUTH_GROUP_CREATION
+    value: "true"
+  - name: OAUTH_GROUP_CLAIM
+    value: "groups"
+
+# Resource limits for 15,000 users
+resources:
+  requests:
+    memory: "2Gi"
+    cpu: "1"
+  limits:
+    memory: "8Gi"
+    cpu: "4"
+
+# Pod disruption budget for HA
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Health checks
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 5
+
+# Node affinity (optional - for dedicated nodes)
+# nodeSelector:
+#   workload: openwebui
+
+# Tolerations (optional)
+# tolerations: []

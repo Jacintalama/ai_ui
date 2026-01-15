@@ -1,0 +1,212 @@
+# kubernetes/mcp-proxy-deployment.yaml
+# =============================================================================
+# MCP Proxy Gateway - Multi-Tenant Router with Native MCP Support
+# =============================================================================
+# Provides two interfaces:
+#   1. FastAPI/OpenAPI (port 8000) - For External Tool Servers
+#   2. FastMCP/Native MCP (port 8001) - For Open WebUI Native MCP
+#
+# The Native MCP interface automatically receives user context from
+# Open WebUI, enabling automatic multi-tenant authentication.
+#
+# Access:
+#   - OpenAPI: http://mcp-proxy:8000 (internal) or localhost:30800 (external)
+#   - Native MCP: http://mcp-proxy:8001/mcp (internal) or localhost:30801 (external)
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-proxy
+  namespace: open-webui
+  labels:
+    app: mcp-proxy
+    version: "0.4.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-proxy
+  template:
+    metadata:
+      labels:
+        app: mcp-proxy
+    spec:
+      containers:
+        - name: mcp-proxy
+          image: mcp-proxy:local
+          imagePullPolicy: Never  # Use local image
+          ports:
+            - containerPort: 8000
+              name: http-openapi
+            - containerPort: 8001
+              name: http-mcp
+          env:
+            - name: DEBUG
+              value: "true"
+            # =================================================================
+            # MCP MODE: dual (both), fastapi (OpenAPI only), fastmcp (MCP only)
+            # =================================================================
+            - name: MCP_MODE
+              value: "dual"
+            # =================================================================
+            # LOCAL SERVERS (in-cluster)
+            # =================================================================
+            - name: MCP_FILESYSTEM_URL
+              value: "http://mcp-filesystem:8001"
+            - name: MCP_GITHUB_URL
+              value: "http://mcp-github:8000"
+            # =================================================================
+            # TIER 2: SSE SERVERS (via mcpo-sse proxy)
+            # =================================================================
+            - name: MCPO_SSE_URL
+              value: "http://mcpo-sse"
+            # =================================================================
+            # TIER 3: STDIO SERVERS (via mcpo-stdio proxy)
+            # =================================================================
+            - name: MCPO_STDIO_URL
+              value: "http://mcpo-stdio"
+            # =================================================================
+            # API KEYS (from secrets)
+            # =================================================================
+            - name: MCP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: MCP_API_KEY
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: GITHUB_TOKEN
+                  optional: true
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: LINEAR_API_KEY
+                  optional: true
+            - name: NOTION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: NOTION_API_KEY
+                  optional: true
+            - name: ATLASSIAN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: ATLASSIAN_TOKEN
+                  optional: true
+            - name: ASANA_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-secrets
+                  key: ASANA_TOKEN
+                  optional: true
+            # =================================================================
+            # API Gateway mode - set to "true" for Entra ID authentication
+            # =================================================================
+            - name: API_GATEWAY_MODE
+              value: "false"  # Set to "true" when using Azure APIM or Kong
+            # =================================================================
+            # DATABASE - For tenant access lookups
+            # =================================================================
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: database-url
+                  optional: false
+            # =================================================================
+            # OPEN WEBUI JWT VALIDATION (PREFERRED - Secure)
+            # Open WebUI sends its own JWT with user context
+            # We validate this JWT using the shared WEBUI_SECRET_KEY
+            # =================================================================
+            - name: WEBUI_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: open-webui-secrets
+                  key: WEBUI_SECRET_KEY
+                  optional: false  # Required for secure authentication
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+---
+# =============================================================================
+# SERVICE: ClusterIP for internal access (Open WebUI uses this)
+# =============================================================================
+# Open WebUI connects to:
+#   - http://mcp-proxy:8000 for OpenAPI/External Tool Server
+#   - http://mcp-proxy:8001/mcp for Native MCP (Streamable HTTP)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-proxy
+  namespace: open-webui
+  labels:
+    app: mcp-proxy
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http-openapi
+    - port: 8001
+      targetPort: 8001
+      protocol: TCP
+      name: http-mcp
+  selector:
+    app: mcp-proxy
+---
+# =============================================================================
+# SERVICE: NodePort for external access (testing/debugging)
+# =============================================================================
+# Access from localhost:
+#   - OpenAPI: http://localhost:30800
+#   - Native MCP: http://localhost:30801/mcp
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-proxy-external
+  namespace: open-webui
+  labels:
+    app: mcp-proxy
+spec:
+  type: NodePort
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30800
+      protocol: TCP
+      name: http-openapi
+    - port: 8001
+      targetPort: 8001
+      nodePort: 30801
+      protocol: TCP
+      name: http-mcp
+  selector:
+    app: mcp-proxy

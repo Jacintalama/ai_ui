@@ -1,0 +1,17 @@
+# mcp-proxy/docker-compose.yml
+services:
+  mcp-proxy:
+    build: .
+    container_name: mcp-proxy
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+networks:
+  mcp-network:
+    external: true
+    name: io_default  # Connect to same network as Open WebUI

@@ -1,0 +1,22 @@
+# MCP Proxy Gateway Dependencies
+# Updated for FastMCP compatibility
+
+# FastMCP for native MCP Streamable HTTP support (must be first to set deps)
+fastmcp>=2.0.0,<3.0.0
+
+# Web framework (let FastMCP determine compatible version)
+fastapi>=0.115.12
+uvicorn>=0.32.0
+httpx>=0.28.1
+
+# Database
+asyncpg>=0.30.0
+
+# Data validation
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+
+# Utilities
+python-dotenv>=1.0.1
+PyJWT>=2.8.0
+cryptography>=41.0.0

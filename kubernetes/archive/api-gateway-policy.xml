@@ -1,0 +1,105 @@
+<!--
+Azure API Management (APIM) Policy for MCP Proxy Gateway
+=========================================================
+
+This policy validates Microsoft Entra ID JWT tokens and forwards
+user claims as headers to the MCP Proxy backend.
+
+Setup Steps:
+1. Create Azure APIM instance
+2. Import this policy in APIM -> APIs -> MCP API -> Inbound processing
+3. Configure Entra ID App Registration:
+   - Create App Registration for MCP Platform
+   - Add API permissions: User.Read, GroupMember.Read.All
+   - Enable "Emit groups as claims" in Token Configuration
+   - Create security groups: MCP-Google, MCP-GitHub, MCP-Admin, etc.
+4. Update <openid-config> URL with your Entra ID tenant
+
+Reference: https://docs.microsoft.com/azure/api-management/api-management-policies
+-->
+
+<policies>
+    <inbound>
+        <base />
+
+        <!-- Validate Entra ID JWT Token -->
+        <validate-jwt header-name="Authorization"
+                      failed-validation-httpcode="401"
+                      failed-validation-error-message="Unauthorized. Invalid or missing token.">
+            <openid-config url="https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration" />
+            <audiences>
+                <audience>{your-app-client-id}</audience>
+            </audiences>
+            <issuers>
+                <issuer>https://login.microsoftonline.com/{tenant-id}/v2.0</issuer>
+            </issuers>
+            <required-claims>
+                <claim name="email" match="any" />
+            </required-claims>
+        </validate-jwt>
+
+        <!-- Extract user info from validated JWT and set headers -->
+        <set-header name="X-User-Email" exists-action="override">
+            <value>@(context.Request.Headers.GetValueOrDefault("Authorization","").Split(' ').Last().AsJwt()?.Claims.GetValueOrDefault("email", ""))</value>
+        </set-header>
+
+        <set-header name="X-User-Name" exists-action="override">
+            <value>@(context.Request.Headers.GetValueOrDefault("Authorization","").Split(' ').Last().AsJwt()?.Claims.GetValueOrDefault("name", ""))</value>
+        </set-header>
+
+        <set-header name="X-User-OID" exists-action="override">
+            <value>@(context.Request.Headers.GetValueOrDefault("Authorization","").Split(' ').Last().AsJwt()?.Claims.GetValueOrDefault("oid", ""))</value>
+        </set-header>
+
+        <set-header name="X-Tenant-ID" exists-action="override">
+            <value>@(context.Request.Headers.GetValueOrDefault("Authorization","").Split(' ').Last().AsJwt()?.Claims.GetValueOrDefault("tid", ""))</value>
+        </set-header>
+
+        <!-- Extract groups claim (array) and convert to comma-separated string -->
+        <set-header name="X-User-Groups" exists-action="override">
+            <value>@{
+                var jwt = context.Request.Headers.GetValueOrDefault("Authorization","").Split(' ').Last().AsJwt();
+                if (jwt == null) return "";
+
+                // Groups can be in "groups" claim or "roles" claim depending on configuration
+                var groups = jwt.Claims.GetValueOrDefault("groups", "");
+                if (string.IsNullOrEmpty(groups)) {
+                    // Try roles claim as fallback
+                    groups = jwt.Claims.GetValueOrDefault("roles", "");
+                }
+
+                // If groups is a JSON array, parse it
+                if (groups.StartsWith("[")) {
+                    try {
+                        var groupList = Newtonsoft.Json.JsonConvert.DeserializeObject<string[]>(groups);
+                        return string.Join(",", groupList);
+                    } catch {
+                        return groups;
+                    }
+                }
+                return groups;
+            }</value>
+        </set-header>
+
+        <!-- Remove the original Authorization header (optional security measure) -->
+        <!-- <set-header name="Authorization" exists-action="delete" /> -->
+
+        <!-- Rate limiting per user -->
+        <rate-limit-by-key calls="100"
+                          renewal-period="60"
+                          counter-key="@(context.Request.Headers.GetValueOrDefault("X-User-Email","anonymous"))" />
+
+    </inbound>
+
+    <backend>
+        <base />
+    </backend>
+
+    <outbound>
+        <base />
+    </outbound>
+
+    <on-error>
+        <base />
+    </on-error>
+</policies>

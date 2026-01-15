@@ -1,0 +1,77 @@
+# kubernetes/mcp-filesystem-deployment.yaml
+# MCP Filesystem Server - provides file access tools
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-filesystem
+  namespace: open-webui
+  labels:
+    app: mcp-filesystem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-filesystem
+  template:
+    metadata:
+      labels:
+        app: mcp-filesystem
+    spec:
+      containers:
+        - name: mcp-filesystem
+          image: node:20-slim
+          command:
+            - /bin/bash
+            - -c
+            - |
+              apt-get update && apt-get install -y python3 python3-pip --no-install-recommends
+              pip3 install --break-system-packages mcpo
+              mcpo --host 0.0.0.0 --port 8001 --api-key test-key -- npx -y @modelcontextprotocol/server-filesystem /data
+          ports:
+            - containerPort: 8001
+              name: http
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: data
+          emptyDir: {}
+      initContainers:
+        - name: create-test-data
+          image: busybox
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Hello from Kubernetes MCP Filesystem!" > /data/sample.txt
+              echo "This is a test file for the MCP Filesystem server." >> /data/sample.txt
+              mkdir -p /data/docs
+              echo "# Test Document" > /data/docs/readme.md
+              echo "This is a markdown document in the docs folder." >> /data/docs/readme.md
+          volumeMounts:
+            - name: data
+              mountPath: /data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-filesystem
+  namespace: open-webui
+  labels:
+    app: mcp-filesystem
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8001
+      targetPort: 8001
+      protocol: TCP
+      name: http
+  selector:
+    app: mcp-filesystem

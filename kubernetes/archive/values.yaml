@@ -1,0 +1,179 @@
+# kubernetes/values.yaml
+# Open WebUI Helm Chart - Company GPT Configuration
+# Use with: helm install open-webui open-webui/open-webui -f values.yaml
+
+# -----------------------------------------------------------------------------
+# IMPORTANT: For 15,000 users deployment
+# - Start with replicaCount: 3
+# - Scale based on observed load
+# - ALWAYS scale down to 1 replica during updates!
+# -----------------------------------------------------------------------------
+
+replicaCount: 3
+
+image:
+  repository: ghcr.io/open-webui/open-webui
+  tag: main
+  pullPolicy: Always
+
+# Use slim image for smaller footprint (no local ML libraries)
+# Set to true if not running local models
+useSlim: false
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# -----------------------------------------------------------------------------
+# Ingress Configuration
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx  # Change based on your ingress controller
+  hosts:
+    - host: chat.company.com  # UPDATE THIS
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: open-webui-tls
+      hosts:
+        - chat.company.com  # UPDATE THIS
+
+# -----------------------------------------------------------------------------
+# Persistence Configuration
+# CRITICAL: Use ReadWriteMany for multiple replicas
+# -----------------------------------------------------------------------------
+persistence:
+  enabled: true
+  size: 50Gi
+  accessModes:
+    - ReadWriteMany  # Required for multiple replicas
+  storageClass: ""  # Use cluster default or specify (e.g., "longhorn", "nfs")
+
+# -----------------------------------------------------------------------------
+# PostgreSQL Configuration
+# NOTE: Use ONE database, NOT 10!
+# -----------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  auth:
+    database: openwebui
+    username: openwebui
+    # Create secret: kubectl create secret generic open-webui-postgres --from-literal=password=YOUR_PASSWORD
+    existingSecret: open-webui-postgres
+    secretKeys:
+      userPasswordKey: password
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: ""
+
+# -----------------------------------------------------------------------------
+# Redis Configuration
+# Required for websocket support with multiple replicas
+# -----------------------------------------------------------------------------
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+
+# -----------------------------------------------------------------------------
+# Ollama (Optional - for local models)
+# Disable if using external API providers only
+# -----------------------------------------------------------------------------
+ollama:
+  enabled: false
+  # Uncomment if needed:
+  # persistence:
+  #   enabled: true
+  #   size: 100Gi
+  # resources:
+  #   requests:
+  #     nvidia.com/gpu: 1
+
+# -----------------------------------------------------------------------------
+# Pipelines (Optional - for community functions)
+# -----------------------------------------------------------------------------
+pipelines:
+  enabled: true
+
+# -----------------------------------------------------------------------------
+# Environment Variables
+# -----------------------------------------------------------------------------
+env:
+  # Model access
+  - name: BYPASS_MODEL_ACCESS_CONTROL
+    value: "true"
+
+  # User identity forwarding (for multi-tenant)
+  - name: ENABLE_FORWARD_USER_INFO_HEADERS
+    value: "true"
+
+  # OpenAI API (configure your provider)
+  # - name: OPENAI_API_KEY
+  #   valueFrom:
+  #     secretKeyRef:
+  #       name: openai-secret
+  #       key: api-key
+
+# -----------------------------------------------------------------------------
+# Resource Limits
+# Adjust based on actual usage patterns
+# -----------------------------------------------------------------------------
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "4Gi"
+    cpu: "2"
+
+# -----------------------------------------------------------------------------
+# Pod Disruption Budget
+# Ensure availability during updates
+# -----------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# -----------------------------------------------------------------------------
+# Autoscaling (Optional)
+# Enable for automatic scaling based on load
+# -----------------------------------------------------------------------------
+autoscaling:
+  enabled: false
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+# -----------------------------------------------------------------------------
+# Extra Containers (MCP Proxy Sidecar)
+# Our multi-tenant gateway
+# -----------------------------------------------------------------------------
+# Uncomment to add MCP Proxy as sidecar:
+# extraContainers:
+#   - name: mcp-proxy
+#     image: company/mcp-proxy:latest
+#     ports:
+#       - containerPort: 8080
+#         name: mcp-proxy
+#     env:
+#       - name: MCP_API_KEY
+#         valueFrom:
+#           secretKeyRef:
+#             name: mcp-secrets
+#             key: api-key
+
+# -----------------------------------------------------------------------------
+# Node Selection (Optional)
+# Schedule on specific nodes if needed
+# -----------------------------------------------------------------------------
+# nodeSelector:
+#   workload-type: ai
+
+# tolerations: []
+
+# affinity: {}

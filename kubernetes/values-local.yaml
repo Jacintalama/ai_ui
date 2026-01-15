@@ -1,0 +1,101 @@
+# kubernetes/values-local.yaml
+# Open WebUI LOCAL Testing Configuration
+# Uses in-cluster PostgreSQL (no Azure needed)
+
+replicaCount: 1  # Single replica for local testing
+
+image:
+  repository: ghcr.io/open-webui/open-webui
+  tag: "v0.7.2"
+  pullPolicy: IfNotPresent
+
+service:
+  type: NodePort  # Access via localhost
+  port: 8080
+  nodePort: 30080  # Access at localhost:30080
+
+# No ingress for local testing
+ingress:
+  enabled: false
+
+# Local persistence
+persistence:
+  enabled: true
+  size: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClass: hostpath  # Docker Desktop default
+
+# IN-CLUSTER PostgreSQL (no Azure needed)
+postgresql:
+  enabled: true
+  auth:
+    database: openwebui
+    username: openwebui
+    password: localdevpassword
+  primary:
+    persistence:
+      enabled: true
+      size: 5Gi
+
+# Redis for sessions
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false  # Simpler for local testing
+
+# Enable Ollama for local LLMs
+ollama:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "500m"
+    limits:
+      memory: "8Gi"
+      cpu: "4"
+
+# Pipelines
+pipelines:
+  enabled: true
+
+# Environment variables
+env:
+  - name: WEBUI_SECRET_KEY
+    value: "local-dev-secret-key-not-for-production"
+  - name: ENABLE_FORWARD_USER_INFO_HEADERS
+    value: "true"
+  - name: BYPASS_MODEL_ACCESS_CONTROL
+    value: "true"  # Easier for local testing
+  - name: ENABLE_WORKSPACE
+    value: "true"
+  # Redis for sessions and caching
+  - name: REDIS_URL
+    value: "redis://redis-master:6379/0"
+  - name: ENABLE_REDIS
+    value: "true"
+  # PostgreSQL Database (replaces SQLite)
+  - name: DATABASE_URL
+    value: "postgresql://openwebui:localdevpassword@postgresql:5432/openwebui"
+  # Vector Database (PGVector instead of ChromaDB)
+  - name: VECTOR_DB
+    value: "pgvector"
+  - name: PGVECTOR_CONNECTION_STRING
+    value: "postgresql://openwebui:localdevpassword@postgresql:5432/openwebui"
+
+# Minimal resources for local
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "2Gi"
+    cpu: "2"
+
+# No HPA for local
+podDisruptionBudget:
+  enabled: false
