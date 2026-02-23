@@ -1,5 +1,6 @@
 """Shared command router for slash commands (Slack & Discord)."""
 import asyncio
+import json
 import httpx
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -8,6 +9,8 @@ import logging
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
+from clients.github import GitHubClient
+from clients.mcp_proxy import MCPProxyClient
 from config import settings, get_service_endpoints
 
 logger = logging.getLogger(__name__)
@@ -40,11 +43,15 @@ class CommandRouter:
         n8n_client: N8NClient,
         ai_model: str = "gpt-4-turbo",
         slack_client=None,
+        github_client: Optional[GitHubClient] = None,
+        mcp_client: Optional[MCPProxyClient] = None,
     ):
         self.openwebui = openwebui_client
         self.n8n = n8n_client
         self.ai_model = ai_model
         self._slack_client = slack_client
+        self._github_client = github_client
+        self._mcp_client = mcp_client
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -66,7 +73,10 @@ class CommandRouter:
         subcommand = parts[0].lower()
         arguments = parts[1] if len(parts) > 1 else ""
 
-        known_commands = {"ask", "workflow", "status", "help", "report"}
+        known_commands = {
+            "ask", "workflow", "workflows", "status", "help",
+            "report", "pr-review", "pr", "mcp",
+        }
         if subcommand in known_commands:
             return (subcommand, arguments)
 
@@ -80,10 +90,16 @@ class CommandRouter:
                 await self._handle_ask(ctx)
             elif ctx.subcommand == "workflow":
                 await self._handle_workflow(ctx)
+            elif ctx.subcommand == "workflows":
+                await self._handle_workflows(ctx)
             elif ctx.subcommand == "status":
                 await self._handle_status(ctx)
             elif ctx.subcommand == "report":
                 await self._handle_report(ctx)
+            elif ctx.subcommand in ("pr-review", "pr"):
+                await self._handle_pr_review(ctx)
+            elif ctx.subcommand == "mcp":
+                await self._handle_mcp(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
             else:
@@ -91,6 +107,40 @@ class CommandRouter:
         except Exception as e:
             logger.error(f"Command error ({ctx.subcommand}): {e}", exc_info=True)
             await ctx.respond(f"Error processing command: {e}")
+
+    def _build_ask_system_prompt(self) -> str:
+        """Build a context-aware system prompt listing available capabilities."""
+        capabilities = [
+            "You are AIUI, an AI assistant for a software team. Be concise and actionable.",
+            "You are responding to a slash command from a chat platform.",
+            "",
+            "The user has access to these commands via /aiui:",
+            "- `/aiui pr-review <number>` — AI-powered review of a GitHub PR",
+            "- `/aiui mcp <server> <tool> [args]` — Execute any MCP tool directly",
+            "- `/aiui workflow <name>` — Trigger an n8n automation workflow",
+            "- `/aiui workflows` — List available n8n workflows",
+            "- `/aiui report` — End-of-day activity summary",
+            "- `/aiui status` — Service health check",
+        ]
+
+        if self._mcp_client:
+            capabilities.append("")
+            capabilities.append(
+                "MCP (Model Context Protocol) tools are available for GitHub, Jira, "
+                "n8n, filesystem, and 40+ other integrations. If the user's question "
+                "could be answered by using an MCP tool, suggest the specific "
+                "`/aiui mcp <server> <tool>` command they can run."
+            )
+
+        if self.n8n.api_key:
+            capabilities.append("")
+            capabilities.append(
+                "n8n workflows are available for automation (PR review, health checks, "
+                "deployment status). If the question relates to automating something, "
+                "mention they can trigger workflows or ask to see available ones."
+            )
+
+        return "\n".join(capabilities)
 
     async def _handle_ask(self, ctx: CommandContext) -> None:
         """Send a question to the AI and return the response."""
@@ -101,10 +151,7 @@ class CommandRouter:
         logger.info(f"[{ctx.platform}] ask from {ctx.user_name}: {ctx.arguments[:80]}")
 
         messages = [
-            {"role": "system", "content": (
-                "You are a helpful AI assistant responding to a slash command. "
-                "Be concise and actionable."
-            )},
+            {"role": "system", "content": self._build_ask_system_prompt()},
             {"role": "user", "content": ctx.arguments},
         ]
 
@@ -152,18 +199,21 @@ class CommandRouter:
         """Check service health and report status."""
         logger.info(f"[{ctx.platform}] status check from {ctx.user_name}")
 
-        lines = ["*Service Status*\n"]
-        for name, url in SERVICE_ENDPOINTS.items():
+        async def _check(name: str, url: str, client: httpx.AsyncClient) -> str:
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(url)
-                    if resp.status_code < 400:
-                        lines.append(f"  {name}: healthy ({resp.status_code})")
-                    else:
-                        lines.append(f"  {name}: unhealthy ({resp.status_code})")
+                resp = await client.get(url)
+                if resp.status_code < 400:
+                    return f"  {name}: healthy ({resp.status_code})"
+                return f"  {name}: unhealthy ({resp.status_code})"
             except Exception:
-                lines.append(f"  {name}: unreachable")
+                return f"  {name}: unreachable"
 
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            results = await asyncio.gather(
+                *[_check(name, url, client) for name, url in SERVICE_ENDPOINTS.items()]
+            )
+
+        lines = ["*Service Status*\n"] + list(results)
         await ctx.respond("\n".join(lines))
 
     async def _handle_help(self, ctx: CommandContext) -> None:
@@ -171,7 +221,10 @@ class CommandRouter:
         help_text = (
             "*Available Commands*\n"
             "`/aiui ask <question>` — Ask the AI a question\n"
+            "`/aiui pr-review <number>` — AI review of a GitHub PR\n"
+            "`/aiui mcp <server> <tool> [json_args]` — Execute an MCP tool\n"
             "`/aiui workflow <name>` — Trigger an n8n workflow\n"
+            "`/aiui workflows` — List active n8n workflows\n"
             "`/aiui report` — Generate end-of-day activity report\n"
             "`/aiui status` — Check service health\n"
             "`/aiui help` — Show this help message"
@@ -251,19 +304,169 @@ class CommandRouter:
             except Exception as e:
                 logger.error(f"Failed to post report to Slack channel: {e}")
 
+    async def _handle_pr_review(self, ctx: CommandContext) -> None:
+        """Fetch a GitHub PR and run AI review on it."""
+        if not ctx.arguments:
+            await ctx.respond("Usage: `/aiui pr-review <pr_number>`")
+            return
+
+        # Parse PR number
+        pr_arg = ctx.arguments.strip().lstrip("#")
+        if not pr_arg.isdigit():
+            await ctx.respond(f"Invalid PR number: `{ctx.arguments}`. Use `/aiui pr-review 10`")
+            return
+        pr_number = int(pr_arg)
+
+        if not self._github_client:
+            await ctx.respond("GitHub integration not configured (no GITHUB_TOKEN).")
+            return
+
+        logger.info(f"[{ctx.platform}] pr-review #{pr_number} from {ctx.user_name}")
+        await ctx.respond(f"Reviewing PR #{pr_number}... (fetching data and running AI analysis)")
+
+        # Parse owner/repo
+        parts = settings.report_github_repo.split("/", 1)
+        if len(parts) != 2:
+            await ctx.respond(f"Invalid repository config: `{settings.report_github_repo}`")
+            return
+        owner, repo = parts
+
+        # Fetch PR details and diff in parallel
+        pr_details, diff_summary = await asyncio.gather(
+            self._github_client.get_pr_details(owner, repo, pr_number),
+            self._github_client.get_pr_files(owner, repo, pr_number),
+        )
+
+        if not pr_details:
+            await ctx.respond(f"Failed to fetch PR #{pr_number}. Check the PR number and GitHub access.")
+            return
+
+        # Run AI review
+        response = await self.openwebui.analyze_pull_request(
+            title=pr_details["title"],
+            body=pr_details.get("body", ""),
+            diff_summary=diff_summary or "No diff available",
+            labels=[],
+            model=self.ai_model,
+        )
+
+        if not response:
+            # Fallback to raw data
+            files_str = diff_summary or "No files"
+            response = (
+                f"*PR #{pr_number}: {pr_details['title']}*\n"
+                f"Author: {pr_details['author']} | "
+                f"Branch: `{pr_details['branch']}` -> `{pr_details['base']}`\n"
+                f"Changes: {pr_details.get('total_changes', 0)} lines across "
+                f"{len(pr_details.get('files_changed', []))} files\n\n"
+                f"```\n{files_str[:1500]}\n```\n\n"
+                f"(AI review unavailable)"
+            )
+
+        # Prepend PR header
+        header = f"*Review: PR #{pr_number} — {pr_details['title']}*\n"
+        response = header + response
+
+        limit = 2000 if ctx.platform == "discord" else 3000
+        if len(response) > limit:
+            response = response[:limit - 20] + "\n\n... (truncated)"
+
+        await ctx.respond(response)
+
+    async def _handle_mcp(self, ctx: CommandContext) -> None:
+        """Execute an MCP tool via the MCP Proxy."""
+        if not self._mcp_client:
+            await ctx.respond("MCP Proxy not configured.")
+            return
+
+        if not ctx.arguments:
+            await ctx.respond(
+                "Usage: `/aiui mcp <server> <tool> [json_args]`\n"
+                "Example: `/aiui mcp github get_me`\n"
+                "Example: `/aiui mcp n8n list_workflows`"
+            )
+            return
+
+        parts = ctx.arguments.split(None, 2)
+        if len(parts) < 2:
+            await ctx.respond("Need at least server and tool name. Usage: `/aiui mcp <server> <tool> [json_args]`")
+            return
+
+        server_id = parts[0]
+        tool_name = parts[1]
+        tool_args = {}
+
+        if len(parts) > 2:
+            try:
+                tool_args = json.loads(parts[2])
+            except json.JSONDecodeError:
+                await ctx.respond(f"Invalid JSON arguments: `{parts[2]}`")
+                return
+
+        logger.info(f"[{ctx.platform}] mcp {server_id}/{tool_name} from {ctx.user_name}")
+        await ctx.respond(f"Executing MCP tool `{server_id}/{tool_name}`...")
+
+        result = await self._mcp_client.execute_tool(
+            server_id=server_id,
+            tool_name=tool_name,
+            arguments=tool_args,
+        )
+
+        if result is not None:
+            result_str = json.dumps(result, indent=2, default=str)
+            limit = 2000 if ctx.platform == "discord" else 3000
+            code_limit = limit - 100  # room for header
+            if len(result_str) > code_limit:
+                result_str = result_str[:code_limit - 20] + "\n... (truncated)"
+            await ctx.respond(f"*MCP Result:* `{server_id}/{tool_name}`\n```\n{result_str}\n```")
+        else:
+            await ctx.respond(f"MCP tool `{server_id}/{tool_name}` failed. Check the server/tool name.")
+
+    async def _handle_workflows(self, ctx: CommandContext) -> None:
+        """List active n8n workflows."""
+        if not self.n8n.api_key:
+            await ctx.respond("n8n API not configured (no API key).")
+            return
+
+        logger.info(f"[{ctx.platform}] workflows list from {ctx.user_name}")
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self.n8n.base_url}/api/v1/workflows",
+                    headers={"X-N8N-API-KEY": self.n8n.api_key},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            wf_list = data.get("data", data) if isinstance(data, dict) else data
+            if not isinstance(wf_list, list):
+                wf_list = []
+
+            active = [w for w in wf_list if w.get("active")]
+            inactive = [w for w in wf_list if not w.get("active")]
+
+            lines = [f"*n8n Workflows ({len(wf_list)} total, {len(active)} active)*\n"]
+            for w in active:
+                lines.append(f"  `{w.get('name', 'unnamed')}` — active")
+            for w in inactive:
+                lines.append(f"  `{w.get('name', 'unnamed')}` — inactive")
+
+            await ctx.respond("\n".join(lines))
+        except Exception as e:
+            logger.error(f"Error listing n8n workflows: {e}")
+            await ctx.respond(f"Failed to list workflows: {e}")
+
     async def _gather_github_commits(self, since: str) -> Optional[list[dict]]:
         """Fetch today's commits. Returns None if not configured."""
-        from clients.github import GitHubClient
-
-        if not settings.github_token:
+        if not self._github_client:
             return None
 
-        client = GitHubClient(token=settings.github_token)
         parts = settings.report_github_repo.split("/", 1)
         if len(parts) != 2:
             logger.error(f"Invalid REPORT_GITHUB_REPO: {settings.report_github_repo}")
             return []
-        return await client.get_commits_since(owner=parts[0], repo=parts[1], since=since)
+        return await self._github_client.get_commits_since(owner=parts[0], repo=parts[1], since=since)
 
     async def _gather_n8n_executions(self, since: str) -> Optional[list[dict]]:
         """Fetch today's n8n executions. Returns None if not configured."""
@@ -276,13 +479,15 @@ class CommandRouter:
 
     async def _gather_health(self) -> list[dict]:
         """Check health of all services."""
-        results = []
-        for name, url in SERVICE_ENDPOINTS.items():
+        async def _check(name: str, url: str, client: httpx.AsyncClient) -> dict:
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(url)
-                    status = "healthy" if resp.status_code < 400 else "unhealthy"
+                resp = await client.get(url)
+                status = "healthy" if resp.status_code < 400 else "unhealthy"
             except Exception:
                 status = "unreachable"
-            results.append({"service": name, "status": status})
-        return results
+            return {"service": name, "status": status}
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            return list(await asyncio.gather(
+                *[_check(name, url, client) for name, url in SERVICE_ENDPOINTS.items()]
+            ))

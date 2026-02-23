@@ -62,5 +62,5 @@ def get_service_endpoints() -> dict[str, str]:
         "open-webui": f"{settings.openwebui_url}/api/config",
         "mcp-proxy": f"{settings.mcp_proxy_url}/health",
         "n8n": f"{settings.n8n_url}/healthz",
-        "webhook-handler": "http://localhost:8086/health",
+        "webhook-handler": f"http://localhost:{settings.port}/health",
     }

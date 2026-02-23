@@ -110,6 +110,8 @@ async def lifespan(app: FastAPI):
         n8n_client=n8n_client,
         ai_model=settings.ai_model,
         slack_client=slack_client,
+        github_client=github_client,
+        mcp_client=mcp_client,
     )
 
     # Wire Slack command handler if Slack is configured
@@ -484,7 +486,8 @@ async def scheduler_jobs_legacy():
 @app.get("/scheduler/jobs")
 async def get_scheduler_jobs():
     """List all scheduled jobs with details."""
-    return {"jobs": list_jobs(), "count": len(list_jobs())}
+    jobs = list_jobs()
+    return {"jobs": jobs, "count": len(jobs)}
 
 
 @app.post("/scheduler/jobs/{job_id}/trigger")
