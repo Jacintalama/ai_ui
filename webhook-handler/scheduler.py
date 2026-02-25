@@ -364,8 +364,9 @@ def create_user_cron_job(
     if len(parts) != 5:
         return {"success": False, "error": f"Invalid cron expression (need 5 fields): {cron_expression}"}
 
-    # Prevent overwriting default jobs
-    if job_id in DEFAULT_JOB_IDS:
+    # Prevent overwriting default jobs (normalize hyphens/underscores)
+    normalized_id = job_id.replace("-", "_")
+    if job_id in DEFAULT_JOB_IDS or normalized_id in DEFAULT_JOB_IDS:
         return {"success": False, "error": f"Cannot overwrite default job '{job_id}'"}
 
     # Validate minimum interval
@@ -432,7 +433,8 @@ def create_user_cron_job(
 
 def delete_user_cron_job(job_id: str) -> dict:
     """Delete a user-managed cron job."""
-    if job_id in DEFAULT_JOB_IDS:
+    normalized_id = job_id.replace("-", "_")
+    if job_id in DEFAULT_JOB_IDS or normalized_id in DEFAULT_JOB_IDS:
         return {"success": False, "error": f"Cannot delete default job '{job_id}'"}
 
     if job_id not in _user_jobs:
