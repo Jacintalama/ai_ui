@@ -1,6 +1,7 @@
 """Webhook Handler Service - Main FastAPI Application."""
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from contextlib import asynccontextmanager
 import logging
 from typing import Optional
@@ -24,6 +25,8 @@ from scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
     list_jobs, trigger_job, register_default_jobs,
     daily_health_report, hourly_n8n_workflow_check,
+    create_user_cron_job, delete_user_cron_job,
+    update_user_cron_job, get_user_jobs,
 )
 
 # Configure logging
@@ -47,6 +50,22 @@ command_router: Optional[CommandRouter] = None
 slack_command_handler: Optional[SlackCommandHandler] = None
 discord_client: Optional[DiscordClient] = None
 discord_command_handler: Optional[DiscordCommandHandler] = None
+
+
+class CreateCronJobRequest(BaseModel):
+    job_id: str
+    cron_expression: str
+    workflow_id: str
+    trigger_method: str = "api"
+    webhook_path: str = ""
+    payload: dict = {}
+    description: str = ""
+    permanent: bool = False
+
+
+class UpdateCronJobRequest(BaseModel):
+    cron_expression: str = None
+    permanent: bool = None
 
 
 @asynccontextmanager
@@ -520,6 +539,63 @@ async def run_n8n_check():
     """Run the n8n workflow check on demand and return results."""
     result = await hourly_n8n_workflow_check()
     return result
+
+
+@app.post("/scheduler/jobs")
+async def create_cron_job_endpoint(req: CreateCronJobRequest):
+    """Create a new user cron job that triggers an n8n workflow on schedule."""
+    result = create_user_cron_job(
+        job_id=req.job_id,
+        cron_expression=req.cron_expression,
+        workflow_id=req.workflow_id,
+        trigger_method=req.trigger_method,
+        webhook_path=req.webhook_path,
+        payload=req.payload,
+        description=req.description,
+        permanent=req.permanent,
+        n8n_url=settings.n8n_url,
+        n8n_api_key=settings.n8n_api_key,
+        min_interval_minutes=settings.scheduler_min_interval_minutes,
+        max_user_jobs=settings.scheduler_max_user_jobs,
+        default_expiry_hours=settings.scheduler_default_expiry_hours,
+    )
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=201)
+    else:
+        return JSONResponse(content=result, status_code=400)
+
+
+@app.delete("/scheduler/jobs/{job_id}")
+async def delete_cron_job_endpoint(job_id: str):
+    """Delete a user-created cron job."""
+    result = delete_user_cron_job(job_id)
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=404)
+
+
+@app.patch("/scheduler/jobs/{job_id}")
+async def update_cron_job_endpoint(job_id: str, req: UpdateCronJobRequest):
+    """Update a user cron job's schedule or permanence."""
+    result = update_user_cron_job(
+        job_id=job_id,
+        cron_expression=req.cron_expression,
+        permanent=req.permanent,
+        min_interval_minutes=settings.scheduler_min_interval_minutes,
+        default_expiry_hours=settings.scheduler_default_expiry_hours,
+    )
+    if result.get("success"):
+        return JSONResponse(content=result, status_code=200)
+    else:
+        return JSONResponse(content=result, status_code=400)
+
+
+@app.get("/scheduler/user-jobs")
+async def get_user_jobs_endpoint():
+    """List all user-created cron jobs with metadata."""
+    jobs = get_user_jobs()
+    return {"jobs": jobs, "count": len(jobs)}
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """Scheduled task manager using APScheduler."""
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Callable, Any
 import httpx
 import logging
@@ -249,5 +250,292 @@ def register_default_jobs(slack_client=None, slack_channel: str = ""):
         cron_expression="0 * * * *",
     )
 
+    # Cleanup expired user cron jobs (every hour at :30)
+    add_cron_job(
+        func=_cleanup_expired_jobs,
+        job_id="_cleanup_expired_jobs",
+        cron_expression="30 * * * *",
+    )
+
     job_count = len(scheduler.get_jobs()) if scheduler else 0
     logger.info(f"Registered {job_count} default scheduled jobs")
+
+
+# ---------------------------------------------------------------------------
+# User-managed cron jobs
+# ---------------------------------------------------------------------------
+
+DEFAULT_JOB_IDS = {"daily_health_report", "hourly_n8n_check", "_cleanup_expired_jobs"}
+_user_jobs: dict[str, dict] = {}
+
+
+def _validate_cron_interval(cron_expression: str, min_minutes: int) -> bool:
+    """
+    Check that a cron expression does not fire more frequently than *min_minutes*.
+
+    Returns True if the interval is acceptable, False otherwise.
+    """
+    parts = cron_expression.split()
+    if len(parts) != 5:
+        return False
+
+    minute_field = parts[0]
+    hour_field = parts[1]
+
+    # "* * * * *" fires every minute
+    if minute_field == "*" and hour_field == "*":
+        return 1 >= min_minutes
+
+    # "*/N * * * *" fires every N minutes
+    if minute_field.startswith("*/") and hour_field == "*":
+        try:
+            n = int(minute_field[2:])
+        except ValueError:
+            return False
+        return n >= min_minutes
+
+    # Specific minute(s) + specific hour(s) → at most once per hour, always OK
+    if hour_field != "*":
+        return True
+
+    # Specific minute(s) with wildcard hour, e.g. "0 * * * *" → once per hour
+    return True
+
+
+async def _trigger_n8n_workflow(
+    job_id: str,
+    workflow_id: str,
+    trigger_method: str,
+    webhook_path: str,
+    payload: dict,
+    n8n_url: str,
+    n8n_api_key: str,
+):
+    """Fire an n8n workflow (called by APScheduler)."""
+    logger.info(f"Cron job '{job_id}' triggering n8n workflow (method={trigger_method})")
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if trigger_method == "webhook":
+                url = f"{n8n_url}/webhook/{webhook_path}"
+                resp = await client.post(url, json=payload or {})
+            else:
+                url = f"{n8n_url}/api/v1/workflows/{workflow_id}/execute"
+                headers = {"X-N8N-API-KEY": n8n_api_key, "Content-Type": "application/json"}
+                resp = await client.post(url, json=payload or {}, headers=headers)
+
+            resp.raise_for_status()
+            status = "success"
+            logger.info(f"Cron job '{job_id}' triggered successfully (HTTP {resp.status_code})")
+    except Exception as e:
+        status = f"error: {e}"
+        logger.error(f"Cron job '{job_id}' failed: {e}")
+
+    if job_id in _user_jobs:
+        _user_jobs[job_id]["last_run"] = datetime.now(timezone.utc).isoformat()
+        _user_jobs[job_id]["last_status"] = status
+
+
+def create_user_cron_job(
+    job_id: str,
+    cron_expression: str,
+    workflow_id: str,
+    trigger_method: str = "webhook",
+    webhook_path: str = "",
+    payload: dict | None = None,
+    description: str = "",
+    permanent: bool = False,
+    n8n_url: str = "",
+    n8n_api_key: str = "",
+    min_interval_minutes: int = 1,
+    max_user_jobs: int = 10,
+    default_expiry_hours: int = 24,
+) -> dict:
+    """
+    Create a user-managed cron job that triggers an n8n workflow.
+
+    Returns a result dict with success status and metadata.
+    """
+    if not scheduler:
+        return {"success": False, "error": "Scheduler not initialized"}
+
+    # Validate cron format
+    parts = cron_expression.split()
+    if len(parts) != 5:
+        return {"success": False, "error": f"Invalid cron expression (need 5 fields): {cron_expression}"}
+
+    # Prevent overwriting default jobs
+    if job_id in DEFAULT_JOB_IDS:
+        return {"success": False, "error": f"Cannot overwrite default job '{job_id}'"}
+
+    # Validate minimum interval
+    if not _validate_cron_interval(cron_expression, min_interval_minutes):
+        return {
+            "success": False,
+            "error": f"Cron interval too frequent. Minimum is every {min_interval_minutes} minute(s).",
+        }
+
+    # Enforce max user jobs (excluding this job if it already exists)
+    existing_count = sum(1 for jid in _user_jobs if jid != job_id)
+    if existing_count >= max_user_jobs:
+        return {"success": False, "error": f"Maximum of {max_user_jobs} user jobs reached"}
+
+    # Calculate expiry
+    now = datetime.now(timezone.utc)
+    expires_at = None if permanent else (now + timedelta(hours=default_expiry_hours)).isoformat()
+
+    # Build CronTrigger
+    trigger = CronTrigger(
+        minute=parts[0],
+        hour=parts[1],
+        day=parts[2],
+        month=parts[3],
+        day_of_week=parts[4],
+    )
+
+    # Register with APScheduler
+    scheduler.add_job(
+        _trigger_n8n_workflow,
+        trigger=trigger,
+        id=job_id,
+        replace_existing=True,
+        kwargs={
+            "job_id": job_id,
+            "workflow_id": workflow_id,
+            "trigger_method": trigger_method,
+            "webhook_path": webhook_path,
+            "payload": payload or {},
+            "n8n_url": n8n_url or settings.n8n_url,
+            "n8n_api_key": n8n_api_key or settings.n8n_api_key,
+        },
+    )
+
+    # Store metadata
+    _user_jobs[job_id] = {
+        "job_id": job_id,
+        "cron_expression": cron_expression,
+        "workflow_id": workflow_id,
+        "trigger_method": trigger_method,
+        "webhook_path": webhook_path,
+        "payload": payload or {},
+        "description": description,
+        "permanent": permanent,
+        "created_at": now.isoformat(),
+        "expires_at": expires_at,
+        "last_run": None,
+        "last_status": None,
+    }
+
+    logger.info(f"User cron job '{job_id}' created (cron={cron_expression}, permanent={permanent})")
+    return {"success": True, "job": _user_jobs[job_id]}
+
+
+def delete_user_cron_job(job_id: str) -> dict:
+    """Delete a user-managed cron job."""
+    if job_id in DEFAULT_JOB_IDS:
+        return {"success": False, "error": f"Cannot delete default job '{job_id}'"}
+
+    if job_id not in _user_jobs:
+        return {"success": False, "error": f"User job '{job_id}' not found"}
+
+    # Remove from APScheduler
+    if scheduler:
+        try:
+            scheduler.remove_job(job_id)
+        except Exception as e:
+            logger.warning(f"Could not remove job '{job_id}' from scheduler: {e}")
+
+    # Remove metadata
+    del _user_jobs[job_id]
+    logger.info(f"User cron job '{job_id}' deleted")
+    return {"success": True, "message": f"Job '{job_id}' deleted"}
+
+
+def update_user_cron_job(
+    job_id: str,
+    cron_expression: str | None = None,
+    permanent: bool | None = None,
+    min_interval_minutes: int = 1,
+    default_expiry_hours: int = 24,
+) -> dict:
+    """Update the schedule or permanence of an existing user cron job."""
+    if job_id not in _user_jobs:
+        return {"success": False, "error": f"User job '{job_id}' not found"}
+
+    meta = _user_jobs[job_id]
+
+    # Update permanent flag
+    if permanent is not None:
+        meta["permanent"] = permanent
+        if permanent:
+            meta["expires_at"] = None
+        else:
+            meta["expires_at"] = (
+                datetime.now(timezone.utc) + timedelta(hours=default_expiry_hours)
+            ).isoformat()
+
+    # Reschedule if cron_expression changed
+    if cron_expression is not None:
+        parts = cron_expression.split()
+        if len(parts) != 5:
+            return {"success": False, "error": f"Invalid cron expression (need 5 fields): {cron_expression}"}
+
+        if not _validate_cron_interval(cron_expression, min_interval_minutes):
+            return {
+                "success": False,
+                "error": f"Cron interval too frequent. Minimum is every {min_interval_minutes} minute(s).",
+            }
+
+        meta["cron_expression"] = cron_expression
+
+        if scheduler:
+            trigger = CronTrigger(
+                minute=parts[0],
+                hour=parts[1],
+                day=parts[2],
+                month=parts[3],
+                day_of_week=parts[4],
+            )
+            try:
+                scheduler.reschedule_job(job_id, trigger=trigger)
+            except Exception as e:
+                return {"success": False, "error": f"Failed to reschedule: {e}"}
+
+    logger.info(f"User cron job '{job_id}' updated")
+    return {"success": True, "job": meta}
+
+
+def get_user_jobs() -> list[dict]:
+    """Return all user-managed cron jobs with their metadata and next run time."""
+    results = []
+    for job_id, meta in _user_jobs.items():
+        entry = dict(meta)
+        # Attach next_run from APScheduler
+        if scheduler:
+            ap_job = scheduler.get_job(job_id)
+            entry["next_run"] = str(ap_job.next_run_time) if ap_job else None
+        else:
+            entry["next_run"] = None
+        results.append(entry)
+    return results
+
+
+async def _cleanup_expired_jobs():
+    """Remove expired non-permanent user jobs (runs on schedule)."""
+    now = datetime.now(timezone.utc)
+    expired_ids = []
+
+    for job_id, meta in _user_jobs.items():
+        if meta.get("permanent"):
+            continue
+        expires_at = meta.get("expires_at")
+        if expires_at and datetime.fromisoformat(expires_at) <= now:
+            expired_ids.append(job_id)
+
+    for job_id in expired_ids:
+        logger.info(f"Cleaning up expired user job '{job_id}'")
+        delete_user_cron_job(job_id)
+
+    if expired_ids:
+        logger.info(f"Expired job cleanup: removed {len(expired_ids)} job(s)")
+    return {"removed": expired_ids}

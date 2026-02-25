@@ -102,6 +102,16 @@
       "tier": "local",
       "groups": ["MCP-Admin"],
       "api_key_env": "N8N_API_KEY"
+    },
+    {
+      "id": "scheduler",
+      "name": "Scheduler MCP",
+      "url": "http://mcp-proxy:8000/scheduler",
+      "type": "openapi",
+      "description": "Create and manage cron jobs that trigger n8n workflows on a schedule",
+      "tier": "local",
+      "groups": ["MCP-Admin"],
+      "api_key_env": null
     }
   ],
   "special_groups": {

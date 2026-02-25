@@ -560,6 +560,7 @@ MCP_DASHBOARD_URL = os.getenv("MCP_DASHBOARD_URL", "http://mcp-dashboard:8000")
 MCP_GITHUB_JACINTALAMA_URL = os.getenv("MCP_GITHUB_JACINTALAMA_URL", "http://mcp-github-jacintalama:8000")
 MCP_NOTION_URL = os.getenv("MCP_NOTION_URL", "http://mcp-notion:8000")
 MCP_N8N_URL = os.getenv("MCP_N8N_URL", "http://mcp-n8n:8000")
+MCP_SCHEDULER_URL = os.getenv("MCP_SCHEDULER_URL", "http://mcp-scheduler:8000")
 
 LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     "github": MCPServerConfig(
@@ -629,6 +630,16 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         api_key_env="MCP_API_KEY",
         description="AI-driven n8n workflow creation, management, and execution (20 tools)",
         enabled=bool(os.getenv("N8N_API_KEY"))
+    ),
+    "scheduler": MCPServerConfig(
+        server_id="scheduler",
+        display_name="Scheduler",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_SCHEDULER_URL,
+        auth_type="bearer",
+        api_key_env="MCP_API_KEY",
+        description="Create and manage cron jobs that trigger n8n workflows on a schedule (4 tools)",
+        enabled=True,
     ),
 }
 

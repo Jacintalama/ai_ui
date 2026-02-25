@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     report_github_repo: str = "TheLukasHenry/proxy-server"
     report_slack_channel: str = ""
 
+    # Scheduler guardrails
+    scheduler_min_interval_minutes: int = 1
+    scheduler_max_user_jobs: int = 10
+    scheduler_default_expiry_hours: int = 24
+
     class Config:
         env_file = ".env"
         case_sensitive = False
