@@ -226,8 +226,9 @@ services:
       # LLM Connections
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
       - ENABLE_OLLAMA_API=${ENABLE_OLLAMA_API:-false}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL:-}
+      # OpenAI + Pipelines (semicolon-separated for multiple connections)
+      - OPENAI_API_KEYS=${OPENAI_API_KEY:-};0p3n-w3bu!
+      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-};http://pipelines:9099
       # Database
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       - VECTOR_DB=pgvector
@@ -497,6 +498,24 @@ services:
     networks:
       - backend
 
+  # ===========================================================================
+  # PIPELINES - External Pipe/Filter Runner
+  # ===========================================================================
+  # Runs Pipe Functions and Filters outside the Open WebUI process.
+  # Exposes OpenAI-compatible API on port 9099.
+  pipelines:
+    image: ghcr.io/open-webui/pipelines:main
+    container_name: pipelines
+    restart: unless-stopped
+    volumes:
+      - pipelines-data:/app/pipelines
+    environment:
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_BASE_URL}
+    networks:
+      - backend
+
 # =============================================================================
 # NETWORKS
 # =============================================================================
@@ -517,3 +536,4 @@ volumes:
   open-webui-data:
   n8n_data:
   n8n-mcp-data:
+  pipelines-data:
