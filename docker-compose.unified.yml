@@ -49,6 +49,7 @@ services:
       timeout: 10s
       retries: 3
 
+
   # ===========================================================================
   # API GATEWAY - Centralized Auth & Rate Limiting
   # ===========================================================================
@@ -86,6 +87,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
 
   # ==========================================================================
   # Webhook Handler - External event processing
@@ -127,6 +129,7 @@ services:
       timeout: 10s
       retries: 3
 
+
   # ==========================================================================
   # n8n - Workflow Automation
   # ==========================================================================
@@ -154,6 +157,7 @@ services:
       - n8n_data:/home/node/.n8n
     networks:
       - backend
+
 
   # ===========================================================================
   # MCP PROXY - Multi-Tenant Tool Gateway
@@ -210,6 +214,7 @@ services:
       timeout: 10s
       retries: 3
 
+
   # ===========================================================================
   # OPEN WEBUI - AI Chat Interface
   # ===========================================================================
@@ -259,6 +264,10 @@ services:
       # User headers (forwarded by gateway)
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       - BYPASS_MODEL_ACCESS_CONTROL=true
+      # LangFuse Observability (in-process filter reads these)
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_BASE_URL:-}
       # =======================================================================
       # MCP Proxy Connection
       # =======================================================================
@@ -272,6 +281,7 @@ services:
         condition: service_healthy
     networks:
       - backend
+
 
   # ===========================================================================
   # ADMIN PORTAL - User/Group Management
@@ -289,6 +299,7 @@ services:
         condition: service_healthy
     networks:
       - backend
+
 
   # ===========================================================================
   # POSTGRESQL - Database
@@ -312,6 +323,7 @@ services:
     networks:
       - backend
 
+
   # ===========================================================================
   # REDIS - Sessions & Cache
   # ===========================================================================
@@ -329,6 +341,7 @@ services:
       retries: 5
     networks:
       - backend
+
 
   # ===========================================================================
   # MCP SERVERS - Tool Containers
@@ -350,6 +363,7 @@ services:
     networks:
       - backend
 
+
   # GitHub - Repository tools (26 tools)
   mcp-github:
     build: ./mcp-servers/github
@@ -360,6 +374,7 @@ services:
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend
+
 
   # ClickUp - Task management (177+ tools)
   mcp-clickup:
@@ -376,6 +391,7 @@ services:
     networks:
       - backend
 
+
   # Trello - Kanban boards
   mcp-trello:
     image: node:20-slim
@@ -391,6 +407,7 @@ services:
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend
+
 
   # SonarQube - Code quality analysis
   mcp-sonarqube:
@@ -409,6 +426,7 @@ services:
     networks:
       - backend
 
+
   # Excel Creator - Spreadsheet generation
   mcp-excel:
     build: ./mcp-servers/excel-creator
@@ -417,6 +435,7 @@ services:
     networks:
       - backend
 
+
   # Dashboard - Executive dashboard generation
   mcp-dashboard:
     build: ./mcp-servers/dashboard
@@ -424,6 +443,7 @@ services:
     restart: unless-stopped
     networks:
       - backend
+
 
   # Notion - Workspace and documentation
   mcp-notion:
@@ -435,6 +455,7 @@ services:
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
     networks:
       - backend
+
 
   # n8n MCP - AI-driven workflow creation and management (20 tools)
   # Official image: ghcr.io/czlonkowski/n8n-mcp (13.7k stars)
@@ -463,6 +484,7 @@ services:
     networks:
       - backend
 
+
   # Scheduler MCP - Cron job management from chat (4 tools)
   mcp-scheduler:
     build: ./mcp-servers/scheduler
@@ -481,6 +503,7 @@ services:
           memory: 256M
         reservations:
           memory: 128M
+
 
   # ===========================================================================
   # DATABASE INIT - Seed data from mcp-servers.json
@@ -516,6 +539,73 @@ services:
     networks:
       - backend
 
+
+  # ===========================================================================
+  # LOKI - Log Aggregation
+  # ===========================================================================
+  # Stores and indexes logs received from Promtail.
+  loki:
+    image: grafana/loki:3.4
+    container_name: loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=-", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # PROMTAIL - Log Shipper
+  # ===========================================================================
+  # Reads Docker container logs from /var/lib/docker/containers and ships to Loki.
+  # Auto-discovers all containers and labels logs by container name.
+  promtail:
+    image: grafana/promtail:3.4
+    container_name: promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yaml
+    volumes:
+      - ./promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp
+    depends_on:
+      - loki
+    networks:
+      - backend
+
+  # ===========================================================================
+  # GRAFANA - Log Dashboard + Alerts
+  # ===========================================================================
+  # Web UI for searching logs, viewing dashboards, and configuring alerts.
+  # Access via /grafana/ route in Caddy.
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s/grafana/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 # =============================================================================
 # NETWORKS
 # =============================================================================
@@ -537,3 +627,6 @@ volumes:
   n8n_data:
   n8n-mcp-data:
   pipelines-data:
+  loki-data:
+  promtail-positions:
+  grafana-data:
