@@ -1,7 +1,7 @@
 # Pipelines + Observability — Research & Design
 
 **Date:** 2026-02-26
-**Status:** Approved
+**Status:** Implemented
 **Origin:** Lukas standup review (2026-02-25) — "looking into pipelines and observability would be good areas"
 
 ---
@@ -22,34 +22,102 @@ The platform already runs ~15 containers on a Hetzner VPS. Both solutions must b
 | Area | Chosen Approach | New Containers | RAM |
 |------|----------------|---------------|-----|
 | Pipelines | External Pipelines container | +1 | ~200MB |
-| Observability | LangFuse Cloud free tier + filter | +0 (uses Pipelines) | ~0 |
+| Observability | LangFuse Cloud free tier + in-process filter | +0 | ~0 |
 | **Total** | | **+1 container** | **~200MB** |
 
 ---
 
 ## Architecture
 
-### Before (Current)
+### Before
 
 ```
-Browser -> Caddy -> API Gateway -> Open WebUI (webhook_pipe.py runs inside)
-                                       |
-                                   MCP Proxy / n8n
+Browser ──> Caddy ──> API Gateway ──> Open WebUI ──> OpenAI API (gpt-5)
+                                        |
+                                        ├── webhook_pipe.py (runs inside, no isolation)
+                                        └── MCP Proxy / n8n
 ```
+
+Everything ran inside Open WebUI. No observability. If webhook_pipe crashed, Open WebUI crashed.
 
 ### After
 
 ```
-Browser -> Caddy -> API Gateway -> Open WebUI
-                                       |
-                                   Pipelines container (port 9099)
-                                     |-- webhook_pipe.py (moved here)
-                                     |-- langfuse_v3_filter_pipeline.py (new)
-                                       |
-                                   MCP Proxy / n8n
-                                       |
-                                   LangFuse Cloud (us.cloud.langfuse.com)
+┌─────────┐    ┌───────┐    ┌─────────────┐    ┌──────────────────────────────────┐
+│ Browser │───>│ Caddy │───>│ API Gateway │───>│         Open WebUI               │
+└─────────┘    └───────┘    └─────────────┘    │                                  │
+                                                │  ┌────────────────────────────┐  │
+                                                │  │  LangFuse Filter (global)  │  │
+                                                │  │                            │  │
+                                                │  │  inlet() ──> before LLM    │  │
+                                                │  │  outlet() ──> after LLM    │  │
+                                                │  └──────────┬─────────────────┘  │
+                                                │             │                    │
+                                                └─────────────┼────────────────────┘
+                                                    │         │
+                                          ┌─────────┘         │
+                                          ▼                   ▼
+                                ┌──────────────────┐  ┌──────────────────┐
+                                │ Pipelines :9099  │  │  LangFuse Cloud  │
+                                │                  │  │  (us.cloud.      │
+                                │  webhook_pipe.py │  │   langfuse.com)  │
+                                │  (isolated)      │  │                  │
+                                └────────┬─────────┘  │  ● Token usage   │
+                                         │            │  ● Cost tracking │
+                                         ▼            │  ● Traces        │
+                                ┌──────────────────┐  │  ● Latency       │
+                                │ MCP Proxy / n8n  │  └──────────────────┘
+                                └──────────────────┘
 ```
+
+### How a Chat Message Flows
+
+```
+1. You type "What is the capital of France?" in the browser
+
+2. Browser ──POST──> /api/chat/completions
+       │
+       ▼
+3. ┌─ INLET fires (LangFuse Filter) ──────────────────────────┐
+   │  • Creates a trace in LangFuse Cloud                      │
+   │  • Records: user email, model (gpt-5), chat ID, prompt   │
+   └───────────────────────────────────────────────────────────┘
+       │
+       ▼
+4. Open WebUI forwards to OpenAI API ──> gpt-5 responds "Paris"
+       │
+       ▼
+5. Response streams back to browser (you see "Paris")
+       │
+       ▼
+6. Browser ──POST──> /api/chat/completed  (automatic, invisible)
+       │
+       ▼
+7. ┌─ OUTLET fires (LangFuse Filter) ─────────────────────────┐
+   │  • Captures AI response ("Paris")                         │
+   │  • Captures token count (29 input, 1 output)             │
+   │  • Creates a GENERATION observation in LangFuse           │
+   │  • Flushes to LangFuse Cloud                             │
+   └───────────────────────────────────────────────────────────┘
+       │
+       ▼
+8. LangFuse Dashboard shows the full trace:
+   model=gpt-5 | user=you | tokens=30 | output="Paris"
+```
+
+### Why the LangFuse Filter Runs In-Process
+
+Open WebUI only calls `outlet()` on **in-process** filter functions (installed inside Open WebUI itself). External Pipelines filters only get `inlet()` calls — the `outlet()` endpoint exists but Open WebUI never calls it. Since we need the outlet to capture responses and token counts, the LangFuse filter must run in-process.
+
+The Pipelines container is still used for `webhook_pipe.py` which benefits from process isolation (heavy MCP tool chains, arbitrary dependencies).
+
+### Key Files
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `langfuse_filter.py` | In-process (Open WebUI Functions) | Global filter: traces all LLM calls to LangFuse |
+| `webhook_pipe.py` | Pipelines container (`/app/pipelines/`) | Webhook automation pipe (MCP tools + n8n) |
+| `docker-compose.unified.yml` | Repo + server | Defines pipelines service + env vars |
 
 No Caddy changes needed. Pipelines only communicates internally on the Docker network.
 
@@ -98,7 +166,7 @@ Every pipe in the container appears as a selectable "model" in the chat dropdown
 ### What Moves There
 
 - `webhook_pipe.py` — Copied into the Pipelines volume, auto-loaded on startup
-- No code changes needed — the Pipe class API is identical between in-process and external
+- One code change needed: `class Pipe` must be renamed to `class Pipeline` (external Pipelines server expects `Pipeline`, Open WebUI in-process expects `Pipe`)
 
 ---
 
@@ -118,12 +186,12 @@ LangFuse is an open-source (MIT) LLM observability platform. The cloud free tier
 
 ### How It Integrates
 
-The official `langfuse_v3_filter_pipeline.py` runs as a Filter in the Pipelines container:
+`langfuse_filter.py` runs as an **in-process global filter** inside Open WebUI (not in the Pipelines container):
 
 - `inlet()` — Runs before every LLM call. Creates a trace with user ID, model, chat ID.
-- `outlet()` — Runs after every LLM call. Captures token count, latency, response. Sends to LangFuse.
+- `outlet()` — Runs after every LLM call. Captures token count, response. Sends to LangFuse.
 
-Applies to ALL models, not just the webhook pipe.
+Applies to ALL models, not just the webhook pipe. Installed via Admin Panel -> Workspace -> Functions.
 
 ### Configuration (Valves in Admin Panel)
 
@@ -133,19 +201,22 @@ Applies to ALL models, not just the webhook pipe.
 | `secret_key` | `sk-lf-d5d3f40b-ce6c-444f-acc5-1d8422654d8f` |
 | `host` | `https://us.cloud.langfuse.com` |
 | `pipelines` | `["*"]` (all models) |
+| `debug` | `false` (set `true` to see `[LangFuse]` logs) |
 
 ### Free Tier Limits
 
 - 50k observations/month (1 observation = 1 LLM call)
 - Sufficient for current platform usage
 
-### Environment Variables (`.env`)
+### Environment Variables (`.env` + `docker-compose.unified.yml`)
 
 ```
 LANGFUSE_SECRET_KEY="sk-lf-..."
 LANGFUSE_PUBLIC_KEY="pk-lf-..."
 LANGFUSE_BASE_URL="https://us.cloud.langfuse.com"
 ```
+
+These are passed to the Open WebUI container as `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_HOST`. The filter reads them on first use (lazy init).
 
 ---
 
@@ -169,16 +240,16 @@ LANGFUSE_BASE_URL="https://us.cloud.langfuse.com"
 
 ---
 
-## 4. Setup Steps
+## 4. Setup Steps (What Was Done)
 
-1. Add `pipelines` service to `docker-compose.unified.yml`
-2. Add `pipelines-data` volume
-3. Deploy to Hetzner: `docker compose -f docker-compose.unified.yml up -d pipelines`
-4. Connect Open WebUI to Pipelines: Admin Panel -> Settings -> Connections -> Add OpenAI API (`http://pipelines:9099`, key: `0p3n-w3bu!`)
-5. Install LangFuse filter: Upload `langfuse_v3_filter_pipeline.py` via Admin Panel -> Pipelines, configure Valves
-6. Move `webhook_pipe.py` into Pipelines volume, verify it appears as a selectable model
-7. Test: Send a chat message, check LangFuse dashboard for the trace
-8. Sync `.env` to Hetzner server with LangFuse keys
+1. Added `pipelines` service to `docker-compose.unified.yml` with `pipelines-data` volume
+2. Added `OPENAI_API_KEYS` / `OPENAI_API_BASE_URLS` (semicolon-separated) to Open WebUI env for Pipelines connection
+3. Added `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_HOST` env vars to Open WebUI container
+4. Deployed to Hetzner: `docker compose up -d pipelines`
+5. Moved `webhook_pipe.py` into Pipelines container (renamed `class Pipe` to `class Pipeline`)
+6. Installed `langfuse_filter.py` as in-process global filter in Open WebUI via API
+7. Configured LangFuse valves (API keys, host, debug mode)
+8. Tested from browser chat — inlet + outlet both fire, traces visible in LangFuse Cloud
 
 ---
 
