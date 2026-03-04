@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     discord_application_id: str = ""
     discord_public_key: str = ""
     discord_bot_token: str = ""
+    discord_alert_channel_id: str = ""
 
     # Report
     report_github_repo: str = "TheLukasHenry/proxy-server"

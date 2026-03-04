@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
+import httpx
 import logging
 from typing import Optional
 
@@ -596,6 +597,106 @@ async def get_user_jobs_endpoint():
     """List all user-created cron jobs with metadata."""
     jobs = get_user_jobs()
     return {"jobs": jobs, "count": len(jobs)}
+
+
+@app.post("/webhook/grafana-alerts")
+async def grafana_alerts_webhook(request: Request):
+    """
+    Receive Grafana alert notifications and forward them to Discord.
+
+    Grafana's generic webhook notifier POSTs its alert payload here.
+    This endpoint formats the alerts and sends them to the configured
+    Discord channel using the bot's Send Messages permission.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    logger.info(f"Grafana alert received: {payload.get('title', 'unknown')}")
+
+    # Build a Discord-friendly message from the Grafana payload
+    status = payload.get("status", "unknown").upper()
+    title = payload.get("title", "Grafana Alert")
+    message_text = payload.get("message", "")
+    state = payload.get("state", "")
+    rule_name = payload.get("ruleName", title)
+
+    # Emoji for status
+    emoji = "\U0001f534" if status == "FIRING" else "\u2705"  # red circle or green check
+
+    lines = [f"{emoji} **{status}: {rule_name}**"]
+    if message_text:
+        lines.append(message_text[:500])
+
+    # Parse alerts array if present (Grafana unified alerting format)
+    alerts = payload.get("alerts", [])
+    for alert in alerts[:5]:  # limit to 5 alerts
+        alert_status = alert.get("status", "")
+        labels = alert.get("labels", {})
+        annotations = alert.get("annotations", {})
+        alert_name = labels.get("alertname", "")
+        summary = annotations.get("summary", annotations.get("description", ""))
+        severity = labels.get("severity", "")
+
+        alert_line = f"- **{alert_name}**"
+        if severity:
+            alert_line += f" [{severity}]"
+        if summary:
+            alert_line += f": {summary}"
+        lines.append(alert_line)
+
+    if len(alerts) > 5:
+        lines.append(f"_... and {len(alerts) - 5} more alerts_")
+
+    # Add link if available
+    external_url = payload.get("externalURL", "")
+    if external_url:
+        lines.append(f"\n[Open Grafana]({external_url})")
+
+    content = "\n".join(lines)
+    if len(content) > 2000:
+        content = content[:1997] + "..."
+
+    # Send to Discord using the bot token
+    channel_id = settings.discord_alert_channel_id
+    bot_token = settings.discord_bot_token
+
+    if not bot_token or not channel_id:
+        logger.error("Discord bot token or alert channel ID not configured")
+        return JSONResponse(
+            content={"success": False, "error": "Discord not configured"},
+            status_code=500,
+        )
+
+    discord_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    headers = {
+        "Authorization": f"Bot {bot_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                discord_url,
+                json={"content": content},
+                headers=headers,
+            )
+            if resp.status_code in (200, 201):
+                logger.info(f"Grafana alert forwarded to Discord channel {channel_id}")
+                return {"success": True, "discord_status": resp.status_code}
+            else:
+                logger.error(f"Discord API error: {resp.status_code} {resp.text}")
+                return JSONResponse(
+                    content={"success": False, "error": f"Discord error: {resp.status_code}"},
+                    status_code=502,
+                )
+    except Exception as e:
+        logger.error(f"Failed to send alert to Discord: {e}")
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500,
+        )
 
 
 if __name__ == "__main__":

@@ -172,28 +172,102 @@ class CommandRouter:
         await ctx.respond(response)
 
     async def _handle_workflow(self, ctx: CommandContext) -> None:
-        """Trigger an n8n workflow by name."""
+        """Trigger an n8n workflow by name (looks up ID via API, then executes)."""
         if not ctx.arguments:
-            await ctx.respond("Usage: `/aiui workflow <name>` — triggers an n8n webhook workflow.")
+            await ctx.respond("Usage: `/aiui workflow <name>` — triggers an n8n workflow by name.")
+            return
+
+        if not self.n8n.api_key:
+            await ctx.respond("n8n API not configured (no API key).")
             return
 
         workflow_name = ctx.arguments.strip()
         logger.info(f"[{ctx.platform}] workflow trigger from {ctx.user_name}: {workflow_name}")
 
-        result = await self.n8n.trigger_workflow(
-            webhook_path=workflow_name,
-            payload={
-                "triggered_by": ctx.user_name,
-                "platform": ctx.platform,
-                "channel": ctx.channel_id,
-            },
-        )
+        # Look up workflow ID by name
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self.n8n.base_url}/api/v1/workflows",
+                    headers={"X-N8N-API-KEY": self.n8n.api_key},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            wf_list = data.get("data", data) if isinstance(data, dict) else data
+            if not isinstance(wf_list, list):
+                wf_list = []
+
+            # Case-insensitive name match
+            match = next(
+                (w for w in wf_list if w.get("name", "").lower() == workflow_name.lower()),
+                None,
+            )
+
+            if not match:
+                available = [w.get("name") for w in wf_list if w.get("active")]
+                names_str = ", ".join(f"`{n}`" for n in available) if available else "none"
+                await ctx.respond(
+                    f"Workflow `{workflow_name}` not found.\n"
+                    f"Active workflows: {names_str}"
+                )
+                return
+
+            if not match.get("active"):
+                await ctx.respond(f"Workflow `{match['name']}` exists but is **inactive**. Activate it in n8n first.")
+                return
+
+            workflow_id = match["id"]
+
+            # Check if workflow has a webhook trigger node — use webhook path if so
+            webhook_path = None
+            for node in match.get("nodes", []):
+                if "webhook" in node.get("type", "").lower() and "respond" not in node.get("name", "").lower():
+                    webhook_path = node.get("parameters", {}).get("path")
+                    break
+
+            # If nodes weren't in the list response, fetch full workflow to find webhook path
+            if webhook_path is None:
+                try:
+                    detail_resp = await httpx.AsyncClient(timeout=15.0).__aenter__()
+                    full_resp = await detail_resp.get(
+                        f"{self.n8n.base_url}/api/v1/workflows/{workflow_id}",
+                        headers={"X-N8N-API-KEY": self.n8n.api_key},
+                    )
+                    await detail_resp.__aexit__(None, None, None)
+                    if full_resp.status_code == 200:
+                        full_data = full_resp.json()
+                        for node in full_data.get("nodes", []):
+                            if "webhook" in node.get("type", "").lower() and "respond" not in node.get("name", "").lower():
+                                webhook_path = node.get("parameters", {}).get("path")
+                                break
+                except Exception as e:
+                    logger.warning(f"Could not fetch workflow details: {e}")
+
+        except Exception as e:
+            logger.error(f"Error looking up workflow: {e}")
+            await ctx.respond(f"Failed to look up workflow: {e}")
+            return
+
+        # Trigger via webhook path if available, otherwise via API execute
+        payload = {
+            "triggered_by": ctx.user_name,
+            "platform": ctx.platform,
+            "channel": ctx.channel_id,
+        }
+
+        if webhook_path:
+            logger.info(f"Triggering workflow '{match['name']}' via webhook path: {webhook_path}")
+            result = await self.n8n.trigger_workflow(webhook_path=webhook_path, payload=payload)
+        else:
+            logger.info(f"Triggering workflow '{match['name']}' via API (id={workflow_id})")
+            result = await self.n8n.trigger_workflow_by_id(workflow_id=workflow_id, payload=payload)
 
         if result is not None:
             summary = str(result)[:500]
-            await ctx.respond(f"Workflow `{workflow_name}` triggered successfully.\n```\n{summary}\n```")
+            await ctx.respond(f"Workflow `{match['name']}` triggered successfully.\n```\n{summary}\n```")
         else:
-            await ctx.respond(f"Failed to trigger workflow `{workflow_name}`. Check the workflow name and n8n status.")
+            await ctx.respond(f"Failed to trigger workflow `{match['name']}`. Check n8n status.")
 
     async def _handle_status(self, ctx: CommandContext) -> None:
         """Check service health and report status."""

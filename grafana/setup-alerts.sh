@@ -3,7 +3,7 @@
 # Run inside grafana container: docker exec grafana sh /etc/grafana/provisioning/setup-alerts.sh
 
 GRAFANA_URL="http://localhost:3000"
-AUTH="Authorization: Basic YWRtaW46YWRtaW4="
+AUTH="Authorization: Basic $(echo -n "admin:${GRAFANA_ADMIN_PASSWORD:-admin}" | base64)"
 CT="Content-Type: application/json"
 
 # Helper function
@@ -74,7 +74,7 @@ post '{
       "refId": "A",
       "datasourceUid": "P8E80F9AEF21F6940",
       "model": {
-        "expr": "count_over_time({container_name=~\".+\"} |~ \"(?i)(error|exception|traceback|panic)\" [5m])",
+        "expr": "count_over_time({container_name=~\".+\", container_name!=\"loki\"} |~ \"(?i)(error|exception|traceback|panic)\" [5m])",
         "queryType": "range",
         "editorMode": "code"
       },
@@ -174,7 +174,7 @@ post '{
       "refId": "A",
       "datasourceUid": "P8E80F9AEF21F6940",
       "model": {
-        "expr": "count_over_time({container_name=~\".+\"} |~ \"(?i)(OOMKilled|exit code [1-9]|container died|fatal|segfault)\" [5m])",
+        "expr": "count_over_time({container_name=~\".+\", container_name!~\"grafana|loki\"} |~ \"(?i)(OOMKilled|exit code [1-9]|container died|segfault)\" [5m])",
         "queryType": "range",
         "editorMode": "code"
       },
