@@ -1,10 +1,12 @@
 """GitHub webhook event handler."""
 from typing import Any, Optional
 import logging
+import httpx
 
 from clients.openwebui import OpenWebUIClient
 from clients.github import GitHubClient
 from clients.n8n import N8NClient
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -119,28 +121,71 @@ class GitHubWebhookHandler:
             "comment_id": comment_id
         }
 
+    async def _notify_discord(self, message: str) -> None:
+        """Post a notification message to the Discord channel."""
+        token = settings.discord_bot_token
+        channel_id = settings.discord_alert_channel_id
+        if not token or not channel_id:
+            return
+
+        url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+        headers = {
+            "Authorization": f"Bot {token}",
+            "Content-Type": "application/json",
+        }
+
+        if len(message) > 2000:
+            message = message[:1997] + "..."
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(url, headers=headers, json={"content": message})
+                if resp.status_code == 200:
+                    logger.info("GitHub event notified to Discord")
+                else:
+                    logger.warning(f"Discord notification failed: {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"Discord notification error: {e}")
+
     async def _handle_pull_request_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle pull request events — forward to n8n for automated review."""
         action = payload.get("action")
         pr = payload.get("pull_request", {})
+        repo = payload.get("repository", {})
+        repo_full_name = repo.get("full_name", "")
+        pr_number = pr.get("number")
+        title = pr.get("title", "")
+        author = pr.get("user", {}).get("login", "unknown")
+        html_url = pr.get("html_url", "")
+        base_branch = pr.get("base", {}).get("ref", "")
 
-        # Handle merged PRs — generate deployment notes
-        if action == "closed" and pr.get("merged", False):
+        # Discord notifications for PR events
+        if action == "opened":
+            await self._notify_discord(
+                f"🔀 **New PR #{pr_number}**: {title}\n"
+                f"by **{author}** → `{base_branch}`\n{html_url}"
+            )
+        elif action == "closed" and pr.get("merged", False):
+            await self._notify_discord(
+                f"✅ **PR #{pr_number} merged**: {title}\n"
+                f"by **{author}** into `{base_branch}`\n{html_url}"
+            )
             return await self._handle_pr_merged(payload)
+        elif action == "closed":
+            await self._notify_discord(
+                f"❌ **PR #{pr_number} closed**: {title}\n"
+                f"by **{author}**\n{html_url}"
+            )
+            return {"success": True, "message": "PR closed notification sent"}
 
         if action not in ("opened", "synchronize"):
             logger.info(f"Ignoring PR action: {action}")
             return {"success": True, "message": f"PR action '{action}' not handled"}
 
-        repo = payload.get("repository", {})
-        repo_full_name = repo.get("full_name", "")
-
         if "/" not in repo_full_name:
             logger.error(f"Invalid repository name: {repo_full_name}")
             return {"success": False, "error": "Invalid repository name"}
 
-        pr_number = pr.get("number")
-        title = pr.get("title", "")
         logger.info(f"Forwarding PR #{pr_number}: {title} (action: {action}) to n8n")
 
         # Build normalized payload for n8n workflow
@@ -149,10 +194,10 @@ class GitHubWebhookHandler:
             "pr_number": pr_number,
             "action": action,
             "title": title,
-            "author": pr.get("user", {}).get("login", "unknown"),
+            "author": author,
             "diff_url": pr.get("diff_url", ""),
-            "html_url": pr.get("html_url", ""),
-            "base_branch": pr.get("base", {}).get("ref", ""),
+            "html_url": html_url,
+            "base_branch": base_branch,
             "head_branch": pr.get("head", {}).get("ref", ""),
             "body": pr.get("body", "") or "",
         }
@@ -323,6 +368,14 @@ class GitHubWebhookHandler:
             return {"success": False, "error": "Invalid repository name"}
 
         logger.info(f"Analyzing push to {branch} by {pusher} ({len(commits)} commits)")
+
+        # Discord notification
+        latest_msg = commits[-1].get("message", "").split("\n")[0] if commits else ""
+        await self._notify_discord(
+            f"📦 **Push to `{branch}`**: {len(commits)} commit{'s' if len(commits) != 1 else ''} by **{pusher}**\n"
+            f"Latest: {latest_msg}\n"
+            f"https://github.com/{repo_full_name}/commits/{branch}"
+        )
 
         # Get AI analysis
         analysis = await self.openwebui.analyze_push(
