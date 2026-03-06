@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import httpx
 import logging
 from typing import Optional
+import re
 
 from config import settings
 from clients.openwebui import OpenWebUIClient
@@ -607,6 +608,33 @@ async def get_user_jobs_endpoint():
     return {"jobs": jobs, "count": len(jobs)}
 
 
+def _extract_file_references(logs_text: str) -> list[str]:
+    """Extract file paths from error logs/stack traces."""
+    patterns = [
+        r'File "([^"]+\.py)"',
+        r'at\s+\S+\s+\(([^)]+\.[jt]s):\d+:\d+\)',
+        r'(/[\w/.-]+\.\w{1,4}):\d+',
+        r'([\w/.-]+\.(py|js|ts|go|rs|java)):\d+',
+    ]
+
+    files = set()
+    for pattern in patterns:
+        for match in re.finditer(pattern, logs_text):
+            fpath = match.group(1)
+            if any(skip in fpath for skip in [
+                "site-packages", "node_modules", "/usr/lib",
+                "/usr/local/lib", "venv", ".venv"
+            ]):
+                continue
+            for prefix in ["/app/", "/root/proxy-server/", "/root/"]:
+                if fpath.startswith(prefix):
+                    fpath = fpath[len(prefix):]
+                    break
+            files.add(fpath)
+
+    return list(files)[:5]
+
+
 @app.post("/webhook/grafana-alerts")
 async def grafana_alerts_webhook(request: Request):
     """
@@ -704,16 +732,15 @@ async def grafana_alerts_webhook(request: Request):
             status_code=500,
         )
 
-    # AI Diagnosis — only on FIRING alerts
+    # AI Diagnosis with code context — only on FIRING alerts
     if status == "FIRING" and loki_client and openwebui_client:
         try:
-            # Query Loki for each alerting container
+            # Step 1: Query Loki for error logs
             all_logs = []
             for cn in container_names:
                 logs = await loki_client.query_error_logs(container_name=cn, minutes=5, limit=30)
                 all_logs.extend(logs)
 
-            # If no specific container, query all
             if not container_names:
                 all_logs = await loki_client.query_error_logs(container_name="", minutes=5, limit=30)
 
@@ -721,18 +748,52 @@ async def grafana_alerts_webhook(request: Request):
                 logs_text = "\n".join(all_logs[:30])
                 containers_str = ", ".join(container_names) if container_names else "all"
 
+                # Step 2: Extract file references from error logs
+                file_refs = _extract_file_references(logs_text)
+                code_context = ""
+
+                # Step 3: Fetch source code via MCP proxy if we have file references
+                if file_refs and mcp_handler:
+                    code_snippets = []
+                    mcp_client_ref = mcp_handler.mcp_client
+                    repo_parts = settings.report_github_repo.split("/", 1)
+                    if len(repo_parts) == 2 and mcp_client_ref:
+                        owner, repo_name = repo_parts
+                        for fpath in file_refs[:3]:
+                            try:
+                                result = await mcp_client_ref.execute_tool(
+                                    server_id="github",
+                                    tool_name="get_file_contents",
+                                    arguments={
+                                        "owner": owner,
+                                        "repo": repo_name,
+                                        "path": fpath,
+                                    },
+                                )
+                                if result:
+                                    content = str(result)[:1500]
+                                    code_snippets.append(f"--- {fpath} ---\n{content}")
+                            except Exception as e:
+                                logger.debug(f"Could not fetch {fpath} via MCP: {e}")
+
+                    if code_snippets:
+                        code_context = "\n\nRelevant source code:\n" + "\n".join(code_snippets)
+
+                # Step 4: AI diagnosis with code context
                 messages = [
                     {"role": "system", "content": (
-                        "You are a DevOps diagnostic assistant. Analyze these container error logs and provide:\n"
-                        "1) Root cause - what went wrong\n"
+                        "You are a DevOps diagnostic assistant. Analyze these container error logs "
+                        "and any source code provided. Provide:\n"
+                        "1) Root cause - what went wrong (reference specific code if available)\n"
                         "2) Impact - what's affected\n"
-                        "3) Suggested fix - specific commands or config changes\n"
+                        "3) Suggested fix - specific code changes or commands\n"
                         "Be concise. Max 3-4 sentences per section."
                     )},
                     {"role": "user", "content": (
                         f"Alert: {rule_name}\n"
                         f"Containers: {containers_str}\n"
                         f"Error logs (last 5 minutes):\n{logs_text}"
+                        f"{code_context}"
                     )},
                 ]
 
@@ -752,7 +813,7 @@ async def grafana_alerts_webhook(request: Request):
                             json={"content": diag_content},
                             headers=headers,
                         )
-                    logger.info("AI diagnosis posted to Discord")
+                    logger.info("AI diagnosis (with code context) posted to Discord")
                 else:
                     logger.warning("AI diagnosis unavailable (Open WebUI error)")
             else:
