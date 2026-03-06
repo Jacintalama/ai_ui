@@ -1,0 +1,66 @@
+{
+  "name": "sheets-report",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sheets-report",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json.body || $input.first().json;\nconst date = data.date || new Date().toISOString().split('T')[0];\nconst action = data.action || 'daily_report';\n\nlet rows = [];\nif (action === 'daily_report') {\n  rows.push([date, 'DAILY REPORT', '', '']);\n  (data.commits || []).forEach(c => rows.push([date, 'commit', c.sha || '', c.message || '']));\n  (data.executions || []).forEach(e => rows.push([date, 'workflow', e.workflow_name || '', e.status || '']));\n  (data.health || []).forEach(h => rows.push([date, 'health', h.service || '', h.status || '']));\n} else {\n  rows.push([date, 'ERROR REPORT', `${data.error_count || 0} errors`, '']);\n  (data.errors || []).slice(0, 20).forEach(e => rows.push([date, 'error', e.substring(0, 200), '']));\n}\n\nreturn rows.map(r => ({ json: { date: r[0], type: r[1], detail: r[2], extra: r[3] } }));"
+      },
+      "name": "Format Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "CONFIGURE_SHEET_ID" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Sheet1" },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "name": "Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [660, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, rows_written: $input.all().length, sheet_url: 'https://docs.google.com/spreadsheets/d/CONFIGURE_SHEET_ID' }) }}"
+      },
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Format Data", "type": "main", "index": 0 }]] },
+    "Format Data": { "main": [[{ "node": "Google Sheets", "type": "main", "index": 0 }]] },
+    "Google Sheets": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

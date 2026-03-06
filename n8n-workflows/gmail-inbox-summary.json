@@ -1,0 +1,66 @@
+{
+  "name": "gmail-inbox-summary",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-inbox-summary",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10,
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {}
+      },
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [440, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const emails = $input.all().map(item => ({\n  from: item.json.from?.text || item.json.from || 'unknown',\n  subject: item.json.subject || 'No subject',\n  date: item.json.date || '',\n  snippet: (item.json.snippet || item.json.textPlain || '').substring(0, 200)\n}));\nreturn [{ json: { emails, count: emails.length } }];"
+      },
+      "name": "Format Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Gmail", "type": "main", "index": 0 }]] },
+    "Gmail": { "main": [[{ "node": "Format Emails", "type": "main", "index": 0 }]] },
+    "Format Emails": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

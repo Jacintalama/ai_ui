@@ -474,6 +474,12 @@ services:
       - N8N_MCP_TELEMETRY_DISABLED=true
       - NODE_ENV=production
       - REBUILD_ON_START=false
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     volumes:
       - n8n-mcp-data:/app/data
     deploy:
