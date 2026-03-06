@@ -11,7 +11,9 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [220, 300],
+      "id": "3055ac5a-4b57-43ca-b0b8-ab7bb4351b55",
+      "webhookId": "sheets-report"
     },
     {
       "parameters": {
@@ -20,7 +22,8 @@
       "name": "Format Data",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 300]
+      "position": [440, 300],
+      "id": "format-data-node"
     },
     {
       "parameters": {
@@ -36,6 +39,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [660, 300],
+      "id": "google-sheets-node",
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "CONFIGURE_IN_UI",
@@ -54,7 +58,8 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [880, 300]
+      "position": [880, 300],
+      "id": "c302aa6c-9a6f-4f9c-b74a-002d6cc97aae"
     }
   ],
   "connections": {

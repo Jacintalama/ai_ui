@@ -11,7 +11,9 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [220, 300],
+      "id": "6dcddd38-f3c4-4b55-b85b-549db9c2bb2a",
+      "webhookId": "gmail-inbox-summary"
     },
     {
       "parameters": {
@@ -27,12 +29,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [440, 300],
-      "credentials": {
-        "gmailOAuth2": {
-          "id": "CONFIGURE_IN_UI",
-          "name": "Gmail account"
-        }
-      }
+      "id": "90c689be-b8f6-436a-8267-cc1182ddd6de"
     },
     {
       "parameters": {
@@ -41,7 +38,8 @@
       "name": "Format Emails",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 300]
+      "position": [660, 300],
+      "id": "3f226728-f1ce-471e-baab-9e4d89e4aa9f"
     },
     {
       "parameters": {
@@ -54,7 +52,8 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [880, 300]
+      "position": [880, 300],
+      "id": "d4861a97-2933-4146-b585-80dbd59bc6bf"
     }
   ],
   "connections": {
