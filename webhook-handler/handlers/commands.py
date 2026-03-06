@@ -77,7 +77,7 @@ class CommandRouter:
 
         known_commands = {
             "ask", "workflow", "workflows", "status", "help",
-            "report", "pr-review", "pr", "mcp", "diagnose",
+            "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -104,6 +104,8 @@ class CommandRouter:
                 await self._handle_mcp(ctx)
             elif ctx.subcommand == "diagnose":
                 await self._handle_diagnose(ctx)
+            elif ctx.subcommand == "analyze":
+                await self._handle_analyze(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
             else:
@@ -306,6 +308,7 @@ class CommandRouter:
             "`/aiui report` — Generate end-of-day activity report\n"
             "`/aiui status` — Check service health\n"
             "`/aiui diagnose [container]` \u2014 AI diagnosis of recent errors\n"
+            "`/aiui analyze [owner/repo]` \u2014 AI analysis of a GitHub codebase\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -362,6 +365,62 @@ class CommandRouter:
             return
 
         response = f"\U0001f50d **Diagnosis for {target}** ({len(logs)} errors, last 5 min)\n\n{diagnosis}"
+
+        limit = 2000 if ctx.platform == "discord" else 3000
+        if len(response) > limit:
+            response = response[:limit - 20] + "\n\n... (truncated)"
+
+        await ctx.respond(response)
+
+    async def _handle_analyze(self, ctx: CommandContext) -> None:
+        """Analyze a GitHub repository and summarize what it does."""
+        if not self._github_client:
+            await ctx.respond("GitHub not configured (no GITHUB_TOKEN).")
+            return
+
+        # Parse owner/repo from arguments, default to configured repo
+        repo_arg = ctx.arguments.strip() if ctx.arguments else ""
+        if repo_arg and "/" in repo_arg:
+            parts = repo_arg.split("/", 1)
+            owner, repo = parts[0], parts[1]
+        elif repo_arg:
+            await ctx.respond(
+                f"Invalid format: `{repo_arg}`. Use `/aiui analyze owner/repo`"
+            )
+            return
+        else:
+            parts = settings.report_github_repo.split("/", 1)
+            if len(parts) != 2:
+                await ctx.respond("No default repository configured.")
+                return
+            owner, repo = parts
+
+        logger.info(f"[{ctx.platform}] analyze {owner}/{repo} from {ctx.user_name}")
+        await ctx.respond(f"Analyzing **{owner}/{repo}**... (fetching repo structure and key files)")
+
+        overview = await self._github_client.get_repo_overview(owner, repo)
+        if not overview:
+            await ctx.respond(f"Failed to fetch repository `{owner}/{repo}`. Check the name and GitHub access.")
+            return
+
+        analysis = await self.openwebui.analyze_codebase(
+            repo_overview=overview,
+            model=self.ai_model,
+        )
+
+        if not analysis:
+            # Fallback: show raw metadata
+            desc = overview.get("description", "No description")
+            lang = overview.get("language", "Unknown")
+            tree_preview = "\n".join(overview.get("tree", [])[:20])
+            await ctx.respond(
+                f"AI analysis unavailable. Raw info for **{owner}/{repo}**:\n"
+                f"**Description:** {desc}\n**Language:** {lang}\n"
+                f"```\n{tree_preview}\n```"
+            )
+            return
+
+        response = f"\U0001f50d **Analysis of {owner}/{repo}**\n\n{analysis}"
 
         limit = 2000 if ctx.platform == "discord" else 3000
         if len(response) > limit:

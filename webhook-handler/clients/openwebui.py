@@ -309,3 +309,45 @@ Please provide:
         ]
 
         return await self.chat_completion(messages, model=model)
+
+    async def analyze_codebase(
+        self,
+        repo_overview: dict,
+        model: str = "gpt-4-turbo",
+    ) -> Optional[str]:
+        """Analyze a codebase and return a concise summary."""
+        full_name = repo_overview.get("full_name", "unknown")
+        description = repo_overview.get("description", "No description")
+        language = repo_overview.get("language", "Unknown")
+        topics = ", ".join(repo_overview.get("topics", [])) or "none"
+        tree = "\n".join(repo_overview.get("tree", []))
+
+        files_text = ""
+        for fname, content in repo_overview.get("files", {}).items():
+            files_text += f"\n--- {fname} ---\n{content}\n"
+
+        prompt = (
+            f"Analyze this GitHub repository and provide a concise summary.\n\n"
+            f"**Repository:** {full_name}\n"
+            f"**Description:** {description}\n"
+            f"**Primary Language:** {language}\n"
+            f"**Topics:** {topics}\n\n"
+            f"**File Tree (top-level):**\n{tree}\n\n"
+            f"**Key File Contents:**\n{files_text}\n\n"
+            f"Provide:\n"
+            f"1. What this application does (1-2 sentences)\n"
+            f"2. Tech stack\n"
+            f"3. Key components/architecture\n"
+            f"Keep it to 1-2 short paragraphs total."
+        )
+
+        messages = [
+            {"role": "system", "content": (
+                "You are a codebase analyst. Given repository metadata, file tree, "
+                "and key file contents, provide a concise summary of what the application "
+                "does, its tech stack, and architecture. Be brief and direct."
+            )},
+            {"role": "user", "content": prompt},
+        ]
+
+        return await self.chat_completion(messages=messages, model=model)

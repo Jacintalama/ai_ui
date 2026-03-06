@@ -234,3 +234,92 @@ class GitHubClient:
         except Exception as e:
             logger.error(f"Error fetching commits for {owner}/{repo}: {e}")
             return []
+
+    async def get_repo_overview(self, owner: str, repo: str) -> Optional[dict]:
+        """Fetch repo metadata, file tree, and key file contents for analysis."""
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                # 1. Repo metadata
+                meta_resp = await client.get(
+                    f"{self.base_url}/repos/{owner}/{repo}",
+                    headers=headers,
+                )
+                meta_resp.raise_for_status()
+                meta = meta_resp.json()
+
+                # 2. File tree (top-level only via contents API)
+                tree_resp = await client.get(
+                    f"{self.base_url}/repos/{owner}/{repo}/contents",
+                    headers=headers,
+                )
+                tree_resp.raise_for_status()
+                tree_items = tree_resp.json()
+
+                tree_names = [
+                    f"{'d' if item.get('type') == 'dir' else 'f'} {item['name']}"
+                    for item in tree_items[:50]
+                ]
+
+                # 3. Identify key files to fetch
+                key_patterns = [
+                    "README.md", "readme.md",
+                    "docker-compose.yml", "docker-compose.yaml",
+                    "docker-compose.unified.yml",
+                    "package.json", "requirements.txt", "Cargo.toml",
+                    "go.mod", "pyproject.toml",
+                    "main.py", "app.py", "index.js", "index.ts",
+                ]
+
+                available_files = [
+                    item["name"] for item in tree_items
+                    if item.get("type") == "file"
+                ]
+
+                files_to_fetch = []
+                for pattern in key_patterns:
+                    for fname in available_files:
+                        if fname.lower() == pattern.lower() and fname not in files_to_fetch:
+                            files_to_fetch.append(fname)
+                            break
+                    if len(files_to_fetch) >= 5:
+                        break
+
+                # 4. Fetch file contents
+                file_contents = {}
+                for fname in files_to_fetch:
+                    try:
+                        file_resp = await client.get(
+                            f"{self.base_url}/repos/{owner}/{repo}/contents/{fname}",
+                            headers={**headers, "Accept": "application/vnd.github.raw+json"},
+                        )
+                        if file_resp.status_code == 200:
+                            content = file_resp.text[:2000]
+                            file_contents[fname] = content
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch {fname}: {e}")
+
+                return {
+                    "owner": owner,
+                    "repo": repo,
+                    "full_name": f"{owner}/{repo}",
+                    "description": meta.get("description", ""),
+                    "language": meta.get("language", ""),
+                    "topics": meta.get("topics", []),
+                    "default_branch": meta.get("default_branch", "main"),
+                    "stars": meta.get("stargazers_count", 0),
+                    "tree": tree_names,
+                    "files": file_contents,
+                }
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"GitHub API error fetching repo overview: {e.response.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to fetch repo overview: {e}")
+            return None
