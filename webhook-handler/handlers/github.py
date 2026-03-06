@@ -148,7 +148,7 @@ class GitHubWebhookHandler:
             logger.warning(f"Discord notification error: {e}")
 
     async def _handle_pull_request_event(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Handle pull request events — forward to n8n for automated review."""
+        """Handle pull request events - AI review + notifications."""
         action = payload.get("action")
         pr = payload.get("pull_request", {})
         repo = payload.get("repository", {})
@@ -162,18 +162,18 @@ class GitHubWebhookHandler:
         # Discord notifications for PR events
         if action == "opened":
             await self._notify_discord(
-                f"🔀 **New PR #{pr_number}**: {title}\n"
-                f"by **{author}** → `{base_branch}`\n{html_url}"
+                f"\U0001f500 **New PR #{pr_number}**: {title}\n"
+                f"by **{author}** \u2192 `{base_branch}`\n{html_url}"
             )
         elif action == "closed" and pr.get("merged", False):
             await self._notify_discord(
-                f"✅ **PR #{pr_number} merged**: {title}\n"
+                f"\u2705 **PR #{pr_number} merged**: {title}\n"
                 f"by **{author}** into `{base_branch}`\n{html_url}"
             )
             return await self._handle_pr_merged(payload)
         elif action == "closed":
             await self._notify_discord(
-                f"❌ **PR #{pr_number} closed**: {title}\n"
+                f"\u274c **PR #{pr_number} closed**: {title}\n"
                 f"by **{author}**\n{html_url}"
             )
             return {"success": True, "message": "PR closed notification sent"}
@@ -186,57 +186,56 @@ class GitHubWebhookHandler:
             logger.error(f"Invalid repository name: {repo_full_name}")
             return {"success": False, "error": "Invalid repository name"}
 
-        logger.info(f"Forwarding PR #{pr_number}: {title} (action: {action}) to n8n")
+        owner, repo_name = repo_full_name.split("/", 1)
 
-        # Build normalized payload for n8n workflow
-        n8n_payload = {
-            "repo": repo_full_name,
+        logger.info(f"Running AI review on PR #{pr_number}: {title} (action: {action})")
+
+        # Fetch PR file summary for AI review
+        diff_summary = await self.github.get_pr_files(owner, repo_name, pr_number)
+
+        # Run AI review via Open WebUI
+        body = pr.get("body", "") or ""
+        review = await self.openwebui.analyze_pull_request(
+            title=title,
+            body=body,
+            diff_summary=diff_summary or "No file changes available",
+            labels=[label.get("name", "") for label in pr.get("labels", [])],
+            model=self.ai_model,
+        )
+
+        result = {
+            "success": True,
             "pr_number": pr_number,
-            "action": action,
-            "title": title,
-            "author": author,
-            "diff_url": pr.get("diff_url", ""),
-            "html_url": html_url,
-            "base_branch": base_branch,
-            "head_branch": pr.get("head", {}).get("ref", ""),
-            "body": pr.get("body", "") or "",
+            "message": "PR review processed",
         }
 
-        # Forward to n8n — awaits the workflow execution (may take 10-30s)
-        if self.n8n:
-            try:
-                n8n_result = await self.n8n.trigger_workflow(
-                    webhook_path="pr-review",
-                    payload=n8n_payload,
-                )
-                if n8n_result:
-                    logger.info(f"n8n pr-review workflow completed for PR #{pr_number}")
-                    return {
-                        "success": True,
-                        "message": "PR forwarded to n8n for automated review",
-                        "pr_number": pr_number,
-                    }
-                else:
-                    logger.warning(f"n8n pr-review returned no result for PR #{pr_number}")
-                    return {
-                        "success": True,
-                        "message": "PR forwarded to n8n (no response — workflow may not be active)",
-                        "pr_number": pr_number,
-                    }
-            except Exception as e:
-                logger.error(f"Failed to forward PR #{pr_number} to n8n: {e}")
-                return {
-                    "success": False,
-                    "error": "Failed to trigger n8n workflow",
-                    "pr_number": pr_number,
-                }
+        # Post review as GitHub comment
+        if review:
+            formatted = self.github.format_ai_response(review)
+            comment_id = await self.github.post_issue_comment(
+                owner=owner,
+                repo=repo_name,
+                issue_number=pr_number,
+                body=formatted,
+            )
+            if comment_id:
+                logger.info(f"AI review posted on PR #{pr_number} (comment {comment_id})")
+                result["comment_id"] = comment_id
+            else:
+                logger.warning(f"Failed to post AI review comment on PR #{pr_number}")
+
+            # Discord summary of the review
+            summary = review[:200].split("\n")[0]
+            await self._notify_discord(
+                f"\U0001f50d **AI Review for PR #{pr_number}**: {title}\n"
+                f"by **{author}** \u2192 `{base_branch}`\n"
+                f"{summary}\n{html_url}"
+            )
         else:
-            logger.warning("n8n client not configured, cannot forward PR event")
-            return {
-                "success": False,
-                "error": "n8n client not configured",
-                "pr_number": pr_number,
-            }
+            logger.warning(f"AI review unavailable for PR #{pr_number} (Open WebUI error)")
+            result["message"] = "PR notification sent but AI review unavailable"
+
+        return result
 
     async def _handle_pr_merged(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Generate and post deployment notes when a PR is merged."""
