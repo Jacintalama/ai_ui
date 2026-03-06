@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     discord_bot_token: str = ""
     discord_alert_channel_id: str = ""
 
+    # Loki
+    loki_url: str = "http://loki:3100"
+
     # Report
     report_github_repo: str = "TheLukasHenry/proxy-server"
     report_slack_channel: str = ""

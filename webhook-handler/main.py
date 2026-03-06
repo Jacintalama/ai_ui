@@ -14,6 +14,7 @@ from clients.mcp_proxy import MCPProxyClient
 from clients.n8n import N8NClient
 from clients.slack import SlackClient, verify_slack_signature
 from clients.discord import DiscordClient, verify_discord_signature
+from clients.loki import LokiClient
 from handlers.github import GitHubWebhookHandler
 from handlers.mcp import MCPWebhookHandler
 from handlers.slack import SlackWebhookHandler
@@ -51,6 +52,7 @@ command_router: Optional[CommandRouter] = None
 slack_command_handler: Optional[SlackCommandHandler] = None
 discord_client: Optional[DiscordClient] = None
 discord_command_handler: Optional[DiscordCommandHandler] = None
+loki_client: Optional[LokiClient] = None
 
 
 class CreateCronJobRequest(BaseModel):
@@ -77,6 +79,7 @@ async def lifespan(app: FastAPI):
     global slack_client, slack_handler, generic_handler, automation_handler
     global command_router, slack_command_handler
     global discord_client, discord_command_handler
+    global loki_client
 
     logger.info("Initializing webhook handler...")
 
@@ -102,6 +105,10 @@ async def lifespan(app: FastAPI):
         api_key=settings.n8n_api_key
     )
     logger.info(f"n8n URL: {settings.n8n_url}")
+
+    # Loki client for log queries
+    loki_client = LokiClient(base_url=settings.loki_url)
+    logger.info(f"Loki URL: {settings.loki_url}")
 
     github_handler = GitHubWebhookHandler(
         openwebui_client=openwebui_client,
@@ -132,6 +139,7 @@ async def lifespan(app: FastAPI):
         slack_client=slack_client,
         github_client=github_client,
         mcp_client=mcp_client,
+        loki_client=loki_client,
     )
 
     # Wire Slack command handler if Slack is configured
@@ -603,10 +611,7 @@ async def get_user_jobs_endpoint():
 async def grafana_alerts_webhook(request: Request):
     """
     Receive Grafana alert notifications and forward them to Discord.
-
-    Grafana's generic webhook notifier POSTs its alert payload here.
-    This endpoint formats the alerts and sends them to the configured
-    Discord channel using the bot's Send Messages permission.
+    When FIRING, also query Loki for error logs and post AI diagnosis.
     """
     try:
         payload = await request.json()
@@ -619,20 +624,18 @@ async def grafana_alerts_webhook(request: Request):
     status = payload.get("status", "unknown").upper()
     title = payload.get("title", "Grafana Alert")
     message_text = payload.get("message", "")
-    state = payload.get("state", "")
     rule_name = payload.get("ruleName", title)
 
-    # Emoji for status
-    emoji = "\U0001f534" if status == "FIRING" else "\u2705"  # red circle or green check
+    emoji = "\U0001f534" if status == "FIRING" else "\u2705"
 
     lines = [f"{emoji} **{status}: {rule_name}**"]
     if message_text:
         lines.append(message_text[:500])
 
-    # Parse alerts array if present (Grafana unified alerting format)
+    # Collect container names from alerts for diagnosis
+    container_names = set()
     alerts = payload.get("alerts", [])
-    for alert in alerts[:5]:  # limit to 5 alerts
-        alert_status = alert.get("status", "")
+    for alert in alerts[:5]:
         labels = alert.get("labels", {})
         annotations = alert.get("annotations", {})
         alert_name = labels.get("alertname", "")
@@ -646,10 +649,14 @@ async def grafana_alerts_webhook(request: Request):
             alert_line += f": {summary}"
         lines.append(alert_line)
 
+        # Collect container_name for Loki query
+        cn = labels.get("container_name", "")
+        if cn:
+            container_names.add(cn)
+
     if len(alerts) > 5:
         lines.append(f"_... and {len(alerts) - 5} more alerts_")
 
-    # Add link if available
     external_url = payload.get("externalURL", "")
     if external_url:
         lines.append(f"\n[Open Grafana]({external_url})")
@@ -658,7 +665,7 @@ async def grafana_alerts_webhook(request: Request):
     if len(content) > 2000:
         content = content[:1997] + "..."
 
-    # Send to Discord using the bot token
+    # Send alert to Discord
     channel_id = settings.discord_alert_channel_id
     bot_token = settings.discord_bot_token
 
@@ -684,7 +691,6 @@ async def grafana_alerts_webhook(request: Request):
             )
             if resp.status_code in (200, 201):
                 logger.info(f"Grafana alert forwarded to Discord channel {channel_id}")
-                return {"success": True, "discord_status": resp.status_code}
             else:
                 logger.error(f"Discord API error: {resp.status_code} {resp.text}")
                 return JSONResponse(
@@ -697,6 +703,64 @@ async def grafana_alerts_webhook(request: Request):
             content={"success": False, "error": str(e)},
             status_code=500,
         )
+
+    # AI Diagnosis — only on FIRING alerts
+    if status == "FIRING" and loki_client and openwebui_client:
+        try:
+            # Query Loki for each alerting container
+            all_logs = []
+            for cn in container_names:
+                logs = await loki_client.query_error_logs(container_name=cn, minutes=5, limit=30)
+                all_logs.extend(logs)
+
+            # If no specific container, query all
+            if not container_names:
+                all_logs = await loki_client.query_error_logs(container_name="", minutes=5, limit=30)
+
+            if all_logs:
+                logs_text = "\n".join(all_logs[:30])
+                containers_str = ", ".join(container_names) if container_names else "all"
+
+                messages = [
+                    {"role": "system", "content": (
+                        "You are a DevOps diagnostic assistant. Analyze these container error logs and provide:\n"
+                        "1) Root cause - what went wrong\n"
+                        "2) Impact - what's affected\n"
+                        "3) Suggested fix - specific commands or config changes\n"
+                        "Be concise. Max 3-4 sentences per section."
+                    )},
+                    {"role": "user", "content": (
+                        f"Alert: {rule_name}\n"
+                        f"Containers: {containers_str}\n"
+                        f"Error logs (last 5 minutes):\n{logs_text}"
+                    )},
+                ]
+
+                diagnosis = await openwebui_client.chat_completion(
+                    messages=messages,
+                    model=settings.ai_model,
+                )
+
+                if diagnosis:
+                    diag_content = f"\U0001f50d **AI Diagnosis for: {rule_name}**\n{diagnosis}"
+                    if len(diag_content) > 2000:
+                        diag_content = diag_content[:1997] + "..."
+
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        await client.post(
+                            discord_url,
+                            json={"content": diag_content},
+                            headers=headers,
+                        )
+                    logger.info("AI diagnosis posted to Discord")
+                else:
+                    logger.warning("AI diagnosis unavailable (Open WebUI error)")
+            else:
+                logger.info("No error logs found in Loki for diagnosis")
+        except Exception as e:
+            logger.error(f"AI diagnosis failed: {e}")
+
+    return {"success": True, "discord_status": 200}
 
 
 if __name__ == "__main__":

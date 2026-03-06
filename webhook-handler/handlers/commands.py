@@ -45,6 +45,7 @@ class CommandRouter:
         slack_client=None,
         github_client: Optional[GitHubClient] = None,
         mcp_client: Optional[MCPProxyClient] = None,
+        loki_client=None,
     ):
         self.openwebui = openwebui_client
         self.n8n = n8n_client
@@ -52,6 +53,7 @@ class CommandRouter:
         self._slack_client = slack_client
         self._github_client = github_client
         self._mcp_client = mcp_client
+        self._loki_client = loki_client
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -75,7 +77,7 @@ class CommandRouter:
 
         known_commands = {
             "ask", "workflow", "workflows", "status", "help",
-            "report", "pr-review", "pr", "mcp",
+            "report", "pr-review", "pr", "mcp", "diagnose",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -100,6 +102,8 @@ class CommandRouter:
                 await self._handle_pr_review(ctx)
             elif ctx.subcommand == "mcp":
                 await self._handle_mcp(ctx)
+            elif ctx.subcommand == "diagnose":
+                await self._handle_diagnose(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
             else:
@@ -301,9 +305,69 @@ class CommandRouter:
             "`/aiui workflows` — List active n8n workflows\n"
             "`/aiui report` — Generate end-of-day activity report\n"
             "`/aiui status` — Check service health\n"
+            "`/aiui diagnose [container]` \u2014 AI diagnosis of recent errors\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
+
+    async def _handle_diagnose(self, ctx: CommandContext) -> None:
+        """Query Loki for error logs and run AI diagnosis."""
+        if not self._loki_client:
+            await ctx.respond("Loki not configured. Cannot run diagnosis.")
+            return
+
+        container_name = ctx.arguments.strip() if ctx.arguments else ""
+        target = container_name or "all containers"
+
+        logger.info(f"[{ctx.platform}] diagnose '{target}' from {ctx.user_name}")
+        await ctx.respond(f"Diagnosing **{target}**... (querying last 5 minutes of error logs)")
+
+        logs = await self._loki_client.query_error_logs(
+            container_name=container_name,
+            minutes=5,
+            limit=50,
+        )
+
+        if not logs:
+            await ctx.respond(f"No recent errors found for **{target}** in the last 5 minutes.")
+            return
+
+        logs_text = "\n".join(logs[:30])
+
+        messages = [
+            {"role": "system", "content": (
+                "You are a DevOps diagnostic assistant. Analyze these container error logs and provide:\n"
+                "1) Root cause - what went wrong\n"
+                "2) Impact - what's affected\n"
+                "3) Suggested fix - specific commands or config changes\n"
+                "Be concise. Max 3-4 sentences per section."
+            )},
+            {"role": "user", "content": (
+                f"Container: {target}\n"
+                f"Error logs (last 5 minutes, {len(logs)} lines):\n{logs_text}"
+            )},
+        ]
+
+        diagnosis = await self.openwebui.chat_completion(
+            messages=messages,
+            model=self.ai_model,
+        )
+
+        if not diagnosis:
+            # Fallback: show raw logs
+            raw = logs_text[:1500]
+            await ctx.respond(
+                f"AI diagnosis unavailable. Raw error logs for **{target}**:\n```\n{raw}\n```"
+            )
+            return
+
+        response = f"\U0001f50d **Diagnosis for {target}** ({len(logs)} errors, last 5 min)\n\n{diagnosis}"
+
+        limit = 2000 if ctx.platform == "discord" else 3000
+        if len(response) > limit:
+            response = response[:limit - 20] + "\n\n... (truncated)"
+
+        await ctx.respond(response)
 
     async def _handle_report(self, ctx: CommandContext) -> None:
         """Generate an end-of-day report with AI summary."""
