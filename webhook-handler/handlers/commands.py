@@ -78,6 +78,7 @@ class CommandRouter:
         known_commands = {
             "ask", "workflow", "workflows", "status", "help",
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
+            "email", "sheets",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -106,6 +107,10 @@ class CommandRouter:
                 await self._handle_diagnose(ctx)
             elif ctx.subcommand == "analyze":
                 await self._handle_analyze(ctx)
+            elif ctx.subcommand == "email":
+                await self._handle_email(ctx)
+            elif ctx.subcommand == "sheets":
+                await self._handle_sheets(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
             else:
@@ -309,6 +314,8 @@ class CommandRouter:
             "`/aiui status` — Check service health\n"
             "`/aiui diagnose [container]` \u2014 AI diagnosis of recent errors\n"
             "`/aiui analyze [owner/repo]` \u2014 AI analysis of a GitHub codebase\n"
+            "`/aiui email` \u2014 Summarize recent emails (via n8n Gmail)\n"
+            "`/aiui sheets [daily|errors]` \u2014 Generate report to Google Sheets\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -427,6 +434,169 @@ class CommandRouter:
             response = response[:limit - 20] + "\n\n... (truncated)"
 
         await ctx.respond(response)
+
+    async def _handle_email(self, ctx: CommandContext) -> None:
+        """Summarize recent emails via n8n Gmail workflow."""
+        if not self.n8n or not self.n8n.api_key:
+            await ctx.respond("n8n not configured. Cannot access Gmail.")
+            return
+
+        logger.info(f"[{ctx.platform}] email summary from {ctx.user_name}")
+        await ctx.respond("Fetching email summary... (triggering Gmail workflow)")
+
+        result = await self._trigger_n8n_by_name(
+            "gmail-inbox-summary",
+            payload={"action": "summary", "limit": 10},
+        )
+
+        if result is None:
+            await ctx.respond(
+                "Gmail workflow not found in n8n. Please create a workflow named "
+                "`gmail-inbox-summary` with a Webhook trigger and Gmail node.\n"
+                "n8n UI: https://n8n.srv1041674.hstgr.cloud"
+            )
+            return
+
+        if isinstance(result, dict) and result.get("emails"):
+            emails_text = json.dumps(result["emails"], indent=2)[:3000]
+            messages = [
+                {"role": "system", "content": (
+                    "Summarize these emails concisely. For each: sender, subject, "
+                    "1-line summary. Group by importance. Be brief."
+                )},
+                {"role": "user", "content": f"Recent emails:\n{emails_text}"},
+            ]
+            summary = await self.openwebui.chat_completion(
+                messages=messages, model=self.ai_model
+            )
+            if summary:
+                response = f"\U0001f4e7 **Email Summary**\n\n{summary}"
+            else:
+                response = f"\U0001f4e7 **Email Summary** (raw)\n```\n{emails_text[:1500]}\n```"
+        elif isinstance(result, dict) and result.get("summary"):
+            response = f"\U0001f4e7 **Email Summary**\n\n{result['summary']}"
+        else:
+            response = f"\U0001f4e7 **Email Summary**\n\n{json.dumps(result, indent=2)[:1500]}"
+
+        limit = 2000 if ctx.platform == "discord" else 3000
+        if len(response) > limit:
+            response = response[:limit - 20] + "\n\n... (truncated)"
+        await ctx.respond(response)
+
+    async def _handle_sheets(self, ctx: CommandContext) -> None:
+        """Generate a report and write to Google Sheets via n8n."""
+        if not self.n8n or not self.n8n.api_key:
+            await ctx.respond("n8n not configured. Cannot access Google Sheets.")
+            return
+
+        report_type = ctx.arguments.strip().lower() if ctx.arguments else "daily"
+        if report_type not in ("daily", "errors"):
+            await ctx.respond("Usage: `/aiui sheets [daily|errors]`")
+            return
+
+        logger.info(f"[{ctx.platform}] sheets {report_type} report from {ctx.user_name}")
+        await ctx.respond(f"Generating **{report_type}** report for Google Sheets...")
+
+        if report_type == "daily":
+            now = datetime.now(timezone.utc)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            commits, executions, health = await asyncio.gather(
+                self._gather_github_commits(today_start),
+                self._gather_n8n_executions(today_start),
+                self._gather_health(),
+            )
+            payload = {
+                "action": "daily_report",
+                "date": now.strftime("%Y-%m-%d"),
+                "commits": commits or [],
+                "executions": executions or [],
+                "health": health,
+            }
+        else:
+            logs = []
+            if self._loki_client:
+                logs = await self._loki_client.query_error_logs(
+                    container_name="", minutes=60, limit=50
+                )
+            payload = {
+                "action": "error_report",
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "errors": logs,
+                "error_count": len(logs),
+            }
+
+        result = await self._trigger_n8n_by_name(
+            "sheets-report",
+            payload=payload,
+        )
+
+        if result is None:
+            await ctx.respond(
+                "Sheets workflow not found in n8n. Please create a workflow named "
+                "`sheets-report` with a Webhook trigger and Google Sheets node.\n"
+                "n8n UI: https://n8n.srv1041674.hstgr.cloud"
+            )
+            return
+
+        if isinstance(result, dict) and result.get("sheet_url"):
+            await ctx.respond(
+                f"\u2705 **{report_type.title()} report** written to Google Sheets!\n"
+                f"{result['sheet_url']}"
+            )
+        else:
+            await ctx.respond(
+                f"\u2705 **{report_type.title()} report** sent to Google Sheets workflow.\n"
+                f"Response: {json.dumps(result, indent=2)[:500]}"
+            )
+
+    async def _trigger_n8n_by_name(
+        self, workflow_name: str, payload: dict = None
+    ) -> Optional[Any]:
+        """Find an n8n workflow by name and trigger it. Returns result or None."""
+        try:
+            headers = {
+                "X-N8N-API-KEY": self.n8n.api_key,
+                "Accept": "application/json",
+            }
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{self.n8n.base_url}/api/v1/workflows",
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            workflows = data.get("data", data) if isinstance(data, dict) else data
+            if not isinstance(workflows, list):
+                return None
+
+            target = None
+            for wf in workflows:
+                if wf.get("name", "").lower() == workflow_name.lower():
+                    target = wf
+                    break
+
+            if not target:
+                return None
+
+            nodes = target.get("nodes", [])
+            webhook_path = None
+            for node in nodes:
+                if "webhook" in node.get("type", "").lower():
+                    webhook_path = node.get("parameters", {}).get("path", "")
+                    break
+
+            if webhook_path:
+                return await self.n8n.trigger_workflow(
+                    webhook_path=webhook_path, payload=payload or {}
+                )
+            else:
+                return await self.n8n.trigger_workflow_by_id(
+                    workflow_id=target["id"], payload=payload or {}
+                )
+        except Exception as e:
+            logger.error(f"Error triggering n8n workflow '{workflow_name}': {e}")
+            return None
 
     async def _handle_report(self, ctx: CommandContext) -> None:
         """Generate an end-of-day report with AI summary."""
