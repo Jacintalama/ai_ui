@@ -116,7 +116,9 @@ async def lifespan(app: FastAPI):
         github_client=github_client,
         n8n_client=n8n_client,
         ai_model=settings.ai_model,
-        ai_system_prompt=settings.ai_system_prompt
+        ai_system_prompt=settings.ai_system_prompt,
+        loki_client=loki_client,
+        mcp_client=mcp_client,
     )
 
     # Slack client (only if configured)

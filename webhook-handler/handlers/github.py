@@ -20,13 +20,17 @@ class GitHubWebhookHandler:
         github_client: GitHubClient,
         n8n_client: Optional[N8NClient] = None,
         ai_model: str = "gpt-4-turbo",
-        ai_system_prompt: str = ""
+        ai_system_prompt: str = "",
+        loki_client=None,
+        mcp_client=None,
     ):
         self.openwebui = openwebui_client
         self.github = github_client
         self.n8n = n8n_client
         self.ai_model = ai_model
         self.ai_system_prompt = ai_system_prompt
+        self._loki_client = loki_client
+        self._mcp_client = mcp_client
 
     async def handle_event(
         self,
@@ -193,12 +197,62 @@ class GitHubWebhookHandler:
         # Fetch PR file summary for AI review
         diff_summary = await self.github.get_pr_files(owner, repo_name, pr_number)
 
-        # Run AI review via Open WebUI
+        # Gather enrichment data
+        codebase_context = ""
+        error_context = ""
+
+        try:
+            # Extract unique directories from changed files
+            changed_dirs = set()
+            if diff_summary:
+                for line in diff_summary.split("\n"):
+                    if line.startswith("**") and "/" in line:
+                        parts = line.strip("* ").split("/")
+                        if len(parts) > 1:
+                            changed_dirs.add(parts[0])
+
+            # Fetch repo overview for codebase context
+            if changed_dirs:
+                overview = await self.github.get_repo_overview(owner, repo_name)
+                if overview:
+                    tree = "\n".join(overview.get("tree", [])[:30])
+                    desc = overview.get("description", "")
+                    lang = overview.get("language", "")
+                    codebase_context = (
+                        f"\n\nCodebase Context:\n"
+                        f"Description: {desc}\n"
+                        f"Language: {lang}\n"
+                        f"File tree:\n{tree}"
+                    )
+
+            # Check Loki for recent errors related to changed components
+            if self._loki_client and changed_dirs:
+                service_errors = []
+                for dir_name in list(changed_dirs)[:3]:
+                    logs = await self._loki_client.query_error_logs(
+                        container_name=dir_name.replace("_", "-"),
+                        minutes=60,
+                        limit=10,
+                    )
+                    if logs:
+                        service_errors.append(f"{dir_name}: {len(logs)} errors")
+                        service_errors.extend([f"  {l}" for l in logs[:3]])
+
+                if service_errors:
+                    error_context = (
+                        f"\n\nRecent Error History (last hour):\n"
+                        + "\n".join(service_errors)
+                    )
+        except Exception as e:
+            logger.warning(f"PR enrichment failed (non-fatal): {e}")
+
+        # Run enriched AI review via Open WebUI
         body = pr.get("body", "") or ""
         review = await self.openwebui.analyze_pull_request(
             title=title,
             body=body,
-            diff_summary=diff_summary or "No file changes available",
+            diff_summary=(diff_summary or "No file changes available")
+                + codebase_context + error_context,
             labels=[label.get("name", "") for label in pr.get("labels", [])],
             model=self.ai_model,
         )
@@ -226,9 +280,14 @@ class GitHubWebhookHandler:
 
             # Discord summary of the review
             summary = review[:200].split("\n")[0]
+            enrichment = ""
+            if codebase_context:
+                enrichment += " + codebase context"
+            if error_context:
+                enrichment += " + error history"
             await self._notify_discord(
                 f"\U0001f50d **AI Review for PR #{pr_number}**: {title}\n"
-                f"by **{author}** \u2192 `{base_branch}`\n"
+                f"by **{author}** \u2192 `{base_branch}`{enrichment}\n"
                 f"{summary}\n{html_url}"
             )
         else:
