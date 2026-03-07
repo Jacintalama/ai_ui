@@ -1,0 +1,154 @@
+const express = require("express");
+const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+const app = express();
+app.use(express.json());
+
+const PORT = 3000;
+const WORKSPACE = "/workspace";
+const CLAUDE_TIMEOUT_MS = 120_000;
+
+let reviewing = false;
+
+function log(msg) {
+  console.log(`[${new Date().toISOString()}] ${msg}`);
+}
+
+function runCommand(cmd, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    log(`Running: ${cmd} ${args.join(" ")}`);
+    const proc = spawn(cmd, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d) => (stdout += d.toString()));
+    proc.stderr.on("data", (d) => (stderr += d.toString()));
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`${cmd} exited with code ${code}: ${stderr.trim()}`));
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+    proc.on("error", reject);
+  });
+}
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
+app.post("/review", async (req, res) => {
+  if (reviewing) {
+    return res.status(503).json({ error: "Review already in progress", status: "busy" });
+  }
+
+  const { owner, repo, pr_number, branch, base_branch } = req.body;
+
+  if (!owner || !repo || !pr_number || !branch || !base_branch) {
+    return res.status(400).json({
+      error: "Missing required fields: owner, repo, pr_number, branch, base_branch",
+      status: "error",
+    });
+  }
+
+  reviewing = true;
+  const startTime = Date.now();
+
+  try {
+    const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+    const repoDir = path.join(WORKSPACE, owner, repo);
+    const repoUrl = `https://${GITHUB_TOKEN}@github.com/${owner}/${repo}.git`;
+
+    // Clone or fetch
+    if (!fs.existsSync(path.join(repoDir, ".git"))) {
+      log(`Cloning ${owner}/${repo}...`);
+      fs.mkdirSync(path.join(WORKSPACE, owner), { recursive: true });
+      await runCommand("git", ["clone", repoUrl, repoDir]);
+    } else {
+      log(`Fetching latest for ${owner}/${repo}...`);
+      await runCommand("git", ["fetch", "origin"], { cwd: repoDir });
+    }
+
+    // Checkout PR branch
+    log(`Checking out branch ${branch}...`);
+    await runCommand("git", ["checkout", branch], { cwd: repoDir });
+    await runCommand("git", ["pull", "origin", branch], { cwd: repoDir });
+
+    // Generate diff
+    log(`Generating diff ${base_branch}...${branch}...`);
+    const diff = await runCommand("git", ["diff", `${base_branch}...${branch}`], { cwd: repoDir });
+    fs.writeFileSync("/tmp/pr-diff.txt", diff);
+    log(`Diff written to /tmp/pr-diff.txt (${diff.length} bytes)`);
+
+    // Run Claude Code
+    const promptText = `Review PR #${pr_number} for the ${owner}/${repo} repository.
+
+The git diff is at /tmp/pr-diff.txt. Read it to understand what changed.
+
+Review the actual source files in this repository for full context.
+Follow the CLAUDE.md guidelines in the repo root.
+
+Provide a structured review covering:
+1. Summary of changes
+2. Potential bugs or issues
+3. Security concerns
+4. Suggestions for improvement
+
+Be concise and actionable.`;
+
+    log("Starting Claude Code review...");
+    const review = await new Promise((resolve, reject) => {
+      const proc = spawn("claude", ["-p", promptText, "--output-format", "text"], {
+        cwd: repoDir,
+        env: {
+          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+          HOME: "/root",
+          PATH: process.env.PATH,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      let stdout = "";
+      let stderr = "";
+      proc.stdout.on("data", (d) => (stdout += d.toString()));
+      proc.stderr.on("data", (d) => (stderr += d.toString()));
+
+      const timeout = setTimeout(() => {
+        log("Claude Code timed out, killing process...");
+        proc.kill("SIGTERM");
+        reject(new Error("Claude Code timed out after 120 seconds"));
+      }, CLAUDE_TIMEOUT_MS);
+
+      proc.on("close", (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          reject(new Error(`Claude exited with code ${code}: ${stderr.trim()}`));
+        } else {
+          resolve(stdout.trim());
+        }
+      });
+
+      proc.on("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    log(`Review completed in ${duration}s`);
+
+    res.json({ review, status: "success", duration_seconds: parseFloat(duration) });
+  } catch (err) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    log(`Review failed after ${duration}s: ${err.message}`);
+    res.status(500).json({ error: err.message, status: "error" });
+  } finally {
+    reviewing = false;
+  }
+});
+
+app.listen(PORT, () => {
+  log(`pr-reviewer listening on port ${PORT}`);
+});
