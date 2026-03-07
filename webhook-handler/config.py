@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     n8n_url: str = "https://n8n.srv1041674.hstgr.cloud"
     n8n_api_key: str = ""
 
+    # PR Reviewer (Claude Code)
+    pr_reviewer_url: str = "http://pr-reviewer:3000"
+
     # Slack
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
