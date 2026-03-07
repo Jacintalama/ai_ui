@@ -120,6 +120,7 @@ services:
       - DISCORD_ALERT_CHANNEL_ID=${DISCORD_ALERT_CHANNEL_ID:-}
       - REPORT_GITHUB_REPO=${REPORT_GITHUB_REPO:-TheLukasHenry/proxy-server}
       - REPORT_SLACK_CHANNEL=${REPORT_SLACK_CHANNEL:-}
+      - PR_REVIEWER_URL=${PR_REVIEWER_URL:-http://pr-reviewer:3000}
     networks:
       - backend
     depends_on:
@@ -129,6 +130,34 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+
+  # ===========================================================================
+  # PR REVIEWER - Claude Code PR Reviews
+  # ===========================================================================
+  pr-reviewer:
+    build: ./pr-reviewer
+    container_name: pr-reviewer
+    restart: unless-stopped
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - pr-review-workspace:/workspace
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
 
   # ==========================================================================
@@ -636,4 +665,5 @@ volumes:
   pipelines-data:
   loki-data:
   promtail-positions:
+  pr-review-workspace:
   grafana-data:
