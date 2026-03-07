@@ -151,6 +151,53 @@ class GitHubWebhookHandler:
         except Exception as e:
             logger.warning(f"Discord notification error: {e}")
 
+    async def _request_claude_code_review(
+        self,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        branch: str,
+        base_branch: str,
+    ) -> Optional[str]:
+        """Request a PR review from the Claude Code pr-reviewer container.
+
+        Returns the review text, or None if the service is unavailable.
+        """
+        pr_reviewer_url = settings.pr_reviewer_url
+        if not pr_reviewer_url:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(
+                    f"{pr_reviewer_url}/review",
+                    json={
+                        "owner": owner,
+                        "repo": repo,
+                        "pr_number": pr_number,
+                        "branch": branch,
+                        "base_branch": base_branch,
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "success" and data.get("review"):
+                        logger.info(
+                            f"Claude Code review completed for PR #{pr_number} "
+                            f"in {data.get('duration_seconds', '?')}s"
+                        )
+                        return data["review"]
+                logger.warning(
+                    f"pr-reviewer returned {resp.status_code}: {resp.text[:200]}"
+                )
+                return None
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.info(f"pr-reviewer unavailable, falling back to Open WebUI: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"pr-reviewer error: {e}")
+            return None
+
     async def _handle_pull_request_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle pull request events - AI review + notifications."""
         action = payload.get("action")
@@ -246,16 +293,25 @@ class GitHubWebhookHandler:
         except Exception as e:
             logger.warning(f"PR enrichment failed (non-fatal): {e}")
 
-        # Run enriched AI review via Open WebUI
-        body = pr.get("body", "") or ""
-        review = await self.openwebui.analyze_pull_request(
-            title=title,
-            body=body,
-            diff_summary=(diff_summary or "No file changes available")
-                + codebase_context + error_context,
-            labels=[label.get("name", "") for label in pr.get("labels", [])],
-            model=self.ai_model,
+        # Try Claude Code review first, fall back to Open WebUI
+        head_branch = pr.get("head", {}).get("ref", "")
+        review = await self._request_claude_code_review(
+            owner, repo_name, pr_number, head_branch, base_branch
         )
+        reviewer_name = "Claude Code"
+
+        if review is None:
+            # Fallback to existing Open WebUI review
+            body = pr.get("body", "") or ""
+            review = await self.openwebui.analyze_pull_request(
+                title=title,
+                body=body,
+                diff_summary=(diff_summary or "No file changes available")
+                    + codebase_context + error_context,
+                labels=[label.get("name", "") for label in pr.get("labels", [])],
+                model=self.ai_model,
+            )
+            reviewer_name = "Open WebUI"
 
         result = {
             "success": True,
@@ -265,7 +321,9 @@ class GitHubWebhookHandler:
 
         # Post review as GitHub comment
         if review:
-            formatted = self.github.format_ai_response(review)
+            formatted = self.github.format_ai_response(
+                review + f"\n\n---\n*Reviewed by {reviewer_name}*"
+            )
             comment_id = await self.github.post_issue_comment(
                 owner=owner,
                 repo=repo_name,
@@ -280,7 +338,7 @@ class GitHubWebhookHandler:
 
             # Discord summary of the review
             summary = review[:200].split("\n")[0]
-            enrichment = ""
+            enrichment = f" | Reviewed by {reviewer_name}"
             if codebase_context:
                 enrichment += " + codebase context"
             if error_context:
