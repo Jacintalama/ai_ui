@@ -299,9 +299,16 @@ class GitHubWebhookHandler:
 
         # Try Claude Code review first, fall back to Open WebUI
         head_branch = pr.get("head", {}).get("ref", "")
-        claude_result = await self._request_claude_code_review(
-            owner, repo_name, pr_number, head_branch, base_branch
-        )
+        claude_result = None
+        if head_branch and base_branch:
+            claude_result = await self._request_claude_code_review(
+                owner, repo_name, pr_number, head_branch, base_branch
+            )
+        else:
+            logger.warning(
+                f"Skipping Claude Code review: missing branch refs "
+                f"(head={head_branch!r}, base={base_branch!r})"
+            )
         review_duration = 0
         reviewer_name = "Claude Code"
 
