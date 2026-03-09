@@ -103,9 +103,12 @@ async def lifespan(app: FastAPI):
     # n8n client (created before github_handler so it can be passed in)
     n8n_client = N8NClient(
         base_url=settings.n8n_url,
-        api_key=settings.n8n_api_key
+        api_key=settings.n8n_api_key,
+        webhook_url=settings.n8n_webhook_url,
     )
-    logger.info(f"n8n URL: {settings.n8n_url}")
+    logger.info(f"n8n API URL: {settings.n8n_url}")
+    if settings.n8n_webhook_url != settings.n8n_url:
+        logger.info(f"n8n Webhook URL: {settings.n8n_webhook_url}")
 
     # Loki client for log queries
     loki_client = LokiClient(base_url=settings.loki_url)

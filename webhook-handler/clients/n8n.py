@@ -9,8 +9,9 @@ logger = logging.getLogger(__name__)
 class N8NClient:
     """Client for triggering n8n workflows via webhook nodes."""
 
-    def __init__(self, base_url: str, api_key: str = ""):
+    def __init__(self, base_url: str, api_key: str = "", webhook_url: str = ""):
         self.base_url = base_url.rstrip("/")
+        self.webhook_url = webhook_url.rstrip("/") if webhook_url else self.base_url
         self.api_key = api_key
         self.timeout = 120.0  # n8n workflows can be slow (AI review takes 60-90s)
 
@@ -32,7 +33,7 @@ class N8NClient:
         Returns:
             Workflow response dict, or None on error
         """
-        url = f"{self.base_url}/webhook/{webhook_path}"
+        url = f"{self.webhook_url}/webhook/{webhook_path}"
         headers = {"Content-Type": "application/json"}
 
         try:

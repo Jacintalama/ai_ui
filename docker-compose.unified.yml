@@ -111,6 +111,7 @@ services:
       - MCP_USER_GROUPS=MCP-Admin
       - AUTOMATION_PIPE_MODEL=${AUTOMATION_PIPE_MODEL:-webhook_automation.webhook-automation}
       - N8N_URL=${N8N_API_URL:-https://n8n.srv1041674.hstgr.cloud}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://n8n.srv1041674.hstgr.cloud}
       - N8N_API_KEY=${N8N_API_KEY:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
