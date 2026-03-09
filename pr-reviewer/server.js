@@ -8,7 +8,8 @@ app.use(express.json());
 
 const PORT = 3000;
 const WORKSPACE = "/workspace";
-const CLAUDE_TIMEOUT_MS = 120_000;
+const CLAUDE_TIMEOUT_MS = 300_000;
+const MAX_DIFF_BYTES = 50_000;
 
 let reviewing = false;
 
@@ -78,7 +79,11 @@ app.post("/review", async (req, res) => {
 
     // Generate diff
     log(`Generating diff ${base_branch}...${branch}...`);
-    const diff = await runCommand("git", ["diff", `${base_branch}...${branch}`], { cwd: repoDir });
+    let diff = await runCommand("git", ["diff", `${base_branch}...${branch}`], { cwd: repoDir });
+    if (diff.length > MAX_DIFF_BYTES) {
+      log(`Diff too large (${diff.length} bytes), truncating to ${MAX_DIFF_BYTES} bytes`);
+      diff = diff.substring(0, MAX_DIFF_BYTES) + "\n\n... [DIFF TRUNCATED - full diff was " + diff.length + " bytes] ...";
+    }
     fs.writeFileSync("/tmp/pr-diff.txt", diff);
     log(`Diff written to /tmp/pr-diff.txt (${diff.length} bytes)`);
 
@@ -118,7 +123,7 @@ Be concise and actionable.`;
       const timeout = setTimeout(() => {
         log("Claude Code timed out, killing process...");
         proc.kill("SIGTERM");
-        reject(new Error("Claude Code timed out after 120 seconds"));
+        reject(new Error("Claude Code timed out after 300 seconds"));
       }, CLAUDE_TIMEOUT_MS);
 
       proc.on("close", (code) => {

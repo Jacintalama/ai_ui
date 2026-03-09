@@ -168,7 +168,7 @@ class GitHubWebhookHandler:
             return None
 
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
+            async with httpx.AsyncClient(timeout=360.0) as client:
                 resp = await client.post(
                     f"{pr_reviewer_url}/review",
                     json={
