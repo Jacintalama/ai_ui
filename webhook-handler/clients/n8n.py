@@ -44,12 +44,17 @@ class N8NClient:
                 )
                 response.raise_for_status()
 
-                # n8n webhooks may return empty body on success
                 text = response.text.strip()
                 if text:
                     result = response.json()
                 else:
-                    result = {"status": "ok"}
+                    # Empty body with responseNode mode means workflow errored
+                    # before reaching the Respond node (e.g. credential issue)
+                    logger.warning(
+                        f"n8n webhook '{webhook_path}' returned empty body "
+                        f"(HTTP {response.status_code}) — workflow likely errored"
+                    )
+                    result = {"status": "error", "error": "Workflow returned empty response — check n8n execution log"}
                 logger.info(f"n8n workflow triggered: {webhook_path}")
                 return result
 

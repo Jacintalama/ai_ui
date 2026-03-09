@@ -457,22 +457,34 @@ class CommandRouter:
             )
             return
 
-        if isinstance(result, dict) and result.get("emails"):
-            emails_text = json.dumps(result["emails"], indent=2)[:3000]
-            messages = [
-                {"role": "system", "content": (
-                    "Summarize these emails concisely. For each: sender, subject, "
-                    "1-line summary. Group by importance. Be brief."
-                )},
-                {"role": "user", "content": f"Recent emails:\n{emails_text}"},
-            ]
-            summary = await self.openwebui.chat_completion(
-                messages=messages, model=self.ai_model
+        if isinstance(result, dict) and result.get("status") == "error":
+            response = (
+                "\u274c **Email workflow error**\n\n"
+                "The Gmail workflow ran but returned no data. Likely causes:\n"
+                "- Gmail OAuth credential not connected in n8n\n"
+                "- OAuth token expired — re-authorize in n8n Credentials\n\n"
+                f"Check: https://n8n.srv1041674.hstgr.cloud"
             )
-            if summary:
-                response = f"\U0001f4e7 **Email Summary**\n\n{summary}"
+        elif isinstance(result, dict) and "emails" in result:
+            emails = result["emails"]
+            if not emails:
+                response = "\U0001f4e7 **Email Summary**\n\nNo unread emails found."
             else:
-                response = f"\U0001f4e7 **Email Summary** (raw)\n```\n{emails_text[:1500]}\n```"
+                emails_text = json.dumps(emails, indent=2)[:3000]
+                messages = [
+                    {"role": "system", "content": (
+                        "Summarize these emails concisely. For each: sender, subject, "
+                        "1-line summary. Group by importance. Be brief."
+                    )},
+                    {"role": "user", "content": f"Recent emails:\n{emails_text}"},
+                ]
+                summary = await self.openwebui.chat_completion(
+                    messages=messages, model=self.ai_model
+                )
+                if summary:
+                    response = f"\U0001f4e7 **Email Summary**\n\n{summary}"
+                else:
+                    response = f"\U0001f4e7 **Email Summary** (raw)\n```\n{emails_text[:1500]}\n```"
         elif isinstance(result, dict) and result.get("summary"):
             response = f"\U0001f4e7 **Email Summary**\n\n{result['summary']}"
         else:
@@ -538,7 +550,16 @@ class CommandRouter:
             )
             return
 
-        if isinstance(result, dict) and result.get("sheet_url"):
+        if isinstance(result, dict) and result.get("status") == "error":
+            await ctx.respond(
+                f"\u274c **Sheets workflow error**\n\n"
+                "The sheets-report workflow ran but returned no data. Likely causes:\n"
+                "- Google Sheets OAuth credential not connected\n"
+                "- Sheet ID not configured (still has placeholder)\n"
+                "- OAuth token expired\n\n"
+                "Check: https://n8n.srv1041674.hstgr.cloud"
+            )
+        elif isinstance(result, dict) and result.get("sheet_url"):
             await ctx.respond(
                 f"\u2705 **{report_type.title()} report** written to Google Sheets!\n"
                 f"{result['sheet_url']}"
