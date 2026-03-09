@@ -33,6 +33,18 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Block vulnerability scanners (PHP, CGI, shell exploits)
+	# ---------------------------------------------------------------------------
+	@scanners {
+		path /vendor/* /phpunit/* /lib/phpunit/* /cgi-bin/* /wp-admin/* /wp-login*
+		path /.env /.git/* /config.php /admin.php /shell* /eval-stdin*
+		path /laravel/* /yii/* /zend/* /drupal/* /wordpress/*
+	}
+	handle @scanners {
+		respond 404
+	}
+
+	# ---------------------------------------------------------------------------
 	# Health check endpoints (bypass gateway)
 	# ---------------------------------------------------------------------------
 	handle /health {

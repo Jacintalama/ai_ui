@@ -124,7 +124,7 @@ post '{
       "refId": "A",
       "datasourceUid": "P8E80F9AEF21F6940",
       "model": {
-        "expr": "count_over_time({container_name=~\"api-gateway|open-webui\"} |~ \"(?i)(unauthorized|forbidden|401|403)\" [5m])",
+        "expr": "count_over_time({container_name=~\"api-gateway|open-webui\"} |~ \"(?i)(unauthorized|forbidden)| (401|403) \" [5m])",
         "queryType": "range",
         "editorMode": "code"
       },
