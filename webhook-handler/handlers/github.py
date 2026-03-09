@@ -158,10 +158,10 @@ class GitHubWebhookHandler:
         pr_number: int,
         branch: str,
         base_branch: str,
-    ) -> Optional[str]:
+    ) -> Optional[dict]:
         """Request a PR review from the Claude Code pr-reviewer container.
 
-        Returns the review text, or None if the service is unavailable.
+        Returns dict with review text and metadata, or None if unavailable.
         """
         pr_reviewer_url = settings.pr_reviewer_url
         if not pr_reviewer_url:
@@ -182,11 +182,15 @@ class GitHubWebhookHandler:
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("status") == "success" and data.get("review"):
+                        duration = data.get("duration_seconds", 0)
                         logger.info(
                             f"Claude Code review completed for PR #{pr_number} "
-                            f"in {data.get('duration_seconds', '?')}s"
+                            f"in {duration}s"
                         )
-                        return data["review"]
+                        return {
+                            "review": data["review"],
+                            "duration_seconds": duration,
+                        }
                 logger.warning(
                     f"pr-reviewer returned {resp.status_code}: {resp.text[:200]}"
                 )
@@ -295,12 +299,16 @@ class GitHubWebhookHandler:
 
         # Try Claude Code review first, fall back to Open WebUI
         head_branch = pr.get("head", {}).get("ref", "")
-        review = await self._request_claude_code_review(
+        claude_result = await self._request_claude_code_review(
             owner, repo_name, pr_number, head_branch, base_branch
         )
+        review_duration = 0
         reviewer_name = "Claude Code"
 
-        if review is None:
+        if claude_result is not None:
+            review = claude_result["review"]
+            review_duration = claude_result.get("duration_seconds", 0)
+        else:
             # Fallback to existing Open WebUI review
             body = pr.get("body", "") or ""
             review = await self.openwebui.analyze_pull_request(
@@ -336,17 +344,40 @@ class GitHubWebhookHandler:
             else:
                 logger.warning(f"Failed to post AI review comment on PR #{pr_number}")
 
-            # Discord summary of the review
-            summary = review[:200].split("\n")[0]
-            enrichment = f" | Reviewed by {reviewer_name}"
-            if codebase_context:
-                enrichment += " + codebase context"
-            if error_context:
-                enrichment += " + error history"
+            # Build rich Discord summary
+            # Extract key findings from the review
+            review_lines = review.split("\n")
+            discord_preview = ""
+            for line in review_lines:
+                stripped = line.strip()
+                # Look for verdict/summary lines
+                if any(kw in stripped.lower() for kw in [
+                    "verdict", "approve", "reject", "summary of changes",
+                    "potential bugs", "security concern",
+                ]):
+                    discord_preview += f"{stripped}\n"
+            if not discord_preview:
+                discord_preview = review[:300].split("\n")[0]
+
+            # Count findings by section
+            bugs_count = review.lower().count("bug") + review.lower().count("issue")
+            security_count = review.lower().count("security")
+            suggestion_count = review.lower().count("suggestion") + review.lower().count("improve")
+
+            if reviewer_name == "Claude Code":
+                method_line = (
+                    f"\U0001f4bb **Full repo checkout** analyzed in "
+                    f"**{review_duration}s** by Claude Code CLI"
+                )
+            else:
+                method_line = "\U0001f916 Reviewed by Open WebUI (diff-only)"
+
             await self._notify_discord(
                 f"\U0001f50d **AI Review for PR #{pr_number}**: {title}\n"
-                f"by **{author}** \u2192 `{base_branch}`{enrichment}\n"
-                f"{summary}\n{html_url}"
+                f"by **{author}** \u2192 `{base_branch}`\n"
+                f"{method_line}\n\n"
+                f"{discord_preview[:500]}\n\n"
+                f"\U0001f517 {html_url}"
             )
         else:
             logger.warning(f"AI review unavailable for PR #{pr_number} (Open WebUI error)")
