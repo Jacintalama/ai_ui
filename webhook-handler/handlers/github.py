@@ -159,18 +159,18 @@ class GitHubWebhookHandler:
         branch: str,
         base_branch: str,
     ) -> Optional[dict]:
-        """Request a PR review from the Claude Code pr-reviewer container.
+        """Request a PR review from the claude-analyzer container.
 
         Returns dict with review text and metadata, or None if unavailable.
         """
-        pr_reviewer_url = settings.pr_reviewer_url
-        if not pr_reviewer_url:
+        analyzer_url = settings.claude_analyzer_url
+        if not analyzer_url:
             return None
 
         try:
             async with httpx.AsyncClient(timeout=360.0) as client:
                 resp = await client.post(
-                    f"{pr_reviewer_url}/review",
+                    f"{analyzer_url}/review",
                     json={
                         "owner": owner,
                         "repo": repo,
@@ -192,14 +192,14 @@ class GitHubWebhookHandler:
                             "duration_seconds": duration,
                         }
                 logger.warning(
-                    f"pr-reviewer returned {resp.status_code}: {resp.text[:200]}"
+                    f"claude-analyzer returned {resp.status_code}: {resp.text[:200]}"
                 )
                 return None
         except (httpx.ConnectError, httpx.TimeoutException) as e:
-            logger.info(f"pr-reviewer unavailable, falling back to Open WebUI: {e}")
+            logger.info(f"claude-analyzer unavailable, falling back to Open WebUI: {e}")
             return None
         except Exception as e:
-            logger.warning(f"pr-reviewer error: {e}")
+            logger.warning(f"claude-analyzer error: {e}")
             return None
 
     async def _handle_pull_request_event(self, payload: dict[str, Any]) -> dict[str, Any]:

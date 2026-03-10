@@ -134,19 +134,21 @@ services:
 
 
   # ===========================================================================
-  # PR REVIEWER - Claude Code PR Reviews
+  # CLAUDE ANALYZER - Claude Code Analysis (PR Review, BRE, Security, etc.)
   # ===========================================================================
-  pr-reviewer:
-    build: ./pr-reviewer
-    container_name: pr-reviewer
+  claude-analyzer:
+    build: ./claude-analyzer
+    container_name: claude-analyzer
     restart: unless-stopped
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
     volumes:
-      - pr-review-workspace:/workspace
+      - analyzer-workspace:/workspace
     networks:
-      - backend
+      backend:
+        aliases:
+          - pr-reviewer
     deploy:
       resources:
         limits:
@@ -666,5 +668,5 @@ volumes:
   pipelines-data:
   loki-data:
   promtail-positions:
-  pr-review-workspace:
+  analyzer-workspace:
   grafana-data:

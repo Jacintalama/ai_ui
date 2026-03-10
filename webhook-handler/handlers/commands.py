@@ -380,11 +380,7 @@ class CommandRouter:
         await ctx.respond(response)
 
     async def _handle_analyze(self, ctx: CommandContext) -> None:
-        """Analyze a GitHub repository and summarize what it does."""
-        if not self._github_client:
-            await ctx.respond("GitHub not configured (no GITHUB_TOKEN).")
-            return
-
+        """Extract business requirements from a GitHub repository."""
         # Parse owner/repo from arguments, default to configured repo
         repo_arg = ctx.arguments.strip() if ctx.arguments else ""
         if repo_arg and "/" in repo_arg:
@@ -403,37 +399,87 @@ class CommandRouter:
             owner, repo = parts
 
         logger.info(f"[{ctx.platform}] analyze {owner}/{repo} from {ctx.user_name}")
-        await ctx.respond(f"Analyzing **{owner}/{repo}**... (fetching repo structure and key files)")
-
-        overview = await self._github_client.get_repo_overview(owner, repo)
-        if not overview:
-            await ctx.respond(f"Failed to fetch repository `{owner}/{repo}`. Check the name and GitHub access.")
-            return
-
-        analysis = await self.openwebui.analyze_codebase(
-            repo_overview=overview,
-            model=self.ai_model,
+        await ctx.respond(
+            f"Analyzing **{owner}/{repo}**... (extracting business requirements, this may take 1-3 minutes)"
         )
 
-        if not analysis:
-            # Fallback: show raw metadata
-            desc = overview.get("description", "No description")
-            lang = overview.get("language", "Unknown")
-            tree_preview = "\n".join(overview.get("tree", [])[:20])
-            await ctx.respond(
-                f"AI analysis unavailable. Raw info for **{owner}/{repo}**:\n"
-                f"**Description:** {desc}\n**Language:** {lang}\n"
-                f"```\n{tree_preview}\n```"
-            )
-            return
+        # Try claude-analyzer container first
+        result = await self._request_claude_analysis(owner, repo)
 
-        response = f"\U0001f50d **Analysis of {owner}/{repo}**\n\n{analysis}"
+        if result:
+            report = result.get("report", "")
+            stories = result.get("user_stories", [])
+            duration = result.get("duration_seconds", 0)
+
+            response = f"**Business Requirements: {owner}/{repo}**\n\n{report}"
+
+            if stories:
+                story_lines = "\n".join(
+                    f"- As a **{s.get('role', '?')}**, I want {s.get('feature', '?')}, so that {s.get('benefit', '?')}."
+                    for s in stories[:10]
+                )
+                response += f"\n\n**User Stories**\n{story_lines}"
+
+            response += f"\n\n_Analyzed in {duration}s by Claude Code CLI_"
+        else:
+            # Fallback to Open WebUI analysis
+            if not self._github_client:
+                await ctx.respond("Claude analyzer unavailable and GitHub not configured.")
+                return
+
+            overview = await self._github_client.get_repo_overview(owner, repo)
+            if not overview:
+                await ctx.respond(f"Failed to fetch repository `{owner}/{repo}`.")
+                return
+
+            analysis = await self.openwebui.analyze_codebase(
+                repo_overview=overview, model=self.ai_model
+            )
+            if analysis:
+                response = f"**Analysis of {owner}/{repo}** (Open WebUI fallback)\n\n{analysis}"
+            else:
+                desc = overview.get("description", "No description")
+                lang = overview.get("language", "Unknown")
+                tree_preview = "\n".join(overview.get("tree", [])[:20])
+                response = (
+                    f"AI analysis unavailable. Raw info for **{owner}/{repo}**:\n"
+                    f"**Description:** {desc}\n**Language:** {lang}\n"
+                    f"```\n{tree_preview}\n```"
+                )
 
         limit = 2000 if ctx.platform == "discord" else 3000
         if len(response) > limit:
             response = response[:limit - 20] + "\n\n... (truncated)"
-
         await ctx.respond(response)
+
+    async def _request_claude_analysis(
+        self, owner: str, repo: str, branch: str = "main"
+    ) -> Optional[dict]:
+        """Request business requirements analysis from claude-analyzer container."""
+        analyzer_url = settings.claude_analyzer_url
+        if not analyzer_url:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=360.0) as client:
+                resp = await client.post(
+                    f"{analyzer_url}/analyze",
+                    json={"owner": owner, "repo": repo, "branch": branch},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "success":
+                        return data
+                logger.warning(
+                    f"claude-analyzer /analyze returned {resp.status_code}: {resp.text[:200]}"
+                )
+                return None
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.info(f"claude-analyzer unavailable, falling back to Open WebUI: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"claude-analyzer error: {e}")
+            return None
 
     async def _handle_email(self, ctx: CommandContext) -> None:
         """Summarize recent emails via n8n Gmail workflow."""

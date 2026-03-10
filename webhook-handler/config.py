@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     n8n_webhook_url: str = "https://n8n.srv1041674.hstgr.cloud"
     n8n_api_key: str = ""
 
-    # PR Reviewer (Claude Code)
-    pr_reviewer_url: str = "http://pr-reviewer:3000"
+    # Claude Analyzer (PR Review, BRE, Security, etc.)
+    claude_analyzer_url: str = "http://claude-analyzer:3000"
 
     # Slack
     slack_bot_token: str = ""
