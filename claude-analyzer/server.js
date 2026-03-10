@@ -247,12 +247,21 @@ Skip test files, build configs, and infrastructure code.`;
 
     const raw = await runClaude(promptText, repoDir, "text");
 
-    // Parse JSON from Claude's response (may have markdown fences)
+    // Parse JSON from Claude's response
+    // Claude may wrap in ```json ... ``` fences or add preamble text
     let parsed;
     try {
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
+      // Strip markdown code fences first
+      let cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      // Try to find the outermost JSON object
+      const firstBrace = cleaned.indexOf("{");
+      const lastBrace = cleaned.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+      }
+      parsed = JSON.parse(cleaned);
     } catch (e) {
+      log(`JSON parse failed: ${e.message}. Returning raw text as report.`);
       parsed = { report: raw, user_stories: [] };
     }
 
