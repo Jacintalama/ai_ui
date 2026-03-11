@@ -9,6 +9,7 @@ app.use(express.json());
 const PORT = 3000;
 const WORKSPACE = "/workspace";
 const CLAUDE_TIMEOUT_MS = 300_000;
+const REBUILD_TIMEOUT_MS = 300_000;
 const MAX_DIFF_BYTES = 50_000;
 
 let analyzing = false;
@@ -120,6 +121,35 @@ function runClaude(prompt, cwd, outputFormat = "text") {
       reject(err);
     });
   });
+}
+
+function readBRECache(repoDir) {
+  const cacheFile = path.join(repoDir, ".bre-cache.json");
+  try {
+    if (!fs.existsSync(cacheFile)) return null;
+    const data = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
+    const age = Date.now() - new Date(data.timestamp).getTime();
+    const MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+    if (age > MAX_AGE) {
+      log(`BRE cache expired (${(age / 3600000).toFixed(1)}h old)`);
+      return null;
+    }
+    log(`BRE cache hit (${(age / 60000).toFixed(0)}m old)`);
+    return data;
+  } catch (e) {
+    log(`BRE cache read failed: ${e.message}`);
+    return null;
+  }
+}
+
+function extractJSON(raw) {
+  let cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+  return JSON.parse(cleaned);
 }
 
 // --- Routes ---
@@ -248,21 +278,25 @@ Skip test files, build configs, and infrastructure code.`;
     const raw = await runClaude(promptText, repoDir, "text");
 
     // Parse JSON from Claude's response
-    // Claude may wrap in ```json ... ``` fences or add preamble text
     let parsed;
     try {
-      // Strip markdown code fences first
-      let cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      // Try to find the outermost JSON object
-      const firstBrace = cleaned.indexOf("{");
-      const lastBrace = cleaned.lastIndexOf("}");
-      if (firstBrace !== -1 && lastBrace > firstBrace) {
-        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
-      }
-      parsed = JSON.parse(cleaned);
+      parsed = extractJSON(raw);
     } catch (e) {
       log(`JSON parse failed: ${e.message}. Returning raw text as report.`);
       parsed = { report: raw, user_stories: [] };
+    }
+
+    // Cache BRE result for /rebuild reuse
+    const cacheFile = path.join(repoDir, ".bre-cache.json");
+    try {
+      fs.writeFileSync(cacheFile, JSON.stringify({
+        timestamp: new Date().toISOString(),
+        report: parsed.report || raw,
+        user_stories: parsed.user_stories || [],
+      }));
+      log(`BRE cached to ${cacheFile}`);
+    } catch (cacheErr) {
+      log(`BRE cache write failed: ${cacheErr.message}`);
     }
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -278,6 +312,231 @@ Skip test files, build configs, and infrastructure code.`;
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     const safeError = redactString(err.message);
     log(`Analysis failed after ${duration}s: ${safeError}`);
+    res.status(500).json({ error: safeError, status: "error" });
+  } finally {
+    analyzing = false;
+  }
+});
+
+app.post("/rebuild", async (req, res) => {
+  if (analyzing) {
+    return res.status(503).json({ error: "Analysis already in progress", status: "busy" });
+  }
+
+  const { owner, repo, branch = "main" } = req.body;
+
+  if (!owner || !repo) {
+    return res.status(400).json({
+      error: "Missing required fields: owner, repo",
+      status: "error",
+    });
+  }
+
+  if (!SAFE_NAME_RE.test(owner) || !SAFE_NAME_RE.test(repo)) {
+    return res.status(400).json({ error: "Invalid owner or repo name", status: "error" });
+  }
+  if (!SAFE_REF_RE.test(branch)) {
+    return res.status(400).json({ error: "Invalid branch name", status: "error" });
+  }
+
+  analyzing = true;
+  const startTime = Date.now();
+
+  try {
+    const repoDir = await cloneOrFetch(owner, repo, branch);
+
+    // Step 1: Get BRE (from cache or fresh extraction)
+    let bre = readBRECache(repoDir);
+    if (!bre) {
+      log("No BRE cache found, running extraction first...");
+      const brePrompt = `Analyze this codebase and extract ONLY the business requirements.
+
+DO NOT describe implementation details, technologies used, or code structure.
+Focus on WHAT the application does, not HOW.
+
+You MUST output valid JSON and nothing else. Output a JSON object with exactly two fields:
+
+1. "report" - A markdown string with these sections:
+   - Problem Statement (what problem does this solve?)
+   - Target Users (who uses this?)
+   - Core Features (what can users do?)
+   - Use Cases (3-5 key scenarios)
+   - Integrations (what external systems does it connect to?)
+
+2. "user_stories" - An array of objects, each with:
+   - "role": who benefits
+   - "feature": what they can do
+   - "benefit": why it matters
+
+Read the README, main entry points, route handlers, and UI components.
+Skip test files, build configs, and infrastructure code.`;
+
+      const breRaw = await runClaude(brePrompt, repoDir, "text");
+      let breParsed;
+      try {
+        breParsed = extractJSON(breRaw);
+      } catch (e) {
+        breParsed = { report: breRaw, user_stories: [] };
+      }
+      bre = {
+        timestamp: new Date().toISOString(),
+        report: breParsed.report || breRaw,
+        user_stories: breParsed.user_stories || [],
+      };
+      try {
+        fs.writeFileSync(path.join(repoDir, ".bre-cache.json"), JSON.stringify(bre));
+      } catch (e) { /* ignore cache write failure */ }
+    }
+
+    const breReport = bre.report;
+    const breStories = Array.isArray(bre.user_stories)
+      ? bre.user_stories.map(s => `- As a ${s.role}, I want ${s.feature}, so that ${s.benefit}`).join("\n")
+      : "";
+
+    // Step 2: Phase 1 — Research via Claude + WebSearch
+    log("Phase 1: Researching existing solutions...");
+    const researchPrompt = `You are a solutions researcher. Given these business requirements extracted from a codebase, find existing solutions that already solve this problem.
+
+BUSINESS REQUIREMENTS:
+${breReport}
+
+USER STORIES:
+${breStories}
+
+YOUR TASK:
+1. Use WebSearch to find open-source projects, SaaS products, and existing frameworks that solve this problem or major parts of it
+2. Search for the problem statement + "open source alternative"
+3. Search for the core features + "SaaS solution"
+4. Search for GitHub repos solving similar problems
+5. For each solution found, evaluate:
+   - Feature coverage (what % of the business requirements does it satisfy?)
+   - Maturity (stars, contributors, last commit, funding)
+   - Self-hostable vs cloud-only
+   - Customization effort
+6. Score each solution 0-100 on fit
+
+You MUST output valid JSON and nothing else. Output a JSON object with these fields:
+- "recommendation": one of "open-source", "saas", or "custom-build"
+- "reasoning": why this recommendation (2-3 sentences)
+- "solutions": array of objects each with {name, type, url, fit_score, pros, cons, effort}
+- "research_summary": markdown overview of findings
+- "gaps": array of strings — features from the business requirements that NO existing solution covers
+
+If no existing solution scores above 60, recommend "custom-build".
+Search at least 5 different queries. Be thorough.`;
+
+    const researchRaw = await runClaude(researchPrompt, repoDir, "text");
+
+    let research;
+    try {
+      research = extractJSON(researchRaw);
+    } catch (e) {
+      log(`Research JSON parse failed: ${e.message}`);
+      research = {
+        recommendation: "custom-build",
+        reasoning: "Could not parse research results. Defaulting to custom build.",
+        solutions: [],
+        research_summary: researchRaw,
+        gaps: [],
+      };
+    }
+
+    // Cache research results
+    try {
+      fs.writeFileSync(
+        path.join(repoDir, ".research-cache.json"),
+        JSON.stringify({ timestamp: new Date().toISOString(), ...research })
+      );
+    } catch (e) { /* ignore */ }
+
+    // Step 3: Phase 2 — Generate plan or PRD based on recommendation
+    log(`Phase 2: Generating ${research.recommendation === "custom-build" ? "PRD" : "integration plan"}...`);
+
+    let plan = "";
+    let prd = null;
+
+    if (research.recommendation === "custom-build") {
+      const gapsText = Array.isArray(research.gaps) ? research.gaps.join("\n- ") : "None identified";
+      const prdPrompt = `You are a product manager. Based on these business requirements and research showing no adequate existing solution, create a Product Requirements Document for a custom application.
+
+BUSINESS REQUIREMENTS:
+${breReport}
+
+RESEARCH FINDINGS (what exists but doesn't fit):
+${research.research_summary || JSON.stringify(research.solutions)}
+
+GAPS (features nothing covers):
+- ${gapsText}
+
+Create a PRD with:
+1. Executive Summary (problem, solution, KPIs)
+2. User Personas & Stories (from the user stories above)
+3. Functional Requirements (detailed, measurable, no vague language)
+4. Non-Functional Requirements (performance, security, scalability)
+5. Technical Architecture recommendation (stack, integrations)
+6. Phased Roadmap (MVP → V1 → V2)
+7. Success Metrics
+
+Be specific. "Fast" → "200ms p95 response time". "Scalable" → "handle 10K concurrent users".
+
+Output as a markdown document.`;
+
+      prd = await runClaude(prdPrompt, repoDir, "text");
+      plan = `## Recommendation: Custom Build\n\nNo existing solution covers >60% of requirements.\n\n### Gaps\n- ${gapsText}\n\nSee PRD below for full specification.`;
+    } else {
+      const planPrompt = `You are a technical architect. Based on these research findings, create an implementation plan for adopting the recommended solution.
+
+BUSINESS REQUIREMENTS:
+${breReport}
+
+RESEARCH FINDINGS:
+${JSON.stringify(research, null, 2)}
+
+Create a detailed implementation plan covering:
+1. Setup & deployment steps
+2. Configuration needed to match the business requirements
+3. Customizations required (what needs to be built on top)
+4. Migration path (if replacing an existing system)
+5. Timeline estimate (phases with milestones)
+6. Risks and mitigation
+
+Output as a markdown document.`;
+
+      plan = await runClaude(planPrompt, repoDir, "text");
+    }
+
+    // Save full report to disk
+    const reportContent = [
+      `# Rebuild Analysis: ${owner}/${repo}`,
+      `\nDate: ${new Date().toISOString()}`,
+      `\nRecommendation: **${research.recommendation}**`,
+      `\n${research.reasoning || ""}`,
+      `\n## Research Summary\n${research.research_summary || ""}`,
+      `\n## Implementation Plan\n${plan}`,
+      prd ? `\n## Product Requirements Document\n${prd}` : "",
+    ].join("\n");
+
+    try {
+      fs.writeFileSync(path.join(repoDir, ".rebuild-report.md"), reportContent);
+      log("Rebuild report saved to .rebuild-report.md");
+    } catch (e) { /* ignore */ }
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    log(`Rebuild completed in ${duration}s — recommendation: ${research.recommendation}`);
+
+    res.json({
+      status: "success",
+      recommendation: research.recommendation || "custom-build",
+      research_summary: research.research_summary || "",
+      solutions: research.solutions || [],
+      plan,
+      prd,
+      duration_seconds: parseFloat(duration),
+    });
+  } catch (err) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    const safeError = redactString(err.message);
+    log(`Rebuild failed after ${duration}s: ${safeError}`);
     res.status(500).json({ error: safeError, status: "error" });
   } finally {
     analyzing = false;
