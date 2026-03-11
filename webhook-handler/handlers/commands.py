@@ -78,7 +78,7 @@ class CommandRouter:
         known_commands = {
             "ask", "workflow", "workflows", "status", "help",
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
-            "email", "sheets",
+            "email", "sheets", "rebuild",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -107,6 +107,8 @@ class CommandRouter:
                 await self._handle_diagnose(ctx)
             elif ctx.subcommand == "analyze":
                 await self._handle_analyze(ctx)
+            elif ctx.subcommand == "rebuild":
+                await self._handle_rebuild(ctx)
             elif ctx.subcommand == "email":
                 await self._handle_email(ctx)
             elif ctx.subcommand == "sheets":
@@ -316,6 +318,7 @@ class CommandRouter:
             "`/aiui analyze [owner/repo]` \u2014 AI analysis of a GitHub codebase\n"
             "`/aiui email` \u2014 Summarize recent emails (via n8n Gmail)\n"
             "`/aiui sheets [daily|errors]` \u2014 Generate report to Google Sheets\n"
+            "`/aiui rebuild [owner/repo]` \u2014 Research solutions & generate rebuild plan\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -479,6 +482,112 @@ class CommandRouter:
             return None
         except Exception as e:
             logger.warning(f"claude-analyzer error: {e}")
+            return None
+
+    async def _handle_rebuild(self, ctx: CommandContext) -> None:
+        """Research solutions and generate rebuild plan for a GitHub repository."""
+        repo_arg = ctx.arguments.strip() if ctx.arguments else ""
+        if repo_arg and "/" in repo_arg:
+            parts = repo_arg.split("/", 1)
+            owner, repo = parts[0], parts[1]
+        elif repo_arg:
+            await ctx.respond(
+                f"Invalid format: `{repo_arg}`. Use `/aiui rebuild owner/repo`"
+            )
+            return
+        else:
+            parts = settings.report_github_repo.split("/", 1)
+            if len(parts) != 2:
+                await ctx.respond("No default repository configured.")
+                return
+            owner, repo = parts
+
+        logger.info(f"[{ctx.platform}] rebuild {owner}/{repo} from {ctx.user_name}")
+        await ctx.respond(
+            f"Researching solutions for **{owner}/{repo}**... "
+            f"(Phase 1: web search for existing solutions, Phase 2: plan/PRD generation. "
+            f"This takes 3-5 minutes)"
+        )
+
+        result = await self._request_claude_rebuild(owner, repo)
+
+        if not result:
+            await ctx.respond(
+                "Rebuild analysis failed. Claude analyzer may be unavailable or busy.\n"
+                "Try again in a few minutes, or run `/aiui analyze` first to warm the cache."
+            )
+            return
+
+        recommendation = result.get("recommendation", "unknown")
+        solutions = result.get("solutions", [])
+        plan = result.get("plan", "")
+        prd = result.get("prd")
+        duration = result.get("duration_seconds", 0)
+
+        # Build Discord response
+        if recommendation == "custom-build":
+            emoji = "\U0001f528"  # hammer
+            header = f"{emoji} **Rebuild Analysis: {owner}/{repo}**\n\n"
+            header += f"**Recommendation: Custom Build**\n"
+            header += f"{result.get('research_summary', '')[:300]}\n"
+            if prd:
+                response = header + f"\n**PRD Summary**\n{prd[:800]}"
+            else:
+                response = header + f"\n{plan[:800]}"
+        else:
+            emoji = "\U0001f50d"  # magnifying glass
+            header = f"{emoji} **Rebuild Analysis: {owner}/{repo}**\n\n"
+            top_solution = solutions[0]["name"] if solutions else "Unknown"
+            header += f"**Recommendation: {recommendation.replace('-', ' ').title()} — {top_solution}**\n\n"
+
+            sol_lines = []
+            for i, s in enumerate(solutions[:3], 1):
+                pros = ", ".join(s.get("pros", [])[:3])
+                cons = ", ".join(s.get("cons", [])[:2])
+                sol_lines.append(
+                    f"{i}. **{s['name']}** ({s.get('type', '?')}, {s.get('fit_score', '?')}/100)\n"
+                    f"   Pros: {pros}\n"
+                    f"   Cons: {cons}\n"
+                    f"   Effort: {s.get('effort', '?')}"
+                )
+            response = header + "\n".join(sol_lines)
+            if plan:
+                response += f"\n\n**Plan**\n{plan[:400]}"
+
+        response += f"\n\n_Completed in {duration}s by Claude Code CLI_"
+
+        limit = 2000 if ctx.platform == "discord" else 3000
+        if len(response) > limit:
+            response = response[:limit - 20] + "\n\n... (truncated)"
+        await ctx.respond(response)
+
+    async def _request_claude_rebuild(
+        self, owner: str, repo: str, branch: str = "main"
+    ) -> Optional[dict]:
+        """Request rebuild analysis from claude-analyzer container."""
+        analyzer_url = settings.claude_analyzer_url
+        if not analyzer_url:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=960.0) as client:
+                resp = await client.post(
+                    f"{analyzer_url}/rebuild",
+                    json={"owner": owner, "repo": repo, "branch": branch},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "success":
+                        return data
+                logger.warning(
+                    f"claude-analyzer /rebuild returned {resp.status_code}: {resp.text[:200]}"
+                )
+                return None
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.info(f"claude-analyzer /rebuild unavailable: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"claude-analyzer /rebuild error: {e}")
             return None
 
     async def _handle_email(self, ctx: CommandContext) -> None:
