@@ -156,8 +156,9 @@ const SKILLS_DIR = path.join(__dirname, "skills");
 const DEFAULT_SKILL_TIMEOUT = 300_000;
 
 function parseSkillFrontmatter(content) {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { meta: {}, prompt: content };
+  const normalized = content.replace(/\r\n/g, "\n");
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return { meta: {}, prompt: normalized };
   const meta = {};
   for (const line of match[1].split("\n")) {
     const idx = line.indexOf(":");
