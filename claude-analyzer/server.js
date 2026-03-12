@@ -82,7 +82,7 @@ async function cloneOrFetch(owner, repo, branch) {
   return repoDir;
 }
 
-function runClaude(prompt, cwd, outputFormat = "text") {
+function runClaude(prompt, cwd, outputFormat = "text", timeoutMs = CLAUDE_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const args = ["-p", prompt, "--output-format", outputFormat];
     log(`Starting Claude Code (${outputFormat} mode)...`);
@@ -104,8 +104,8 @@ function runClaude(prompt, cwd, outputFormat = "text") {
     const timeout = setTimeout(() => {
       log("Claude Code timed out, killing process...");
       proc.kill("SIGTERM");
-      reject(new Error("Claude Code timed out after 300 seconds"));
-    }, CLAUDE_TIMEOUT_MS);
+      reject(new Error(`Claude Code timed out after ${timeoutMs / 1000} seconds`));
+    }, timeoutMs);
 
     proc.on("close", (code) => {
       clearTimeout(timeout);
@@ -152,10 +152,148 @@ function extractJSON(raw) {
   return JSON.parse(cleaned);
 }
 
+const SKILLS_DIR = path.join(__dirname, "skills");
+const DEFAULT_SKILL_TIMEOUT = 300_000;
+
+function parseSkillFrontmatter(content) {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return { meta: {}, prompt: content };
+  const meta = {};
+  for (const line of match[1].split("\n")) {
+    const idx = line.indexOf(":");
+    if (idx > 0) {
+      const key = line.slice(0, idx).trim();
+      let val = line.slice(idx + 1).trim();
+      if (/^\d+$/.test(val)) val = parseInt(val, 10);
+      meta[key] = val;
+    }
+  }
+  return { meta, prompt: match[2].trim() };
+}
+
+function loadSkill(skillName) {
+  if (!SAFE_NAME_RE.test(skillName)) return null;
+  const filePath = path.join(SKILLS_DIR, `${skillName}.md`);
+  if (!fs.existsSync(filePath)) return null;
+  const content = fs.readFileSync(filePath, "utf-8");
+  return parseSkillFrontmatter(content);
+}
+
+function listSkills() {
+  if (!fs.existsSync(SKILLS_DIR)) return [];
+  return fs.readdirSync(SKILLS_DIR)
+    .filter(f => f.endsWith(".md"))
+    .map(f => {
+      const content = fs.readFileSync(path.join(SKILLS_DIR, f), "utf-8");
+      const { meta } = parseSkillFrontmatter(content);
+      return { name: meta.name || f.replace(".md", ""), description: meta.description || "" };
+    });
+}
+
+function readSkillCache(repoDir, skillName) {
+  const cacheFile = path.join(repoDir, `.skill-${skillName}-cache.json`);
+  try {
+    if (!fs.existsSync(cacheFile)) return null;
+    const data = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
+    const age = Date.now() - new Date(data.timestamp).getTime();
+    const MAX_AGE = 24 * 60 * 60 * 1000;
+    if (age > MAX_AGE) {
+      log(`Skill cache expired for ${skillName} (${(age / 3600000).toFixed(1)}h old)`);
+      return null;
+    }
+    log(`Skill cache hit for ${skillName} (${(age / 60000).toFixed(0)}m old)`);
+    return data.results;
+  } catch (e) {
+    return null;
+  }
+}
+
 // --- Routes ---
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+app.get("/skills", (_req, res) => {
+  res.json({ skills: listSkills() });
+});
+
+app.post("/skill", async (req, res) => {
+  if (analyzing) {
+    return res.status(503).json({ error: "Analysis already in progress", status: "busy" });
+  }
+
+  const { owner, repo, branch = "main", skill: skillName } = req.body;
+
+  if (!owner || !repo || !skillName) {
+    return res.status(400).json({
+      error: "Missing required fields: owner, repo, skill",
+      status: "error",
+    });
+  }
+
+  if (!SAFE_NAME_RE.test(owner) || !SAFE_NAME_RE.test(repo)) {
+    return res.status(400).json({ error: "Invalid owner or repo name", status: "error" });
+  }
+  if (!SAFE_REF_RE.test(branch)) {
+    return res.status(400).json({ error: "Invalid branch name", status: "error" });
+  }
+
+  const skill = loadSkill(skillName);
+  if (!skill) {
+    const available = listSkills().map(s => s.name);
+    return res.status(400).json({
+      error: `Unknown skill: ${skillName}. Available: ${available.join(", ")}`,
+      status: "error",
+    });
+  }
+
+  analyzing = true;
+  const startTime = Date.now();
+  const timeoutMs = skill.meta.timeout || DEFAULT_SKILL_TIMEOUT;
+
+  try {
+    const repoDir = await cloneOrFetch(owner, repo, branch);
+
+    // Check cache first
+    const cached = readSkillCache(repoDir, skillName);
+    if (cached) {
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+      log(`Skill ${skillName} served from cache in ${duration}s`);
+      return res.json({ status: "success", skill: skillName, results: cached, cached: true, duration_seconds: parseFloat(duration) });
+    }
+
+    log(`Running skill: ${skillName}...`);
+    const raw = await runClaude(skill.prompt, repoDir, "text", timeoutMs);
+
+    let results;
+    try {
+      results = extractJSON(raw);
+    } catch (e) {
+      log(`Skill ${skillName} JSON parse failed: ${e.message}`);
+      results = { raw_output: raw };
+    }
+
+    // Cache results
+    try {
+      fs.writeFileSync(
+        path.join(repoDir, `.skill-${skillName}-cache.json`),
+        JSON.stringify({ timestamp: new Date().toISOString(), results })
+      );
+    } catch (e) { /* ignore */ }
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    log(`Skill ${skillName} completed in ${duration}s`);
+
+    res.json({ status: "success", skill: skillName, results, duration_seconds: parseFloat(duration) });
+  } catch (err) {
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+    const safeError = redactString(err.message);
+    log(`Skill ${skillName} failed after ${duration}s: ${safeError}`);
+    res.status(500).json({ error: safeError, status: "error" });
+  } finally {
+    analyzing = false;
+  }
 });
 
 app.post("/review", async (req, res) => {
