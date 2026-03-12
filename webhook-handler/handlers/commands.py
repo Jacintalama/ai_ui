@@ -79,6 +79,7 @@ class CommandRouter:
             "ask", "workflow", "workflows", "status", "help",
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
             "email", "sheets", "rebuild",
+            "health", "security", "deps", "license",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -109,6 +110,8 @@ class CommandRouter:
                 await self._handle_analyze(ctx)
             elif ctx.subcommand == "rebuild":
                 await self._handle_rebuild(ctx)
+            elif ctx.subcommand in ("health", "security", "deps", "license"):
+                await self._handle_skill(ctx, ctx.subcommand)
             elif ctx.subcommand == "email":
                 await self._handle_email(ctx)
             elif ctx.subcommand == "sheets":
@@ -319,6 +322,10 @@ class CommandRouter:
             "`/aiui email` \u2014 Summarize recent emails (via n8n Gmail)\n"
             "`/aiui sheets [daily|errors]` \u2014 Generate report to Google Sheets\n"
             "`/aiui rebuild [owner/repo]` \u2014 Research solutions & generate rebuild plan\n"
+            "`/aiui health [owner/repo]` \u2014 Code quality & architecture health assessment\n"
+            "`/aiui security [owner/repo]` \u2014 Deep security audit (OWASP Top 10)\n"
+            "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
+            "`/aiui license [owner/repo]` \u2014 License compliance check\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -588,6 +595,193 @@ class CommandRouter:
             return None
         except Exception as e:
             logger.warning(f"claude-analyzer /rebuild error: {e}")
+            return None
+
+    async def _handle_skill(self, ctx: CommandContext, skill_name: str) -> None:
+        """Run a generic Claude analyzer skill on a GitHub repository."""
+        repo_arg = ctx.arguments.strip() if ctx.arguments else ""
+        if repo_arg and "/" in repo_arg:
+            parts = repo_arg.split("/", 1)
+            owner, repo = parts[0], parts[1]
+        elif repo_arg:
+            await ctx.respond(
+                f"Invalid format: `{repo_arg}`. Use `/aiui {skill_name} owner/repo`"
+            )
+            return
+        else:
+            parts = settings.report_github_repo.split("/", 1)
+            if len(parts) != 2:
+                await ctx.respond("No default repository configured.")
+                return
+            owner, repo = parts
+
+        skill_labels = {
+            "health": ("\U0001f3e5", "Health Report"),
+            "security": ("\U0001f512", "Security Audit"),
+            "deps": ("\U0001f4e6", "Dependency Report"),
+            "license": ("\u2696\ufe0f", "License Report"),
+        }
+        emoji, label = skill_labels.get(skill_name, ("\U0001f527", skill_name.title()))
+
+        logger.info(f"[{ctx.platform}] {skill_name} {owner}/{repo} from {ctx.user_name}")
+        await ctx.respond(
+            f"Running **{label}** on **{owner}/{repo}**... "
+            f"(This takes 2-5 minutes)"
+        )
+
+        result = await self._request_skill(owner, repo, skill_name)
+
+        if not result:
+            await ctx.respond(
+                f"{label} failed. Claude analyzer may be unavailable or busy.\n"
+                "Try again in a few minutes."
+            )
+            return
+
+        results = result.get("results", {})
+        cached = result.get("cached", False)
+        duration = result.get("duration_seconds", 0)
+        cache_note = " (cached)" if cached else ""
+
+        response = self._format_skill_response(
+            skill_name, owner, repo, results, emoji, label, duration, cache_note
+        )
+
+        limit = 2000 if ctx.platform == "discord" else 3000
+        if len(response) > limit:
+            response = response[:limit - 20] + "\n\n... (truncated)"
+        await ctx.respond(response)
+
+    def _format_skill_response(
+        self, skill_name: str, owner: str, repo: str,
+        results: dict, emoji: str, label: str,
+        duration: float, cache_note: str,
+    ) -> str:
+        """Format skill results for Discord/Slack."""
+        header = f"{emoji} **{label}: {owner}/{repo}**\n\n"
+
+        if skill_name == "health":
+            score = results.get("score", "?")
+            bar = self._score_bar(score) if isinstance(score, (int, float)) else ""
+            summary = results.get("summary", "No summary available.")
+            findings = results.get("findings", [])
+            recs = results.get("recommendations", [])
+
+            body = f"**Score: {score}/100** {bar}\n\n{summary}\n\n"
+            if findings:
+                body += f"\U0001f4cb **Findings ({len(findings)})**\n"
+                for f in findings[:8]:
+                    sev_icon = {
+                        "critical": "\U0001f534", "high": "\U0001f534",
+                        "medium": "\U0001f7e1", "low": "\U0001f7e2",
+                    }.get(f.get("severity", ""), "\u26aa")
+                    body += f"{sev_icon} {f.get('title', 'Unknown')}\n"
+                if len(findings) > 8:
+                    body += f"... +{len(findings) - 8} more\n"
+            if recs:
+                body += f"\n\U0001f4a1 **Top Recommendations**\n"
+                for i, r in enumerate(recs[:5], 1):
+                    body += f"{i}. {r}\n"
+
+        elif skill_name == "security":
+            risk = results.get("risk_level", "unknown").upper()
+            summary = results.get("summary", "No summary available.")
+            vulns = results.get("vulnerabilities", [])
+            positives = results.get("positive_findings", [])
+
+            body = f"**Risk Level: {risk}**\n\n{summary}\n\n"
+            if vulns:
+                body += f"\U0001f6a8 **Vulnerabilities ({len(vulns)})**\n"
+                for v in vulns[:8]:
+                    sev_icon = {
+                        "critical": "\U0001f534", "high": "\U0001f534",
+                        "medium": "\U0001f7e1", "low": "\U0001f7e2",
+                    }.get(v.get("severity", ""), "\u26aa")
+                    loc = f" ({v['location']})" if v.get("location") else ""
+                    body += f"{sev_icon} **{v.get('severity', '').upper()}**: {v.get('title', 'Unknown')}{loc}\n"
+                if len(vulns) > 8:
+                    body += f"... +{len(vulns) - 8} more\n"
+            if positives:
+                body += f"\n\u2705 **Done Well**\n"
+                for p in positives[:3]:
+                    body += f"- {p}\n"
+
+        elif skill_name == "deps":
+            total = results.get("total_deps", "?")
+            outdated = results.get("outdated_count", "?")
+            vuln = results.get("vulnerable_count", "?")
+            issues = results.get("issues", [])
+
+            body = f"**Total: {total} | Outdated: {outdated} | Vulnerable: {vuln}**\n\n"
+            if issues:
+                for iss in issues[:10]:
+                    sev_icon = {
+                        "critical": "\U0001f534", "high": "\U0001f534",
+                        "medium": "\U0001f7e1", "low": "\U0001f7e2",
+                    }.get(iss.get("severity", ""), "\u26aa")
+                    cves = ", ".join(iss.get("cves", []))
+                    cve_text = f" ({cves})" if cves else ""
+                    body += f"{sev_icon} **{iss.get('package', '?')}** {iss.get('current_version', '?')} \u2192 {iss.get('latest_version', '?')}{cve_text}\n"
+                if len(issues) > 10:
+                    body += f"... +{len(issues) - 10} more\n"
+
+        elif skill_name == "license":
+            status = results.get("status", "unknown")
+            status_icon = {"clean": "\u2705", "warning": "\u26a0\ufe0f", "violation": "\U0001f6d1"}.get(status, "\u2753")
+            dist = results.get("distribution", {})
+            risks = results.get("risks", [])
+
+            dist_text = " | ".join(f"{k} ({v})" for k, v in list(dist.items())[:6])
+            body = f"**Status: {status_icon} {status.upper()}**\n\n"
+            if dist_text:
+                body += f"\U0001f4ca **Distribution:** {dist_text}\n\n"
+            if risks:
+                for r in risks[:6]:
+                    sev_icon = {
+                        "critical": "\U0001f534", "high": "\U0001f534",
+                        "medium": "\U0001f7e1", "low": "\U0001f7e2",
+                    }.get(r.get("severity", ""), "\u26aa")
+                    body += f"{sev_icon} **{r.get('package', '?')}** ({r.get('license', '?')}) \u2014 {r.get('risk_type', '?')}\n"
+                if len(risks) > 6:
+                    body += f"... +{len(risks) - 6} more\n"
+
+        else:
+            body = json.dumps(results, indent=2)[:1000]
+
+        return header + body + f"\n\n_Completed in {duration}s{cache_note} by Claude Code CLI_"
+
+    @staticmethod
+    def _score_bar(score: int, width: int = 10) -> str:
+        filled = round(score / 100 * width)
+        return "\u2588" * filled + "\u2591" * (width - filled)
+
+    async def _request_skill(
+        self, owner: str, repo: str, skill_name: str, branch: str = "main"
+    ) -> Optional[dict]:
+        """Request a skill run from claude-analyzer container."""
+        analyzer_url = settings.claude_analyzer_url
+        if not analyzer_url:
+            return None
+
+        try:
+            async with httpx.AsyncClient(timeout=960.0) as client:
+                resp = await client.post(
+                    f"{analyzer_url}/skill",
+                    json={"owner": owner, "repo": repo, "branch": branch, "skill": skill_name},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "success":
+                        return data
+                logger.warning(
+                    f"claude-analyzer /skill/{skill_name} returned {resp.status_code}: {resp.text[:200]}"
+                )
+                return None
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            logger.info(f"claude-analyzer /skill/{skill_name} unavailable: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"claude-analyzer /skill/{skill_name} error: {e}")
             return None
 
     async def _handle_email(self, ctx: CommandContext) -> None:
