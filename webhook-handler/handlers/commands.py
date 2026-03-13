@@ -30,6 +30,33 @@ class CommandContext:
     metadata: dict = field(default_factory=dict)
 
 
+class VoiceResponseCollector:
+    """Collects command output for voice webhook responses."""
+
+    def __init__(self):
+        self.messages: list[str] = []
+
+    async def respond(self, msg: str) -> None:
+        self.messages.append(msg)
+
+    @property
+    def full_result(self) -> str:
+        return "\n\n".join(self.messages)
+
+    @property
+    def spoken_summary(self) -> str:
+        """Last message, stripped of markdown for speech."""
+        if not self.messages:
+            return "No response."
+        text = self.messages[-1]
+        import re
+        text = re.sub(r'[*_`#\[\]()]', '', text)
+        text = re.sub(r'\n+', '. ', text)
+        if len(text) > 500:
+            text = text[:497] + "..."
+        return text
+
+
 # Health endpoints to check for the status command
 SERVICE_ENDPOINTS = get_service_endpoints()
 
@@ -802,7 +829,7 @@ class CommandRouter:
             await ctx.respond(
                 "Gmail workflow not found in n8n. Please create a workflow named "
                 "`gmail-inbox-summary` with a Webhook trigger and Gmail node.\n"
-                "n8n UI: https://n8n.srv1041674.hstgr.cloud"
+                "n8n UI: https://ai-ui.coolestdomain.win/n8n"
             )
             return
 
@@ -812,7 +839,7 @@ class CommandRouter:
                 "The Gmail workflow ran but returned no data. Likely causes:\n"
                 "- Gmail OAuth credential not connected in n8n\n"
                 "- OAuth token expired — re-authorize in n8n Credentials\n\n"
-                f"Check: https://n8n.srv1041674.hstgr.cloud"
+                f"Check: https://ai-ui.coolestdomain.win/n8n"
             )
         elif isinstance(result, dict) and "emails" in result:
             emails = result["emails"]
@@ -895,7 +922,7 @@ class CommandRouter:
             await ctx.respond(
                 "Sheets workflow not found in n8n. Please create a workflow named "
                 "`sheets-report` with a Webhook trigger and Google Sheets node.\n"
-                "n8n UI: https://n8n.srv1041674.hstgr.cloud"
+                "n8n UI: https://ai-ui.coolestdomain.win/n8n"
             )
             return
 
@@ -906,7 +933,7 @@ class CommandRouter:
                 "- Google Sheets OAuth credential not connected\n"
                 "- Sheet ID not configured (still has placeholder)\n"
                 "- OAuth token expired\n\n"
-                "Check: https://n8n.srv1041674.hstgr.cloud"
+                "Check: https://ai-ui.coolestdomain.win/n8n"
             )
         elif isinstance(result, dict) and result.get("sheet_url"):
             await ctx.respond(

@@ -21,7 +21,7 @@ from handlers.mcp import MCPWebhookHandler
 from handlers.slack import SlackWebhookHandler
 from handlers.generic import GenericWebhookHandler
 from handlers.automation import AutomationWebhookHandler
-from handlers.commands import CommandRouter
+from handlers.commands import CommandRouter, CommandContext, VoiceResponseCollector
 from handlers.slack_commands import SlackCommandHandler
 from handlers.discord_commands import DiscordCommandHandler
 from scheduler import (
@@ -442,6 +442,44 @@ async def discord_webhook(
 
     result = await discord_command_handler.handle_interaction(payload)
     return JSONResponse(content=result, status_code=200)
+
+
+@app.post("/webhook/voice/{command}")
+async def voice_webhook(
+    command: str,
+    request: Request,
+    x_voice_secret: str = Header(None, alias="X-Voice-Secret"),
+):
+    """Handle tool calls from ElevenLabs voice agent."""
+    if not settings.voice_webhook_secret or x_voice_secret != settings.voice_webhook_secret:
+        raise HTTPException(status_code=401, detail="Invalid voice webhook secret")
+
+    body = await request.json()
+    arguments = body.get("arguments", "")
+    if body.get("owner") and body.get("repo"):
+        arguments = f"{body['owner']}/{body['repo']} {arguments}".strip()
+
+    collector = VoiceResponseCollector()
+
+    ctx = CommandContext(
+        user_id="voice-agent",
+        user_name="Voice User",
+        channel_id=body.get("channel_id", "voice"),
+        raw_text=f"{command} {arguments}".strip(),
+        subcommand=command,
+        arguments=arguments,
+        platform="voice",
+        respond=collector.respond,
+        metadata={"source": "elevenlabs"},
+    )
+
+    await command_router.execute(ctx)
+
+    return {
+        "spoken_summary": collector.spoken_summary,
+        "full_result": collector.full_result,
+        "post_to_text_channel": len(collector.full_result) > 500,
+    }
 
 
 @app.post("/webhook/generic")

@@ -1,0 +1,640 @@
+{
+  "name": "Google Drive → Knowledge Base Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            { "mode": "everyMinute", "value": 2 }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CONFIGURE_FOLDER_ID"
+        },
+        "event": "fileCreatedOrUpdated",
+        "options": {}
+      },
+      "name": "Google Drive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [220, 300],
+      "id": "gdrive-trigger-node",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.OPENWEBUI_URL }}/api/v1/knowledge/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          }
+        }
+      },
+      "name": "List Knowledge Bases",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "id": "list-kb-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find the 'Google Drive' knowledge base or flag for creation\nconst kbList = $input.first().json;\nconst items = Array.isArray(kbList) ? kbList : (kbList.data || kbList.items || []);\nconst googleDriveKB = items.find(kb => kb.name === 'Google Drive');\n\nif (googleDriveKB) {\n  return [{ json: { kb_id: googleDriveKB.id, kb_exists: true } }];\n} else {\n  return [{ json: { kb_id: null, kb_exists: false } }];\n}"
+      },
+      "name": "Find Google Drive KB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "id": "find-kb-node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.kb_exists }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "KB Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "id": "kb-exists-check"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OPENWEBUI_URL }}/api/v1/knowledge/create",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: 'Google Drive', description: 'Auto-synced documents from Google Drive AI Knowledge folder' }) }}",
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          }
+        }
+      },
+      "name": "Create KB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "id": "create-kb-node"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge KB ID from either path (existing or newly created)\nconst items = $input.all();\nconst data = items[0].json;\nlet kb_id = data.kb_id || data.id;\nif (!kb_id) {\n  throw new Error('Failed to find or create Google Drive knowledge base');\n}\nreturn [{ json: { kb_id } }];"
+      },
+      "name": "Merge KB ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "id": "merge-kb-id-node"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter supported file types, determine export format, and detect edits\nconst trigger = $('Google Drive Trigger').first().json;\nconst mimeType = trigger.mimeType || '';\nconst fileName = trigger.name || 'unknown';\nconst fileId = trigger.id || '';\nconst lastModified = trigger.modifiedTime || trigger.modifiedDate || new Date().toISOString();\n\n// Google Workspace MIME types -> export format\nconst exportMap = {\n  'application/vnd.google-apps.spreadsheet': { export: 'text/csv', ext: 'csv', type: 'sheets' },\n  'application/vnd.google-apps.document': { export: 'text/html', ext: 'html', type: 'docs' },\n  'application/vnd.google-apps.presentation': { export: 'text/plain', ext: 'txt', type: 'slides' }\n};\n\n// Direct download types\nconst directTypes = ['application/pdf'];\n\n// Skip unsupported types\nconst skipPrefixes = ['image/', 'video/', 'audio/', 'application/zip', 'application/x-rar', 'application/x-7z', 'application/gzip'];\nconst shouldSkip = skipPrefixes.some(p => mimeType.startsWith(p));\n\nif (shouldSkip || !mimeType) {\n  return [{ json: { skip: true, reason: 'Unsupported type: ' + mimeType, fileName } }];\n}\n\nconst exportInfo = exportMap[mimeType];\nconst isDirect = directTypes.includes(mimeType);\n\nif (!exportInfo && !isDirect) {\n  return [{ json: { skip: true, reason: 'Unknown type: ' + mimeType, fileName } }];\n}\n\n// Check if file was previously ingested (edit detection)\nconst staticData = $getWorkflowStaticData('global');\nconst existingFile = staticData.files ? staticData.files[fileId] : null;\nconst isEdit = !!existingFile;\nconst previousOpenWebUIFileId = existingFile ? existingFile.openwebui_file_id : null;\n\nconst kb_id = $('Merge KB ID').first().json.kb_id;\n\nreturn [{ json: {\n  skip: false,\n  fileId,\n  fileName,\n  mimeType,\n  lastModified,\n  isGoogleWorkspace: !!exportInfo,\n  isDirect,\n  exportMime: exportInfo ? exportInfo.export : null,\n  fileType: exportInfo ? exportInfo.type : 'pdf',\n  kb_id,\n  isEdit,\n  previousOpenWebUIFileId\n} }];"
+      },
+      "name": "Filter File Type",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300],
+      "id": "filter-file-type-node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Should Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 300],
+      "id": "should-skip-check"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Filter File Type').first().json.fileId }}"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "html",
+              "sheetsToFormat": "csv",
+              "slidesToFormat": "txt"
+            }
+          }
+        }
+      },
+      "name": "Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2060, 400],
+      "id": "download-file-node",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $('Filter File Type').first().json.isEdit }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Is Edit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2280, 400],
+      "id": "is-edit-check"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OPENWEBUI_URL }}/api/v1/knowledge/{{ $('Filter File Type').first().json.kb_id }}/file/remove",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ file_id: $('Filter File Type').first().json.previousOpenWebUIFileId }) }}",
+        "options": {}
+      },
+      "name": "Delete Old File",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 300],
+      "id": "delete-old-file-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert file content to Markdown based on file type\nconst filterData = $('Filter File Type').first().json;\nconst fileType = filterData.fileType;\nconst fileName = filterData.fileName;\nconst fileId = filterData.fileId;\nconst kb_id = filterData.kb_id;\nconst isEdit = filterData.isEdit;\nconst lastModified = filterData.lastModified;\nconst now = new Date().toISOString();\n\n// Get downloaded content - binary data from Google Drive node\nlet content = '';\nconst inputItem = $input.first();\nif (inputItem.binary && inputItem.binary.data) {\n  // For non-PDF files, read the binary as text\n  if (fileType !== 'pdf') {\n    content = Buffer.from(inputItem.binary.data.data, 'base64').toString('utf-8');\n  }\n} else if (inputItem.json && inputItem.json.data) {\n  content = inputItem.json.data;\n} else if (typeof inputItem.json === 'string') {\n  content = inputItem.json;\n}\n\nlet markdown = '';\n\nif (fileType === 'sheets') {\n  // CSV -> Markdown table\n  const lines = content.split('\\n').filter(l => l.trim());\n  if (lines.length > 0) {\n    markdown = '# ' + fileName + '\\n\\n';\n    markdown += '**Source:** Google Drive / AI Knowledge\\n';\n    markdown += '**Last modified:** ' + (lastModified || now).split('T')[0] + '\\n\\n';\n\n    const headers = lines[0].split(',').map(h => h.replace(/^\"|\"$/g, '').trim());\n    markdown += '| ' + headers.join(' | ') + ' |\\n';\n    markdown += '| ' + headers.map(() => '---').join(' | ') + ' |\\n';\n\n    for (let i = 1; i < lines.length; i++) {\n      // Handle CSV with quoted fields containing commas\n      const row = [];\n      let inQuote = false;\n      let field = '';\n      for (const char of lines[i]) {\n        if (char === '\"') { inQuote = !inQuote; }\n        else if (char === ',' && !inQuote) { row.push(field.trim()); field = ''; }\n        else { field += char; }\n      }\n      row.push(field.trim());\n      markdown += '| ' + row.join(' | ') + ' |\\n';\n    }\n  }\n} else if (fileType === 'docs') {\n  // HTML -> Markdown\n  markdown = '# ' + fileName + '\\n\\n';\n  markdown += '**Source:** Google Drive / AI Knowledge\\n';\n  markdown += '**Last modified:** ' + (lastModified || now).split('T')[0] + '\\n\\n';\n\n  let text = content;\n  // Convert headings\n  text = text.replace(/<h1[^>]*>(.*?)<\\/h1>/gi, '# $1\\n\\n');\n  text = text.replace(/<h2[^>]*>(.*?)<\\/h2>/gi, '## $1\\n\\n');\n  text = text.replace(/<h3[^>]*>(.*?)<\\/h3>/gi, '### $1\\n\\n');\n  text = text.replace(/<h4[^>]*>(.*?)<\\/h4>/gi, '#### $1\\n\\n');\n  // Convert formatting\n  text = text.replace(/<b[^>]*>(.*?)<\\/b>/gi, '**$1**');\n  text = text.replace(/<strong[^>]*>(.*?)<\\/strong>/gi, '**$1**');\n  text = text.replace(/<i[^>]*>(.*?)<\\/i>/gi, '*$1*');\n  text = text.replace(/<em[^>]*>(.*?)<\\/em>/gi, '*$1*');\n  // Convert links\n  text = text.replace(/<a[^>]*href=\"([^\"]*?)\"[^>]*>(.*?)<\\/a>/gi, '[$2]($1)');\n  // Convert lists\n  text = text.replace(/<li[^>]*>(.*?)<\\/li>/gi, '- $1\\n');\n  // Convert paragraphs\n  text = text.replace(/<p[^>]*>(.*?)<\\/p>/gi, '$1\\n\\n');\n  // Convert line breaks\n  text = text.replace(/<br\\s*\\/?>/gi, '\\n');\n  // Strip remaining HTML tags\n  text = text.replace(/<[^>]+>/g, '');\n  // Decode common HTML entities\n  text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ');\n  // Clean up whitespace\n  text = text.replace(/\\n{3,}/g, '\\n\\n').trim();\n\n  markdown += text;\n} else if (fileType === 'slides') {\n  // Plain text -> Markdown with slide separators\n  markdown = '# ' + fileName + '\\n\\n';\n  markdown += '**Source:** Google Drive / AI Knowledge\\n';\n  markdown += '**Last modified:** ' + (lastModified || now).split('T')[0] + '\\n\\n';\n\n  // Split by common slide separators (form feed, or \"Slide N\" headers)\n  const slides = content.split(/\\n(?=Slide \\d|\\f)/i);\n  slides.forEach((slide, i) => {\n    const trimmed = slide.trim();\n    if (trimmed) {\n      markdown += '## Slide ' + (i + 1) + '\\n\\n' + trimmed + '\\n\\n---\\n\\n';\n    }\n  });\n} else if (fileType === 'pdf') {\n  // PDF: pass through as-is, OpenWebUI handles extraction\n  markdown = null;\n}\n\nconst outputFileName = fileName.replace(/\\.[^/.]+$/, '') + (markdown ? '.md' : '.pdf');\n\n// Create binary output for upload\nconst output = { json: {\n  markdown,\n  fileName: outputFileName,\n  originalName: fileName,\n  fileId,\n  fileType,\n  kb_id,\n  isEdit,\n  isPdf: fileType === 'pdf'\n}, binary: {} };\n\nif (markdown) {\n  // Convert markdown text to binary for file upload\n  output.binary.data = {\n    data: Buffer.from(markdown, 'utf-8').toString('base64'),\n    mimeType: 'text/markdown',\n    fileName: outputFileName\n  };\n} else if (fileType === 'pdf' && inputItem.binary && inputItem.binary.data) {\n  // Pass through PDF binary as-is\n  output.binary.data = inputItem.binary.data;\n  output.binary.data.fileName = outputFileName;\n}\n\nreturn [output];"
+      },
+      "name": "Convert to Markdown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2720, 400],
+      "id": "convert-markdown-node"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OPENWEBUI_URL }}/api/v1/files/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          }
+        }
+      },
+      "name": "Upload to OpenWebUI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2940, 400],
+      "id": "upload-file-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.OPENWEBUI_URL }}/api/v1/files/{{ $('Upload to OpenWebUI').first().json.id }}/process/status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          },
+          "timeout": 30000
+        }
+      },
+      "name": "Poll Processing Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3160, 400],
+      "id": "poll-status-node",
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 10,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OPENWEBUI_URL }}/api/v1/knowledge/{{ $('Merge KB ID').first().json.kb_id }}/file/add",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ file_id: $('Upload to OpenWebUI').first().json.id }) }}",
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          }
+        }
+      },
+      "name": "Add to Knowledge Base",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3380, 400],
+      "id": "add-to-kb-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Save file mapping to workflow static data\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.files) staticData.files = {};\n\nconst gdriveId = $('Filter File Type').first().json.fileId;\nconst openwebuiFileId = $('Upload to OpenWebUI').first().json.id;\nconst fileName = $('Filter File Type').first().json.fileName;\nconst isEdit = $('Filter File Type').first().json.isEdit;\n\nstaticData.files[gdriveId] = {\n  openwebui_file_id: openwebuiFileId,\n  filename: fileName,\n  last_modified: new Date().toISOString()\n};\n\nreturn [{ json: {\n  saved: true,\n  gdrive_id: gdriveId,\n  openwebui_file_id: openwebuiFileId,\n  filename: fileName,\n  isEdit\n} }];"
+      },
+      "name": "Update Static Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3600, 400],
+      "id": "update-static-data-node"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://discord.com/api/v10/channels/{{ $env.DISCORD_ALERT_CHANNEL_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $env.DISCORD_BOT_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: ($json.isEdit ? '\ud83d\udd04' : '\ud83d\udcc4') + ' **Knowledge Base Updated**\\n\\nFile: `' + $json.filename + '`\\nAction: ' + ($json.isEdit ? 'File updated (re-synced)' : 'New file ingested') + '\\nKB: Google Drive\\nTime: ' + new Date().toISOString().split('T')[0] }) }}",
+        "options": {}
+      },
+      "name": "Discord Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3820, 400],
+      "id": "discord-notify-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check for deleted files by looking up the triggered file in static data\n// The Google Drive Trigger fires for file changes including deletions\n// When a file is trashed/deleted, we detect it here\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.files || Object.keys(staticData.files).length === 0) {\n  return [{ json: { hasDelete: false, reason: 'No tracked files' } }];\n}\n\nconst trigger = $('Google Drive Trigger').first().json;\nconst fileId = trigger.id || '';\nconst trashed = trigger.trashed || false;\nconst trackedFile = staticData.files[fileId];\n\n// If the file is trashed and we have it tracked, it's a deletion\nif (trashed && trackedFile) {\n  const kb_id = $('Merge KB ID').first().json.kb_id;\n  return [{ json: {\n    hasDelete: true,\n    gdriveId: fileId,\n    openwebui_file_id: trackedFile.openwebui_file_id,\n    filename: trackedFile.filename,\n    kb_id\n  } }];\n}\n\nreturn [{ json: { hasDelete: false, reason: 'File not tracked or not trashed' } }];"
+      },
+      "name": "Check Deletions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 600],
+      "id": "check-deletions-node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasDelete }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Has Deletion?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1780, 600],
+      "id": "has-deletion-check"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OPENWEBUI_URL }}/api/v1/knowledge/{{ $json.kb_id }}/file/remove",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENWEBUI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ file_id: $json.openwebui_file_id }) }}",
+        "options": {}
+      },
+      "name": "Remove from KB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 600],
+      "id": "remove-from-kb-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Remove deleted file from static data tracking\nconst staticData = $getWorkflowStaticData('global');\nconst gdriveId = $('Check Deletions').first().json.gdriveId;\nconst fileName = staticData.files[gdriveId] ? staticData.files[gdriveId].filename : 'unknown';\ndelete staticData.files[gdriveId];\nreturn [{ json: { deleted: true, filename: fileName, gdriveId } }];"
+      },
+      "name": "Cleanup Static Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 600],
+      "id": "cleanup-static-data-node"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://discord.com/api/v10/channels/{{ $env.DISCORD_ALERT_CHANNEL_ID }}/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bot {{ $env.DISCORD_BOT_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: '\ud83d\uddd1\ufe0f **Knowledge Base Updated**\\n\\nFile: `' + $json.filename + '`\\nAction: File removed\\nKB: Google Drive\\nTime: ' + new Date().toISOString().split('T')[0] }) }}",
+        "options": {}
+      },
+      "name": "Discord Notify Delete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2440, 600],
+      "id": "discord-notify-delete-node",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Google Drive Trigger": {
+      "main": [
+        [
+          { "node": "List Knowledge Bases", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "List Knowledge Bases": {
+      "main": [
+        [
+          { "node": "Find Google Drive KB", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Find Google Drive KB": {
+      "main": [
+        [
+          { "node": "KB Exists?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "KB Exists?": {
+      "main": [
+        [
+          { "node": "Create KB", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Merge KB ID", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Create KB": {
+      "main": [
+        [
+          { "node": "Merge KB ID", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Merge KB ID": {
+      "main": [
+        [
+          { "node": "Check Deletions", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Deletion?": {
+      "main": [
+        [
+          { "node": "Remove from KB", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Filter File Type", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Filter File Type": {
+      "main": [
+        [
+          { "node": "Should Skip?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Should Skip?": {
+      "main": [
+        [],
+        [
+          { "node": "Download File", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          { "node": "Is Edit?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is Edit?": {
+      "main": [
+        [
+          { "node": "Delete Old File", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Convert to Markdown", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Delete Old File": {
+      "main": [
+        [
+          { "node": "Convert to Markdown", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Convert to Markdown": {
+      "main": [
+        [
+          { "node": "Upload to OpenWebUI", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Upload to OpenWebUI": {
+      "main": [
+        [
+          { "node": "Poll Processing Status", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Poll Processing Status": {
+      "main": [
+        [
+          { "node": "Add to Knowledge Base", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Add to Knowledge Base": {
+      "main": [
+        [
+          { "node": "Update Static Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Update Static Data": {
+      "main": [
+        [
+          { "node": "Discord Notify", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Deletions": {
+      "main": [
+        [
+          { "node": "Has Deletion?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Remove from KB": {
+      "main": [
+        [
+          { "node": "Cleanup Static Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Cleanup Static Data": {
+      "main": [
+        [
+          { "node": "Discord Notify Delete", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

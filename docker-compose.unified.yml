@@ -110,8 +110,8 @@ services:
       - MCP_USER_EMAIL=webhook-handler@system
       - MCP_USER_GROUPS=MCP-Admin
       - AUTOMATION_PIPE_MODEL=${AUTOMATION_PIPE_MODEL:-webhook_automation.webhook-automation}
-      - N8N_URL=${N8N_API_URL:-https://n8n.srv1041674.hstgr.cloud}
-      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://n8n.srv1041674.hstgr.cloud}
+      - N8N_URL=${N8N_API_URL:-http://n8n:5678}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://n8n:5678}
       - N8N_API_KEY=${N8N_API_KEY:-}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
       - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
@@ -122,12 +122,37 @@ services:
       - REPORT_GITHUB_REPO=${REPORT_GITHUB_REPO:-TheLukasHenry/proxy-server}
       - REPORT_SLACK_CHANNEL=${REPORT_SLACK_CHANNEL:-}
       - PR_REVIEWER_URL=${PR_REVIEWER_URL:-http://pr-reviewer:3000}
+      - VOICE_WEBHOOK_SECRET=${VOICE_WEBHOOK_SECRET:-}
     networks:
       - backend
     depends_on:
       - open-webui
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+  # ===========================================================================
+  # VOICE BRIDGE - Discord Voice <-> ElevenLabs Conversational AI
+  # ===========================================================================
+  voice-bridge:
+    build: ./voice-bridge
+    container_name: voice-bridge
+    restart: unless-stopped
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
+      - WEBHOOK_HANDLER_URL=http://webhook-handler:8086
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    networks:
+      - backend
+    depends_on:
+      - webhook-handler
+    healthcheck:
+      test: ["CMD", "python", "-c", "print('ok')"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -186,6 +211,9 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
       - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - DISCORD_ALERT_CHANNEL_ID=${DISCORD_ALERT_CHANNEL_ID:-}
+      - OPENWEBUI_URL=http://open-webui:8080
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
@@ -498,7 +526,7 @@ services:
     restart: unless-stopped
     environment:
       - MCP_MODE=stdio
-      - N8N_API_URL=${N8N_API_URL:-https://n8n.srv1041674.hstgr.cloud}
+      - N8N_API_URL=${N8N_API_URL:-http://n8n:5678}
       - N8N_API_KEY=${N8N_API_KEY:-}
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
       - LOG_LEVEL=error

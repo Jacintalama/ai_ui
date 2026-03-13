@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     automation_pipe_model: str = "webhook_automation.webhook-automation"
 
     # n8n
-    n8n_url: str = "https://n8n.srv1041674.hstgr.cloud"
-    n8n_webhook_url: str = "https://n8n.srv1041674.hstgr.cloud"
+    n8n_url: str = "http://n8n:5678"
+    n8n_webhook_url: str = "http://n8n:5678"
     n8n_api_key: str = ""
 
     # Claude Analyzer (PR Review, BRE, Security, etc.)
@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     discord_public_key: str = ""
     discord_bot_token: str = ""
     discord_alert_channel_id: str = ""
+
+    # Voice (ElevenLabs)
+    voice_webhook_secret: str = ""
 
     # Loki
     loki_url: str = "http://loki:3100"
