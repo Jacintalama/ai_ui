@@ -123,36 +123,16 @@ services:
       - REPORT_SLACK_CHANNEL=${REPORT_SLACK_CHANNEL:-}
       - PR_REVIEWER_URL=${PR_REVIEWER_URL:-http://pr-reviewer:3000}
       - VOICE_WEBHOOK_SECRET=${VOICE_WEBHOOK_SECRET:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-JBFqnCBsd6RMkjVDRZzb}
+      - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
+      - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
     networks:
       - backend
     depends_on:
       - open-webui
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-
-  # ===========================================================================
-  # VOICE BRIDGE - Discord Voice <-> ElevenLabs Conversational AI
-  # ===========================================================================
-  voice-bridge:
-    build: ./voice-bridge
-    container_name: voice-bridge
-    restart: unless-stopped
-    environment:
-      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
-      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
-      - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
-      - WEBHOOK_HANDLER_URL=http://webhook-handler:8086
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    networks:
-      - backend
-    depends_on:
-      - webhook-handler
-    healthcheck:
-      test: ["CMD", "python", "-c", "print('ok')"]
       interval: 30s
       timeout: 10s
       retries: 3

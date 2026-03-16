@@ -1,9 +1,13 @@
 fastapi==0.109.0
 uvicorn==0.27.0
 httpx==0.26.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic>=2.5.3
+pydantic-settings>=2.1.0
 python-dotenv==1.0.0
 python-multipart==0.0.6
 apscheduler==3.10.4
 PyNaCl==1.5.0
+discord.py[voice]>=2.3.0
+davey>=0.1.4
+discord-ext-voice-recv @ git+https://github.com/vocolboy/discord-ext-voice-recv.git@main
+elevenlabs>=2.39.0

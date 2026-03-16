@@ -51,6 +51,10 @@ class Settings(BaseSettings):
 
     # Voice (ElevenLabs)
     voice_webhook_secret: str = ""
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = "JBFqnCBsd6RMkjVDRZzb"
+    elevenlabs_model_id: str = "eleven_turbo_v2_5"
+    elevenlabs_agent_id: str = ""
 
     # Loki
     loki_url: str = "http://loki:3100"

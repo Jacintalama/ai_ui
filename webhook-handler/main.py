@@ -1,4 +1,5 @@
 """Webhook Handler Service - Main FastAPI Application."""
+import asyncio
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -24,6 +25,7 @@ from handlers.automation import AutomationWebhookHandler
 from handlers.commands import CommandRouter, CommandContext, VoiceResponseCollector
 from handlers.slack_commands import SlackCommandHandler
 from handlers.discord_commands import DiscordCommandHandler
+from voice_bot import start_voice_bot
 from scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
     list_jobs, trigger_job, register_default_jobs,
@@ -191,11 +193,29 @@ async def lifespan(app: FastAPI):
     )
     start_scheduler()
 
+    # Voice bot (Discord voice channel — runs as background task)
+    voice_bot_task = None
+    if settings.discord_bot_token and settings.elevenlabs_api_key:
+        voice_bot_task = asyncio.create_task(start_voice_bot(
+            bot_token=settings.discord_bot_token,
+            elevenlabs_api_key=settings.elevenlabs_api_key,
+            agent_id=settings.elevenlabs_agent_id,
+        ))
+        logger.info("Voice bot starting as background task")
+    else:
+        logger.info("Voice bot disabled (no DISCORD_BOT_TOKEN or ELEVENLABS_API_KEY)")
+
     logger.info(f"Webhook handler ready on port {settings.port}")
     logger.info(f"Open WebUI URL: {settings.openwebui_url}")
 
     yield
 
+    if voice_bot_task and not voice_bot_task.done():
+        voice_bot_task.cancel()
+        try:
+            await voice_bot_task
+        except asyncio.CancelledError:
+            pass
     shutdown_scheduler()
     logger.info("Shutting down webhook handler...")
 
@@ -209,6 +229,7 @@ app = FastAPI(
 
 
 @app.get("/health")
+@app.get("/webhook/health")
 async def health_check():
     """Health check endpoint."""
     return {
