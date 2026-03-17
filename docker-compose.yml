@@ -276,6 +276,52 @@ services:
         condition: service_healthy
     restart: "no"  # Run once and exit
 
+  # ==========================================================================
+  # Webhook Handler - Discord/Slack Bot + Event Processing
+  # ==========================================================================
+  webhook-handler:
+    build: ./webhook-handler
+    container_name: webhook-handler
+    ports:
+      - "8086:8086"
+    environment:
+      # Service
+      - PORT=8086
+      - DEBUG=${DEBUG:-false}
+      # Open WebUI (Docker internal)
+      - OPENWEBUI_URL=http://open-webui:8080
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+      - AI_MODEL=${AI_MODEL:-gpt-4-turbo}
+      # MCP Proxy (Docker internal)
+      - MCP_PROXY_URL=http://mcp-proxy:8000
+      - MCP_API_KEY=${MCP_API_KEY:-test-key}
+      # GitHub
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
+      # n8n (remote hosted instance)
+      - N8N_URL=${N8N_API_URL:-http://n8n:5678}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://n8n:5678}
+      - N8N_API_KEY=${N8N_API_KEY}
+      # Discord Bot
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_APPLICATION_ID=${DISCORD_APPLICATION_ID}
+      - DISCORD_PUBLIC_KEY=${DISCORD_PUBLIC_KEY}
+      - DISCORD_ALERT_CHANNEL_ID=${DISCORD_ALERT_CHANNEL_ID}
+      # ElevenLabs Voice
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID}
+      - VOICE_WEBHOOK_SECRET=${VOICE_WEBHOOK_SECRET}
+      # Loki (not available locally — handler degrades gracefully)
+      - LOKI_URL=${LOKI_URL:-http://loki:3100}
+      # Reporting
+      - REPORT_GITHUB_REPO=${REPORT_GITHUB_REPO:-TheLukasHenry/proxy-server}
+    depends_on:
+      open-webui:
+        condition: service_started
+      mcp-proxy:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   redis-data:
   postgres-data:
