@@ -10,6 +10,11 @@ __pycache__/
 # Playwright
 .playwright-mcp/
 
+# n8n workflows with hardcoded tokens
+n8n-workflows/gdrive-knowledge-sync.json
+n8n-workflows/gdrive-knowledge-cleanup.json
+
 # IDE
 .vscode/
 .idea/
+mcp-servers/gdrive/docker-compose.test.yml

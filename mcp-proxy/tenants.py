@@ -406,16 +406,7 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
     # -------------------------------------------------------------------------
     # File Storage
     # -------------------------------------------------------------------------
-    "google-drive": MCPServerConfig(
-        server_id="google-drive",
-        display_name="Google Drive",
-        tier=ServerTier.STDIO,
-        endpoint_url=f"{MCPO_STDIO_URL}:8032",
-        auth_type="oauth",
-        api_key_env="GOOGLE_DRIVE_CREDENTIALS",
-        description="Google Drive file access - files, folders, search",
-        enabled=False
-    ),
+    # google-drive: moved to LOCAL_SERVERS (mcp-gdrive container)
     "onedrive": MCPServerConfig(
         server_id="onedrive",
         display_name="OneDrive",
@@ -561,8 +552,30 @@ MCP_GITHUB_JACINTALAMA_URL = os.getenv("MCP_GITHUB_JACINTALAMA_URL", "http://mcp
 MCP_NOTION_URL = os.getenv("MCP_NOTION_URL", "http://mcp-notion:8000")
 MCP_N8N_URL = os.getenv("MCP_N8N_URL", "http://mcp-n8n:8000")
 MCP_SCHEDULER_URL = os.getenv("MCP_SCHEDULER_URL", "http://mcp-scheduler:8000")
+MCP_GDRIVE_URL = os.getenv("MCP_GDRIVE_URL", "http://mcp-gdrive:8000")
+MCP_GMAIL_URL = os.getenv("MCP_GMAIL_URL", "http://mcp-gmail:8000")
 
 LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
+    "google-drive": MCPServerConfig(
+        server_id="google-drive",
+        display_name="Google Drive",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_GDRIVE_URL,
+        auth_type="none",
+        api_key_env=None,
+        description="Browse, search, and read files from your Google Drive (4 tools)",
+        enabled=True,
+    ),
+    "gmail": MCPServerConfig(
+        server_id="gmail",
+        display_name="Gmail",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_GMAIL_URL,
+        auth_type="none",
+        api_key_env=None,
+        description="Search, read, and send emails from your Gmail (5 tools)",
+        enabled=True,
+    ),
     "github": MCPServerConfig(
         server_id="github",
         display_name="GitHub",

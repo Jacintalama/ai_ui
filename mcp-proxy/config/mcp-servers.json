@@ -112,6 +112,26 @@
       "tier": "local",
       "groups": ["MCP-Admin"],
       "api_key_env": null
+    },
+    {
+      "id": "google-drive",
+      "name": "Google Drive",
+      "url": "http://mcp-proxy:8000/google-drive",
+      "type": "openapi",
+      "description": "Browse, search, and read files from your Google Drive",
+      "tier": "local",
+      "groups": ["MCP-Admin", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "api_key_env": null
+    },
+    {
+      "id": "gmail",
+      "name": "Gmail",
+      "url": "http://mcp-proxy:8000/gmail",
+      "type": "openapi",
+      "description": "Search, read, and send emails from your Gmail",
+      "tier": "local",
+      "groups": ["MCP-Admin", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "api_key_env": null
     }
   ],
   "special_groups": {

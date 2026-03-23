@@ -61,12 +61,18 @@ services:
       - "3000:8080"
     volumes:
       - open-webui-data:/app/backend/data
+      - ./mcp-servers/gdrive/integrations-ui.js:/app/backend/open_webui/static/integrations-ui.js:ro
+      - ./mcp-servers/gdrive/integrations-ui.js:/app/build/static/integrations-ui.js:ro
+      - ./mcp-servers/gdrive/loader.js:/app/backend/open_webui/static/loader.js:ro
+      - ./mcp-servers/gdrive/loader.js:/app/build/static/loader.js:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       # Ollama connection (local LLMs)
       - OLLAMA_BASE_URL=http://ollama:11434
       # OpenAI connection (cloud LLMs)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Default model
+      - DEFAULT_MODELS=gpt-4o-mini
       # Enable local signup (first user becomes admin)
       - ENABLE_SIGNUP=true
       # User headers for MCP Proxy
@@ -129,6 +135,9 @@ services:
       - MCP_GITHUB_URL=http://mcp-github:8000
       - MCP_EXCEL_URL=http://mcp-excel:8000
       - MCP_DASHBOARD_URL=http://mcp-dashboard:8000
+      - MCP_GDRIVE_URL=http://mcp-gdrive:8000
+      - MCP_GMAIL_URL=http://mcp-gmail:8000
+      - META_TOOLS_MODE=true
       # API Gateway Mode - trust headers from Traefik/auth-service
       - API_GATEWAY_MODE=true
       - TRUSTED_PROXY_HEADERS=X-User-Email,X-User-Groups
@@ -163,6 +172,10 @@ services:
       mcp-excel:
         condition: service_started
       mcp-dashboard:
+        condition: service_started
+      mcp-gdrive:
+        condition: service_started
+      mcp-gmail:
         condition: service_started
     restart: unless-stopped
 
@@ -214,6 +227,54 @@ services:
     ports:
       - "8004:8000"
     restart: unless-stopped
+
+  # ==========================================================================
+  # MCP Google Drive - Browse & Read Google Drive Files
+  # ==========================================================================
+  mcp-gdrive:
+    build: ./mcp-servers/gdrive
+    container_name: mcp-gdrive
+    ports:
+      - "8005:8000"
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - OAUTH_REDIRECT_URI=http://localhost:8005/auth/google/callback
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  # ==========================================================================
+  # MCP Gmail - Search, Read & Send Emails
+  # ==========================================================================
+  mcp-gmail:
+    build: ./mcp-servers/gmail
+    container_name: mcp-gmail
+    ports:
+      - "8006:8000"
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - OAUTH_REDIRECT_URI=http://localhost:8006/auth/google/callback
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
 
   # ==========================================================================
   # TIER 2: SSE MCP Servers

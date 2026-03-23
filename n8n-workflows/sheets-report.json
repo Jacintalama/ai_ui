@@ -28,7 +28,7 @@
     {
       "parameters": {
         "operation": "append",
-        "documentId": { "__rl": true, "mode": "id", "value": "CONFIGURE_SHEET_ID" },
+        "documentId": { "__rl": true, "mode": "id", "value": "19L4EQEeq4b9CIbgtXXwZKjUJB9CXi7OYKHKlgM8RtjM" },
         "sheetName": { "__rl": true, "mode": "name", "value": "Sheet1" },
         "columns": {
           "mappingMode": "autoMapInputData"
@@ -53,7 +53,7 @@
           "responseCode": 200
         },
         "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ success: true, rows_written: $input.all().length, sheet_url: 'https://docs.google.com/spreadsheets/d/CONFIGURE_SHEET_ID' }) }}"
+        "responseBody": "={{ JSON.stringify({ success: true, rows_written: $input.all().length, sheet_url: 'https://docs.google.com/spreadsheets/d/19L4EQEeq4b9CIbgtXXwZKjUJB9CXi7OYKHKlgM8RtjM' }) }}"
       },
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
