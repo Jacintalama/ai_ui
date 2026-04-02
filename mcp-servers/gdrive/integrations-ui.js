@@ -634,6 +634,59 @@
 
     grid.appendChild(gmailCard);
 
+    // --- Meeting Knowledge Base Card ---
+    var MEETING_KB_ICON = '<svg width="28" height="28" viewBox="0 0 24 24" fill="#8e44ad"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>';
+    var MEETING_KB_ICON_SMALL = '<svg width="18" height="18" viewBox="0 0 24 24" fill="#8e44ad"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>';
+
+    var meetingCard = document.createElement('div');
+    meetingCard.setAttribute('data-integration', 'meeting-kb');
+    meetingCard.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:12px;padding:16px;transition:all 0.2s;display:flex;align-items:center;gap:14px;';
+
+    var meetingKbEnabled = localStorage.getItem('meeting_kb_enabled') === 'true';
+
+    meetingCard.innerHTML = '<div style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#333;border-radius:10px;padding:8px;">' + MEETING_KB_ICON + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<span style="color:#fff;font-weight:600;font-size:15px;">Meeting Knowledge Base</span>' +
+          '<span id="aiui-status-meeting-kb" style="' + (meetingKbEnabled ? '' : 'display:none;') + 'background:#8e44ad;color:#fff;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:600;">Active</span>' +
+        '</div>' +
+        '<p style="color:#888;font-size:13px;margin:3px 0 0 0;">Search and browse meeting summaries stored in the knowledge base</p>' +
+      '</div>' +
+      '<div style="flex-shrink:0;">' +
+        '<label style="position:relative;display:inline-block;width:48px;height:26px;cursor:pointer;">' +
+          '<input id="aiui-toggle-meeting-kb" type="checkbox" ' + (meetingKbEnabled ? 'checked' : '') + ' style="opacity:0;width:0;height:0;">' +
+          '<span style="position:absolute;top:0;left:0;right:0;bottom:0;background:' + (meetingKbEnabled ? '#8e44ad' : '#555') + ';border-radius:26px;transition:0.3s;"></span>' +
+          '<span style="position:absolute;top:3px;left:' + (meetingKbEnabled ? '25px' : '3px') + ';width:20px;height:20px;background:#fff;border-radius:50%;transition:0.3s;"></span>' +
+        '</label>' +
+      '</div>';
+
+    if (meetingKbEnabled) meetingCard.style.borderColor = '#8e44ad';
+
+    meetingCard.addEventListener('mouseenter', function() { meetingCard.style.background = '#333'; });
+    meetingCard.addEventListener('mouseleave', function() { meetingCard.style.background = '#2a2a2a'; });
+
+    var meetingToggle = meetingCard.querySelector('#aiui-toggle-meeting-kb');
+    meetingToggle.addEventListener('change', function() {
+      var enabled = meetingToggle.checked;
+      localStorage.setItem('meeting_kb_enabled', enabled ? 'true' : 'false');
+      var statusBadge = meetingCard.querySelector('#aiui-status-meeting-kb');
+      var slider = meetingToggle.nextElementSibling;
+      var knob = slider.nextElementSibling;
+      if (enabled) {
+        statusBadge.style.display = '';
+        slider.style.background = '#8e44ad';
+        knob.style.left = '25px';
+        meetingCard.style.borderColor = '#8e44ad';
+      } else {
+        statusBadge.style.display = 'none';
+        slider.style.background = '#555';
+        knob.style.left = '3px';
+        meetingCard.style.borderColor = '#333';
+      }
+    });
+
+    grid.appendChild(meetingCard);
+
     // Check Gmail status
     if (isGmailConnected()) updateCardConnected(modal, 'gmail');
     fetch(GMAIL_API + '/auth/google/status?user_email=' + encodeURIComponent(getEffectiveEmail()))
