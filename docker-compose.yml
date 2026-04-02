@@ -137,6 +137,7 @@ services:
       - MCP_DASHBOARD_URL=http://mcp-dashboard:8000
       - MCP_GDRIVE_URL=http://mcp-gdrive:8000
       - MCP_GMAIL_URL=http://mcp-gmail:8000
+      - MCP_MEETING_KB_URL=http://meeting-kb:8200
       - META_TOOLS_MODE=true
       # API Gateway Mode - trust headers from Traefik/auth-service
       - API_GATEWAY_MODE=true
@@ -176,6 +177,8 @@ services:
       mcp-gdrive:
         condition: service_started
       mcp-gmail:
+        condition: service_started
+      meeting-kb:
         condition: service_started
     restart: unless-stopped
 
@@ -265,6 +268,28 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - OAUTH_REDIRECT_URI=http://localhost:8006/auth/google/callback
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  # ==========================================================================
+  # MCP Meeting Knowledge Base - Search & Store Meeting Summaries
+  # ==========================================================================
+  meeting-kb:
+    build: ./mcp-servers/meeting-kb
+    container_name: meeting-kb
+    ports:
+      - "8200:8200"
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      - MEETING_KB_API_KEY=${MEETING_KB_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
