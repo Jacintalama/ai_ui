@@ -397,6 +397,10 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/admin/groups/"):
         backend_url = MCP_PROXY_URL
         backend_path = full_path
+    # /mcp/meeting-kb/api/* → Meeting KB upload API (bypass MCP Proxy)
+    elif full_path.startswith("/mcp/meeting-kb/api"):
+        backend_url = os.getenv("MEETING_KB_URL", "http://meeting-kb:8200")
+        backend_path = full_path[16:]  # strip "/mcp/meeting-kb" → "/api/..."
     # /mcp/* → MCP Proxy (tool endpoints)
     elif full_path.startswith("/mcp"):
         backend_url = MCP_PROXY_URL
