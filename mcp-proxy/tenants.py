@@ -554,6 +554,7 @@ MCP_N8N_URL = os.getenv("MCP_N8N_URL", "http://mcp-n8n:8000")
 MCP_SCHEDULER_URL = os.getenv("MCP_SCHEDULER_URL", "http://mcp-scheduler:8000")
 MCP_GDRIVE_URL = os.getenv("MCP_GDRIVE_URL", "http://mcp-gdrive:8000")
 MCP_GMAIL_URL = os.getenv("MCP_GMAIL_URL", "http://mcp-gmail:8000")
+MCP_MEETING_KB_URL = os.getenv("MCP_MEETING_KB_URL", "http://meeting-kb:8200")
 
 LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     "google-drive": MCPServerConfig(
@@ -652,6 +653,16 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="bearer",
         api_key_env="MCP_API_KEY",
         description="Create and manage cron jobs that trigger n8n workflows on a schedule (4 tools)",
+        enabled=True,
+    ),
+    "meeting-kb": MCPServerConfig(
+        server_id="meeting-kb",
+        display_name="Meeting Knowledge Base",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MEETING_KB_URL,
+        auth_type="none",
+        api_key_env=None,
+        description="Search and browse meeting summaries (3 tools)",
         enabled=True,
     ),
 }
