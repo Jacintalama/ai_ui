@@ -1,0 +1,149 @@
+{
+  "name": "Fathom Transcript to Sheets (Cloud)",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 5,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "filters": {
+          "sender": "notifications@fathom.video",
+          "readStatus": "unread"
+        },
+        "options": {
+          "downloadAttachments": false
+        }
+      },
+      "id": "gmail-trigger",
+      "name": "Fathom Email Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Fathom notification email\n// Fathom emails typically contain:\n// - Meeting title in the subject\n// - AI-generated summary with highlights\n// - Action items\n// - Recording link\n// - Attendee list\n\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const email = item.json;\n  const subject = email.subject || 'Untitled Meeting';\n  const rawDate = email.date || email.internalDate || new Date().toISOString();\n  const body = email.textPlainBody || email.textPlain || email.snippet || '';\n  const htmlBody = email.textHtml || email.body || '';\n\n  // Extract meeting title - Fathom subjects often look like:\n  // \"Your call recording: Meeting Title\" or \"Meeting Title - Call Summary\"\n  let title = subject\n    .replace(/^(Your call recording:\\s*|Call summary:\\s*|Fathom:\\s*)/i, '')\n    .replace(/\\s*-\\s*(Call Summary|Recording Ready)$/i, '')\n    .trim() || subject;\n\n  // Format date nicely\n  let date;\n  try {\n    const d = new Date(rawDate);\n    date = d.toISOString().split('T')[0];\n  } catch (e) {\n    date = new Date().toISOString().split('T')[0];\n  }\n\n  // Extract Fathom recording link\n  let fathomLink = '';\n  const linkPatterns = [\n    /https?:\\/\\/[^\\s\"'<>]*fathom\\.video[^\\s\"'<>]*/gi,\n    /https?:\\/\\/[^\\s\"'<>]*app\\.fathom\\.video[^\\s\"'<>]*/gi\n  ];\n  for (const pattern of linkPatterns) {\n    const matches = (body + ' ' + htmlBody).match(pattern);\n    if (matches && matches.length > 0) {\n      fathomLink = matches[0].replace(/[)\\]}>]+$/, '');\n      break;\n    }\n  }\n\n  // Extract attendees from email body\n  // Fathom emails often list participants\n  let attendees = '';\n  const attendeePatterns = [\n    /(?:Participants|Attendees|With):\\s*([^\\n]+)/i,\n    /(?:Call with|Meeting with)\\s+([^\\n.]+)/i\n  ];\n  for (const pattern of attendeePatterns) {\n    const match = body.match(pattern);\n    if (match) {\n      attendees = match[1].trim();\n      break;\n    }\n  }\n  // Also check CC/To headers as fallback\n  if (!attendees) {\n    const to = email.to?.text || email.to || '';\n    const cc = email.cc?.text || email.cc || '';\n    attendees = [to, cc].filter(Boolean).join(', ');\n  }\n\n  // Extract AI summary from Fathom email body\n  // Fathom structures emails with sections like Summary, Highlights, Action Items\n  let summary = '';\n  let actionItems = '';\n\n  // Try to parse summary section\n  const summaryPatterns = [\n    /(?:Summary|Overview|Key Points)[:\\s]*\\n([\\s\\S]*?)(?=\\n(?:Action Items|Highlights|Key Decisions|Next Steps|---)|$)/i,\n    /(?:Here'?s? (?:a |your )?(?:summary|recap))[:\\s]*\\n([\\s\\S]*?)(?=\\n(?:Action Items|Highlights|---)|$)/i\n  ];\n  for (const pattern of summaryPatterns) {\n    const match = body.match(pattern);\n    if (match) {\n      summary = match[1].trim().substring(0, 2000);\n      break;\n    }\n  }\n  // Fallback: use first meaningful chunk of body as summary\n  if (!summary) {\n    const lines = body.split('\\n').filter(l => l.trim().length > 20);\n    summary = lines.slice(0, 10).join('\\n').substring(0, 2000) || body.substring(0, 2000);\n  }\n\n  // Try to parse action items section\n  const actionPatterns = [\n    /(?:Action Items|Next Steps|To[- ]?Do|Follow[- ]?ups?)[:\\s]*\\n([\\s\\S]*?)(?=\\n(?:Summary|Highlights|Key Decisions|---)|$)/i,\n    /(?:Action Items|Next Steps)[:\\s]*\\n([\\s\\S]*?)$/i\n  ];\n  for (const pattern of actionPatterns) {\n    const match = body.match(pattern);\n    if (match) {\n      actionItems = match[1].trim().substring(0, 1500);\n      break;\n    }\n  }\n\n  results.push({\n    json: {\n      title,\n      date,\n      body: body.substring(0, 3000),\n      summary,\n      action_items: actionItems || 'None identified',\n      fathom_link: fathomLink,\n      attendees,\n      email_id: email.id || email.messageId || ''\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "parse-fathom-email",
+      "name": "Parse Fathom Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CONFIGURE_SHEET_ID"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Meeting Transcripts"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $json.date }}",
+            "Meeting Title": "={{ $json.title }}",
+            "Attendees": "={{ $json.attendees }}",
+            "AI Summary": "={{ $json.summary }}",
+            "Action Items": "={{ $json.action_items }}",
+            "Fathom Link": "={{ $json.fathom_link }}",
+            "Status": "Processed"
+          }
+        },
+        "options": {}
+      },
+      "id": "google-sheets-add",
+      "name": "Add to Meeting Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [680, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "CONFIGURE_DISCORD_WEBHOOK_URL",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"embeds\": [\n    {\n      \"title\": \"Meeting Transcript Processed\",\n      \"description\": \"**{{ $('Parse Fathom Email').item.json.title }}**\\n\\n{{ $('Parse Fathom Email').item.json.summary.substring(0, 1500) }}\",\n      \"fields\": [\n        {\n          \"name\": \"Action Items\",\n          \"value\": \"{{ $('Parse Fathom Email').item.json.action_items.substring(0, 1000) || 'None identified' }}\",\n          \"inline\": false\n        },\n        {\n          \"name\": \"Attendees\",\n          \"value\": \"{{ $('Parse Fathom Email').item.json.attendees || 'Not listed' }}\",\n          \"inline\": true\n        },\n        {\n          \"name\": \"Date\",\n          \"value\": \"{{ $('Parse Fathom Email').item.json.date }}\",\n          \"inline\": true\n        }\n      ],\n      \"color\": 3447003,\n      \"footer\": {\n        \"text\": \"Fathom Recording\"\n      },\n      \"url\": \"{{ $('Parse Fathom Email').item.json.fathom_link }}\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "discord-webhook",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 300]
+    }
+  ],
+  "connections": {
+    "Fathom Email Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Fathom Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Fathom Email": {
+      "main": [
+        [
+          {
+            "node": "Add to Meeting Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Meeting Sheet": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -132,6 +132,16 @@
       "tier": "local",
       "groups": ["MCP-Admin", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
       "api_key_env": null
+    },
+    {
+      "id": "web-search",
+      "name": "Web Search",
+      "url": "http://mcp-web-search:8000",
+      "type": "openapi",
+      "description": "Search the web, scrape pages, save to Knowledge Base",
+      "tier": "local",
+      "groups": ["MCP-Admin", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "api_key_env": null
     }
   ],
   "special_groups": {

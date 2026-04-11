@@ -139,6 +139,114 @@ services:
 
 
   # ===========================================================================
+  # MCP GOOGLE DRIVE - Browse & Read Google Drive Files
+  # ===========================================================================
+  mcp-gdrive:
+    build: ./mcp-servers/gdrive
+    container_name: mcp-gdrive
+    restart: unless-stopped
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - OAUTH_REDIRECT_URI=https://ai-ui.coolestdomain.win/gdrive/auth/google/callback
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ===========================================================================
+  # MCP GMAIL - Email Integration
+  # ===========================================================================
+  mcp-gmail:
+    build: ./mcp-servers/gmail
+    container_name: mcp-gmail
+    restart: unless-stopped
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - OAUTH_REDIRECT_URI=https://ai-ui.coolestdomain.win/gmail/auth/google/callback
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ===========================================================================
+  # MCP GOOGLE CALENDAR - Event Management & Invites
+  # ===========================================================================
+  mcp-calendar:
+    build: ./mcp-servers/calendar
+    container_name: mcp-calendar
+    restart: unless-stopped
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - OAUTH_REDIRECT_URI=https://ai-ui.coolestdomain.win/calendar/auth/google/callback
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ===========================================================================
+  # MCP MEETINGS - Meeting Transcript Storage & KB Integration
+  # ===========================================================================
+  mcp-meetings:
+    build: ./mcp-servers/meetings
+    container_name: mcp-meetings
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      - OPENWEBUI_URL=https://ai-ui.coolestdomain.win
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ===========================================================================
+  # MCP WEB SEARCH - Search, Scrape, Save to Knowledge Base
+  # ===========================================================================
+  mcp-web-search:
+    build: ./mcp-servers/web-search
+    container_name: mcp-web-search
+    restart: unless-stopped
+    environment:
+      - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
+      - OPENWEBUI_URL=http://open-webui:8080
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY:-}
+    networks:
+      - backend
+    depends_on:
+      - open-webui
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ===========================================================================
   # CLAUDE ANALYZER - Claude Code Analysis (PR Review, BRE, Security, etc.)
   # ===========================================================================
   claude-analyzer:
@@ -257,16 +365,42 @@ services:
 
 
   # ===========================================================================
+  # MCP AUTH - API Key Authentication for External MCP Access
+  # ===========================================================================
+  mcp-auth:
+    build: ./mcp-auth
+    container_name: mcp-auth
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      - MCP_PROXY_URL=http://mcp-proxy:8000
+      - MCP_AUTH_ADMIN_SECRET=${MCP_AUTH_ADMIN_SECRET:-}
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+
+  # ===========================================================================
   # OPEN WEBUI - AI Chat Interface
   # ===========================================================================
   open-webui:
-    image: ghcr.io/open-webui/open-webui:v0.8.3
+    image: ghcr.io/open-webui/open-webui:v0.8.10
     container_name: open-webui
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:8080"
     volumes:
       - open-webui-data:/app/backend/data
+      - ./mcp-servers/gdrive/integrations-ui.js:/app/backend/open_webui/static/integrations-ui.js:ro
+      - ./mcp-servers/gdrive/integrations-ui.js:/app/build/static/integrations-ui.js:ro
+      - ./mcp-servers/gdrive/loader.js:/app/backend/open_webui/static/loader.js:ro
+      - ./mcp-servers/gdrive/loader.js:/app/build/static/loader.js:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       # LLM Connections

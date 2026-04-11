@@ -105,7 +105,7 @@ class CommandRouter:
         known_commands = {
             "ask", "workflow", "workflows", "status", "help",
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
-            "email", "sheets", "rebuild",
+            "email", "sheets", "rebuild", "web-search",
             "health", "security", "deps", "license",
         }
         if subcommand in known_commands:
@@ -143,6 +143,8 @@ class CommandRouter:
                 await self._handle_email(ctx)
             elif ctx.subcommand == "sheets":
                 await self._handle_sheets(ctx)
+            elif ctx.subcommand == "web-search":
+                await self._handle_web_search(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
             else:
@@ -169,10 +171,10 @@ class CommandRouter:
         if self._mcp_client:
             capabilities.append("")
             capabilities.append(
-                "MCP (Model Context Protocol) tools are available for GitHub, Jira, "
-                "n8n, filesystem, and 40+ other integrations. If the user's question "
-                "could be answered by using an MCP tool, suggest the specific "
-                "`/aiui mcp <server> <tool>` command they can run."
+                "MCP (Model Context Protocol) tools are available: Web Search (search & save to KB), "
+                "Google Drive, Gmail, GitHub, n8n, Filesystem, Excel, Dashboard, Scheduler, "
+                "and 30+ other integrations. If the user's question could be answered by "
+                "using an MCP tool, suggest the specific `/aiui mcp <server> <tool>` command."
             )
 
         if self.n8n.api_key:
@@ -1136,6 +1138,41 @@ class CommandRouter:
             response = response[:limit - 20] + "\n\n... (truncated)"
 
         await ctx.respond(response)
+
+    async def _handle_web_search(self, ctx: CommandContext) -> None:
+        """Search the web and save results to Knowledge Base."""
+        if not ctx.arguments:
+            await ctx.respond(
+                "Usage: `/aiui web-search <query>`\n"
+                "Example: `/aiui web-search Bitcoin price today`\n"
+                "Searches the web and saves results to Knowledge Base."
+            )
+            return
+
+        query = ctx.arguments.strip()
+        await ctx.respond(f"Searching for **{query}**... saving to Knowledge Base.")
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(
+                    "http://mcp-web-search:8000/web_save_to_kb",
+                    json={"query": query, "kb_name": "Web Research", "count": 3},
+                )
+                resp.raise_for_status()
+                result = resp.json()
+
+            files_saved = result.get("files_saved", 0)
+            sources = result.get("results", [])
+            source_list = "\n".join(f"- [{s.get('title', 'Link')[:60]}]({s.get('url', '')})" for s in sources)
+
+            await ctx.respond(
+                f"Saved **{files_saved} pages** to Knowledge Base **\"Web Research\"**\n\n"
+                f"**Sources:**\n{source_list}"
+            )
+        except Exception as e:
+            logger.error(f"Web search error: {e}", exc_info=True)
+            await ctx.respond(f"Web search failed: {e}")
 
     async def _handle_mcp(self, ctx: CommandContext) -> None:
         """Execute an MCP tool via the MCP Proxy."""

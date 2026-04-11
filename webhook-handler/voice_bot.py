@@ -77,14 +77,19 @@ class AudioOutputSource(discord.AudioSource):
     Uses queue.Queue (thread-safe) instead of asyncio.Queue.
     """
 
-    def __init__(self):
+    def __init__(self, on_drained=None):
         self._lock = threading.Lock()
         self._buffer = bytearray()
         self._queue = queue.Queue(maxsize=200)
+        self._has_content = False
+        self._empty_count = 0
+        self._on_drained = on_drained
 
     def feed(self, pcm_48k_stereo: bytes):
         with self._lock:
             self._buffer.extend(pcm_48k_stereo)
+            self._has_content = True
+            self._empty_count = 0
             while len(self._buffer) >= DISCORD_FRAME_SIZE:
                 frame = bytes(self._buffer[:DISCORD_FRAME_SIZE])
                 self._buffer = self._buffer[DISCORD_FRAME_SIZE:]
@@ -97,11 +102,24 @@ class AudioOutputSource(discord.AudioSource):
         try:
             return self._queue.get_nowait()
         except queue.Empty:
+            # Track when audio finishes playing (buffer drained after having content)
+            if self._has_content:
+                self._empty_count += 1
+                # 30 consecutive empty reads = ~600ms of silence after last audio
+                # Short enough for fast mic unmute, long enough to bridge
+                # micro-gaps between audio chunks from ElevenLabs
+                if self._empty_count >= 30:
+                    self._has_content = False
+                    self._empty_count = 0
+                    if self._on_drained:
+                        self._on_drained()
             return SILENCE_FRAME
 
     def clear(self):
         with self._lock:
             self._buffer.clear()
+            self._has_content = False
+            self._empty_count = 0
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
@@ -130,6 +148,14 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             self._loop = loop
             self._frame_count = 0
             self._agent_speaking = False
+            # Wire drain callback — unmute mic only after audio finishes playing
+            self._audio_output._on_drained = self._on_playback_drained
+
+        def _on_playback_drained(self):
+            """Called from AudioPlayer thread when buffered audio queue empties."""
+            # Don't unmute here — _on_agent_response handles unmuting
+            # This just signals that queued audio finished playing
+            pass
 
         async def start(self, input_callback):
             self._input_callback = input_callback
@@ -141,22 +167,24 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             logger.info("[ConvAI] Audio interface stopped")
 
         async def output(self, audio: bytes):
-            self._agent_speaking = True
             pcm_48k = resample_16k_mono_to_48k_stereo(audio)
             self._audio_output.feed(pcm_48k)
 
         async def interrupt(self):
-            self._agent_speaking = False
             self._audio_output.clear()
             logger.info("[ConvAI] User interrupted agent")
 
         def feed_discord_audio(self, pcm_48k_stereo: bytes):
-            """Called from audio sink thread with raw Discord PCM."""
+            """Called from audio sink thread with raw Discord PCM.
+
+            Mute while audio queue has content (agent is speaking).
+            Unmute instantly when queue empties — no timer delay.
+            """
             cb = self._input_callback
             if cb is None:
                 return
-            # Mute input while agent is speaking — prevents noise interruptions
-            if self._agent_speaking:
+            # Mute while agent audio is playing — prevents noise interruption
+            if not self._audio_output._queue.empty() or self._audio_output._has_content:
                 return
             self._frame_count += 1
             if self._frame_count % 500 == 1:
@@ -212,6 +240,11 @@ class ConversationalVoiceBot(discord.Client):
         self._text_channel = None
         self._session_active = False
         self._session_end_handled = False
+        self._last_user_transcript_time = 0.0
+        self._reconnect_attempts = 0
+        self._max_reconnect_attempts = 3
+        self._watchdog_task = None
+        self._session_voice_channel = None
 
     async def on_ready(self):
         logger.info(f"Conversational voice bot ready as {self.user}")
@@ -298,6 +331,14 @@ class ConversationalVoiceBot(discord.Client):
             await self._conversation.start_session()
             self._session_active = True
             self._session_end_handled = False
+            self._session_voice_channel = voice_channel
+            import time
+            self._last_user_transcript_time = time.monotonic()
+
+            # Start DAVE watchdog — auto-reconnect if no user speech detected
+            if self._watchdog_task:
+                self._watchdog_task.cancel()
+            self._watchdog_task = asyncio.create_task(self._dave_watchdog())
 
             logger.info(f"[ConvAI] Session started in {voice_channel.name}")
             if self._text_channel:
@@ -327,6 +368,11 @@ class ConversationalVoiceBot(discord.Client):
         self._session_active = False
         conv = self._conversation
         self._conversation = None
+
+        # Cancel watchdog
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
 
         # Disconnect from Discord FIRST (fast, prevents stuck bot in channel)
         for vc in self.voice_clients:
@@ -371,9 +417,6 @@ class ConversationalVoiceBot(discord.Client):
 
     async def _on_agent_response(self, response: str):
         logger.info(f"[ConvAI] Agent: {response[:100]}")
-        # Agent finished speaking — unmute mic input
-        if self._audio_interface:
-            self._audio_interface._agent_speaking = False
         if self._text_channel:
             try:
                 msg = response[:1900] if len(response) > 1900 else response
@@ -381,17 +424,108 @@ class ConversationalVoiceBot(discord.Client):
             except Exception:
                 pass
 
+    async def _wait_and_unmute(self):
+        """Wait for audio to finish playing, then unmute mic.
+
+        Requires 3 continuous seconds of empty queue before unmuting.
+        If new audio arrives during the wait, resets the timer.
+        This bridges tool call gaps (agent says "Checking..." → 1-3s tool call → speaks result).
+        """
+        if not self._audio_output or not self._audio_interface:
+            return
+        try:
+            empty_seconds = 0.0
+            for _ in range(750):  # max 15 seconds total
+                await asyncio.sleep(0.02)
+                if self._audio_output._queue.empty() and not self._audio_output._has_content:
+                    empty_seconds += 0.02
+                    if empty_seconds >= 3.0:
+                        break
+                else:
+                    empty_seconds = 0.0  # Reset — new audio arrived
+
+            if self._audio_interface:
+                self._audio_interface._agent_speaking = False
+                logger.info("[ConvAI] Agent finished speaking — mic unmuted")
+        except asyncio.CancelledError:
+            pass
+
     async def _on_user_transcript(self, transcript: str):
         # Filter out noise transcripts ("...", empty, or very short)
         cleaned = transcript.strip().strip(".")
         if len(cleaned) < 2:
             return
+        import time
+        self._last_user_transcript_time = time.monotonic()
+        self._reconnect_attempts = 0  # Reset on successful speech
         logger.info(f"[ConvAI] User: {transcript}")
         if self._text_channel:
             try:
                 await self._text_channel.send(f"*You: {transcript}*")
             except Exception:
                 pass
+
+    async def _dave_watchdog(self):
+        """Monitor DAVE audio quality. Auto-reconnect if no speech detected."""
+        import time
+        try:
+            # Wait 15s after session start for greeting to finish
+            await asyncio.sleep(15)
+
+            while self._session_active:
+                await asyncio.sleep(10)
+                if not self._session_active:
+                    break
+
+                elapsed = time.monotonic() - self._last_user_transcript_time
+                # If 25+ seconds since last transcript and audio is flowing
+                if elapsed > 25 and self._audio_interface and self._audio_interface._frame_count > 100:
+                    if self._reconnect_attempts >= self._max_reconnect_attempts:
+                        logger.warning("[ConvAI] DAVE: Max reconnect attempts reached, giving up")
+                        if self._text_channel:
+                            try:
+                                await self._text_channel.send(
+                                    "*(Voice quality issue — couldn't establish clear audio. "
+                                    "Try disconnecting and rejoining.)*"
+                                )
+                            except Exception:
+                                pass
+                        break
+
+                    self._reconnect_attempts += 1
+                    logger.info(f"[ConvAI] DAVE: No speech detected for {elapsed:.0f}s, "
+                                f"reconnecting (attempt {self._reconnect_attempts}/{self._max_reconnect_attempts})")
+
+                    if self._text_channel:
+                        try:
+                            await self._text_channel.send(
+                                f"*(Reconnecting for better audio... attempt {self._reconnect_attempts})*"
+                            )
+                        except Exception:
+                            pass
+
+                    # Save channel ref before cleanup
+                    voice_channel = self._session_voice_channel
+                    text_channel = self._text_channel
+
+                    # Clean up current session
+                    await self._cleanup()
+
+                    # Small delay for Discord to process disconnect
+                    await asyncio.sleep(3)
+
+                    # Reconnect if user is still in the channel
+                    if voice_channel:
+                        non_bot = [m for m in voice_channel.members if not m.bot]
+                        if non_bot:
+                            self._text_channel = text_channel
+                            await self._start_session(voice_channel, non_bot[0])
+                    break  # New session starts its own watchdog
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[ConvAI] Watchdog error: {e}", exc_info=True)
 
 
 async def start_voice_bot(
