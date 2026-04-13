@@ -113,6 +113,7 @@ async def _process_and_push(record: MeetingRecord):
             discord_webhook_url=DISCORD_WEBHOOK_URL,
             summary=record.summary,
             title=record.title,
+            meeting_id=str(record.id),
         )
 
     # Step 3: Push to KB (uses AI-processed summary if available)
