@@ -216,6 +216,7 @@ services:
       - OPENWEBUI_URL=https://ai-ui.coolestdomain.win
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      - TASKS_WEBHOOK_URL=${TASKS_WEBHOOK_URL:-http://tasks:8210/webhooks/meeting-action-items}
     networks:
       - backend
     depends_on:
@@ -224,6 +225,32 @@ services:
     deploy:
       resources:
         limits:
+          memory: 128M
+
+  # ===========================================================================
+  # TASKS - Admin Task Approval Panel API + AI execution
+  # ===========================================================================
+  tasks:
+    build: ./mcp-servers/tasks
+    container_name: tasks
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
+      - CLAUDE_WORKSPACE=/workspace/ai_ui
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./:/workspace/ai_ui
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
           memory: 128M
 
   # ===========================================================================
