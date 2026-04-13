@@ -11,22 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Make app modules importable from tests/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db import _run_migrations  # noqa: E402
+from db import init_db  # noqa: E402
 
 # Use the same DB as the running app — DATABASE_URL is set in the container env.
 RAW_DB_URL = os.environ["DATABASE_URL"]
 SQLA_DB_URL = RAW_DB_URL.replace("postgresql://", "postgresql+asyncpg://")
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def _ensure_schema():
-    """Make sure tasks schema exists before tests run."""
-    await _run_migrations()
-
-
 @pytest_asyncio.fixture
 async def db_session():
-    """Provide a clean session, truncating tables between tests."""
+    """Initialize the global session maker on the current event loop, then
+    yield a clean session with truncated tables.
+
+    Initializing per-test (rather than once per session) avoids asyncpg's
+    "future attached to different loop" errors when pytest-asyncio creates
+    a fresh event loop per test function.
+    """
+    await init_db()
     engine = create_async_engine(SQLA_DB_URL)
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with engine.begin() as conn:
