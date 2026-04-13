@@ -1,0 +1,17 @@
+# Local-only overrides — applied with: docker compose -f docker-compose.unified.yml -f docker-compose.local.yml ...
+# Reason: ports 80/443 already used on this Windows machine; tasks:8210 only
+# exposed locally for the demo HTML at /tasks/static/local-demo.html.
+services:
+  caddy:
+    # Build a Caddy that includes the replace-response plugin (used by the
+    # main Caddyfile to auto-inject the task panel script tag).
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    image: ai_ui-caddy-replace
+    ports:
+      !override
+      - "8090:80"
+  tasks:
+    ports:
+      - "127.0.0.1:8210:8210"  # local browser only — bound to loopback

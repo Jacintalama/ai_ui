@@ -308,18 +308,175 @@
     }
   });
 
-  // ===== Bootstrap =====
-  async function init() {
-    await refreshAll();
-    const dismissedAt = parseInt(localStorage.getItem(DISMISS_KEY) || "0", 10);
-    const fresh = Date.now() - dismissedAt > DISMISS_TTL_MS;
-    if (state.tasks.pending.length > 0 && fresh) {
-      panel.classList.remove("hidden");
-    } else {
-      // Even when dismissed/empty, expose a global to reopen manually:
-      console.log("[AIUI tasks] panel hidden — call window.aiuiTaskPanel.open() to show");
+  // ===== Auth gate =====
+  // Don't render on auth/error pages or before the user has signed in.
+  function onAuthRoute() {
+    const p = location.pathname || "";
+    return p.startsWith("/auth") || p.startsWith("/error") || p === "/signin";
+  }
+
+  // Save the original fetch reference so demo wrappers can't trick us.
+  const _origFetchOrWindow = window.fetch.bind(window);
+  let _cachedAuth = null;
+
+  async function getAuthInfo() {
+    if (_cachedAuth) return _cachedAuth;
+    const token = localStorage.getItem("token");
+    if (!token) return null;
+    try {
+      const r = await _origFetchOrWindow("/api/v1/auths/", {
+        credentials: "include",
+        headers: { Authorization: "Bearer " + token },
+      });
+      if (!r.ok) return null;
+      _cachedAuth = await r.json();
+      console.log("[AIUI tasks] auth:", _cachedAuth.email, "role:", _cachedAuth.role);
+      return _cachedAuth;
+    } catch (e) {
+      console.warn("[AIUI tasks] auth check failed:", e);
+      return null;
     }
   }
+
+  async function isSignedIn() {
+    return !!(await getAuthInfo());
+  }
+
+  async function isAdmin() {
+    const a = await getAuthInfo();
+    return !!(a && a.role === "admin");
+  }
+
+  // ===== Bootstrap =====
+  let _initRunning = false;
+  let _initDone = false;
+
+  async function init() {
+    if (_initRunning || _initDone) return;
+    if (onAuthRoute()) {
+      console.log("[AIUI tasks] auth route — skipping panel");
+      return;
+    }
+    _initRunning = true;
+    try {
+      if (!(await isAdmin())) {
+        console.log("[AIUI tasks] not admin — skipping panel");
+        return;
+      }
+      await refreshAll();
+      _initDone = true;
+      if (!isAutoShowEnabled()) {
+        console.log("[AIUI tasks] auto-show disabled by admin");
+        return;
+      }
+      const dismissedAt = parseInt(localStorage.getItem(DISMISS_KEY) || "0", 10);
+      const fresh = Date.now() - dismissedAt > DISMISS_TTL_MS;
+      if (state.tasks.pending.length > 0 && fresh) {
+        panel.classList.remove("hidden");
+      } else {
+        console.log("[AIUI tasks] panel hidden — call window.aiuiTaskPanel.open() to show");
+      }
+    } finally {
+      _initRunning = false;
+    }
+  }
+
+  // ===== Inject single "Tasks" entry into the OpenWebUI user dropdown =====
+  // Dropdown is created on demand. Use MutationObserver but dedupe per
+  // menu instance via a unique flag on the parent menu element.
+  const AUTOSHOW_KEY = "aiui-tasks-autoshow";
+  function isAutoShowEnabled() {
+    return localStorage.getItem(AUTOSHOW_KEY) !== "false"; // default ON
+  }
+  function setAutoShow(enabled) {
+    localStorage.setItem(AUTOSHOW_KEY, enabled ? "true" : "false");
+  }
+
+  function injectMenuEntry() {
+    let pending = false;
+    const observer = new MutationObserver(() => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(async () => {
+        pending = false;
+        // Admin-gate: only show the menu entry for admins.
+        if (!(await isAdmin())) return;
+
+        // Walk up from any "Sign Out" text node to the nearest button/a, then
+        // inject a sibling menu item just before it.
+        const all = document.querySelectorAll("button, a, [role='menuitem']");
+        for (const el of all) {
+          const txt = (el.textContent || "").trim();
+          if (txt !== "Sign Out") continue;
+          const menu = el.parentElement;
+          if (!menu || menu.dataset.aiuiTasksInjected) continue;
+          menu.dataset.aiuiTasksInjected = "1";
+
+          // Clone the Sign Out element to inherit menu-item styling
+          const entry = el.cloneNode(false); // shallow clone — keep tag + classes only
+          entry.dataset.aiuiTasksEntry = "1";
+          entry.removeAttribute("href");
+          entry.removeAttribute("aria-label");
+          renderEntryLabel(entry);
+          entry.style.cursor = "pointer";
+          entry.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const newValue = !isAutoShowEnabled();
+            setAutoShow(newValue);
+            renderEntryLabel(entry);
+            if (window.aiuiTaskPanel) {
+              window.aiuiTaskPanel.open();
+              window.aiuiTaskPanel.refresh();
+            }
+          });
+          menu.insertBefore(entry, el);
+          console.log("[AIUI tasks] menu entry injected");
+        }
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function renderEntryLabel(entry) {
+    entry.innerHTML = "";
+    const icon = document.createElement("span");
+    icon.textContent = isAutoShowEnabled() ? "☑" : "☐";
+    icon.style.cssText = "color:#3b82f6;font-weight:700;margin-right:8px;";
+    const label = document.createElement("span");
+    label.textContent = "Tasks (auto-show)";
+    entry.appendChild(icon);
+    entry.appendChild(label);
+  }
+
+  injectMenuEntry();
+
+  // ===== SPA navigation watcher =====
+  // OpenWebUI is a SvelteKit SPA — sign-in changes URL via pushState without
+  // reloading. Watch for route changes and re-attempt init when leaving /auth.
+  function watchSpaNavigation() {
+    let lastPath = location.pathname;
+    function onChange() {
+      if (location.pathname === lastPath) return;
+      lastPath = location.pathname;
+      console.log("[AIUI tasks] route changed to", lastPath);
+      // Reset init when entering or leaving /auth
+      if (onAuthRoute()) {
+        panel.classList.add("hidden");
+      } else {
+        _initDone = false;
+        init();
+      }
+    }
+    const _push = history.pushState;
+    const _replace = history.replaceState;
+    history.pushState = function () { _push.apply(this, arguments); onChange(); };
+    history.replaceState = function () { _replace.apply(this, arguments); onChange(); };
+    window.addEventListener("popstate", onChange);
+    // Belt-and-braces: poll once a second in case some app uses location.assign
+    setInterval(onChange, 1000);
+  }
+  watchSpaNavigation();
 
   window.aiuiTaskPanel = {
     open: () => panel.classList.remove("hidden"),

@@ -235,6 +235,9 @@ services:
     build: ./mcp-servers/tasks
     container_name: tasks
     restart: unless-stopped
+    # Note: tasks:8210 is reachable only on the backend network in production.
+    # Caddy proxies /tasks/static/* and api-gateway proxies /api/tasks/*.
+    # For local browser-only access, see docker-compose.local.yml.
     environment:
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
       - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
@@ -429,6 +432,8 @@ services:
       - ./mcp-servers/gdrive/integrations-ui.js:/app/build/static/integrations-ui.js:ro
       - ./mcp-servers/gdrive/loader.js:/app/backend/open_webui/static/loader.js:ro
       - ./mcp-servers/gdrive/loader.js:/app/build/static/loader.js:ro
+      # Patched index.html with task-panel.js auto-loader (admin task panel)
+      - ./openwebui-overrides/index.html:/app/build/index.html:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       # LLM Connections

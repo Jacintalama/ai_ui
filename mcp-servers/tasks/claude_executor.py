@@ -8,6 +8,15 @@ from typing import AsyncIterator, Literal
 CLAUDE_WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
 EXECUTION_TIMEOUT_SECONDS = 300
 
+# Sanity bounds on AI execution to limit blast radius
+MAX_PROMPT_CHARS = 8000
+MAX_LOG_BYTES = 1_000_000  # 1 MB cap on stdout we'll buffer per execution
+
+# When set, run claude inside this writable copy of the workspace instead of
+# the live mount. Set CLAUDE_SANDBOX_DIR=/sandbox to enable; the route layer
+# is responsible for snapshotting the repo into that path before each run.
+CLAUDE_SANDBOX_DIR = os.environ.get("CLAUDE_SANDBOX_DIR", "")
+
 PROMPT_TEMPLATE = """You are executing a task from the AIUI meeting decision engine.
 
 TASK: {description}
@@ -69,27 +78,45 @@ def parse_outcome(claude_response: str) -> Outcome:
 
 
 async def run_claude_subprocess(prompt: str) -> AsyncIterator[str]:
-    """Spawn the claude CLI with --print and stream its stdout in 4 KB chunks."""
+    """Spawn the claude CLI with --print and stream its stdout in 4 KB chunks.
+
+    Safety:
+      - Prompt is capped at MAX_PROMPT_CHARS to limit injection of huge payloads.
+      - Hard timeout of EXECUTION_TIMEOUT_SECONDS; process is killed on timeout.
+      - Stdout is capped at MAX_LOG_BYTES; subsequent output is dropped.
+      - cwd is CLAUDE_SANDBOX_DIR if set (snapshot copy), else CLAUDE_WORKSPACE.
+    """
+    if len(prompt) > MAX_PROMPT_CHARS:
+        prompt = prompt[:MAX_PROMPT_CHARS] + "\n[truncated by tasks service]"
+
+    cwd = CLAUDE_SANDBOX_DIR or CLAUDE_WORKSPACE
+
     proc = await asyncio.create_subprocess_exec(
         "claude",
         "--print",
         "--dangerously-skip-permissions",
         prompt,
-        cwd=CLAUDE_WORKSPACE,
+        cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         env={**os.environ},
     )
     assert proc.stdout is not None
+    bytes_yielded = 0
     try:
         async with asyncio.timeout(EXECUTION_TIMEOUT_SECONDS):
             while True:
                 chunk = await proc.stdout.read(4096)
                 if not chunk:
                     break
+                if bytes_yielded >= MAX_LOG_BYTES:
+                    proc.kill()
+                    yield "\n[OUTPUT CAP exceeded — process killed]\n"
+                    break
+                bytes_yielded += len(chunk)
                 yield chunk.decode("utf-8", errors="replace")
             await proc.wait()
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        yield "\n[TIMEOUT after 300s — process killed]\n"
+        yield f"\n[TIMEOUT after {EXECUTION_TIMEOUT_SECONDS}s — process killed]\n"
