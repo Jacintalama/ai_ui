@@ -555,6 +555,8 @@ MCP_SCHEDULER_URL = os.getenv("MCP_SCHEDULER_URL", "http://mcp-scheduler:8000")
 MCP_GDRIVE_URL = os.getenv("MCP_GDRIVE_URL", "http://mcp-gdrive:8000")
 MCP_GMAIL_URL = os.getenv("MCP_GMAIL_URL", "http://mcp-gmail:8000")
 MCP_MEETING_KB_URL = os.getenv("MCP_MEETING_KB_URL", "http://meeting-kb:8200")
+MCP_CALENDAR_URL = os.getenv("MCP_CALENDAR_URL", "http://mcp-calendar:8000")
+MCP_WEB_SEARCH_URL = os.getenv("MCP_WEB_SEARCH_URL", "http://mcp-web-search:8000")
 
 LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     "google-drive": MCPServerConfig(
@@ -575,6 +577,26 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="none",
         api_key_env=None,
         description="Search, read, and send emails from your Gmail (5 tools)",
+        enabled=True,
+    ),
+    "calendar": MCPServerConfig(
+        server_id="calendar",
+        display_name="Google Calendar",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_CALENDAR_URL,
+        auth_type="none",
+        api_key_env=None,
+        description="Create events, send invites, manage Google Calendar (5 tools)",
+        enabled=True,
+    ),
+    "web-search": MCPServerConfig(
+        server_id="web-search",
+        display_name="Web Search",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_WEB_SEARCH_URL,
+        auth_type="none",
+        api_key_env=None,
+        description="Search the web, scrape pages, save to Knowledge Base (3 tools)",
         enabled=True,
     ),
     "github": MCPServerConfig(

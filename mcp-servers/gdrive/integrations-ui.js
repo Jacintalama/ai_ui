@@ -2,8 +2,8 @@
 (function() {
   'use strict';
 
-  var GDRIVE_API = 'http://localhost:8005';
-  var GMAIL_API = 'http://localhost:8006';
+  var GDRIVE_API = window.location.hostname === 'localhost' ? 'http://localhost:8005' : '/gdrive';
+  var GMAIL_API = window.location.hostname === 'localhost' ? 'http://localhost:8006' : '/gmail';
   var GMAIL_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 75 75" xmlns="http://www.w3.org/2000/svg"><path d="M6.25 56.25h12.5V36.46L0 22.5v27.5c0 3.45 2.8 6.25 6.25 6.25z" fill="#4285f4"/><path d="M56.25 56.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-18.75 13.96" fill="#34a853"/><path d="M56.25 25v31.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-11.72 8.72" fill="#34a853"/><path d="M18.75 56.25V36.46L37.5 50l18.75-13.54V25L37.5 38.54 18.75 25" fill="#ea4335"/><path d="M0 22.5l18.75 13.96V25L6.25 18.75C2.8 18.75 0 21.55 0 22.5" fill="#c5221f"/><path d="M56.25 25v11.46L75 22.5c0-.95-2.8-3.75-6.25-3.75L56.25 25" fill="#0d652d"/><path d="M18.75 25L6.25 18.75C2.8 18.75 0 21.55 0 22.5l18.75 13.96" fill="#c5221f"/><path d="M56.25 25l12.5-6.25C65.3 18.75 62.5 21.55 62.5 22.5" fill="#0d652d"/></svg>';
   var GMAIL_ICON_BIG = '<svg width="24" height="24" viewBox="0 0 75 75" xmlns="http://www.w3.org/2000/svg"><path d="M6.25 56.25h12.5V36.46L0 22.5v27.5c0 3.45 2.8 6.25 6.25 6.25z" fill="#4285f4"/><path d="M56.25 56.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-18.75 13.96" fill="#34a853"/><path d="M56.25 25v31.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-11.72 8.72" fill="#34a853"/><path d="M18.75 56.25V36.46L37.5 50l18.75-13.54V25L37.5 38.54 18.75 25" fill="#ea4335"/><path d="M0 22.5l18.75 13.96V25L6.25 18.75C2.8 18.75 0 21.55 0 22.5" fill="#c5221f"/><path d="M56.25 25v11.46L75 22.5c0-.95-2.8-3.75-6.25-3.75L56.25 25" fill="#0d652d"/><path d="M18.75 25L6.25 18.75C2.8 18.75 0 21.55 0 22.5l18.75 13.96" fill="#c5221f"/><path d="M56.25 25l12.5-6.25C65.3 18.75 62.5 21.55 62.5 22.5" fill="#0d652d"/></svg>';
   var GDRIVE_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-20.4 35.3c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.4 9.35z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-10.1-17.5c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 23.8h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
@@ -11,33 +11,73 @@
 
   // ========== Helpers ==========
 
+  // Cache the resolved email to avoid repeated API calls
+  var _cachedEmail = null;
+
   function getEffectiveEmail() {
-    var stored = localStorage.getItem('aiui-gdrive-email');
-    if (stored) return stored;
+    // Return cached email if available
+    if (_cachedEmail) return _cachedEmail;
+
+    // Try to decode JWT token from Open WebUI
+    var token = localStorage.getItem('token');
+    if (token) {
+      try {
+        var payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload && payload.id) {
+          // Use user ID as identifier (email not in JWT)
+          _cachedEmail = payload.id;
+          return _cachedEmail;
+        }
+      } catch (e) {}
+    }
+
+    // Fallback: search localStorage for email
     for (var i = 0; i < localStorage.length; i++) {
       try {
         var val = localStorage.getItem(localStorage.key(i));
         if (!val) continue;
         var obj = JSON.parse(val);
-        if (obj && obj.email) return obj.email;
-        if (obj && obj.user && obj.user.email) return obj.user.email;
+        if (obj && obj.email) { _cachedEmail = obj.email; return _cachedEmail; }
+        if (obj && obj.user && obj.user.email) { _cachedEmail = obj.user.email; return _cachedEmail; }
       } catch (e) {}
     }
     return 'default@local';
   }
 
+  // Fetch actual email from Open WebUI API and update cache
+  function resolveUserEmail() {
+    var token = localStorage.getItem('token');
+    if (!token) return;
+    fetch('/api/v1/auths/', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    }).then(function(r) { return r.json(); }).then(function(data) {
+      if (data && data.email) {
+        _cachedEmail = data.email;
+        console.log('[AIUI] User email resolved:', data.email);
+      }
+    }).catch(function() {});
+  }
+  // Resolve email on load
+  setTimeout(resolveUserEmail, 1000);
+
+  // Per-user localStorage keys — each user has separate connection state
+  function _userKey(base) {
+    var email = getEffectiveEmail();
+    return base + ':' + email;
+  }
+
   function isConnected() {
-    return localStorage.getItem('aiui-gdrive-connected') === 'true';
+    return localStorage.getItem(_userKey('aiui-gdrive-connected')) === 'true';
   }
 
   function isGmailConnected() {
-    return localStorage.getItem('aiui-gmail-connected') === 'true';
+    return localStorage.getItem(_userKey('aiui-gmail-connected')) === 'true';
   }
 
   function handleDisconnected() {
-    // Clear local state
-    localStorage.removeItem('aiui-gdrive-connected');
-    localStorage.removeItem('aiui-gdrive-email');
+    // Clear local state for current user only
+    localStorage.removeItem(_userKey('aiui-gdrive-connected'));
+    localStorage.removeItem(_userKey('aiui-gdrive-email'));
     // Remove "Add from Google Drive" button from menu
     var gdriveBtn = document.getElementById('aiui-gdrive-menu-btn');
     if (gdriveBtn) gdriveBtn.remove();
@@ -92,13 +132,13 @@
   // Listen for OAuth callback
   window.addEventListener('message', function(event) {
     if (event.data && event.data.type === 'aiui-gdrive-connected') {
-      localStorage.setItem('aiui-gdrive-email', event.data.email);
-      localStorage.setItem('aiui-gdrive-connected', 'true');
+      localStorage.setItem(_userKey('aiui-gdrive-email'), event.data.email);
+      localStorage.setItem(_userKey('aiui-gdrive-connected'), 'true');
       if (activeIntModal) updateCardConnected(activeIntModal, 'google-drive');
     }
     if (event.data && event.data.type === 'aiui-gmail-connected') {
-      localStorage.setItem('aiui-gmail-email', event.data.email);
-      localStorage.setItem('aiui-gmail-connected', 'true');
+      localStorage.setItem(_userKey('aiui-gmail-email'), event.data.email);
+      localStorage.setItem(_userKey('aiui-gmail-connected'), 'true');
       if (activeIntModal) updateCardConnected(activeIntModal, 'gmail');
     }
   });
@@ -1252,26 +1292,29 @@
 
   // ========== Menu Injection ==========
 
-  function injectMenuItems() {
-    var observer = new MutationObserver(function(mutations) {
-      for (var i = 0; i < mutations.length; i++) {
-        var addedNodes = mutations[i].addedNodes;
-        for (var j = 0; j < addedNodes.length; j++) {
-          var node = addedNodes[j];
-          if (node.nodeType !== 1) continue;
+  function tryInjectItems() {
+    // Already injected?
+    if (document.getElementById('aiui-integrations-btn')) return;
 
-          var allButtons = node.querySelectorAll ? node.querySelectorAll('button') : [];
-          var refItem = null;
-          allButtons.forEach(function(btn) {
-            var text = btn.textContent ? btn.textContent.trim() : '';
-            if (text.includes('Reference Chats') || text.includes('Attach Knowledge') || text.includes('Upload Files')) {
-              refItem = btn;
-            }
-          });
+    // Find a menu button to anchor to
+    var allButtons = document.querySelectorAll('button');
+    var refItem = null;
+    allButtons.forEach(function(btn) {
+      var text = btn.textContent ? btn.textContent.trim() : '';
+      if (text === 'Upload Files' || text === 'Reference Chats' || text === 'Attach Knowledge' ||
+          text === 'Attach Webpage' || text === 'Capture' || text === 'Attach Notes') {
+        refItem = btn;
+      }
+    });
 
-          if (refItem && !document.getElementById('aiui-integrations-btn')) {
-            var container = refItem.parentElement;
-            if (!container) continue;
+    if (!refItem) return;
+
+    var container = refItem.parentElement;
+    if (!container) return;
+
+    console.log('[AIUI] Injecting menu items into', container.tagName, 'with', container.children.length, 'children');
+
+    {
 
             // 1. "Add from Google Drive" — only show if connected
             if (isConnected()) {
@@ -1338,12 +1381,36 @@
             });
 
             container.appendChild(intBtn);
-          }
+    }
+  }
+
+  function injectMenuItems() {
+    // Watch for DOM changes (dropdown appearing)
+    var observer = new MutationObserver(function() {
+      tryInjectItems();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Fallback: poll every 500ms
+    setInterval(function() {
+      tryInjectItems();
+    }, 500);
+
+    // Also intercept clicks on + buttons to trigger rapid injection
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest('button');
+      if (btn) {
+        var text = btn.textContent.trim();
+        // If clicked button looks like the + button (empty or just "+")
+        if (text === '+' || text === '' || btn.querySelector('svg')) {
+          // Rapid-fire injection attempts after click
+          setTimeout(tryInjectItems, 50);
+          setTimeout(tryInjectItems, 150);
+          setTimeout(tryInjectItems, 300);
+          setTimeout(tryInjectItems, 600);
         }
       }
-    });
-
-    observer.observe(document.body, { childList: true, subtree: true });
+    }, true);
   }
 
   // ========== Init ==========

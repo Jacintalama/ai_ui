@@ -116,6 +116,46 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Google Drive MCP connector
+	# ---------------------------------------------------------------------------
+	handle /gdrive/* {
+		uri strip_prefix /gdrive
+		reverse_proxy mcp-gdrive:8000
+	}
+
+	# ---------------------------------------------------------------------------
+	# Gmail MCP connector
+	# ---------------------------------------------------------------------------
+	handle /gmail/* {
+		uri strip_prefix /gmail
+		reverse_proxy mcp-gmail:8000
+	}
+
+	# ---------------------------------------------------------------------------
+	# Google Calendar MCP connector
+	# ---------------------------------------------------------------------------
+	handle /calendar/* {
+		uri strip_prefix /calendar
+		reverse_proxy mcp-calendar:8000
+	}
+
+	# ---------------------------------------------------------------------------
+	# Meetings MCP — meeting transcript storage
+	# ---------------------------------------------------------------------------
+	handle /meetings/* {
+		uri strip_prefix /meetings
+		reverse_proxy mcp-meetings:8000
+	}
+
+	# ---------------------------------------------------------------------------
+	# MCP Remote — Claude Desktop external access (API key auth)
+	# ---------------------------------------------------------------------------
+	handle /mcp-remote/* {
+		uri strip_prefix /mcp-remote
+		reverse_proxy mcp-auth:8000
+	}
+
+	# ---------------------------------------------------------------------------
 	# n8n Workflow Engine (external webhook triggers)
 	# ---------------------------------------------------------------------------
 	handle /n8n/* {
