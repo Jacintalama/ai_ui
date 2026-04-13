@@ -75,6 +75,7 @@ services:
       - MCP_PROXY_URL=http://mcp-proxy:8000
       - ADMIN_PORTAL_URL=http://admin-portal:8080
       - OPEN_WEBUI_URL=http://open-webui:8080
+      - TASKS_URL=http://tasks:8210
       # Debug mode
       - DEBUG=${DEBUG:-false}
     depends_on:

@@ -116,6 +116,18 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Tasks Service — admin task approval panel
+	# ---------------------------------------------------------------------------
+	# /api/tasks/* goes through the gateway so JWT becomes X-User-Email
+	handle /api/tasks/* {
+		reverse_proxy api-gateway:8080
+	}
+	# Static frontend (panel JS + history page) — public, no auth on assets
+	handle /tasks/static/* {
+		reverse_proxy tasks:8210
+	}
+
+	# ---------------------------------------------------------------------------
 	# Google Drive MCP connector
 	# ---------------------------------------------------------------------------
 	handle /gdrive/* {
