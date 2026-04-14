@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Task Panel — Local Demo</title>
+<style>
+  body { margin: 0; background: #050505; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; min-height: 100vh; }
+  .stage { max-width: 700px; margin: 0 auto; padding: 32px 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: #888; font-size: 13px; margin-bottom: 20px; }
+  .panel-info { background: #0f0f0f; border: 1px solid #2a2a2a; border-radius: 8px; padding: 14px; margin-bottom: 16px; font-size: 13px; color: #ccc; line-height: 1.6; }
+  .panel-info strong { color: #fff; }
+  .panel-info code { background: #000; padding: 2px 6px; border-radius: 3px; color: #60a5fa; font-size: 12px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .controls button, .controls select { background: #1a1a1a; color: #fff; border: 1px solid #2a2a2a; padding: 8px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .controls button:hover { background: #2a2a2a; }
+  #status { color: #888; font-size: 12px; margin-top: 8px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <h1>Task Panel — Local Demo</h1>
+  <div class="subtitle">Loads the production task-panel.js with fake admin headers injected via fetch interception.</div>
+
+  <div class="panel-info">
+    <strong>Acting as:</strong> <span id="who">ralph@aiui.com</span> &nbsp;|&nbsp; admin: true<br/>
+    <strong>API:</strong> <code>/api/tasks/*</code> &nbsp;|&nbsp; <strong>Static:</strong> <code>/tasks/static/*</code><br/>
+    The floating panel will appear top-right once data loads.
+  </div>
+
+  <div class="controls">
+    <label>Switch admin:
+      <select id="user">
+        <option value="ralph@aiui.com">Ralph</option>
+        <option value="clarenz@aiui.com">Clarenz</option>
+        <option value="lukas@aiui.com">Lukas</option>
+        <option value="jacint@aiui.com">Jacint</option>
+        <option value="team@aiui.local">Team (sentinel)</option>
+      </select>
+    </label>
+    <button onclick="seedTasks()">+ Seed sample tasks</button>
+    <button onclick="clearAll()">Clear all tasks</button>
+    <button onclick="window.aiuiTaskPanel && window.aiuiTaskPanel.open()">Reopen panel</button>
+  </div>
+  <div id="status">Ready.</div>
+</div>
+
+<script>
+// =========================================================================
+// 1. INJECT FAKE ADMIN HEADERS — Monkey-patch fetch so the tasks API thinks
+//    we're authenticated. This bypass is ONLY safe because port 8210 is
+//    bound to localhost.
+// =========================================================================
+const _origFetch = window.fetch.bind(window);
+window.fetch = function(url, opts = {}) {
+  const headers = new Headers(opts.headers || {});
+  headers.set("X-User-Email", document.getElementById("user").value);
+  headers.set("X-User-Admin", "true");
+  return _origFetch(url, { ...opts, headers });
+};
+
+// EventSource doesn't support custom headers — patch it to add them as
+// query params and have the gateway/server pick those up. For local demo we
+// just rely on the SSE endpoint accepting query string (we'll hit it raw).
+const _OrigEventSource = window.EventSource;
+window.EventSource = function(url, opts) {
+  const sep = url.includes("?") ? "&" : "?";
+  const email = document.getElementById("user").value;
+  const augmented = `${url}${sep}__demo_user=${encodeURIComponent(email)}`;
+  return new _OrigEventSource(augmented, opts);
+};
+
+// =========================================================================
+// 2. Helpers — seed and clear
+// =========================================================================
+async function seedTasks() {
+  const status = document.getElementById("status");
+  status.textContent = "Posting sample meeting to webhook…";
+  const meetingId = crypto.randomUUID();
+  try {
+    const r = await _origFetch("/webhooks/meeting-action-items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        meeting_id: meetingId,
+        items: [
+          { action_type: "BUILD",     assignee: "Ralph Benitez",  description: "Fix Caddy routing for meetings container",     priority: "CRITICAL" },
+          { action_type: "INTEGRATE", assignee: "Jacint Alama",   description: "Set up Trello webhook for action items",       priority: "NICE_TO_HAVE" },
+          { action_type: "ASK_USER",  assignee: "Ralph Benitez",  description: "Confirm Gemini vs ElevenLabs preference",      priority: "IMPORTANT" },
+          { action_type: "BUILD",     assignee: "Lukas Herajt",   description: "Add summary to MOM output",                    priority: "IMPORTANT" },
+          { action_type: "RESEARCH",  assignee: "Clarenz Bacalla","description: Compare Gemini Live API vs ElevenLabs pricing", priority: "IMPORTANT" },
+          { action_type: "BUILD",     assignee: "team",           description: "Investigate slow webhook handler",             priority: "NICE_TO_HAVE" }
+        ]
+      })
+    });
+    const j = await r.json();
+    status.textContent = `Seeded ${j.created} new tasks (meeting ${meetingId.slice(0, 8)}…). Refreshing panel…`;
+    if (window.aiuiTaskPanel) window.aiuiTaskPanel.refresh();
+  } catch (e) {
+    status.textContent = `Seed failed: ${e.message}`;
+  }
+}
+
+async function clearAll() {
+  const status = document.getElementById("status");
+  if (!confirm("Delete ALL tasks from the local DB?")) return;
+  try {
+    // No DELETE endpoint by design — call the DB directly via a small helper route?
+    // For demo purposes just hit an admin-only purge that we add here:
+    const r = await fetch("/api/tasks?status=pending", { method: "GET" });
+    status.textContent = "Use the SQL console to truncate. Or: docker exec postgres psql -U openwebui -d openwebui -c \"TRUNCATE tasks.items, tasks.executions CASCADE\"";
+  } catch (e) {
+    status.textContent = `Clear failed: ${e.message}`;
+  }
+}
+
+document.getElementById("user").addEventListener("change", () => {
+  if (window.aiuiTaskPanel) window.aiuiTaskPanel.refresh();
+  document.getElementById("who").textContent = document.getElementById("user").value;
+});
+</script>
+
+<!-- 3. Load the production panel JS -->
+<script src="/tasks/static/task-panel.js"></script>
+
+</body>
+</html>
