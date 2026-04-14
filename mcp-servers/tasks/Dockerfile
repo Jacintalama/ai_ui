@@ -13,4 +13,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 EXPOSE 8210
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8210"]
+# Use standard asyncio event loop — uvloop has issues with async subprocess
+# pipes which breaks the claude CLI integration.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8210", "--loop", "asyncio"]

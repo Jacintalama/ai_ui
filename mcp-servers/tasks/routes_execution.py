@@ -96,8 +96,17 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
             raise HTTPException(status_code=403, detail="Not your task")
         if item.action_type not in ("BUILD", "INTEGRATE"):
             raise HTTPException(status_code=400, detail="AI execution not allowed for this task type")
-        if item.status not in ("pending", "awaiting_input"):
+        if item.status not in ("pending", "awaiting_input", "failed"):
             raise HTTPException(status_code=409, detail=f"Task is {item.status}")
+
+        # Reap any orphan 'running' executions for this task so the partial
+        # unique index doesn't block the new row.
+        await s.execute(
+            update(TaskExecution)
+            .where(TaskExecution.task_id == item.id, TaskExecution.status == "running")
+            .values(status="failed", error="orphan execution — reaped on retry", finished_at=datetime.utcnow())
+        )
+
         item.status = "running"
         item.mode = "ai"
         execution = TaskExecution(task_id=item.id, status="running", log="")

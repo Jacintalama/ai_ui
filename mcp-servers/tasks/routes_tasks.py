@@ -54,6 +54,30 @@ async def list_tasks(
     return rows
 
 
+@router.get("/{task_id}/executions")
+async def list_executions(task_id: UUID, user: AdminUser = Depends(current_admin)):
+    """Return execution history for a task — used by the panel to show what AI did."""
+    from models import TaskExecution
+    async with session() as s:
+        item = await _get_owned_task(s, task_id, user.email)
+        rows = (await s.execute(
+            select(TaskExecution)
+            .where(TaskExecution.task_id == item.id)
+            .order_by(TaskExecution.started_at.desc())
+        )).scalars().all()
+        return [
+            {
+                "id": str(r.id),
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "status": r.status,
+                "log": r.log or "",
+                "error": r.error,
+            }
+            for r in rows
+        ]
+
+
 @router.get("/history", response_model=list[TaskOut])
 async def history(
     limit: int = 50,
@@ -77,12 +101,19 @@ async def history(
 
 @router.post("/{task_id}/manual", response_model=TaskOut)
 async def claim_manual(task_id: UUID, user: AdminUser = Depends(current_admin)):
+    """Claim a task for manual handling.
+
+    Allowed from 'pending' (fresh task) or 'failed' (admin taking over after
+    an AI execution failure). 'failed -> claimed_manual' preserves the
+    execution log for audit and lets the admin finish the work.
+    """
     async with session() as s:
         item = await _get_owned_task(s, task_id, user.email)
-        if item.status != "pending":
+        if item.status not in ("pending", "failed"):
             raise HTTPException(status_code=409, detail=f"Task is {item.status}")
         item.status = "claimed_manual"
         item.mode = "manual"
+        item.completed_at = None  # reset in case we're reviving a failed task
         await s.commit()
         await s.refresh(item)
     return item

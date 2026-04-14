@@ -81,7 +81,8 @@
     .aiui-tp-btn-answer { background: #f59e0b; color: #000; }
     .aiui-tp-btn-answer:hover { background: #d97706; }
     .aiui-tp-btn-stop { background: #7f1d1d; color: #fff; }
-    .aiui-tp-live { background: #000; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 11px; color: #3b82f6; margin: 6px 0; max-height: 80px; overflow-y: auto; white-space: pre-wrap; }
+    .aiui-tp-live { background: #000; border-radius: 6px; padding: 10px 12px; font-family: Consolas, Menlo, monospace; font-size: 11.5px; color: #d1d5db; margin: 6px 0; max-height: 240px; min-height: 60px; overflow-y: auto; white-space: normal; line-height: 1.5; }
+    .aiui-tp-live:empty::before { content: "Waiting for Claude to start…"; color: #666; font-style: italic; }
     .aiui-tp-foot { border-top: 1px solid #2a2a2a; padding: 10px 14px; background: #0f0f0f; text-align: center; }
     .aiui-tp-foot a { color: #60a5fa; font-size: 12px; text-decoration: none; cursor: pointer; }
     .aiui-tp-foot a:hover { text-decoration: underline; }
@@ -228,43 +229,86 @@
   }
 
   function renderDone(t) {
+    const isFailed = t.status === "failed";
+    const takeOverBtn = isFailed
+      ? `<button class="aiui-tp-btn-manual" data-task-action="take-over" data-task-id="${t.id}">✋ Take over manually</button>`
+      : "";
+    const resultBlock = t.result
+      ? `<div style="background:${isFailed ? '#1a0a0a' : '#0a1a14'};border:1px solid ${isFailed ? '#7f1d1d' : '#065f46'};border-radius:6px;padding:8px 10px;font-size:12px;color:${isFailed ? '#fca5a5' : '#86efac'};margin-top:8px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(t.result)}</div>`
+      : "";
     return `
-      <div class="aiui-tp-task aiui-tp-done">
-        <div class="aiui-tp-badges">
-          <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
-          <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+      <div class="aiui-tp-task aiui-tp-done" data-task-card="${t.id}">
+        <div class="aiui-tp-done-header" data-task-action="toggle-done" data-task-id="${t.id}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+          <div style="flex:1;min-width:0;">
+            <div class="aiui-tp-badges">
+              <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
+              <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+            </div>
+            <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
+            <div class="aiui-tp-done-meta">
+              <span class="aiui-tp-check" style="${isFailed ? 'color:#ef4444;' : ''}">${isFailed ? "✗ Failed" : "✓ Done"}</span>
+              ${t.mode ? `<span class="aiui-tp-done-mode ${t.mode}">${t.mode === "ai" ? "⚡ AI" : "✋ Manual"}</span>` : ""}
+              ${t.completed_at ? `<span>${new Date(t.completed_at).toLocaleString()}</span>` : ""}
+            </div>
+            <div class="aiui-tp-meta" style="margin-top:6px;margin-bottom:0;"><span class="aiui-tp-assignee">${escapeHtml(t.assignee_name)}</span></div>
+          </div>
+          <span class="aiui-tp-chev" style="color:#888;font-size:13px;transition:transform 0.2s;user-select:none;margin-top:4px;">▾</span>
         </div>
-        <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
-        <div class="aiui-tp-done-meta">
-          <span class="aiui-tp-check">${t.status === "completed" ? "✓ Done" : "✗ Failed"}</span>
-          ${t.mode ? `<span class="aiui-tp-done-mode ${t.mode}">${t.mode === "ai" ? "⚡ AI" : "✋ Manual"}</span>` : ""}
-          ${t.completed_at ? `<span>${new Date(t.completed_at).toLocaleString()}</span>` : ""}
+        <div class="aiui-tp-done-details" data-task-details="${t.id}" style="display:none;">
+          ${resultBlock}
+          <div class="aiui-tp-actions" style="margin-top:8px;">
+            <button class="aiui-tp-btn-manual" data-task-action="view-log" data-task-id="${t.id}" style="font-size:11px;padding:5px 8px;">📜 View full AI log</button>
+            ${takeOverBtn}
+          </div>
         </div>
-        <div class="aiui-tp-meta" style="margin-top:6px;margin-bottom:0;"><span class="aiui-tp-assignee">${escapeHtml(t.assignee_name)}</span></div>
       </div>`;
   }
 
   // ===== Actions =====
   async function onAction(id, action) {
     try {
-      if (action === "ai") { await api("POST", `/${id}/execute`); openStream(id); switchTab("progress"); }
-      else if (action === "manual") { await api("POST", `/${id}/manual`); refreshAll(); }
-      else if (action === "cancel") { await api("POST", `/${id}/cancel`); refreshAll(); }
+      if (action === "ai") {
+        await api("POST", `/${id}/execute`);
+        await refreshAll();          // re-fetch so the task shows up in progress
+        switchTab("progress");
+        openStream(id);
+      }
+      else if (action === "manual" || action === "take-over") {
+        await api("POST", `/${id}/manual`);
+        await refreshAll();
+        if (action === "take-over") switchTab("progress");
+      }
+      else if (action === "cancel") {
+        await api("POST", `/${id}/cancel`);
+        await refreshAll();
+      }
       else if (action === "answer-ui") {
         const ans = prompt("Your answer:");
-        if (ans !== null) { await api("POST", `/${id}/answer`, { answer: ans }); refreshAll(); }
+        if (ans !== null) { await api("POST", `/${id}/answer`, { answer: ans }); await refreshAll(); }
       }
       else if (action === "answer-resume") {
         const ta = panel.querySelector(`[data-textarea-id="${id}"]`);
         const ans = ta && ta.value.trim();
         if (!ans) { alert("Type a reply first."); return; }
         await api("POST", `/${id}/answer`, { answer: ans });
-        refreshAll();
+        await refreshAll();
       }
       else if (action === "complete-prompt") {
         const note = prompt("Add a note about what you did:") || "";
         await api("POST", `/${id}/complete`, { result: note });
-        refreshAll();
+        await refreshAll();
+      }
+      else if (action === "view-log") {
+        showLogModal(id);
+      }
+      else if (action === "toggle-done") {
+        const details = panel.querySelector(`[data-task-details="${id}"]`);
+        const chev = panel.querySelector(`[data-task-card="${id}"] .aiui-tp-chev`);
+        if (details) {
+          const open = details.style.display !== "none";
+          details.style.display = open ? "none" : "block";
+          if (chev) chev.style.transform = open ? "rotate(0deg)" : "rotate(180deg)";
+        }
       }
     } catch (e) {
       alert(`Action failed: ${e.message}`);
@@ -276,13 +320,119 @@
     const ev = new EventSource(`${API_BASE}/${id}/stream`, { withCredentials: true });
     state.sse[id] = ev;
     const live = panel.querySelector(`[data-live-id="${id}"]`);
-    if (live) live.textContent = "";
+    if (live) { live.textContent = ""; live.dataset.streamBuf = ""; }
+
     ev.addEventListener("log", e => {
       const liveEl = panel.querySelector(`[data-live-id="${id}"]`);
-      if (liveEl) { liveEl.textContent += e.data; liveEl.scrollTop = liveEl.scrollHeight; }
+      if (!liveEl) return;
+      const buf = (liveEl.dataset.streamBuf || "") + e.data;
+      const parts = buf.split("\n");
+      liveEl.dataset.streamBuf = parts.pop(); // last partial line
+      for (const line of parts) {
+        const pretty = prettifyStreamLine(line);
+        if (pretty) appendLiveLine(liveEl, pretty);
+      }
     });
     ev.addEventListener("done", () => { ev.close(); delete state.sse[id]; refreshAll(); });
     ev.addEventListener("error", () => { ev.close(); delete state.sse[id]; });
+  }
+
+  function appendLiveLine(el, html) {
+    const line = document.createElement("div");
+    line.innerHTML = html;
+    line.style.cssText = "padding:2px 0;";
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  // Convert one line of Claude's stream-json into a readable status
+  function prettifyStreamLine(line) {
+    line = line.trim();
+    if (!line || !line.startsWith("{")) return null;
+    let obj;
+    try { obj = JSON.parse(line); } catch (_) { return null; }
+    if (obj.type === "system" && obj.subtype === "init") {
+      return `<span style="color:#60a5fa;">◦ Claude session started</span>`;
+    }
+    if (obj.type === "assistant" && obj.message && Array.isArray(obj.message.content)) {
+      const bits = [];
+      for (const c of obj.message.content) {
+        if (c.type === "tool_use") {
+          const name = c.name || "tool";
+          const inp = c.input || {};
+          if (name === "Read" && inp.file_path) bits.push(`📖 Reading <span style="color:#86efac;">${escapeHtml(inp.file_path)}</span>`);
+          else if ((name === "Write" || name === "Edit") && inp.file_path) bits.push(`✏️ Editing <span style="color:#fcd34d;">${escapeHtml(inp.file_path)}</span>`);
+          else if (name === "Bash" && inp.command) bits.push(`▶ <span style="color:#c084fc;">${escapeHtml(String(inp.command).slice(0, 90))}</span>`);
+          else if (name === "Grep" && inp.pattern) bits.push(`🔎 Grep <span style="color:#86efac;">${escapeHtml(String(inp.pattern).slice(0, 60))}</span>`);
+          else if (name === "Glob" && inp.pattern) bits.push(`🔎 Glob <span style="color:#86efac;">${escapeHtml(String(inp.pattern).slice(0, 60))}</span>`);
+          else if (name === "WebSearch" || name === "WebFetch") bits.push(`🌐 ${name}`);
+          else bits.push(`⚙ ${escapeHtml(name)}`);
+        } else if (c.type === "text" && c.text && c.text.trim()) {
+          const txt = c.text.trim();
+          // Skip the verbose assistant text; show only short one-liners
+          if (txt.length < 140) bits.push(`<span style="color:#d1d5db;">${escapeHtml(txt)}</span>`);
+        }
+      }
+      return bits.join("<br>");
+    }
+    if (obj.type === "user" && obj.message && Array.isArray(obj.message.content)) {
+      for (const c of obj.message.content) {
+        if (c.type === "tool_result") {
+          const ok = !c.is_error;
+          const note = ok ? "✓ ok" : "✗ error";
+          const color = ok ? "#4ade80" : "#f87171";
+          return `<span style="color:${color};font-size:11px;">  ↳ ${note}</span>`;
+        }
+      }
+    }
+    if (obj.type === "result") {
+      const sub = obj.subtype || "finished";
+      return `<span style="color:#4ade80;font-weight:600;">◉ ${escapeHtml(sub)}</span>`;
+    }
+    return null;
+  }
+
+  async function showLogModal(taskId) {
+    try {
+      const r = await fetch(`${API_BASE}/${taskId}/executions`, { credentials: "include" });
+      if (!r.ok) { alert("Failed to fetch log: " + r.status); return; }
+      const execs = await r.json();
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;";
+      const modal = document.createElement("div");
+      modal.style.cssText = "background:#0f0f0f;border:1px solid #2a2a2a;border-radius:12px;max-width:900px;width:100%;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;";
+      modal.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #2a2a2a;">
+          <strong style="color:#fff;font-size:15px;">AI Execution Log</strong>
+          <button id="aiui-log-close" style="background:transparent;border:0;color:#888;font-size:22px;cursor:pointer;line-height:1;">×</button>
+        </div>
+        <div id="aiui-log-body" style="padding:16px 20px;overflow-y:auto;flex:1;"></div>
+      `;
+      backdrop.appendChild(modal);
+      document.body.appendChild(backdrop);
+
+      const body = modal.querySelector("#aiui-log-body");
+      if (!execs.length) {
+        body.innerHTML = '<div style="color:#888;text-align:center;padding:40px;">No AI runs for this task (was claimed manually).</div>';
+      } else {
+        body.innerHTML = execs.map((e, i) => `
+          <div style="margin-bottom:14px;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden;">
+            <div style="padding:10px 14px;background:#111;display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:12px;">
+              <div>
+                <strong style="color:${e.status === 'succeeded' ? '#22c55e' : e.status === 'failed' ? '#ef4444' : '#f59e0b'};">${escapeHtml(e.status)}</strong>
+                <span style="color:#666;margin-left:8px;">Run ${execs.length - i}</span>
+              </div>
+              <div style="color:#666;">${e.started_at ? new Date(e.started_at).toLocaleString() : ''}</div>
+            </div>
+            ${e.error ? `<div style="padding:10px 14px;background:#1a0a0a;color:#fca5a5;font-size:12px;border-top:1px solid #2a2a2a;">Error: ${escapeHtml(e.error)}</div>` : ''}
+            <pre style="margin:0;padding:14px;background:#000;color:#d1d5db;font-family:Consolas,Menlo,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow:auto;">${escapeHtml(e.log || "(no output)")}</pre>
+          </div>`).join("");
+      }
+
+      function close() { backdrop.remove(); }
+      modal.querySelector("#aiui-log-close").addEventListener("click", close);
+      backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+    } catch (e) { alert("Failed: " + e.message); }
   }
 
   function switchTab(tab) {
@@ -290,6 +440,57 @@
     $$(".aiui-tp-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
     render();
   }
+
+  // ===== Drag to move =====
+  const POS_KEY = "aiui-tasks-panel-pos";
+  (function restorePos() {
+    try {
+      const pos = JSON.parse(localStorage.getItem(POS_KEY) || "null");
+      if (pos && typeof pos.left === "number" && typeof pos.top === "number") {
+        panel.style.left = Math.max(0, Math.min(window.innerWidth - 100, pos.left)) + "px";
+        panel.style.top = Math.max(0, Math.min(window.innerHeight - 60, pos.top)) + "px";
+        panel.style.right = "auto";
+      }
+    } catch (_) {}
+  })();
+
+  (function enableDrag() {
+    const header = panel.querySelector(".aiui-tp-head");
+    if (!header) return;
+    header.style.cursor = "move";
+    let dragging = false, offX = 0, offY = 0;
+
+    header.addEventListener("mousedown", e => {
+      // Don't start drag when clicking a button in the header
+      if (e.target.closest("button")) return;
+      dragging = true;
+      const rect = panel.getBoundingClientRect();
+      offX = e.clientX - rect.left;
+      offY = e.clientY - rect.top;
+      panel.style.transition = "none";
+      e.preventDefault();
+    });
+
+    document.addEventListener("mousemove", e => {
+      if (!dragging) return;
+      let left = e.clientX - offX;
+      let top = e.clientY - offY;
+      // Clamp to viewport
+      left = Math.max(0, Math.min(window.innerWidth - 100, left));
+      top = Math.max(0, Math.min(window.innerHeight - 60, top));
+      panel.style.left = left + "px";
+      panel.style.top = top + "px";
+      panel.style.right = "auto";
+    });
+
+    document.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      panel.style.transition = "";
+      const rect = panel.getBoundingClientRect();
+      localStorage.setItem(POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+    });
+  })();
 
   // ===== Header controls =====
   panel.addEventListener("click", e => {
@@ -350,6 +551,7 @@
   // ===== Bootstrap =====
   let _initRunning = false;
   let _initDone = false;
+  let _firstLoad = true; // only auto-show on the very first page load
 
   async function init() {
     if (_initRunning || _initDone) return;
@@ -365,16 +567,24 @@
       }
       await refreshAll();
       _initDone = true;
+
+      // Only auto-popup on the very first page load. SPA navigations (clicking
+      // around inside OpenWebUI) MUST NOT re-open the panel; the user can use
+      // the integrations menu button or Settings toggle to re-open manually.
+      if (!_firstLoad) {
+        console.log("[AIUI tasks] SPA init — data refreshed, not auto-showing");
+        return;
+      }
+      _firstLoad = false;
+
       if (!isAutoShowEnabled()) {
         console.log("[AIUI tasks] auto-show disabled by admin");
         return;
       }
-      const dismissedAt = parseInt(localStorage.getItem(DISMISS_KEY) || "0", 10);
-      const fresh = Date.now() - dismissedAt > DISMISS_TTL_MS;
-      if (state.tasks.pending.length > 0 && fresh) {
+      if (state.tasks.pending.length > 0) {
         panel.classList.remove("hidden");
       } else {
-        console.log("[AIUI tasks] panel hidden — call window.aiuiTaskPanel.open() to show");
+        console.log("[AIUI tasks] panel hidden — no pending tasks");
       }
     } finally {
       _initRunning = false;
@@ -392,64 +602,201 @@
     localStorage.setItem(AUTOSHOW_KEY, enabled ? "true" : "false");
   }
 
-  function injectMenuEntry() {
+  // Settings toggle removed — toggle now lives inline in the + menu row.
+  const SETTINGS_ANCHORS = [];
+  // eslint-disable-next-line no-unused-vars
+  function injectSettingsToggle_DISABLED() {
     let pending = false;
     const observer = new MutationObserver(() => {
       if (pending) return;
       pending = true;
       requestAnimationFrame(async () => {
         pending = false;
-        // Admin-gate: only show the menu entry for admins.
         if (!(await isAdmin())) return;
+        if (document.querySelector("[data-aiui-tasks-toggle]")) return;
 
-        // Walk up from any "Sign Out" text node to the nearest button/a, then
-        // inject a sibling menu item just before it.
-        const all = document.querySelectorAll("button, a, [role='menuitem']");
+        // Find any element whose trimmed text is EXACTLY one of our anchors.
+        // Then walk up to find the row (a container <= 300 chars text,
+        // with at least one sibling row).
+        let targetRow = null;
+        let matchedAnchor = null;
+        const all = document.querySelectorAll("*");
         for (const el of all) {
           const txt = (el.textContent || "").trim();
-          if (txt !== "Sign Out") continue;
-          const menu = el.parentElement;
-          if (!menu || menu.dataset.aiuiTasksInjected) continue;
-          menu.dataset.aiuiTasksInjected = "1";
+          if (!SETTINGS_ANCHORS.includes(txt)) continue;
+          // Skip elements that contain many children (too big to be a label)
+          if ((el.children && el.children.length > 2)) continue;
 
-          // Clone the Sign Out element to inherit menu-item styling
-          const entry = el.cloneNode(false); // shallow clone — keep tag + classes only
-          entry.dataset.aiuiTasksEntry = "1";
-          entry.removeAttribute("href");
-          entry.removeAttribute("aria-label");
-          renderEntryLabel(entry);
-          entry.style.cursor = "pointer";
-          entry.addEventListener("click", (ev) => {
+          let cur = el.parentElement;
+          for (let i = 0; i < 4 && cur; i++) {
+            const siblings = cur.parentElement ? cur.parentElement.children.length : 1;
+            const bodyLen = (cur.textContent || "").length;
+            // STRICT: row must be short (< 80 chars ~ label + "Default"/"On")
+            // and have siblings (meaning it's a list item, not a section)
+            if (siblings > 1 && bodyLen < 80) {
+              targetRow = cur;
+              matchedAnchor = txt;
+              break;
+            }
+            cur = cur.parentElement;
+          }
+          if (targetRow) break;
+        }
+        if (!targetRow || !targetRow.parentElement) {
+          console.log("[AIUI tasks] settings toggle: no anchor match");
+          return;
+        }
+        console.log("[AIUI tasks] settings injecting after:", matchedAnchor);
+
+        // Clone the native row so we inherit Tailwind/Svelte classes exactly.
+        // This matches alignment, colors, spacing, toggle shape pixel-perfectly.
+        const myRow = targetRow.cloneNode(true);
+        myRow.dataset.aiuiTasksToggle = "1";
+
+        // Rewrite the left-hand label text. Find the first text node that has
+        // the anchor text and replace it with "Tasks (admin)".
+        (function rewriteLabel(node) {
+          for (const child of Array.from(node.childNodes)) {
+            if (child.nodeType === 3) {
+              const t = child.nodeValue.trim();
+              if (t && t !== "Default" && t !== "On" && t !== "Off") {
+                child.nodeValue = child.nodeValue.replace(t, "Tasks (admin)");
+                return true;
+              }
+            } else if (child.nodeType === 1) {
+              if (rewriteLabel(child)) return true;
+            }
+          }
+          return false;
+        })(myRow);
+
+        // Clone the toggle button/input and rewire its handler. We disable
+        // the original click by cloning the node (clones drop listeners).
+        const toggle = myRow.querySelector("button, input[type='checkbox']");
+        if (toggle) {
+          const fresh = toggle.cloneNode(true);
+          toggle.replaceWith(fresh);
+          function paint() {
+            const on = isAutoShowEnabled();
+            if (fresh.tagName === "INPUT") fresh.checked = on;
+            fresh.setAttribute("aria-checked", on ? "true" : "false");
+            // If the native toggle uses a class to indicate "on", try common ones
+            if (on) fresh.classList.add("!bg-emerald-500", "!bg-green-500");
+            else fresh.classList.remove("!bg-emerald-500", "!bg-green-500");
+          }
+          paint();
+          fresh.addEventListener("click", (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
-            const newValue = !isAutoShowEnabled();
-            setAutoShow(newValue);
-            renderEntryLabel(entry);
-            if (window.aiuiTaskPanel) {
+            setAutoShow(!isAutoShowEnabled());
+            paint();
+            if (isAutoShowEnabled() && window.aiuiTaskPanel) {
               window.aiuiTaskPanel.open();
               window.aiuiTaskPanel.refresh();
             }
           });
-          menu.insertBefore(entry, el);
-          console.log("[AIUI tasks] menu entry injected");
+        }
+
+        targetRow.parentElement.insertBefore(myRow, targetRow.nextSibling);
+        console.log("[AIUI tasks] settings toggle injected (cloned row)");
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
+  // injectSettingsToggle(); // disabled — toggle is now inline in the + menu
+
+  // Inject a "Tasks" manual-open button into the + integrations menu
+  // (the menu with Upload Files / Capture / Attach Webpage / Integrations).
+  function injectIntegrationsMenuEntry() {
+    let pending = false;
+    const observer = new MutationObserver(() => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(async () => {
+        pending = false;
+        if (!(await isAdmin())) return;
+
+        const all = document.querySelectorAll("*");
+        for (const el of all) {
+          const txt = (el.textContent || "").trim();
+          if (txt !== "Upload Files") continue;
+          let row = el;
+          while (row && row.parentElement) {
+            const t = row.tagName.toLowerCase();
+            if (t === "button" || row.getAttribute("role") === "menuitem") break;
+            row = row.parentElement;
+          }
+          if (!row) continue;
+          const menu = row.parentElement;
+          if (!menu || menu.dataset.aiuiTasksIntegInjected) continue;
+          menu.dataset.aiuiTasksIntegInjected = "1";
+
+          // Outer container — cloned shallow so it inherits classes/padding
+          const entry = row.cloneNode(false);
+          entry.dataset.aiuiTasksIntegEntry = "1";
+          entry.removeAttribute("href");
+          entry.innerHTML = "";
+          entry.style.cssText += ";display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;";
+
+          // Left side: click-to-open label area
+          const leftSide = document.createElement("span");
+          leftSide.style.cssText = "display:flex;align-items:center;gap:8px;flex:1;";
+          const icon = document.createElement("span");
+          icon.textContent = "✓";
+          icon.style.cssText = "color:#3b82f6;font-weight:700;";
+          const label = document.createElement("span");
+          label.textContent = "Tasks";
+          leftSide.appendChild(icon);
+          leftSide.appendChild(label);
+          leftSide.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            // Close the + menu first, then open the task panel
+            document.body.click();
+            setTimeout(() => {
+              if (window.aiuiTaskPanel) {
+                window.aiuiTaskPanel.open();
+                window.aiuiTaskPanel.refresh();
+              }
+            }, 80);
+          });
+
+          // Right side: inline auto-show toggle
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.setAttribute("role", "switch");
+          toggle.title = "Auto-popup the panel on login";
+          toggle.style.cssText = "position:relative;width:32px;height:18px;border:0;border-radius:10px;cursor:pointer;transition:background 0.2s;padding:0;flex-shrink:0;";
+          const knob = document.createElement("span");
+          knob.style.cssText = "position:absolute;top:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left 0.2s;";
+          toggle.appendChild(knob);
+          function paint() {
+            const on = isAutoShowEnabled();
+            toggle.setAttribute("aria-checked", on ? "true" : "false");
+            toggle.style.background = on ? "#10b981" : "#4b5563";
+            knob.style.left = on ? "16px" : "2px";
+          }
+          paint();
+          toggle.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            setAutoShow(!isAutoShowEnabled());
+            paint();
+          });
+
+          entry.appendChild(leftSide);
+          entry.appendChild(toggle);
+          menu.insertBefore(entry, row);
+          console.log("[AIUI tasks] + menu entry injected (with toggle)");
+          return;
         }
       });
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
 
-  function renderEntryLabel(entry) {
-    entry.innerHTML = "";
-    const icon = document.createElement("span");
-    icon.textContent = isAutoShowEnabled() ? "☑" : "☐";
-    icon.style.cssText = "color:#3b82f6;font-weight:700;margin-right:8px;";
-    const label = document.createElement("span");
-    label.textContent = "Tasks (auto-show)";
-    entry.appendChild(icon);
-    entry.appendChild(label);
-  }
-
-  injectMenuEntry();
+  injectIntegrationsMenuEntry();
 
   // ===== SPA navigation watcher =====
   // OpenWebUI is a SvelteKit SPA — sign-in changes URL via pushState without
@@ -484,10 +831,28 @@
     state,
   };
 
-  // Wait for page to be ready
+  // Wait for OpenWebUI's chat UI to actually render before auto-showing.
+  // Poll for the chat input textarea (or the app shell) with a hard cap.
+  function waitForAppThenInit() {
+    const start = Date.now();
+    const tick = () => {
+      const appReady =
+        document.querySelector("textarea") ||
+        document.querySelector('[class*="chat"]') ||
+        document.querySelector('main');
+      if (appReady || Date.now() - start > 8000) {
+        // Additional 600ms grace period so Svelte settles its initial render
+        setTimeout(init, 600);
+      } else {
+        setTimeout(tick, 200);
+      }
+    };
+    tick();
+  }
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => setTimeout(init, 500));
+    document.addEventListener("DOMContentLoaded", waitForAppThenInit);
   } else {
-    setTimeout(init, 500);
+    waitForAppThenInit();
   }
 })();

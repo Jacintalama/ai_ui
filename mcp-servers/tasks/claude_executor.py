@@ -58,16 +58,39 @@ class Outcome:
 
 
 _SENTINEL_RE = re.compile(
-    r"^(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS):\s*(?P<rest>.*)",
-    re.MULTILINE | re.DOTALL,
+    r"(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS):\s*(?P<rest>[^\n]*)",
+    re.DOTALL,
 )
 
 
+def _extract_assistant_text(stream_text: str) -> str:
+    """Collect all assistant text chunks from a stream-json log."""
+    import json as _json
+    out: list[str] = []
+    for line in stream_text.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            obj = _json.loads(line)
+        except Exception:
+            continue
+        if obj.get("type") == "result" and isinstance(obj.get("result"), str):
+            out.append(obj["result"])
+        elif obj.get("type") == "assistant":
+            for item in (obj.get("message", {}) or {}).get("content", []) or []:
+                if item.get("type") == "text" and isinstance(item.get("text"), str):
+                    out.append(item["text"])
+    return "\n".join(out)
+
+
 def parse_outcome(claude_response: str) -> Outcome:
-    """Find the LAST sentinel line and treat its payload as the result."""
-    matches = list(_SENTINEL_RE.finditer(claude_response))
+    """Find the LAST sentinel in Claude's text output. Supports both raw
+    text and stream-json (newline-delimited JSON) formats."""
+    text = _extract_assistant_text(claude_response) or claude_response
+    matches = list(_SENTINEL_RE.finditer(text))
     if not matches:
-        return Outcome(kind="failed", payload=claude_response.strip()[:500])
+        return Outcome(kind="failed", payload=text.strip()[:500] or claude_response.strip()[:500])
     last = matches[-1]
     kind_map = {
         "COMPLETED": "completed",
@@ -91,15 +114,23 @@ async def run_claude_subprocess(prompt: str) -> AsyncIterator[str]:
 
     cwd = CLAUDE_SANDBOX_DIR or CLAUDE_WORKSPACE
 
+    # IS_SANDBOX=1 lets claude accept --dangerously-skip-permissions under root
+    # (the container runs as root and there's no rootless option for us here).
+    env = {**os.environ, "IS_SANDBOX": "1"}
+    # Use stream-json + verbose so each tool call / partial text chunk is
+    # emitted immediately on its own line. The panel parses those lines to
+    # render "Reading foo.py", "Running: docker restart …", etc.
     proc = await asyncio.create_subprocess_exec(
         "claude",
         "--print",
         "--dangerously-skip-permissions",
+        "--output-format", "stream-json",
+        "--verbose",
         prompt,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        env={**os.environ},
+        env=env,
     )
     assert proc.stdout is not None
     bytes_yielded = 0
