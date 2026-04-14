@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Literal
 
 CLAUDE_WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
-EXECUTION_TIMEOUT_SECONDS = 300
+EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("TASKS_AI_TIMEOUT_SECONDS", "600"))
 
 # Sanity bounds on AI execution to limit blast radius
 MAX_PROMPT_CHARS = 8000
@@ -24,14 +24,27 @@ TYPE: {action_type}
 PRIORITY: {priority}
 SOURCE: {meeting_title} on {meeting_date}
 
-Repository: /workspace/ai_ui (you have full read/write access in this container)
+Repository: /workspace/ai_ui (you have full read/write access; it is a git
+working tree tracking `feat/gdrive-gmail-connectors` on GitHub).
+
+If your work modifies files, you MUST:
+  1. Stage just the files you changed: `git add <path1> <path2> ...`
+     (do NOT `git add -A` or `git add .` — only stage what you intentionally
+     edited, and never commit files like .env, *.db, or anything under
+     openwebui-overrides/ unless the task explicitly calls for it).
+  2. Create one commit per task using your summary as the message:
+     `git commit -m "<short summary of the change>"`.
+     If git says nothing is staged, skip the commit step — you didn't edit
+     any code.
+  3. Do NOT push; the admin pulls on the VPS manually.
 
 Complete the task autonomously. If you cannot proceed because of:
   - Missing credentials -> respond ending with: NEEDS_INPUT: <what you need>
   - Unclear requirement -> respond ending with: NEEDS_INPUT: <clarifying question>
   - Hard blocker -> respond ending with: NEEDS_STEPS: <numbered manual steps>
 
-When done successfully, respond ending with: COMPLETED: <summary of what you did>"""
+When done successfully, respond ending with: COMPLETED: <summary of what you did>
+(include the short commit hash if you made one: "COMPLETED: ... (commit abc1234)")"""
 
 
 def build_prompt(
@@ -100,8 +113,12 @@ def parse_outcome(claude_response: str) -> Outcome:
     return Outcome(kind=kind_map[last.group("kind")], payload=last.group("rest").strip())
 
 
-async def run_claude_subprocess(prompt: str) -> AsyncIterator[str]:
-    """Spawn the claude CLI with --print and stream its stdout in 4 KB chunks.
+async def run_claude_subprocess(prompt: str, proc_holder: dict | None = None) -> AsyncIterator[str]:
+    """Spawn the claude CLI and stream its stdout.
+
+    proc_holder (optional): dict where this function stores the spawned
+    subprocess under key "proc" so the cancel endpoint can .kill() it
+    from outside.
 
     Safety:
       - Prompt is capped at MAX_PROMPT_CHARS to limit injection of huge payloads.
@@ -132,6 +149,8 @@ async def run_claude_subprocess(prompt: str) -> AsyncIterator[str]:
         stderr=asyncio.subprocess.STDOUT,
         env=env,
     )
+    if proc_holder is not None:
+        proc_holder["proc"] = proc
     assert proc.stdout is not None
     bytes_yielded = 0
     try:
@@ -151,3 +170,12 @@ async def run_claude_subprocess(prompt: str) -> AsyncIterator[str]:
         proc.kill()
         await proc.wait()
         yield f"\n[TIMEOUT after {EXECUTION_TIMEOUT_SECONDS}s — process killed]\n"
+    except asyncio.CancelledError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        raise
+    finally:
+        if proc_holder is not None:
+            proc_holder["proc"] = None

@@ -189,15 +189,27 @@
 
   function renderPending(t) {
     const isAsk = t.action_type === "ASK_USER";
-    const actions = isAsk
-      ? `<button class="aiui-tp-btn-answer" data-task-action="answer-ui" data-task-id="${t.id}">💬 Answer</button>`
-      : `<button class="aiui-tp-btn-ai" data-task-action="ai" data-task-id="${t.id}">⚡ AI</button>
-         <button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>`;
+    const canAi = t.action_type === "BUILD" || t.action_type === "INTEGRATE" || t.action_type === "RESEARCH";
+    let actions;
+    if (isAsk) {
+      actions = `<button class="aiui-tp-btn-answer" data-task-action="answer-ui" data-task-id="${t.id}">💬 Answer</button>`;
+    } else if (canAi) {
+      actions = `<button class="aiui-tp-btn-ai" data-task-action="ai" data-task-id="${t.id}">⚡ AI</button>
+                 <button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>`;
+    } else {
+      actions = `<button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>`;
+    }
     const askInputUI = t.status === "awaiting_input"
       ? `<div style="background:#1a1208;border:1px solid #78350f;border-radius:4px;padding:8px;font-size:11px;color:#fcd34d;margin-bottom:8px;"><strong>AI says:</strong><br/>${escapeHtml(t.result || "")}</div>
          <textarea class="aiui-tp-textarea" data-textarea-id="${t.id}" placeholder="Reply to the AI…"></textarea>
          <div class="aiui-tp-actions"><button class="aiui-tp-btn-answer" data-task-action="answer-resume" data-task-id="${t.id}">↩ Reply</button></div>`
       : `<div class="aiui-tp-actions">${actions}</div>`;
+    // If a previous AI run failed, show a small warning + the reason
+    const priorFailHint = (!t.mode && t.result && !isAsk && t.status === "pending")
+      ? `<div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:4px;padding:6px 8px;font-size:11px;color:#fca5a5;margin-bottom:8px;">
+           ⚠️ Previous attempt failed — <span style="color:#f87171;">${escapeHtml((t.result || "").slice(0, 140))}</span>
+         </div>`
+      : "";
     return `
       <div class="aiui-tp-task">
         <div class="aiui-tp-badges">
@@ -207,6 +219,7 @@
         </div>
         <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
         <div class="aiui-tp-meta"><span class="aiui-tp-assignee">${escapeHtml(t.assignee_name)}</span></div>
+        ${priorFailHint}
         ${askInputUI}
       </div>`;
   }
@@ -222,7 +235,7 @@
         <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
         <div class="aiui-tp-meta"><span class="aiui-tp-assignee">${escapeHtml(t.assignee_name)}</span></div>
         ${t.status === "running"
-          ? `<div class="aiui-tp-live" data-live-id="${t.id}">Connecting…</div>
+          ? `<div class="aiui-tp-live" data-live-id="${t.id}"><span style="color:#888;">◦ Spawning Claude (takes ~10s)…</span></div>
              <div class="aiui-tp-actions"><button class="aiui-tp-btn-stop" data-task-action="cancel" data-task-id="${t.id}">⏹ Stop</button></div>`
           : `<div class="aiui-tp-actions"><button class="aiui-tp-btn-ai" data-task-action="complete-prompt" data-task-id="${t.id}">✓ Mark Done</button></div>`}
       </div>`;
