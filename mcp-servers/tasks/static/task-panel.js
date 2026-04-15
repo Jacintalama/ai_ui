@@ -13,7 +13,6 @@
 
   // ===== Config =====
   const API_BASE = "/api/tasks";
-  const HISTORY_URL = "/tasks/static/task-history.html";
   const DISMISS_KEY = "aiui-tasks-dismissed-at";
   const DISMISS_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
@@ -278,11 +277,24 @@
   }
 
   // ===== Actions =====
+  const _inflight = new Set();
   async function onAction(id, action) {
+    const key = `${id}:${action}`;
+    if (_inflight.has(key)) return; // debounce double-clicks
+    _inflight.add(key);
+    // Disable the clicked button visually
+    const btns = Array.from(panel.querySelectorAll(`[data-task-action="${action}"][data-task-id="${id}"]`));
+    btns.forEach(b => { b.disabled = true; b.style.opacity = "0.5"; b.style.cursor = "wait"; });
     try {
       if (action === "ai") {
-        await api("POST", `/${id}/execute`);
-        await refreshAll();          // re-fetch so the task shows up in progress
+        try {
+          await api("POST", `/${id}/execute`);
+        } catch (e) {
+          // 409 = task is already running (most common double-click cause).
+          // Treat as success and just switch tabs to show progress.
+          if (!String(e.message || "").includes("409")) throw e;
+        }
+        await refreshAll();
         switchTab("progress");
         openStream(id);
       }
@@ -325,6 +337,9 @@
       }
     } catch (e) {
       alert(`Action failed: ${e.message}`);
+    } finally {
+      _inflight.delete(key);
+      btns.forEach(b => { b.disabled = false; b.style.opacity = ""; b.style.cursor = ""; });
     }
   }
 
@@ -403,6 +418,92 @@
       return `<span style="color:#4ade80;font-weight:600;">◉ ${escapeHtml(sub)}</span>`;
     }
     return null;
+  }
+
+  async function showHistoryModal() {
+    try {
+      const r = await fetch(`${API_BASE}/history?limit=100`, { credentials: "include" });
+      if (!r.ok) { alert("Failed to fetch history: " + r.status); return; }
+      const items = await r.json();
+
+      const backdrop = document.createElement("div");
+      backdrop.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;";
+      const modal = document.createElement("div");
+      modal.style.cssText = "background:#0f0f0f;border:1px solid #2a2a2a;border-radius:12px;max-width:900px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;";
+      modal.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #2a2a2a;">
+          <div>
+            <strong style="font-size:15px;">Task History</strong>
+            <div style="color:#888;font-size:12px;margin-top:2px;">${items.length} completed or failed tasks</div>
+          </div>
+          <button id="aiui-hist-close" style="background:transparent;border:0;color:#888;font-size:22px;cursor:pointer;line-height:1;">×</button>
+        </div>
+        <div id="aiui-hist-body" style="overflow-y:auto;flex:1;padding:8px 12px;"></div>
+      `;
+      backdrop.appendChild(modal);
+      document.body.appendChild(backdrop);
+
+      const body = modal.querySelector("#aiui-hist-body");
+      if (!items.length) {
+        body.innerHTML = '<div style="color:#888;text-align:center;padding:40px;">No completed tasks yet.</div>';
+      } else {
+        body.innerHTML = items.map(renderHistoryRow).join("");
+        // Wire up expand chevrons
+        body.querySelectorAll("[data-hist-toggle]").forEach(row => {
+          row.addEventListener("click", (ev) => {
+            if (ev.target.closest("button")) return;
+            const id = row.dataset.histToggle;
+            const det = body.querySelector(`[data-hist-details="${id}"]`);
+            const chev = row.querySelector(".aiui-hist-chev");
+            if (det) {
+              const open = det.style.display !== "none";
+              det.style.display = open ? "none" : "block";
+              if (chev) chev.style.transform = open ? "rotate(0deg)" : "rotate(180deg)";
+            }
+          });
+        });
+        // Wire "View full AI log" buttons
+        body.querySelectorAll("[data-hist-log]").forEach(btn => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            showLogModal(btn.dataset.histLog);
+          });
+        });
+      }
+
+      function close() { backdrop.remove(); }
+      modal.querySelector("#aiui-hist-close").addEventListener("click", close);
+      backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+    } catch (e) { alert("Failed: " + e.message); }
+  }
+
+  function renderHistoryRow(t) {
+    const isFailed = t.status === "failed";
+    const typeColors = { BUILD: "#7f1d1d", RESEARCH: "#1e3a8a", INTEGRATE: "#365314", ASK_USER: "#7c2d12" };
+    const typeBg = typeColors[t.action_type] || "#374151";
+    return `
+      <div style="border:1px solid #2a2a2a;border-radius:8px;margin-bottom:8px;overflow:hidden;">
+        <div data-hist-toggle="${t.id}" style="padding:12px 14px;cursor:pointer;display:flex;gap:12px;align-items:center;background:#111;">
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;gap:6px;margin-bottom:4px;flex-wrap:wrap;">
+              <span style="font-size:10.5px;padding:3px 8px;border-radius:4px;font-weight:600;background:${typeBg};color:#fff;">${escapeHtml(t.action_type)}</span>
+              <span style="font-size:10.5px;padding:3px 8px;border-radius:4px;background:${isFailed?'#7f1d1d':'#065f46'};color:#fff;font-weight:600;">${isFailed?'FAILED':'DONE'}</span>
+              ${t.mode?`<span style="font-size:10.5px;padding:3px 8px;border-radius:4px;background:${t.mode==='ai'?'#1e3a8a':'#374151'};color:#fff;font-weight:600;">${t.mode==='ai'?'AI':'MANUAL'}</span>`:''}
+            </div>
+            <div style="font-size:13px;line-height:1.4;">${escapeHtml(t.description)}</div>
+            <div style="font-size:11px;color:#666;margin-top:4px;">${t.completed_at?new Date(t.completed_at).toLocaleString():''}</div>
+          </div>
+          <span class="aiui-hist-chev" style="color:#888;transition:transform 0.2s;">▾</span>
+        </div>
+        <div data-hist-details="${t.id}" style="display:none;padding:12px 14px;background:#0a0a0a;border-top:1px solid #2a2a2a;">
+          ${t.result ? `<div style="background:${isFailed?'#1a0a0a':'#0a1a14'};border:1px solid ${isFailed?'#7f1d1d':'#065f46'};border-radius:6px;padding:10px 12px;font-size:12.5px;color:${isFailed?'#fca5a5':'#86efac'};line-height:1.5;white-space:pre-wrap;">${escapeHtml(t.result)}</div>` : '<div style="color:#666;font-size:12px;">(no result recorded)</div>'}
+          <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
+            <button data-hist-log="${t.id}" style="background:#1e3a8a;color:#dbeafe;border:0;padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600;">📜 View full AI log</button>
+            <span style="color:#555;font-size:11px;">Meeting: ${escapeHtml(String(t.meeting_id).slice(0,8))}…</span>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   async function showLogModal(taskId) {
@@ -515,7 +616,7 @@
       panel.classList.add("hidden");
       try { localStorage.setItem(DISMISS_KEY, String(Date.now())); } catch (_) {}
     }
-    else if (act === "history") window.open(HISTORY_URL, "_blank");
+    else if (act === "history") showHistoryModal();
     else if (tab) switchTab(tab);
     else if (panel.classList.contains("minimized") && !e.target.closest("button")) {
       panel.classList.remove("minimized");
