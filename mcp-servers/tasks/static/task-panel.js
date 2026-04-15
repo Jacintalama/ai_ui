@@ -426,22 +426,59 @@
       if (!r.ok) { alert("Failed to fetch history: " + r.status); return; }
       const items = await r.json();
 
-      const backdrop = document.createElement("div");
-      backdrop.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.8);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;";
+      // If already open, just bring to front
+      const existing = document.querySelector("[data-aiui-hist-window]");
+      if (existing) { existing.remove(); }
+
+      // Floating, draggable window — not a backdrop modal
       const modal = document.createElement("div");
-      modal.style.cssText = "background:#0f0f0f;border:1px solid #2a2a2a;border-radius:12px;max-width:900px;width:100%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;";
+      modal.dataset.aiuiHistWindow = "1";
+      const HIST_POS_KEY = "aiui-hist-panel-pos";
+      let savedPos = null;
+      try { savedPos = JSON.parse(localStorage.getItem(HIST_POS_KEY) || "null"); } catch (_) {}
+      const top = savedPos && typeof savedPos.top === "number" ? Math.max(8, Math.min(window.innerHeight - 80, savedPos.top)) : 80;
+      const left = savedPos && typeof savedPos.left === "number" ? Math.max(8, Math.min(window.innerWidth - 100, savedPos.left)) : (window.innerWidth - 920) / 2;
+      modal.style.cssText = `position:fixed;top:${top}px;left:${left}px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:12px;width:min(900px, 92vw);max-height:78vh;display:flex;flex-direction:column;overflow:hidden;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;z-index:10000;box-shadow:0 20px 60px rgba(0,0,0,0.7),0 0 0 1px rgba(255,255,255,0.04);animation:aiui-tp-in 0.2s ease-out;`;
       modal.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid #2a2a2a;">
+        <div id="aiui-hist-head" style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid #2a2a2a;background:#111;cursor:move;user-select:none;">
           <div>
             <strong style="font-size:15px;">Task History</strong>
-            <div style="color:#888;font-size:12px;margin-top:2px;">${items.length} completed or failed tasks</div>
+            <div style="color:#888;font-size:12px;margin-top:2px;">${items.length} completed or failed tasks · drag to move</div>
           </div>
-          <button id="aiui-hist-close" style="background:transparent;border:0;color:#888;font-size:22px;cursor:pointer;line-height:1;">×</button>
+          <button id="aiui-hist-close" style="background:transparent;border:0;color:#888;font-size:22px;cursor:pointer;line-height:1;padding:0 6px;">×</button>
         </div>
         <div id="aiui-hist-body" style="overflow-y:auto;flex:1;padding:8px 12px;"></div>
       `;
-      backdrop.appendChild(modal);
-      document.body.appendChild(backdrop);
+      document.body.appendChild(modal);
+
+      // Drag support on the header
+      (function enableDrag() {
+        const head = modal.querySelector("#aiui-hist-head");
+        let dragging = false, offX = 0, offY = 0;
+        head.addEventListener("mousedown", (e) => {
+          if (e.target.closest("button")) return;
+          dragging = true;
+          const rect = modal.getBoundingClientRect();
+          offX = e.clientX - rect.left;
+          offY = e.clientY - rect.top;
+          modal.style.transition = "none";
+          e.preventDefault();
+        });
+        document.addEventListener("mousemove", (e) => {
+          if (!dragging) return;
+          const l = Math.max(0, Math.min(window.innerWidth - 100, e.clientX - offX));
+          const t = Math.max(0, Math.min(window.innerHeight - 60, e.clientY - offY));
+          modal.style.left = l + "px";
+          modal.style.top = t + "px";
+        });
+        document.addEventListener("mouseup", () => {
+          if (!dragging) return;
+          dragging = false;
+          modal.style.transition = "";
+          const rect = modal.getBoundingClientRect();
+          localStorage.setItem(HIST_POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+        });
+      })();
 
       const body = modal.querySelector("#aiui-hist-body");
       if (!items.length) {
@@ -471,9 +508,7 @@
         });
       }
 
-      function close() { backdrop.remove(); }
-      modal.querySelector("#aiui-hist-close").addEventListener("click", close);
-      backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+      modal.querySelector("#aiui-hist-close").addEventListener("click", () => modal.remove());
     } catch (e) { alert("Failed: " + e.message); }
   }
 
