@@ -2,8 +2,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -26,6 +26,12 @@ class TaskItem(Base):
     status = Column(Text, nullable=False, default="pending")
     mode = Column(Text, nullable=True)
     result = Column(Text, nullable=True)
+    max_attempts = Column(Integer, nullable=False, default=1)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    conversation_history = Column(JSONB, nullable=False, default=list)
+    plan = Column(Text, nullable=True)
+    plan_status = Column(Text, nullable=True)
+    built_app_slug = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)

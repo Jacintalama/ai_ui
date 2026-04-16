@@ -7,8 +7,9 @@ from pydantic import BaseModel, Field
 
 ActionType = Literal["RESEARCH", "BUILD", "INTEGRATE", "ASK_USER"]
 Priority = Literal["CRITICAL", "IMPORTANT", "NICE_TO_HAVE"]
-Status = Literal["pending", "claimed_manual", "running", "awaiting_input", "completed", "failed"]
+Status = Literal["pending", "planning", "awaiting_plan_review", "claimed_manual", "running", "awaiting_input", "completed", "failed"]
 Mode = Literal["ai", "manual"]
+PlanStatus = Literal["pending_review", "approved", "rejected"]
 
 
 class TaskOut(BaseModel):
@@ -23,6 +24,12 @@ class TaskOut(BaseModel):
     status: Status
     mode: Mode | None = None
     result: str | None = None
+    max_attempts: int = 1
+    attempt_count: int = 0
+    conversation_history: list = []
+    plan: str | None = None
+    plan_status: str | None = None
+    built_app_slug: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
 
@@ -60,3 +67,9 @@ class CreateTaskRequest(BaseModel):
     action_type: ActionType
     priority: Priority
     assignee: str = Field(default="self", description="'self', 'team', or a name prefix in the assignee map")
+    max_attempts: int = Field(default=1, ge=1, le=10, description="1=one-shot, >1=loop mode")
+
+
+class PlanReviewRequest(BaseModel):
+    approved: bool
+    feedback: str = ""
