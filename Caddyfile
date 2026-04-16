@@ -127,6 +127,12 @@
 		reverse_proxy tasks:8210
 	}
 
+	# Preview app — proxies to the running app inside the tasks container
+	handle /tasks/preview-app/* {
+		uri strip_prefix /tasks/preview-app
+		reverse_proxy tasks:9100
+	}
+
 	# ---------------------------------------------------------------------------
 	# Google Drive MCP connector
 	# ---------------------------------------------------------------------------
