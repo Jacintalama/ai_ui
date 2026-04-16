@@ -9,10 +9,15 @@ from sqlalchemy import select, update
 from sse_starlette.sse import EventSourceResponse
 
 from auth import AdminUser, current_admin
-from claude_executor import build_prompt, parse_outcome, run_claude_subprocess
+from claude_executor import (
+    build_prompt, build_clarify_prompt, build_plan_prompt,
+    build_tdd_execute_prompt, build_verify_prompt,
+    extract_app_slug, parse_outcome, parse_clarify_done,
+    parse_plan, parse_test_outcome, run_claude_subprocess,
+)
 from db import session
 from models import TaskExecution, TaskItem
-from schemas import TaskOut
+from schemas import PlanReviewRequest, TaskOut
 
 logger = logging.getLogger("tasks")
 router = APIRouter(prefix="/api/tasks")
@@ -25,11 +30,27 @@ _RUNNING: dict[UUID, dict] = {}
 TEAM_EMAIL = "team@aiui.local"
 
 
-async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
-    """Background coroutine: stream Claude output, parse outcome, persist."""
+async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
+    """Run a Claude subprocess, stream output to execution log, return full output."""
     full_log: list[str] = []
+    proc_holder = _RUNNING.get(task_id, {})
+    async for chunk in run_claude_subprocess(prompt, proc_holder=proc_holder):
+        full_log.append(chunk)
+        async with session() as s:
+            await s.execute(
+                update(TaskExecution)
+                .where(TaskExecution.id == execution_id)
+                .values(log=TaskExecution.log + chunk)
+            )
+            await s.commit()
+    return "".join(full_log)
+
+
+async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
+    """Background coroutine: stream Claude output, parse outcome, persist.
+    In loop mode (max_attempts > 1), handles auto-retry on failure
+    and runs the VERIFY step after COMPLETED."""
     try:
-        # Give SSE clients an immediate heartbeat so the panel shows activity
         async with session() as s:
             await s.execute(
                 update(TaskExecution).where(TaskExecution.id == execution_id)
@@ -37,26 +58,104 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             )
             await s.commit()
 
-        proc_holder = _RUNNING.get(task_id, {})
-        async for chunk in run_claude_subprocess(prompt, proc_holder=proc_holder):
-            full_log.append(chunk)
+        full_output = await _stream_claude(prompt, execution_id, task_id)
+        outcome = parse_outcome(full_output)
+
+        async with session() as s:
+            task = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one()
+            is_loop = task.max_attempts > 1
+            attempt = task.attempt_count
+            max_att = task.max_attempts
+
+        slug = None
+        if outcome.kind == "completed":
+            slug = extract_app_slug(full_output)
+
+        # --- LOOP MODE: auto-retry on failure ---
+        if outcome.kind == "failed" and is_loop and attempt < max_att:
             async with session() as s:
                 await s.execute(
-                    update(TaskExecution)
-                    .where(TaskExecution.id == execution_id)
-                    .values(log=TaskExecution.log + chunk)
+                    update(TaskExecution).where(TaskExecution.id == execution_id)
+                    .values(status="failed", finished_at=datetime.utcnow(),
+                            error=f"Attempt {attempt}/{max_att} failed — auto-retrying")
+                )
+                await s.execute(
+                    update(TaskItem).where(TaskItem.id == task_id)
+                    .values(attempt_count=attempt + 1, result=outcome.payload)
+                )
+                new_exec = TaskExecution(task_id=task_id, status="running", log="")
+                s.add(new_exec)
+                await s.commit()
+                await s.refresh(new_exec)
+
+            retry_prompt = build_tdd_execute_prompt(
+                description=task.description,
+                action_type=task.action_type,
+                priority=task.priority,
+                meeting_title=str(task.meeting_id),
+                meeting_date="",
+                plan=task.plan or "",
+                conversation_history=task.conversation_history or [],
+                attempt_count=attempt + 1,
+                max_attempts=max_att,
+                error_context=outcome.payload,
+            )
+            await _run_execution(task_id, new_exec.id, retry_prompt)
+            return
+
+        # --- LOOP MODE: VERIFY step after COMPLETED ---
+        if outcome.kind == "completed" and is_loop and slug:
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution).where(TaskExecution.id == execution_id)
+                    .values(log=TaskExecution.log + "\n\n--- VERIFY STEP ---\n")
                 )
                 await s.commit()
 
-        outcome = parse_outcome("".join(full_log))
-        # On failure, roll the task back to pending so the admin can retry
-        # from the normal Pending controls (⚡ AI / ✋ Manual / 💬 Answer).
-        # The execution log stays in tasks.executions for audit.
+            verify_output = await _stream_claude(
+                build_verify_prompt(slug=slug, description=task.description),
+                execution_id, task_id,
+            )
+            test_result = parse_test_outcome(verify_output)
+
+            if not test_result.passed and attempt < max_att:
+                async with session() as s:
+                    await s.execute(
+                        update(TaskExecution).where(TaskExecution.id == execution_id)
+                        .values(status="failed", finished_at=datetime.utcnow(),
+                                error=f"Verify failed: {test_result.detail}")
+                    )
+                    await s.execute(
+                        update(TaskItem).where(TaskItem.id == task_id)
+                        .values(attempt_count=attempt + 1,
+                                result=f"Verify failed: {test_result.detail}")
+                    )
+                    new_exec = TaskExecution(task_id=task_id, status="running", log="")
+                    s.add(new_exec)
+                    await s.commit()
+                    await s.refresh(new_exec)
+
+                retry_prompt = build_tdd_execute_prompt(
+                    description=task.description,
+                    action_type=task.action_type,
+                    priority=task.priority,
+                    meeting_title=str(task.meeting_id),
+                    meeting_date="",
+                    plan=task.plan or "",
+                    conversation_history=task.conversation_history or [],
+                    attempt_count=attempt + 1,
+                    max_attempts=max_att,
+                    error_context=f"Build completed but verification failed: {test_result.detail}",
+                )
+                await _run_execution(task_id, new_exec.id, retry_prompt)
+                return
+
+        # --- Standard outcome handling ---
         new_task_status = {
             "completed": "completed",
             "needs_input": "awaiting_input",
             "needs_steps": "claimed_manual",
-            "failed": "pending",
+            "failed": "pending" if not is_loop else "failed",
         }[outcome.kind]
         new_exec_status = {
             "completed": "succeeded",
@@ -64,30 +163,28 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             "needs_steps": "succeeded",
             "failed": "failed",
         }[outcome.kind]
+        mode_val = None if outcome.kind == "failed" else ("manual" if outcome.kind == "needs_steps" else "ai")
 
-        # For failed outcomes: reset mode to None (so the Pending card doesn't
-        # show "⚡ AI" label on it), and keep the error in `result` as a hint.
-        if outcome.kind == "failed":
-            mode_val = None
-        elif outcome.kind == "needs_steps":
-            mode_val = "manual"
-        else:
-            mode_val = "ai"
+        history_update = {}
+        if outcome.kind == "needs_input":
+            history = list(task.conversation_history or [])
+            history.append({"role": "ai", "content": outcome.payload, "attempt": attempt})
+            history_update = {"conversation_history": history}
 
         async with session() as s:
             await s.execute(
-                update(TaskExecution)
-                .where(TaskExecution.id == execution_id)
+                update(TaskExecution).where(TaskExecution.id == execution_id)
                 .values(status=new_exec_status, finished_at=datetime.utcnow())
             )
             await s.execute(
-                update(TaskItem)
-                .where(TaskItem.id == task_id)
+                update(TaskItem).where(TaskItem.id == task_id)
                 .values(
                     status=new_task_status,
                     mode=mode_val,
                     result=outcome.payload,
                     completed_at=datetime.utcnow() if outcome.kind == "completed" else None,
+                    built_app_slug=slug,
+                    **history_update,
                 )
             )
             await s.commit()
@@ -95,11 +192,9 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
         logger.exception("Execution failed: %s", exc)
         async with session() as s:
             await s.execute(
-                update(TaskExecution)
-                .where(TaskExecution.id == execution_id)
+                update(TaskExecution).where(TaskExecution.id == execution_id)
                 .values(status="failed", error=str(exc), finished_at=datetime.utcnow())
             )
-            # Roll back to pending so the admin can retry / claim manual.
             await s.execute(
                 update(TaskItem).where(TaskItem.id == task_id).values(
                     status="pending", mode=None, result=f"Previous AI run failed: {exc}"[:500]
@@ -122,7 +217,7 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
             raise HTTPException(status_code=403, detail="Not your task")
         if item.action_type not in ("BUILD", "INTEGRATE", "RESEARCH"):
             raise HTTPException(status_code=400, detail="AI execution not allowed for this task type")
-        if item.status not in ("pending", "awaiting_input", "failed"):
+        if item.status not in ("pending", "awaiting_input", "failed", "awaiting_plan_review"):
             raise HTTPException(status_code=409, detail=f"Task is {item.status}")
 
         # Reap any orphan 'running' executions for this task so the partial
@@ -141,18 +236,230 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         await s.refresh(item)
         await s.refresh(execution)
 
-    prompt = build_prompt(
-        description=item.description,
-        action_type=item.action_type,
-        priority=item.priority,
-        meeting_title=str(item.meeting_id),
-        meeting_date="",
-    )
+    if item.max_attempts > 1 and item.plan and item.plan_status == "approved":
+        prompt = build_tdd_execute_prompt(
+            description=item.description,
+            action_type=item.action_type,
+            priority=item.priority,
+            meeting_title=str(item.meeting_id),
+            meeting_date="",
+            plan=item.plan,
+            conversation_history=item.conversation_history or [],
+            attempt_count=item.attempt_count,
+            max_attempts=item.max_attempts,
+            error_context=item.result or "",
+        )
+    else:
+        prompt = build_prompt(
+            description=item.description,
+            action_type=item.action_type,
+            priority=item.priority,
+            meeting_title=str(item.meeting_id),
+            meeting_date="",
+        )
     # Create a holder dict so the subprocess can register its own reference
     # for hard-kill on cancel.
     _RUNNING[item.id] = {"task": None, "proc": None}
     bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
     _RUNNING[item.id]["task"] = bg
+    return item
+
+
+async def _plan_bg(tid: UUID, eid: UUID, prompt: str):
+    """Background: run plan subprocess, parse PLAN sentinel, await review."""
+    try:
+        full_output = await _stream_claude(prompt, eid, tid)
+        plan_text = parse_plan(full_output)
+        async with session() as s:
+            await s.execute(
+                update(TaskExecution).where(TaskExecution.id == eid)
+                .values(status="succeeded", finished_at=datetime.utcnow())
+            )
+            await s.execute(
+                update(TaskItem).where(TaskItem.id == tid).values(
+                    status="awaiting_plan_review",
+                    plan=plan_text or full_output[-3000:],
+                    plan_status="pending_review",
+                )
+            )
+            await s.commit()
+    except Exception as exc:
+        logger.exception("Plan step failed: %s", exc)
+        async with session() as s:
+            await s.execute(
+                update(TaskExecution).where(TaskExecution.id == eid)
+                .values(status="failed", error=str(exc), finished_at=datetime.utcnow())
+            )
+            await s.execute(
+                update(TaskItem).where(TaskItem.id == tid).values(status="pending", mode=None)
+            )
+            await s.commit()
+    finally:
+        _RUNNING.pop(tid, None)
+
+
+@router.post("/{task_id}/clarify", response_model=TaskOut)
+async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin)):
+    """Start the CLARIFY phase — Claude asks structured questions before planning."""
+    async with session() as s:
+        item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if item.assignee_email not in (user.email, TEAM_EMAIL):
+            raise HTTPException(status_code=403, detail="Not your task")
+        if item.max_attempts <= 1:
+            raise HTTPException(status_code=400, detail="Clarify only for loop mode")
+        if item.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Task is {item.status}")
+
+        item.status = "running"
+        item.mode = "ai"
+        execution = TaskExecution(task_id=item.id, status="running", log="")
+        s.add(execution)
+        await s.commit()
+        await s.refresh(item)
+        await s.refresh(execution)
+
+    prompt = build_clarify_prompt(
+        description=item.description,
+        action_type=item.action_type,
+        priority=item.priority,
+        conversation_history=item.conversation_history or [],
+    )
+    _RUNNING[item.id] = {"task": None, "proc": None}
+
+    async def _clarify_bg(tid, eid, p):
+        try:
+            full_output = await _stream_claude(p, eid, tid)
+            done_text = parse_clarify_done(full_output)
+            outcome = parse_outcome(full_output)
+
+            async with session() as s:
+                task = (await s.execute(select(TaskItem).where(TaskItem.id == tid))).scalar_one()
+                history = list(task.conversation_history or [])
+
+                if done_text:
+                    await s.execute(
+                        update(TaskExecution).where(TaskExecution.id == eid)
+                        .values(status="succeeded", finished_at=datetime.utcnow())
+                    )
+                    await s.execute(
+                        update(TaskItem).where(TaskItem.id == tid).values(
+                            status="planning", result=done_text,
+                        )
+                    )
+                    await s.commit()
+
+                    plan_exec = TaskExecution(task_id=tid, status="running", log="")
+                    s.add(plan_exec)
+                    await s.commit()
+                    await s.refresh(plan_exec)
+
+                    plan_prompt = build_plan_prompt(
+                        description=task.description,
+                        action_type=task.action_type,
+                        priority=task.priority,
+                        requirements=done_text,
+                    )
+                    await _plan_bg(tid, plan_exec.id, plan_prompt)
+                elif outcome.kind == "needs_input":
+                    history.append({"role": "ai", "content": outcome.payload, "attempt": 0})
+                    await s.execute(
+                        update(TaskExecution).where(TaskExecution.id == eid)
+                        .values(status="needs_input", finished_at=datetime.utcnow())
+                    )
+                    await s.execute(
+                        update(TaskItem).where(TaskItem.id == tid).values(
+                            status="awaiting_input", result=outcome.payload,
+                            conversation_history=history,
+                        )
+                    )
+                    await s.commit()
+                else:
+                    await s.execute(
+                        update(TaskExecution).where(TaskExecution.id == eid)
+                        .values(status="succeeded", finished_at=datetime.utcnow())
+                    )
+                    await s.execute(
+                        update(TaskItem).where(TaskItem.id == tid).values(
+                            status="pending", result="Clarify phase ended without CLARIFY_DONE"
+                        )
+                    )
+                    await s.commit()
+        except Exception as exc:
+            logger.exception("Clarify step failed: %s", exc)
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution).where(TaskExecution.id == eid)
+                    .values(status="failed", error=str(exc), finished_at=datetime.utcnow())
+                )
+                await s.execute(
+                    update(TaskItem).where(TaskItem.id == tid).values(status="pending", mode=None)
+                )
+                await s.commit()
+        finally:
+            _RUNNING.pop(tid, None)
+
+    bg = asyncio.create_task(_clarify_bg(item.id, execution.id, prompt))
+    _RUNNING[item.id]["task"] = bg
+    return item
+
+
+@router.post("/{task_id}/plan", response_model=TaskOut)
+async def start_plan(task_id: UUID, user: AdminUser = Depends(current_admin)):
+    """Manually trigger the PLAN phase (can skip CLARIFY if task is clear)."""
+    async with session() as s:
+        item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if item.assignee_email not in (user.email, TEAM_EMAIL):
+            raise HTTPException(status_code=403, detail="Not your task")
+        if item.max_attempts <= 1:
+            raise HTTPException(status_code=400, detail="Plan step only for loop mode")
+        if item.status not in ("pending", "planning"):
+            raise HTTPException(status_code=409, detail=f"Task is {item.status}")
+
+        item.status = "planning"
+        item.mode = "ai"
+        execution = TaskExecution(task_id=item.id, status="running", log="")
+        s.add(execution)
+        await s.commit()
+        await s.refresh(item)
+        await s.refresh(execution)
+
+    requirements = item.result or ""
+    prompt = build_plan_prompt(
+        description=item.description,
+        action_type=item.action_type,
+        priority=item.priority,
+        requirements=requirements,
+    )
+    _RUNNING[item.id] = {"task": None, "proc": None}
+    bg = asyncio.create_task(_plan_bg(item.id, execution.id, prompt))
+    _RUNNING[item.id]["task"] = bg
+    return item
+
+
+@router.post("/{task_id}/review-plan", response_model=TaskOut)
+async def review_plan(task_id: UUID, body: PlanReviewRequest, user: AdminUser = Depends(current_admin)):
+    """Admin approves or rejects a plan."""
+    async with session() as s:
+        item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if item.status != "awaiting_plan_review":
+            raise HTTPException(status_code=409, detail=f"Task is {item.status}")
+        if body.approved:
+            item.plan_status = "approved"
+            item.status = "pending"
+        else:
+            item.plan_status = "rejected"
+            item.status = "pending"
+            item.plan = None
+            if body.feedback:
+                item.result = f"Plan rejected: {body.feedback}"
+        await s.commit()
+        await s.refresh(item)
     return item
 
 
