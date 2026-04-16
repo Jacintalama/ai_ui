@@ -195,7 +195,15 @@
       actions = `<button class="aiui-tp-btn-answer" data-task-action="answer-ui" data-task-id="${t.id}">💬 Answer</button>
                  <button class="aiui-tp-btn-manual" data-task-action="delete" data-task-id="${t.id}" title="Delete this task" style="flex:0 0 auto;padding:8px 10px;">🗑</button>`;
     } else if (canAi) {
-      actions = `<button class="aiui-tp-btn-ai" data-task-action="ai" data-task-id="${t.id}">⚡ AI</button>
+      let loopBtns = "";
+      if (t.max_attempts > 1) {
+          if (!t.plan || t.plan_status !== "approved") {
+              loopBtns = `<button class="aiui-tp-btn-ai" data-task-action="clarify" data-task-id="${t.id}" style="background:#7c3aed;">💬 Clarify</button>
+                          <button class="aiui-tp-btn-ai" data-task-action="plan" data-task-id="${t.id}" style="background:#4f46e5;">📋 Plan</button>`;
+          }
+      }
+      actions = `${loopBtns}
+                 <button class="aiui-tp-btn-ai" data-task-action="ai" data-task-id="${t.id}">⚡ AI</button>
                  <button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>
                  <button class="aiui-tp-btn-manual" data-task-action="delete" data-task-id="${t.id}" title="Delete this task" style="flex:0 0 auto;padding:8px 10px;">🗑</button>`;
     } else {
@@ -207,6 +215,13 @@
          <textarea class="aiui-tp-textarea" data-textarea-id="${t.id}" placeholder="Reply to the AI…"></textarea>
          <div class="aiui-tp-actions"><button class="aiui-tp-btn-answer" data-task-action="answer-resume" data-task-id="${t.id}">↩ Reply</button></div>`
       : `<div class="aiui-tp-actions">${actions}</div>`;
+    const planReviewUI = t.status === "awaiting_plan_review" && t.plan
+      ? `<div style="background:#0a1a1a;border:1px solid #065f46;border-radius:4px;padding:8px;font-size:11px;color:#6ee7b7;margin-bottom:8px;max-height:200px;overflow-y:auto;white-space:pre-wrap;"><strong>AI Plan:</strong><br/>${escapeHtml(t.plan)}</div>
+         <div class="aiui-tp-actions">
+           <button class="aiui-tp-btn-ai" data-task-action="approve-plan" data-task-id="${t.id}">✓ Approve Plan</button>
+           <button class="aiui-tp-btn-manual" data-task-action="reject-plan" data-task-id="${t.id}">✗ Reject</button>
+         </div>`
+      : "";
     // If a previous AI run failed, show a small warning + the reason
     const priorFailHint = (!t.mode && t.result && !isAsk && t.status === "pending")
       ? `<div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:4px;padding:6px 8px;font-size:11px;color:#fca5a5;margin-bottom:8px;">
@@ -218,12 +233,13 @@
         <div class="aiui-tp-badges">
           <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
           <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+          ${t.max_attempts > 1 ? `<span class="aiui-tp-badge" style="background:#312e81;color:#c4b5fd;">🔄 Loop ${t.attempt_count}/${t.max_attempts}</span>` : ''}
           ${t.status === "awaiting_input" ? '<span class="aiui-tp-badge" style="background:#7c2d12;color:#fed7aa;">⚠️ NEEDS INPUT</span>' : ''}
         </div>
         <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
         <div class="aiui-tp-meta"><span class="aiui-tp-assignee">${escapeHtml(t.assignee_name)}</span></div>
         ${priorFailHint}
-        ${askInputUI}
+        ${askInputUI}${planReviewUI}
       </div>`;
   }
 
@@ -233,6 +249,7 @@
         <div class="aiui-tp-badges">
           <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
           <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+          ${t.max_attempts > 1 ? `<span class="aiui-tp-badge" style="background:#312e81;color:#c4b5fd;">🔄 Loop ${t.attempt_count}/${t.max_attempts}</span>` : ''}
           ${t.status === "running" ? '<span class="aiui-tp-badge live">⚡ AI RUNNING</span>' : '<span class="aiui-tp-badge" style="background:#374151;color:#d1d5db;">✋ MANUAL</span>'}
         </div>
         <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
@@ -259,6 +276,7 @@
             <div class="aiui-tp-badges">
               <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
               <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+              ${t.max_attempts > 1 ? `<span class="aiui-tp-badge" style="background:#312e81;color:#c4b5fd;">🔄 Loop ${t.attempt_count}/${t.max_attempts}</span>` : ''}
             </div>
             <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
             <div class="aiui-tp-done-meta">
@@ -330,6 +348,31 @@
         if (!ans) { alert("Type a reply first."); return; }
         await api("POST", `/${id}/answer`, { answer: ans });
         await refreshAll();
+      }
+      else if (action === "clarify") {
+        await api("POST", `/${id}/clarify`);
+        await refreshAll();
+        switchTab("progress");
+        openStream(id);
+      }
+      else if (action === "plan") {
+        await api("POST", `/${id}/plan`);
+        await refreshAll();
+        switchTab("progress");
+        openStream(id);
+      }
+      else if (action === "approve-plan") {
+        await api("POST", `/${id}/review-plan`, { approved: true });
+        await refreshAll();
+      }
+      else if (action === "reject-plan") {
+        showTextModal({
+          title: "Reject Plan — Feedback (optional)",
+          placeholder: "What should be different?",
+          saveLabel: "Reject",
+          allowEmpty: true,
+          onSave: async (fb) => { await api("POST", `/${id}/review-plan`, { approved: false, feedback: fb }); await refreshAll(); },
+        });
       }
       else if (action === "complete-prompt") {
         showTextModal({
@@ -676,6 +719,11 @@
         </select>
       </div>
 
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:#aaa;">
+          <input type="checkbox" data-loop-toggle style="accent-color:#4f46e5;"/>
+          Loop mode (clarify → plan → TDD build → verify → retry)
+      </label>
+
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
         <button data-cancel style="background:#374151;color:#ddd;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;">Cancel</button>
         <button data-save style="background:#10b981;color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;">+ Create task</button>
@@ -687,11 +735,14 @@
     modal.querySelector("[data-save]").addEventListener("click", async () => {
       const desc = modal.querySelector("[data-desc]").value.trim();
       if (!desc) { modal.querySelector("[data-desc]").focus(); return; }
+      const loopToggle = modal.querySelector("[data-loop-toggle]");
+      const maxAttempts = loopToggle && loopToggle.checked ? 3 : 1;
       const body = {
         description: desc,
         action_type: modal.querySelector("[data-type]").value,
         priority: modal.querySelector("[data-prio]").value,
         assignee: modal.querySelector("[data-assignee]").value,
+        max_attempts: maxAttempts,
       };
       try {
         modal.querySelector("[data-save]").disabled = true;
