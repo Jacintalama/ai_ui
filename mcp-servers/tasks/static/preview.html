@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview — AIUI Tasks</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f0f0f;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-width: 800px;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 18px;
+      background: #111;
+      border-bottom: 1px solid #2a2a2a;
+      flex-shrink: 0;
+      gap: 12px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+    .back-link {
+      color: #60a5fa;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: color 0.15s;
+    }
+    .back-link:hover { color: #93bbfd; }
+    .slug-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #ccc;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .btn {
+      border: none;
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-run { background: #3b82f6; color: #fff; }
+    .btn-run:hover:not(:disabled) { background: #2563eb; }
+    .btn-stop { background: #7f1d1d; color: #fff; }
+    .btn-stop:hover:not(:disabled) { background: #991b1b; }
+
+    /* ── Main layout ── */
+    .main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── File tree sidebar ── */
+    .sidebar {
+      width: 250px;
+      min-width: 180px;
+      border-right: 1px solid #2a2a2a;
+      background: #0f0f0f;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .sidebar-header {
+      padding: 10px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid #2a2a2a;
+      background: #111;
+    }
+    .file-tree {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+    .file-tree::-webkit-scrollbar { width: 6px; }
+    .file-tree::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+
+    .tree-folder {
+      padding: 5px 14px;
+      font-size: 12px;
+      color: #888;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tree-folder:hover { color: #ccc; }
+    .tree-folder .chevron {
+      font-size: 10px;
+      transition: transform 0.15s;
+      display: inline-block;
+    }
+    .tree-folder.collapsed .chevron { transform: rotate(-90deg); }
+
+    .tree-file {
+      padding: 4px 14px 4px 28px;
+      font-size: 12px;
+      color: #ccc;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.1s;
+      user-select: none;
+    }
+    .tree-file:hover { background: #1a1a1a; }
+    .tree-file.active { background: #1e3a5a; color: #fff; }
+    .tree-file .icon { font-size: 11px; opacity: 0.7; flex-shrink: 0; }
+    .tree-file .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tree-file .size {
+      margin-left: auto;
+      font-size: 10px;
+      color: #555;
+      flex-shrink: 0;
+    }
+
+    .tree-nested { overflow: hidden; }
+    .tree-nested.hidden { display: none; }
+
+    /* ── Content pane ── */
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #2a2a2a;
+      background: #111;
+      flex-shrink: 0;
+    }
+    .tab {
+      padding: 10px 18px;
+      background: transparent;
+      border: none;
+      color: #888;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      transition: color 0.15s;
+    }
+    .tab:hover { color: #ccc; }
+    .tab.active { color: #fff; border-bottom-color: #3b82f6; }
+
+    /* ── Tab panels ── */
+    .tab-panels {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    .tab-panel {
+      position: absolute;
+      inset: 0;
+      overflow: auto;
+      display: none;
+    }
+    .tab-panel.active { display: block; }
+    .tab-panel::-webkit-scrollbar { width: 8px; }
+    .tab-panel::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 4px; }
+
+    /* Code panel */
+    .code-panel {
+      padding: 0;
+    }
+    .code-panel .file-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding: 8px 16px;
+      background: #111;
+      border-bottom: 1px solid #2a2a2a;
+      font-size: 12px;
+      color: #888;
+      font-family: Consolas, Menlo, monospace;
+    }
+    .code-panel pre {
+      margin: 0;
+      padding: 16px;
+      background: #0d1117;
+      font-size: 13px;
+      line-height: 1.55;
+      tab-size: 2;
+    }
+    .code-panel pre code {
+      font-family: Consolas, Menlo, "Courier New", monospace;
+    }
+    .code-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #555;
+      font-size: 14px;
+    }
+
+    /* Preview iframe panel */
+    .preview-panel { padding: 0; }
+    .preview-panel iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #fff;
+    }
+    .preview-msg {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #555;
+      font-size: 14px;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Tests panel */
+    .tests-panel {
+      padding: 16px;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #d1d5db;
+    }
+    .tests-panel .pass { color: #4ade80; }
+    .tests-panel .fail { color: #f87171; }
+
+    /* Logs panel */
+    .logs-panel { padding: 12px 16px; }
+    .log-entry {
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .log-entry-head {
+      padding: 8px 14px;
+      background: #111;
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+    }
+    .log-entry-body {
+      padding: 12px 14px;
+      background: #000;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #d1d5db;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .log-entry-body::-webkit-scrollbar { width: 6px; }
+    .log-entry-body::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    .log-status { font-weight: 700; }
+    .log-status.succeeded { color: #22c55e; }
+    .log-status.failed { color: #ef4444; }
+    .log-status.running { color: #f59e0b; }
+    .log-status.needs_input { color: #f59e0b; }
+    .log-error {
+      padding: 8px 14px;
+      background: #1a0a0a;
+      color: #fca5a5;
+      font-size: 12px;
+      border-top: 1px solid #2a2a2a;
+    }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 18px;
+      background: #111;
+      border-top: 1px solid #2a2a2a;
+      font-size: 12px;
+      color: #888;
+      flex-shrink: 0;
+      gap: 12px;
+    }
+    .status-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.running { background: #22c55e; animation: pulse-green 1.5s infinite; }
+    .status-dot.stopped { background: #666; }
+    @keyframes pulse-green {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Loading / error states ── */
+    .full-center {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #555;
+      font-size: 14px;
+    }
+    .error-msg { color: #f87171; }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .sidebar { width: 200px; min-width: 140px; }
+    }
+    @media (max-width: 800px) {
+      .sidebar { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <a class="back-link" href="/">&#8592; Back to Tasks</a>
+      <span class="slug-name" id="slug-name">Loading...</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-run" id="btn-run" disabled>Run</button>
+      <button class="btn btn-stop" id="btn-stop" disabled>Stop</button>
+    </div>
+  </div>
+
+  <!-- Main layout -->
+  <div class="main">
+    <!-- Sidebar file tree -->
+    <div class="sidebar">
+      <div class="sidebar-header">Files</div>
+      <div class="file-tree" id="file-tree">
+        <div class="full-center" style="padding:20px;font-size:12px;">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Content pane -->
+    <div class="content">
+      <div class="tabs">
+        <button class="tab active" data-tab="code">Code</button>
+        <button class="tab" data-tab="preview">Preview</button>
+        <button class="tab" data-tab="tests">Tests</button>
+        <button class="tab" data-tab="logs">Logs</button>
+      </div>
+      <div class="tab-panels">
+        <div class="tab-panel code-panel active" id="panel-code">
+          <div class="code-empty">Select a file from the tree</div>
+        </div>
+        <div class="tab-panel preview-panel" id="panel-preview">
+          <div class="preview-msg" id="preview-msg">
+            <span>App is not running</span>
+            <span style="font-size:12px;color:#444;">Click Run to start the preview server</span>
+          </div>
+        </div>
+        <div class="tab-panel tests-panel" id="panel-tests">
+          <span style="color:#555;">No test output yet. Tests appear after a VERIFY step runs.</span>
+        </div>
+        <div class="tab-panel logs-panel" id="panel-logs">
+          <span style="color:#555;">Loading execution logs...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div class="status-bar">
+    <div class="status-left">
+      <div class="status-dot stopped" id="status-dot"></div>
+      <span id="status-text">Not running</span>
+    </div>
+    <span id="status-elapsed"></span>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  const API_BASE = "/api/tasks";
+  const taskId = new URLSearchParams(window.location.search).get("task");
+
+  if (!taskId) {
+    document.body.innerHTML = '<div class="full-center error-msg">Missing ?task= parameter</div>';
+    return;
+  }
+
+  // ── State ──
+  let slug = "";
+  let files = [];
+  let activeFile = null;
+  let activeTab = "code";
+  let previewRunning = false;
+  let previewPort = null;
+  let pollTimer = null;
+
+  // ── DOM refs ──
+  const $slugName = document.getElementById("slug-name");
+  const $btnRun = document.getElementById("btn-run");
+  const $btnStop = document.getElementById("btn-stop");
+  const $fileTree = document.getElementById("file-tree");
+  const $panelCode = document.getElementById("panel-code");
+  const $panelPreview = document.getElementById("panel-preview");
+  const $panelTests = document.getElementById("panel-tests");
+  const $panelLogs = document.getElementById("panel-logs");
+  const $previewMsg = document.getElementById("preview-msg");
+  const $statusDot = document.getElementById("status-dot");
+  const $statusText = document.getElementById("status-text");
+  const $statusElapsed = document.getElementById("status-elapsed");
+
+  // ── Helpers ──
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function humanSize(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function extToLang(path) {
+    const ext = (path.split(".").pop() || "").toLowerCase();
+    const map = {
+      html: "xml", htm: "xml", svg: "xml", xml: "xml",
+      css: "css", scss: "css",
+      js: "javascript", mjs: "javascript", jsx: "javascript",
+      ts: "typescript", tsx: "typescript",
+      json: "json",
+      py: "python",
+      sh: "bash", bash: "bash",
+      md: "markdown", txt: "plaintext",
+    };
+    return map[ext] || "";
+  }
+
+  function fileIcon(path) {
+    const ext = (path.split(".").pop() || "").toLowerCase();
+    const icons = {
+      html: "&#128196;", htm: "&#128196;",
+      css: "&#127912;",
+      js: "&#9889;", mjs: "&#9889;", jsx: "&#9889;",
+      ts: "&#128312;", tsx: "&#128312;",
+      json: "&#128203;",
+      py: "&#128013;",
+      md: "&#128221;", txt: "&#128221;",
+      png: "&#128444;", jpg: "&#128444;", gif: "&#128444;", svg: "&#128444;",
+    };
+    return icons[ext] || "&#128196;";
+  }
+
+  async function apiFetch(method, path, body) {
+    const opts = {
+      method,
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const r = await fetch(API_BASE + path, opts);
+    if (!r.ok) {
+      const text = await r.text().catch(() => r.statusText);
+      throw new Error(r.status + " " + text);
+    }
+    return r.json();
+  }
+
+  // ── Tab switching ──
+  document.querySelector(".tabs").addEventListener("click", function (e) {
+    const tab = e.target.dataset && e.target.dataset.tab;
+    if (!tab) return;
+    activeTab = tab;
+    document.querySelectorAll(".tab").forEach(function (t) {
+      t.classList.toggle("active", t.dataset.tab === tab);
+    });
+    document.querySelectorAll(".tab-panel").forEach(function (p) {
+      p.classList.toggle("active", p.id === "panel-" + tab);
+    });
+    if (tab === "preview") refreshPreviewFrame();
+    if (tab === "logs") loadLogs();
+    if (tab === "tests") loadTests();
+  });
+
+  // ── File tree ──
+  async function loadFileTree() {
+    try {
+      const data = await apiFetch("GET", "/" + taskId + "/files");
+      slug = data.slug || "";
+      files = data.files || [];
+      $slugName.textContent = "Preview: apps/" + slug;
+      document.title = "Preview: " + slug + " — AIUI Tasks";
+      renderFileTree();
+    } catch (err) {
+      $fileTree.innerHTML = '<div class="full-center error-msg" style="padding:20px;font-size:12px;">' +
+        escapeHtml(err.message) + "</div>";
+      $slugName.textContent = "Error loading files";
+    }
+  }
+
+  function renderFileTree() {
+    if (!files.length) {
+      $fileTree.innerHTML = '<div class="full-center" style="padding:20px;font-size:12px;color:#555;">No files found</div>';
+      return;
+    }
+
+    // Build a directory tree structure
+    var tree = {};
+    files.forEach(function (f) {
+      var parts = f.path.replace(/\\/g, "/").split("/");
+      var node = tree;
+      for (var i = 0; i < parts.length - 1; i++) {
+        if (!node[parts[i]]) node[parts[i]] = {};
+        node = node[parts[i]];
+      }
+      node[parts[parts.length - 1]] = f;
+    });
+
+    function renderNode(obj, depth) {
+      var html = "";
+      // Sort: folders first, then files
+      var keys = Object.keys(obj).sort(function (a, b) {
+        var aIsDir = typeof obj[a] === "object" && !obj[a].path;
+        var bIsDir = typeof obj[b] === "object" && !obj[b].path;
+        if (aIsDir && !bIsDir) return -1;
+        if (!aIsDir && bIsDir) return 1;
+        return a.localeCompare(b);
+      });
+
+      keys.forEach(function (key) {
+        var val = obj[key];
+        if (typeof val === "object" && !val.path) {
+          // Directory
+          var pad = 14 + depth * 12;
+          html += '<div class="tree-folder" style="padding-left:' + pad + 'px;" data-folder>' +
+            '<span class="chevron">&#9660;</span> ' + escapeHtml(key) +
+            "</div>";
+          html += '<div class="tree-nested">' + renderNode(val, depth + 1) + "</div>";
+        } else {
+          // File
+          var pad = 28 + depth * 12;
+          html += '<div class="tree-file" data-path="' + escapeHtml(val.path) + '" style="padding-left:' + pad + 'px;">' +
+            '<span class="icon">' + fileIcon(val.path) + "</span>" +
+            '<span class="name">' + escapeHtml(key) + "</span>" +
+            '<span class="size">' + humanSize(val.size) + "</span>" +
+            "</div>";
+        }
+      });
+      return html;
+    }
+
+    $fileTree.innerHTML = renderNode(tree, 0);
+
+    // Wire click handlers
+    $fileTree.querySelectorAll(".tree-file").forEach(function (el) {
+      el.addEventListener("click", function () {
+        var path = el.dataset.path;
+        loadFile(path);
+        // Highlight active
+        $fileTree.querySelectorAll(".tree-file").forEach(function (f) {
+          f.classList.toggle("active", f.dataset.path === path);
+        });
+      });
+    });
+
+    $fileTree.querySelectorAll(".tree-folder").forEach(function (el) {
+      el.addEventListener("click", function () {
+        el.classList.toggle("collapsed");
+        var nested = el.nextElementSibling;
+        if (nested && nested.classList.contains("tree-nested")) {
+          nested.classList.toggle("hidden");
+        }
+      });
+    });
+
+    // Auto-select first file
+    if (files.length > 0) {
+      var firstFile = $fileTree.querySelector(".tree-file");
+      if (firstFile) firstFile.click();
+    }
+  }
+
+  // ── Code viewer ──
+  async function loadFile(path) {
+    activeFile = path;
+    $panelCode.innerHTML = '<div class="code-empty">Loading...</div>';
+
+    // Switch to code tab
+    if (activeTab !== "code") {
+      activeTab = "code";
+      document.querySelectorAll(".tab").forEach(function (t) {
+        t.classList.toggle("active", t.dataset.tab === "code");
+      });
+      document.querySelectorAll(".tab-panel").forEach(function (p) {
+        p.classList.toggle("active", p.id === "panel-code");
+      });
+    }
+
+    try {
+      var data = await apiFetch("GET", "/" + taskId + "/files/" + encodeURIComponent(path));
+      var lang = extToLang(path);
+      var highlighted;
+      try {
+        if (lang && hljs.getLanguage(lang)) {
+          highlighted = hljs.highlight(data.content, { language: lang }).value;
+        } else {
+          highlighted = hljs.highlightAuto(data.content).value;
+        }
+      } catch (_) {
+        highlighted = escapeHtml(data.content);
+      }
+
+      $panelCode.innerHTML =
+        '<div class="file-header">' + escapeHtml(path) + "</div>" +
+        "<pre><code>" + highlighted + "</code></pre>";
+    } catch (err) {
+      $panelCode.innerHTML = '<div class="code-empty error-msg">' + escapeHtml(err.message) + "</div>";
+    }
+  }
+
+  // ── Preview iframe ──
+  function refreshPreviewFrame() {
+    if (previewRunning && previewPort) {
+      $panelPreview.innerHTML =
+        '<iframe src="/tasks/preview-app/" title="App preview"></iframe>';
+    } else {
+      $panelPreview.innerHTML =
+        '<div class="preview-msg">' +
+        "<span>App is not running</span>" +
+        '<span style="font-size:12px;color:#444;">Click Run to start the preview server</span>' +
+        "</div>";
+    }
+  }
+
+  // ── Tests ──
+  async function loadTests() {
+    try {
+      var execs = await apiFetch("GET", "/" + taskId + "/executions");
+      var testOutput = "";
+      for (var i = 0; i < execs.length; i++) {
+        var log = execs[i].log || "";
+        var idx = log.indexOf("--- VERIFY STEP ---");
+        if (idx !== -1) {
+          testOutput = log.substring(idx);
+          break;
+        }
+      }
+      if (testOutput) {
+        // Colorize pass/fail patterns
+        var colored = escapeHtml(testOutput)
+          .replace(/(PASS|PASSED|pass|passed|OK|ok|✓)/g, '<span class="pass">$1</span>')
+          .replace(/(FAIL|FAILED|fail|failed|ERROR|error|✗)/g, '<span class="fail">$1</span>');
+        $panelTests.innerHTML = colored;
+      } else {
+        $panelTests.innerHTML = '<span style="color:#555;">No test output yet. Tests appear after a VERIFY step runs.</span>';
+      }
+    } catch (err) {
+      $panelTests.innerHTML = '<span class="error-msg">' + escapeHtml(err.message) + "</span>";
+    }
+  }
+
+  // ── Logs ──
+  async function loadLogs() {
+    try {
+      var execs = await apiFetch("GET", "/" + taskId + "/executions");
+      if (!execs.length) {
+        $panelLogs.innerHTML = '<span style="color:#555;">No executions recorded for this task.</span>';
+        return;
+      }
+      var html = "";
+      execs.forEach(function (ex, i) {
+        var statusClass = ex.status || "";
+        html += '<div class="log-entry">' +
+          '<div class="log-entry-head">' +
+          '<div><span class="log-status ' + escapeHtml(statusClass) + '">' + escapeHtml(ex.status) + "</span>" +
+          '<span style="color:#666;margin-left:8px;">Run ' + (execs.length - i) + "</span></div>" +
+          '<div style="color:#666;">' + (ex.started_at ? new Date(ex.started_at).toLocaleString() : "") + "</div>" +
+          "</div>";
+        if (ex.error) {
+          html += '<div class="log-error">Error: ' + escapeHtml(ex.error) + "</div>";
+        }
+        html += '<div class="log-entry-body">' + escapeHtml(ex.log || "(no output)") + "</div>" +
+          "</div>";
+      });
+      $panelLogs.innerHTML = html;
+    } catch (err) {
+      $panelLogs.innerHTML = '<span class="error-msg">' + escapeHtml(err.message) + "</span>";
+    }
+  }
+
+  // ── Preview status polling ──
+  async function pollPreviewStatus() {
+    try {
+      var status = await apiFetch("GET", "/" + taskId + "/preview/status");
+      var wasRunning = previewRunning;
+      previewRunning = !!status.running;
+      previewPort = status.port || null;
+
+      if (previewRunning) {
+        $statusDot.className = "status-dot running";
+        $statusText.textContent = "Running on port " + previewPort;
+        $statusElapsed.textContent = formatElapsed(status.elapsed_seconds || 0);
+        $btnRun.disabled = true;
+        $btnStop.disabled = false;
+      } else {
+        $statusDot.className = "status-dot stopped";
+        $statusText.textContent = "Not running";
+        $statusElapsed.textContent = "";
+        $btnRun.disabled = false;
+        $btnStop.disabled = true;
+      }
+
+      // If state changed while on preview tab, refresh iframe
+      if (wasRunning !== previewRunning && activeTab === "preview") {
+        refreshPreviewFrame();
+      }
+    } catch (_) {
+      // Silently ignore polling errors
+    }
+  }
+
+  function formatElapsed(seconds) {
+    if (seconds < 60) return seconds + "s elapsed";
+    var m = Math.floor(seconds / 60);
+    var s = seconds % 60;
+    return m + "m " + s + "s elapsed";
+  }
+
+  function startPolling() {
+    if (pollTimer) return;
+    pollPreviewStatus();
+    pollTimer = setInterval(pollPreviewStatus, 5000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  // ── Run / Stop actions ──
+  $btnRun.addEventListener("click", async function () {
+    $btnRun.disabled = true;
+    $btnRun.textContent = "Starting...";
+    try {
+      var res = await apiFetch("POST", "/" + taskId + "/preview/start");
+      previewRunning = true;
+      previewPort = res.port;
+      await pollPreviewStatus();
+      if (activeTab === "preview") refreshPreviewFrame();
+    } catch (err) {
+      alert("Failed to start preview: " + err.message);
+    }
+    $btnRun.textContent = "Run";
+    // Status poll will update button state
+  });
+
+  $btnStop.addEventListener("click", async function () {
+    $btnStop.disabled = true;
+    $btnStop.textContent = "Stopping...";
+    try {
+      await apiFetch("POST", "/" + taskId + "/preview/stop");
+      previewRunning = false;
+      previewPort = null;
+      await pollPreviewStatus();
+      if (activeTab === "preview") refreshPreviewFrame();
+    } catch (err) {
+      alert("Failed to stop preview: " + err.message);
+    }
+    $btnStop.textContent = "Stop";
+  });
+
+  // ── Init ──
+  async function init() {
+    await loadFileTree();
+    startPolling();
+    loadLogs();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
