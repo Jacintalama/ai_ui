@@ -401,6 +401,10 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/mcp/meeting-kb/api"):
         backend_url = os.getenv("MEETING_KB_URL", "http://meeting-kb:8200")
         backend_path = full_path[16:]  # strip "/mcp/meeting-kb" → "/api/..."
+    # /api/todoist/* → Todoist service (bypass MCP Proxy)
+    elif full_path.startswith("/api/todoist"):
+        backend_url = os.getenv("TODOIST_URL", "http://todoist:8220")
+        backend_path = full_path
     # /api/tasks/* → Tasks service (bypass MCP Proxy)
     elif full_path.startswith("/api/tasks"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")

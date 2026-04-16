@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Todoist</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: '#1a1a1a',
+            'surface-2': '#0f0f0f',
+            'surface-3': '#111',
+            border: '#2a2a2a',
+            'border-2': '#3a3a3a',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    body { background: #0f0f0f; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+    .pri-1 { color: #9ca3af; }  /* normal */
+    .pri-2 { color: #3b82f6; }  /* medium */
+    .pri-3 { color: #f59e0b; }  /* high */
+    .pri-4 { color: #ef4444; }  /* urgent */
+    .pri-bg-1 { background: #1f2937; color: #9ca3af; }
+    .pri-bg-2 { background: #1e3a8a; color: #93c5fd; }
+    .pri-bg-3 { background: #451a03; color: #fbbf24; }
+    .pri-bg-4 { background: #7f1d1d; color: #fca5a5; }
+    .task-enter { animation: fadeSlideIn 0.15s ease-out; }
+    @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    .checkbox-custom {
+      width: 18px; height: 18px; border-radius: 50%; border: 2px solid #3a3a3a;
+      flex-shrink: 0; cursor: pointer; transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .checkbox-custom:hover { border-color: #6b7280; }
+    .checkbox-custom.checked { background: #22c55e; border-color: #22c55e; }
+    .sidebar-item { border-radius: 6px; padding: 7px 10px; cursor: pointer; transition: background 0.1s; font-size: 13.5px; display: flex; align-items: center; gap: 8px; }
+    .sidebar-item:hover { background: #1a1a1a; }
+    .sidebar-item.active { background: #1e3a8a; color: #fff; }
+    .btn { padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; border: 0; }
+    .btn-primary { background: #ef4444; color: #fff; }
+    .btn-primary:hover { background: #dc2626; }
+    .btn-ghost { background: transparent; color: #9ca3af; border: 1px solid #2a2a2a; }
+    .btn-ghost:hover { background: #1a1a1a; color: #fff; }
+    input, textarea, select {
+      background: #111; border: 1px solid #2a2a2a; border-radius: 6px;
+      color: #fff; padding: 8px 12px; font-size: 13px; outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, textarea:focus, select:focus { border-color: #ef4444; }
+    input::placeholder, textarea::placeholder { color: #666; }
+  </style>
+</head>
+<body x-data="todoist()" x-init="init()">
+
+  <!-- Toast -->
+  <div x-show="toast.show" x-cloak
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 translate-y-1"
+       x-transition:enter-end="opacity-100 translate-y-0"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100"
+       x-transition:leave-end="opacity-0"
+       :class="toast.error ? 'bg-red-600' : 'bg-green-600'"
+       class="fixed bottom-6 right-6 text-white text-sm font-medium px-5 py-3 rounded-lg shadow-xl z-50"
+       x-text="toast.message">
+  </div>
+
+  <!-- Token Setup Modal -->
+  <div x-show="showTokenModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center" style="background: rgba(0,0,0,0.7);">
+    <div class="bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl p-6 w-[400px] shadow-2xl">
+      <h2 class="text-lg font-bold mb-1">Todoist API Token</h2>
+      <p class="text-sm text-gray-400 mb-4">
+        Enter your Todoist API token to get started. Find it at
+        <span class="text-blue-400">Settings → Integrations → Developer</span>.
+      </p>
+      <input type="password" x-model="tokenInput" @keydown.enter="saveToken()"
+             placeholder="Your Todoist API token…"
+             class="w-full mb-4" />
+      <div class="flex gap-3">
+        <button class="btn btn-primary flex-1" @click="saveToken()">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Task Modal -->
+  <div x-show="showAddModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center" style="background: rgba(0,0,0,0.7);">
+    <div class="bg-[#1a1a1a] border border-[#2a2a2a] rounded-xl p-5 w-[480px] shadow-2xl" @click.stop>
+      <h2 class="text-base font-bold mb-4">Add Task</h2>
+      <div class="space-y-3">
+        <input type="text" x-model="newTask.content" placeholder="Task name*"
+               @keydown.enter="submitNewTask()" class="w-full" />
+        <textarea x-model="newTask.description" placeholder="Description (optional)"
+                  rows="2" class="w-full resize-none"></textarea>
+        <div class="flex gap-3">
+          <select x-model="newTask.project_id" class="flex-1">
+            <option value="">Inbox</option>
+            <template x-for="p in projects" :key="p.id">
+              <option :value="p.id" x-text="p.name"></option>
+            </template>
+          </select>
+          <select x-model="newTask.priority" class="flex-1">
+            <option value="1">Priority: Normal</option>
+            <option value="2">Priority: Medium</option>
+            <option value="3">Priority: High</option>
+            <option value="4">Priority: Urgent</option>
+          </select>
+        </div>
+        <input type="text" x-model="newTask.due_string" placeholder="Due date: today, tomorrow, next monday…" class="w-full" />
+      </div>
+      <div class="flex gap-3 mt-4">
+        <button class="btn btn-primary flex-1" @click="submitNewTask()" :disabled="!newTask.content.trim()">Add Task</button>
+        <button class="btn btn-ghost" @click="showAddModal = false">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Layout -->
+  <div class="flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-56 flex-shrink-0 flex flex-col border-r border-[#1a1a1a] bg-[#0a0a0a] p-3 gap-1">
+      <!-- Logo -->
+      <div class="flex items-center gap-2 px-2 py-3 mb-2">
+        <svg class="w-5 h-5 text-red-500" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M8 12l3 3 5-5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="font-bold text-sm tracking-wide">Todoist</span>
+      </div>
+
+      <!-- Inbox -->
+      <div class="sidebar-item" :class="activeView === 'inbox' && 'active'" @click="selectView('inbox')">
+        <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+        </svg>
+        <span>Inbox</span>
+        <span x-show="inboxCount > 0" x-text="inboxCount"
+              class="ml-auto text-xs bg-[#2a2a2a] text-gray-400 px-2 py-0.5 rounded-full"></span>
+      </div>
+
+      <!-- Today -->
+      <div class="sidebar-item" :class="activeView === 'today' && 'active'" @click="selectView('today')">
+        <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+        </svg>
+        <span>Today</span>
+        <span x-show="todayCount > 0" x-text="todayCount"
+              class="ml-auto text-xs bg-red-900 text-red-300 px-2 py-0.5 rounded-full"></span>
+      </div>
+
+      <!-- Upcoming -->
+      <div class="sidebar-item" :class="activeView === 'upcoming' && 'active'" @click="selectView('upcoming')">
+        <svg class="w-4 h-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        <span>Upcoming</span>
+      </div>
+
+      <!-- Projects heading -->
+      <div class="px-2 pt-4 pb-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">Projects</div>
+
+      <!-- Project list -->
+      <template x-for="p in projects" :key="p.id">
+        <div class="sidebar-item" :class="activeView === 'project:' + p.id && 'active'"
+             @click="selectView('project:' + p.id)">
+          <span class="w-2 h-2 rounded-full flex-shrink-0" :style="`background: ${projectColor(p.color)}`"></span>
+          <span class="truncate" x-text="p.name"></span>
+        </div>
+      </template>
+
+      <div x-show="loadingProjects" class="px-2 py-2 text-xs text-gray-600 italic">Loading…</div>
+
+      <!-- Bottom: settings -->
+      <div class="mt-auto pt-3 border-t border-[#1a1a1a]">
+        <div class="sidebar-item text-gray-500" @click="showTokenModal = true">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+          </svg>
+          <span>API Token</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Top bar -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-[#1a1a1a] bg-[#0a0a0a]">
+        <div>
+          <h1 class="text-base font-bold" x-text="viewTitle"></h1>
+          <p class="text-xs text-gray-500 mt-0.5" x-show="tasks.length > 0"
+             x-text="tasks.length + ' task' + (tasks.length !== 1 ? 's' : '')"></p>
+        </div>
+        <button class="btn btn-primary flex items-center gap-2" @click="openAddModal()">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+          </svg>
+          Add task
+        </button>
+      </div>
+
+      <!-- Tasks area -->
+      <div class="flex-1 overflow-y-auto px-6 py-4">
+
+        <!-- Loading -->
+        <div x-show="loadingTasks" class="flex items-center gap-3 py-8 text-gray-500 text-sm">
+          <svg class="animate-spin w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+          Loading tasks…
+        </div>
+
+        <!-- No token -->
+        <div x-show="!token && !loadingTasks" class="py-16 text-center text-gray-500">
+          <svg class="w-12 h-12 mx-auto mb-4 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+          </svg>
+          <p class="text-sm font-medium text-gray-400 mb-1">No API token configured</p>
+          <p class="text-xs text-gray-600 mb-4">Click "API Token" in the sidebar to connect your Todoist account.</p>
+          <button class="btn btn-primary" @click="showTokenModal = true">Connect Todoist</button>
+        </div>
+
+        <!-- Error -->
+        <div x-show="error && !loadingTasks" x-cloak class="py-8 text-center">
+          <p class="text-red-400 text-sm" x-text="error"></p>
+          <button class="btn btn-ghost mt-3 text-xs" @click="loadTasks()">Retry</button>
+        </div>
+
+        <!-- Empty -->
+        <div x-show="token && !loadingTasks && !error && tasks.length === 0" class="py-16 text-center text-gray-500">
+          <svg class="w-10 h-10 mx-auto mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+          </svg>
+          <p class="text-sm">All done! No tasks here.</p>
+        </div>
+
+        <!-- Task list -->
+        <div x-show="!loadingTasks && tasks.length > 0" class="space-y-1 max-w-2xl">
+          <template x-for="task in tasks" :key="task.id">
+            <div class="task-enter flex items-start gap-3 px-4 py-3 rounded-lg hover:bg-[#1a1a1a] group transition-colors">
+
+              <!-- Checkbox -->
+              <div class="checkbox-custom mt-0.5 flex-shrink-0"
+                   :class="completingIds.has(task.id) ? 'checked' : ''"
+                   :style="completingIds.has(task.id) ? '' : `border-color: ${priorityColor(task.priority)}`"
+                   @click="completeTask(task)">
+                <svg x-show="completingIds.has(task.id)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                </svg>
+              </div>
+
+              <!-- Content -->
+              <div class="flex-1 min-w-0">
+                <p class="text-sm leading-snug" :class="completingIds.has(task.id) ? 'line-through text-gray-500' : 'text-white'"
+                   x-text="task.content"></p>
+                <p x-show="task.description" class="text-xs text-gray-500 mt-0.5 line-clamp-2" x-text="task.description"></p>
+                <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <!-- Project badge (shown only in multi-project views) -->
+                  <span x-show="activeView !== 'project:' + task.project_id && task.project_id"
+                        class="text-xs px-2 py-0.5 rounded bg-[#1f2937] text-blue-400 font-medium"
+                        x-text="projectName(task.project_id)"></span>
+                  <!-- Due date -->
+                  <span x-show="task.due" class="flex items-center gap-1 text-xs"
+                        :class="isDue(task) ? 'text-red-400' : 'text-gray-500'">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                    </svg>
+                    <span x-text="formatDue(task.due)"></span>
+                  </span>
+                  <!-- Priority badge -->
+                  <span x-show="task.priority > 1"
+                        class="text-xs px-2 py-0.5 rounded font-semibold"
+                        :class="'pri-bg-' + task.priority"
+                        x-text="priorityLabel(task.priority)"></span>
+                </div>
+              </div>
+
+              <!-- Delete button (hover) -->
+              <button class="opacity-0 group-hover:opacity-100 transition-opacity text-gray-600 hover:text-red-400 flex-shrink-0"
+                      @click="deleteTask(task)" title="Delete">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+              </button>
+            </div>
+          </template>
+        </div>
+
+      </div><!-- /tasks area -->
+    </main>
+  </div><!-- /layout -->
+
+<script>
+const TODOIST_COLORS = {
+  berry_red: '#b8255f', red: '#db4035', orange: '#ff9933', yellow: '#fad000',
+  olive_green: '#afb83b', lime_green: '#7ecc49', green: '#299438', mint_green: '#6accbc',
+  teal: '#158fad', sky_blue: '#14aaf5', light_blue: '#96c3eb', blue: '#4073ff',
+  grape: '#884dff', violet: '#af38eb', lavender: '#eb96eb', magenta: '#e05194',
+  salmon: '#ff8d85', charcoal: '#808080', grey: '#b8b8b8', taupe: '#ccac93',
+};
+
+function todoist() {
+  return {
+    token: '',
+    tokenInput: '',
+    showTokenModal: false,
+    showAddModal: false,
+
+    projects: [],
+    loadingProjects: false,
+    tasks: [],
+    loadingTasks: false,
+    completingIds: new Set(),
+    error: null,
+
+    activeView: 'inbox',
+    inboxCount: 0,
+    todayCount: 0,
+
+    newTask: { content: '', description: '', project_id: '', priority: '1', due_string: '' },
+
+    toast: { show: false, message: '', error: false },
+    _toastTimer: null,
+
+    // ---- init ----
+    async init() {
+      this.token = localStorage.getItem('todoist_token') || '';
+      if (!this.token) {
+        this.showTokenModal = true;
+        return;
+      }
+      await this.loadProjects();
+      await this.loadTasks();
+      await this.loadCounts();
+    },
+
+    // ---- auth ----
+    async saveToken() {
+      const t = this.tokenInput.trim();
+      if (!t) return;
+      this.token = t;
+      localStorage.setItem('todoist_token', t);
+      this.showTokenModal = false;
+      this.tokenInput = '';
+      await this.loadProjects();
+      await this.loadTasks();
+      await this.loadCounts();
+    },
+
+    // ---- api helpers ----
+    async apiFetch(path, opts = {}) {
+      const headers = { 'Content-Type': 'application/json', 'X-Todoist-Token': this.token };
+      const res = await fetch(path, { headers, ...opts });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => res.statusText);
+        throw new Error(`API error ${res.status}: ${msg}`);
+      }
+      if (res.status === 204) return null;
+      return res.json();
+    },
+
+    // ---- projects ----
+    async loadProjects() {
+      this.loadingProjects = true;
+      try {
+        this.projects = await this.apiFetch('/api/todoist/projects');
+      } catch (e) {
+        this.showToast(e.message, true);
+      } finally {
+        this.loadingProjects = false;
+      }
+    },
+
+    projectName(id) {
+      const p = this.projects.find(p => p.id === id);
+      return p ? p.name : '';
+    },
+
+    projectColor(colorName) {
+      return TODOIST_COLORS[colorName] || '#808080';
+    },
+
+    // ---- views ----
+    get viewTitle() {
+      if (this.activeView === 'inbox') return 'Inbox';
+      if (this.activeView === 'today') return 'Today';
+      if (this.activeView === 'upcoming') return 'Upcoming';
+      if (this.activeView.startsWith('project:')) {
+        const id = this.activeView.slice(8);
+        return this.projectName(id) || 'Project';
+      }
+      return '';
+    },
+
+    async selectView(view) {
+      this.activeView = view;
+      await this.loadTasks();
+    },
+
+    // ---- tasks ----
+    async loadTasks() {
+      if (!this.token) return;
+      this.loadingTasks = true;
+      this.error = null;
+      this.tasks = [];
+      try {
+        let url = '/api/todoist/tasks';
+        const params = new URLSearchParams();
+        if (this.activeView === 'inbox') {
+          // Todoist Inbox has no project_id filter from API — use filter
+          params.set('filter', '#Inbox');
+        } else if (this.activeView === 'today') {
+          params.set('filter', 'today | overdue');
+        } else if (this.activeView === 'upcoming') {
+          params.set('filter', '7 days');
+        } else if (this.activeView.startsWith('project:')) {
+          params.set('project_id', this.activeView.slice(8));
+        }
+        if ([...params].length) url += '?' + params.toString();
+        this.tasks = await this.apiFetch(url);
+        // Sort: priority desc, then by due date
+        this.tasks.sort((a, b) => {
+          if (b.priority !== a.priority) return b.priority - a.priority;
+          const da = a.due?.date || '9999';
+          const db = b.due?.date || '9999';
+          return da < db ? -1 : da > db ? 1 : 0;
+        });
+      } catch (e) {
+        this.error = e.message;
+      } finally {
+        this.loadingTasks = false;
+      }
+    },
+
+    async loadCounts() {
+      if (!this.token) return;
+      try {
+        const [inbox, today] = await Promise.all([
+          this.apiFetch('/api/todoist/tasks?filter=' + encodeURIComponent('#Inbox')),
+          this.apiFetch('/api/todoist/tasks?filter=' + encodeURIComponent('today | overdue')),
+        ]);
+        this.inboxCount = inbox.length;
+        this.todayCount = today.length;
+      } catch (_) { /* silently fail counts */ }
+    },
+
+    // ---- task actions ----
+    async completeTask(task) {
+      if (this.completingIds.has(task.id)) return;
+      this.completingIds = new Set([...this.completingIds, task.id]);
+      try {
+        await this.apiFetch(`/api/todoist/tasks/${task.id}/close`, { method: 'POST' });
+        // Brief delay to show checkmark animation, then remove
+        setTimeout(() => {
+          this.tasks = this.tasks.filter(t => t.id !== task.id);
+          this.completingIds = new Set([...this.completingIds].filter(id => id !== task.id));
+          // Update counts
+          if (this.activeView === 'inbox') this.inboxCount = Math.max(0, this.inboxCount - 1);
+          if (this.activeView === 'today') this.todayCount = Math.max(0, this.todayCount - 1);
+        }, 600);
+      } catch (e) {
+        this.completingIds = new Set([...this.completingIds].filter(id => id !== task.id));
+        this.showToast(e.message, true);
+      }
+    },
+
+    async deleteTask(task) {
+      try {
+        await this.apiFetch(`/api/todoist/tasks/${task.id}`, { method: 'DELETE' });
+        this.tasks = this.tasks.filter(t => t.id !== task.id);
+        this.showToast('Task deleted');
+      } catch (e) {
+        this.showToast(e.message, true);
+      }
+    },
+
+    // ---- add task ----
+    openAddModal() {
+      this.newTask = {
+        content: '',
+        description: '',
+        project_id: this.activeView.startsWith('project:') ? this.activeView.slice(8) : '',
+        priority: '1',
+        due_string: '',
+      };
+      this.showAddModal = true;
+    },
+
+    async submitNewTask() {
+      if (!this.newTask.content.trim()) return;
+      const body = {
+        content: this.newTask.content.trim(),
+        priority: parseInt(this.newTask.priority, 10),
+      };
+      if (this.newTask.description) body.description = this.newTask.description;
+      if (this.newTask.project_id) body.project_id = this.newTask.project_id;
+      if (this.newTask.due_string) body.due_string = this.newTask.due_string;
+      try {
+        const created = await this.apiFetch('/api/todoist/tasks', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        this.showAddModal = false;
+        this.showToast('Task added');
+        // Prepend to list if it belongs in current view
+        const inCurrentProject = !this.newTask.project_id && this.activeView === 'inbox'
+          || (this.activeView === 'project:' + created.project_id);
+        if (inCurrentProject || this.activeView === 'today' || this.activeView === 'upcoming') {
+          this.tasks.unshift(created);
+        }
+        if (this.activeView === 'inbox') this.inboxCount++;
+      } catch (e) {
+        this.showToast(e.message, true);
+      }
+    },
+
+    // ---- display helpers ----
+    priorityColor(p) {
+      return ['', '#6b7280', '#3b82f6', '#f59e0b', '#ef4444'][p] || '#6b7280';
+    },
+
+    priorityLabel(p) {
+      return ['', '', 'P3', 'P2', 'P1'][p] || '';
+    },
+
+    isDue(task) {
+      if (!task.due) return false;
+      const today = new Date().toISOString().slice(0, 10);
+      return task.due.date <= today;
+    },
+
+    formatDue(due) {
+      if (!due) return '';
+      const today = new Date().toISOString().slice(0, 10);
+      const d = due.date;
+      if (d === today) return 'Today';
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      if (d === tomorrow) return 'Tomorrow';
+      return due.string || d;
+    },
+
+    // ---- toast ----
+    showToast(message, error = false) {
+      clearTimeout(this._toastTimer);
+      this.toast = { show: true, message, error };
+      this._toastTimer = setTimeout(() => { this.toast.show = false; }, 3000);
+    },
+  };
+}
+</script>
+</body>
+</html>

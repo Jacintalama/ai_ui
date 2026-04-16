@@ -128,6 +128,22 @@
 	}
 
 	# ---------------------------------------------------------------------------
+	# Todoist web app
+	# ---------------------------------------------------------------------------
+	# Static frontend served directly from container (no auth required for assets)
+	handle /todoist/static/* {
+		reverse_proxy todoist:8220
+	}
+	# API calls go through the gateway so JWT becomes X-User-Email
+	handle /api/todoist/* {
+		reverse_proxy api-gateway:8080
+	}
+	# App shell (redirect bare /todoist to /todoist/static/index.html)
+	handle /todoist {
+		redir /todoist/static/index.html 302
+	}
+
+	# ---------------------------------------------------------------------------
 	# Google Drive MCP connector
 	# ---------------------------------------------------------------------------
 	handle /gdrive/* {
