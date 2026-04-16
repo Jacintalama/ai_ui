@@ -1,4 +1,5 @@
 """Scheduled jobs — weekly recap POST to n8n."""
+import asyncio
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,77 @@ def _week_window_utc(now_utc: datetime) -> tuple[datetime, datetime, str, str]:
         monday_ph.date().isoformat(),
         friday_end_ph.date().isoformat(),
     )
+
+
+SIGN_OFF = "\n\n---\n\nGreat work everyone — have a good weekend, see you on Monday! 👋"
+
+
+async def _claude_summarize(raw_context: str) -> str | None:
+    """Ask the claude CLI to write a warm narrative weekly recap from the raw
+    data. Returns the summary text, or None on failure (caller falls back)."""
+    prompt = f"""You are writing a warm, concise weekly team recap for the AIUI team.
+
+Below is the raw data for this week's meetings and tasks. Write a ~300-400
+word narrative summary (NOT a table or bullet dump) that reads like a
+thoughtful team lead's Friday wrap-up email. Highlight the main themes
+from the meetings, celebrate what got completed, briefly mention what's
+still pending, and keep the tone upbeat and collaborative.
+
+Use markdown. Start with a short title line. Do NOT include any sign-off
+at the end — that will be added separately.
+
+RAW DATA:
+{raw_context}"""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "--print", "--dangerously-skip-permissions", prompt,
+            cwd="/workspace/ai_ui",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, "IS_SANDBOX": "1"},
+        )
+        assert proc.stdout is not None
+        chunks: list[bytes] = []
+        async with asyncio.timeout(120):
+            while True:
+                c = await proc.stdout.read(4096)
+                if not c:
+                    break
+                chunks.append(c)
+            await proc.wait()
+        text = b"".join(chunks).decode("utf-8", errors="replace").strip()
+        if text and proc.returncode == 0:
+            return text
+        logger.warning("Claude summarize returned rc=%s, len=%d", proc.returncode, len(text))
+        return None
+    except Exception as exc:
+        logger.exception("Claude summarize failed: %s", exc)
+        return None
+
+
+def _build_raw_context(meetings: list[dict[str, Any]], tasks: list[dict[str, Any]],
+                      start: str, end: str) -> str:
+    """Compact raw data string for Claude to summarize."""
+    lines = [f"Week of {start} to {end}", ""]
+    lines.append(f"MEETINGS ({len(meetings)}):")
+    for m in meetings:
+        lines.append(f"- {m['title']} — attendees: {m.get('attendees', '?')}")
+        summ = (m.get("summary") or "").strip()
+        if summ:
+            lines.append(f"  summary: {summ[:1200]}")
+        if m.get("fathom_link"):
+            lines.append(f"  link: {m['fathom_link']}")
+    lines.append("")
+    lines.append(f"TASKS ({len(tasks)}):")
+    for t in tasks:
+        mode = t.get("mode") or "—"
+        res = (t.get("result") or "")[:300]
+        lines.append(
+            f"- [{t['status']}] {t['action_type']}/{t['priority']} "
+            f"assignee={t['assignee_name']} mode={mode}: {t['description']}"
+            + (f" → {res}" if res else "")
+        )
+    return "\n".join(lines)
 
 
 def _format_body(meetings: list[dict[str, Any]], tasks: list[dict[str, Any]],
@@ -205,7 +277,15 @@ async def weekly_recap(x_cron_secret: str = Header(default="")):
         for t in tasks_rows
     ]
 
-    body = _format_body(meetings, tasks, start_str, end_str)
+    # Ask Claude to write a warm narrative summary; fall back to the
+    # template if Claude is unavailable.
+    raw = _build_raw_context(meetings, tasks, start_str, end_str)
+    narrative = await _claude_summarize(raw)
+    if narrative:
+        body = narrative.rstrip() + SIGN_OFF
+    else:
+        body = _format_body(meetings, tasks, start_str, end_str).rstrip() + SIGN_OFF
+
     payload = {
         "recap_type": "weekly",
         "generated_at": now_utc.isoformat().replace("+00:00", "Z"),
