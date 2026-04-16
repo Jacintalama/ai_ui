@@ -1,11 +1,45 @@
 """Decision Engine — classifies action items and routes to MCP tools."""
 import json
 import logging
+import os
 import re
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+TASKS_WEBHOOK_URL = os.environ.get("TASKS_WEBHOOK_URL", "")
+
+
+async def post_to_tasks_service(meeting_id: str, items: list[dict]) -> bool:
+    """Send classified action items to the tasks service for admin approval."""
+    if not TASKS_WEBHOOK_URL:
+        logger.info("TASKS_WEBHOOK_URL not set — skipping tasks webhook")
+        return False
+    payload = {
+        "meeting_id": meeting_id,
+        "items": [
+            {
+                "action_type": it.get("type", "BUILD"),
+                "assignee": it.get("assignee", "team"),
+                "description": it.get("description", ""),
+                "query": it.get("query"),
+                "priority": it.get("priority", "IMPORTANT"),
+            }
+            for it in items
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(TASKS_WEBHOOK_URL, json=payload)
+            if resp.is_success:
+                logger.info("Tasks webhook accepted %d items", len(items))
+                return True
+            logger.warning("Tasks webhook returned %s", resp.status_code)
+            return False
+    except Exception as exc:
+        logger.error(f"Tasks webhook failed: {exc}")
+        return False
 
 CLASSIFICATION_PROMPT = """You are an action item classifier for a software development team.
 
@@ -150,6 +184,7 @@ async def process_action_items(
     discord_webhook_url: str,
     summary: str,
     title: str = "",
+    meeting_id: str = "",
 ) -> dict:
     """Full pipeline: classify action items then route each one.
 
@@ -159,6 +194,10 @@ async def process_action_items(
 
     if not items:
         return {"processed": 0, "results": []}
+
+    # Forward to the tasks service so admins see them in the approval panel.
+    if meeting_id:
+        await post_to_tasks_service(meeting_id, items)
 
     results = []
 

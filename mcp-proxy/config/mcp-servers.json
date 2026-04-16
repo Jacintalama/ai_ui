@@ -134,6 +134,16 @@
       "api_key_env": null
     },
     {
+      "id": "meeting-kb",
+      "name": "Meeting Knowledge Base",
+      "url": "http://mcp-proxy:8000/meeting-kb",
+      "type": "openapi",
+      "description": "Search and browse meeting summaries stored in the knowledge base",
+      "tier": "local",
+      "groups": ["MCP-Admin", "Tenant-Google", "Tenant-Microsoft", "Tenant-AcmeCorp"],
+      "api_key_env": null
+    },
+    {
       "id": "web-search",
       "name": "Web Search",
       "url": "http://mcp-web-search:8000",

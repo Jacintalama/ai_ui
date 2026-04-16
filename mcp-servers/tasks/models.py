@@ -1,0 +1,50 @@
+"""SQLAlchemy ORM models for the tasks schema."""
+import uuid
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, ForeignKey, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class TaskItem(Base):
+    __tablename__ = "items"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    meeting_id = Column(UUID(as_uuid=True), nullable=False)
+    action_type = Column(Text, nullable=False)
+    assignee_name = Column(Text, nullable=False)
+    assignee_email = Column(Text, nullable=False)
+    description = Column(Text, nullable=False)
+    query = Column(Text, nullable=True)
+    priority = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="pending")
+    mode = Column(Text, nullable=True)
+    result = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    executions = relationship(
+        "TaskExecution", back_populates="task", cascade="all, delete-orphan"
+    )
+
+
+class TaskExecution(Base):
+    __tablename__ = "executions"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.items.id"), nullable=False)
+    started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(Text, nullable=False, default="running")
+    log = Column(Text, nullable=False, default="")
+    error = Column(Text, nullable=True)
+
+    task = relationship("TaskItem", back_populates="executions")

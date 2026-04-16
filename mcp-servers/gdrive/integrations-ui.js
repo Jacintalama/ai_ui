@@ -54,9 +54,36 @@
       if (data && data.email) {
         _cachedEmail = data.email;
         console.log('[AIUI] User email resolved:', data.email);
+        // Sync Gmail connection state with the server so stale localStorage
+        // doesn't show UI for a connection the server no longer has.
+        syncGmailStateFromServer();
       }
     }).catch(function() {});
   }
+
+  function syncGmailStateFromServer() {
+    var email = getEffectiveEmail();
+    if (!email) return;
+    fetch(GMAIL_API + '/auth/google/status?user_email=' + encodeURIComponent(email))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var key = 'aiui-gmail-connected:' + email;
+        var emailKey = 'aiui-gmail-email:' + email;
+        if (data && data.connected === true) {
+          localStorage.setItem(key, 'true');
+        } else {
+          // Server says not connected — clear stale localStorage so Gmail UI
+          // (Add-from-Gmail menu item, Gmail card in Integrations) stays hidden.
+          if (localStorage.getItem(key) === 'true') {
+            console.log('[AIUI] Clearing stale Gmail localStorage for', email);
+            localStorage.removeItem(key);
+            localStorage.removeItem(emailKey);
+          }
+        }
+      })
+      .catch(function() { /* network err — leave state alone */ });
+  }
+
   // Resolve email on load
   setTimeout(resolveUserEmail, 1000);
 
@@ -672,7 +699,12 @@
         });
     });
 
+    // Gmail card always visible in Integrations so admins can connect it.
+    // The "+ menu" entry ("Add from Gmail") stays hidden until connected
+    // (handled at the + menu render site).
     grid.appendChild(gmailCard);
+
+    // Meeting Knowledge Base card removed — not needed in Integrations modal.
 
     // Check Gmail status
     if (isGmailConnected()) updateCardConnected(modal, 'gmail');

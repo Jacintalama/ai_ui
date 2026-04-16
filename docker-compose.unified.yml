@@ -75,6 +75,7 @@ services:
       - MCP_PROXY_URL=http://mcp-proxy:8000
       - ADMIN_PORTAL_URL=http://admin-portal:8080
       - OPEN_WEBUI_URL=http://open-webui:8080
+      - TASKS_URL=http://tasks:8210
       # Debug mode
       - DEBUG=${DEBUG:-false}
     depends_on:
@@ -216,6 +217,7 @@ services:
       - OPENWEBUI_URL=https://ai-ui.coolestdomain.win
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
+      - TASKS_WEBHOOK_URL=${TASKS_WEBHOOK_URL:-http://tasks:8210/webhooks/meeting-action-items}
     networks:
       - backend
     depends_on:
@@ -224,6 +226,35 @@ services:
     deploy:
       resources:
         limits:
+          memory: 128M
+
+  # ===========================================================================
+  # TASKS - Admin Task Approval Panel API + AI execution
+  # ===========================================================================
+  tasks:
+    build: ./mcp-servers/tasks
+    container_name: tasks
+    restart: unless-stopped
+    # Note: tasks:8210 is reachable only on the backend network in production.
+    # Caddy proxies /tasks/static/* and api-gateway proxies /api/tasks/*.
+    # For local browser-only access, see docker-compose.local.yml.
+    environment:
+      - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
+      - CLAUDE_WORKSPACE=/workspace/ai_ui
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./:/workspace/ai_ui
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
           memory: 128M
 
   # ===========================================================================
@@ -401,6 +432,8 @@ services:
       - ./mcp-servers/gdrive/integrations-ui.js:/app/build/static/integrations-ui.js:ro
       - ./mcp-servers/gdrive/loader.js:/app/backend/open_webui/static/loader.js:ro
       - ./mcp-servers/gdrive/loader.js:/app/build/static/loader.js:ro
+      # Patched index.html with task-panel.js auto-loader (admin task panel)
+      - ./openwebui-overrides/index.html:/app/build/index.html:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       # LLM Connections
