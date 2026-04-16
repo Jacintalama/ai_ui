@@ -210,8 +210,20 @@
       actions = `<button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>
                  <button class="aiui-tp-btn-manual" data-task-action="delete" data-task-id="${t.id}" title="Delete this task" style="flex:0 0 auto;padding:8px 10px;">🗑</button>`;
     }
+    const historyHtml = (t.conversation_history || []).length > 0
+      ? `<div style="max-height:120px;overflow-y:auto;margin-bottom:6px;">${
+          (t.conversation_history || []).map(h =>
+              `<div style="font-size:11px;padding:4px 6px;margin:2px 0;border-radius:3px;background:${
+                  h.role === 'ai' ? '#1a1208' : '#0a1a14'};color:${
+                  h.role === 'ai' ? '#fcd34d' : '#86efac'};">
+                  <strong>${h.role === 'ai' ? 'AI' : 'You'}:</strong> ${escapeHtml(h.content)}
+              </div>`
+          ).join("")
+      }</div>`
+      : "";
     const askInputUI = t.status === "awaiting_input"
       ? `<div style="background:#1a1208;border:1px solid #78350f;border-radius:4px;padding:8px;font-size:11px;color:#fcd34d;margin-bottom:8px;"><strong>AI says:</strong><br/>${escapeHtml(t.result || "")}</div>
+         ${historyHtml}
          <textarea class="aiui-tp-textarea" data-textarea-id="${t.id}" placeholder="Reply to the AI…"></textarea>
          <div class="aiui-tp-actions"><button class="aiui-tp-btn-answer" data-task-action="answer-resume" data-task-id="${t.id}">↩ Reply</button></div>`
       : `<div class="aiui-tp-actions">${actions}</div>`;
@@ -266,6 +278,11 @@
     const takeOverBtn = isFailed
       ? `<button class="aiui-tp-btn-manual" data-task-action="take-over" data-task-id="${t.id}">✋ Take over manually</button>`
       : "";
+    const previewBtn = (t.action_type === "BUILD" && t.built_app_slug)
+      ? `<a href="/tasks/static/preview.html?task=${t.id}" target="_blank"
+           class="aiui-tp-btn-ai" style="text-decoration:none;text-align:center;display:inline-block;">
+           🔍 Preview App</a>`
+      : "";
     const resultBlock = t.result
       ? `<div style="background:${isFailed ? '#1a0a0a' : '#0a1a14'};border:1px solid ${isFailed ? '#7f1d1d' : '#065f46'};border-radius:6px;padding:8px 10px;font-size:12px;color:${isFailed ? '#fca5a5' : '#86efac'};margin-top:8px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(t.result)}</div>`
       : "";
@@ -292,6 +309,7 @@
           ${resultBlock}
           <div class="aiui-tp-actions" style="margin-top:8px;">
             <button class="aiui-tp-btn-manual" data-task-action="view-log" data-task-id="${t.id}" style="font-size:11px;padding:5px 8px;">📜 View full AI log</button>
+            ${previewBtn}
             ${takeOverBtn}
           </div>
         </div>
