@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/tasks")
 TEAM_EMAIL = "team@aiui.local"
 
 STATUS_BY_TAB: dict[str, list[str]] = {
-    "pending": ["pending", "awaiting_input"],
+    "pending": ["pending", "awaiting_input", "planning", "awaiting_plan_review"],
     "progress": ["running", "claimed_manual"],
     "done": ["completed", "failed"],
 }
@@ -126,6 +126,7 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
         description=body.description.strip()[:2000],
         priority=body.priority,
         status="pending",
+        max_attempts=body.max_attempts,
     )
     async with session() as s:
         s.add(item)
@@ -210,14 +211,14 @@ async def answer(
             return item
 
         if item.status == "awaiting_input":
-            # Resume AI execution with the admin's answer appended to context.
-            # Imported lazily to avoid circular import with routes_execution.
             import asyncio
-
-            from claude_executor import build_prompt
+            from claude_executor import build_prompt, build_tdd_execute_prompt
             from models import TaskExecution
-            from routes_execution import _run_execution
+            from routes_execution import _run_execution, _RUNNING
 
+            history = list(item.conversation_history or [])
+            history.append({"role": "admin", "content": body.answer})
+            item.conversation_history = history
             item.status = "running"
             new_exec = TaskExecution(task_id=item.id, status="running", log="")
             s.add(new_exec)
@@ -225,17 +226,34 @@ async def answer(
             await s.refresh(item)
             await s.refresh(new_exec)
 
-            prompt = (
-                build_prompt(
+            if item.max_attempts > 1 and item.plan:
+                prompt = build_tdd_execute_prompt(
                     description=item.description,
                     action_type=item.action_type,
                     priority=item.priority,
                     meeting_title=str(item.meeting_id),
                     meeting_date="",
+                    plan=item.plan,
+                    conversation_history=history,
+                    attempt_count=item.attempt_count,
+                    max_attempts=item.max_attempts,
+                    error_context="",
                 )
-                + f"\n\nADMIN PROVIDED THIS ANSWER: {body.answer}"
-            )
-            asyncio.create_task(_run_execution(item.id, new_exec.id, prompt))
+            else:
+                prompt = (
+                    build_prompt(
+                        description=item.description,
+                        action_type=item.action_type,
+                        priority=item.priority,
+                        meeting_title=str(item.meeting_id),
+                        meeting_date="",
+                    )
+                    + f"\n\nADMIN PROVIDED THIS ANSWER: {body.answer}"
+                )
+
+            _RUNNING[item.id] = {"task": None, "proc": None}
+            bg = asyncio.create_task(_run_execution(item.id, new_exec.id, prompt))
+            _RUNNING[item.id]["task"] = bg
             return item
 
         raise HTTPException(status_code=409, detail="Answer not applicable in current state")
