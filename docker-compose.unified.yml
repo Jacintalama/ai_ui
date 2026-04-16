@@ -76,7 +76,6 @@ services:
       - ADMIN_PORTAL_URL=http://admin-portal:8080
       - OPEN_WEBUI_URL=http://open-webui:8080
       - TASKS_URL=http://tasks:8210
-      - TODOIST_URL=http://todoist:8220
       # Debug mode
       - DEBUG=${DEBUG:-false}
     depends_on:
@@ -230,22 +229,6 @@ services:
           memory: 128M
 
   # ===========================================================================
-  # TODOIST - Todoist web app (proxy to Todoist REST API v2)
-  # ===========================================================================
-  todoist:
-    build: ./mcp-servers/todoist
-    container_name: todoist
-    restart: unless-stopped
-    environment:
-      - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
-    networks:
-      - backend
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-
-  # ===========================================================================
   # TASKS - Admin Task Approval Panel API + AI execution
   # ===========================================================================
   tasks:
@@ -258,7 +241,6 @@ services:
     environment:
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
       - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
-      - CRON_SHARED_SECRET=${CRON_SHARED_SECRET}
       - CLAUDE_WORKSPACE=/workspace/ai_ui
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
