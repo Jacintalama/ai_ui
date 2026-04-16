@@ -51,3 +51,12 @@ class CompleteRequest(BaseModel):
 
 class AnswerRequest(BaseModel):
     answer: str
+
+
+class CreateTaskRequest(BaseModel):
+    """Body for admin-created tasks from the panel."""
+
+    description: str = Field(min_length=1, max_length=2000)
+    action_type: ActionType
+    priority: Priority
+    assignee: str = Field(default="self", description="'self', 'team', or a name prefix in the assignee map")

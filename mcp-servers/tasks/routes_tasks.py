@@ -5,10 +5,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
+import uuid
+
+from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import AdminUser, current_admin
 from db import session
 from models import TaskItem
-from schemas import AnswerRequest, CompleteRequest, TaskOut
+from schemas import AnswerRequest, CompleteRequest, CreateTaskRequest, TaskOut
 
 router = APIRouter(prefix="/api/tasks")
 
@@ -97,6 +100,56 @@ async def history(
         )
         rows = (await s.execute(q)).scalars().all()
     return rows
+
+
+@router.post("", response_model=TaskOut, status_code=201)
+async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current_admin)):
+    """Admin-created task from the panel. Not tied to a real meeting —
+    uses a synthetic meeting_id so it shows up as normal in the panel."""
+    amap = AssigneeMap.from_env()
+    assignee_raw = (body.assignee or "self").strip()
+    if assignee_raw.lower() == "self":
+        assignee_name = user.email.split("@")[0]
+        assignee_email = user.email
+    elif assignee_raw.lower() == "team":
+        assignee_name = "team"
+        assignee_email = TEAM_EMAIL_CONST
+    else:
+        assignee_name = assignee_raw
+        assignee_email = amap.resolve(assignee_raw)
+
+    item = TaskItem(
+        meeting_id=uuid.uuid4(),  # synthetic — no real meeting
+        action_type=body.action_type,
+        assignee_name=assignee_name,
+        assignee_email=assignee_email,
+        description=body.description.strip()[:2000],
+        priority=body.priority,
+        status="pending",
+    )
+    async with session() as s:
+        s.add(item)
+        await s.commit()
+        await s.refresh(item)
+    return item
+
+
+@router.delete("/{task_id}", status_code=204)
+async def delete_task(task_id, user: AdminUser = Depends(current_admin)):
+    """Delete a task — only allowed from 'pending' status and for tasks
+    owned by the current admin (or in the shared team bucket)."""
+    from uuid import UUID
+    try:
+        tid = UUID(str(task_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid task ID")
+    async with session() as s:
+        item = await _get_owned_task(s, tid, user.email)
+        if item.status != "pending":
+            raise HTTPException(status_code=409, detail=f"Can only delete pending tasks (this is {item.status})")
+        await s.delete(item)
+        await s.commit()
+    return None
 
 
 @router.post("/{task_id}/manual", response_model=TaskOut)
