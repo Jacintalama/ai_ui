@@ -67,15 +67,20 @@ def _format_body(meetings: list[dict[str, Any]], tasks: list[dict[str, Any]],
             lines.append(f"**Attendees:** {m['attendees']}")
         summary = (m.get("summary") or "").strip()
         if summary:
-            # Strip leading "Title: ..." and the first heading so it reads cleanly
+            # Per-meeting truncation at ~1200 chars so every meeting gets
+            # its fair share of the body, not just the first one.
+            kept: list[str] = []
+            running = 0
             for ln in summary.splitlines():
                 s = ln.strip()
                 if s.startswith("Title:") or s == m["title"]:
                     continue
-                lines.append(ln)
-                if len("\n".join(lines)) > 1800:
-                    lines.append("_…(truncated)_")
+                kept.append(ln)
+                running += len(ln) + 1
+                if running > 1200:
+                    kept.append("_…(truncated)_")
                     break
+            lines.extend(kept)
         if m.get("fathom_link"):
             lines.append(f"🎬 {m['fathom_link']}")
         lines.append("")
