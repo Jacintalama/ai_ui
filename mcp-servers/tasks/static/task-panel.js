@@ -612,6 +612,7 @@
           ${t.result ? `<div style="background:${isFailed?'#1a0a0a':'#0a1a14'};border:1px solid ${isFailed?'#7f1d1d':'#065f46'};border-radius:6px;padding:10px 12px;font-size:12.5px;color:${isFailed?'#fca5a5':'#86efac'};line-height:1.5;white-space:pre-wrap;">${escapeHtml(t.result)}</div>` : '<div style="color:#666;font-size:12px;">(no result recorded)</div>'}
           <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
             <button data-hist-log="${t.id}" style="background:#1e3a8a;color:#dbeafe;border:0;padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600;">📜 View full AI log</button>
+            ${(t.action_type === "BUILD" && t.built_app_slug) ? `<a href="/tasks/static/preview.html?task=${t.id}" target="_blank" style="background:#3b82f6;color:#fff;border:0;padding:6px 10px;border-radius:6px;font-size:11px;font-weight:600;text-decoration:none;">🔍 Preview App</a>` : ''}
             <span style="color:#555;font-size:11px;">Meeting: ${escapeHtml(String(t.meeting_id).slice(0,8))}…</span>
           </div>
         </div>
