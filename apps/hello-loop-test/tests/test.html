@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tests: hello-loop-test</title>
+  <style>
+    body { font-family: monospace; padding: 1rem; }
+    .pass { color: green; }
+    .fail { color: red; }
+  </style>
+</head>
+<body>
+  <h2>Test Results</h2>
+  <ul id="results"></ul>
+
+  <!-- Load the app in a hidden iframe -->
+  <iframe id="app-frame" src="../index.html" style="display:none"></iframe>
+
+  <script>
+    const results = document.getElementById('results');
+    let passed = 0, failed = 0;
+
+    function assert(desc, condition) {
+      const li = document.createElement('li');
+      if (condition) {
+        li.className = 'pass';
+        li.textContent = '✓ ' + desc;
+        passed++;
+      } else {
+        li.className = 'fail';
+        li.textContent = '✗ ' + desc;
+        failed++;
+      }
+      results.appendChild(li);
+    }
+
+    document.getElementById('app-frame').addEventListener('load', function() {
+      const doc = this.contentDocument;
+
+      // Test 1: h1 exists with correct initial text
+      const h1 = doc.querySelector('h1');
+      assert('h1 element exists', h1 !== null);
+      assert('h1 has initial text "Hello from loop test"',
+        h1 && h1.textContent.trim() === 'Hello from loop test');
+
+      // Test 2: button exists
+      const btn = doc.querySelector('button');
+      assert('button element exists', btn !== null);
+
+      // Test 3: clicking button changes h1 text
+      if (btn && h1) {
+        btn.click();
+        assert('h1 text changes to "Button clicked!" after click',
+          h1.textContent.trim() === 'Button clicked!');
+      } else {
+        assert('h1 text changes to "Button clicked!" after click', false);
+      }
+
+      // Summary
+      const summary = document.createElement('p');
+      summary.textContent = `${passed} passed, ${failed} failed`;
+      summary.style.fontWeight = 'bold';
+      summary.style.color = failed > 0 ? 'red' : 'green';
+      document.body.appendChild(summary);
+    });
+  </script>
+</body>
+</html>
