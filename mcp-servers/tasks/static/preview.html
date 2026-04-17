@@ -684,13 +684,14 @@
   // ── Preview iframe ──
   function refreshPreviewFrame() {
     if (previewRunning && previewPort) {
+      // Add cache-buster timestamp so iframe refetches after a Run/switch
       $panelPreview.innerHTML =
-        '<iframe src="/tasks/preview-app/" title="App preview"></iframe>';
+        '<iframe src="/tasks/preview-app/?t=' + Date.now() + '" title="App preview"></iframe>';
     } else {
       $panelPreview.innerHTML =
         '<div class="preview-msg">' +
-        "<span>App is not running</span>" +
-        '<span style="font-size:12px;color:#444;">Click Run to start the preview server</span>' +
+        "<span>App is not running for this task</span>" +
+        '<span style="font-size:12px;color:#444;">Click Run (top right) to start the preview server</span>' +
         "</div>";
     }
   }
@@ -756,15 +757,23 @@
     try {
       var status = await apiFetch("GET", "/" + taskId + "/preview/status");
       var wasRunning = previewRunning;
-      previewRunning = !!status.running;
+      // Running ONLY counts if it's THIS task's slug — another app doesn't count as "mine"
+      var runningThisApp = !!status.running && status.slug === slug;
+      previewRunning = runningThisApp;
       previewPort = status.port || null;
 
-      if (previewRunning) {
+      if (runningThisApp) {
         $statusDot.className = "status-dot running";
         $statusText.textContent = "Running on port " + previewPort;
         $statusElapsed.textContent = formatElapsed(status.elapsed_seconds || 0);
         $btnRun.disabled = true;
         $btnStop.disabled = false;
+      } else if (status.running && status.slug && status.slug !== slug) {
+        $statusDot.className = "status-dot stopped";
+        $statusText.textContent = 'A different app (' + status.slug + ') is running — click Run to switch';
+        $statusElapsed.textContent = "";
+        $btnRun.disabled = false;
+        $btnStop.disabled = true;
       } else {
         $statusDot.className = "status-dot stopped";
         $statusText.textContent = "Not running";
