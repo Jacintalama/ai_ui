@@ -124,6 +124,9 @@
 	}
 	# Static frontend (panel JS + history page) — public, no auth on assets
 	handle /tasks/static/* {
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
 		reverse_proxy tasks:8210
 	}
 
