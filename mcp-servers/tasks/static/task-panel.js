@@ -286,6 +286,11 @@
     const resultBlock = t.result
       ? `<div style="background:${isFailed ? '#1a0a0a' : '#0a1a14'};border:1px solid ${isFailed ? '#7f1d1d' : '#065f46'};border-radius:6px;padding:8px 10px;font-size:12px;color:${isFailed ? '#fca5a5' : '#86efac'};margin-top:8px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(t.result)}</div>`
       : "";
+    const previewBtnBig = (t.action_type === "BUILD" && t.built_app_slug)
+      ? `<a href="/tasks/static/preview.html?task=${t.id}" target="_blank"
+           style="display:block;background:#3b82f6;color:#fff;border:0;padding:10px 14px;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;text-align:center;margin-top:10px;">
+           🔍 Preview App →</a>`
+      : "";
     return `
       <div class="aiui-tp-task aiui-tp-done" data-task-card="${t.id}">
         <div class="aiui-tp-done-header" data-task-action="toggle-done" data-task-id="${t.id}" style="cursor:pointer;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
@@ -305,11 +310,11 @@
           </div>
           <span class="aiui-tp-chev" style="color:#888;font-size:13px;transition:transform 0.2s;user-select:none;margin-top:4px;">▾</span>
         </div>
+        ${previewBtnBig}
         <div class="aiui-tp-done-details" data-task-details="${t.id}" style="display:none;">
           ${resultBlock}
           <div class="aiui-tp-actions" style="margin-top:8px;">
             <button class="aiui-tp-btn-manual" data-task-action="view-log" data-task-id="${t.id}" style="font-size:11px;padding:5px 8px;">📜 View full AI log</button>
-            ${previewBtn}
             ${takeOverBtn}
           </div>
         </div>
