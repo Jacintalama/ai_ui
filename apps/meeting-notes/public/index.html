@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meeting Notes</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #222;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 0 1.5rem;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .02em; flex-shrink: 0; }
+
+    #search-box {
+      flex: 1;
+      max-width: 420px;
+      padding: .45rem .8rem;
+      border: none;
+      border-radius: 6px;
+      background: #2e2e50;
+      color: #fff;
+      font-size: .9rem;
+      outline: none;
+    }
+    #search-box::placeholder { color: #888; }
+    #search-box:focus { background: #3a3a62; }
+
+    /* ── Layout ── */
+    .layout {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    aside {
+      width: 280px;
+      background: #fff;
+      border-right: 1px solid #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-header {
+      padding: 1rem;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .sidebar-header h2 { font-size: .85rem; text-transform: uppercase; letter-spacing: .06em; color: #666; margin-bottom: .75rem; }
+
+    /* Add-meeting form */
+    #add-form { display: flex; flex-direction: column; gap: .5rem; }
+    #add-form input {
+      padding: .4rem .6rem;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: .88rem;
+    }
+    #add-form button {
+      padding: .42rem;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: .88rem;
+    }
+    #add-form button:hover { background: #2d2d52; }
+
+    /* Meeting list */
+    #meeting-list {
+      overflow-y: auto;
+      flex: 1;
+    }
+    .meeting-item {
+      padding: .7rem 1rem;
+      cursor: pointer;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: .5rem;
+    }
+    .meeting-item:hover { background: #f7f7ff; }
+    .meeting-item.active { background: #eeeeff; }
+    .meeting-item-info { flex: 1; min-width: 0; }
+    .meeting-title { font-size: .9rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meeting-date { font-size: .78rem; color: #888; margin-top: 2px; }
+    .btn-delete-meeting {
+      background: none;
+      border: none;
+      color: #bbb;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 0 2px;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .btn-delete-meeting:hover { color: #c0392b; }
+
+    /* ── Main content ── */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+    }
+
+    .placeholder {
+      color: #aaa;
+      font-size: 1rem;
+      margin-top: 3rem;
+      text-align: center;
+    }
+
+    /* Meeting detail */
+    #detail-view h2 { font-size: 1.3rem; font-weight: 600; margin-bottom: .2rem; }
+    #detail-date { font-size: .9rem; color: #777; margin-bottom: 1.25rem; }
+
+    /* Add note form */
+    #note-form {
+      display: flex;
+      gap: .5rem;
+      margin-bottom: 1.25rem;
+    }
+    #note-input {
+      flex: 1;
+      padding: .5rem .75rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: .9rem;
+      font-family: inherit;
+      resize: vertical;
+      min-height: 38px;
+    }
+    #note-input:focus { outline: none; border-color: #1a1a2e; }
+    #btn-add-note {
+      padding: .5rem 1rem;
+      background: #1a1a2e;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .88rem;
+      align-self: flex-start;
+    }
+    #btn-add-note:hover { background: #2d2d52; }
+
+    /* Notes list */
+    #notes-list { display: flex; flex-direction: column; gap: .6rem; }
+    .note-card {
+      background: #fff;
+      border: 1px solid #e4e4e4;
+      border-radius: 7px;
+      padding: .75rem 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: .75rem;
+    }
+    .note-content { flex: 1; font-size: .9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .note-meta { font-size: .75rem; color: #aaa; margin-top: .25rem; }
+    .btn-delete-note {
+      background: none;
+      border: none;
+      color: #bbb;
+      cursor: pointer;
+      font-size: 1.05rem;
+      flex-shrink: 0;
+      line-height: 1;
+      padding: 2px;
+    }
+    .btn-delete-note:hover { color: #c0392b; }
+
+    /* ── Search results ── */
+    #search-results { padding: 1.5rem 2rem; overflow-y: auto; flex: 1; }
+    #search-results h2 { font-size: 1rem; color: #555; margin-bottom: 1rem; }
+    .search-result-card {
+      background: #fff;
+      border: 1px solid #e4e4e4;
+      border-radius: 7px;
+      padding: .75rem 1rem;
+      margin-bottom: .6rem;
+    }
+    .search-result-meeting { font-size: .78rem; font-weight: 600; color: #555; margin-bottom: .3rem; }
+    .search-result-content { font-size: .9rem; white-space: pre-wrap; word-break: break-word; }
+    mark { background: #fff176; border-radius: 2px; }
+
+    .empty-note { color: #aaa; font-size: .9rem; font-style: italic; }
+
+    .error-msg { color: #c0392b; font-size: .85rem; margin-top: .4rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Meeting Notes</h1>
+  <input id="search-box" type="search" placeholder="Search notes..." autocomplete="off" />
+</header>
+
+<div class="layout">
+  <!-- Sidebar -->
+  <aside>
+    <div class="sidebar-header">
+      <h2>New Meeting</h2>
+      <form id="add-form" autocomplete="off">
+        <input id="new-title" type="text" placeholder="Title" required maxlength="200" />
+        <input id="new-date" type="date" required />
+        <button type="submit">+ Add Meeting</button>
+      </form>
+      <div id="add-error" class="error-msg"></div>
+    </div>
+    <div id="meeting-list"></div>
+  </aside>
+
+  <!-- Main area: either detail or search results -->
+  <div id="main-wrapper" style="flex:1;overflow:hidden;display:flex;flex-direction:column;">
+    <div id="search-results" style="display:none;"></div>
+    <main id="main-content">
+      <p class="placeholder">Select a meeting to view notes.</p>
+    </main>
+  </div>
+</div>
+
+<template id="detail-tpl">
+  <div id="detail-view">
+    <h2 id="detail-title"></h2>
+    <div id="detail-date"></div>
+    <form id="note-form">
+      <textarea id="note-input" placeholder="Add a note..." rows="2"></textarea>
+      <button id="btn-add-note" type="submit">Add Note</button>
+    </form>
+    <div id="note-error" class="error-msg"></div>
+    <div id="notes-list"></div>
+  </div>
+</template>
+
+<script>
+  const API = '';
+  let activeMeetingId = null;
+  let allMeetings = [];
+
+  // ── Utilities ──────────────────────────────────────────────
+
+  function fmt(dateStr) {
+    // dateStr is "YYYY-MM-DD" — parse as local date to avoid UTC shift
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function fmtTime(iso) {
+    return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function highlight(text, q) {
+    if (!q) return escHtml(text);
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return escHtml(text).replace(new RegExp(escaped.replace(/&amp;|&lt;|&gt;/g,''), 'gi'), m => `<mark>${m}</mark>`);
+  }
+
+  // ── Fetch helpers ──────────────────────────────────────────
+
+  async function apiFetch(path, opts = {}) {
+    const res = await fetch(API + path, { headers: {'Content-Type':'application/json'}, ...opts });
+    if (res.status === 204) return null;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+
+  // ── Render sidebar ─────────────────────────────────────────
+
+  function renderSidebar(meetings) {
+    allMeetings = meetings;
+    const list = document.getElementById('meeting-list');
+    if (!meetings.length) {
+      list.innerHTML = '<p style="padding:.8rem 1rem;color:#aaa;font-size:.85rem;">No meetings yet.</p>';
+      return;
+    }
+    list.innerHTML = meetings.map(m => `
+      <div class="meeting-item${m.id === activeMeetingId ? ' active' : ''}" data-id="${m.id}">
+        <div class="meeting-item-info">
+          <div class="meeting-title">${escHtml(m.title)}</div>
+          <div class="meeting-date">${fmt(m.date)}</div>
+        </div>
+        <button class="btn-delete-meeting" data-id="${m.id}" title="Delete meeting">✕</button>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.meeting-item').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.classList.contains('btn-delete-meeting')) return;
+        openMeeting(parseInt(el.dataset.id, 10));
+      });
+    });
+
+    list.querySelectorAll('.btn-delete-meeting').forEach(btn => {
+      btn.addEventListener('click', () => deleteMeeting(parseInt(btn.dataset.id, 10)));
+    });
+  }
+
+  // ── Load meetings ──────────────────────────────────────────
+
+  async function loadMeetings() {
+    try {
+      const meetings = await apiFetch('/api/meetings');
+      renderSidebar(meetings);
+      // If active meeting was deleted, clear detail
+      if (activeMeetingId && !meetings.find(m => m.id === activeMeetingId)) {
+        activeMeetingId = null;
+        showPlaceholder();
+      } else if (activeMeetingId) {
+        const m = meetings.find(x => x.id === activeMeetingId);
+        if (m) renderDetail(m);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  // ── Add meeting ────────────────────────────────────────────
+
+  document.getElementById('add-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const title = document.getElementById('new-title').value.trim();
+    const date  = document.getElementById('new-date').value;
+    const errEl = document.getElementById('add-error');
+    errEl.textContent = '';
+    try {
+      const meeting = await apiFetch('/api/meetings', {
+        method: 'POST',
+        body: JSON.stringify({ title, date }),
+      });
+      document.getElementById('new-title').value = '';
+      document.getElementById('new-date').value = '';
+      await loadMeetings();
+      openMeeting(meeting.id);
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
+  });
+
+  // ── Delete meeting ─────────────────────────────────────────
+
+  async function deleteMeeting(id) {
+    if (!confirm('Delete this meeting and all its notes?')) return;
+    try {
+      await apiFetch(`/api/meetings/${id}`, { method: 'DELETE' });
+      if (activeMeetingId === id) {
+        activeMeetingId = null;
+        showPlaceholder();
+      }
+      await loadMeetings();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  // ── Open meeting detail ────────────────────────────────────
+
+  function openMeeting(id) {
+    activeMeetingId = id;
+    hideSearch();
+    const m = allMeetings.find(x => x.id === id);
+    if (m) renderDetail(m);
+    // Highlight in sidebar
+    document.querySelectorAll('.meeting-item').forEach(el => {
+      el.classList.toggle('active', parseInt(el.dataset.id, 10) === id);
+    });
+  }
+
+  function showPlaceholder() {
+    document.getElementById('main-content').innerHTML = '<p class="placeholder">Select a meeting to view notes.</p>';
+  }
+
+  function renderDetail(meeting) {
+    const main = document.getElementById('main-content');
+    const tpl  = document.getElementById('detail-tpl').content.cloneNode(true);
+    main.innerHTML = '';
+    main.appendChild(tpl);
+
+    document.getElementById('detail-title').textContent = meeting.title;
+    document.getElementById('detail-date').textContent  = fmt(meeting.date);
+
+    renderNotes(meeting.notes || []);
+
+    // Add note
+    document.getElementById('note-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const content = document.getElementById('note-input').value.trim();
+      const errEl   = document.getElementById('note-error');
+      errEl.textContent = '';
+      if (!content) return;
+      try {
+        await apiFetch(`/api/meetings/${meeting.id}/notes`, {
+          method: 'POST',
+          body: JSON.stringify({ content }),
+        });
+        document.getElementById('note-input').value = '';
+        await loadMeetings();
+      } catch (err) {
+        errEl.textContent = err.message;
+      }
+    });
+  }
+
+  function renderNotes(notes) {
+    const list = document.getElementById('notes-list');
+    if (!list) return;
+    if (!notes.length) {
+      list.innerHTML = '<p class="empty-note">No notes yet. Add one above.</p>';
+      return;
+    }
+    list.innerHTML = notes.map(n => `
+      <div class="note-card" data-note-id="${n.id}">
+        <div>
+          <div class="note-content">${escHtml(n.content)}</div>
+          <div class="note-meta">${fmtTime(n.createdAt)}</div>
+        </div>
+        <button class="btn-delete-note" data-id="${n.id}" title="Delete note">✕</button>
+      </div>
+    `).join('');
+
+    list.querySelectorAll('.btn-delete-note').forEach(btn => {
+      btn.addEventListener('click', () => deleteNote(parseInt(btn.dataset.id, 10)));
+    });
+  }
+
+  // ── Delete note ────────────────────────────────────────────
+
+  async function deleteNote(id) {
+    if (!confirm('Delete this note?')) return;
+    try {
+      await apiFetch(`/api/notes/${id}`, { method: 'DELETE' });
+      await loadMeetings();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
+  // ── Search ─────────────────────────────────────────────────
+
+  let searchTimeout = null;
+  const searchBox = document.getElementById('search-box');
+
+  searchBox.addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(doSearch, 280);
+  });
+
+  searchBox.addEventListener('search', () => {
+    if (!searchBox.value.trim()) hideSearch();
+  });
+
+  async function doSearch() {
+    const q = searchBox.value.trim();
+    if (!q) { hideSearch(); return; }
+
+    const resultsEl = document.getElementById('search-results');
+    const mainEl    = document.getElementById('main-content');
+
+    resultsEl.style.display = 'block';
+    mainEl.style.display    = 'none';
+
+    try {
+      const notes = await apiFetch(`/api/search?q=${encodeURIComponent(q)}`);
+      if (!notes.length) {
+        resultsEl.innerHTML = `<h2>No results for "<em>${escHtml(q)}</em>"</h2>`;
+        return;
+      }
+      resultsEl.innerHTML = `<h2>${notes.length} result${notes.length !== 1 ? 's' : ''} for "<em>${escHtml(q)}</em>"</h2>`
+        + notes.map(n => `
+          <div class="search-result-card">
+            <div class="search-result-meeting">${escHtml(n.meeting.title)} — ${fmt(n.meeting.date)}</div>
+            <div class="search-result-content">${highlight(n.content, q)}</div>
+          </div>
+        `).join('');
+    } catch (err) {
+      resultsEl.innerHTML = `<p class="error-msg">${escHtml(err.message)}</p>`;
+    }
+  }
+
+  function hideSearch() {
+    document.getElementById('search-results').style.display = 'none';
+    document.getElementById('main-content').style.display   = 'block';
+  }
+
+  // ── Boot ───────────────────────────────────────────────────
+
+  loadMeetings();
+</script>
+</body>
+</html>
