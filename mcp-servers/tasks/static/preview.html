@@ -514,11 +514,24 @@
     return icons[ext] || "&#128196;";
   }
 
+  // Open WebUI stores the auth token in localStorage under "token".
+  // Since this page is served from /tasks/static/ (different path than Open
+  // WebUI's app routes), we must send the JWT ourselves — the api-gateway
+  // needs it to inject X-User-Email into the upstream tasks service request.
+  function authHeaders() {
+    const h = { "Content-Type": "application/json" };
+    try {
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+    } catch (_) { /* localStorage unavailable → unauthenticated */ }
+    return h;
+  }
+
   async function apiFetch(method, path, body) {
     const opts = {
       method,
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(),
     };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const r = await fetch(API_BASE + path, opts);
