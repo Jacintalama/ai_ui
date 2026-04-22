@@ -171,21 +171,29 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             history.append({"role": "ai", "content": outcome.payload, "attempt": attempt})
             history_update = {"conversation_history": history}
 
+        # Only write built_app_slug when we actually extracted one from this
+        # execution's output. Otherwise preserve whatever was set at task
+        # creation (e.g. enhancement tasks inherit the slug from their source,
+        # and Claude's completion message for a tweak rarely repeats the
+        # `apps/<slug>/` path — without this guard the slug gets clobbered to
+        # NULL, breaking the Preview App button and sidebar polling).
+        update_values = {
+            "status": new_task_status,
+            "mode": mode_val,
+            "result": outcome.payload,
+            "completed_at": datetime.utcnow() if outcome.kind == "completed" else None,
+            **history_update,
+        }
+        if slug:
+            update_values["built_app_slug"] = slug
+
         async with session() as s:
             await s.execute(
                 update(TaskExecution).where(TaskExecution.id == execution_id)
                 .values(status=new_exec_status, finished_at=datetime.utcnow())
             )
             await s.execute(
-                update(TaskItem).where(TaskItem.id == task_id)
-                .values(
-                    status=new_task_status,
-                    mode=mode_val,
-                    result=outcome.payload,
-                    completed_at=datetime.utcnow() if outcome.kind == "completed" else None,
-                    built_app_slug=slug,
-                    **history_update,
-                )
+                update(TaskItem).where(TaskItem.id == task_id).values(**update_values)
             )
             await s.commit()
     except Exception as exc:
