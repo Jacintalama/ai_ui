@@ -322,6 +322,165 @@
       border-top: 1px solid #2a2a2a;
     }
 
+    /* ── Enhance chat sidebar (right) ── */
+    .sidebar-enhance {
+      width: 340px;
+      min-width: 280px;
+      max-width: 420px;
+      border-left: 1px solid #2a2a2a;
+      background: #0f0f0f;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow: hidden;
+      transition: width 0.2s;
+    }
+    .sidebar-enhance.collapsed {
+      width: 40px;
+      min-width: 40px;
+    }
+    .sidebar-enhance.collapsed .enhance-log,
+    .sidebar-enhance.collapsed .enhance-input {
+      display: none;
+    }
+    .enhance-header {
+      padding: 10px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #888;
+      text-transform: uppercase;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #0a0a0a;
+    }
+    .enhance-header button {
+      background: transparent;
+      border: 0;
+      color: #888;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .enhance-header button:hover {
+      background: #1a1a1a;
+      color: #fff;
+    }
+    .enhance-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .enhance-bubble {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12.5px;
+    }
+    .enhance-bubble .who {
+      font-size: 10.5px;
+      color: #888;
+      font-weight: 600;
+    }
+    .enhance-bubble.user .body {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #e5e5e5;
+      white-space: pre-wrap;
+    }
+    .enhance-bubble.ai .body {
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      border-left: 3px solid #3b82f6;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #d1d5db;
+    }
+    .enhance-bubble.ai.done .body {
+      border-left-color: #22c55e;
+    }
+    .enhance-bubble.ai.failed .body {
+      border-left-color: #ef4444;
+      color: #fca5a5;
+    }
+    .enhance-bubble .phase {
+      font-weight: 600;
+      color: #fcd34d;
+    }
+    .enhance-bubble.done .phase { color: #86efac; }
+    .enhance-bubble.failed .phase { color: #fca5a5; }
+    .enhance-bubble .detail {
+      margin-top: 4px;
+      color: #888;
+      font-size: 11.5px;
+      white-space: pre-wrap;
+    }
+    .enhance-bubble .commit {
+      display: inline-block;
+      margin-top: 4px;
+      padding: 1px 6px;
+      background: #1e3a8a;
+      color: #dbeafe;
+      border-radius: 3px;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 10.5px;
+    }
+    .enhance-input {
+      border-top: 1px solid #2a2a2a;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: #0a0a0a;
+    }
+    .enhance-input textarea {
+      background: #000;
+      color: #fff;
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12.5px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      resize: vertical;
+      min-height: 64px;
+      outline: none;
+    }
+    .enhance-input textarea:focus {
+      border-color: #3b82f6;
+    }
+    .enhance-input button {
+      align-self: flex-end;
+      background: #3b82f6;
+      color: #fff;
+      border: 0;
+      padding: 7px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12.5px;
+    }
+    .enhance-input button:disabled {
+      background: #374151;
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+    .enhance-input .warn {
+      color: #f59e0b;
+      font-size: 10.5px;
+    }
+
+    /* Collapse sidebar below 1100px */
+    @media (max-width: 1100px) {
+      .sidebar-enhance { display: none; }
+    }
+
     /* ── Status bar ── */
     .status-bar {
       display: flex;
@@ -423,6 +582,29 @@
         </div>
       </div>
     </div>
+
+    <!-- Enhance chat sidebar (right) -->
+    <aside id="enhance-sidebar" class="sidebar-enhance">
+      <div class="enhance-header">
+        <span>✨ Enhance</span>
+        <button id="enhance-collapse" title="Collapse">🗕</button>
+      </div>
+      <div class="enhance-log" id="enhance-log">
+        <div style="color:#555;font-size:11.5px;text-align:center;padding:20px;">
+          Type a change below to get started.
+        </div>
+      </div>
+      <div class="enhance-input">
+        <textarea id="enhance-prompt"
+                  placeholder="Type what you want to change..."
+                  maxlength="2000"
+                  rows="3"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span class="warn" id="enhance-warn"></span>
+          <button id="enhance-send">Send</button>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <!-- Status bar -->
