@@ -208,5 +208,27 @@ class TestMeetingNotesAPI(unittest.TestCase):
         self.assertIsNone(next((m for m in meetings if m["id"] == meeting["id"]), None))
 
 
+    # ── Feature 7: Meeting name field ───────────────────────────────────────────
+
+    def test_14_create_meeting_with_name(self):
+        status, body = api("/api/meetings", "POST", {"title": "Named Meeting", "date": "2026-08-01", "name": "Alice"})
+        self.assertEqual(status, 201)
+        self.assertIn("name", body)
+        self.assertEqual(body["name"], "Alice")
+
+    def test_15_name_included_in_list(self):
+        _, meeting = api("/api/meetings", "POST", {"title": "Named List", "date": "2026-08-02", "name": "Bob"})
+        _, meetings = api("/api/meetings")
+        m = next((x for x in meetings if x["id"] == meeting["id"]), None)
+        self.assertIsNotNone(m)
+        self.assertEqual(m["name"], "Bob")
+
+    def test_16_name_defaults_to_empty_string(self):
+        status, body = api("/api/meetings", "POST", {"title": "No Name", "date": "2026-08-03"})
+        self.assertEqual(status, 201)
+        self.assertIn("name", body)
+        self.assertEqual(body["name"], "")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

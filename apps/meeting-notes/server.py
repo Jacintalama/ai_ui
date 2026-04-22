@@ -33,6 +33,7 @@ def init_db():
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 title     TEXT    NOT NULL,
                 date      TEXT    NOT NULL,
+                name      TEXT    NOT NULL DEFAULT '',
                 createdAt TEXT    NOT NULL DEFAULT (datetime('now'))
             );
             CREATE TABLE IF NOT EXISTS Note (
@@ -42,6 +43,11 @@ def init_db():
                 createdAt TEXT    NOT NULL DEFAULT (datetime('now'))
             );
         """)
+        # Migration: add name column to existing databases
+        try:
+            db.execute("ALTER TABLE Meeting ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # Column already exists
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -79,11 +85,12 @@ def create_meeting():
     data = request.get_json(silent=True) or {}
     title = (data.get("title") or "").strip()
     date = (data.get("date") or "").strip()
+    name = (data.get("name") or "").strip()
     if not title or not date:
         return jsonify({"error": "title and date are required"}), 400
     with get_db() as db:
         cur = db.execute(
-            "INSERT INTO Meeting (title, date) VALUES (?, ?)", (title, date)
+            "INSERT INTO Meeting (title, date, name) VALUES (?, ?, ?)", (title, date, name)
         )
         row = db.execute(
             "SELECT * FROM Meeting WHERE id = ?", (cur.lastrowid,)

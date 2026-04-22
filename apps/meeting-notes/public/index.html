@@ -223,6 +223,7 @@
       <form id="add-form" autocomplete="off">
         <input id="new-title" type="text" placeholder="Title" required maxlength="200" />
         <input id="new-date" type="date" required />
+        <input id="new-name" type="text" placeholder="Name" maxlength="200" />
         <button type="submit">+ Add Meeting</button>
       </form>
       <div id="add-error" class="error-msg"></div>
@@ -347,15 +348,17 @@
     e.preventDefault();
     const title = document.getElementById('new-title').value.trim();
     const date  = document.getElementById('new-date').value;
+    const name  = document.getElementById('new-name').value.trim();
     const errEl = document.getElementById('add-error');
     errEl.textContent = '';
     try {
       const meeting = await apiFetch('/api/meetings', {
         method: 'POST',
-        body: JSON.stringify({ title, date }),
+        body: JSON.stringify({ title, date, name }),
       });
       document.getElementById('new-title').value = '';
       document.getElementById('new-date').value = '';
+      document.getElementById('new-name').value = '';
       await loadMeetings();
       openMeeting(meeting.id);
     } catch (err) {
@@ -403,7 +406,7 @@
     main.appendChild(tpl);
 
     document.getElementById('detail-title').textContent = meeting.title;
-    document.getElementById('detail-date').textContent  = fmt(meeting.date);
+    document.getElementById('detail-date').textContent  = fmt(meeting.date) + (meeting.name ? ' · ' + meeting.name : '');
 
     renderNotes(meeting.notes || []);
 
