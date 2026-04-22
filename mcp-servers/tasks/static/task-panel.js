@@ -971,10 +971,10 @@
         console.log("[AIUI tasks] auto-show disabled by admin");
         return;
       }
-      if (state.tasks.pending.length > 0) {
+      if (state.tasks.pending.length > 0 || state.tasks.done.length > 0) {
         panel.classList.remove("hidden");
       } else {
-        console.log("[AIUI tasks] panel hidden — no pending tasks");
+        console.log("[AIUI tasks] panel hidden — no tasks at all");
       }
     } finally {
       _initRunning = false;
