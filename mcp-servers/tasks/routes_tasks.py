@@ -37,6 +37,7 @@ async def _get_owned_task(s, task_id: UUID, email: str) -> TaskItem:
 @router.get("", response_model=list[TaskOut])
 async def list_tasks(
     status: str = "pending",
+    slug: str | None = None,
     limit: int = 50,
     user: AdminUser = Depends(current_admin),
 ):
@@ -53,6 +54,8 @@ async def list_tasks(
             .order_by(TaskItem.created_at.desc())
             .limit(limit)
         )
+        if slug:
+            q = q.where(TaskItem.built_app_slug == slug)
         rows = (await s.execute(q)).scalars().all()
     return rows
 
