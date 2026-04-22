@@ -193,7 +193,7 @@ class TestMeetingNotesAPI(unittest.TestCase):
     def test_13_html_has_footer(self):
         with urllib.request.urlopen(f"{BASE}/") as resp:
             html = resp.read().decode()
-        self.assertIn("Made by AI ✨", html)
+        self.assertIn("Built with AIUI 🚀", html)
 
     # ── Feature 5: Delete meeting ────────────────────────────────────────────────
 
