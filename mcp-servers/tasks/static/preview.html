@@ -745,6 +745,7 @@
     try {
       const data = await apiFetch("GET", "/" + taskId + "/files");
       slug = data.slug || "";
+      loadEnhanceHistory();  // chat history depends on slug
       files = data.files || [];
       $slugName.textContent = "Preview: apps/" + slug;
       document.title = "Preview: " + slug + " — AIUI Tasks";
@@ -1046,6 +1047,231 @@
   }
 
   init();
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENHANCE CHAT SIDEBAR
+  // ═══════════════════════════════════════════════════════════════════════
+
+  const $log = document.getElementById("enhance-log");
+  const $prompt = document.getElementById("enhance-prompt");
+  const $send = document.getElementById("enhance-send");
+  const $warn = document.getElementById("enhance-warn");
+  const $collapseBtn = document.getElementById("enhance-collapse");
+  const $sidebar = document.getElementById("enhance-sidebar");
+
+  const ENHANCE_STATE_KEY = "aiui-enhance-collapsed";
+  const activeBubbles = new Map();  // taskId → { bubbleEl, pollTimer }
+
+  // ── Collapse persistence ──
+  if (localStorage.getItem(ENHANCE_STATE_KEY) === "true") {
+    $sidebar.classList.add("collapsed");
+  }
+  $collapseBtn.addEventListener("click", () => {
+    $sidebar.classList.toggle("collapsed");
+    localStorage.setItem(
+      ENHANCE_STATE_KEY,
+      $sidebar.classList.contains("collapsed")
+    );
+  });
+
+  // ── Bubble rendering ──
+  function renderBubble(kind, content, opts) {
+    opts = opts || {};
+    // Clear the empty placeholder if it's the first bubble
+    const placeholder = $log.querySelector(":scope > div[style*='Type a change']");
+    if (placeholder) placeholder.remove();
+
+    const el = document.createElement("div");
+    el.className = "enhance-bubble " + kind;
+    if (opts.taskId) el.dataset.taskId = opts.taskId;
+    const whoLabel = kind === "user" ? "💬 You" : "🤖 AI";
+    el.innerHTML =
+      '<span class="who">' + whoLabel + '</span>' +
+      '<div class="body">' +
+        (kind === "ai" ? '<span class="phase">⏳ Queued</span>' : '') +
+        '<div class="content"></div>' +
+        '<div class="detail"></div>' +
+      '</div>';
+    el.querySelector(".content").textContent = content || "";
+    $log.appendChild(el);
+    $log.scrollTop = $log.scrollHeight;
+    return el;
+  }
+
+  // ── Phase derivation ──
+  function extractCommitSha(resultText) {
+    if (!resultText) return null;
+    const m = resultText.match(/commit\s+([a-f0-9]{7,40})/i);
+    return m ? m[1].substring(0, 7) : null;
+  }
+
+  function derivePhase(task, latestExec) {
+    const log = (latestExec && latestExec.log) || "";
+    const attempt = task.attempt_count || 0;
+    const max = task.max_attempts || 1;
+    if (task.status === "completed") return { label: "✓ Done", terminal: true };
+    if (task.status === "failed")    return { label: "✗ Failed", terminal: true };
+    if (task.status === "awaiting_input")
+      return { label: "❓ Needs input", terminal: false, needsReply: true };
+    if (task.status === "running") {
+      if (attempt > 0) return { label: "🔄 Retrying (" + attempt + "/" + max + ")…", terminal: false };
+      if (log.indexOf("--- VERIFY STEP ---") !== -1) return { label: "✅ Verifying…", terminal: false };
+      return { label: "⚡ Building…", terminal: false };
+    }
+    return { label: "⏳ Queued", terminal: false };
+  }
+
+  function updateAiBubble(bubbleEl, task, latestExec) {
+    const phase = derivePhase(task, latestExec);
+    const phaseEl = bubbleEl.querySelector(".phase");
+    const detailEl = bubbleEl.querySelector(".detail");
+    if (phaseEl) phaseEl.textContent = phase.label;
+    if (task.status === "completed") {
+      bubbleEl.classList.add("done");
+      const sha = extractCommitSha(task.result);
+      const summary = (task.result || "")
+        .replace(/\s*\(commit [a-f0-9]+\)\s*$/i, "").trim();
+      detailEl.innerHTML = escapeHtml(summary) +
+        (sha ? ' <span class="commit">commit ' + sha + '</span>' : "");
+      refreshPreviewIframeIfVisible();
+    } else if (task.status === "failed") {
+      bubbleEl.classList.add("failed");
+      detailEl.textContent = task.result || "Enhancement failed";
+    }
+    return phase;
+  }
+
+  // ── Iframe auto-refresh on success ──
+  function refreshPreviewIframeIfVisible() {
+    if (activeTab !== "preview") return;
+    const iframe = document.querySelector("#panel-preview iframe");
+    if (!iframe) return;
+    try {
+      const url = new URL(iframe.src, window.location.origin);
+      url.searchParams.set("t", Date.now());
+      iframe.src = url.toString();
+    } catch (e) {
+      iframe.src = "/tasks/preview-app/?t=" + Date.now();
+    }
+  }
+
+  // ── Polling ──
+  async function pollEnhance(taskId, bubbleEl) {
+    try {
+      // GET single task needs /api/tasks/{id} — but no such endpoint exists; use executions (returns task's recent runs) + list endpoint with ID filter as fallback. Simpler: use /api/tasks?status=done+running+...&slug= and find by ID. Simplest: use executions endpoint and derive task state from latest execution + poll /api/tasks?status=done&slug= for completed lookup.
+      // ACTUALLY simplest: call GET /api/tasks/{id}/executions and if empty, task just started. For task status, call list_tasks with all three tabs.
+      // Instead — there IS no GET /api/tasks/{id} endpoint. Use a workaround: query executions for log, and separately list all tasks for this slug to find by id.
+      const execs = await apiFetch("GET", "/" + taskId + "/executions");
+      const latestExec = (execs && execs.length) ? execs[0] : null;
+      // Fetch the task row by querying tasks list filtered by slug — find our id
+      const listsToCheck = ["pending", "progress", "done"];
+      let task = null;
+      for (const st of listsToCheck) {
+        const items = await apiFetch("GET",
+          "?status=" + st + (slug ? "&slug=" + encodeURIComponent(slug) : "") + "&limit=100");
+        const match = (items || []).find((t) => t.id === taskId);
+        if (match) { task = match; break; }
+      }
+      if (!task) return;  // task disappeared (shouldn't happen)
+
+      const phase = updateAiBubble(bubbleEl, task, latestExec);
+      if (phase.terminal) {
+        stopEnhancePolling(taskId);
+        setSendDisabled(false);
+      }
+    } catch (e) {
+      console.warn("[enhance] poll error", e);
+    }
+  }
+
+  function startEnhancePolling(taskId, bubbleEl) {
+    if (activeBubbles.has(taskId)) return;
+    const timer = setInterval(function () { pollEnhance(taskId, bubbleEl); }, 2000);
+    activeBubbles.set(taskId, { bubbleEl: bubbleEl, pollTimer: timer });
+    pollEnhance(taskId, bubbleEl);  // fire immediately
+  }
+
+  function stopEnhancePolling(taskId) {
+    const entry = activeBubbles.get(taskId);
+    if (!entry) return;
+    clearInterval(entry.pollTimer);
+    activeBubbles.delete(taskId);
+  }
+
+  function setSendDisabled(disabled) {
+    $send.disabled = disabled;
+    $prompt.disabled = disabled;
+    $warn.textContent = disabled ? "Enhancement in progress…" : "";
+  }
+
+  // ── Submit ──
+  async function submitEnhance() {
+    const text = $prompt.value.trim();
+    if (!text) return;
+    if (!taskId) {
+      $warn.textContent = "No source task — reload the page";
+      return;
+    }
+    setSendDisabled(true);
+    renderBubble("user", text);
+    const aiBubble = renderBubble("ai", "", { taskId: "pending" });
+    $prompt.value = "";
+
+    try {
+      const resp = await apiFetch("POST", "/enhance", {
+        source_task_id: taskId,
+        prompt: text,
+      });
+      aiBubble.dataset.taskId = resp.id;
+      startEnhancePolling(resp.id, aiBubble);
+    } catch (e) {
+      aiBubble.classList.add("failed");
+      const phaseEl = aiBubble.querySelector(".phase");
+      if (phaseEl) phaseEl.textContent = "✗ Failed";
+      aiBubble.querySelector(".detail").textContent = e.message || String(e);
+      setSendDisabled(false);
+    }
+  }
+
+  $send.addEventListener("click", submitEnhance);
+  $prompt.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitEnhance();
+    }
+  });
+
+  // ── History on load ──
+  async function loadEnhanceHistory() {
+    if (!slug) return;
+    try {
+      // Fetch prior enhancements (done + running) for this slug
+      const [done, running] = await Promise.all([
+        apiFetch("GET", "?status=done&slug=" + encodeURIComponent(slug) + "&limit=20"),
+        apiFetch("GET", "?status=progress&slug=" + encodeURIComponent(slug) + "&limit=20"),
+      ]);
+      const all = [].concat(done || [], running || []);
+      // Exclude the source task itself; only show "Enhance " prefixed ones
+      const sorted = all
+        .filter((t) => t.id !== taskId)
+        .filter((t) => (t.description || "").startsWith("Enhance apps/"))
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      if (!sorted.length) return;
+      $log.innerHTML = "";
+      for (const t of sorted) {
+        const userMsg = (t.description || "").replace(/^Enhance apps\/[^\/]+\/:\s*/i, "");
+        renderBubble("user", userMsg, { taskId: t.id });
+        const aiBubble = renderBubble("ai", "", { taskId: t.id });
+        updateAiBubble(aiBubble, t, null);
+        // If still running, start polling it
+        if (t.status === "running" || t.status === "planning" || t.status === "awaiting_input") {
+          startEnhancePolling(t.id, aiBubble);
+        }
+      }
+    } catch (e) {
+      console.warn("[enhance] history load failed", e);
+    }
+  }
 })();
 </script>
 </body>
