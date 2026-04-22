@@ -218,6 +218,66 @@ If everything works correctly:
 If something is broken:
   TESTS_FAILED: <specific list of what's wrong and how to fix each issue>"""
 
+ENHANCE_PROMPT_TEMPLATE = """You are enhancing an EXISTING app from the AIUI decision engine.
+
+APP LOCATION: /workspace/ai_ui/apps/{slug}/
+
+USER REQUEST: {user_request}
+
+RULES — READ CAREFULLY:
+  1. You are MODIFYING existing code, not creating a new app from scratch.
+  2. READ the existing files first (index.html, server.py, etc.) before
+     changing anything. Understand the current structure before you touch it.
+  3. Make the SMALLEST change that satisfies the request. Do not refactor.
+  4. PRESERVE THE EXISTING TECH STACK. If the app is Python/Flask/sqlite3,
+     stay there — do not switch to Node/Prisma or vice versa.
+  5. Preserve existing features. The user is ADDING to the app, not replacing
+     it.
+  6. Do NOT delete the existing database file (apps/{slug}/data/*.db).
+     If you change the schema, write a migration that ALTERs the existing
+     table instead.
+  7. Keep tests passing. If there's a tests/ folder or test file, update it
+     if your change breaks existing tests.
+
+You MUST follow Red-Green-Refactor for the change itself:
+  RED:   Write a test (or update an existing one) that proves the new
+         behavior. Run it. Confirm it fails.
+  GREEN: Make the minimal change. Run the test. Confirm it passes.
+  COMMIT: Stage only the files you changed. One commit with clear message.
+
+{error_context_block}
+
+When done successfully:
+  COMPLETED: <one-sentence summary of what changed> (commit <sha>)
+
+If you cannot proceed:
+  NEEDS_INPUT: <what you need>
+  FAILED: <what went wrong>
+"""
+
+
+def build_enhance_prompt(
+    *,
+    slug: str,
+    user_request: str,
+    attempt_count: int = 0,
+    max_attempts: int = 3,
+    error_context: str = "",
+) -> str:
+    if error_context:
+        err_block = (
+            f"PREVIOUS ATTEMPT ({attempt_count}/{max_attempts}) FAILED:\n"
+            f"{error_context}\n"
+            "Fix the issues above. Do NOT repeat the same mistake."
+        )
+    else:
+        err_block = ""
+    return ENHANCE_PROMPT_TEMPLATE.format(
+        slug=slug,
+        user_request=user_request,
+        error_context_block=err_block,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Builder functions for the Superpowers-style prompts

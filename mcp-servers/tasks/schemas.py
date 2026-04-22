@@ -73,3 +73,8 @@ class CreateTaskRequest(BaseModel):
 class PlanReviewRequest(BaseModel):
     approved: bool
     feedback: str = ""
+
+
+class EnhanceRequest(BaseModel):
+    source_task_id: UUID
+    prompt: str = Field(min_length=1, max_length=2000)
