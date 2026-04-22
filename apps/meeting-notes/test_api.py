@@ -188,6 +188,13 @@ class TestMeetingNotesAPI(unittest.TestCase):
         self.assertEqual(len(m["notes"]), 1)
         self.assertEqual(m["notes"][0]["id"], note1["id"])
 
+    # ── Feature 6: Footer ────────────────────────────────────────────────────────
+
+    def test_13_html_has_footer(self):
+        with urllib.request.urlopen(f"{BASE}/") as resp:
+            html = resp.read().decode()
+        self.assertIn("Made by AI ✨", html)
+
     # ── Feature 5: Delete meeting ────────────────────────────────────────────────
 
     def test_12_delete_meeting_removes_meeting_and_notes(self):
