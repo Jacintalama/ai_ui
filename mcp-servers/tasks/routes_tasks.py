@@ -11,7 +11,7 @@ from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import AdminUser, current_admin
 from db import session
 from models import TaskItem
-from schemas import AnswerRequest, CompleteRequest, CreateTaskRequest, TaskOut
+from schemas import AnswerRequest, CompleteRequest, CreateTaskRequest, EnhanceRequest, TaskOut
 
 router = APIRouter(prefix="/api/tasks")
 
@@ -257,3 +257,84 @@ async def answer(
             return item
 
         raise HTTPException(status_code=409, detail="Answer not applicable in current state")
+
+
+@router.post("/enhance", response_model=TaskOut, status_code=202)
+async def enhance(
+    body: EnhanceRequest,
+    user: AdminUser = Depends(current_admin),
+):
+    """Create a new BUILD task that modifies an existing app.
+
+    Skips CLARIFY/PLAN (plan_status='approved' set up front) and goes straight
+    to TDD EXECUTE with ENHANCE_PROMPT_TEMPLATE so the user gets a fast
+    iteration loop — type change -> AI edits existing files -> preview reloads.
+    """
+    import asyncio
+    from claude_executor import build_enhance_prompt
+    from models import TaskExecution
+    from routes_execution import _run_execution, _RUNNING
+
+    async with session() as s:
+        # 1. Validate source
+        source = (await s.execute(
+            select(TaskItem).where(TaskItem.id == body.source_task_id)
+        )).scalar_one_or_none()
+        if source is None:
+            raise HTTPException(status_code=404, detail="Source task not found")
+        if source.action_type != "BUILD":
+            raise HTTPException(status_code=400, detail="Can only enhance BUILD tasks")
+        if not source.built_app_slug:
+            raise HTTPException(
+                status_code=400,
+                detail="Source task has no built_app_slug — nothing to enhance",
+            )
+
+        # 2. Reject concurrent enhancements on same app
+        in_flight = (await s.execute(
+            select(TaskItem).where(
+                TaskItem.built_app_slug == source.built_app_slug,
+                TaskItem.status.in_(["running", "planning", "awaiting_input"]),
+            )
+        )).scalar_one_or_none()
+        if in_flight:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Another enhancement is already in progress for apps/{source.built_app_slug}/",
+            )
+
+        # 3. Create new enhancement task
+        new_task = TaskItem(
+            meeting_id=uuid.uuid4(),
+            action_type="BUILD",
+            assignee_name=user.email.split("@")[0],
+            assignee_email=user.email,
+            description=f"Enhance apps/{source.built_app_slug}/: {body.prompt.strip()[:400]}",
+            priority="NICE_TO_HAVE",
+            status="running",
+            mode="ai",
+            max_attempts=max(source.max_attempts or 1, 1),
+            built_app_slug=source.built_app_slug,
+            plan_status="approved",
+        )
+        s.add(new_task)
+        await s.commit()
+        await s.refresh(new_task)
+
+        execution = TaskExecution(task_id=new_task.id, status="running", log="")
+        s.add(execution)
+        await s.commit()
+        await s.refresh(execution)
+
+    # 4. Fire background execution with ENHANCE prompt
+    prompt = build_enhance_prompt(
+        slug=source.built_app_slug,
+        user_request=body.prompt.strip(),
+        attempt_count=0,
+        max_attempts=new_task.max_attempts,
+    )
+    _RUNNING[new_task.id] = {"task": None, "proc": None}
+    bg = asyncio.create_task(_run_execution(new_task.id, execution.id, prompt))
+    _RUNNING[new_task.id]["task"] = bg
+
+    return new_task
