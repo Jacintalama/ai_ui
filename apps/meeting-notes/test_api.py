@@ -230,5 +230,30 @@ class TestMeetingNotesAPI(unittest.TestCase):
         self.assertEqual(body["name"], "")
 
 
+    # ── Feature 8: Edit note ────────────────────────────────────────────────────
+
+    def test_17_edit_note_updates_content(self):
+        _, meeting = api("/api/meetings", "POST", {"title": "Edit Note Mtg", "date": "2026-09-01"})
+        _, note = api(f"/api/meetings/{meeting['id']}/notes", "POST", {"content": "Original content"})
+        status, body = api(f"/api/notes/{note['id']}", "PUT", {"content": "Updated content"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["content"], "Updated content")
+        self.assertEqual(body["id"], note["id"])
+
+    def test_18_edit_note_empty_content_rejected(self):
+        _, meeting = api("/api/meetings", "POST", {"title": "Edit Empty Mtg", "date": "2026-09-02"})
+        _, note = api(f"/api/meetings/{meeting['id']}/notes", "POST", {"content": "Has content"})
+        status, _ = api(f"/api/notes/{note['id']}", "PUT", {"content": ""})
+        self.assertEqual(status, 400)
+
+    def test_19_edit_note_persists(self):
+        _, meeting = api("/api/meetings", "POST", {"title": "Persist Edit Mtg", "date": "2026-09-03"})
+        _, note = api(f"/api/meetings/{meeting['id']}/notes", "POST", {"content": "Before edit"})
+        api(f"/api/notes/{note['id']}", "PUT", {"content": "After edit"})
+        _, meetings = api("/api/meetings")
+        m = next((x for x in meetings if x["id"] == meeting["id"]), None)
+        self.assertEqual(m["notes"][0]["content"], "After edit")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

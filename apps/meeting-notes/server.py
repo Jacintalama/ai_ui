@@ -123,6 +123,20 @@ def add_note(meeting_id):
     return jsonify(note_row_to_dict(row)), 201
 
 
+@app.put("/api/notes/<int:note_id>")
+def update_note(note_id):
+    data = request.get_json(silent=True) or {}
+    content = (data.get("content") or "").strip()
+    if not content:
+        return jsonify({"error": "content is required"}), 400
+    with get_db() as db:
+        db.execute("UPDATE Note SET content = ? WHERE id = ?", (content, note_id))
+        row = db.execute("SELECT * FROM Note WHERE id = ?", (note_id,)).fetchone()
+    if row is None:
+        return jsonify({"error": "not found"}), 404
+    return jsonify(note_row_to_dict(row)), 200
+
+
 @app.delete("/api/notes/<int:note_id>")
 def delete_note(note_id):
     with get_db() as db:

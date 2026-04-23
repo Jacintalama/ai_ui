@@ -177,7 +177,8 @@
     }
     .note-content { flex: 1; font-size: .9rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
     .note-meta { font-size: .75rem; color: #aaa; margin-top: .25rem; }
-    .btn-delete-note {
+    .note-actions { display: flex; gap: .25rem; flex-shrink: 0; }
+    .btn-delete-note, .btn-edit-note {
       background: none;
       border: none;
       color: #bbb;
@@ -188,6 +189,29 @@
       padding: 2px;
     }
     .btn-delete-note:hover { color: #c0392b; }
+    .btn-edit-note:hover { color: #1a1a2e; }
+    .note-edit-area {
+      width: 100%;
+      padding: .4rem .6rem;
+      border: 1px solid #1a1a2e;
+      border-radius: 5px;
+      font-size: .9rem;
+      font-family: inherit;
+      resize: vertical;
+      min-height: 60px;
+    }
+    .note-edit-actions { display: flex; gap: .4rem; margin-top: .4rem; }
+    .btn-save-note, .btn-cancel-edit {
+      padding: .3rem .7rem;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: .82rem;
+    }
+    .btn-save-note { background: #1a1a2e; color: #fff; }
+    .btn-save-note:hover { background: #2d2d52; }
+    .btn-cancel-edit { background: #eee; color: #333; }
+    .btn-cancel-edit:hover { background: #ddd; }
 
     /* ── Search results ── */
     #search-results { padding: 1.5rem 2rem; overflow-y: auto; flex: 1; }
@@ -439,17 +463,73 @@
     }
     list.innerHTML = notes.map(n => `
       <div class="note-card" data-note-id="${n.id}">
-        <div>
+        <div style="flex:1;min-width:0;">
           <div class="note-content">${escHtml(n.content)}</div>
           <div class="note-meta">${fmtTime(n.createdAt)}</div>
         </div>
-        <button class="btn-delete-note" data-id="${n.id}" title="Delete note">✕</button>
+        <div class="note-actions">
+          <button class="btn-edit-note" data-id="${n.id}" title="Edit note">✎</button>
+          <button class="btn-delete-note" data-id="${n.id}" title="Delete note">✕</button>
+        </div>
       </div>
     `).join('');
 
     list.querySelectorAll('.btn-delete-note').forEach(btn => {
       btn.addEventListener('click', () => deleteNote(parseInt(btn.dataset.id, 10)));
     });
+    list.querySelectorAll('.btn-edit-note').forEach(btn => {
+      btn.addEventListener('click', () => editNote(parseInt(btn.dataset.id, 10)));
+    });
+  }
+
+  // ── Edit note ──────────────────────────────────────────────
+
+  function editNote(id) {
+    const card = document.querySelector(`.note-card[data-note-id="${id}"]`);
+    if (!card) return;
+    const contentEl = card.querySelector('.note-content');
+    const original = contentEl.textContent;
+    const metaEl = card.querySelector('.note-meta');
+    const actionsEl = card.querySelector('.note-actions');
+
+    contentEl.style.display = 'none';
+    metaEl.style.display = 'none';
+    actionsEl.style.display = 'none';
+
+    const editor = document.createElement('div');
+    editor.style.flex = '1';
+    editor.innerHTML = `
+      <textarea class="note-edit-area">${escHtml(original)}</textarea>
+      <div class="note-edit-actions">
+        <button class="btn-save-note">Save</button>
+        <button class="btn-cancel-edit">Cancel</button>
+      </div>
+    `;
+    card.insertBefore(editor, actionsEl);
+
+    const textarea = editor.querySelector('.note-edit-area');
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+    editor.querySelector('.btn-cancel-edit').addEventListener('click', () => {
+      editor.remove();
+      contentEl.style.display = '';
+      metaEl.style.display = '';
+      actionsEl.style.display = '';
+    });
+
+    editor.querySelector('.btn-save-note').addEventListener('click', () => updateNote(id, textarea.value));
+  }
+
+  async function updateNote(id, newContent) {
+    const content = newContent.trim();
+    if (!content) { alert('Note content cannot be empty.'); return; }
+    try {
+      await apiFetch(`/api/notes/${id}`, { method: 'PUT', body: JSON.stringify({ content }) });
+      await loadMeetings();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
   }
 
   // ── Delete note ────────────────────────────────────────────
