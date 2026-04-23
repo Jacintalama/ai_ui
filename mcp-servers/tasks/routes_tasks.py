@@ -11,7 +11,7 @@ from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import AdminUser, current_admin
 from db import session
 from models import TaskItem
-from schemas import AnswerRequest, CompleteRequest, CreateTaskRequest, EnhanceRequest, TaskOut
+from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, EnhanceRequest, TaskOut
 
 router = APIRouter(prefix="/api/tasks")
 
@@ -215,7 +215,7 @@ async def answer(
 
         if item.status == "awaiting_input":
             import asyncio
-            from claude_executor import build_prompt, build_tdd_execute_prompt
+            from claude_executor import build_prompt, build_tdd_execute_prompt, build_enhance_prompt
             from models import TaskExecution
             from routes_execution import _run_execution, _RUNNING
 
@@ -229,7 +229,41 @@ async def answer(
             await s.refresh(item)
             await s.refresh(new_exec)
 
-            if item.max_attempts > 1 and item.plan:
+            # Enhance tasks need `build_enhance_prompt` so Claude stays in the
+            # app's existing stack/dir and follows the enhance rules. Using the
+            # generic `build_prompt` here would make Claude start a NEW app
+            # instead of modifying `apps/<slug>/`.
+            is_enhance = (
+                item.action_type == "BUILD"
+                and item.built_app_slug
+                and (item.description or "").startswith("Enhance apps/")
+            )
+
+            if is_enhance:
+                convo_block_lines = []
+                for entry in history:
+                    role = entry.get("role", "")
+                    content = entry.get("content", "")
+                    if role == "ai":
+                        convo_block_lines.append(f"AI asked: {content}")
+                    elif role == "admin":
+                        convo_block_lines.append(f"ADMIN answered: {content}")
+                convo_block = "\n".join(convo_block_lines)
+                # Strip the "Enhance apps/<slug>/: " prefix to get the raw ask,
+                # then append the clarifying round so Claude has full context.
+                raw_ask = (item.description or "").split(":", 1)[-1].strip()
+                user_request = (
+                    raw_ask
+                    + "\n\nCONVERSATION WITH ADMIN:\n"
+                    + convo_block
+                )
+                prompt = build_enhance_prompt(
+                    slug=item.built_app_slug,
+                    user_request=user_request,
+                    attempt_count=item.attempt_count,
+                    max_attempts=item.max_attempts,
+                )
+            elif item.max_attempts > 1 and item.plan:
                 prompt = build_tdd_execute_prompt(
                     description=item.description,
                     action_type=item.action_type,
@@ -341,3 +375,152 @@ async def enhance(
     _RUNNING[new_task.id]["task"] = bg
 
     return new_task
+
+
+@router.post("/{task_id}/cancel", response_model=TaskOut)
+async def cancel_task(
+    task_id: UUID,
+    user: AdminUser = Depends(current_admin),
+):
+    """Cancel a task stuck in a non-terminal state.
+
+    Unblocks the admin when an enhancement is stuck in `awaiting_input`
+    (AI asked a clarifying question nobody answered) or `running` (crashed
+    background worker) and is preventing new enhancements on the same slug
+    from being queued (see `/enhance` 409 path).
+
+    The DB row is marked `failed` with a 'Cancelled by user' result. If a
+    background task is still tracked in `_RUNNING`, its asyncio.Task and
+    subprocess are also cancelled so they stop consuming resources.
+    """
+    TERMINAL = {"completed", "failed"}
+    async with session() as s:
+        item = await _get_owned_task(s, task_id, user.email)
+        if item.status in TERMINAL:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Task already {item.status}; nothing to cancel",
+            )
+        item.status = "failed"
+        item.result = "Cancelled by user"
+        item.updated_at = datetime.utcnow()
+        await s.commit()
+        await s.refresh(item)
+
+    # Best-effort: cancel any in-flight asyncio task + child process
+    from routes_execution import _RUNNING
+    entry = _RUNNING.pop(task_id, None)
+    if entry:
+        bg_task = entry.get("task")
+        if bg_task and not bg_task.done():
+            bg_task.cancel()
+        proc = entry.get("proc")
+        if proc and proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+
+    return item
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    body: ChatRequest,
+    user: AdminUser = Depends(current_admin),
+):
+    """Lightweight chat about an existing app.
+
+    Calls the Anthropic Messages API directly — no build pipeline, no git
+    commits, no file edits. The Enhance panel's Chat mode uses this so admins
+    can ask questions, brainstorm changes, or just discuss the app without
+    triggering an expensive build run that might fail on a greeting like "hi".
+
+    Uses Haiku for latency + cost. Retrieves the existing app's file list so
+    Claude can give grounded answers about what's in the app.
+    """
+    import os
+    import httpx
+    from uuid import UUID as _UUID
+
+    try:
+        source_id = _UUID(body.source_task_id)
+    except (ValueError, AttributeError):
+        raise HTTPException(status_code=400, detail="Invalid source_task_id")
+
+    async with session() as s:
+        source = await _get_owned_task(s, source_id, user.email)
+    if not source.built_app_slug:
+        raise HTTPException(status_code=400, detail="Source task has no built app to chat about")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Chat unavailable — ANTHROPIC_API_KEY not configured")
+
+    slug = source.built_app_slug
+    app_dir = os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps", slug)
+    # Gather a compact file listing for context (file names only, no content)
+    file_listing = ""
+    try:
+        entries = []
+        for root, dirs, files in os.walk(app_dir):
+            # Skip heavy/generated dirs
+            dirs[:] = [d for d in dirs if d not in ("node_modules", "__pycache__", ".pytest_cache", "data", ".git")]
+            for f in files:
+                rel = os.path.relpath(os.path.join(root, f), app_dir)
+                entries.append(rel)
+                if len(entries) >= 60:
+                    break
+            if len(entries) >= 60:
+                break
+        file_listing = "\n".join(f"  - {e}" for e in sorted(entries))
+    except Exception:
+        file_listing = "(file list unavailable)"
+
+    system_prompt = (
+        f"You are a helpful assistant for the AIUI decision engine, chatting with an admin "
+        f"about the existing web app at apps/{slug}/. Answer their questions conversationally. "
+        f"Keep replies concise (2-4 sentences for simple questions, up to ~8 sentences when "
+        f"explaining or proposing a design). Use markdown sparingly — **bold** key phrases, "
+        f"bullet lists only when listing multiple distinct items.\n\n"
+        f"When the admin describes a concrete change they want made to the app, end your "
+        f'reply with a one-line summary prefixed "BUILD_SUGGESTION:" that captures the '
+        f"change in a form suitable for a build task (imperative, concrete). Example:\n"
+        f"  BUILD_SUGGESTION: Add a search input that filters meetings by title (case-insensitive).\n"
+        f"Only include BUILD_SUGGESTION when they're clearly ready to commit to a change — "
+        f"not for hypothetical discussions. Never include it for greetings or pure questions.\n\n"
+        f"APP FILES:\n{file_listing}"
+    )
+
+    messages = [m.model_dump() for m in body.history] + [
+        {"role": "user", "content": body.message}
+    ]
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 700,
+                    "system": system_prompt,
+                    "messages": messages,
+                },
+            )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Chat upstream error: {e}")
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Claude API returned {r.status_code}: {r.text[:200]}")
+
+    data = r.json()
+    parts = [c.get("text", "") for c in data.get("content", []) if c.get("type") == "text"]
+    reply_text = "\n".join(p for p in parts if p).strip()
+    if not reply_text:
+        reply_text = "(no reply generated)"
+    return ChatResponse(reply=reply_text)

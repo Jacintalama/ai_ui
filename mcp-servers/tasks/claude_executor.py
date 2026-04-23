@@ -247,8 +247,32 @@ You MUST follow Red-Green-Refactor for the change itself:
 
 {error_context_block}
 
-When done successfully:
-  COMPLETED: <one-sentence summary of what changed> (commit <sha>)
+When done successfully, end your response with a `COMPLETED:` block formatted
+EXACTLY like this (friendly, plain language — written for the admin user who
+will read it in the chat panel, not a developer reading a commit log):
+
+  COMPLETED:
+  <2-3 sentence summary in plain language. Lead with WHAT the user will now
+  see or be able to do. Mention where in the UI it shows up. Avoid jargon.>
+
+  **Next ideas:**
+  - <one short, concrete follow-up the user might want next>
+  - <one more short follow-up — different angle (polish, validation, related feature)>
+
+  (commit <sha>)
+
+Example of a good COMPLETED block:
+
+  COMPLETED:
+  Added a **Name** field to the "New Meeting" form. When you add a meeting
+  the name is saved alongside the title and date, and it shows up in the
+  meeting list and API responses.
+
+  **Next ideas:**
+  - Make the Name field required so meetings can't be saved blank
+  - Add an email field next to Name so you can link meetings to attendees
+
+  (commit 64bcf50)
 
 If you cannot proceed:
   NEEDS_INPUT: <what you need>
@@ -369,7 +393,12 @@ class Outcome:
 
 
 _SENTINEL_RE = re.compile(
-    r"(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS):\s*(?P<rest>[^\n]*)",
+    # `rest` captures everything up to the NEXT sentinel (or end-of-string).
+    # Non-greedy + lookahead so a multiline COMPLETED block — including a
+    # "Next ideas:" suggestions section — is preserved intact. Single-line
+    # payloads still work (the lookahead falls through to \Z).
+    r"(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS):\s*"
+    r"(?P<rest>.*?)(?=\n\s*(?:COMPLETED|NEEDS_INPUT|NEEDS_STEPS):|\Z)",
     re.DOTALL,
 )
 

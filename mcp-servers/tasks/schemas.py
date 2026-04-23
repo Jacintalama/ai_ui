@@ -60,6 +60,23 @@ class AnswerRequest(BaseModel):
     answer: str
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class ChatRequest(BaseModel):
+    """Body for POST /api/tasks/chat — lightweight Claude chat (no build)."""
+
+    source_task_id: str = Field(description="UUID of the BUILD task whose app is being discussed")
+    message: str = Field(min_length=1, max_length=2000)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=40)
+
+
+class ChatResponse(BaseModel):
+    reply: str
+
+
 class CreateTaskRequest(BaseModel):
     """Body for admin-created tasks from the panel."""
 
