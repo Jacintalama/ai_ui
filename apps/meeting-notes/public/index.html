@@ -85,6 +85,18 @@
     }
     #add-form button:hover { background: #2d2d52; }
 
+    /* Sidebar filter */
+    #filter-meetings {
+      width: 100%;
+      padding: .38rem .6rem;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      font-size: .85rem;
+      outline: none;
+      background: #fafafa;
+    }
+    #filter-meetings:focus { border-color: #1a1a2e; background: #fff; }
+
     /* Meeting list */
     #meeting-list {
       overflow-y: auto;
@@ -252,6 +264,9 @@
       </form>
       <div id="add-error" class="error-msg"></div>
     </div>
+    <div style="padding:.5rem 1rem .4rem;">
+      <input id="filter-meetings" type="search" placeholder="Filter meetings..." autocomplete="off" />
+    </div>
     <div id="meeting-list"></div>
   </aside>
 
@@ -320,12 +335,17 @@
 
   function renderSidebar(meetings) {
     allMeetings = meetings;
+    const q = (document.getElementById('filter-meetings').value || '').trim().toLowerCase();
+    const visible = q
+      ? meetings.filter(m => m.title.toLowerCase().includes(q) || m.name.toLowerCase().includes(q))
+      : meetings;
     const list = document.getElementById('meeting-list');
-    if (!meetings.length) {
-      list.innerHTML = '<p style="padding:.8rem 1rem;color:#aaa;font-size:.85rem;">No meetings yet.</p>';
+    if (!visible.length) {
+      list.innerHTML = '<p style="padding:.8rem 1rem;color:#aaa;font-size:.85rem;">'
+        + (q ? 'No matches.' : 'No meetings yet.') + '</p>';
       return;
     }
-    list.innerHTML = meetings.map(m => `
+    list.innerHTML = visible.map(m => `
       <div class="meeting-item${m.id === activeMeetingId ? ' active' : ''}" data-id="${m.id}">
         <div class="meeting-item-info">
           <div class="meeting-title">${escHtml(m.title)}</div>
@@ -590,6 +610,12 @@
     document.getElementById('search-results').style.display = 'none';
     document.getElementById('main-content').style.display   = 'block';
   }
+
+  // ── Sidebar filter ─────────────────────────────────────────
+
+  document.getElementById('filter-meetings').addEventListener('input', () => {
+    renderSidebar(allMeetings);
+  });
 
   // ── Boot ───────────────────────────────────────────────────
 

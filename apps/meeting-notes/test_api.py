@@ -261,6 +261,25 @@ class TestMeetingNotesAPI(unittest.TestCase):
             html = resp.read().decode()
         self.assertIn('placeholder="Meeting Title"', html)
 
+    # ── Feature 10: Sidebar filter ──────────────────────────────────────────────
+
+    def test_21_sidebar_has_filter_input(self):
+        with urllib.request.urlopen(f"{BASE}/") as resp:
+            html = resp.read().decode()
+        self.assertIn('id="filter-meetings"', html)
+
+    def test_22_filter_meetings_api_supports_name_query(self):
+        _, m1 = api("/api/meetings", "POST", {"title": "Alpha Review", "date": "2026-10-01", "name": "Alice"})
+        _, m2 = api("/api/meetings", "POST", {"title": "Beta Planning", "date": "2026-10-02", "name": "Bob"})
+        # Both appear in full list
+        _, meetings = api("/api/meetings")
+        titles = [m["title"] for m in meetings]
+        self.assertIn("Alpha Review", titles)
+        self.assertIn("Beta Planning", titles)
+        # name field is present so client-side filter can use it
+        m = next(x for x in meetings if x["id"] == m1["id"])
+        self.assertEqual(m["name"], "Alice")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
