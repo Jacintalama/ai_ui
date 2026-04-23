@@ -254,6 +254,13 @@ class TestMeetingNotesAPI(unittest.TestCase):
         m = next((x for x in meetings if x["id"] == meeting["id"]), None)
         self.assertEqual(m["notes"][0]["content"], "After edit")
 
+    # ── Feature 9: Title input placeholder ─────────────────────────────────────
+
+    def test_20_title_input_placeholder_is_meeting_title(self):
+        with urllib.request.urlopen(f"{BASE}/") as resp:
+            html = resp.read().decode()
+        self.assertIn('placeholder="Meeting Title"', html)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
