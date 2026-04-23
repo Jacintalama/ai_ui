@@ -242,6 +242,20 @@
     .empty-note { color: #aaa; font-size: .9rem; font-style: italic; }
 
     .error-msg { color: #c0392b; font-size: .85rem; margin-top: .4rem; }
+
+    /* Copy button */
+    #btn-copy-notes {
+      padding: .3rem .75rem;
+      background: #f0f0f0;
+      color: #555;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: .82rem;
+      flex-shrink: 0;
+    }
+    #btn-copy-notes:hover { background: #e4e4e4; }
+    #btn-copy-notes.copied { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
   </style>
 </head>
 <body>
@@ -283,7 +297,10 @@
 
 <template id="detail-tpl">
   <div id="detail-view">
-    <h2 id="detail-title"></h2>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:.2rem;">
+      <h2 id="detail-title"></h2>
+      <button id="btn-copy-notes" title="Copy all notes to clipboard">⎘ Copy</button>
+    </div>
     <div id="detail-date"></div>
     <form id="note-form">
       <textarea id="note-input" placeholder="Add a note..." rows="2"></textarea>
@@ -295,7 +312,7 @@
 </template>
 
 <script>
-  const API = '';
+  const API = window.location.pathname.startsWith("/tasks/preview-app") ? "/tasks/preview-app" : "";
   let activeMeetingId = null;
   let allMeetings = [];
 
@@ -454,6 +471,8 @@
 
     renderNotes(meeting.notes || []);
 
+    document.getElementById('btn-copy-notes').addEventListener('click', () => copyNotes());
+
     // Add note
     document.getElementById('note-form').addEventListener('submit', async e => {
       e.preventDefault();
@@ -562,6 +581,29 @@
     } catch (err) {
       alert('Error: ' + err.message);
     }
+  }
+
+  // ── Copy notes ─────────────────────────────────────────────
+
+  function copyNotes() {
+    const title = document.getElementById('detail-title').textContent;
+    const dateLine = document.getElementById('detail-date').textContent;
+    const cards = [...document.querySelectorAll('.note-card')];
+    const noteLines = cards.map(card => {
+      const content = card.querySelector('.note-content').textContent;
+      const meta = card.querySelector('.note-meta').textContent;
+      return content + '\n  — ' + meta;
+    });
+    const text = [title, dateLine, '', ...noteLines].join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById('btn-copy-notes');
+      if (!btn) return;
+      btn.textContent = '✓ Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 1500);
+    }).catch(() => {
+      alert('Could not copy to clipboard.');
+    });
   }
 
   // ── Search ─────────────────────────────────────────────────

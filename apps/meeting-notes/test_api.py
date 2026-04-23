@@ -268,6 +268,13 @@ class TestMeetingNotesAPI(unittest.TestCase):
             html = resp.read().decode()
         self.assertIn('id="filter-meetings"', html)
 
+    # ── Feature 11: Copy notes button ──────────────────────────────────────────
+
+    def test_23_html_has_copy_button(self):
+        with urllib.request.urlopen(f"{BASE}/") as resp:
+            html = resp.read().decode()
+        self.assertIn('id="btn-copy-notes"', html)
+
     def test_22_filter_meetings_api_supports_name_query(self):
         _, m1 = api("/api/meetings", "POST", {"title": "Alpha Review", "date": "2026-10-01", "name": "Alice"})
         _, m2 = api("/api/meetings", "POST", {"title": "Beta Planning", "date": "2026-10-02", "name": "Bob"})
