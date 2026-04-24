@@ -7,6 +7,9 @@ from typing import AsyncIterator, Literal
 
 CLAUDE_WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("TASKS_AI_TIMEOUT_SECONDS", "600"))
+# Optional: set TASKS_CLAUDE_MODEL to pin a specific model (e.g. "claude-sonnet-4-6").
+# When unset the claude CLI uses its own configured default.
+TASKS_CLAUDE_MODEL = os.environ.get("TASKS_CLAUDE_MODEL", "")
 
 # Sanity bounds on AI execution to limit blast radius
 MAX_PROMPT_CHARS = 8000
@@ -510,16 +513,28 @@ async def run_claude_subprocess(prompt: str, proc_holder: dict | None = None) ->
     # IS_SANDBOX=1 lets claude accept --dangerously-skip-permissions under root
     # (the container runs as root and there's no rootless option for us here).
     env = {**os.environ, "IS_SANDBOX": "1"}
-    # Use stream-json + verbose so each tool call / partial text chunk is
-    # emitted immediately on its own line. The panel parses those lines to
-    # render "Reading foo.py", "Running: docker restart …", etc.
-    proc = await asyncio.create_subprocess_exec(
+
+    cmd = [
         "claude",
         "--print",
         "--dangerously-skip-permissions",
         "--output-format", "stream-json",
         "--verbose",
-        prompt,
+    ]
+    if TASKS_CLAUDE_MODEL:
+        cmd += ["--model", TASKS_CLAUDE_MODEL]
+    cmd.append(prompt)
+
+    model_label = TASKS_CLAUDE_MODEL or "(claude CLI default)"
+    if proc_holder is not None:
+        # Yield a header line so the execution log shows which model is running.
+        yield f"[model: {model_label}]\n"
+
+    # Use stream-json + verbose so each tool call / partial text chunk is
+    # emitted immediately on its own line. The panel parses those lines to
+    # render "Reading foo.py", "Running: docker restart …", etc.
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
