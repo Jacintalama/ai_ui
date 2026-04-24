@@ -112,6 +112,7 @@
         <span class="badge" data-role="badge">0</span>
       </div>
       <div class="ctrls">
+        <button data-act="new-task" title="Create a new task">+</button>
         <button data-act="refresh" title="Refresh">⟳</button>
         <button data-act="min" title="Minimize">─</button>
         <button data-act="close" title="Close">✕</button>
@@ -191,18 +192,48 @@
     const canAi = t.action_type === "BUILD" || t.action_type === "INTEGRATE" || t.action_type === "RESEARCH";
     let actions;
     if (isAsk) {
-      actions = `<button class="aiui-tp-btn-answer" data-task-action="answer-ui" data-task-id="${t.id}">💬 Answer</button>`;
+      actions = `<button class="aiui-tp-btn-answer" data-task-action="answer-ui" data-task-id="${t.id}">💬 Answer</button>
+                 <button class="aiui-tp-btn-manual" data-task-action="delete" data-task-id="${t.id}" title="Delete this task" style="flex:0 0 auto;padding:8px 10px;">🗑</button>`;
     } else if (canAi) {
-      actions = `<button class="aiui-tp-btn-ai" data-task-action="ai" data-task-id="${t.id}">⚡ AI</button>
-                 <button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>`;
+      let loopBtns = "";
+      if (t.max_attempts > 1) {
+          if (!t.plan || t.plan_status !== "approved") {
+              loopBtns = `<button class="aiui-tp-btn-ai" data-task-action="clarify" data-task-id="${t.id}" style="background:#7c3aed;">💬 Clarify</button>
+                          <button class="aiui-tp-btn-ai" data-task-action="plan" data-task-id="${t.id}" style="background:#4f46e5;">📋 Plan</button>`;
+          }
+      }
+      actions = `${loopBtns}
+                 <button class="aiui-tp-btn-ai" data-task-action="ai" data-task-id="${t.id}">⚡ AI</button>
+                 <button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>
+                 <button class="aiui-tp-btn-manual" data-task-action="delete" data-task-id="${t.id}" title="Delete this task" style="flex:0 0 auto;padding:8px 10px;">🗑</button>`;
     } else {
-      actions = `<button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>`;
+      actions = `<button class="aiui-tp-btn-manual" data-task-action="manual" data-task-id="${t.id}">✋ Manual</button>
+                 <button class="aiui-tp-btn-manual" data-task-action="delete" data-task-id="${t.id}" title="Delete this task" style="flex:0 0 auto;padding:8px 10px;">🗑</button>`;
     }
+    const historyHtml = (t.conversation_history || []).length > 0
+      ? `<div style="max-height:120px;overflow-y:auto;margin-bottom:6px;">${
+          (t.conversation_history || []).map(h =>
+              `<div style="font-size:11px;padding:4px 6px;margin:2px 0;border-radius:3px;background:${
+                  h.role === 'ai' ? '#1a1208' : '#0a1a14'};color:${
+                  h.role === 'ai' ? '#fcd34d' : '#86efac'};">
+                  <strong>${h.role === 'ai' ? 'AI' : 'You'}:</strong> ${escapeHtml(h.content)}
+              </div>`
+          ).join("")
+      }</div>`
+      : "";
     const askInputUI = t.status === "awaiting_input"
       ? `<div style="background:#1a1208;border:1px solid #78350f;border-radius:4px;padding:8px;font-size:11px;color:#fcd34d;margin-bottom:8px;"><strong>AI says:</strong><br/>${escapeHtml(t.result || "")}</div>
+         ${historyHtml}
          <textarea class="aiui-tp-textarea" data-textarea-id="${t.id}" placeholder="Reply to the AI…"></textarea>
          <div class="aiui-tp-actions"><button class="aiui-tp-btn-answer" data-task-action="answer-resume" data-task-id="${t.id}">↩ Reply</button></div>`
       : `<div class="aiui-tp-actions">${actions}</div>`;
+    const planReviewUI = t.status === "awaiting_plan_review" && t.plan
+      ? `<div style="background:#0a1a1a;border:1px solid #065f46;border-radius:4px;padding:8px;font-size:11px;color:#6ee7b7;margin-bottom:8px;max-height:200px;overflow-y:auto;white-space:pre-wrap;"><strong>AI Plan:</strong><br/>${escapeHtml(t.plan)}</div>
+         <div class="aiui-tp-actions">
+           <button class="aiui-tp-btn-ai" data-task-action="approve-plan" data-task-id="${t.id}">✓ Approve Plan</button>
+           <button class="aiui-tp-btn-manual" data-task-action="reject-plan" data-task-id="${t.id}">✗ Reject</button>
+         </div>`
+      : "";
     // If a previous AI run failed, show a small warning + the reason
     const priorFailHint = (!t.mode && t.result && !isAsk && t.status === "pending")
       ? `<div style="background:#1a0a0a;border:1px solid #7f1d1d;border-radius:4px;padding:6px 8px;font-size:11px;color:#fca5a5;margin-bottom:8px;">
@@ -214,12 +245,13 @@
         <div class="aiui-tp-badges">
           <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
           <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+          ${t.max_attempts > 1 ? `<span class="aiui-tp-badge" style="background:#312e81;color:#c4b5fd;">🔄 Loop ${t.attempt_count}/${t.max_attempts}</span>` : ''}
           ${t.status === "awaiting_input" ? '<span class="aiui-tp-badge" style="background:#7c2d12;color:#fed7aa;">⚠️ NEEDS INPUT</span>' : ''}
         </div>
         <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
         <div class="aiui-tp-meta"><span class="aiui-tp-assignee">${escapeHtml(t.assignee_name)}</span></div>
         ${priorFailHint}
-        ${askInputUI}
+        ${askInputUI}${planReviewUI}
       </div>`;
   }
 
@@ -229,6 +261,7 @@
         <div class="aiui-tp-badges">
           <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
           <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+          ${t.max_attempts > 1 ? `<span class="aiui-tp-badge" style="background:#312e81;color:#c4b5fd;">🔄 Loop ${t.attempt_count}/${t.max_attempts}</span>` : ''}
           ${t.status === "running" ? '<span class="aiui-tp-badge live">⚡ AI RUNNING</span>' : '<span class="aiui-tp-badge" style="background:#374151;color:#d1d5db;">✋ MANUAL</span>'}
         </div>
         <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
@@ -245,8 +278,18 @@
     const takeOverBtn = isFailed
       ? `<button class="aiui-tp-btn-manual" data-task-action="take-over" data-task-id="${t.id}">✋ Take over manually</button>`
       : "";
+    const previewBtn = (t.action_type === "BUILD" && t.built_app_slug)
+      ? `<a href="/tasks/static/preview.html?task=${t.id}" target="_blank"
+           class="aiui-tp-btn-ai" style="text-decoration:none;text-align:center;display:inline-block;">
+           🔍 Preview App</a>`
+      : "";
     const resultBlock = t.result
       ? `<div style="background:${isFailed ? '#1a0a0a' : '#0a1a14'};border:1px solid ${isFailed ? '#7f1d1d' : '#065f46'};border-radius:6px;padding:8px 10px;font-size:12px;color:${isFailed ? '#fca5a5' : '#86efac'};margin-top:8px;line-height:1.5;white-space:pre-wrap;">${escapeHtml(t.result)}</div>`
+      : "";
+    const previewBtnBig = (t.action_type === "BUILD" && t.built_app_slug)
+      ? `<a href="/tasks/static/preview.html?task=${t.id}" target="_blank"
+           style="display:block;background:#3b82f6;color:#fff;border:0;padding:10px 14px;border-radius:6px;font-size:13px;font-weight:700;text-decoration:none;text-align:center;margin-top:10px;">
+           🔍 Preview App →</a>`
       : "";
     return `
       <div class="aiui-tp-task aiui-tp-done" data-task-card="${t.id}">
@@ -255,6 +298,7 @@
             <div class="aiui-tp-badges">
               <span class="aiui-tp-badge ${t.action_type}">${TYPE_LABELS[t.action_type] || TYPE_LABELS.UNKNOWN}</span>
               <span class="aiui-tp-badge priority">${PRI_LABELS[t.priority] || t.priority}</span>
+              ${t.max_attempts > 1 ? `<span class="aiui-tp-badge" style="background:#312e81;color:#c4b5fd;">🔄 Loop ${t.attempt_count}/${t.max_attempts}</span>` : ''}
             </div>
             <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
             <div class="aiui-tp-done-meta">
@@ -266,6 +310,7 @@
           </div>
           <span class="aiui-tp-chev" style="color:#888;font-size:13px;transition:transform 0.2s;user-select:none;margin-top:4px;">▾</span>
         </div>
+        ${previewBtnBig}
         <div class="aiui-tp-done-details" data-task-details="${t.id}" style="display:none;">
           ${resultBlock}
           <div class="aiui-tp-actions" style="margin-top:8px;">
@@ -308,8 +353,17 @@
         await refreshAll();
       }
       else if (action === "answer-ui") {
-        const ans = prompt("Your answer:");
-        if (ans !== null) { await api("POST", `/${id}/answer`, { answer: ans }); await refreshAll(); }
+        showTextModal({
+          title: "Answer this ASK_USER task",
+          placeholder: "Your answer…",
+          saveLabel: "Send answer",
+          onSave: async (ans) => { await api("POST", `/${id}/answer`, { answer: ans }); await refreshAll(); },
+        });
+      }
+      else if (action === "delete") {
+        if (!confirm("Delete this pending task? This cannot be undone.")) return;
+        await api("DELETE", `/${id}`);
+        await refreshAll();
       }
       else if (action === "answer-resume") {
         const ta = panel.querySelector(`[data-textarea-id="${id}"]`);
@@ -318,10 +372,39 @@
         await api("POST", `/${id}/answer`, { answer: ans });
         await refreshAll();
       }
-      else if (action === "complete-prompt") {
-        const note = prompt("Add a note about what you did:") || "";
-        await api("POST", `/${id}/complete`, { result: note });
+      else if (action === "clarify") {
+        await api("POST", `/${id}/clarify`);
         await refreshAll();
+        switchTab("progress");
+        openStream(id);
+      }
+      else if (action === "plan") {
+        await api("POST", `/${id}/plan`);
+        await refreshAll();
+        switchTab("progress");
+        openStream(id);
+      }
+      else if (action === "approve-plan") {
+        await api("POST", `/${id}/review-plan`, { approved: true });
+        await refreshAll();
+      }
+      else if (action === "reject-plan") {
+        showTextModal({
+          title: "Reject Plan — Feedback (optional)",
+          placeholder: "What should be different?",
+          saveLabel: "Reject",
+          allowEmpty: true,
+          onSave: async (fb) => { await api("POST", `/${id}/review-plan`, { approved: false, feedback: fb }); await refreshAll(); },
+        });
+      }
+      else if (action === "complete-prompt") {
+        showTextModal({
+          title: "Mark as Done",
+          placeholder: "What did you do? (optional note)",
+          saveLabel: "Mark Done",
+          allowEmpty: true,
+          onSave: async (note) => { await api("POST", `/${id}/complete`, { result: note || "" }); await refreshAll(); },
+        });
       }
       else if (action === "view-log") {
         showLogModal(id);
@@ -534,11 +617,168 @@
           ${t.result ? `<div style="background:${isFailed?'#1a0a0a':'#0a1a14'};border:1px solid ${isFailed?'#7f1d1d':'#065f46'};border-radius:6px;padding:10px 12px;font-size:12.5px;color:${isFailed?'#fca5a5':'#86efac'};line-height:1.5;white-space:pre-wrap;">${escapeHtml(t.result)}</div>` : '<div style="color:#666;font-size:12px;">(no result recorded)</div>'}
           <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
             <button data-hist-log="${t.id}" style="background:#1e3a8a;color:#dbeafe;border:0;padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:600;">📜 View full AI log</button>
+            ${(t.action_type === "BUILD" && t.built_app_slug) ? `<a href="/tasks/static/preview.html?task=${t.id}" target="_blank" style="background:#3b82f6;color:#fff;border:0;padding:6px 10px;border-radius:6px;font-size:11px;font-weight:600;text-decoration:none;">🔍 Preview App</a>` : ''}
             <span style="color:#555;font-size:11px;">Meeting: ${escapeHtml(String(t.meeting_id).slice(0,8))}…</span>
           </div>
         </div>
       </div>
     `;
+  }
+
+  // ===== Floating draggable form modal (used for create / note / answer) =====
+  function makeFloatingModal(title, bodyHtml, posKey) {
+    // Remove any existing instance of the same kind
+    const existing = document.querySelector(`[data-aiui-modal="${posKey}"]`);
+    if (existing) existing.remove();
+
+    const modal = document.createElement("div");
+    modal.dataset.aiuiModal = posKey;
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(posKey) || "null"); } catch (_) {}
+    const top  = saved && typeof saved.top === "number" ? Math.max(8, Math.min(window.innerHeight-80, saved.top)) : 100;
+    const left = saved && typeof saved.left === "number" ? Math.max(8, Math.min(window.innerWidth-100, saved.left)) : Math.max(20, (window.innerWidth - 520) / 2);
+    modal.style.cssText = `position:fixed;top:${top}px;left:${left}px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:12px;width:min(520px, 92vw);display:flex;flex-direction:column;overflow:hidden;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;z-index:10001;box-shadow:0 20px 60px rgba(0,0,0,0.7),0 0 0 1px rgba(255,255,255,0.04);animation:aiui-tp-in 0.2s ease-out;`;
+    modal.innerHTML = `
+      <div class="aiui-modal-head" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid #2a2a2a;background:#111;cursor:move;user-select:none;">
+        <strong style="font-size:14px;">${escapeHtml(title)}</strong>
+        <button data-modal-close style="background:transparent;border:0;color:#888;font-size:20px;cursor:pointer;line-height:1;padding:0 6px;">×</button>
+      </div>
+      <div style="padding:14px 16px;">${bodyHtml}</div>
+    `;
+    document.body.appendChild(modal);
+
+    // Drag
+    (function () {
+      const head = modal.querySelector(".aiui-modal-head");
+      let dragging = false, offX = 0, offY = 0;
+      head.addEventListener("mousedown", (e) => {
+        if (e.target.closest("button")) return;
+        dragging = true;
+        const r = modal.getBoundingClientRect();
+        offX = e.clientX - r.left; offY = e.clientY - r.top;
+        e.preventDefault();
+      });
+      document.addEventListener("mousemove", (e) => {
+        if (!dragging) return;
+        const l = Math.max(0, Math.min(window.innerWidth - 100, e.clientX - offX));
+        const t = Math.max(0, Math.min(window.innerHeight - 60, e.clientY - offY));
+        modal.style.left = l + "px"; modal.style.top = t + "px";
+      });
+      document.addEventListener("mouseup", () => {
+        if (!dragging) return;
+        dragging = false;
+        const r = modal.getBoundingClientRect();
+        localStorage.setItem(posKey, JSON.stringify({ left: r.left, top: r.top }));
+      });
+    })();
+
+    modal.querySelector("[data-modal-close]").addEventListener("click", () => modal.remove());
+    return modal;
+  }
+
+  // Simple single-textarea modal (reused for manual note + ASK_USER answer)
+  function showTextModal({ title, placeholder, saveLabel, onSave, allowEmpty = false }) {
+    const html = `
+      <textarea data-ta style="width:100%;background:#000;color:#fff;border:1px solid #2a2a2a;border-radius:6px;padding:10px 12px;font-size:13px;font-family:Consolas,Menlo,monospace;height:110px;box-sizing:border-box;resize:vertical;" placeholder="${escapeHtml(placeholder || '')}"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button data-cancel style="background:#374151;color:#ddd;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;">Cancel</button>
+        <button data-save style="background:#3b82f6;color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;">${escapeHtml(saveLabel || 'Save')}</button>
+      </div>
+    `;
+    const modal = makeFloatingModal(title, html, "aiui-text-modal");
+    const ta = modal.querySelector("[data-ta]");
+    setTimeout(() => ta.focus(), 50);
+    modal.querySelector("[data-cancel]").addEventListener("click", () => modal.remove());
+    modal.querySelector("[data-save]").addEventListener("click", async () => {
+      const val = ta.value.trim();
+      if (!allowEmpty && !val) { ta.focus(); return; }
+      try {
+        modal.querySelector("[data-save]").disabled = true;
+        await onSave(val);
+        modal.remove();
+      } catch (e) {
+        alert("Failed: " + e.message);
+        modal.querySelector("[data-save]").disabled = false;
+      }
+    });
+  }
+
+  // Create-task form modal
+  async function showCreateTaskModal() {
+    const auth = await getAuthInfo();
+    const currentEmail = (auth && auth.email) || "me";
+    const html = `
+      <label style="display:block;font-size:12px;color:#888;margin-bottom:4px;">Description</label>
+      <textarea data-desc style="width:100%;background:#000;color:#fff;border:1px solid #2a2a2a;border-radius:6px;padding:10px 12px;font-size:13px;height:80px;box-sizing:border-box;resize:vertical;" placeholder="What needs doing?"></textarea>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+        <div>
+          <label style="display:block;font-size:12px;color:#888;margin-bottom:4px;">Type</label>
+          <select data-type style="width:100%;background:#000;color:#fff;border:1px solid #2a2a2a;border-radius:6px;padding:8px;font-size:13px;">
+            <option value="BUILD">BUILD</option>
+            <option value="INTEGRATE">INTEGRATE</option>
+            <option value="RESEARCH">RESEARCH</option>
+            <option value="ASK_USER">ASK_USER</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block;font-size:12px;color:#888;margin-bottom:4px;">Priority</label>
+          <select data-prio style="width:100%;background:#000;color:#fff;border:1px solid #2a2a2a;border-radius:6px;padding:8px;font-size:13px;">
+            <option value="IMPORTANT">IMPORTANT</option>
+            <option value="CRITICAL">CRITICAL</option>
+            <option value="NICE_TO_HAVE">NICE_TO_HAVE</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label style="display:block;font-size:12px;color:#888;margin-bottom:4px;">Assignee</label>
+        <select data-assignee style="width:100%;background:#000;color:#fff;border:1px solid #2a2a2a;border-radius:6px;padding:8px;font-size:13px;">
+          <option value="self">Me (${escapeHtml(currentEmail)})</option>
+          <option value="Ralph">Ralph</option>
+          <option value="Clarenz">Clarenz</option>
+          <option value="Lukas">Lukas</option>
+          <option value="Jacint">Jacint</option>
+          <option value="team">Team (visible to all admins)</option>
+        </select>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:#aaa;">
+          <input type="checkbox" data-loop-toggle style="accent-color:#4f46e5;"/>
+          Loop mode (clarify → plan → TDD build → verify → retry)
+      </label>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <button data-cancel style="background:#374151;color:#ddd;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;">Cancel</button>
+        <button data-save style="background:#10b981;color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;font-weight:600;">+ Create task</button>
+      </div>
+    `;
+    const modal = makeFloatingModal("New task", html, "aiui-create-modal");
+    setTimeout(() => modal.querySelector("[data-desc]").focus(), 50);
+    modal.querySelector("[data-cancel]").addEventListener("click", () => modal.remove());
+    modal.querySelector("[data-save]").addEventListener("click", async () => {
+      const desc = modal.querySelector("[data-desc]").value.trim();
+      if (!desc) { modal.querySelector("[data-desc]").focus(); return; }
+      const loopToggle = modal.querySelector("[data-loop-toggle]");
+      const maxAttempts = loopToggle && loopToggle.checked ? 3 : 1;
+      const body = {
+        description: desc,
+        action_type: modal.querySelector("[data-type]").value,
+        priority: modal.querySelector("[data-prio]").value,
+        assignee: modal.querySelector("[data-assignee]").value,
+        max_attempts: maxAttempts,
+      };
+      try {
+        modal.querySelector("[data-save]").disabled = true;
+        await api("POST", "", body);
+        modal.remove();
+        await refreshAll();
+        switchTab("pending");
+      } catch (e) {
+        alert("Create failed: " + e.message);
+        modal.querySelector("[data-save]").disabled = false;
+      }
+    });
   }
 
   async function showLogModal(taskId) {
@@ -645,7 +885,8 @@
   panel.addEventListener("click", e => {
     const act = e.target.dataset && e.target.dataset.act;
     const tab = e.target.dataset && e.target.dataset.tab;
-    if (act === "refresh") refreshAll();
+    if (act === "new-task") showCreateTaskModal();
+    else if (act === "refresh") refreshAll();
     else if (act === "min") panel.classList.toggle("minimized");
     else if (act === "close") {
       panel.classList.add("hidden");
@@ -730,10 +971,10 @@
         console.log("[AIUI tasks] auto-show disabled by admin");
         return;
       }
-      if (state.tasks.pending.length > 0) {
+      if (state.tasks.pending.length > 0 || state.tasks.done.length > 0) {
         panel.classList.remove("hidden");
       } else {
-        console.log("[AIUI tasks] panel hidden — no pending tasks");
+        console.log("[AIUI tasks] panel hidden — no tasks at all");
       }
     } finally {
       _initRunning = false;
