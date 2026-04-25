@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from db import init_db
+from routes_chat_history import router as chat_history_router
 from routes_cron import router as cron_router
 from routes_db import router as db_router
 from routes_execution import router as execution_router
@@ -36,6 +37,7 @@ app.include_router(preview_router)
 app.include_router(projects_router)
 app.include_router(supabase_router)
 app.include_router(db_router)
+app.include_router(chat_history_router)
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
 
 
