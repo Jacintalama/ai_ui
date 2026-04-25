@@ -251,6 +251,41 @@ async def remove_member(
     return None
 
 
+@router.post("/{slug}/leave", status_code=204)
+async def leave_project(slug: str, user: AdminUser = Depends(current_admin)):
+    """Self-remove from a project. Refused if you're the last owner."""
+    _validate_slug(slug)
+    async with session() as s:
+        row = (
+            await s.execute(
+                select(ProjectMember).where(
+                    and_(
+                        ProjectMember.slug == slug,
+                        ProjectMember.user_email == user.email,
+                    )
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Not a member of this project")
+        if row.role == "owner":
+            owner_count = len((
+                await s.execute(
+                    select(ProjectMember).where(
+                        and_(ProjectMember.slug == slug, ProjectMember.role == "owner")
+                    )
+                )
+            ).scalars().all())
+            if owner_count <= 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="You're the last owner — promote someone else first or unpublish the project.",
+                )
+        await s.delete(row)
+        await s.commit()
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Presence (live "who is here / who is building")
 # ---------------------------------------------------------------------------
