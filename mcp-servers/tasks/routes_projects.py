@@ -176,6 +176,7 @@ async def invite_member(
         raise HTTPException(status_code=400, detail="Invalid email")
 
     async with session() as s:
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
         # Project must exist (some task must have built it).
         exists = (
             await s.execute(
@@ -219,6 +220,7 @@ async def remove_member(
     last owner (leaving the project orphaned)."""
     target = email.strip().lower()
     async with session() as s:
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
         row = (
             await s.execute(
                 select(ProjectMember).where(
