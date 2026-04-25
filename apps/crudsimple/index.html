@@ -3,873 +3,904 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CRUDSimple — Instant Supabase CRUD Without the Boilerplate</title>
-  <meta name="description" content="Connect your Supabase project, pick a table, and get a fully functional admin interface in seconds. No code required." />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <title>CRUDSimple</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            display: ['"Plus Jakarta Sans"', 'sans-serif'],
-            body: ['Inter', 'sans-serif'],
-          },
-          colors: {
-            accent: {
-              50:  '#f0fdf4',
-              100: '#dcfce7',
-              200: '#bbf7d0',
-              300: '#86efac',
-              400: '#4ade80',
-              500: '#22c55e',
-              600: '#16a34a',
-              700: '#15803d',
-              800: '#166534',
-              900: '#14532d',
-            }
-          }
-        }
-      }
-    }
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body { font-family: 'Inter', sans-serif; }
-
-    /* Focus styles */
-    :focus-visible {
-      outline: 2px solid #22c55e;
-      outline-offset: 3px;
-      border-radius: 4px;
-    }
-
-    /* Accordion */
-    .faq-answer {
-      max-height: 0;
-      overflow: hidden;
-      transition: max-height 0.3s ease, padding 0.3s ease;
-    }
-    .faq-answer.open {
-      max-height: 400px;
-    }
-
-    /* Gradient text */
-    .gradient-text {
-      background: linear-gradient(135deg, #22c55e 0%, #16a34a 50%, #4ade80 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-
-    /* Hero gradient bg */
-    .hero-bg {
-      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(34,197,94,0.12) 0%, transparent 70%);
-    }
-
-    /* Card hover */
-    .feature-card {
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .feature-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 20px 40px rgba(0,0,0,0.12);
-    }
-
-    /* Mobile menu */
-    #mobile-menu {
-      display: none;
-    }
-    #mobile-menu.open {
-      display: block;
-    }
-
-    /* Testimonial card */
-    .testimonial-card {
-      transition: transform 0.2s ease;
-    }
-    .testimonial-card:hover {
-      transform: translateY(-2px);
-    }
-
-    /* Pricing toggle highlight */
-    .pricing-card-featured {
-      background: linear-gradient(135deg, #16a34a, #15803d);
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #0f172a; }
+    :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .row-compact td { height: 44px; }
+    .row-comfortable td { height: 64px; }
+    .drawer { transition: transform 0.2s ease; }
+    .drawer-closed { transform: translateX(100%); }
+    .drawer-open { transform: translateX(0); }
+    .overlay { transition: opacity 0.2s ease; }
+    .toast { animation: slideIn 0.2s ease, fadeOut 0.3s ease 2.7s forwards; }
+    @keyframes slideIn { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes fadeOut { to { opacity: 0; pointer-events: none; } }
+    .sort-icon { opacity: 0.3; }
+    th:hover .sort-icon, th[data-sorted] .sort-icon { opacity: 1; }
+    th[data-sorted="asc"] .sort-asc { color: #2563eb; }
+    th[data-sorted="desc"] .sort-desc { color: #2563eb; }
+    input[type="checkbox"] { accent-color: #2563eb; width: 16px; height: 16px; cursor: pointer; }
+    .field-error { border-color: #ef4444 !important; }
+    .error-msg { color: #ef4444; font-size: 0.75rem; margin-top: 2px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    @media (max-width: 640px) {
+      .drawer { width: 100% !important; }
+      .hide-sm { display: none !important; }
     }
   </style>
 </head>
-<body class="antialiased bg-zinc-50 text-zinc-800 font-body">
+<body class="min-h-screen">
 
-  <!-- ===== HEADER ===== -->
-  <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-zinc-100 shadow-sm">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex items-center justify-between h-16">
+<!-- Toast container -->
+<div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" aria-live="polite"></div>
 
-        <!-- Logo -->
-        <a href="#" class="flex items-center gap-2 font-display font-800 text-xl text-zinc-900" aria-label="CRUDSimple home">
-          <span class="w-8 h-8 rounded-lg bg-accent-500 flex items-center justify-center text-white text-sm font-bold">CS</span>
-          <span>CRUD<span class="gradient-text">Simple</span></span>
-        </a>
+<!-- Confirm modal -->
+<div id="confirmModal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="overlay absolute inset-0 bg-black/40" id="modalOverlay"></div>
+  <div class="relative z-10 flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white border border-slate-200 rounded-lg p-6 w-full max-w-sm shadow-lg">
+      <h2 id="confirmTitle" class="text-base font-semibold text-slate-900 mb-2">Delete record</h2>
+      <p id="confirmMsg" class="text-sm text-slate-600 mb-6"></p>
+      <div class="flex gap-3 justify-end">
+        <button id="confirmCancel" class="px-4 py-2 text-sm font-medium border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>
+        <button id="confirmOk" class="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
 
-        <!-- Desktop Nav -->
-        <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-zinc-600" aria-label="Main navigation">
-          <a href="#features" class="hover:text-accent-600 transition-colors">Features</a>
-          <a href="#how-it-works" class="hover:text-accent-600 transition-colors">How it works</a>
-          <a href="#testimonials" class="hover:text-accent-600 transition-colors">Customers</a>
-          <a href="#pricing" class="hover:text-accent-600 transition-colors">Pricing</a>
-          <a href="#faq" class="hover:text-accent-600 transition-colors">FAQ</a>
-        </nav>
+<!-- Side drawer -->
+<div id="drawerOverlay" class="overlay fixed inset-0 z-40 bg-black/30 hidden" aria-hidden="true"></div>
+<aside id="drawer" class="drawer drawer-closed fixed top-0 right-0 z-40 h-full w-full sm:w-[640px] bg-white border-l border-slate-200 flex flex-col" aria-label="Record editor" aria-hidden="true">
+  <header class="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
+    <h2 id="drawerTitle" class="text-base font-semibold text-slate-900">New Record</h2>
+    <button id="drawerClose" class="p-1.5 rounded hover:bg-slate-100 text-slate-500" aria-label="Close drawer">
+      <i data-lucide="x" class="w-4 h-4"></i>
+    </button>
+  </header>
+  <div id="drawerBody" class="flex-1 overflow-y-auto px-5 py-6 space-y-5"></div>
+  <footer class="flex items-center gap-3 px-5 py-4 border-t border-slate-200 flex-shrink-0">
+    <button id="drawerSave" class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500">Save</button>
+    <button id="drawerCancel" class="px-4 py-2 text-sm font-medium border border-slate-300 rounded-md hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>
+  </footer>
+</aside>
 
-        <!-- CTA + Mobile toggle -->
-        <div class="flex items-center gap-3">
-          <a href="#pricing" class="hidden sm:inline-flex items-center gap-1.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors shadow-sm">
-            Start free
-            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
-          </a>
+<!-- App shell -->
+<div class="flex flex-col min-h-screen">
 
-          <!-- Hamburger -->
-          <button id="menu-toggle" class="md:hidden p-2 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors" aria-expanded="false" aria-controls="mobile-menu" aria-label="Toggle navigation menu">
-            <svg id="icon-open" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>
-            <svg id="icon-close" class="w-5 h-5 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
-          </button>
-        </div>
+  <!-- Top bar -->
+  <header class="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 flex-wrap">
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <i data-lucide="database" class="w-5 h-5 text-blue-600"></i>
+      <span class="text-base font-semibold text-slate-900">CRUDSimple</span>
+    </div>
 
+    <div class="flex items-center gap-2 flex-1 min-w-0">
+      <!-- Table selector -->
+      <div class="relative flex-shrink-0">
+        <select id="tableSelect" class="pl-3 pr-8 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 appearance-none cursor-pointer" aria-label="Select table">
+          <option value="">Select table…</option>
+        </select>
+        <i data-lucide="chevron-down" class="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"></i>
       </div>
 
-      <!-- Mobile Menu -->
-      <nav id="mobile-menu" class="pb-4 space-y-1 md:hidden" aria-label="Mobile navigation">
-        <a href="#features" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">Features</a>
-        <a href="#how-it-works" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">How it works</a>
-        <a href="#testimonials" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">Customers</a>
-        <a href="#pricing" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">Pricing</a>
-        <a href="#faq" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">FAQ</a>
-        <a href="#pricing" class="block px-3 py-2 rounded-lg text-sm font-medium text-white bg-accent-500 hover:bg-accent-600 transition-colors text-center mt-2">Start free</a>
-      </nav>
+      <!-- Search -->
+      <div class="relative flex-1 max-w-xs">
+        <i data-lucide="search" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
+        <input id="searchInput" type="search" placeholder="Search…" aria-label="Search records"
+          class="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-300 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" />
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <!-- Density toggle -->
+      <button id="densityToggle" title="Toggle row density" class="p-1.5 border border-slate-300 rounded-md hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500" aria-pressed="false" aria-label="Comfortable row height">
+        <i data-lucide="align-justify" class="w-4 h-4 text-slate-500"></i>
+      </button>
+
+      <!-- Refresh -->
+      <button id="refreshBtn" title="Refresh" class="p-1.5 border border-slate-300 rounded-md hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Refresh">
+        <i data-lucide="refresh-cw" class="w-4 h-4 text-slate-500"></i>
+      </button>
+
+      <!-- New button -->
+      <button id="newBtn" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500">
+        <i data-lucide="plus" class="w-4 h-4"></i>
+        <span>New Record</span>
+      </button>
     </div>
   </header>
 
-  <main>
+  <!-- Bulk action bar (hidden until rows selected) -->
+  <div id="bulkBar" class="hidden bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center gap-3">
+    <span id="bulkCount" class="text-sm font-medium text-blue-800"></span>
+    <button id="bulkDelete" class="flex items-center gap-1 px-3 py-1 text-sm font-medium text-red-700 border border-red-300 rounded hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-500">
+      <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete selected
+    </button>
+    <button id="bulkDeselect" class="text-sm text-blue-700 hover:underline ml-auto">Deselect all</button>
+  </div>
 
-    <!-- ===== HERO ===== -->
-    <section class="hero-bg pt-20 pb-24 px-4 sm:px-6 lg:px-8 overflow-hidden" aria-labelledby="hero-heading">
-      <div class="max-w-7xl mx-auto">
-        <div class="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
+  <!-- Connection banner -->
+  <div id="connectionBanner" class="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 text-sm text-amber-800">
+    <i data-lucide="wifi-off" class="w-4 h-4 flex-shrink-0"></i>
+    <span id="connectionMsg">No Supabase config detected — using localStorage. Set <code class="bg-amber-100 px-1 rounded">window.SUPABASE_URL</code> and <code class="bg-amber-100 px-1 rounded">window.SUPABASE_ANON_KEY</code> to connect.</span>
+    <button id="dismissBanner" class="ml-auto text-amber-700 hover:text-amber-900" aria-label="Dismiss">
+      <i data-lucide="x" class="w-4 h-4"></i>
+    </button>
+  </div>
 
-          <!-- Text -->
-          <div class="flex-1 text-center lg:text-left max-w-2xl mx-auto lg:mx-0">
-            <span class="inline-flex items-center gap-2 text-xs font-semibold text-accent-700 bg-accent-50 border border-accent-200 px-3 py-1.5 rounded-full mb-6">
-              <span class="w-1.5 h-1.5 rounded-full bg-accent-500 animate-pulse"></span>
-              Supabase-native · Zero configuration
-            </span>
+  <!-- Main content -->
+  <main class="flex-1 flex flex-col p-4 gap-4">
 
-            <h1 id="hero-heading" class="font-display font-extrabold text-4xl sm:text-5xl lg:text-6xl text-zinc-900 leading-[1.1] tracking-tight mb-6">
-              CRUD your Supabase<br />
-              tables in <span class="gradient-text">seconds,</span><br />
-              not days.
-            </h1>
+    <!-- Filter chips area -->
+    <div id="filterArea" class="hidden flex flex-wrap gap-2 items-center">
+      <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Filters:</span>
+      <div id="filterChips" class="flex flex-wrap gap-1.5"></div>
+      <button id="clearFilters" class="text-xs text-blue-600 hover:underline">Clear all</button>
+    </div>
 
-            <p class="text-lg sm:text-xl text-zinc-500 leading-relaxed mb-8 max-w-xl mx-auto lg:mx-0">
-              Connect your Supabase project, pick any table, and instantly get a
-              polished admin interface with create, read, update, and delete — no
-              backend code, no ORM wiring, no boilerplate.
-            </p>
+    <!-- Table wrapper -->
+    <div class="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col">
+      <div class="overflow-auto flex-1">
+        <table id="mainTable" class="w-full text-sm border-collapse">
+          <thead id="tableHead" class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10"></thead>
+          <tbody id="tableBody" class="divide-y divide-slate-100 row-compact"></tbody>
+        </table>
 
-            <div class="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
-              <a href="#pricing" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-accent-500 hover:bg-accent-600 text-white font-semibold text-base px-6 py-3.5 rounded-2xl transition-colors shadow-md shadow-accent-500/20">
-                Start for free
-                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
-              </a>
-              <a href="#how-it-works" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-zinc-700 hover:text-zinc-900 font-semibold text-base px-6 py-3.5 rounded-2xl border border-zinc-200 hover:border-zinc-300 bg-white hover:bg-zinc-50 transition-colors">
-                <svg class="w-4 h-4 text-accent-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112Z"/></svg>
-                See how it works
-              </a>
-            </div>
+        <!-- Empty state -->
+        <div id="emptyState" class="hidden flex flex-col items-center justify-center py-20 text-center px-4">
+          <svg width="80" height="80" viewBox="0 0 80 80" fill="none" aria-hidden="true" class="mb-4 text-slate-200">
+            <rect x="10" y="20" width="60" height="48" rx="4" fill="currentColor"/>
+            <rect x="20" y="10" width="40" height="8" rx="2" fill="#e2e8f0"/>
+            <rect x="25" y="35" width="30" height="4" rx="2" fill="#cbd5e1"/>
+            <rect x="25" y="45" width="20" height="4" rx="2" fill="#cbd5e1"/>
+          </svg>
+          <p id="emptyTitle" class="text-base font-semibold text-slate-700 mb-1">No records yet</p>
+          <p id="emptySubtitle" class="text-sm text-slate-500 mb-4">Get started by adding your first record.</p>
+          <button id="emptyNewBtn" class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500">
+            <i data-lucide="plus" class="w-4 h-4"></i> Add your first record
+          </button>
+        </div>
 
-            <p class="mt-4 text-xs text-zinc-400">No credit card required · Free plan available · Setup in under 2 minutes</p>
+        <!-- Loading state -->
+        <div id="loadingState" class="hidden flex items-center justify-center py-20">
+          <div class="flex items-center gap-2 text-slate-500">
+            <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+            <span class="text-sm">Loading…</span>
           </div>
+        </div>
 
-          <!-- Mock UI -->
-          <div class="flex-1 w-full max-w-xl lg:max-w-none" aria-hidden="true">
-            <div class="rounded-2xl shadow-2xl shadow-zinc-900/10 border border-zinc-200 overflow-hidden bg-white">
-              <!-- Window chrome -->
-              <div class="flex items-center gap-1.5 px-4 py-3 border-b border-zinc-100 bg-zinc-50">
-                <span class="w-3 h-3 rounded-full bg-red-400"></span>
-                <span class="w-3 h-3 rounded-full bg-yellow-400"></span>
-                <span class="w-3 h-3 rounded-full bg-green-400"></span>
-                <span class="ml-3 flex-1 bg-white border border-zinc-200 rounded text-xs text-zinc-400 px-2 py-0.5">app.crudsimple.io/tables/products</span>
-              </div>
-              <!-- Mock toolbar -->
-              <div class="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
-                <div class="flex items-center gap-2">
-                  <span class="text-sm font-semibold text-zinc-800">products</span>
-                  <span class="text-xs text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-full">24 rows</span>
-                </div>
-                <button class="flex items-center gap-1.5 text-xs font-semibold text-white bg-accent-500 px-3 py-1.5 rounded-lg" tabindex="-1">
-                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
-                  Add row
-                </button>
-              </div>
-              <!-- Mock table -->
-              <div class="overflow-x-auto">
-                <table class="w-full text-xs">
-                  <thead>
-                    <tr class="border-b border-zinc-100 bg-zinc-50">
-                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">id</th>
-                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">name</th>
-                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">price</th>
-                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">stock</th>
-                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr class="border-b border-zinc-50 hover:bg-zinc-50/50">
-                      <td class="px-4 py-2.5 text-zinc-400 font-mono">1</td>
-                      <td class="px-4 py-2.5 text-zinc-800 font-medium">Running Shoes Pro</td>
-                      <td class="px-4 py-2.5 text-zinc-600">$129.00</td>
-                      <td class="px-4 py-2.5"><span class="bg-accent-50 text-accent-700 px-1.5 py-0.5 rounded font-medium">48</span></td>
-                      <td class="px-4 py-2.5 flex gap-1.5">
-                        <span class="cursor-pointer text-zinc-400 hover:text-accent-600">✏</span>
-                        <span class="cursor-pointer text-zinc-400 hover:text-red-500">✕</span>
-                      </td>
-                    </tr>
-                    <tr class="border-b border-zinc-50 hover:bg-zinc-50/50">
-                      <td class="px-4 py-2.5 text-zinc-400 font-mono">2</td>
-                      <td class="px-4 py-2.5 text-zinc-800 font-medium">Yoga Mat Premium</td>
-                      <td class="px-4 py-2.5 text-zinc-600">$64.99</td>
-                      <td class="px-4 py-2.5"><span class="bg-accent-50 text-accent-700 px-1.5 py-0.5 rounded font-medium">112</span></td>
-                      <td class="px-4 py-2.5 flex gap-1.5">
-                        <span class="cursor-pointer text-zinc-400 hover:text-accent-600">✏</span>
-                        <span class="cursor-pointer text-zinc-400 hover:text-red-500">✕</span>
-                      </td>
-                    </tr>
-                    <tr class="hover:bg-zinc-50/50">
-                      <td class="px-4 py-2.5 text-zinc-400 font-mono">3</td>
-                      <td class="px-4 py-2.5 text-zinc-800 font-medium">Resistance Bands Set</td>
-                      <td class="px-4 py-2.5 text-zinc-600">$34.00</td>
-                      <td class="px-4 py-2.5"><span class="bg-yellow-50 text-yellow-700 px-1.5 py-0.5 rounded font-medium">7</span></td>
-                      <td class="px-4 py-2.5 flex gap-1.5">
-                        <span class="cursor-pointer text-zinc-400 hover:text-accent-600">✏</span>
-                        <span class="cursor-pointer text-zinc-400 hover:text-red-500">✕</span>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-
+        <!-- No table selected -->
+        <div id="noTableState" class="flex flex-col items-center justify-center py-20 text-center px-4">
+          <i data-lucide="table" class="w-12 h-12 text-slate-200 mb-4"></i>
+          <p class="text-base font-semibold text-slate-600 mb-1">Select a table</p>
+          <p class="text-sm text-slate-400">Choose a table from the dropdown above, or connect Supabase to list your tables.</p>
         </div>
       </div>
-    </section>
 
-    <!-- ===== TRUST STRIP ===== -->
-    <section class="border-y border-zinc-100 bg-white py-10 px-4 sm:px-6 lg:px-8" aria-label="Trusted by teams worldwide">
-      <div class="max-w-5xl mx-auto">
-        <p class="text-center text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-8">Trusted by teams building on Supabase</p>
-        <div class="flex flex-wrap items-center justify-center gap-8 sm:gap-12 opacity-60">
-          <!-- Placeholder logos as styled text marks -->
-          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Acmecorp</span>
-          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Devstack</span>
-          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Shiphero</span>
-          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Launchpad</span>
-          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Forgeio</span>
-          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Buildnow</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== FEATURES ===== -->
-    <section id="features" class="py-24 px-4 sm:px-6 lg:px-8 bg-zinc-50" aria-labelledby="features-heading">
-      <div class="max-w-7xl mx-auto">
-        <div class="text-center mb-14">
-          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">Features</span>
-          <h2 id="features-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
-            Everything you need, nothing you don't
-          </h2>
-          <p class="text-zinc-500 text-lg max-w-2xl mx-auto">
-            CRUDSimple gives your team a clean interface to manage Supabase data
-            without writing a single line of backend code.
-          </p>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-
-          <!-- Feature 1 -->
-          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
-              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>
-            </div>
-            <h3 class="font-display font-bold text-zinc-900 mb-2">One-click Supabase connect</h3>
-            <p class="text-zinc-500 text-sm leading-relaxed">Paste your Supabase URL and anon key. CRUDSimple introspects your schema automatically — no manual table setup.</p>
-          </div>
-
-          <!-- Feature 2 -->
-          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
-              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg>
-            </div>
-            <h3 class="font-display font-bold text-zinc-900 mb-2">Full CRUD out of the box</h3>
-            <p class="text-zinc-500 text-sm leading-relaxed">Create, read, update, and delete rows across any table. Inline editing, bulk delete, and optimistic UI updates included.</p>
-          </div>
-
-          <!-- Feature 3 -->
-          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
-              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
-            </div>
-            <h3 class="font-display font-bold text-zinc-900 mb-2">Instant search & filter</h3>
-            <p class="text-zinc-500 text-sm leading-relaxed">Filter by any column, sort ascending or descending, and search across text fields — all without writing a single SQL query.</p>
-          </div>
-
-          <!-- Feature 4 -->
-          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
-              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 0 1 21.75 8.25Z"/></svg>
-            </div>
-            <h3 class="font-display font-bold text-zinc-900 mb-2">Row-Level Security aware</h3>
-            <p class="text-zinc-500 text-sm leading-relaxed">CRUDSimple respects your existing Supabase RLS policies. Your data stays protected — no admin backdoors, no bypasses.</p>
-          </div>
-
-          <!-- Feature 5 -->
-          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
-              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"/></svg>
-            </div>
-            <h3 class="font-display font-bold text-zinc-900 mb-2">Team access controls</h3>
-            <p class="text-zinc-500 text-sm leading-relaxed">Invite teammates with viewer or editor roles. Keep sensitive tables read-only for junior members while admins get full write access.</p>
-          </div>
-
-          <!-- Feature 6 -->
-          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
-              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
-            </div>
-            <h3 class="font-display font-bold text-zinc-900 mb-2">CSV export in one click</h3>
-            <p class="text-zinc-500 text-sm leading-relaxed">Export any table or filtered view to CSV instantly. Share data with stakeholders or import it into spreadsheets without touching Supabase Studio.</p>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== HOW IT WORKS ===== -->
-    <section id="how-it-works" class="py-24 px-4 sm:px-6 lg:px-8 bg-white" aria-labelledby="how-heading">
-      <div class="max-w-6xl mx-auto">
-        <div class="text-center mb-16">
-          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">How it works</span>
-          <h2 id="how-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
-            From zero to CRUD in three steps
-          </h2>
-        </div>
-
-        <div class="space-y-20">
-
-          <!-- Step 1 -->
-          <div class="flex flex-col md:flex-row items-center gap-10 lg:gap-16">
-            <div class="flex-1 order-2 md:order-1">
-              <span class="inline-block text-5xl font-display font-extrabold text-accent-100 mb-2 leading-none">01</span>
-              <h3 class="font-display font-bold text-2xl text-zinc-900 mb-3">Connect your Supabase project</h3>
-              <p class="text-zinc-500 leading-relaxed">
-                Enter your Supabase project URL and API key. CRUDSimple reads your
-                database schema in real time — every table, column type, and foreign
-                key relationship is automatically discovered. Nothing to configure manually.
-              </p>
-            </div>
-            <div class="flex-1 order-1 md:order-2" aria-hidden="true">
-              <div class="rounded-2xl bg-zinc-50 border border-zinc-100 p-6 shadow-sm">
-                <label class="block text-xs font-semibold text-zinc-500 mb-1">Supabase Project URL</label>
-                <div class="bg-white border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-400 font-mono mb-4">https://xyzcompany.supabase.co</div>
-                <label class="block text-xs font-semibold text-zinc-500 mb-1">Anon / Service key</label>
-                <div class="bg-white border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-400 font-mono mb-5">eyJhbGci••••••••••••••••••••</div>
-                <button class="w-full bg-accent-500 text-white text-sm font-semibold py-2.5 rounded-xl" tabindex="-1">Connect project →</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Step 2 -->
-          <div class="flex flex-col md:flex-row items-center gap-10 lg:gap-16">
-            <div class="flex-1" aria-hidden="true">
-              <div class="rounded-2xl bg-zinc-50 border border-zinc-100 p-5 shadow-sm">
-                <p class="text-xs font-semibold text-zinc-400 mb-3">Tables discovered</p>
-                <div class="space-y-2">
-                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-accent-200 shadow-sm">
-                    <span class="w-2 h-2 rounded-full bg-accent-500"></span>
-                    <span class="text-sm font-medium text-zinc-800">products</span>
-                    <span class="ml-auto text-xs text-zinc-400">24 rows</span>
-                  </div>
-                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5">
-                    <span class="w-2 h-2 rounded-full bg-zinc-300"></span>
-                    <span class="text-sm text-zinc-600">orders</span>
-                    <span class="ml-auto text-xs text-zinc-400">1,204 rows</span>
-                  </div>
-                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5">
-                    <span class="w-2 h-2 rounded-full bg-zinc-300"></span>
-                    <span class="text-sm text-zinc-600">customers</span>
-                    <span class="ml-auto text-xs text-zinc-400">382 rows</span>
-                  </div>
-                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5">
-                    <span class="w-2 h-2 rounded-full bg-zinc-300"></span>
-                    <span class="text-sm text-zinc-600">categories</span>
-                    <span class="ml-auto text-xs text-zinc-400">12 rows</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="flex-1">
-              <span class="inline-block text-5xl font-display font-extrabold text-accent-100 mb-2 leading-none">02</span>
-              <h3 class="font-display font-bold text-2xl text-zinc-900 mb-3">Pick a table, start editing</h3>
-              <p class="text-zinc-500 leading-relaxed">
-                Select any table from the sidebar. CRUDSimple renders a paginated,
-                sortable data grid with the correct input types for each column —
-                text fields, number inputs, toggles for booleans, date pickers for
-                timestamps, and dropdowns for foreign keys.
-              </p>
-            </div>
-          </div>
-
-          <!-- Step 3 -->
-          <div class="flex flex-col md:flex-row items-center gap-10 lg:gap-16">
-            <div class="flex-1 order-2 md:order-1">
-              <span class="inline-block text-5xl font-display font-extrabold text-accent-100 mb-2 leading-none">03</span>
-              <h3 class="font-display font-bold text-2xl text-zinc-900 mb-3">Share with your team</h3>
-              <p class="text-zinc-500 leading-relaxed">
-                Invite content editors, customer support agents, or operations staff
-                by email. Assign viewer or editor roles per-project. Your teammates
-                get a clean, simple interface — no Supabase account needed, no SQL
-                knowledge required.
-              </p>
-            </div>
-            <div class="flex-1 order-1 md:order-2" aria-hidden="true">
-              <div class="rounded-2xl bg-zinc-50 border border-zinc-100 p-6 shadow-sm">
-                <p class="text-xs font-semibold text-zinc-400 mb-3">Team members</p>
-                <div class="space-y-2.5">
-                  <div class="flex items-center gap-3">
-                    <span class="w-8 h-8 rounded-full bg-accent-500 flex items-center justify-center text-white text-xs font-bold">SM</span>
-                    <span class="flex-1 text-sm text-zinc-800">sarah@company.io</span>
-                    <span class="text-xs font-semibold text-accent-700 bg-accent-50 px-2 py-0.5 rounded-full">Admin</span>
-                  </div>
-                  <div class="flex items-center gap-3">
-                    <span class="w-8 h-8 rounded-full bg-blue-400 flex items-center justify-center text-white text-xs font-bold">JL</span>
-                    <span class="flex-1 text-sm text-zinc-800">james@company.io</span>
-                    <span class="text-xs font-semibold text-zinc-600 bg-zinc-100 px-2 py-0.5 rounded-full">Editor</span>
-                  </div>
-                  <div class="flex items-center gap-3">
-                    <span class="w-8 h-8 rounded-full bg-purple-400 flex items-center justify-center text-white text-xs font-bold">AK</span>
-                    <span class="flex-1 text-sm text-zinc-800">anya@company.io</span>
-                    <span class="text-xs font-semibold text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full">Viewer</span>
-                  </div>
-                </div>
-                <div class="mt-4 flex gap-2">
-                  <input class="flex-1 bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs text-zinc-400" value="colleague@company.io" readonly tabindex="-1" aria-label="Invite email" />
-                  <button class="text-xs font-semibold bg-accent-500 text-white px-3 py-2 rounded-lg" tabindex="-1">Invite</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== TESTIMONIALS ===== -->
-    <section id="testimonials" class="py-24 px-4 sm:px-6 lg:px-8 bg-zinc-50" aria-labelledby="testimonials-heading">
-      <div class="max-w-6xl mx-auto">
-        <div class="text-center mb-14">
-          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">Social proof</span>
-          <h2 id="testimonials-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
-            Loved by builders everywhere
-          </h2>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-          <!-- Testimonial 1 -->
-          <div class="testimonial-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="flex gap-1 mb-4" aria-label="5 out of 5 stars">
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-            </div>
-            <blockquote>
-              <p class="text-zinc-700 text-sm leading-relaxed mb-5">"We replaced a 400-line internal admin panel with CRUDSimple in an afternoon. Our customer support team can now update order records themselves — no more pinging engineers."</p>
-            </blockquote>
-            <div class="flex items-center gap-3">
-              <span class="w-9 h-9 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">MR</span>
-              <div>
-                <p class="text-sm font-semibold text-zinc-900">Marcus Reid</p>
-                <p class="text-xs text-zinc-400">CTO · Shiphero Commerce</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Testimonial 2 -->
-          <div class="testimonial-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="flex gap-1 mb-4" aria-label="5 out of 5 stars">
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-            </div>
-            <blockquote>
-              <p class="text-zinc-700 text-sm leading-relaxed mb-5">"I was about to spend two weeks building a bespoke admin dashboard. CRUDSimple connected to my Supabase project in literally 90 seconds. I shipped my actual product feature instead."</p>
-            </blockquote>
-            <div class="flex items-center gap-3">
-              <span class="w-9 h-9 rounded-full bg-purple-500 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">PK</span>
-              <div>
-                <p class="text-sm font-semibold text-zinc-900">Priya Krishnan</p>
-                <p class="text-xs text-zinc-400">Founder · Launchpad SaaS</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Testimonial 3 -->
-          <div class="testimonial-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
-            <div class="flex gap-1 mb-4" aria-label="5 out of 5 stars">
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
-            </div>
-            <blockquote>
-              <p class="text-zinc-700 text-sm leading-relaxed mb-5">"Our ops team manages 12 Supabase tables daily. CRUDSimple made that effortless — clean UI, fast search, and the RLS integration means we never worry about accidentally exposing data."</p>
-            </blockquote>
-            <div class="flex items-center gap-3">
-              <span class="w-9 h-9 rounded-full bg-orange-400 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">TN</span>
-              <div>
-                <p class="text-sm font-semibold text-zinc-900">Tomás Navarro</p>
-                <p class="text-xs text-zinc-400">Head of Operations · Forgeio</p>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== PRICING ===== -->
-    <section id="pricing" class="py-24 px-4 sm:px-6 lg:px-8 bg-white" aria-labelledby="pricing-heading">
-      <div class="max-w-5xl mx-auto">
-        <div class="text-center mb-14">
-          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">Pricing</span>
-          <h2 id="pricing-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
-            Simple pricing for every team
-          </h2>
-          <p class="text-zinc-500 text-lg max-w-xl mx-auto">Start free, upgrade when you need it. No hidden fees, no per-seat surprises on the free plan.</p>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
-
-          <!-- Free -->
-          <div class="rounded-2xl border border-zinc-200 p-7 flex flex-col">
-            <p class="text-sm font-semibold text-zinc-500 mb-1">Free</p>
-            <p class="font-display font-extrabold text-4xl text-zinc-900 mb-1">$0</p>
-            <p class="text-xs text-zinc-400 mb-6">Forever free · No card needed</p>
-            <ul class="space-y-3 text-sm text-zinc-600 mb-8 flex-1">
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> 1 Supabase project</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Up to 5 tables</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> 2 team members</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> 1,000 row reads/day</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> CSV export</li>
-            </ul>
-            <a href="#" class="block text-center text-sm font-semibold py-3 rounded-xl border border-zinc-300 hover:border-accent-400 hover:text-accent-600 transition-colors">Get started free</a>
-          </div>
-
-          <!-- Pro (featured) -->
-          <div class="pricing-card-featured rounded-2xl p-7 flex flex-col text-white relative shadow-xl shadow-accent-900/20">
-            <span class="absolute -top-3 left-1/2 -translate-x-1/2 text-xs font-bold text-accent-700 bg-accent-100 px-3 py-1 rounded-full">Most popular</span>
-            <p class="text-sm font-semibold text-accent-200 mb-1">Pro</p>
-            <p class="font-display font-extrabold text-4xl mb-1">$29</p>
-            <p class="text-xs text-accent-300 mb-6">per month · billed monthly</p>
-            <ul class="space-y-3 text-sm text-green-100 mb-8 flex-1">
-              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Unlimited projects</li>
-              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Unlimited tables</li>
-              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Up to 10 team members</li>
-              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Unlimited row reads</li>
-              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Viewer/editor roles</li>
-              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Priority support</li>
-            </ul>
-            <a href="#" class="block text-center text-sm font-semibold py-3 rounded-xl bg-white text-accent-700 hover:bg-accent-50 transition-colors">Start Pro trial</a>
-          </div>
-
-          <!-- Team -->
-          <div class="rounded-2xl border border-zinc-200 p-7 flex flex-col">
-            <p class="text-sm font-semibold text-zinc-500 mb-1">Team</p>
-            <p class="font-display font-extrabold text-4xl text-zinc-900 mb-1">$99</p>
-            <p class="text-xs text-zinc-400 mb-6">per month · billed monthly</p>
-            <ul class="space-y-3 text-sm text-zinc-600 mb-8 flex-1">
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Everything in Pro</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Unlimited team members</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Custom domain</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Audit log (30 days)</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> SSO / SAML</li>
-              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Dedicated support</li>
-            </ul>
-            <a href="#" class="block text-center text-sm font-semibold py-3 rounded-xl border border-zinc-300 hover:border-accent-400 hover:text-accent-600 transition-colors">Contact sales</a>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== FAQ ===== -->
-    <section id="faq" class="py-24 px-4 sm:px-6 lg:px-8 bg-zinc-50" aria-labelledby="faq-heading">
-      <div class="max-w-3xl mx-auto">
-        <div class="text-center mb-14">
-          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">FAQ</span>
-          <h2 id="faq-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2">
-            Common questions
-          </h2>
-        </div>
-
-        <div class="space-y-3" role="list">
-
-          <!-- FAQ Item 1 -->
-          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
-            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
-              <span>Is my Supabase data safe with CRUDSimple?</span>
-              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
-            </button>
-            <div class="faq-answer">
-              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
-                Yes. CRUDSimple never stores your data — all reads and writes go directly
-                from your browser to your Supabase project via the official Supabase JS client.
-                We only store your project URL and a hashed reference to your key. Your
-                Supabase Row Level Security policies are fully enforced.
-              </p>
-            </div>
-          </div>
-
-          <!-- FAQ Item 2 -->
-          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
-            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
-              <span>Do I need to know SQL to use CRUDSimple?</span>
-              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
-            </button>
-            <div class="faq-answer">
-              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
-                Not at all. CRUDSimple abstracts all database interactions into a
-                point-and-click interface. Filtering, sorting, searching, and editing
-                rows requires zero SQL knowledge — it's designed for non-technical
-                teammates, content editors, and operations staff.
-              </p>
-            </div>
-          </div>
-
-          <!-- FAQ Item 3 -->
-          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
-            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
-              <span>What's the difference between CRUDSimple and the Supabase Table Editor?</span>
-              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
-            </button>
-            <div class="faq-answer">
-              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
-                The Supabase Table Editor is a developer tool built for engineers who own the project.
-                CRUDSimple is an end-user admin panel designed for non-technical teammates. It hides
-                schema management, dangerous operations, and raw SQL, exposing only the data operations
-                that are safe for your team to perform.
-              </p>
-            </div>
-          </div>
-
-          <!-- FAQ Item 4 -->
-          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
-            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
-              <span>Can I limit which tables my teammates can see?</span>
-              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
-            </button>
-            <div class="faq-answer">
-              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
-                Yes. Admins can configure table-level visibility per project. If a teammate only
-                needs access to the <code class="bg-zinc-100 px-1 rounded text-xs font-mono">orders</code> and
-                <code class="bg-zinc-100 px-1 rounded text-xs font-mono">customers</code> tables, you can hide everything
-                else from their view entirely. Combined with Supabase RLS, this gives you fine-grained control.
-              </p>
-            </div>
-          </div>
-
-          <!-- FAQ Item 5 -->
-          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
-            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
-              <span>Does CRUDSimple support Supabase Storage and Auth tables?</span>
-              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
-            </button>
-            <div class="faq-answer">
-              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
-                CRUDSimple focuses on your database (public schema) tables. Support for
-                Supabase Storage buckets and Auth user management is on the roadmap for Q3 2026.
-                Subscribe to the newsletter to be notified when these ship.
-              </p>
-            </div>
-          </div>
-
-          <!-- FAQ Item 6 -->
-          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
-            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
-              <span>Can I self-host CRUDSimple?</span>
-              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
-            </button>
-            <div class="faq-answer">
-              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
-                A self-hosted Community Edition is planned and will be open-sourced on GitHub.
-                Enterprise customers on the Team plan can request early access to the on-prem
-                package — reach out via the contact form below.
-              </p>
-            </div>
-          </div>
-
-          <!-- FAQ Item 7 -->
-          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
-            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
-              <span>What happens if I exceed the free plan row limit?</span>
-              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
-            </button>
-            <div class="faq-answer">
-              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
-                The interface becomes read-only for the rest of that calendar day — no data is
-                lost and no surprise charges are applied. You'll see a banner prompting you to
-                upgrade. Limits reset at midnight UTC each day.
-              </p>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== FINAL CTA ===== -->
-    <section class="py-24 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-accent-600 via-accent-700 to-accent-800" aria-labelledby="cta-heading">
-      <div class="max-w-3xl mx-auto text-center">
-        <h2 id="cta-heading" class="font-display font-extrabold text-3xl sm:text-4xl lg:text-5xl text-white mb-6 leading-tight">
-          Stop building admin panels.<br />Start shipping features.
-        </h2>
-        <p class="text-accent-200 text-lg mb-10 max-w-xl mx-auto">
-          Connect your Supabase project in under two minutes.
-          Your team can start managing data today — no engineers required.
-        </p>
-        <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-          <a href="#pricing" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-accent-700 font-bold text-base px-8 py-4 rounded-2xl hover:bg-accent-50 transition-colors shadow-lg shadow-accent-900/30">
-            Start for free
-            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
-          </a>
-          <a href="#how-it-works" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 border border-accent-400 text-white hover:bg-white/10 font-semibold text-base px-8 py-4 rounded-2xl transition-colors">
-            See how it works
-          </a>
-        </div>
-        <p class="mt-6 text-sm text-accent-300">No credit card required · Free forever plan · 2-minute setup</p>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- ===== FOOTER ===== -->
-  <footer class="bg-zinc-900 text-zinc-400 py-16 px-4 sm:px-6 lg:px-8">
-    <div class="max-w-7xl mx-auto">
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-
-        <!-- Brand col -->
-        <div class="col-span-2 md:col-span-1">
-          <a href="#" class="flex items-center gap-2 font-display font-bold text-lg text-white mb-3" aria-label="CRUDSimple home">
-            <span class="w-7 h-7 rounded-lg bg-accent-500 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">CS</span>
-            CRUDSimple
-          </a>
-          <p class="text-sm leading-relaxed text-zinc-500">Instant Supabase admin interfaces for the whole team.</p>
-        </div>
-
-        <!-- Product links -->
-        <div>
-          <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest mb-4">Product</h3>
-          <ul class="space-y-2.5 text-sm">
-            <li><a href="#features" class="hover:text-white transition-colors">Features</a></li>
-            <li><a href="#pricing" class="hover:text-white transition-colors">Pricing</a></li>
-            <li><a href="#how-it-works" class="hover:text-white transition-colors">How it works</a></li>
-            <li><a href="#" class="hover:text-white transition-colors">Changelog</a></li>
-          </ul>
-        </div>
-
-        <!-- Company links -->
-        <div>
-          <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest mb-4">Company</h3>
-          <ul class="space-y-2.5 text-sm">
-            <li><a href="#" class="hover:text-white transition-colors">About</a></li>
-            <li><a href="#" class="hover:text-white transition-colors">Blog</a></li>
-            <li><a href="#" class="hover:text-white transition-colors">Careers</a></li>
-            <li><a href="#" class="hover:text-white transition-colors">Contact</a></li>
-          </ul>
-        </div>
-
-        <!-- Legal links -->
-        <div>
-          <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest mb-4">Legal</h3>
-          <ul class="space-y-2.5 text-sm">
-            <li><a href="#" class="hover:text-white transition-colors">Privacy Policy</a></li>
-            <li><a href="#" class="hover:text-white transition-colors">Terms of Service</a></li>
-            <li><a href="#" class="hover:text-white transition-colors">Cookie Policy</a></li>
-            <li><a href="#" class="hover:text-white transition-colors">Security</a></li>
-          </ul>
-        </div>
-
-      </div>
-
-      <div class="border-t border-zinc-800 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <p class="text-xs text-zinc-600">&copy; 2026 CRUDSimple. All rights reserved.</p>
-
-        <!-- Social icons -->
-        <div class="flex items-center gap-4">
-          <a href="#" class="text-zinc-500 hover:text-white transition-colors" aria-label="CRUDSimple on X (Twitter)">
-            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-          </a>
-          <a href="#" class="text-zinc-500 hover:text-white transition-colors" aria-label="CRUDSimple on GitHub">
-            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
-          </a>
-          <a href="#" class="text-zinc-500 hover:text-white transition-colors" aria-label="CRUDSimple on LinkedIn">
-            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-          </a>
+      <!-- Pagination -->
+      <div id="paginationBar" class="hidden border-t border-slate-200 px-4 py-3 flex items-center justify-between text-sm text-slate-600">
+        <span id="pageInfo"></span>
+        <div class="flex items-center gap-1">
+          <button id="prevPage" class="p-1.5 rounded hover:bg-slate-100 disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Previous page">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+          </button>
+          <span id="pageNum" class="px-2"></span>
+          <button id="nextPage" class="p-1.5 rounded hover:bg-slate-100 disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Next page">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+          </button>
         </div>
       </div>
     </div>
-  </footer>
 
-  <script>
-    // Mobile menu toggle
-    const menuToggle = document.getElementById('menu-toggle');
-    const mobileMenu = document.getElementById('mobile-menu');
-    const iconOpen = document.getElementById('icon-open');
-    const iconClose = document.getElementById('icon-close');
+  </main>
+</div>
 
-    menuToggle.addEventListener('click', () => {
-      const isOpen = mobileMenu.classList.toggle('open');
-      menuToggle.setAttribute('aria-expanded', String(isOpen));
-      iconOpen.classList.toggle('hidden', isOpen);
-      iconClose.classList.toggle('hidden', !isOpen);
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const PAGE_SIZE = 50;
+const LS_KEY    = 'crudsimple_v1';
+
+let supabase      = null;
+let currentTable  = null;
+let columns       = [];        // [{name, type}]
+let records       = [];        // displayed rows
+let allRecords    = [];        // full local cache (localStorage mode)
+let drawerRecord  = null;      // record being edited (null = new)
+let sortCol       = null;
+let sortDir       = 'asc';
+let searchQuery   = '';
+let page          = 1;
+let totalCount    = 0;
+let comfortable   = false;
+let selected      = new Set(); // ids of checked rows
+let supabaseMode  = false;
+
+// ── Init Supabase ─────────────────────────────────────────────────────────────
+function initSupabase() {
+  const url = window.SUPABASE_URL;
+  const key = window.SUPABASE_ANON_KEY;
+  if (url && key) {
+    supabase     = window.supabase.createClient(url, key);
+    supabaseMode = true;
+    document.getElementById('connectionBanner').classList.add('hidden');
+    loadTableList();
+  } else {
+    loadLocalTables();
+  }
+}
+
+// ── Table list ────────────────────────────────────────────────────────────────
+async function loadTableList() {
+  const sel = document.getElementById('tableSelect');
+  if (supabaseMode) {
+    try {
+      const { data, error } = await supabase.rpc('get_tables').catch(() => ({ data: null, error: true }));
+      // Fall back: query information_schema via a known RPC or list a default
+      const { data: tables, error: e2 } = await supabase
+        .from('information_schema.tables')
+        .select('table_name')
+        .eq('table_schema', 'public')
+        .catch(() => ({ data: null }));
+
+      if (tables && tables.length) {
+        tables.forEach(t => {
+          const o = document.createElement('option');
+          o.value = t.table_name;
+          o.textContent = t.table_name;
+          sel.appendChild(o);
+        });
+      } else {
+        // Can't auto-list — let user type table name
+        addTableInput();
+      }
+    } catch { addTableInput(); }
+  }
+}
+
+function addTableInput() {
+  const sel = document.getElementById('tableSelect');
+  sel.outerHTML = `<input id="tableSelect" type="text" placeholder="Table name…"
+    class="pl-3 pr-3 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+    aria-label="Table name" style="width:140px" />`;
+  document.getElementById('tableSelect').addEventListener('change', onTableChange);
+  document.getElementById('tableSelect').addEventListener('keydown', e => { if (e.key === 'Enter') onTableChange(); });
+}
+
+function loadLocalTables() {
+  const data = getLocalData();
+  const sel  = document.getElementById('tableSelect');
+  const tables = Object.keys(data);
+  tables.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t;
+    sel.appendChild(o);
+  });
+  // Add option to create new table
+  const o = document.createElement('option');
+  o.value = '__new__'; o.textContent = '+ Create table…';
+  sel.appendChild(o);
+}
+
+// ── LocalStorage helpers ──────────────────────────────────────────────────────
+function getLocalData() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveLocalData(d) { localStorage.setItem(LS_KEY, JSON.stringify(d)); }
+function getLocalRecords(table) { return (getLocalData()[table] || []); }
+function saveLocalRecords(table, rows) {
+  const d = getLocalData();
+  d[table] = rows;
+  saveLocalData(d);
+}
+function nextLocalId(rows) {
+  return rows.length ? Math.max(...rows.map(r => r.id || 0)) + 1 : 1;
+}
+
+// ── Table change ──────────────────────────────────────────────────────────────
+async function onTableChange() {
+  const sel   = document.getElementById('tableSelect');
+  const value = (sel.value || sel.value === undefined) ? (sel.value || '') : '';
+
+  if (!value || value === '') { currentTable = null; renderNoTable(); return; }
+
+  if (value === '__new__') {
+    const name = prompt('Table name (letters, numbers, underscores):');
+    if (!name) { sel.value = ''; return; }
+    const clean = name.trim().replace(/[^a-z0-9_]/gi, '_').toLowerCase();
+    if (!getLocalData()[clean]) saveLocalRecords(clean, []);
+    // Add option
+    const o = document.createElement('option');
+    o.value = clean; o.textContent = clean;
+    sel.insertBefore(o, sel.lastElementChild);
+    sel.value = clean;
+    currentTable = clean;
+  } else {
+    currentTable = value;
+  }
+
+  selected.clear();
+  page    = 1;
+  sortCol = null;
+  searchQuery = document.getElementById('searchInput').value = '';
+  await loadColumns();
+  await loadRecords();
+}
+
+// ── Columns ───────────────────────────────────────────────────────────────────
+async function loadColumns() {
+  if (!currentTable) return;
+
+  if (supabaseMode) {
+    // Try to infer columns from first row
+    const { data, error } = await supabase.from(currentTable).select('*').limit(1);
+    if (!error && data && data.length) {
+      columns = Object.keys(data[0]).map(k => ({ name: k, type: typeof data[0][k] === 'number' ? 'number' : 'text' }));
+    } else if (!error) {
+      columns = [{ name: 'id', type: 'number' }, { name: 'name', type: 'text' }];
+    } else {
+      showToast(`Error loading columns: ${error.message}`, 'error');
+      columns = [];
+    }
+  } else {
+    const rows = getLocalRecords(currentTable);
+    if (rows.length) {
+      columns = Object.keys(rows[0]).map(k => ({ name: k, type: typeof rows[0][k] === 'number' ? 'number' : 'text' }));
+    } else {
+      // Default columns for new table
+      columns = [
+        { name: 'id',   type: 'number' },
+        { name: 'name', type: 'text' },
+        { name: 'notes', type: 'text' },
+      ];
+    }
+  }
+}
+
+// ── Load records ──────────────────────────────────────────────────────────────
+async function loadRecords(optimistic) {
+  if (!currentTable) return;
+  showLoading(true);
+
+  if (supabaseMode) {
+    await loadSupabase();
+  } else {
+    loadLocal();
+  }
+  renderTable();
+  showLoading(false);
+}
+
+async function loadSupabase() {
+  let q = supabase.from(currentTable).select('*', { count: 'exact' });
+
+  if (searchQuery && columns.length) {
+    const textCols = columns.filter(c => c.type === 'text' && c.name !== 'id');
+    if (textCols.length) {
+      const or = textCols.map(c => `${c.name}.ilike.%${searchQuery}%`).join(',');
+      q = q.or(or);
+    }
+  }
+  if (sortCol) q = q.order(sortCol, { ascending: sortDir === 'asc' });
+  q = q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+
+  const { data, error, count } = await q;
+  if (error) { showToast(`Load error: ${error.message}`, 'error'); records = []; totalCount = 0; return; }
+  records    = data || [];
+  totalCount = count || 0;
+}
+
+function loadLocal() {
+  let rows = getLocalRecords(currentTable);
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    rows = rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)));
+  }
+  if (sortCol) {
+    rows = [...rows].sort((a, b) => {
+      const av = a[sortCol]; const bv = b[sortCol];
+      if (av === bv) return 0;
+      const res = av < bv ? -1 : 1;
+      return sortDir === 'asc' ? res : -res;
+    });
+  }
+  totalCount = rows.length;
+  allRecords = rows;
+  records    = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+}
+
+// ── Render table ──────────────────────────────────────────────────────────────
+function renderTable() {
+  const head = document.getElementById('tableHead');
+  const body = document.getElementById('tableBody');
+  const empty = document.getElementById('emptyState');
+  const noTable = document.getElementById('noTableState');
+  const pagBar = document.getElementById('paginationBar');
+
+  noTable.classList.add('hidden');
+
+  if (!columns.length && !records.length) { renderEmpty(); return; }
+
+  empty.classList.add('hidden');
+  head.innerHTML = '';
+  body.innerHTML = '';
+
+  // Header row
+  const tr = document.createElement('tr');
+
+  // Checkbox column
+  const thCb = document.createElement('th');
+  thCb.className = 'px-3 py-2 w-8';
+  thCb.innerHTML = `<input type="checkbox" id="selectAll" aria-label="Select all" />`;
+  tr.appendChild(thCb);
+
+  columns.forEach(col => {
+    const th = document.createElement('th');
+    const isSorted = sortCol === col.name;
+    th.className = 'px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wide cursor-pointer select-none whitespace-nowrap';
+    if (isSorted) th.setAttribute('data-sorted', sortDir);
+    th.dataset.col = col.name;
+    th.innerHTML = `
+      <span class="flex items-center gap-1">
+        ${escHtml(col.name)}
+        <span class="sort-icon flex flex-col gap-px ml-0.5">
+          <i data-lucide="chevron-up" class="w-2.5 h-2.5 sort-asc"></i>
+          <i data-lucide="chevron-down" class="w-2.5 h-2.5 sort-desc" style="margin-top:-4px"></i>
+        </span>
+      </span>`;
+    th.addEventListener('click', () => onSort(col.name));
+    tr.appendChild(th);
+  });
+
+  // Actions header
+  const thAct = document.createElement('th');
+  thAct.className = 'px-3 py-2 w-16 text-right text-xs font-medium text-slate-500 uppercase tracking-wide';
+  thAct.textContent = 'Actions';
+  tr.appendChild(thAct);
+  head.appendChild(tr);
+
+  // Rows
+  if (records.length === 0) { renderEmpty(); return; }
+  empty.classList.add('hidden');
+
+  records.forEach(rec => {
+    const tr = document.createElement('tr');
+    tr.className = `hover:bg-slate-50 cursor-pointer ${comfortable ? 'row-comfortable' : 'row-compact'}`;
+    tr.dataset.id = rec.id;
+
+    const id = getRecordId(rec);
+
+    // Checkbox
+    const tdCb = document.createElement('td');
+    tdCb.className = 'px-3';
+    tdCb.innerHTML = `<input type="checkbox" aria-label="Select row" ${selected.has(id) ? 'checked' : ''} />`;
+    tdCb.querySelector('input').addEventListener('change', e => {
+      e.stopPropagation();
+      if (e.target.checked) selected.add(id); else selected.delete(id);
+      updateBulkBar();
+      updateSelectAll();
+    });
+    tdCb.addEventListener('click', e => e.stopPropagation());
+    tr.appendChild(tdCb);
+
+    // Data cells
+    columns.forEach(col => {
+      const td = document.createElement('td');
+      td.className = 'px-3 py-2 text-slate-700 max-w-xs truncate';
+      const val = rec[col.name];
+      td.textContent = val === null || val === undefined ? '' : String(val);
+      tr.appendChild(td);
     });
 
-    // Close mobile menu on nav link click
-    mobileMenu.querySelectorAll('a').forEach(link => {
-      link.addEventListener('click', () => {
-        mobileMenu.classList.remove('open');
-        menuToggle.setAttribute('aria-expanded', 'false');
-        iconOpen.classList.remove('hidden');
-        iconClose.classList.add('hidden');
-      });
+    // Action cells
+    const tdAct = document.createElement('td');
+    tdAct.className = 'px-3 py-2 text-right whitespace-nowrap';
+    tdAct.innerHTML = `
+      <button data-action="edit" title="Edit" class="p-1 rounded hover:bg-slate-100 text-slate-500 hover:text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Edit record">
+        <i data-lucide="pencil" class="w-3.5 h-3.5 pointer-events-none"></i>
+      </button>
+      <button data-action="delete" title="Delete" class="p-1 rounded hover:bg-slate-100 text-slate-500 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 ml-1" aria-label="Delete record">
+        <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
+      </button>`;
+    tdAct.addEventListener('click', e => {
+      e.stopPropagation();
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      if (btn.dataset.action === 'edit') openDrawer(rec);
+      if (btn.dataset.action === 'delete') confirmDelete([id], rec);
+    });
+    tr.appendChild(tdAct);
+
+    tr.addEventListener('click', () => openDrawer(rec));
+    body.appendChild(tr);
+  });
+
+  // Pagination
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+  if (totalCount > PAGE_SIZE) {
+    pagBar.classList.remove('hidden');
+    document.getElementById('pageInfo').textContent = `${(page-1)*PAGE_SIZE+1}–${Math.min(page*PAGE_SIZE, totalCount)} of ${totalCount}`;
+    document.getElementById('pageNum').textContent  = `Page ${page} of ${totalPages}`;
+    document.getElementById('prevPage').disabled = page <= 1;
+    document.getElementById('nextPage').disabled = page >= totalPages;
+  } else {
+    pagBar.classList.add('hidden');
+  }
+
+  document.getElementById('selectAll').addEventListener('change', e => {
+    const ids = records.map(r => getRecordId(r));
+    if (e.target.checked) ids.forEach(id => selected.add(id));
+    else ids.forEach(id => selected.delete(id));
+    updateBulkBar();
+    renderTable();
+  });
+
+  lucide.createIcons();
+}
+
+function getRecordId(rec) {
+  return rec.id !== undefined ? rec.id : rec[columns[0]?.name];
+}
+
+function renderEmpty() {
+  document.getElementById('emptyState').classList.remove('hidden');
+  document.getElementById('mainTable').querySelector('thead').innerHTML = '';
+  document.getElementById('mainTable').querySelector('tbody').innerHTML = '';
+  document.getElementById('paginationBar').classList.add('hidden');
+}
+
+function renderNoTable() {
+  document.getElementById('noTableState').classList.remove('hidden');
+  document.getElementById('emptyState').classList.add('hidden');
+  document.getElementById('mainTable').querySelector('thead').innerHTML = '';
+  document.getElementById('mainTable').querySelector('tbody').innerHTML = '';
+  document.getElementById('paginationBar').classList.add('hidden');
+}
+
+function showLoading(v) {
+  document.getElementById('loadingState').classList.toggle('hidden', !v);
+  document.getElementById('noTableState').classList.add('hidden');
+}
+
+// ── Sort ──────────────────────────────────────────────────────────────────────
+function onSort(col) {
+  if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  else { sortCol = col; sortDir = 'asc'; }
+  page = 1;
+  loadRecords();
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+let searchTimer;
+document.getElementById('searchInput').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchQuery = e.target.value.trim();
+    page = 1;
+    loadRecords();
+  }, 300);
+});
+
+// ── Drawer ────────────────────────────────────────────────────────────────────
+function openDrawer(rec) {
+  drawerRecord = rec || null;
+  const isNew  = !rec;
+  document.getElementById('drawerTitle').textContent = isNew ? 'New Record' : 'Edit Record';
+  renderDrawerFields(rec);
+  document.getElementById('drawer').classList.remove('drawer-closed');
+  document.getElementById('drawer').classList.add('drawer-open');
+  document.getElementById('drawer').setAttribute('aria-hidden', 'false');
+  document.getElementById('drawerOverlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  // Focus first field
+  setTimeout(() => {
+    const first = document.getElementById('drawerBody').querySelector('input, textarea, select');
+    if (first) first.focus();
+  }, 50);
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('drawer-open');
+  document.getElementById('drawer').classList.add('drawer-closed');
+  document.getElementById('drawer').setAttribute('aria-hidden', 'true');
+  document.getElementById('drawerOverlay').classList.add('hidden');
+  document.body.style.overflow = '';
+  drawerRecord = null;
+}
+
+function renderDrawerFields(rec) {
+  const body   = document.getElementById('drawerBody');
+  body.innerHTML = '';
+  const editCols = columns.filter(c => c.name !== 'id');
+
+  if (editCols.length === 0) {
+    // Let user define columns for a new empty table
+    body.innerHTML = `<p class="text-sm text-slate-500">This table has no columns yet. Add a record to auto-detect columns, or first insert rows via Supabase.</p>`;
+    return;
+  }
+
+  editCols.forEach(col => {
+    const val   = rec ? (rec[col.name] ?? '') : '';
+    const label = document.createElement('label');
+    label.className = 'flex flex-col gap-1';
+    label.innerHTML = `
+      <span class="text-sm font-medium text-slate-700">
+        ${escHtml(col.name)} <span class="text-red-500" aria-hidden="true">*</span>
+      </span>`;
+
+    let input;
+    if (col.type === 'number') {
+      input = document.createElement('input');
+      input.type = 'number';
+    } else if (String(val).length > 80 || col.name.match(/notes|desc|body|content|text/i)) {
+      input = document.createElement('textarea');
+      input.rows = 3;
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+    }
+
+    input.id      = `field_${col.name}`;
+    input.name    = col.name;
+    input.value   = val;
+    input.className = 'px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-y';
+    input.setAttribute('aria-required', 'true');
+
+    // Inline validation
+    input.addEventListener('blur', () => validateField(input, col));
+    input.addEventListener('input', () => {
+      input.classList.remove('field-error');
+      const err = label.querySelector('.error-msg');
+      if (err) err.remove();
     });
 
-    // FAQ accordion
-    document.querySelectorAll('.faq-toggle').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const answer = btn.nextElementSibling;
-        const isOpen = answer.classList.toggle('open');
-        btn.setAttribute('aria-expanded', String(isOpen));
-        const chevron = btn.querySelector('.faq-chevron');
-        chevron.style.transform = isOpen ? 'rotate(180deg)' : '';
-      });
-    });
-  </script>
+    const errSpan = document.createElement('span');
+    errSpan.className = 'error-msg hidden';
+    errSpan.setAttribute('aria-live', 'polite');
+
+    label.appendChild(input);
+    label.appendChild(errSpan);
+    body.appendChild(label);
+  });
+}
+
+function validateField(input, col) {
+  const val = input.value.trim();
+  const err = input.parentElement.querySelector('.error-msg');
+  if (!val) {
+    input.classList.add('field-error');
+    err.textContent = `${col.name} is required`;
+    err.classList.remove('hidden');
+    return false;
+  }
+  input.classList.remove('field-error');
+  err.classList.add('hidden');
+  return true;
+}
+
+function collectDrawerValues() {
+  const editCols = columns.filter(c => c.name !== 'id');
+  const data     = {};
+  let valid      = true;
+
+  editCols.forEach(col => {
+    const input = document.getElementById(`field_${col.name}`);
+    if (!input) return;
+    if (!validateField(input, col)) valid = false;
+    const val = input.value.trim();
+    data[col.name] = col.type === 'number' ? Number(val) : val;
+  });
+
+  return valid ? data : null;
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+async function saveRecord() {
+  const values = collectDrawerValues();
+  if (!values) return;
+
+  const isNew = !drawerRecord;
+
+  if (supabaseMode) {
+    if (isNew) {
+      // Optimistic
+      const tempId  = `temp_${Date.now()}`;
+      const tempRec = { id: tempId, ...values };
+      records = [tempRec, ...records];
+      renderTable();
+      closeDrawer();
+
+      const { data, error } = await supabase.from(currentTable).insert([values]).select().single();
+      if (error) {
+        records = records.filter(r => r.id !== tempId);
+        renderTable();
+        showToast(`Save failed: ${error.message}`, 'error');
+      } else {
+        records = records.map(r => r.id === tempId ? data : r);
+        renderTable();
+        showToast('Record created', 'success');
+      }
+    } else {
+      const id      = getRecordId(drawerRecord);
+      const old     = { ...drawerRecord };
+      const updated = { ...drawerRecord, ...values };
+      records = records.map(r => getRecordId(r) === id ? updated : r);
+      renderTable();
+      closeDrawer();
+
+      const { error } = await supabase.from(currentTable).update(values).eq('id', id);
+      if (error) {
+        records = records.map(r => getRecordId(r) === id ? old : r);
+        renderTable();
+        showToast(`Update failed: ${error.message}`, 'error');
+      } else {
+        showToast('Record updated', 'success');
+      }
+    }
+  } else {
+    // localStorage
+    const rows = getLocalRecords(currentTable);
+    if (isNew) {
+      const newRec = { id: nextLocalId(rows), ...values };
+      const updated = [newRec, ...rows];
+      saveLocalRecords(currentTable, updated);
+      showToast('Record created', 'success');
+    } else {
+      const id      = getRecordId(drawerRecord);
+      const updated = rows.map(r => (r.id === id ? { ...r, ...values } : r));
+      saveLocalRecords(currentTable, updated);
+      showToast('Record updated', 'success');
+    }
+    closeDrawer();
+    await loadRecords();
+  }
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+function confirmDelete(ids, sampleRec) {
+  const label = sampleRec
+    ? (sampleRec.name || sampleRec.title || sampleRec.label || `#${getRecordId(sampleRec)}`)
+    : `${ids.length} records`;
+
+  const msg = ids.length === 1
+    ? `Delete "${label}"? This cannot be undone.`
+    : `Delete ${ids.length} selected records? This cannot be undone.`;
+
+  document.getElementById('confirmMsg').textContent = msg;
+  document.getElementById('confirmModal').classList.remove('hidden');
+
+  const ok     = document.getElementById('confirmOk');
+  const cancel = document.getElementById('confirmCancel');
+
+  const cleanup = () => {
+    document.getElementById('confirmModal').classList.add('hidden');
+    ok.replaceWith(ok.cloneNode(true));
+    cancel.replaceWith(cancel.cloneNode(true));
+  };
+
+  document.getElementById('confirmOk').addEventListener('click', async () => {
+    cleanup();
+    await deleteRecords(ids);
+  }, { once: true });
+  document.getElementById('confirmCancel').addEventListener('click', cleanup, { once: true });
+  document.getElementById('modalOverlay').addEventListener('click', cleanup, { once: true });
+}
+
+async function deleteRecords(ids) {
+  if (supabaseMode) {
+    // Optimistic remove
+    const removed = records.filter(r => ids.includes(getRecordId(r)));
+    records = records.filter(r => !ids.includes(getRecordId(r)));
+    renderTable();
+    selected.clear();
+    updateBulkBar();
+
+    const { error } = await supabase.from(currentTable).delete().in('id', ids);
+    if (error) {
+      records = [...removed, ...records];
+      renderTable();
+      showToast(`Delete failed: ${error.message}`, 'error');
+    } else {
+      showToast(`${ids.length} record(s) deleted`, 'success');
+    }
+  } else {
+    let rows = getLocalRecords(currentTable);
+    rows = rows.filter(r => !ids.includes(r.id));
+    saveLocalRecords(currentTable, rows);
+    selected.clear();
+    updateBulkBar();
+    showToast(`${ids.length} record(s) deleted`, 'success');
+    await loadRecords();
+  }
+}
+
+// ── Bulk ──────────────────────────────────────────────────────────────────────
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  if (selected.size > 0) {
+    bar.classList.remove('hidden');
+    document.getElementById('bulkCount').textContent = `${selected.size} selected`;
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+function updateSelectAll() {
+  const cb = document.getElementById('selectAll');
+  if (!cb) return;
+  const ids = records.map(r => getRecordId(r));
+  const allChecked = ids.length > 0 && ids.every(id => selected.has(id));
+  cb.checked       = allChecked;
+  cb.indeterminate = !allChecked && ids.some(id => selected.has(id));
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(msg, type = 'info') {
+  const colors = { success: 'bg-green-700', error: 'bg-red-700', info: 'bg-slate-700' };
+  const icons  = { success: 'check-circle', error: 'alert-circle', info: 'info' };
+  const div    = document.createElement('div');
+  div.className = `toast flex items-center gap-2 px-4 py-2.5 rounded-lg text-white text-sm shadow-lg ${colors[type]} pointer-events-auto`;
+  div.setAttribute('role', 'status');
+  div.innerHTML = `<i data-lucide="${icons[type]}" class="w-4 h-4 flex-shrink-0"></i><span>${escHtml(msg)}</span>`;
+  document.getElementById('toastContainer').appendChild(div);
+  lucide.createIcons({ nodes: [div] });
+  setTimeout(() => div.remove(), 3200);
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Event bindings ────────────────────────────────────────────────────────────
+document.getElementById('tableSelect').addEventListener('change', onTableChange);
+document.getElementById('newBtn').addEventListener('click', () => { if (currentTable) openDrawer(null); else showToast('Select a table first', 'info'); });
+document.getElementById('emptyNewBtn').addEventListener('click', () => openDrawer(null));
+document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+document.getElementById('drawerCancel').addEventListener('click', closeDrawer);
+document.getElementById('drawerOverlay').addEventListener('click', closeDrawer);
+document.getElementById('drawerSave').addEventListener('click', saveRecord);
+document.getElementById('refreshBtn').addEventListener('click', () => loadRecords());
+document.getElementById('dismissBanner').addEventListener('click', () => {
+  document.getElementById('connectionBanner').classList.add('hidden');
+});
+document.getElementById('bulkDelete').addEventListener('click', () => {
+  if (selected.size) confirmDelete([...selected], null);
+});
+document.getElementById('bulkDeselect').addEventListener('click', () => {
+  selected.clear();
+  updateBulkBar();
+  renderTable();
+});
+document.getElementById('prevPage').addEventListener('click', () => { if (page > 1) { page--; loadRecords(); } });
+document.getElementById('nextPage').addEventListener('click', () => { page++; loadRecords(); });
+
+document.getElementById('densityToggle').addEventListener('click', function() {
+  comfortable = !comfortable;
+  this.setAttribute('aria-pressed', comfortable);
+  this.title = comfortable ? 'Switch to compact' : 'Switch to comfortable';
+  document.querySelectorAll('#tableBody tr').forEach(tr => {
+    tr.classList.toggle('row-compact', !comfortable);
+    tr.classList.toggle('row-comfortable', comfortable);
+  });
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDrawer();
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+lucide.createIcons();
+initSupabase();
+</script>
 </body>
 </html>
