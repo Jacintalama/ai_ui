@@ -243,6 +243,7 @@ services:
       - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
       - CLAUDE_WORKSPACE=/workspace/ai_ui
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AIUI_FERNET_KEY=${AIUI_FERNET_KEY:-}
     volumes:
       - ./:/workspace/ai_ui
     networks:
