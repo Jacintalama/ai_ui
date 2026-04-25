@@ -31,7 +31,10 @@ async def db_session():
     engine = create_async_engine(SQLA_DB_URL)
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE tasks.items, tasks.executions CASCADE"))
+        await conn.execute(text(
+            "TRUNCATE tasks.items, tasks.executions, "
+            "tasks.published_apps, tasks.project_members CASCADE"
+        ))
     async with maker() as s:
         yield s
     await engine.dispose()
