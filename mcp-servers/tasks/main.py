@@ -155,6 +155,31 @@ async def serve_published_app_by_host(
     return await serve_published_app(slug=row.slug, file_path=file_path, request=request)
 
 
+async def _supabase_inject_for(slug: str) -> str:
+    """Return the <script> snippet to inject for this slug, or '' if no config."""
+    from models import ProjectSupabase as _ProjSb
+    import crypto_utils as _crypto
+    import json
+    async with _db_session() as s:
+        row = (await s.execute(
+            _select(_ProjSb).where(_ProjSb.slug == slug)
+        )).scalar_one_or_none()
+    if row is None:
+        return ""
+    try:
+        anon = _crypto.decrypt(row.anon_key_encrypted)
+    except Exception:
+        return ""  # corrupt token / wrong key — fail silently rather than 500
+    url_js = json.dumps(row.supabase_url)
+    key_js = json.dumps(anon)
+    return (
+        "<script>"
+        f"window.SUPABASE_URL={url_js};"
+        f"window.SUPABASE_ANON_KEY={key_js};"
+        "</script>"
+    )
+
+
 @app.get("/__public/{slug}", include_in_schema=False)
 @app.get("/__public/{slug}/", include_in_schema=False)
 @app.get("/__public/{slug}/{file_path:path}", include_in_schema=False)
@@ -196,6 +221,21 @@ async def serve_published_app(
 
     ext = _os.path.splitext(target)[1].lower()
     media = _MIME_BY_EXT.get(ext, "application/octet-stream")
+
+    if ext in (".html", ".htm"):
+        with open(target, "rb") as f:
+            body = f.read().decode("utf-8", errors="replace")
+        snippet = await _supabase_inject_for(slug)
+        if snippet:
+            lower = body.lower()
+            head_idx = lower.find("<head>")
+            if head_idx >= 0:
+                body = body[: head_idx + 6] + snippet + body[head_idx + 6 :]
+            else:
+                body = snippet + body
+        return Response(content=body, media_type=media,
+                        headers={"Cache-Control": "public, max-age=120"})
+
     return FileResponse(
         target,
         media_type=media,
