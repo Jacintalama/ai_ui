@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Preview — AIUI Tasks</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Crect%20width%3D%2224%22%20height%3D%2224%22%20rx%3D%226%22%20fill%3D%22%237c8cff%22%2F%3E%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M12%204L14%2010L20%2012L14%2014L12%2020L10%2014L4%2012L10%2010Z%22%2F%3E%3C%2Fsvg%3E">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
@@ -94,6 +95,19 @@
       overflow: hidden;
     }
     button { font-family: inherit; color: inherit; }
+    /* Consistent pointer cursor on anything clickable. */
+    button:not(:disabled),
+    a.btn,
+    .tab,
+    .filter-btn,
+    [role="button"]:not([aria-disabled="true"]),
+    [data-close],
+    .close,
+    .rollback-btn:not([disabled]),
+    .ex-btn,
+    .copy-btn,
+    .icon-btn:not(:disabled) { cursor: pointer; }
+    button:disabled, .btn:disabled, .rollback-btn[disabled] { cursor: not-allowed; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { color: var(--accent-2); }
 
@@ -117,6 +131,588 @@
     }
     .topbar-left, .topbar-right { display: flex; align-items: center; gap: var(--s-3); }
     .topbar-left { min-width: 0; }
+
+    /* Brand mark — same look as App Builder index page */
+    .brand-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px 4px 4px;
+      border-radius: var(--radius);
+      flex-shrink: 0;
+      transition: background 0.15s;
+      text-decoration: none;
+      color: var(--text);
+    }
+    .brand-link:hover { background: var(--surface-2); color: var(--text); }
+    .brand-link .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, #7c8cff 0%, #a78bfa 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 8px rgba(124,140,255,0.35);
+      flex-shrink: 0;
+      transition: transform 0.12s;
+    }
+    .brand-link:hover .brand-mark { transform: translateY(-1px); }
+    .brand-link .brand-mark svg { width: 15px; height: 15px; color: white; }
+    .brand-link .brand-text {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* Presence strip — who else is looking at this project */
+    .presence-strip {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding-left: var(--s-3);
+      margin-left: var(--s-2);
+      border-left: 1px solid var(--border);
+      height: 28px;
+    }
+    .presence-strip:empty { display: none; }
+    .presence-avatar {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      position: relative;
+      border: 2px solid var(--surface);
+      margin-left: -6px;
+      transition: transform 0.15s;
+      cursor: default;
+    }
+    .presence-avatar:first-child { margin-left: 0; }
+    .presence-avatar:hover { transform: translateY(-1px); z-index: 5; }
+    .presence-avatar.is-me {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+    .presence-avatar.is-building::after {
+      content: "";
+      position: absolute;
+      bottom: -2px;
+      right: -2px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--danger);
+      border: 2px solid var(--surface);
+      box-shadow: 0 0 0 0 var(--danger);
+      animation: presence-pulse 1.3s ease-out infinite;
+    }
+    @keyframes presence-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
+      70%  { box-shadow: 0 0 0 8px rgba(248, 113, 113, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+    }
+    .building-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      margin-left: var(--s-3);
+      font-size: 11px;
+      color: var(--danger);
+      background: var(--danger-soft);
+      border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .building-banner .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--danger);
+      animation: presence-pulse 1.3s ease-out infinite;
+    }
+
+    /* Version-history panel (inside preview.html) */
+    .history-body { padding: var(--s-4); overflow-y: auto; }
+    .history-list { display: flex; flex-direction: column; gap: 8px; }
+    .history-row {
+      display: grid;
+      grid-template-columns: 58px 1fr auto;
+      gap: 14px;
+      align-items: center;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .history-row:hover { background: var(--surface-2); border-color: var(--border-2); }
+    .history-row.current { border-color: var(--accent); background: var(--accent-soft); }
+    .history-row.error   { border-color: rgba(248,113,113,0.45); }
+    .history-row.rollback { border-color: rgba(245,158,11,0.4); }
+    .history-row .version-tag {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+      text-align: center;
+      padding: 6px 8px;
+      background: var(--accent-soft);
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(124,140,255,0.3);
+    }
+    .history-row.current .version-tag {
+      background: var(--accent);
+      color: #0a0a0b;
+      border-color: var(--accent);
+    }
+    .history-row .info {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .history-row .info .message {
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-row .info .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .history-row .info .meta .by { color: var(--text-2); }
+    .history-row .info .meta .sha {
+      font-family: var(--font-mono);
+      color: var(--muted);
+      font-size: 10px;
+      padding: 1px 5px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+    .history-row .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .history-row .status-pill {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .history-row .status-pill.ok       { background: var(--success-soft); color: var(--success); }
+    .history-row .status-pill.error    { background: var(--danger-soft);  color: var(--danger); }
+    .history-row .status-pill.rollback { background: var(--warning-soft); color: var(--warning); }
+    .history-row .status-pill.current  { background: var(--accent);       color: #0a0a0b; }
+    .history-row .rollback-btn {
+      padding: 5px 12px;
+      font-size: 11px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      color: var(--text);
+    }
+    .history-row .rollback-btn:hover:not([disabled]) {
+      background: var(--accent);
+      color: #0a0a0b;
+      border-color: var(--accent);
+    }
+    .history-row .rollback-btn[disabled] { opacity: 0.3; }
+
+    /* Publish modal */
+    .pub-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1500;
+      padding: 16px;
+    }
+    .pub-overlay[hidden] { display: none !important; }
+    .pub-card {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+      width: 100%;
+      max-width: 520px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .pub-card h3 {
+      font-size: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+    }
+    .pub-card .body {
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.55;
+    }
+    .pub-url-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .pub-url-pill .copy {
+      flex-shrink: 0;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm);
+      background: var(--surface-3);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .pub-url-pill .copy:hover { background: var(--accent); color: #0a0a0b; border-color: var(--accent); }
+    .pub-card .pub-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .pub-meta {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    /* Tri-state Publish badge: Publish (grey) → Preview (amber) → Live (green) */
+    #btn-publish.is-preview {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      border-color: #d97706;
+      color: white;
+    }
+    #btn-publish.is-preview:hover { filter: brightness(1.08); }
+    #btn-publish.is-live {
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+      border-color: #16a34a;
+      color: white;
+    }
+    #btn-publish.is-live:hover { filter: brightness(1.08); }
+
+    /* Custom domain section inside publish modal */
+    .pub-section-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+    .pub-section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pub-section-title .badge-soft {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .pub-section-title .badge-soft.verified {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+    .pub-domain-input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .pub-domain-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+    }
+    .pub-domain-input:focus { border-color: var(--accent); }
+    .pub-dns-table {
+      display: grid;
+      grid-template-columns: minmax(60px,auto) 1fr 1fr;
+      gap: 6px;
+      align-items: stretch;
+      font-size: 11px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+    }
+    .pub-dns-table .col-h {
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 10px;
+      padding: 0 2px;
+    }
+    .pub-dns-cell {
+      display: flex;
+      align-items: stretch;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      transition: border-color 0.12s;
+    }
+    .pub-dns-cell:hover { border-color: var(--border-2); }
+    .pub-dns-cell .val {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text);
+      padding: 6px 8px;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: text;
+      user-select: text;
+    }
+    .pub-dns-cell .copy-mini {
+      flex-shrink: 0;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 500;
+      border: 0;
+      border-left: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-2);
+      transition: background 0.12s, color 0.12s;
+      cursor: pointer;
+    }
+    .pub-dns-cell .copy-mini:hover { background: var(--accent); color: #0a0a0b; }
+    .pub-dns-cell.copied .copy-mini { background: var(--success); color: #0a0a0b; }
+    .pub-dns-note {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .pub-dns-note strong { color: var(--text-2); }
+    .pub-cf-warn {
+      background: var(--warning-soft);
+      color: var(--warning);
+      border: 1px solid rgba(245,158,11,0.35);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    /* Open external-link icon button (replaces "Detach" on attached state) */
+    .icon-btn-sm {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-2);
+      background: var(--surface-3);
+      color: var(--text-2);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .icon-btn-sm:hover { background: var(--accent); color: #0a0a0b; border-color: var(--accent); }
+    .icon-btn-sm svg { width: 13px; height: 13px; }
+
+    /* Rename row inside publish modal */
+    .pub-rename-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .pub-rename-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+    }
+    .pub-rename-input:focus { border-color: var(--accent); }
+    .pub-rename-result {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      min-height: 14px;
+    }
+    .pub-verify-result {
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pub-verify-result.ok    { background: var(--success-soft); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+    .pub-verify-result.fail  { background: var(--danger-soft);  color: var(--danger);  border: 1px solid rgba(248,113,113,0.3); }
+
+    /* Full-screen "Claude is building" overlay shown while task is not yet done */
+    .build-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 10, 11, 0.94);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      padding: 32px 24px;
+      overflow: auto;
+    }
+    .build-overlay[hidden] { display: none !important; }
+    .build-overlay .wand {
+      font-size: 56px;
+      animation: wand-bounce 1.6s ease-in-out infinite;
+      filter: drop-shadow(0 0 24px rgba(124, 140, 255, 0.45));
+    }
+    @keyframes wand-bounce {
+      0%, 100% { transform: translateY(0) rotate(-8deg); }
+      50%      { transform: translateY(-10px) rotate(10deg); }
+    }
+    .build-overlay h2 {
+      font-size: 22px;
+      font-weight: 700;
+      background: linear-gradient(90deg, var(--accent) 0%, #c084fc 50%, var(--accent) 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      text-align: center;
+      animation: gradient-shift 3s linear infinite;
+      margin: 0;
+    }
+    @keyframes gradient-shift {
+      0%   { background-position: 0% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .build-overlay .sub {
+      color: var(--text-2);
+      font-size: 13px;
+      max-width: 460px;
+      text-align: center;
+      line-height: 1.55;
+    }
+    .build-overlay .phase-chip {
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      padding: 4px 12px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(124,140,255,0.3);
+      border-radius: 999px;
+    }
+    .build-overlay .progress-bar {
+      width: 240px;
+      height: 3px;
+      background: var(--surface-2);
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+    .build-overlay .progress-bar::after {
+      content: "";
+      position: absolute;
+      top: 0; bottom: 0;
+      left: -40%; width: 40%;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: bo-sweep 1.8s linear infinite;
+    }
+    @keyframes bo-sweep { from { left: -40%; } to { left: 100%; } }
+    .build-overlay .live-log {
+      width: 100%;
+      max-width: 640px;
+      min-height: 160px;
+      max-height: 260px;
+      background: #050507;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #a0a8b6;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+      box-shadow: inset 0 0 40px rgba(124,140,255,0.06);
+    }
+    .build-overlay .live-log .cursor {
+      display: inline-block;
+      width: 6px;
+      height: 11px;
+      background: var(--accent);
+      margin-left: 2px;
+      animation: bo-blink 1s step-end infinite;
+      vertical-align: text-bottom;
+    }
+    @keyframes bo-blink { 50% { opacity: 0; } }
+    .build-overlay.failed h2 {
+      background: linear-gradient(90deg, var(--danger), #fb7185);
+      -webkit-background-clip: text;
+      background-clip: text;
+      animation: none;
+    }
+    .build-overlay .actions { display: flex; gap: 8px; margin-top: 6px; }
+    .build-overlay .actions .btn { padding: 8px 16px; }
 
     .back-link {
       display: inline-flex;
@@ -1217,11 +1813,150 @@
 </head>
 <body>
 
+<div class="pub-overlay" id="pub-overlay" hidden>
+  <div class="pub-card">
+    <h3 id="pub-title">🌐 Publish app</h3>
+    <div class="body" id="pub-body">
+      Make <strong id="pub-slug-name"></strong> reachable at a public URL anyone can visit.
+    </div>
+
+    <!-- ─── Auto subdomain section (hidden once a custom domain is verified) ─── -->
+    <div id="pub-auto-section">
+      <div class="pub-url-pill" id="pub-url-row" hidden>
+        <span style="flex:1;" id="pub-url-text"></span>
+        <button type="button" class="copy" id="pub-url-copy">Copy</button>
+        <a href="#" target="_blank" rel="noreferrer" class="copy" id="pub-url-open" style="text-decoration:none;">Open ↗</a>
+      </div>
+      <div class="pub-meta" id="pub-meta" hidden>
+        <span>Published <span id="pub-when"></span> by <strong id="pub-by"></strong>.</span>
+        <span>Re-publish is automatic — every new build is live immediately.</span>
+      </div>
+
+      <!-- Rename project (only shown once published) -->
+      <div id="pub-rename-block" hidden>
+        <div class="pub-section-title" style="margin-top:6px; font-size:11px; text-transform:uppercase; color:var(--muted);">Project name</div>
+        <div class="pub-rename-row">
+          <input type="text" class="pub-rename-input" id="pub-rename-input"
+                 autocomplete="off" spellcheck="false"
+                 placeholder="lowercase-letters-and-hyphens">
+          <button type="button" class="btn" id="pub-rename-btn">Rename</button>
+        </div>
+        <div class="pub-rename-result" id="pub-rename-result">
+          Lowercase letters, digits, and hyphens (3–50 chars). Renaming changes the URL.
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Custom domain section ─── -->
+    <div class="pub-section-divider" id="pub-cd-divider"></div>
+    <div class="pub-section-title" id="pub-cd-title">
+      <span>🌍 Use your own domain</span>
+      <span class="badge-soft" id="pub-cd-badge">Optional</span>
+    </div>
+    <div class="body" id="pub-cd-body">
+      Type your domain below and click <strong>Attach</strong> — we'll publish your app and show you the DNS record to add at your registrar.
+      Your app will live at <code style="font-family:var(--font-mono);font-size:11px;" id="pub-cd-example">app.mybrand.com</code>.
+    </div>
+    <div class="pub-domain-input-row" id="pub-cd-input-row" hidden>
+      <input type="text" class="pub-domain-input" id="pub-cd-input"
+             placeholder="mybrand.com" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn btn-primary" id="pub-cd-attach">Attach</button>
+    </div>
+    <div id="pub-cd-attached" hidden>
+      <div class="pub-url-pill">
+        <span style="flex:1;" id="pub-cd-current"></span>
+        <a href="#" target="_blank" rel="noreferrer" class="icon-btn-sm" id="pub-cd-open" title="Open live URL in a new tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
+      </div>
+
+      <!-- DNS instructions block — hidden once verified -->
+      <div id="pub-cd-dns-block">
+        <div class="pub-section-title" style="margin-top:14px; font-size:11px; text-transform:uppercase; color:var(--muted);">
+          DNS record to add at your registrar:
+        </div>
+        <div class="pub-dns-table" id="pub-cd-dns"></div>
+        <div class="pub-dns-note">
+          <strong>Important:</strong> use an <strong>A record</strong>, not CNAME. If your DNS provider has a "proxy" / "orange cloud" / "CDN" toggle, leave it <strong>OFF</strong> (DNS-only). DNS may take a few minutes to propagate.
+        </div>
+        <div class="pub-actions" style="margin-top:6px;">
+          <span id="pub-cd-verify-result"></span>
+          <span style="flex:1;"></span>
+          <button type="button" class="btn btn-primary" id="pub-cd-verify">Verify DNS</button>
+        </div>
+      </div>
+
+      <!-- Verified state — only shown when verified -->
+      <div id="pub-cd-verified-msg" hidden>
+        <div class="pub-verify-result ok" style="margin-top:14px;">
+          ✓ Verified — your app is live at <span id="pub-cd-verified-url-text" style="text-decoration:underline;font-weight:600;"></span>
+        </div>
+        <div class="pub-dns-note" style="margin-top:6px;">
+          To stop using your custom domain, click <strong>Unpublish</strong> below.
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Supabase backend section ─── -->
+    <div class="pub-section-divider"></div>
+    <div class="pub-section-title">
+      <span>🗄 Supabase backend</span>
+      <span class="badge-soft" id="pub-sb-badge">Optional</span>
+    </div>
+    <div class="body" id="pub-sb-body">
+      Connect a Supabase project for auth, database, and file storage.
+      Your anon key is encrypted at rest and injected into the live app
+      at runtime (<code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> /
+      <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>).
+      Claude is told how to use it on every build.
+    </div>
+    <div class="pub-domain-input-row">
+      <input type="url" class="pub-domain-input" id="pub-sb-url"
+             placeholder="https://xxxxx.supabase.co" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn btn-primary" id="pub-sb-save">Save</button>
+    </div>
+    <input type="text" class="pub-domain-input" id="pub-sb-anon"
+           placeholder="anon public key (eyJ…)" autocomplete="off" spellcheck="false"
+           style="margin-top:6px;">
+    <div id="pub-sb-attached" hidden>
+      <div class="pub-url-pill">
+        <span style="flex:1;" id="pub-sb-current"></span>
+        <button type="button" class="copy" id="pub-sb-clear">Disconnect</button>
+      </div>
+    </div>
+
+    <div class="pub-actions">
+      <button type="button" class="btn" id="pub-cancel">Close</button>
+      <button type="button" class="btn btn-danger" id="pub-unpublish" hidden>Unpublish</button>
+      <button type="button" class="btn btn-primary" id="pub-confirm">Publish now</button>
+    </div>
+  </div>
+</div>
+
+<div class="build-overlay" id="build-overlay" hidden>
+  <div class="wand">🪄</div>
+  <h2 id="build-title">Claude is building your app…</h2>
+  <div class="sub" id="build-sub">Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.</div>
+  <div class="phase-chip" id="build-phase">Starting up</div>
+  <div class="progress-bar"></div>
+  <div class="live-log" id="build-log"><span class="cursor"></span></div>
+  <div class="actions">
+    <button class="btn btn-primary" id="build-start" type="button" hidden>▶ Start build now</button>
+    <button class="btn btn-primary" id="build-retry" type="button" hidden>Try again</button>
+    <a class="btn" href="/tasks/static/projects.html">← Back to my projects</a>
+  </div>
+  <div class="sub" style="font-size:11px; margin-top:4px;">The build keeps running in the background — you can come back anytime.</div>
+</div>
+
 <header class="topbar">
   <div class="topbar-left">
-    <a class="back-link" href="/" title="Back to tasks">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-      Tasks
+    <a class="brand-link" href="/tasks/app-builder" title="App Builder — back to my projects" aria-label="AIUI App Builder">
+      <span class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.813 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.813a2 2 0 0 1 1.287-1.288L21 12l-5.813-1.9a2 2 0 0 1-1.287-1.287z"/>
+        </svg>
+      </span>
+      <span class="brand-text">App Builder</span>
     </a>
     <div class="slug-pill" id="slug-pill" title="App path">
       <span class="slug-prefix">apps/</span>
@@ -1229,6 +1964,11 @@
       <button class="copy-btn" id="copy-slug" title="Copy apps/<slug>/">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       </button>
+    </div>
+    <div class="presence-strip" id="presence-strip"></div>
+    <div class="building-banner" id="building-banner" hidden>
+      <span class="live-dot"></span>
+      <span id="building-who">someone is editing</span>
     </div>
   </div>
   <div class="topbar-right">
@@ -1244,6 +1984,12 @@
     <button class="btn btn-danger" id="btn-stop" disabled>
       <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14"/></svg>
       Stop
+    </button>
+    <button class="btn" id="btn-publish" type="button" title="Publish this app to a public URL">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+      </svg>
+      <span id="btn-publish-label">Publish</span>
     </button>
     <button class="icon-btn" id="theme-toggle" title="Toggle theme">
       <svg id="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -1301,6 +2047,13 @@
         </span>
         <span class="tab-label">Logs</span>
         <span class="tab-badge" id="badge-logs" hidden></span>
+      </button>
+      <button class="tab" data-tab="history" title="Version history — rollback to a previous build">
+        <span class="tab-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+        </span>
+        <span class="tab-label">History</span>
+        <span class="tab-badge" id="badge-history" hidden></span>
       </button>
     </nav>
 
@@ -1387,6 +2140,25 @@
           <div class="empty">
             <div class="empty-icon">≡</div>
             <div class="empty-title">Loading execution logs…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- History (version-control) panel -->
+      <div class="panel" id="panel-history">
+        <div class="panel-head">
+          <span class="filepath" id="history-title">Version history</span>
+          <div class="panel-actions">
+            <span id="history-count" style="font-size:11px;color:var(--muted);"></span>
+            <button class="icon-btn" id="history-refresh" title="Refresh" type="button">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="panel-body history-body" id="history-body">
+          <div class="empty">
+            <div class="empty-icon">🕒</div>
+            <div class="empty-title">Loading versions…</div>
           </div>
         </div>
       </div>
@@ -1484,6 +2256,163 @@
     document.body.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Missing ?task= parameter</div><div class="empty-sub">Open this page with a task id: <code>/tasks/static/preview.html?task=&lt;id&gt;</code></div></div>';
     return;
   }
+
+  // ────────────────────────────────────────────────────────────────────
+  // BUILD OVERLAY — show "Claude is building" animation while the task
+  // is not yet completed. Polls task status + latest execution log so the
+  // user can watch files being written in real time.
+  // ────────────────────────────────────────────────────────────────────
+  const $bov         = document.getElementById("build-overlay");
+  const $bovTitle    = document.getElementById("build-title");
+  const $bovSub      = document.getElementById("build-sub");
+  const $bovPhase    = document.getElementById("build-phase");
+  const $bovLog      = document.getElementById("build-log");
+  const $bovRetry    = document.getElementById("build-retry");
+  const $bovStart    = document.getElementById("build-start");
+  let _bovAutoKicked = false;  // only fire auto-execute once per page load
+  const BUILDING_STATES = new Set([
+    "pending", "planning", "running", "awaiting_input", "awaiting_plan_review", "claimed_manual",
+  ]);
+  const PHASE_LABELS = {
+    pending: "Queued",
+    planning: "Planning",
+    awaiting_plan_review: "Awaiting plan review",
+    running: "Building",
+    awaiting_input: "Needs your input",
+    claimed_manual: "Manual mode",
+  };
+  let _bovPollTimer = null;
+  let _bovLastLog = "";
+
+  function _escapeHtmlBov(s) {
+    return (s || "").replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+    );
+  }
+
+  async function _bovCheck() {
+    try {
+      const task = await apiFetch("GET", "/" + taskId);
+      if (!task) return false;
+      if (task.status === "completed") {
+        $bov.hidden = true;
+        await loadFileTree();
+        try { startPolling(); } catch (_) {}
+        try { loadLogs(); } catch (_) {}
+        try { loadEnhanceHistory(); } catch (_) {}
+        if (typeof toast === "function") toast("✨ Your app is ready!", "success", 4000);
+        return true;
+      }
+      if (task.status === "failed") {
+        $bov.classList.add("failed");
+        $bovTitle.textContent = "🪄 Build ran into a problem";
+        $bovSub.textContent = task.result || "Claude had trouble with this build. You can retry or adjust the description.";
+        $bovPhase.textContent = "Error";
+        $bovRetry.hidden = false;
+        $bov.hidden = false;
+        return true;  // stop polling until user retries
+      }
+      // Still working
+      $bov.hidden = false;
+      $bovPhase.textContent = PHASE_LABELS[task.status] || task.status;
+
+      // Auto-kick: a pending BUILD/INTEGRATE/RESEARCH with zero executions
+      // means the initial /execute call never reached the backend. Fire it
+      // now so the user doesn't sit watching a phantom "building" forever.
+      if (
+        !_bovAutoKicked &&
+        task.status === "pending" &&
+        ["BUILD", "INTEGRATE", "RESEARCH"].includes(task.action_type)
+      ) {
+        _bovAutoKicked = true;
+        try {
+          const execs = await apiFetch("GET", "/" + taskId + "/executions");
+          if (!execs || execs.length === 0) {
+            $bovTitle.textContent = "🚀 Starting Claude…";
+            try {
+              await apiFetch("POST", "/" + taskId + "/execute");
+              $bovTitle.textContent = "Claude is building your app…";
+            } catch (e) {
+              // Couldn't start — show manual Start button so user has a way out.
+              $bovTitle.textContent = "⚠ Build didn't start automatically";
+              $bovSub.textContent = "Click Start below to kick it off manually, or go back to your projects.";
+              $bovStart.hidden = false;
+            }
+          }
+        } catch (_) { /* ignore — we'll retry the overall poll */ }
+      }
+
+      // Pull the latest execution log to stream into the overlay.
+      try {
+        const execs = await apiFetch("GET", "/" + taskId + "/executions");
+        if (execs && execs.length) {
+          const latest = execs[0];
+          if (latest.log && latest.log !== _bovLastLog) {
+            const lines = latest.log.split("\n").slice(-40).join("\n");
+            $bovLog.innerHTML = _escapeHtmlBov(lines) + '<span class="cursor"></span>';
+            $bovLog.scrollTop = $bovLog.scrollHeight;
+            _bovLastLog = latest.log;
+          }
+        }
+      } catch (_) { /* log fetch errors are non-fatal */ }
+      return false;
+    } catch (err) {
+      console.warn("[build overlay] check failed", err);
+      // Auth error or task missing — don't block the page forever.
+      $bov.hidden = true;
+      return true;
+    }
+  }
+
+  async function _bovStart() {
+    const done = await _bovCheck();
+    if (done) return;
+    _bovPollTimer = setInterval(async () => {
+      const finished = await _bovCheck();
+      if (finished && _bovPollTimer) {
+        clearInterval(_bovPollTimer);
+        _bovPollTimer = null;
+      }
+    }, 2500);
+  }
+
+  if ($bovStart) {
+    $bovStart.addEventListener("click", async () => {
+      $bovStart.hidden = true;
+      $bovTitle.textContent = "🚀 Starting Claude…";
+      $bovSub.textContent = "Kicking off the build…";
+      try {
+        await apiFetch("POST", "/" + taskId + "/execute");
+        $bovTitle.textContent = "Claude is building your app…";
+        $bovSub.textContent = "Sit tight — creating files, writing code, and running tests.";
+      } catch (err) {
+        $bovTitle.textContent = "⚠ Could not start";
+        $bovSub.textContent = (err && err.message) || "Backend rejected the request.";
+        $bovStart.hidden = false;
+      }
+    });
+  }
+
+  if ($bovRetry) {
+    $bovRetry.addEventListener("click", async () => {
+      $bovRetry.hidden = true;
+      $bov.classList.remove("failed");
+      $bovTitle.textContent = "Restarting build…";
+      $bovSub.textContent = "Claude is picking things back up.";
+      _bovLastLog = "";
+      $bovLog.innerHTML = '<span class="cursor"></span>';
+      try {
+        await apiFetch("POST", "/" + taskId + "/execute");
+      } catch (err) {
+        if (typeof toast === "function") toast("Retry failed: " + err.message, "error", 5000);
+      }
+      if (_bovPollTimer) clearInterval(_bovPollTimer);
+      _bovStart();
+    });
+  }
+
+  // Kick off immediately (before the rest of the page loads data).
+  _bovStart();
 
   // ── State ──
   let slug = "";
@@ -1725,6 +2654,7 @@
     if (tab === "preview") refreshPreviewFrame();
     if (tab === "logs") loadLogs();
     if (tab === "tests") loadTests();
+    if (tab === "history") loadVersions();
   }
   document.getElementById("tabs").addEventListener("click", function (e) {
     const btn = e.target.closest(".tab");
@@ -1745,9 +2675,19 @@
       $fileCount.textContent = files.length + " file" + (files.length === 1 ? "" : "s");
       renderFileTree();
     } catch (err) {
-      $fileTree.innerHTML = '<div class="tree-empty" style="color:var(--danger)">' + escapeHtml(err.message) + '</div>';
-      $slugName.textContent = "(error)";
-      toast("Could not load files: " + err.message, "error", 6000);
+      // 404 is expected during build (app not written yet) — stay quiet.
+      // The build overlay watcher will retry loadFileTree once the build
+      // completes. Only surface real errors (5xx, network) to the user.
+      const msg = (err && err.message) || "";
+      const isExpectedDuringBuild = msg.includes("404") || msg.includes("Not Found");
+      if (!isExpectedDuringBuild) {
+        $fileTree.innerHTML = '<div class="tree-empty" style="color:var(--danger)">' + escapeHtml(msg) + '</div>';
+        toast("Could not load files: " + msg, "error", 6000);
+      } else {
+        $fileTree.innerHTML = '<div class="tree-empty">Waiting for Claude to write the first files…</div>';
+      }
+      // Never set slug-name to "(error)" — it leaks into presence URLs.
+      // Leave it as "loading…" so presence waits for a real slug.
     }
   }
 
@@ -2069,6 +3009,715 @@
   });
 
   // ────────────────────────────────────────────────────────────────────
+  // HISTORY (version control)
+  // ────────────────────────────────────────────────────────────────────
+  const $historyBody    = document.getElementById("history-body");
+  const $historyCount   = document.getElementById("history-count");
+  const $historyRefresh = document.getElementById("history-refresh");
+
+  function formatVersionDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    const today = new Date();
+    const opts = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+    if (d.getFullYear() !== today.getFullYear()) opts.year = "numeric";
+    return d.toLocaleString(undefined, opts);
+  }
+
+  function renderVersions(rows) {
+    if (!rows || !rows.length) {
+      $historyBody.innerHTML =
+        '<div class="empty">' +
+        '<div class="empty-icon">🕒</div>' +
+        '<div class="empty-title">No versions yet</div>' +
+        '<div class="empty-sub">Every build commit becomes a version you can roll back to. Run a build from the Enhance sidebar.</div>' +
+        '</div>';
+      $historyCount.textContent = "";
+      return;
+    }
+    // Oldest commit = v1, newest = v(N). Rows come newest-first from git log.
+    const total = rows.length;
+    $historyCount.textContent = total + " version" + (total === 1 ? "" : "s");
+
+    const list = document.createElement("div");
+    list.className = "history-list";
+    rows.forEach((v, idx) => {
+      const versionNum = total - idx;
+      const row = document.createElement("div");
+      row.className = "history-row"
+        + (v.is_current ? " current" : "")
+        + (v.status === "error" ? " error" : "")
+        + (v.status === "rollback" ? " rollback" : "");
+
+      const actor = v.actor_email
+        ? v.actor_email.split("@")[0]
+        : (v.author && v.author !== "AIUI Deploy" ? v.author : "system");
+
+      const pillCls = v.is_current ? "current" : v.status;
+      const pillLbl = v.is_current ? "current" : v.status;
+
+      const canRollback = !v.is_current;
+      row.innerHTML =
+        '<div class="version-tag">v' + versionNum + '</div>' +
+        '<div class="info">' +
+          '<div class="message">' + escapeHtml(v.message) + '</div>' +
+          '<div class="meta">' +
+            '<span>🕒 ' + escapeHtml(formatVersionDate(v.date)) + '</span>' +
+            '<span class="by">· by <strong>' + escapeHtml(actor) + '</strong></span>' +
+            '<span class="sha">' + escapeHtml(v.short_sha) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="actions">' +
+          '<span class="status-pill ' + pillCls + '">' + escapeHtml(pillLbl) + '</span>' +
+          '<button type="button" class="rollback-btn" data-sha="' + escapeHtml(v.sha) + '" data-v="' + versionNum + '"'
+            + (canRollback ? "" : " disabled") + '>' + (canRollback ? "Rollback" : "—") + '</button>' +
+        '</div>';
+      list.appendChild(row);
+    });
+    $historyBody.innerHTML = "";
+    $historyBody.appendChild(list);
+
+    list.querySelectorAll(".rollback-btn:not([disabled])").forEach((b) =>
+      b.addEventListener("click", () => rollbackVersion(b.dataset.sha, b.dataset.v))
+    );
+  }
+
+  async function loadVersions() {
+    if (!slug) {
+      $historyBody.innerHTML =
+        '<div class="empty">' +
+        '<div class="empty-icon">🕒</div>' +
+        '<div class="empty-title">Waiting for build</div>' +
+        '<div class="empty-sub">Version history will appear here once the app has its first commit.</div>' +
+        '</div>';
+      return;
+    }
+    $historyBody.innerHTML =
+      '<div class="empty"><div class="empty-icon">🕒</div><div class="empty-title">Loading versions…</div></div>';
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = "Bearer " + token;
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/versions", {
+        headers: headers,
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        $historyBody.innerHTML =
+          '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load</div><div class="empty-sub">' +
+          escapeHtml(txt).slice(0, 300) + '</div></div>';
+        return;
+      }
+      const rows = await r.json();
+      renderVersions(rows);
+    } catch (err) {
+      $historyBody.innerHTML =
+        '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Network error</div><div class="empty-sub">' +
+        escapeHtml(err.message) + '</div></div>';
+    }
+  }
+
+  async function rollbackVersion(sha, versionNum) {
+    if (!confirm("Rollback apps/" + slug + "/ to v" + versionNum + " (" + sha.slice(0, 7) + ")?\n\nA new commit is added on top — the old versions stay in history so you can always come forward again.")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = "Bearer " + token;
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/rollback", {
+        method: "POST",
+        headers: headers,
+        credentials: "include",
+        body: JSON.stringify({ sha: sha }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Rollback failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      const res = await r.json();
+      toast(res.noop ? "Already at that version." : "✅ Rolled back to v" + versionNum + ".", "success", 4000);
+      await loadVersions();
+      // Refresh file tree so Code panel shows the rolled-back files.
+      await loadFileTree();
+      // If a preview server is running, its files on disk just changed.
+      if (activeTab === "preview") refreshPreviewFrame();
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    }
+  }
+
+  if ($historyRefresh) $historyRefresh.addEventListener("click", loadVersions);
+
+  // ────────────────────────────────────────────────────────────────────
+  // PUBLISH (host app at <slug>.ai-ui.coolestdomain.win)
+  // ────────────────────────────────────────────────────────────────────
+  const $pubOverlay = document.getElementById("pub-overlay");
+  const $pubTitle   = document.getElementById("pub-title");
+  const $pubBody    = document.getElementById("pub-body");
+  const $pubSlug    = document.getElementById("pub-slug-name");
+  const $pubUrlRow  = document.getElementById("pub-url-row");
+  const $pubUrlText = document.getElementById("pub-url-text");
+  const $pubUrlCopy = document.getElementById("pub-url-copy");
+  const $pubUrlOpen = document.getElementById("pub-url-open");
+  const $pubMeta    = document.getElementById("pub-meta");
+  const $pubWhen    = document.getElementById("pub-when");
+  const $pubBy      = document.getElementById("pub-by");
+  const $pubCancel  = document.getElementById("pub-cancel");
+  const $pubConfirm = document.getElementById("pub-confirm");
+  const $pubUnpub   = document.getElementById("pub-unpublish");
+  const $btnPub     = document.getElementById("btn-publish");
+  const $btnPubLbl  = document.getElementById("btn-publish-label");
+
+  let _publishedState = null; // {published, public_url, ...}
+
+  function _closePub() { $pubOverlay.hidden = true; }
+  $pubCancel.addEventListener("click", _closePub);
+  $pubOverlay.addEventListener("click", (ev) => { if (ev.target === $pubOverlay) _closePub(); });
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$pubOverlay.hidden) _closePub(); });
+
+  function _renderPubButton(state, custom) {
+    // Tri-state badge:
+    //   "Publish" (grey)  — nothing published anywhere
+    //   "Preview" (amber) — published only at the generic auto subdomain
+    //                       (visible URL but not yet on the user's real domain)
+    //   "Live"    (green) — a custom domain is attached AND verified;
+    //                       the app is live at the user's real URL.
+    $btnPub.classList.remove("is-live", "is-preview");
+    if (custom && custom.verified) {
+      $btnPub.classList.add("is-live");
+      $btnPubLbl.textContent = "Live";
+      $btnPub.title = "Live at " + (custom.public_url || "") + " — click to manage";
+    } else if (state && state.published) {
+      $btnPub.classList.add("is-preview");
+      $btnPubLbl.textContent = "Preview";
+      $btnPub.title = "Preview at " + (state.public_url || "")
+        + " — attach your own domain to go fully live. Click to manage.";
+    } else {
+      $btnPubLbl.textContent = "Publish";
+      $btnPub.title = "Publish this app — click to set up a public URL or your own domain";
+    }
+  }
+
+  async function refreshPublishStatus() {
+    if (!slug) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/publish", {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (!r.ok) return;
+      _publishedState = await r.json();
+      _renderPubButton(_publishedState, _customDomainState);
+    } catch (_) {}
+  }
+
+  function _renderPubModal() {
+    $pubSlug.textContent = slug || "(unknown)";
+    const $renameBlock = document.getElementById("pub-rename-block");
+    const $renameInput = document.getElementById("pub-rename-input");
+    if (_publishedState && _publishedState.published) {
+      $pubTitle.textContent = "🌐 App is live";
+      $pubBody.innerHTML = "Anyone with this link can view <strong>" + escapeHtml(slug) + "</strong>:";
+      $pubUrlRow.hidden = false;
+      $pubUrlText.textContent = _publishedState.public_url;
+      $pubUrlOpen.href = _publishedState.public_url;
+      $pubMeta.hidden = false;
+      try {
+        const d = new Date(_publishedState.published_at);
+        $pubWhen.textContent = d.toLocaleString();
+      } catch (_) { $pubWhen.textContent = ""; }
+      $pubBy.textContent = (_publishedState.published_by || "").split("@")[0] || "—";
+      $pubConfirm.hidden = true;
+      $pubUnpub.hidden = false;
+      if ($renameBlock) {
+        $renameBlock.hidden = false;
+        if ($renameInput) $renameInput.value = slug || "";
+      }
+    } else {
+      $pubTitle.textContent = "🌐 Publish app";
+      $pubBody.innerHTML = "Make <strong>" + escapeHtml(slug) + "</strong> reachable at a public URL anyone can visit. Publishing is free — you can unpublish anytime.";
+      $pubUrlRow.hidden = false;
+      const previewUrl = "https://" + slug + ".ai-ui.coolestdomain.win/";
+      $pubUrlText.textContent = previewUrl;
+      $pubUrlOpen.href = previewUrl;
+      $pubUrlOpen.style.display = "none";
+      $pubMeta.hidden = true;
+      $pubConfirm.hidden = false;
+      $pubUnpub.hidden = true;
+      if ($renameBlock) $renameBlock.hidden = true;
+    }
+  }
+
+  // ── Supabase config ──
+  const $sbUrl      = document.getElementById("pub-sb-url");
+  const $sbAnon     = document.getElementById("pub-sb-anon");
+  const $sbSave     = document.getElementById("pub-sb-save");
+  const $sbClear    = document.getElementById("pub-sb-clear");
+  const $sbAttached = document.getElementById("pub-sb-attached");
+  const $sbCurrent  = document.getElementById("pub-sb-current");
+  const $sbBadge    = document.getElementById("pub-sb-badge");
+
+  let _sbState = null;
+
+  async function refreshSupabase() {
+    if (!slug) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (r.ok) _sbState = await r.json();
+    } catch (_) {}
+    _renderSupabase();
+  }
+
+  function _renderSupabase() {
+    const cfg = _sbState || {};
+    if (cfg.configured) {
+      $sbBadge.textContent = "Connected";
+      $sbBadge.classList.add("verified");
+      $sbAttached.hidden = false;
+      $sbCurrent.textContent = cfg.supabase_url || "";
+      $sbUrl.value = cfg.supabase_url || "";
+      $sbAnon.value = "";
+      $sbAnon.placeholder = "(saved — paste again only to change)";
+    } else {
+      $sbBadge.textContent = "Optional";
+      $sbBadge.classList.remove("verified");
+      $sbAttached.hidden = true;
+      $sbAnon.placeholder = "anon public key (eyJ…)";
+    }
+  }
+
+  $sbSave.addEventListener("click", async () => {
+    const url = ($sbUrl.value || "").trim();
+    const key = ($sbAnon.value || "").trim();
+    if (!url) { $sbUrl.focus(); return; }
+    if (!key) {
+      if (!(_sbState && _sbState.configured)) {
+        $sbAnon.focus();
+        toast("Paste your anon public key.", "error", 4000);
+        return;
+      }
+      toast("Paste your anon key again to change the config (we don't store it in plaintext).", "error", 5000);
+      return;
+    }
+    $sbSave.disabled = true;
+    $sbSave.textContent = "Saving…";
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+        credentials: "include",
+        body: JSON.stringify({ supabase_url: url, anon_key: key }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Save failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _sbState = await r.json();
+      _renderSupabase();
+      toast("Supabase saved. Future builds + the live app will use it.", "success", 4000);
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $sbSave.disabled = false;
+      $sbSave.textContent = "Save";
+    }
+  });
+
+  $sbClear.addEventListener("click", async () => {
+    if (!confirm("Disconnect Supabase from this project? The live app will lose access immediately.")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
+        method: "DELETE",
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        toast("Disconnect failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _sbState = { configured: false };
+      _renderSupabase();
+      toast("Supabase disconnected.", "success", 3000);
+    } catch (err) { toast("Network error: " + err.message, "error", 6000); }
+  });
+
+  // Refresh Supabase config every time the publish modal opens.
+  $btnPub.addEventListener("click", () => {
+    setTimeout(refreshSupabase, 100);
+  });
+
+  // ── Rename project ──
+  const $renameInput  = document.getElementById("pub-rename-input");
+  const $renameBtn    = document.getElementById("pub-rename-btn");
+  const $renameResult = document.getElementById("pub-rename-result");
+  const SLUG_RE_PV = /^[a-z0-9][a-z0-9-]{2,49}$/;
+
+  if ($renameBtn) {
+    $renameBtn.addEventListener("click", async () => {
+      const newSlug = ($renameInput.value || "").trim().toLowerCase();
+      if (!newSlug || newSlug === slug) {
+        $renameResult.textContent = "Type a new name (lowercase letters, digits, and hyphens, 3–50 chars).";
+        return;
+      }
+      if (!SLUG_RE_PV.test(newSlug)) {
+        $renameResult.innerHTML = '<span style="color:var(--danger);">Invalid name. Use lowercase letters, digits, and hyphens (3–50 chars).</span>';
+        return;
+      }
+      if (!confirm(`Rename "${slug}" → "${newSlug}"?\n\nThe URL will change. Any custom domain you've attached will need a new DNS record for the new name.`)) return;
+
+      $renameBtn.disabled = true;
+      $renameBtn.textContent = "Renaming…";
+      try {
+        const token = localStorage.getItem("token");
+        const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/rename`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+          credentials: "include",
+          body: JSON.stringify({ new_slug: newSlug }),
+        });
+        if (!r.ok) {
+          const txt = await r.text();
+          $renameResult.innerHTML = '<span style="color:var(--danger);">' + escapeHtml(txt).slice(0, 220) + '</span>';
+          return;
+        }
+        toast(`Renamed to ${newSlug}. Reloading…`, "success", 3000);
+        // Reload the page after a beat — slug is in many places, easiest reset.
+        setTimeout(() => window.location.reload(), 800);
+      } catch (err) {
+        $renameResult.innerHTML = '<span style="color:var(--danger);">Network error: ' + escapeHtml(err.message) + '</span>';
+      } finally {
+        $renameBtn.disabled = false;
+        $renameBtn.textContent = "Rename";
+      }
+    });
+  }
+
+  $btnPub.addEventListener("click", async () => {
+    await refreshPublishStatus();
+    _renderPubModal();
+    $pubOverlay.hidden = false;
+  });
+
+  $pubConfirm.addEventListener("click", async () => {
+    $pubConfirm.disabled = true;
+    $pubConfirm.textContent = "Publishing…";
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Publish failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _publishedState = await r.json();
+      _renderPubButton(_publishedState, _customDomainState);
+      _renderPubModal();
+      $pubUrlOpen.style.display = "";
+      toast("✨ App is now live at " + _publishedState.public_url, "success", 5000);
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $pubConfirm.disabled = false;
+      $pubConfirm.textContent = "Publish now";
+    }
+  });
+
+  $pubUnpub.addEventListener("click", async () => {
+    const hadCustom = !!(_customDomainState && _customDomainState.domain);
+    const msg = hadCustom
+      ? `Unpublish ${slug}?\n\nThis stops the public URL AND detaches your custom domain "${_customDomainState.domain}". You can re-attach it later.`
+      : `Unpublish ${slug}? The public URL will stop working.`;
+    if (!confirm(msg)) return;
+    $pubUnpub.disabled = true;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/publish", {
+        method: "DELETE",
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        toast("Unpublish failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      // Reset everything: server already deleted the row (which cascades
+      // custom_domain + verified_at), now mirror that locally.
+      _publishedState = { published: false };
+      _customDomainState = null;
+      if ($cdInput) $cdInput.value = "";
+      if ($cdResult) $cdResult.innerHTML = "";
+      if ($cdDnsBlock) $cdDnsBlock.hidden = false;
+      if ($cdVerifiedMsg) $cdVerifiedMsg.hidden = true;
+      if ($autoSection) $autoSection.hidden = false;
+      _renderPubButton(_publishedState, _customDomainState);
+      _renderPubModal();
+      _renderCustomDomain();
+      toast(hadCustom
+        ? "App unpublished and custom domain detached."
+        : "App unpublished.", "success", 3500);
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $pubUnpub.disabled = false;
+    }
+  });
+
+  $pubUrlCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($pubUrlText.textContent);
+      const orig = $pubUrlCopy.textContent;
+      $pubUrlCopy.textContent = "Copied!";
+      setTimeout(() => ($pubUrlCopy.textContent = orig), 1500);
+    } catch (_) {}
+  });
+
+  // Refresh publish status when the slug becomes known (after build).
+  // Hook into the existing loadFileTree which sets `slug`.
+  const _origLoadFileTree2 = loadFileTree;
+  loadFileTree = async function (...args) {
+    const r = await _origLoadFileTree2(...args);
+    refreshPublishStatus();
+    return r;
+  };
+
+  // ── Custom domain (inside the publish modal) ──
+  const $cdDivider = document.getElementById("pub-cd-divider");
+  const $cdTitle   = document.getElementById("pub-cd-title");
+  const $cdBadge   = document.getElementById("pub-cd-badge");
+  const $cdBody    = document.getElementById("pub-cd-body");
+  const $cdInputRow = document.getElementById("pub-cd-input-row");
+  const $cdInput   = document.getElementById("pub-cd-input");
+  const $cdAttach  = document.getElementById("pub-cd-attach");
+  const $cdAttached = document.getElementById("pub-cd-attached");
+  const $cdCurrent = document.getElementById("pub-cd-current");
+  const $cdOpen    = document.getElementById("pub-cd-open");
+  const $cdDns     = document.getElementById("pub-cd-dns");
+  const $cdDnsBlock = document.getElementById("pub-cd-dns-block");
+  const $cdVerifiedMsg = document.getElementById("pub-cd-verified-msg");
+  const $cdVerifiedUrl = document.getElementById("pub-cd-verified-url-text");
+  const $cdVerify  = document.getElementById("pub-cd-verify");
+  const $cdResult  = document.getElementById("pub-cd-verify-result");
+  const $autoSection = document.getElementById("pub-auto-section");
+
+  let _customDomainState = null;
+
+  function _showCdSection(show) {
+    // Always-visible now — kept as a no-op for any legacy callers.
+    [$cdDivider, $cdTitle, $cdBody].forEach((el) => { if (el) el.hidden = false; });
+  }
+
+  function _renderDnsTable(instructions) {
+    if (!instructions || !instructions.length) { $cdDns.innerHTML = ""; return; }
+    let html = '<span class="col-h">TYPE</span><span class="col-h">NAME</span><span class="col-h">VALUE</span>';
+    for (const ins of instructions) {
+      html += `
+        <div class="pub-dns-cell"><span class="val">${escapeHtml(ins.record_type)}</span><button type="button" class="copy-mini" data-copy="${escapeHtml(ins.record_type)}">Copy</button></div>
+        <div class="pub-dns-cell"><span class="val">${escapeHtml(ins.name)}</span><button type="button" class="copy-mini" data-copy="${escapeHtml(ins.name)}">Copy</button></div>
+        <div class="pub-dns-cell"><span class="val">${escapeHtml(ins.value)}</span><button type="button" class="copy-mini" data-copy="${escapeHtml(ins.value)}">Copy</button></div>`;
+    }
+    $cdDns.innerHTML = html;
+    $cdDns.querySelectorAll(".copy-mini").forEach((b) =>
+      b.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(b.dataset.copy);
+          const cell = b.closest(".pub-dns-cell");
+          if (cell) {
+            cell.classList.add("copied");
+            const orig = b.textContent;
+            b.textContent = "✓";
+            setTimeout(() => {
+              cell.classList.remove("copied");
+              b.textContent = orig;
+            }, 1200);
+          }
+        } catch (_) {}
+      })
+    );
+  }
+
+  function _renderCustomDomain() {
+    // Always show the custom-domain section so users can see where to put
+    // their domain. If the app isn't published yet, Attach will auto-publish
+    // first (handled in the Attach handler below).
+    _showCdSection(true);
+    if (!_publishedState || !_publishedState.published) {
+      // Show input row, hide attached/verified state.
+      $cdInputRow.hidden = false;
+      $cdAttached.hidden = true;
+      // Update example URL if slug is known.
+      const ex = document.getElementById("pub-cd-example");
+      if (ex && slug) ex.textContent = `${slug}.mybrand.com`;
+      return;
+    }
+    // Update the example URL in the body using the current slug.
+    const ex = document.getElementById("pub-cd-example");
+    if (ex && slug) ex.textContent = `${slug}.mybrand.com`;
+    const cd = _customDomainState || {};
+    const hasDomain = !!cd.domain;
+    $cdBadge.textContent = hasDomain ? (cd.verified ? "Verified" : "Pending DNS") : "Optional";
+    $cdBadge.classList.toggle("verified", !!cd.verified);
+
+    if (!hasDomain) {
+      $cdInputRow.hidden = false;
+      $cdAttached.hidden = true;
+      // Verified-only UI hidden; auto subdomain section visible.
+      if ($autoSection) $autoSection.hidden = false;
+    } else {
+      $cdInputRow.hidden = true;
+      $cdAttached.hidden = false;
+      const url = cd.public_url || `https://${cd.fqdn || cd.domain}/`;
+      $cdCurrent.textContent = url;
+      $cdOpen.href = url;
+
+      if (cd.verified) {
+        // Verified state: hide DNS block + auto-subdomain section. The
+        // custom domain is now the canonical URL — no point showing the
+        // backup auto subdomain or DNS instructions any more.
+        $cdDnsBlock.hidden = true;
+        $cdVerifiedMsg.hidden = false;
+        $cdVerifiedUrl.textContent = url;
+        if ($autoSection) $autoSection.hidden = true;
+      } else {
+        // Pending: show DNS instructions, hide verified message.
+        $cdDnsBlock.hidden = false;
+        $cdVerifiedMsg.hidden = true;
+        if ($autoSection) $autoSection.hidden = false;
+        _renderDnsTable(cd.instructions);
+        $cdResult.innerHTML = '';
+        $cdVerify.textContent = "Verify DNS";
+      }
+    }
+  }
+
+  async function refreshCustomDomain() {
+    if (!slug) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish/domain`, {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (r.ok) _customDomainState = await r.json();
+    } catch (_) {}
+    _renderCustomDomain();
+    // Re-render the topbar badge — it now depends on custom-domain state too.
+    _renderPubButton(_publishedState, _customDomainState);
+  }
+
+  $btnPub.addEventListener("click", () => {
+    // Refresh both states when modal opens.
+    setTimeout(refreshCustomDomain, 100);
+  });
+
+  $cdAttach.addEventListener("click", async () => {
+    const domain = ($cdInput.value || "").trim().toLowerCase();
+    if (!domain) { $cdInput.focus(); return; }
+    $cdAttach.disabled = true;
+    $cdAttach.textContent = "Attaching…";
+    try {
+      const token = localStorage.getItem("token");
+      const auth = { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) };
+
+      // If the app isn't published yet, publish to the auto subdomain
+      // first — the custom-domain endpoint requires a publish row.
+      if (!_publishedState || !_publishedState.published) {
+        $cdAttach.textContent = "Publishing…";
+        const pubResp = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish`, {
+          method: "POST",
+          headers: auth,
+          credentials: "include",
+        });
+        if (!pubResp.ok) {
+          const txt = await pubResp.text();
+          toast("Couldn't publish: " + txt.slice(0, 240), "error", 6000);
+          return;
+        }
+        _publishedState = await pubResp.json();
+        _renderPubButton(_publishedState, _customDomainState);
+        _renderPubModal();
+      }
+
+      $cdAttach.textContent = "Attaching…";
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish/domain`, {
+        method: "POST",
+        headers: auth,
+        credentials: "include",
+        body: JSON.stringify({ domain }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Could not attach: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _customDomainState = await r.json();
+      _renderCustomDomain();
+      const fq = _customDomainState.fqdn || domain;
+      toast(`Domain attached. Add an A record for "${fq}" → ${_customDomainState.server_ip} at your DNS provider, then click Verify.`, "success", 7000);
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $cdAttach.disabled = false;
+      $cdAttach.textContent = "Attach";
+    }
+  });
+
+  $cdVerify.addEventListener("click", async () => {
+    $cdVerify.disabled = true;
+    $cdVerify.textContent = "Checking…";
+    $cdResult.innerHTML = '';
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish/domain/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        $cdResult.innerHTML = `<span class="pub-verify-result fail">Verify failed: ${escapeHtml(txt).slice(0, 200)}</span>`;
+        return;
+      }
+      _customDomainState = await r.json();
+      const lc = _customDomainState.last_check || {};
+      if (_customDomainState.verified) {
+        toast("✓ DNS verified. The first HTTPS hit may take a few seconds while Caddy issues the cert.", "success", 6000);
+      } else {
+        // Server now returns a human-readable `warning` explaining what
+        // went wrong (e.g. Cloudflare CNAME loop, DNS not propagated).
+        const msg = lc.warning ||
+          ((lc.resolved_ips && lc.resolved_ips.length)
+            ? `DNS not pointing here. Expected ${lc.expected_ip || ""}, got ${lc.resolved_ips.join(", ")}.`
+            : "No A records found yet — DNS may still be propagating.");
+        $cdResult.innerHTML = `<span class="pub-verify-result fail">⚠ ${escapeHtml(msg)}</span>`;
+      }
+      _renderCustomDomain();
+      _renderPubButton(_publishedState, _customDomainState);
+    } catch (err) {
+      $cdResult.innerHTML = `<span class="pub-verify-result fail">Network error: ${escapeHtml(err.message)}</span>`;
+    } finally {
+      $cdVerify.disabled = false;
+    }
+  });
+
+  // The legacy "Detach" button is replaced by the Open icon (href-driven).
+  // Custom-domain reset is now bundled into the main Unpublish handler above.
+
+  // ────────────────────────────────────────────────────────────────────
   // PREVIEW STATUS POLLING
   // ────────────────────────────────────────────────────────────────────
   async function pollPreviewStatus() {
@@ -2244,6 +3893,16 @@
   // INIT
   // ────────────────────────────────────────────────────────────────────
   async function init() {
+    // If task is still being built by Claude, the build overlay owns the
+    // loading sequence — it'll call loadFileTree + startPolling + loadLogs
+    // once the build reaches completed. Kicking them off now would just
+    // produce noisy 404s. For completed/failed tasks, run normally.
+    try {
+      const task = await apiFetch("GET", "/" + taskId);
+      if (task && BUILDING_STATES.has(task.status)) {
+        return;  // overlay watcher takes over
+      }
+    } catch (_) { /* fall through to normal init */ }
     await loadFileTree();
     startPolling();
     loadLogs();
@@ -2507,6 +4166,21 @@
       console.warn("[enhance] poll error", e);
     }
   }
+  // IDs of builds that the current user started in this session. Used by
+  // the presence system to only flag OUR amBuilding=true when we own the
+  // run (history-loaded in-progress builds started by others don't count).
+  const _myBuildIds = new Set();
+  function markMyBuildStart(tid) {
+    _myBuildIds.add(tid);
+    if (window.__aiui_setBuildingState) window.__aiui_setBuildingState(true);
+  }
+  function markMyBuildEnd(tid) {
+    _myBuildIds.delete(tid);
+    if (_myBuildIds.size === 0 && window.__aiui_setBuildingState) {
+      window.__aiui_setBuildingState(false);
+    }
+  }
+
   function startEnhancePolling(tid, bubbleEl) {
     if (activeBubbles.has(tid)) return;
     const timer = setInterval(function () { pollEnhance(tid, bubbleEl); }, 2000);
@@ -2518,6 +4192,7 @@
     if (!entry) return;
     clearInterval(entry.pollTimer);
     activeBubbles.delete(tid);
+    markMyBuildEnd(tid);  // no-op if we didn't own this build
   }
   function setSendDisabled(disabled) {
     $send.disabled = disabled;
@@ -2628,6 +4303,7 @@
           if (iconEl) iconEl.textContent = "⚡";
           if (textEl) textEl.textContent = "Building…";
           if (contentEl) contentEl.innerHTML = "";
+          markMyBuildStart(replyToTask);
           startEnhancePolling(replyToTask, aiBubble);
         }
       } catch (e) {
@@ -2648,6 +4324,7 @@
         prompt: text,
       });
       aiBubble.dataset.taskId = resp.id;
+      markMyBuildStart(resp.id);
       startEnhancePolling(resp.id, aiBubble);
     } catch (e) {
       aiBubble.classList.add("failed");
@@ -2730,6 +4407,173 @@
       console.warn("[enhance] history load failed", e);
     }
   }
+})();
+</script>
+
+<script>
+// ===== Live presence + build lock =====
+// Broadcasts the current user's presence to others looking at the same
+// project, and greys out the Build button when someone else is editing.
+(function () {
+  const slug = (window.__AIUI_SLUG__) ||
+    new URLSearchParams(window.location.search).get("slug") ||
+    null;
+  // preview.html loads task_id and looks up slug async — wait for it.
+  function getSlug() {
+    // slug-name element holds the resolved slug once loaded. Reject any
+    // placeholder / error / unknown values so we never build presence URLs
+    // against nonsense slugs during an in-progress build.
+    const el = document.getElementById("slug-name");
+    const s = (el && el.textContent || "").trim();
+    if (!s) return null;
+    if (s === "loading…" || s === "(error)" || s === "unknown") return null;
+    // Only real slugs: lowercase, digits, hyphens, underscores, dots.
+    if (!/^[a-z0-9][a-z0-9._-]{1,100}$/.test(s)) return null;
+    return s;
+  }
+  const stripEl   = document.getElementById("presence-strip");
+  const bannerEl  = document.getElementById("building-banner");
+  const bannerWho = document.getElementById("building-who");
+  const buildBtn  = document.getElementById("enh-build-btn")
+                 || document.querySelector("[data-enhance-mode='build']")
+                 || null;
+  const sendBtn   = document.getElementById("enh-send")
+                 || document.querySelector("#send")
+                 || null;
+
+  let myEmail = null;
+  let amBuilding = false;
+  let lastRemoteBuilder = null;
+
+  function authHeaders() {
+    const h = { "Content-Type": "application/json" };
+    const token = localStorage.getItem("token");
+    if (token) h.Authorization = "Bearer " + token;
+    return h;
+  }
+
+  function nameFromEmail(e) {
+    if (!e) return "?";
+    const local = e.split("@")[0];
+    return (local[0] || "?").toUpperCase() + (local[1] || "").toLowerCase();
+  }
+
+  async function heartbeat() {
+    const s = getSlug();
+    if (!s) return;
+    try {
+      const resp = await fetch(`/api/projects/${encodeURIComponent(s)}/presence`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ is_building: amBuilding }),
+      });
+      if (resp.ok) {
+        const j = await resp.json();
+        if (j.me) myEmail = j.me;
+      }
+    } catch (_) { /* network hiccup — retry next tick */ }
+  }
+
+  async function refresh() {
+    const s = getSlug();
+    if (!s) return;
+    try {
+      const resp = await fetch(`/api/projects/${encodeURIComponent(s)}/presence`, {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!resp.ok) return;
+      const rows = await resp.json();
+      render(rows);
+    } catch (_) {}
+  }
+
+  function render(rows) {
+    if (!stripEl) return;
+    stripEl.innerHTML = "";
+    // Put me first, then others by recency.
+    rows.sort((a, b) => {
+      if (a.user_email === myEmail) return -1;
+      if (b.user_email === myEmail) return 1;
+      return a.seconds_since_seen - b.seconds_since_seen;
+    });
+    for (const r of rows) {
+      const el = document.createElement("div");
+      el.className = "presence-avatar" +
+        (r.user_email === myEmail ? " is-me" : "") +
+        (r.is_building ? " is-building" : "");
+      el.title = r.user_email + (r.is_building ? " — editing now" : " — viewing");
+      el.textContent = nameFromEmail(r.user_email);
+      stripEl.appendChild(el);
+    }
+    // Find a remote builder (not me)
+    const remoteBuilder = rows.find((r) => r.is_building && r.user_email !== myEmail);
+    lastRemoteBuilder = remoteBuilder ? remoteBuilder.user_email : null;
+    if (remoteBuilder) {
+      bannerEl.hidden = false;
+      bannerWho.textContent = `${nameFromEmail(remoteBuilder.user_email)} (${remoteBuilder.user_email}) is editing`;
+    } else {
+      bannerEl.hidden = true;
+    }
+    applyLock();
+  }
+
+  function applyLock() {
+    // Disable the enhance send button when someone else is building.
+    // (Chat is read-only and concurrent users can chat safely, so we only
+    // lock when the current enhance mode is BUILD.)
+    const modeBuild = typeof chatMode !== "undefined" ? chatMode === "build"
+                   : (document.querySelector("[data-enhance-mode-active='build']") !== null);
+    const lock = lastRemoteBuilder && modeBuild;
+    if (sendBtn) {
+      sendBtn.disabled = !!lock || (sendBtn.__origDisabled === true);
+      sendBtn.title = lock
+        ? `Locked — ${lastRemoteBuilder} is currently editing`
+        : sendBtn.__origTitle || "";
+    }
+  }
+
+  // Hook into existing build submission to flip amBuilding.
+  // window.__aiui_setBuildingState is called by the main enhance IIFE
+  // whenever it starts/stops a build. We expose it globally via a small
+  // shim that we can retro-fit without touching the big preview.html JS.
+  window.__aiui_setBuildingState = function (flag) {
+    amBuilding = !!flag;
+    heartbeat();  // send updated state immediately
+    refresh();
+  };
+
+  // Heartbeat + poll loops. First fire delayed so slug-name has had a
+  // chance to resolve from the task lookup.
+  setTimeout(() => {
+    heartbeat();
+    refresh();
+    setInterval(heartbeat, 10_000);
+    setInterval(refresh, 3_000);
+  }, 1500);
+
+  // Best-effort sign-off on unload.
+  window.addEventListener("beforeunload", () => {
+    const s = getSlug();
+    if (!s) return;
+    const token = localStorage.getItem("token");
+    const body = new Blob([], { type: "application/json" });
+    try {
+      navigator.sendBeacon(
+        `/api/projects/${encodeURIComponent(s)}/presence?_=${Date.now()}`,
+        body
+      );
+    } catch (_) {}
+    // sendBeacon can't set Authorization or method=DELETE, so also fire
+    // a keepalive DELETE for good measure (best-effort).
+    fetch(`/api/projects/${encodeURIComponent(s)}/presence`, {
+      method: "DELETE",
+      headers: authHeaders(),
+      credentials: "include",
+      keepalive: true,
+    }).catch(() => {});
+  });
 })();
 </script>
 </body>
