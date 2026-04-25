@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from db import init_db
 from routes_cron import router as cron_router
+from routes_db import router as db_router
 from routes_execution import router as execution_router
 from routes_preview import router as preview_router
 from routes_projects import router as projects_router
@@ -34,6 +35,7 @@ app.include_router(cron_router)
 app.include_router(preview_router)
 app.include_router(projects_router)
 app.include_router(supabase_router)
+app.include_router(db_router)
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
 
 
