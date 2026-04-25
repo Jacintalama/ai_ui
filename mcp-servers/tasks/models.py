@@ -90,3 +90,15 @@ class ProjectSupabase(Base):
     configured_by = Column(Text, nullable=False)
     configured_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_history"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug = Column(Text, nullable=False)
+    user_email = Column(Text, nullable=False)
+    role = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
