@@ -450,17 +450,7 @@ async def rollback_project(
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        is_owner = (
-            await s.execute(
-                select(ProjectMember).where(
-                    ProjectMember.slug == slug,
-                    ProjectMember.user_email == user.email,
-                    ProjectMember.role == "owner",
-                ).limit(1)
-            )
-        ).scalar_one_or_none() is not None
-        if not is_owner and not user.is_admin:
-            raise HTTPException(status_code=403, detail="Only project owners can rollback")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
 
     # Verify the SHA exists and touched this app.
     rc, out = await _run_git("cat-file", "-e", f"{body.sha}^{{commit}}")
@@ -552,17 +542,7 @@ async def publish_app(slug: str, user: AdminUser = Depends(current_admin)):
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        is_owner = (
-            await s.execute(
-                select(ProjectMember).where(
-                    ProjectMember.slug == slug,
-                    ProjectMember.user_email == user.email,
-                    ProjectMember.role == "owner",
-                ).limit(1)
-            )
-        ).scalar_one_or_none() is not None
-        if not is_owner and not user.is_admin:
-            raise HTTPException(status_code=403, detail="Only project owners can publish")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
 
         # Verify apps/<slug>/index.html exists — otherwise publishing is pointless.
         index_path = os.path.join(REPO_ROOT, "apps", slug, "index.html")
@@ -786,17 +766,7 @@ async def set_custom_domain(
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        is_owner = (
-            await s.execute(
-                select(ProjectMember).where(
-                    ProjectMember.slug == slug,
-                    ProjectMember.user_email == user.email,
-                    ProjectMember.role == "owner",
-                ).limit(1)
-            )
-        ).scalar_one_or_none() is not None
-        if not is_owner and not user.is_admin:
-            raise HTTPException(status_code=403, detail="Only project owners can set a custom domain")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
 
         pub = (
             await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
@@ -909,17 +879,7 @@ async def rename_project(
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        is_owner = (
-            await s.execute(
-                select(ProjectMember).where(
-                    ProjectMember.slug == slug,
-                    ProjectMember.user_email == user.email,
-                    ProjectMember.role == "owner",
-                ).limit(1)
-            )
-        ).scalar_one_or_none() is not None
-        if not is_owner and not user.is_admin:
-            raise HTTPException(status_code=403, detail="Only project owners can rename")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
 
         # New slug must be available everywhere.
         from sqlalchemy import text as _text
@@ -1025,17 +985,7 @@ async def remove_custom_domain(slug: str, user: AdminUser = Depends(current_admi
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        is_owner = (
-            await s.execute(
-                select(ProjectMember).where(
-                    ProjectMember.slug == slug,
-                    ProjectMember.user_email == user.email,
-                    ProjectMember.role == "owner",
-                ).limit(1)
-            )
-        ).scalar_one_or_none() is not None
-        if not is_owner and not user.is_admin:
-            raise HTTPException(status_code=403, detail="Only project owners can remove a custom domain")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
         pub = (
             await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
         ).scalar_one_or_none()
@@ -1053,17 +1003,7 @@ async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        is_owner = (
-            await s.execute(
-                select(ProjectMember).where(
-                    ProjectMember.slug == slug,
-                    ProjectMember.user_email == user.email,
-                    ProjectMember.role == "owner",
-                ).limit(1)
-            )
-        ).scalar_one_or_none() is not None
-        if not is_owner and not user.is_admin:
-            raise HTTPException(status_code=403, detail="Only project owners can unpublish")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
         existing = (
             await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
         ).scalar_one_or_none()
