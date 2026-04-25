@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CRUDSimple — Add, Update & Delete Without the Complexity</title>
+  <meta name="description" content="CRUDSimple gives your team a dead-simple interface to manage any data. No code, no migrations, no headaches." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Critical inline CSS */
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background: #09090b; color: #f4f4f5; }
+
+    /* Focus visible for accessibility */
+    :focus-visible { outline: 2px solid #818cf8; outline-offset: 3px; border-radius: 4px; }
+
+    /* Gradient hero text */
+    .gradient-text {
+      background: linear-gradient(135deg, #a5b4fc 0%, #818cf8 50%, #6366f1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Glassmorphism card */
+    .glass-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(8px);
+    }
+
+    /* Subtle grid background */
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(99,102,241,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.06) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* Nav blur */
+    .nav-blur {
+      background: rgba(9,9,11,0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    /* Accordion animation */
+    .accordion-body {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.35s ease, padding 0.2s ease;
+    }
+    .accordion-body.open {
+      max-height: 500px;
+    }
+
+    /* Pseudo-UI mockup */
+    .mockup-row {
+      display: grid;
+      grid-template-columns: 1fr 2fr 1fr 80px;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .mockup-row:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.05); }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Plus Jakarta Sans', 'sans-serif'] },
+          colors: {
+            indigo: {
+              50:  '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe',
+              300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1',
+              600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="antialiased">
+
+  <!-- ========== STICKY NAV ========== -->
+  <header class="fixed top-0 inset-x-0 z-50 nav-blur border-b border-white/5">
+    <nav class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between" aria-label="Main navigation">
+      <!-- Logo -->
+      <a href="#hero" class="flex items-center gap-2 shrink-0">
+        <span class="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.9"/>
+            <rect x="10" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+            <rect x="2" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+            <rect x="10" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.3"/>
+          </svg>
+        </span>
+        <span class="font-bold text-lg text-white tracking-tight">CRUD<span class="text-indigo-400">Simple</span></span>
+      </a>
+
+      <!-- Desktop nav links -->
+      <ul class="hidden md:flex items-center gap-8 text-sm font-medium text-zinc-400" role="list">
+        <li><a href="#features" class="hover:text-white transition-colors">Features</a></li>
+        <li><a href="#testimonials" class="hover:text-white transition-colors">Reviews</a></li>
+        <li><a href="#faq" class="hover:text-white transition-colors">FAQ</a></li>
+        <li><a href="#pricing" class="hover:text-white transition-colors">Pricing</a></li>
+      </ul>
+
+      <!-- CTA -->
+      <div class="flex items-center gap-3">
+        <a href="#cta" class="hidden sm:inline-flex text-sm font-medium text-zinc-300 hover:text-white transition-colors">Sign in</a>
+        <a href="#cta" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-semibold transition-colors shadow-lg shadow-indigo-500/20">
+          Start free
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+
+    <!-- ========== HERO ========== -->
+    <section id="hero" class="relative grid-bg pt-32 pb-20 sm:pt-40 sm:pb-28 overflow-hidden">
+      <!-- Glow blobs -->
+      <div class="absolute -top-40 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none" aria-hidden="true"></div>
+      <div class="absolute top-60 -left-20 w-72 h-72 bg-indigo-800/10 rounded-full blur-[80px] pointer-events-none" aria-hidden="true"></div>
+
+      <div class="relative max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-12">
+          <!-- Badge -->
+          <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/25 text-indigo-300 text-xs font-medium mb-6">
+            <span class="w-1.5 h-1.5 rounded-full bg-indigo-400" aria-hidden="true"></span>
+            No-code data management — now in beta
+          </span>
+
+          <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white leading-tight tracking-tight mb-5">
+            Create. Read. Update.<br />
+            <span class="gradient-text">Delete. Done.</span>
+          </h1>
+          <p class="text-lg sm:text-xl text-zinc-400 max-w-2xl mx-auto mb-8 leading-relaxed">
+            CRUDSimple gives every team a clean interface to manage any data without writing a single line of code. Add records, edit them, remove them — in seconds.
+          </p>
+
+          <!-- Primary CTAs -->
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <a href="#cta" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-base transition-colors shadow-xl shadow-indigo-500/25">
+              Get started free
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M3.5 8h9M9 4.5L12.5 8 9 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </a>
+            <a href="#features" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-base transition-colors">
+              See how it works
+            </a>
+          </div>
+          <p class="mt-4 text-xs text-zinc-500">No credit card required · Free for up to 3 collections</p>
+        </div>
+
+        <!-- Hero UI Mockup -->
+        <div class="relative max-w-3xl mx-auto">
+          <div class="glass-card rounded-2xl overflow-hidden shadow-2xl shadow-black/50 border border-white/10">
+            <!-- Window chrome -->
+            <div class="flex items-center gap-2 px-4 py-3 bg-white/[0.03] border-b border-white/[0.06]">
+              <span class="w-3 h-3 rounded-full bg-red-500/60" aria-hidden="true"></span>
+              <span class="w-3 h-3 rounded-full bg-yellow-500/60" aria-hidden="true"></span>
+              <span class="w-3 h-3 rounded-full bg-green-500/60" aria-hidden="true"></span>
+              <span class="ml-3 text-xs text-zinc-500 font-mono">crudsimple.app / collections / customers</span>
+            </div>
+
+            <!-- Toolbar -->
+            <div class="flex items-center justify-between px-4 py-3 bg-white/[0.02] border-b border-white/[0.05]">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold text-zinc-200">Customers</span>
+                <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-xs font-medium">42 records</span>
+              </div>
+              <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500 text-white text-xs font-semibold" aria-label="Add new record">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                Add record
+              </button>
+            </div>
+
+            <!-- Table header -->
+            <div class="mockup-row text-zinc-500 text-xs font-semibold uppercase tracking-wide px-4 py-2">
+              <span>Name</span><span>Email</span><span>Status</span><span>Actions</span>
+            </div>
+
+            <!-- Table rows -->
+            <div aria-label="Sample data table">
+              <div class="mockup-row hover:bg-white/[0.02] transition-colors">
+                <span class="text-zinc-200 font-medium truncate">Sarah Kim</span>
+                <span class="text-zinc-400 truncate">sarah@acme.io</span>
+                <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-medium w-fit">Active</span>
+                <div class="flex gap-1">
+                  <button class="p-1.5 rounded hover:bg-indigo-500/20 text-zinc-400 hover:text-indigo-300 transition-colors" aria-label="Edit Sarah Kim">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7.5 2.5l2 2L3 11H1V9L7.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button class="p-1.5 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" aria-label="Delete Sarah Kim">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h8M5 3V2h2v1M3.5 3l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="mockup-row hover:bg-white/[0.02] transition-colors">
+                <span class="text-zinc-200 font-medium truncate">James Okafor</span>
+                <span class="text-zinc-400 truncate">james@betatech.com</span>
+                <span class="px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 text-xs font-medium w-fit">Trial</span>
+                <div class="flex gap-1">
+                  <button class="p-1.5 rounded hover:bg-indigo-500/20 text-zinc-400 hover:text-indigo-300 transition-colors" aria-label="Edit James Okafor">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7.5 2.5l2 2L3 11H1V9L7.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button class="p-1.5 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" aria-label="Delete James Okafor">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h8M5 3V2h2v1M3.5 3l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="mockup-row hover:bg-white/[0.02] transition-colors">
+                <span class="text-zinc-200 font-medium truncate">Priya Menon</span>
+                <span class="text-zinc-400 truncate">priya@designco.io</span>
+                <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-medium w-fit">Active</span>
+                <div class="flex gap-1">
+                  <button class="p-1.5 rounded hover:bg-indigo-500/20 text-zinc-400 hover:text-indigo-300 transition-colors" aria-label="Edit Priya Menon">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7.5 2.5l2 2L3 11H1V9L7.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button class="p-1.5 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" aria-label="Delete Priya Menon">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h8M5 3V2h2v1M3.5 3l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Floating badge -->
+          <div class="absolute -bottom-4 -right-4 glass-card rounded-xl px-4 py-2.5 shadow-xl hidden sm:flex items-center gap-2.5">
+            <span class="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8.5l3 3 7-7" stroke="#34d399" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <div>
+              <p class="text-xs font-semibold text-white">Record updated</p>
+              <p class="text-xs text-zinc-400">Just now · no code written</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== FEATURES ========== -->
+    <section id="features" class="py-20 sm:py-28">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">Everything you need</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4">CRUD without the ceremony</h2>
+          <p class="text-zinc-400 text-lg max-w-xl mx-auto">Four operations. Infinite possibilities. No ORM, no migrations, no boilerplate.</p>
+        </div>
+
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+
+          <!-- Feature 1 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="3" width="16" height="16" rx="3" stroke="#818cf8" stroke-width="1.5"/>
+                <path d="M11 8v6M8 11h6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Add records instantly</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Click "Add", fill in your fields, and save. Your schema is inferred from what you type — no schema definition required.</p>
+          </div>
+
+          <!-- Feature 2 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 6h14M4 11h10M4 16h7" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="17" cy="16" r="3" stroke="#818cf8" stroke-width="1.5"/>
+                <path d="M17 14.5v1.5l1 1" stroke="#818cf8" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Search & filter at speed</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Find any record across thousands of rows in milliseconds. Filter by any field, sort by any column — no SQL required.</p>
+          </div>
+
+          <!-- Feature 3 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 4l4 4-9 9H5v-4L14 4z" stroke="#818cf8" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Inline editing</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Click any cell to edit it directly in the table. Bulk-edit multiple records at once. Changes are validated before they save.</p>
+          </div>
+
+          <!-- Feature 4 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M19 9V6a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h7" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M16 14l2 2 4-4" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Safe deletes with undo</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Accidental deletes are the #1 data catastrophe. CRUDSimple gives you a 30-second undo window before anything is truly gone.</p>
+          </div>
+
+          <!-- Feature 5 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+                <rect x="12" y="3" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+                <rect x="3" y="12" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+                <rect x="12" y="12" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Multiple collections</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Customers, orders, inventory, tasks — each gets its own collection. Link records across collections with a single click.</p>
+          </div>
+
+          <!-- Feature 6 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="11" cy="11" r="8" stroke="#818cf8" stroke-width="1.5"/>
+                <path d="M8 11l2 2 4-4" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Permissions & audit log</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Control who can create, read, update, or delete. Every action is logged — know exactly who changed what and when.</p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== TESTIMONIALS ========== -->
+    <section id="testimonials" class="py-20 sm:py-24 bg-white/[0.02] border-y border-white/[0.05]">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-12">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">Loved by teams</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white">Real people. Real data. Zero headaches.</h2>
+        </div>
+
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+
+          <figure class="glass-card rounded-2xl p-6">
+            <blockquote class="text-zinc-300 text-sm leading-relaxed mb-5">
+              "We used to ask engineering every time we needed to update a price or fix a customer record. Now our ops team does it themselves in CRUDSimple. Saved us hours every week."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-indigo-500/30 flex items-center justify-center text-indigo-300 font-bold text-sm" aria-hidden="true">AL</div>
+              <div>
+                <p class="text-white font-semibold text-sm">Alicia Lund</p>
+                <p class="text-zinc-500 text-xs">Head of Operations · Freeflow SaaS</p>
+              </div>
+            </figcaption>
+          </figure>
+
+          <figure class="glass-card rounded-2xl p-6">
+            <blockquote class="text-zinc-300 text-sm leading-relaxed mb-5">
+              "I built our entire internal tooling layer on CRUDSimple in a weekend. What would have taken a month of Airtable customization was done in two days."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-violet-500/30 flex items-center justify-center text-violet-300 font-bold text-sm" aria-hidden="true">MP</div>
+              <div>
+                <p class="text-white font-semibold text-sm">Marcus Petit</p>
+                <p class="text-zinc-500 text-xs">Solo founder · ShipTrackr</p>
+              </div>
+            </figcaption>
+          </figure>
+
+          <figure class="glass-card rounded-2xl p-6">
+            <blockquote class="text-zinc-300 text-sm leading-relaxed mb-5">
+              "The audit log alone is worth it. We know who deleted what and when. No more mystery — just accountability. Our compliance team finally stopped complaining."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-emerald-500/30 flex items-center justify-center text-emerald-300 font-bold text-sm" aria-hidden="true">RN</div>
+              <div>
+                <p class="text-white font-semibold text-sm">Reva Nair</p>
+                <p class="text-zinc-500 text-xs">Engineering Lead · Bastion Finance</p>
+              </div>
+            </figcaption>
+          </figure>
+
+        </div>
+
+        <!-- Logo strip -->
+        <div class="mt-14 text-center">
+          <p class="text-xs uppercase tracking-widest text-zinc-600 mb-6">Trusted by teams at</p>
+          <div class="flex flex-wrap items-center justify-center gap-8 sm:gap-12" role="list" aria-label="Company logos">
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">ACME CORP</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">FREEFLOW</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">BETATECH</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">SHIPTRACKR</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">DESIGNCO</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== PRICING ========== -->
+    <section id="pricing" class="py-20 sm:py-28">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">Simple pricing</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4">One price. All features.</h2>
+          <p class="text-zinc-400 text-lg">No per-seat gotchas. No hidden add-ons. Cancel any time.</p>
+        </div>
+
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl mx-auto">
+
+          <!-- Free -->
+          <div class="glass-card rounded-2xl p-7 flex flex-col">
+            <p class="text-zinc-400 text-sm font-medium mb-1">Free</p>
+            <div class="flex items-end gap-1 mb-5">
+              <span class="text-4xl font-extrabold text-white">$0</span>
+              <span class="text-zinc-500 text-sm mb-1">/mo</span>
+            </div>
+            <ul class="space-y-3 text-sm text-zinc-400 mb-8 flex-1" role="list" aria-label="Free plan features">
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Up to 3 collections</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>500 records total</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>1 team member</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>7-day audit log</li>
+            </ul>
+            <a href="#cta" class="block text-center px-5 py-3 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-sm transition-colors">Get started free</a>
+          </div>
+
+          <!-- Pro (highlighted) -->
+          <div class="relative rounded-2xl p-7 flex flex-col border border-indigo-500/50 bg-indigo-500/10 shadow-xl shadow-indigo-500/10">
+            <span class="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-indigo-500 text-white text-xs font-semibold">Most popular</span>
+            <p class="text-indigo-300 text-sm font-medium mb-1">Pro</p>
+            <div class="flex items-end gap-1 mb-5">
+              <span class="text-4xl font-extrabold text-white">$19</span>
+              <span class="text-zinc-400 text-sm mb-1">/mo</span>
+            </div>
+            <ul class="space-y-3 text-sm text-zinc-300 mb-8 flex-1" role="list" aria-label="Pro plan features">
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Unlimited collections</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>100,000 records</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Up to 10 team members</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>90-day audit log</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>CSV export</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>API access</li>
+            </ul>
+            <a href="#cta" class="block text-center px-5 py-3 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm transition-colors shadow-lg shadow-indigo-500/25">Start Pro free for 14 days</a>
+          </div>
+
+          <!-- Team -->
+          <div class="glass-card rounded-2xl p-7 flex flex-col">
+            <p class="text-zinc-400 text-sm font-medium mb-1">Team</p>
+            <div class="flex items-end gap-1 mb-5">
+              <span class="text-4xl font-extrabold text-white">$79</span>
+              <span class="text-zinc-500 text-sm mb-1">/mo</span>
+            </div>
+            <ul class="space-y-3 text-sm text-zinc-400 mb-8 flex-1" role="list" aria-label="Team plan features">
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Pro</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Unlimited members</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Role-based permissions</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>SSO / SAML</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Priority support</li>
+            </ul>
+            <a href="#cta" class="block text-center px-5 py-3 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-sm transition-colors">Contact sales</a>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== FAQ ========== -->
+    <section id="faq" class="py-20 sm:py-24 bg-white/[0.02] border-y border-white/[0.05]">
+      <div class="max-w-3xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-12">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">FAQ</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white">Common questions</h2>
+        </div>
+
+        <div class="space-y-3" role="list">
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>Do I need to know SQL or how to code?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Not at all. CRUDSimple is designed for non-technical users. If you can use a spreadsheet, you can use CRUDSimple. There's no SQL, no code, and no schema to define — just click, type, and save.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>How is this different from Airtable or Notion databases?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                CRUDSimple is purpose-built for the four CRUD operations. Unlike Airtable's endless views or Notion's doc-first approach, we focus on speed: add a record, update it, delete it. No fluff, no feature bloat. It also exposes a clean REST API so you can power your own apps with it.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>What happens to my data if I cancel?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Your data is yours. Before your account closes, you can export all collections as CSV or JSON. We hold your data for 30 days after cancellation so you have time to export if you forget. After 30 days, it is permanently deleted.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>Can multiple people edit the same collection at once?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Yes. CRUDSimple supports real-time collaborative editing on Pro and Team plans. You'll see a live indicator when a teammate is editing the same record, and conflicts are resolved automatically using last-write-wins with full audit history.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>Is there a REST API I can use in my own apps?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Yes — available on the Pro plan and above. Every collection gets auto-generated REST endpoints for GET, POST, PUT/PATCH, and DELETE. Full OpenAPI docs are included. Rate limits are generous: 1,000 req/min on Pro, unlimited on Team.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== FINAL CTA ========== -->
+    <section id="cta" class="py-24 sm:py-32 relative overflow-hidden">
+      <div class="absolute inset-0 bg-indigo-600/10 pointer-events-none" aria-hidden="true"></div>
+      <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-indigo-600/15 rounded-full blur-[120px] pointer-events-none" aria-hidden="true"></div>
+
+      <div class="relative max-w-3xl mx-auto px-4 sm:px-6 text-center">
+        <h2 class="text-3xl sm:text-5xl font-extrabold text-white mb-5 leading-tight tracking-tight">
+          Stop wrestling with data.<br />
+          <span class="gradient-text">Start managing it simply.</span>
+        </h2>
+        <p class="text-zinc-400 text-lg mb-8 max-w-xl mx-auto">
+          Join hundreds of teams who replaced custom admin panels and clunky spreadsheets with CRUDSimple. Free to start, no credit card needed.
+        </p>
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <a href="#" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold text-base transition-colors shadow-xl shadow-indigo-500/30">
+            Create free account
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M3.5 8h9M9 4.5L12.5 8 9 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+          <a href="mailto:hello@crudsimple.app" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-base transition-colors">
+            Talk to us
+          </a>
+        </div>
+        <p class="mt-5 text-xs text-zinc-500">Free forever on the Starter plan · No credit card · Cancel Pro anytime</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ========== FOOTER ========== -->
+  <footer class="border-t border-white/[0.06] bg-white/[0.01]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-12">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-8 mb-10">
+        <div class="col-span-2 sm:col-span-1">
+          <a href="#hero" class="flex items-center gap-2 mb-4">
+            <span class="w-7 h-7 rounded-lg bg-indigo-500 flex items-center justify-center" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.9"/>
+                <rect x="10" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+                <rect x="2" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+                <rect x="10" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.3"/>
+              </svg>
+            </span>
+            <span class="font-bold text-white">CRUD<span class="text-indigo-400">Simple</span></span>
+          </a>
+          <p class="text-zinc-500 text-sm leading-relaxed">The simplest way to add, update, and delete your data. Built for teams who'd rather ship than administrate.</p>
+        </div>
+
+        <nav aria-label="Product links">
+          <p class="text-white font-semibold text-sm mb-3">Product</p>
+          <ul class="space-y-2.5 text-zinc-500 text-sm" role="list">
+            <li><a href="#features" class="hover:text-zinc-300 transition-colors">Features</a></li>
+            <li><a href="#pricing" class="hover:text-zinc-300 transition-colors">Pricing</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">API Docs</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Changelog</a></li>
+          </ul>
+        </nav>
+
+        <nav aria-label="Company links">
+          <p class="text-white font-semibold text-sm mb-3">Company</p>
+          <ul class="space-y-2.5 text-zinc-500 text-sm" role="list">
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">About</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Blog</a></li>
+            <li><a href="mailto:hello@crudsimple.app" class="hover:text-zinc-300 transition-colors">Contact</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Status</a></li>
+          </ul>
+        </nav>
+
+        <nav aria-label="Legal links">
+          <p class="text-white font-semibold text-sm mb-3">Legal</p>
+          <ul class="space-y-2.5 text-zinc-500 text-sm" role="list">
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Privacy Policy</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Terms of Service</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Security</a></li>
+          </ul>
+        </nav>
+      </div>
+
+      <div class="border-t border-white/[0.05] pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <p class="text-zinc-600 text-xs">&copy; 2026 CRUDSimple. All rights reserved.</p>
+        <div class="flex items-center gap-4">
+          <a href="#" aria-label="CRUDSimple on Twitter / X" class="text-zinc-600 hover:text-zinc-300 transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+            </svg>
+          </a>
+          <a href="#" aria-label="CRUDSimple on GitHub" class="text-zinc-600 hover:text-zinc-300 transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.168 6.839 9.491.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.154-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836a9.59 9.59 0 012.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.165 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
+            </svg>
+          </a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    function toggleAccordion(button) {
+      const body = button.nextElementSibling;
+      const icon = button.querySelector('svg');
+      const isOpen = body.classList.contains('open');
+
+      // Close all
+      document.querySelectorAll('.accordion-body.open').forEach(el => {
+        el.classList.remove('open');
+        el.previousElementSibling.setAttribute('aria-expanded', 'false');
+        el.previousElementSibling.querySelector('svg').style.transform = '';
+      });
+
+      if (!isOpen) {
+        body.classList.add('open');
+        button.setAttribute('aria-expanded', 'true');
+        icon.style.transform = 'rotate(180deg)';
+      }
+    }
+  </script>
+</body>
+</html>
