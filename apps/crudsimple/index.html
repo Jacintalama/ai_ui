@@ -3,904 +3,697 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CRUDSimple</title>
+  <title>CRUDSimple — Add, Update & Delete Without the Complexity</title>
+  <meta name="description" content="CRUDSimple gives your team a dead-simple interface to manage any data. No code, no migrations, no headaches." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
   <style>
+    /* Critical inline CSS */
     *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #0f172a; }
-    :focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
-    .row-compact td { height: 44px; }
-    .row-comfortable td { height: 64px; }
-    .drawer { transition: transform 0.2s ease; }
-    .drawer-closed { transform: translateX(100%); }
-    .drawer-open { transform: translateX(0); }
-    .overlay { transition: opacity 0.2s ease; }
-    .toast { animation: slideIn 0.2s ease, fadeOut 0.3s ease 2.7s forwards; }
-    @keyframes slideIn { from { transform: translateY(16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-    @keyframes fadeOut { to { opacity: 0; pointer-events: none; } }
-    .sort-icon { opacity: 0.3; }
-    th:hover .sort-icon, th[data-sorted] .sort-icon { opacity: 1; }
-    th[data-sorted="asc"] .sort-asc { color: #2563eb; }
-    th[data-sorted="desc"] .sort-desc { color: #2563eb; }
-    input[type="checkbox"] { accent-color: #2563eb; width: 16px; height: 16px; cursor: pointer; }
-    .field-error { border-color: #ef4444 !important; }
-    .error-msg { color: #ef4444; font-size: 0.75rem; margin-top: 2px; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-    @media (max-width: 640px) {
-      .drawer { width: 100% !important; }
-      .hide-sm { display: none !important; }
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Plus Jakarta Sans', sans-serif; background: #09090b; color: #f4f4f5; }
+
+    /* Focus visible for accessibility */
+    :focus-visible { outline: 2px solid #818cf8; outline-offset: 3px; border-radius: 4px; }
+
+    /* Gradient hero text */
+    .gradient-text {
+      background: linear-gradient(135deg, #a5b4fc 0%, #818cf8 50%, #6366f1 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
+
+    /* Glassmorphism card */
+    .glass-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(8px);
+    }
+
+    /* Subtle grid background */
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(99,102,241,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99,102,241,0.06) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* Nav blur */
+    .nav-blur {
+      background: rgba(9,9,11,0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    /* Accordion animation */
+    .accordion-body {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.35s ease, padding 0.2s ease;
+    }
+    .accordion-body.open {
+      max-height: 500px;
+    }
+
+    /* Pseudo-UI mockup */
+    .mockup-row {
+      display: grid;
+      grid-template-columns: 1fr 2fr 1fr 80px;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .mockup-row:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.05); }
   </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Plus Jakarta Sans', 'sans-serif'] },
+          colors: {
+            indigo: {
+              50:  '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe',
+              300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1',
+              600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81',
+            }
+          }
+        }
+      }
+    }
+  </script>
 </head>
-<body class="min-h-screen">
+<body class="antialiased">
 
-<!-- Toast container -->
-<div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none" aria-live="polite"></div>
-
-<!-- Confirm modal -->
-<div id="confirmModal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
-  <div class="overlay absolute inset-0 bg-black/40" id="modalOverlay"></div>
-  <div class="relative z-10 flex items-center justify-center min-h-screen p-4">
-    <div class="bg-white border border-slate-200 rounded-lg p-6 w-full max-w-sm shadow-lg">
-      <h2 id="confirmTitle" class="text-base font-semibold text-slate-900 mb-2">Delete record</h2>
-      <p id="confirmMsg" class="text-sm text-slate-600 mb-6"></p>
-      <div class="flex gap-3 justify-end">
-        <button id="confirmCancel" class="px-4 py-2 text-sm font-medium border border-slate-300 rounded-md hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>
-        <button id="confirmOk" class="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500">Delete</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Side drawer -->
-<div id="drawerOverlay" class="overlay fixed inset-0 z-40 bg-black/30 hidden" aria-hidden="true"></div>
-<aside id="drawer" class="drawer drawer-closed fixed top-0 right-0 z-40 h-full w-full sm:w-[640px] bg-white border-l border-slate-200 flex flex-col" aria-label="Record editor" aria-hidden="true">
-  <header class="flex items-center justify-between px-5 py-4 border-b border-slate-200 flex-shrink-0">
-    <h2 id="drawerTitle" class="text-base font-semibold text-slate-900">New Record</h2>
-    <button id="drawerClose" class="p-1.5 rounded hover:bg-slate-100 text-slate-500" aria-label="Close drawer">
-      <i data-lucide="x" class="w-4 h-4"></i>
-    </button>
-  </header>
-  <div id="drawerBody" class="flex-1 overflow-y-auto px-5 py-6 space-y-5"></div>
-  <footer class="flex items-center gap-3 px-5 py-4 border-t border-slate-200 flex-shrink-0">
-    <button id="drawerSave" class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500">Save</button>
-    <button id="drawerCancel" class="px-4 py-2 text-sm font-medium border border-slate-300 rounded-md hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500">Cancel</button>
-  </footer>
-</aside>
-
-<!-- App shell -->
-<div class="flex flex-col min-h-screen">
-
-  <!-- Top bar -->
-  <header class="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 flex-wrap">
-    <div class="flex items-center gap-2 flex-shrink-0">
-      <i data-lucide="database" class="w-5 h-5 text-blue-600"></i>
-      <span class="text-base font-semibold text-slate-900">CRUDSimple</span>
-    </div>
-
-    <div class="flex items-center gap-2 flex-1 min-w-0">
-      <!-- Table selector -->
-      <div class="relative flex-shrink-0">
-        <select id="tableSelect" class="pl-3 pr-8 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 appearance-none cursor-pointer" aria-label="Select table">
-          <option value="">Select table…</option>
-        </select>
-        <i data-lucide="chevron-down" class="w-3.5 h-3.5 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"></i>
-      </div>
-
-      <!-- Search -->
-      <div class="relative flex-1 max-w-xs">
-        <i data-lucide="search" class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"></i>
-        <input id="searchInput" type="search" placeholder="Search…" aria-label="Search records"
-          class="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-300 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500" />
-      </div>
-    </div>
-
-    <div class="flex items-center gap-2 flex-shrink-0">
-      <!-- Density toggle -->
-      <button id="densityToggle" title="Toggle row density" class="p-1.5 border border-slate-300 rounded-md hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500" aria-pressed="false" aria-label="Comfortable row height">
-        <i data-lucide="align-justify" class="w-4 h-4 text-slate-500"></i>
-      </button>
-
-      <!-- Refresh -->
-      <button id="refreshBtn" title="Refresh" class="p-1.5 border border-slate-300 rounded-md hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Refresh">
-        <i data-lucide="refresh-cw" class="w-4 h-4 text-slate-500"></i>
-      </button>
-
-      <!-- New button -->
-      <button id="newBtn" class="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500">
-        <i data-lucide="plus" class="w-4 h-4"></i>
-        <span>New Record</span>
-      </button>
-    </div>
-  </header>
-
-  <!-- Bulk action bar (hidden until rows selected) -->
-  <div id="bulkBar" class="hidden bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center gap-3">
-    <span id="bulkCount" class="text-sm font-medium text-blue-800"></span>
-    <button id="bulkDelete" class="flex items-center gap-1 px-3 py-1 text-sm font-medium text-red-700 border border-red-300 rounded hover:bg-red-50 focus-visible:ring-2 focus-visible:ring-red-500">
-      <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete selected
-    </button>
-    <button id="bulkDeselect" class="text-sm text-blue-700 hover:underline ml-auto">Deselect all</button>
-  </div>
-
-  <!-- Connection banner -->
-  <div id="connectionBanner" class="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2 text-sm text-amber-800">
-    <i data-lucide="wifi-off" class="w-4 h-4 flex-shrink-0"></i>
-    <span id="connectionMsg">No Supabase config detected — using localStorage. Set <code class="bg-amber-100 px-1 rounded">window.SUPABASE_URL</code> and <code class="bg-amber-100 px-1 rounded">window.SUPABASE_ANON_KEY</code> to connect.</span>
-    <button id="dismissBanner" class="ml-auto text-amber-700 hover:text-amber-900" aria-label="Dismiss">
-      <i data-lucide="x" class="w-4 h-4"></i>
-    </button>
-  </div>
-
-  <!-- Main content -->
-  <main class="flex-1 flex flex-col p-4 gap-4">
-
-    <!-- Filter chips area -->
-    <div id="filterArea" class="hidden flex flex-wrap gap-2 items-center">
-      <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Filters:</span>
-      <div id="filterChips" class="flex flex-wrap gap-1.5"></div>
-      <button id="clearFilters" class="text-xs text-blue-600 hover:underline">Clear all</button>
-    </div>
-
-    <!-- Table wrapper -->
-    <div class="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col">
-      <div class="overflow-auto flex-1">
-        <table id="mainTable" class="w-full text-sm border-collapse">
-          <thead id="tableHead" class="bg-slate-50 border-b border-slate-200 sticky top-0 z-10"></thead>
-          <tbody id="tableBody" class="divide-y divide-slate-100 row-compact"></tbody>
-        </table>
-
-        <!-- Empty state -->
-        <div id="emptyState" class="hidden flex flex-col items-center justify-center py-20 text-center px-4">
-          <svg width="80" height="80" viewBox="0 0 80 80" fill="none" aria-hidden="true" class="mb-4 text-slate-200">
-            <rect x="10" y="20" width="60" height="48" rx="4" fill="currentColor"/>
-            <rect x="20" y="10" width="40" height="8" rx="2" fill="#e2e8f0"/>
-            <rect x="25" y="35" width="30" height="4" rx="2" fill="#cbd5e1"/>
-            <rect x="25" y="45" width="20" height="4" rx="2" fill="#cbd5e1"/>
+  <!-- ========== STICKY NAV ========== -->
+  <header class="fixed top-0 inset-x-0 z-50 nav-blur border-b border-white/5">
+    <nav class="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between" aria-label="Main navigation">
+      <!-- Logo -->
+      <a href="#hero" class="flex items-center gap-2 shrink-0">
+        <span class="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.9"/>
+            <rect x="10" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+            <rect x="2" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+            <rect x="10" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.3"/>
           </svg>
-          <p id="emptyTitle" class="text-base font-semibold text-slate-700 mb-1">No records yet</p>
-          <p id="emptySubtitle" class="text-sm text-slate-500 mb-4">Get started by adding your first record.</p>
-          <button id="emptyNewBtn" class="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 focus-visible:ring-2 focus-visible:ring-blue-500">
-            <i data-lucide="plus" class="w-4 h-4"></i> Add your first record
-          </button>
+        </span>
+        <span class="font-bold text-lg text-white tracking-tight">CRUD<span class="text-indigo-400">Simple</span></span>
+      </a>
+
+      <!-- Desktop nav links -->
+      <ul class="hidden md:flex items-center gap-8 text-sm font-medium text-zinc-400" role="list">
+        <li><a href="#features" class="hover:text-white transition-colors">Features</a></li>
+        <li><a href="#testimonials" class="hover:text-white transition-colors">Reviews</a></li>
+        <li><a href="#faq" class="hover:text-white transition-colors">FAQ</a></li>
+        <li><a href="#pricing" class="hover:text-white transition-colors">Pricing</a></li>
+      </ul>
+
+      <!-- CTA -->
+      <div class="flex items-center gap-3">
+        <a href="#cta" class="hidden sm:inline-flex text-sm font-medium text-zinc-300 hover:text-white transition-colors">Sign in</a>
+        <a href="#cta" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-semibold transition-colors shadow-lg shadow-indigo-500/20">
+          Start free
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+
+    <!-- ========== HERO ========== -->
+    <section id="hero" class="relative grid-bg pt-32 pb-20 sm:pt-40 sm:pb-28 overflow-hidden">
+      <!-- Glow blobs -->
+      <div class="absolute -top-40 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-indigo-600/20 rounded-full blur-[120px] pointer-events-none" aria-hidden="true"></div>
+      <div class="absolute top-60 -left-20 w-72 h-72 bg-indigo-800/10 rounded-full blur-[80px] pointer-events-none" aria-hidden="true"></div>
+
+      <div class="relative max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-12">
+          <!-- Badge -->
+          <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/25 text-indigo-300 text-xs font-medium mb-6">
+            <span class="w-1.5 h-1.5 rounded-full bg-indigo-400" aria-hidden="true"></span>
+            No-code data management — now in beta
+          </span>
+
+          <h1 class="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white leading-tight tracking-tight mb-5">
+            Create. Read. Update.<br />
+            <span class="gradient-text">Delete. Done.</span>
+          </h1>
+          <p class="text-lg sm:text-xl text-zinc-400 max-w-2xl mx-auto mb-8 leading-relaxed">
+            CRUDSimple gives every team a clean interface to manage any data without writing a single line of code. Add records, edit them, remove them — in seconds.
+          </p>
+
+          <!-- Primary CTAs -->
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <a href="#cta" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-base transition-colors shadow-xl shadow-indigo-500/25">
+              Get started free
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M3.5 8h9M9 4.5L12.5 8 9 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </a>
+            <a href="#features" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-base transition-colors">
+              See how it works
+            </a>
+          </div>
+          <p class="mt-4 text-xs text-zinc-500">No credit card required · Free for up to 3 collections</p>
         </div>
 
-        <!-- Loading state -->
-        <div id="loadingState" class="hidden flex items-center justify-center py-20">
-          <div class="flex items-center gap-2 text-slate-500">
-            <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
-            <span class="text-sm">Loading…</span>
+        <!-- Hero UI Mockup -->
+        <div class="relative max-w-3xl mx-auto">
+          <div class="glass-card rounded-2xl overflow-hidden shadow-2xl shadow-black/50 border border-white/10">
+            <!-- Window chrome -->
+            <div class="flex items-center gap-2 px-4 py-3 bg-white/[0.03] border-b border-white/[0.06]">
+              <span class="w-3 h-3 rounded-full bg-red-500/60" aria-hidden="true"></span>
+              <span class="w-3 h-3 rounded-full bg-yellow-500/60" aria-hidden="true"></span>
+              <span class="w-3 h-3 rounded-full bg-green-500/60" aria-hidden="true"></span>
+              <span class="ml-3 text-xs text-zinc-500 font-mono">crudsimple.app / collections / customers</span>
+            </div>
+
+            <!-- Toolbar -->
+            <div class="flex items-center justify-between px-4 py-3 bg-white/[0.02] border-b border-white/[0.05]">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold text-zinc-200">Customers</span>
+                <span class="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-xs font-medium">42 records</span>
+              </div>
+              <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500 text-white text-xs font-semibold" aria-label="Add new record">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <path d="M6 2v8M2 6h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                </svg>
+                Add record
+              </button>
+            </div>
+
+            <!-- Table header -->
+            <div class="mockup-row text-zinc-500 text-xs font-semibold uppercase tracking-wide px-4 py-2">
+              <span>Name</span><span>Email</span><span>Status</span><span>Actions</span>
+            </div>
+
+            <!-- Table rows -->
+            <div aria-label="Sample data table">
+              <div class="mockup-row hover:bg-white/[0.02] transition-colors">
+                <span class="text-zinc-200 font-medium truncate">Sarah Kim</span>
+                <span class="text-zinc-400 truncate">sarah@acme.io</span>
+                <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-medium w-fit">Active</span>
+                <div class="flex gap-1">
+                  <button class="p-1.5 rounded hover:bg-indigo-500/20 text-zinc-400 hover:text-indigo-300 transition-colors" aria-label="Edit Sarah Kim">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7.5 2.5l2 2L3 11H1V9L7.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button class="p-1.5 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" aria-label="Delete Sarah Kim">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h8M5 3V2h2v1M3.5 3l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="mockup-row hover:bg-white/[0.02] transition-colors">
+                <span class="text-zinc-200 font-medium truncate">James Okafor</span>
+                <span class="text-zinc-400 truncate">james@betatech.com</span>
+                <span class="px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-400 text-xs font-medium w-fit">Trial</span>
+                <div class="flex gap-1">
+                  <button class="p-1.5 rounded hover:bg-indigo-500/20 text-zinc-400 hover:text-indigo-300 transition-colors" aria-label="Edit James Okafor">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7.5 2.5l2 2L3 11H1V9L7.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button class="p-1.5 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" aria-label="Delete James Okafor">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h8M5 3V2h2v1M3.5 3l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="mockup-row hover:bg-white/[0.02] transition-colors">
+                <span class="text-zinc-200 font-medium truncate">Priya Menon</span>
+                <span class="text-zinc-400 truncate">priya@designco.io</span>
+                <span class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-xs font-medium w-fit">Active</span>
+                <div class="flex gap-1">
+                  <button class="p-1.5 rounded hover:bg-indigo-500/20 text-zinc-400 hover:text-indigo-300 transition-colors" aria-label="Edit Priya Menon">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7.5 2.5l2 2L3 11H1V9L7.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+                  </button>
+                  <button class="p-1.5 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" aria-label="Delete Priya Menon">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2 3h8M5 3V2h2v1M3.5 3l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Floating badge -->
+          <div class="absolute -bottom-4 -right-4 glass-card rounded-xl px-4 py-2.5 shadow-xl hidden sm:flex items-center gap-2.5">
+            <span class="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 8.5l3 3 7-7" stroke="#34d399" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <div>
+              <p class="text-xs font-semibold text-white">Record updated</p>
+              <p class="text-xs text-zinc-400">Just now · no code written</p>
+            </div>
           </div>
         </div>
+      </div>
+    </section>
 
-        <!-- No table selected -->
-        <div id="noTableState" class="flex flex-col items-center justify-center py-20 text-center px-4">
-          <i data-lucide="table" class="w-12 h-12 text-slate-200 mb-4"></i>
-          <p class="text-base font-semibold text-slate-600 mb-1">Select a table</p>
-          <p class="text-sm text-slate-400">Choose a table from the dropdown above, or connect Supabase to list your tables.</p>
+    <!-- ========== FEATURES ========== -->
+    <section id="features" class="py-20 sm:py-28">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">Everything you need</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4">CRUD without the ceremony</h2>
+          <p class="text-zinc-400 text-lg max-w-xl mx-auto">Four operations. Infinite possibilities. No ORM, no migrations, no boilerplate.</p>
+        </div>
+
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+
+          <!-- Feature 1 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="3" width="16" height="16" rx="3" stroke="#818cf8" stroke-width="1.5"/>
+                <path d="M11 8v6M8 11h6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Add records instantly</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Click "Add", fill in your fields, and save. Your schema is inferred from what you type — no schema definition required.</p>
+          </div>
+
+          <!-- Feature 2 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 6h14M4 11h10M4 16h7" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="17" cy="16" r="3" stroke="#818cf8" stroke-width="1.5"/>
+                <path d="M17 14.5v1.5l1 1" stroke="#818cf8" stroke-width="1.2" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Search & filter at speed</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Find any record across thousands of rows in milliseconds. Filter by any field, sort by any column — no SQL required.</p>
+          </div>
+
+          <!-- Feature 3 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M14 4l4 4-9 9H5v-4L14 4z" stroke="#818cf8" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Inline editing</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Click any cell to edit it directly in the table. Bulk-edit multiple records at once. Changes are validated before they save.</p>
+          </div>
+
+          <!-- Feature 4 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M19 9V6a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2h7" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
+                <path d="M16 14l2 2 4-4" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Safe deletes with undo</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Accidental deletes are the #1 data catastrophe. CRUDSimple gives you a 30-second undo window before anything is truly gone.</p>
+          </div>
+
+          <!-- Feature 5 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+                <rect x="12" y="3" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+                <rect x="3" y="12" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+                <rect x="12" y="12" width="7" height="7" rx="1.5" stroke="#818cf8" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Multiple collections</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Customers, orders, inventory, tasks — each gets its own collection. Link records across collections with a single click.</p>
+          </div>
+
+          <!-- Feature 6 -->
+          <div class="glass-card rounded-2xl p-6 hover:border-indigo-500/30 transition-colors">
+            <div class="w-11 h-11 rounded-xl bg-indigo-500/15 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="11" cy="11" r="8" stroke="#818cf8" stroke-width="1.5"/>
+                <path d="M8 11l2 2 4-4" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <h3 class="text-white font-semibold text-lg mb-2">Permissions & audit log</h3>
+            <p class="text-zinc-400 text-sm leading-relaxed">Control who can create, read, update, or delete. Every action is logged — know exactly who changed what and when.</p>
+          </div>
+
         </div>
       </div>
+    </section>
 
-      <!-- Pagination -->
-      <div id="paginationBar" class="hidden border-t border-slate-200 px-4 py-3 flex items-center justify-between text-sm text-slate-600">
-        <span id="pageInfo"></span>
-        <div class="flex items-center gap-1">
-          <button id="prevPage" class="p-1.5 rounded hover:bg-slate-100 disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Previous page">
-            <i data-lucide="chevron-left" class="w-4 h-4"></i>
-          </button>
-          <span id="pageNum" class="px-2"></span>
-          <button id="nextPage" class="p-1.5 rounded hover:bg-slate-100 disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Next page">
-            <i data-lucide="chevron-right" class="w-4 h-4"></i>
-          </button>
+    <!-- ========== TESTIMONIALS ========== -->
+    <section id="testimonials" class="py-20 sm:py-24 bg-white/[0.02] border-y border-white/[0.05]">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-12">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">Loved by teams</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white">Real people. Real data. Zero headaches.</h2>
+        </div>
+
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+
+          <figure class="glass-card rounded-2xl p-6">
+            <blockquote class="text-zinc-300 text-sm leading-relaxed mb-5">
+              "We used to ask engineering every time we needed to update a price or fix a customer record. Now our ops team does it themselves in CRUDSimple. Saved us hours every week."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-indigo-500/30 flex items-center justify-center text-indigo-300 font-bold text-sm" aria-hidden="true">AL</div>
+              <div>
+                <p class="text-white font-semibold text-sm">Alicia Lund</p>
+                <p class="text-zinc-500 text-xs">Head of Operations · Freeflow SaaS</p>
+              </div>
+            </figcaption>
+          </figure>
+
+          <figure class="glass-card rounded-2xl p-6">
+            <blockquote class="text-zinc-300 text-sm leading-relaxed mb-5">
+              "I built our entire internal tooling layer on CRUDSimple in a weekend. What would have taken a month of Airtable customization was done in two days."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-violet-500/30 flex items-center justify-center text-violet-300 font-bold text-sm" aria-hidden="true">MP</div>
+              <div>
+                <p class="text-white font-semibold text-sm">Marcus Petit</p>
+                <p class="text-zinc-500 text-xs">Solo founder · ShipTrackr</p>
+              </div>
+            </figcaption>
+          </figure>
+
+          <figure class="glass-card rounded-2xl p-6">
+            <blockquote class="text-zinc-300 text-sm leading-relaxed mb-5">
+              "The audit log alone is worth it. We know who deleted what and when. No more mystery — just accountability. Our compliance team finally stopped complaining."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-emerald-500/30 flex items-center justify-center text-emerald-300 font-bold text-sm" aria-hidden="true">RN</div>
+              <div>
+                <p class="text-white font-semibold text-sm">Reva Nair</p>
+                <p class="text-zinc-500 text-xs">Engineering Lead · Bastion Finance</p>
+              </div>
+            </figcaption>
+          </figure>
+
+        </div>
+
+        <!-- Logo strip -->
+        <div class="mt-14 text-center">
+          <p class="text-xs uppercase tracking-widest text-zinc-600 mb-6">Trusted by teams at</p>
+          <div class="flex flex-wrap items-center justify-center gap-8 sm:gap-12" role="list" aria-label="Company logos">
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">ACME CORP</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">FREEFLOW</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">BETATECH</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">SHIPTRACKR</span>
+            <span role="listitem" class="text-zinc-600 font-bold text-sm tracking-tight hover:text-zinc-400 transition-colors">DESIGNCO</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== PRICING ========== -->
+    <section id="pricing" class="py-20 sm:py-28">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">Simple pricing</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4">One price. All features.</h2>
+          <p class="text-zinc-400 text-lg">No per-seat gotchas. No hidden add-ons. Cancel any time.</p>
+        </div>
+
+        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl mx-auto">
+
+          <!-- Free -->
+          <div class="glass-card rounded-2xl p-7 flex flex-col">
+            <p class="text-zinc-400 text-sm font-medium mb-1">Free</p>
+            <div class="flex items-end gap-1 mb-5">
+              <span class="text-4xl font-extrabold text-white">$0</span>
+              <span class="text-zinc-500 text-sm mb-1">/mo</span>
+            </div>
+            <ul class="space-y-3 text-sm text-zinc-400 mb-8 flex-1" role="list" aria-label="Free plan features">
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Up to 3 collections</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>500 records total</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>1 team member</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>7-day audit log</li>
+            </ul>
+            <a href="#cta" class="block text-center px-5 py-3 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-sm transition-colors">Get started free</a>
+          </div>
+
+          <!-- Pro (highlighted) -->
+          <div class="relative rounded-2xl p-7 flex flex-col border border-indigo-500/50 bg-indigo-500/10 shadow-xl shadow-indigo-500/10">
+            <span class="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-indigo-500 text-white text-xs font-semibold">Most popular</span>
+            <p class="text-indigo-300 text-sm font-medium mb-1">Pro</p>
+            <div class="flex items-end gap-1 mb-5">
+              <span class="text-4xl font-extrabold text-white">$19</span>
+              <span class="text-zinc-400 text-sm mb-1">/mo</span>
+            </div>
+            <ul class="space-y-3 text-sm text-zinc-300 mb-8 flex-1" role="list" aria-label="Pro plan features">
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Unlimited collections</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>100,000 records</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Up to 10 team members</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>90-day audit log</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>CSV export</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#a5b4fc" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>API access</li>
+            </ul>
+            <a href="#cta" class="block text-center px-5 py-3 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm transition-colors shadow-lg shadow-indigo-500/25">Start Pro free for 14 days</a>
+          </div>
+
+          <!-- Team -->
+          <div class="glass-card rounded-2xl p-7 flex flex-col">
+            <p class="text-zinc-400 text-sm font-medium mb-1">Team</p>
+            <div class="flex items-end gap-1 mb-5">
+              <span class="text-4xl font-extrabold text-white">$79</span>
+              <span class="text-zinc-500 text-sm mb-1">/mo</span>
+            </div>
+            <ul class="space-y-3 text-sm text-zinc-400 mb-8 flex-1" role="list" aria-label="Team plan features">
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in Pro</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Unlimited members</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Role-based permissions</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>SSO / SAML</li>
+              <li class="flex items-center gap-2"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M2.5 7.5l3 3 6-6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Priority support</li>
+            </ul>
+            <a href="#cta" class="block text-center px-5 py-3 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-sm transition-colors">Contact sales</a>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== FAQ ========== -->
+    <section id="faq" class="py-20 sm:py-24 bg-white/[0.02] border-y border-white/[0.05]">
+      <div class="max-w-3xl mx-auto px-4 sm:px-6">
+        <div class="text-center mb-12">
+          <span class="text-xs font-semibold uppercase tracking-widest text-indigo-400 mb-3 block">FAQ</span>
+          <h2 class="text-3xl sm:text-4xl font-bold text-white">Common questions</h2>
+        </div>
+
+        <div class="space-y-3" role="list">
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>Do I need to know SQL or how to code?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Not at all. CRUDSimple is designed for non-technical users. If you can use a spreadsheet, you can use CRUDSimple. There's no SQL, no code, and no schema to define — just click, type, and save.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>How is this different from Airtable or Notion databases?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                CRUDSimple is purpose-built for the four CRUD operations. Unlike Airtable's endless views or Notion's doc-first approach, we focus on speed: add a record, update it, delete it. No fluff, no feature bloat. It also exposes a clean REST API so you can power your own apps with it.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>What happens to my data if I cancel?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Your data is yours. Before your account closes, you can export all collections as CSV or JSON. We hold your data for 30 days after cancellation so you have time to export if you forget. After 30 days, it is permanently deleted.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>Can multiple people edit the same collection at once?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Yes. CRUDSimple supports real-time collaborative editing on Pro and Team plans. You'll see a live indicator when a teammate is editing the same record, and conflicts are resolved automatically using last-write-wins with full audit history.
+              </p>
+            </div>
+          </div>
+
+          <div class="glass-card rounded-xl overflow-hidden" role="listitem">
+            <button
+              class="w-full flex items-center justify-between px-5 py-4 text-left text-white font-medium text-sm sm:text-base hover:bg-white/[0.03] transition-colors"
+              aria-expanded="false"
+              onclick="toggleAccordion(this)"
+            >
+              <span>Is there a REST API I can use in my own apps?</span>
+              <svg class="w-5 h-5 text-zinc-400 shrink-0 transition-transform duration-300" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M5 8l5 5 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <div class="accordion-body">
+              <p class="px-5 pb-4 text-zinc-400 text-sm leading-relaxed">
+                Yes — available on the Pro plan and above. Every collection gets auto-generated REST endpoints for GET, POST, PUT/PATCH, and DELETE. Full OpenAPI docs are included. Rate limits are generous: 1,000 req/min on Pro, unlimited on Team.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== FINAL CTA ========== -->
+    <section id="cta" class="py-24 sm:py-32 relative overflow-hidden">
+      <div class="absolute inset-0 bg-indigo-600/10 pointer-events-none" aria-hidden="true"></div>
+      <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-indigo-600/15 rounded-full blur-[120px] pointer-events-none" aria-hidden="true"></div>
+
+      <div class="relative max-w-3xl mx-auto px-4 sm:px-6 text-center">
+        <h2 class="text-3xl sm:text-5xl font-extrabold text-white mb-5 leading-tight tracking-tight">
+          Stop wrestling with data.<br />
+          <span class="gradient-text">Start managing it simply.</span>
+        </h2>
+        <p class="text-zinc-400 text-lg mb-8 max-w-xl mx-auto">
+          Join hundreds of teams who replaced custom admin panels and clunky spreadsheets with CRUDSimple. Free to start, no credit card needed.
+        </p>
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <a href="#" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl bg-indigo-500 hover:bg-indigo-400 text-white font-bold text-base transition-colors shadow-xl shadow-indigo-500/30">
+            Create free account
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M3.5 8h9M9 4.5L12.5 8 9 11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+          <a href="mailto:hello@crudsimple.app" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl border border-white/10 text-zinc-300 hover:text-white hover:border-white/20 font-semibold text-base transition-colors">
+            Talk to us
+          </a>
+        </div>
+        <p class="mt-5 text-xs text-zinc-500">Free forever on the Starter plan · No credit card · Cancel Pro anytime</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ========== FOOTER ========== -->
+  <footer class="border-t border-white/[0.06] bg-white/[0.01]">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-12">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-8 mb-10">
+        <div class="col-span-2 sm:col-span-1">
+          <a href="#hero" class="flex items-center gap-2 mb-4">
+            <span class="w-7 h-7 rounded-lg bg-indigo-500 flex items-center justify-center" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="2" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.9"/>
+                <rect x="10" y="2" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+                <rect x="2" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.6"/>
+                <rect x="10" y="10" width="6" height="6" rx="1.5" fill="white" opacity="0.3"/>
+              </svg>
+            </span>
+            <span class="font-bold text-white">CRUD<span class="text-indigo-400">Simple</span></span>
+          </a>
+          <p class="text-zinc-500 text-sm leading-relaxed">The simplest way to add, update, and delete your data. Built for teams who'd rather ship than administrate.</p>
+        </div>
+
+        <nav aria-label="Product links">
+          <p class="text-white font-semibold text-sm mb-3">Product</p>
+          <ul class="space-y-2.5 text-zinc-500 text-sm" role="list">
+            <li><a href="#features" class="hover:text-zinc-300 transition-colors">Features</a></li>
+            <li><a href="#pricing" class="hover:text-zinc-300 transition-colors">Pricing</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">API Docs</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Changelog</a></li>
+          </ul>
+        </nav>
+
+        <nav aria-label="Company links">
+          <p class="text-white font-semibold text-sm mb-3">Company</p>
+          <ul class="space-y-2.5 text-zinc-500 text-sm" role="list">
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">About</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Blog</a></li>
+            <li><a href="mailto:hello@crudsimple.app" class="hover:text-zinc-300 transition-colors">Contact</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Status</a></li>
+          </ul>
+        </nav>
+
+        <nav aria-label="Legal links">
+          <p class="text-white font-semibold text-sm mb-3">Legal</p>
+          <ul class="space-y-2.5 text-zinc-500 text-sm" role="list">
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Privacy Policy</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Terms of Service</a></li>
+            <li><a href="#" class="hover:text-zinc-300 transition-colors">Security</a></li>
+          </ul>
+        </nav>
+      </div>
+
+      <div class="border-t border-white/[0.05] pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <p class="text-zinc-600 text-xs">&copy; 2026 CRUDSimple. All rights reserved.</p>
+        <div class="flex items-center gap-4">
+          <a href="#" aria-label="CRUDSimple on Twitter / X" class="text-zinc-600 hover:text-zinc-300 transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+            </svg>
+          </a>
+          <a href="#" aria-label="CRUDSimple on GitHub" class="text-zinc-600 hover:text-zinc-300 transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.168 6.839 9.491.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.154-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0112 6.836a9.59 9.59 0 012.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.165 22 16.418 22 12c0-5.523-4.477-10-10-10z"/>
+            </svg>
+          </a>
         </div>
       </div>
     </div>
-
-  </main>
-</div>
-
-<script>
-// ── State ────────────────────────────────────────────────────────────────────
-const PAGE_SIZE = 50;
-const LS_KEY    = 'crudsimple_v1';
-
-let supabase      = null;
-let currentTable  = null;
-let columns       = [];        // [{name, type}]
-let records       = [];        // displayed rows
-let allRecords    = [];        // full local cache (localStorage mode)
-let drawerRecord  = null;      // record being edited (null = new)
-let sortCol       = null;
-let sortDir       = 'asc';
-let searchQuery   = '';
-let page          = 1;
-let totalCount    = 0;
-let comfortable   = false;
-let selected      = new Set(); // ids of checked rows
-let supabaseMode  = false;
-
-// ── Init Supabase ─────────────────────────────────────────────────────────────
-function initSupabase() {
-  const url = window.SUPABASE_URL;
-  const key = window.SUPABASE_ANON_KEY;
-  if (url && key) {
-    supabase     = window.supabase.createClient(url, key);
-    supabaseMode = true;
-    document.getElementById('connectionBanner').classList.add('hidden');
-    loadTableList();
-  } else {
-    loadLocalTables();
-  }
-}
-
-// ── Table list ────────────────────────────────────────────────────────────────
-async function loadTableList() {
-  const sel = document.getElementById('tableSelect');
-  if (supabaseMode) {
-    try {
-      const { data, error } = await supabase.rpc('get_tables').catch(() => ({ data: null, error: true }));
-      // Fall back: query information_schema via a known RPC or list a default
-      const { data: tables, error: e2 } = await supabase
-        .from('information_schema.tables')
-        .select('table_name')
-        .eq('table_schema', 'public')
-        .catch(() => ({ data: null }));
-
-      if (tables && tables.length) {
-        tables.forEach(t => {
-          const o = document.createElement('option');
-          o.value = t.table_name;
-          o.textContent = t.table_name;
-          sel.appendChild(o);
-        });
-      } else {
-        // Can't auto-list — let user type table name
-        addTableInput();
-      }
-    } catch { addTableInput(); }
-  }
-}
-
-function addTableInput() {
-  const sel = document.getElementById('tableSelect');
-  sel.outerHTML = `<input id="tableSelect" type="text" placeholder="Table name…"
-    class="pl-3 pr-3 py-1.5 text-sm border border-slate-300 rounded-md bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-    aria-label="Table name" style="width:140px" />`;
-  document.getElementById('tableSelect').addEventListener('change', onTableChange);
-  document.getElementById('tableSelect').addEventListener('keydown', e => { if (e.key === 'Enter') onTableChange(); });
-}
-
-function loadLocalTables() {
-  const data = getLocalData();
-  const sel  = document.getElementById('tableSelect');
-  const tables = Object.keys(data);
-  tables.forEach(t => {
-    const o = document.createElement('option');
-    o.value = t; o.textContent = t;
-    sel.appendChild(o);
-  });
-  // Add option to create new table
-  const o = document.createElement('option');
-  o.value = '__new__'; o.textContent = '+ Create table…';
-  sel.appendChild(o);
-}
-
-// ── LocalStorage helpers ──────────────────────────────────────────────────────
-function getLocalData() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) || '{}'); }
-  catch { return {}; }
-}
-function saveLocalData(d) { localStorage.setItem(LS_KEY, JSON.stringify(d)); }
-function getLocalRecords(table) { return (getLocalData()[table] || []); }
-function saveLocalRecords(table, rows) {
-  const d = getLocalData();
-  d[table] = rows;
-  saveLocalData(d);
-}
-function nextLocalId(rows) {
-  return rows.length ? Math.max(...rows.map(r => r.id || 0)) + 1 : 1;
-}
-
-// ── Table change ──────────────────────────────────────────────────────────────
-async function onTableChange() {
-  const sel   = document.getElementById('tableSelect');
-  const value = (sel.value || sel.value === undefined) ? (sel.value || '') : '';
-
-  if (!value || value === '') { currentTable = null; renderNoTable(); return; }
-
-  if (value === '__new__') {
-    const name = prompt('Table name (letters, numbers, underscores):');
-    if (!name) { sel.value = ''; return; }
-    const clean = name.trim().replace(/[^a-z0-9_]/gi, '_').toLowerCase();
-    if (!getLocalData()[clean]) saveLocalRecords(clean, []);
-    // Add option
-    const o = document.createElement('option');
-    o.value = clean; o.textContent = clean;
-    sel.insertBefore(o, sel.lastElementChild);
-    sel.value = clean;
-    currentTable = clean;
-  } else {
-    currentTable = value;
-  }
-
-  selected.clear();
-  page    = 1;
-  sortCol = null;
-  searchQuery = document.getElementById('searchInput').value = '';
-  await loadColumns();
-  await loadRecords();
-}
-
-// ── Columns ───────────────────────────────────────────────────────────────────
-async function loadColumns() {
-  if (!currentTable) return;
-
-  if (supabaseMode) {
-    // Try to infer columns from first row
-    const { data, error } = await supabase.from(currentTable).select('*').limit(1);
-    if (!error && data && data.length) {
-      columns = Object.keys(data[0]).map(k => ({ name: k, type: typeof data[0][k] === 'number' ? 'number' : 'text' }));
-    } else if (!error) {
-      columns = [{ name: 'id', type: 'number' }, { name: 'name', type: 'text' }];
-    } else {
-      showToast(`Error loading columns: ${error.message}`, 'error');
-      columns = [];
-    }
-  } else {
-    const rows = getLocalRecords(currentTable);
-    if (rows.length) {
-      columns = Object.keys(rows[0]).map(k => ({ name: k, type: typeof rows[0][k] === 'number' ? 'number' : 'text' }));
-    } else {
-      // Default columns for new table
-      columns = [
-        { name: 'id',   type: 'number' },
-        { name: 'name', type: 'text' },
-        { name: 'notes', type: 'text' },
-      ];
-    }
-  }
-}
-
-// ── Load records ──────────────────────────────────────────────────────────────
-async function loadRecords(optimistic) {
-  if (!currentTable) return;
-  showLoading(true);
-
-  if (supabaseMode) {
-    await loadSupabase();
-  } else {
-    loadLocal();
-  }
-  renderTable();
-  showLoading(false);
-}
-
-async function loadSupabase() {
-  let q = supabase.from(currentTable).select('*', { count: 'exact' });
-
-  if (searchQuery && columns.length) {
-    const textCols = columns.filter(c => c.type === 'text' && c.name !== 'id');
-    if (textCols.length) {
-      const or = textCols.map(c => `${c.name}.ilike.%${searchQuery}%`).join(',');
-      q = q.or(or);
-    }
-  }
-  if (sortCol) q = q.order(sortCol, { ascending: sortDir === 'asc' });
-  q = q.range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-
-  const { data, error, count } = await q;
-  if (error) { showToast(`Load error: ${error.message}`, 'error'); records = []; totalCount = 0; return; }
-  records    = data || [];
-  totalCount = count || 0;
-}
-
-function loadLocal() {
-  let rows = getLocalRecords(currentTable);
-
-  if (searchQuery) {
-    const q = searchQuery.toLowerCase();
-    rows = rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)));
-  }
-  if (sortCol) {
-    rows = [...rows].sort((a, b) => {
-      const av = a[sortCol]; const bv = b[sortCol];
-      if (av === bv) return 0;
-      const res = av < bv ? -1 : 1;
-      return sortDir === 'asc' ? res : -res;
-    });
-  }
-  totalCount = rows.length;
-  allRecords = rows;
-  records    = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-}
-
-// ── Render table ──────────────────────────────────────────────────────────────
-function renderTable() {
-  const head = document.getElementById('tableHead');
-  const body = document.getElementById('tableBody');
-  const empty = document.getElementById('emptyState');
-  const noTable = document.getElementById('noTableState');
-  const pagBar = document.getElementById('paginationBar');
-
-  noTable.classList.add('hidden');
-
-  if (!columns.length && !records.length) { renderEmpty(); return; }
-
-  empty.classList.add('hidden');
-  head.innerHTML = '';
-  body.innerHTML = '';
-
-  // Header row
-  const tr = document.createElement('tr');
-
-  // Checkbox column
-  const thCb = document.createElement('th');
-  thCb.className = 'px-3 py-2 w-8';
-  thCb.innerHTML = `<input type="checkbox" id="selectAll" aria-label="Select all" />`;
-  tr.appendChild(thCb);
-
-  columns.forEach(col => {
-    const th = document.createElement('th');
-    const isSorted = sortCol === col.name;
-    th.className = 'px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase tracking-wide cursor-pointer select-none whitespace-nowrap';
-    if (isSorted) th.setAttribute('data-sorted', sortDir);
-    th.dataset.col = col.name;
-    th.innerHTML = `
-      <span class="flex items-center gap-1">
-        ${escHtml(col.name)}
-        <span class="sort-icon flex flex-col gap-px ml-0.5">
-          <i data-lucide="chevron-up" class="w-2.5 h-2.5 sort-asc"></i>
-          <i data-lucide="chevron-down" class="w-2.5 h-2.5 sort-desc" style="margin-top:-4px"></i>
-        </span>
-      </span>`;
-    th.addEventListener('click', () => onSort(col.name));
-    tr.appendChild(th);
-  });
-
-  // Actions header
-  const thAct = document.createElement('th');
-  thAct.className = 'px-3 py-2 w-16 text-right text-xs font-medium text-slate-500 uppercase tracking-wide';
-  thAct.textContent = 'Actions';
-  tr.appendChild(thAct);
-  head.appendChild(tr);
-
-  // Rows
-  if (records.length === 0) { renderEmpty(); return; }
-  empty.classList.add('hidden');
-
-  records.forEach(rec => {
-    const tr = document.createElement('tr');
-    tr.className = `hover:bg-slate-50 cursor-pointer ${comfortable ? 'row-comfortable' : 'row-compact'}`;
-    tr.dataset.id = rec.id;
-
-    const id = getRecordId(rec);
-
-    // Checkbox
-    const tdCb = document.createElement('td');
-    tdCb.className = 'px-3';
-    tdCb.innerHTML = `<input type="checkbox" aria-label="Select row" ${selected.has(id) ? 'checked' : ''} />`;
-    tdCb.querySelector('input').addEventListener('change', e => {
-      e.stopPropagation();
-      if (e.target.checked) selected.add(id); else selected.delete(id);
-      updateBulkBar();
-      updateSelectAll();
-    });
-    tdCb.addEventListener('click', e => e.stopPropagation());
-    tr.appendChild(tdCb);
-
-    // Data cells
-    columns.forEach(col => {
-      const td = document.createElement('td');
-      td.className = 'px-3 py-2 text-slate-700 max-w-xs truncate';
-      const val = rec[col.name];
-      td.textContent = val === null || val === undefined ? '' : String(val);
-      tr.appendChild(td);
-    });
-
-    // Action cells
-    const tdAct = document.createElement('td');
-    tdAct.className = 'px-3 py-2 text-right whitespace-nowrap';
-    tdAct.innerHTML = `
-      <button data-action="edit" title="Edit" class="p-1 rounded hover:bg-slate-100 text-slate-500 hover:text-blue-600 focus-visible:ring-2 focus-visible:ring-blue-500" aria-label="Edit record">
-        <i data-lucide="pencil" class="w-3.5 h-3.5 pointer-events-none"></i>
-      </button>
-      <button data-action="delete" title="Delete" class="p-1 rounded hover:bg-slate-100 text-slate-500 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 ml-1" aria-label="Delete record">
-        <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
-      </button>`;
-    tdAct.addEventListener('click', e => {
-      e.stopPropagation();
-      const btn = e.target.closest('[data-action]');
-      if (!btn) return;
-      if (btn.dataset.action === 'edit') openDrawer(rec);
-      if (btn.dataset.action === 'delete') confirmDelete([id], rec);
-    });
-    tr.appendChild(tdAct);
-
-    tr.addEventListener('click', () => openDrawer(rec));
-    body.appendChild(tr);
-  });
-
-  // Pagination
-  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
-  if (totalCount > PAGE_SIZE) {
-    pagBar.classList.remove('hidden');
-    document.getElementById('pageInfo').textContent = `${(page-1)*PAGE_SIZE+1}–${Math.min(page*PAGE_SIZE, totalCount)} of ${totalCount}`;
-    document.getElementById('pageNum').textContent  = `Page ${page} of ${totalPages}`;
-    document.getElementById('prevPage').disabled = page <= 1;
-    document.getElementById('nextPage').disabled = page >= totalPages;
-  } else {
-    pagBar.classList.add('hidden');
-  }
-
-  document.getElementById('selectAll').addEventListener('change', e => {
-    const ids = records.map(r => getRecordId(r));
-    if (e.target.checked) ids.forEach(id => selected.add(id));
-    else ids.forEach(id => selected.delete(id));
-    updateBulkBar();
-    renderTable();
-  });
-
-  lucide.createIcons();
-}
-
-function getRecordId(rec) {
-  return rec.id !== undefined ? rec.id : rec[columns[0]?.name];
-}
-
-function renderEmpty() {
-  document.getElementById('emptyState').classList.remove('hidden');
-  document.getElementById('mainTable').querySelector('thead').innerHTML = '';
-  document.getElementById('mainTable').querySelector('tbody').innerHTML = '';
-  document.getElementById('paginationBar').classList.add('hidden');
-}
-
-function renderNoTable() {
-  document.getElementById('noTableState').classList.remove('hidden');
-  document.getElementById('emptyState').classList.add('hidden');
-  document.getElementById('mainTable').querySelector('thead').innerHTML = '';
-  document.getElementById('mainTable').querySelector('tbody').innerHTML = '';
-  document.getElementById('paginationBar').classList.add('hidden');
-}
-
-function showLoading(v) {
-  document.getElementById('loadingState').classList.toggle('hidden', !v);
-  document.getElementById('noTableState').classList.add('hidden');
-}
-
-// ── Sort ──────────────────────────────────────────────────────────────────────
-function onSort(col) {
-  if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-  else { sortCol = col; sortDir = 'asc'; }
-  page = 1;
-  loadRecords();
-}
-
-// ── Search ────────────────────────────────────────────────────────────────────
-let searchTimer;
-document.getElementById('searchInput').addEventListener('input', e => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    searchQuery = e.target.value.trim();
-    page = 1;
-    loadRecords();
-  }, 300);
-});
-
-// ── Drawer ────────────────────────────────────────────────────────────────────
-function openDrawer(rec) {
-  drawerRecord = rec || null;
-  const isNew  = !rec;
-  document.getElementById('drawerTitle').textContent = isNew ? 'New Record' : 'Edit Record';
-  renderDrawerFields(rec);
-  document.getElementById('drawer').classList.remove('drawer-closed');
-  document.getElementById('drawer').classList.add('drawer-open');
-  document.getElementById('drawer').setAttribute('aria-hidden', 'false');
-  document.getElementById('drawerOverlay').classList.remove('hidden');
-  document.body.style.overflow = 'hidden';
-  // Focus first field
-  setTimeout(() => {
-    const first = document.getElementById('drawerBody').querySelector('input, textarea, select');
-    if (first) first.focus();
-  }, 50);
-}
-
-function closeDrawer() {
-  document.getElementById('drawer').classList.remove('drawer-open');
-  document.getElementById('drawer').classList.add('drawer-closed');
-  document.getElementById('drawer').setAttribute('aria-hidden', 'true');
-  document.getElementById('drawerOverlay').classList.add('hidden');
-  document.body.style.overflow = '';
-  drawerRecord = null;
-}
-
-function renderDrawerFields(rec) {
-  const body   = document.getElementById('drawerBody');
-  body.innerHTML = '';
-  const editCols = columns.filter(c => c.name !== 'id');
-
-  if (editCols.length === 0) {
-    // Let user define columns for a new empty table
-    body.innerHTML = `<p class="text-sm text-slate-500">This table has no columns yet. Add a record to auto-detect columns, or first insert rows via Supabase.</p>`;
-    return;
-  }
-
-  editCols.forEach(col => {
-    const val   = rec ? (rec[col.name] ?? '') : '';
-    const label = document.createElement('label');
-    label.className = 'flex flex-col gap-1';
-    label.innerHTML = `
-      <span class="text-sm font-medium text-slate-700">
-        ${escHtml(col.name)} <span class="text-red-500" aria-hidden="true">*</span>
-      </span>`;
-
-    let input;
-    if (col.type === 'number') {
-      input = document.createElement('input');
-      input.type = 'number';
-    } else if (String(val).length > 80 || col.name.match(/notes|desc|body|content|text/i)) {
-      input = document.createElement('textarea');
-      input.rows = 3;
-    } else {
-      input = document.createElement('input');
-      input.type = 'text';
-    }
-
-    input.id      = `field_${col.name}`;
-    input.name    = col.name;
-    input.value   = val;
-    input.className = 'px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 resize-y';
-    input.setAttribute('aria-required', 'true');
-
-    // Inline validation
-    input.addEventListener('blur', () => validateField(input, col));
-    input.addEventListener('input', () => {
-      input.classList.remove('field-error');
-      const err = label.querySelector('.error-msg');
-      if (err) err.remove();
-    });
-
-    const errSpan = document.createElement('span');
-    errSpan.className = 'error-msg hidden';
-    errSpan.setAttribute('aria-live', 'polite');
-
-    label.appendChild(input);
-    label.appendChild(errSpan);
-    body.appendChild(label);
-  });
-}
-
-function validateField(input, col) {
-  const val = input.value.trim();
-  const err = input.parentElement.querySelector('.error-msg');
-  if (!val) {
-    input.classList.add('field-error');
-    err.textContent = `${col.name} is required`;
-    err.classList.remove('hidden');
-    return false;
-  }
-  input.classList.remove('field-error');
-  err.classList.add('hidden');
-  return true;
-}
-
-function collectDrawerValues() {
-  const editCols = columns.filter(c => c.name !== 'id');
-  const data     = {};
-  let valid      = true;
-
-  editCols.forEach(col => {
-    const input = document.getElementById(`field_${col.name}`);
-    if (!input) return;
-    if (!validateField(input, col)) valid = false;
-    const val = input.value.trim();
-    data[col.name] = col.type === 'number' ? Number(val) : val;
-  });
-
-  return valid ? data : null;
-}
-
-// ── Save ──────────────────────────────────────────────────────────────────────
-async function saveRecord() {
-  const values = collectDrawerValues();
-  if (!values) return;
-
-  const isNew = !drawerRecord;
-
-  if (supabaseMode) {
-    if (isNew) {
-      // Optimistic
-      const tempId  = `temp_${Date.now()}`;
-      const tempRec = { id: tempId, ...values };
-      records = [tempRec, ...records];
-      renderTable();
-      closeDrawer();
-
-      const { data, error } = await supabase.from(currentTable).insert([values]).select().single();
-      if (error) {
-        records = records.filter(r => r.id !== tempId);
-        renderTable();
-        showToast(`Save failed: ${error.message}`, 'error');
-      } else {
-        records = records.map(r => r.id === tempId ? data : r);
-        renderTable();
-        showToast('Record created', 'success');
-      }
-    } else {
-      const id      = getRecordId(drawerRecord);
-      const old     = { ...drawerRecord };
-      const updated = { ...drawerRecord, ...values };
-      records = records.map(r => getRecordId(r) === id ? updated : r);
-      renderTable();
-      closeDrawer();
-
-      const { error } = await supabase.from(currentTable).update(values).eq('id', id);
-      if (error) {
-        records = records.map(r => getRecordId(r) === id ? old : r);
-        renderTable();
-        showToast(`Update failed: ${error.message}`, 'error');
-      } else {
-        showToast('Record updated', 'success');
+  </footer>
+
+  <script>
+    function toggleAccordion(button) {
+      const body = button.nextElementSibling;
+      const icon = button.querySelector('svg');
+      const isOpen = body.classList.contains('open');
+
+      // Close all
+      document.querySelectorAll('.accordion-body.open').forEach(el => {
+        el.classList.remove('open');
+        el.previousElementSibling.setAttribute('aria-expanded', 'false');
+        el.previousElementSibling.querySelector('svg').style.transform = '';
+      });
+
+      if (!isOpen) {
+        body.classList.add('open');
+        button.setAttribute('aria-expanded', 'true');
+        icon.style.transform = 'rotate(180deg)';
       }
     }
-  } else {
-    // localStorage
-    const rows = getLocalRecords(currentTable);
-    if (isNew) {
-      const newRec = { id: nextLocalId(rows), ...values };
-      const updated = [newRec, ...rows];
-      saveLocalRecords(currentTable, updated);
-      showToast('Record created', 'success');
-    } else {
-      const id      = getRecordId(drawerRecord);
-      const updated = rows.map(r => (r.id === id ? { ...r, ...values } : r));
-      saveLocalRecords(currentTable, updated);
-      showToast('Record updated', 'success');
-    }
-    closeDrawer();
-    await loadRecords();
-  }
-}
-
-// ── Delete ────────────────────────────────────────────────────────────────────
-function confirmDelete(ids, sampleRec) {
-  const label = sampleRec
-    ? (sampleRec.name || sampleRec.title || sampleRec.label || `#${getRecordId(sampleRec)}`)
-    : `${ids.length} records`;
-
-  const msg = ids.length === 1
-    ? `Delete "${label}"? This cannot be undone.`
-    : `Delete ${ids.length} selected records? This cannot be undone.`;
-
-  document.getElementById('confirmMsg').textContent = msg;
-  document.getElementById('confirmModal').classList.remove('hidden');
-
-  const ok     = document.getElementById('confirmOk');
-  const cancel = document.getElementById('confirmCancel');
-
-  const cleanup = () => {
-    document.getElementById('confirmModal').classList.add('hidden');
-    ok.replaceWith(ok.cloneNode(true));
-    cancel.replaceWith(cancel.cloneNode(true));
-  };
-
-  document.getElementById('confirmOk').addEventListener('click', async () => {
-    cleanup();
-    await deleteRecords(ids);
-  }, { once: true });
-  document.getElementById('confirmCancel').addEventListener('click', cleanup, { once: true });
-  document.getElementById('modalOverlay').addEventListener('click', cleanup, { once: true });
-}
-
-async function deleteRecords(ids) {
-  if (supabaseMode) {
-    // Optimistic remove
-    const removed = records.filter(r => ids.includes(getRecordId(r)));
-    records = records.filter(r => !ids.includes(getRecordId(r)));
-    renderTable();
-    selected.clear();
-    updateBulkBar();
-
-    const { error } = await supabase.from(currentTable).delete().in('id', ids);
-    if (error) {
-      records = [...removed, ...records];
-      renderTable();
-      showToast(`Delete failed: ${error.message}`, 'error');
-    } else {
-      showToast(`${ids.length} record(s) deleted`, 'success');
-    }
-  } else {
-    let rows = getLocalRecords(currentTable);
-    rows = rows.filter(r => !ids.includes(r.id));
-    saveLocalRecords(currentTable, rows);
-    selected.clear();
-    updateBulkBar();
-    showToast(`${ids.length} record(s) deleted`, 'success');
-    await loadRecords();
-  }
-}
-
-// ── Bulk ──────────────────────────────────────────────────────────────────────
-function updateBulkBar() {
-  const bar = document.getElementById('bulkBar');
-  if (selected.size > 0) {
-    bar.classList.remove('hidden');
-    document.getElementById('bulkCount').textContent = `${selected.size} selected`;
-  } else {
-    bar.classList.add('hidden');
-  }
-}
-
-function updateSelectAll() {
-  const cb = document.getElementById('selectAll');
-  if (!cb) return;
-  const ids = records.map(r => getRecordId(r));
-  const allChecked = ids.length > 0 && ids.every(id => selected.has(id));
-  cb.checked       = allChecked;
-  cb.indeterminate = !allChecked && ids.some(id => selected.has(id));
-}
-
-// ── Toast ─────────────────────────────────────────────────────────────────────
-function showToast(msg, type = 'info') {
-  const colors = { success: 'bg-green-700', error: 'bg-red-700', info: 'bg-slate-700' };
-  const icons  = { success: 'check-circle', error: 'alert-circle', info: 'info' };
-  const div    = document.createElement('div');
-  div.className = `toast flex items-center gap-2 px-4 py-2.5 rounded-lg text-white text-sm shadow-lg ${colors[type]} pointer-events-auto`;
-  div.setAttribute('role', 'status');
-  div.innerHTML = `<i data-lucide="${icons[type]}" class="w-4 h-4 flex-shrink-0"></i><span>${escHtml(msg)}</span>`;
-  document.getElementById('toastContainer').appendChild(div);
-  lucide.createIcons({ nodes: [div] });
-  setTimeout(() => div.remove(), 3200);
-}
-
-// ── Utility ───────────────────────────────────────────────────────────────────
-function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Event bindings ────────────────────────────────────────────────────────────
-document.getElementById('tableSelect').addEventListener('change', onTableChange);
-document.getElementById('newBtn').addEventListener('click', () => { if (currentTable) openDrawer(null); else showToast('Select a table first', 'info'); });
-document.getElementById('emptyNewBtn').addEventListener('click', () => openDrawer(null));
-document.getElementById('drawerClose').addEventListener('click', closeDrawer);
-document.getElementById('drawerCancel').addEventListener('click', closeDrawer);
-document.getElementById('drawerOverlay').addEventListener('click', closeDrawer);
-document.getElementById('drawerSave').addEventListener('click', saveRecord);
-document.getElementById('refreshBtn').addEventListener('click', () => loadRecords());
-document.getElementById('dismissBanner').addEventListener('click', () => {
-  document.getElementById('connectionBanner').classList.add('hidden');
-});
-document.getElementById('bulkDelete').addEventListener('click', () => {
-  if (selected.size) confirmDelete([...selected], null);
-});
-document.getElementById('bulkDeselect').addEventListener('click', () => {
-  selected.clear();
-  updateBulkBar();
-  renderTable();
-});
-document.getElementById('prevPage').addEventListener('click', () => { if (page > 1) { page--; loadRecords(); } });
-document.getElementById('nextPage').addEventListener('click', () => { page++; loadRecords(); });
-
-document.getElementById('densityToggle').addEventListener('click', function() {
-  comfortable = !comfortable;
-  this.setAttribute('aria-pressed', comfortable);
-  this.title = comfortable ? 'Switch to compact' : 'Switch to comfortable';
-  document.querySelectorAll('#tableBody tr').forEach(tr => {
-    tr.classList.toggle('row-compact', !comfortable);
-    tr.classList.toggle('row-comfortable', comfortable);
-  });
-});
-
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeDrawer();
-});
-
-// ── Boot ──────────────────────────────────────────────────────────────────────
-lucide.createIcons();
-initSupabase();
-</script>
+  </script>
 </body>
 </html>
