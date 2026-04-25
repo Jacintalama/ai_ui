@@ -3,651 +3,873 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CRUDSimple — Product Store</title>
-  <meta name="description" content="Manage your product catalog: add, update, and delete products with prices." />
+  <title>CRUDSimple — Instant Supabase CRUD Without the Boilerplate</title>
+  <meta name="description" content="Connect your Supabase project, pick a table, and get a fully functional admin interface in seconds. No code required." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            display: ['"Plus Jakarta Sans"', 'sans-serif'],
+            body: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            accent: {
+              50:  '#f0fdf4',
+              100: '#dcfce7',
+              200: '#bbf7d0',
+              300: '#86efac',
+              400: '#4ade80',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+              800: '#166534',
+              900: '#14532d',
+            }
+          }
+        }
+      }
+    }
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f1f5f9; }
-    :focus-visible { outline: 2px solid #818cf8; outline-offset: 3px; border-radius: 4px; }
+    body { font-family: 'Inter', sans-serif; }
 
-    .glass {
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.09);
+    /* Focus styles */
+    :focus-visible {
+      outline: 2px solid #22c55e;
+      outline-offset: 3px;
+      border-radius: 4px;
     }
 
-    /* Toast slide-in */
-    @keyframes slideIn {
-      from { transform: translateY(100%); opacity: 0; }
-      to   { transform: translateY(0);   opacity: 1; }
+    /* Accordion */
+    .faq-answer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease, padding 0.3s ease;
     }
-    .toast { animation: slideIn 0.2s ease; }
-
-    /* Row fade-in */
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-6px); }
-      to   { opacity: 1; transform: translateY(0); }
+    .faq-answer.open {
+      max-height: 400px;
     }
-    .row-new { animation: fadeIn 0.25s ease; }
 
-    /* Shake on error */
-    @keyframes shake {
-      0%,100% { transform: translateX(0); }
-      25%     { transform: translateX(-6px); }
-      75%     { transform: translateX(6px); }
+    /* Gradient text */
+    .gradient-text {
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 50%, #4ade80 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
-    .shake { animation: shake 0.3s ease; }
 
-    /* Optimistic dimming */
-    .optimistic { opacity: 0.5; pointer-events: none; }
+    /* Hero gradient bg */
+    .hero-bg {
+      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(34,197,94,0.12) 0%, transparent 70%);
+    }
+
+    /* Card hover */
+    .feature-card {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .feature-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+    }
+
+    /* Mobile menu */
+    #mobile-menu {
+      display: none;
+    }
+    #mobile-menu.open {
+      display: block;
+    }
+
+    /* Testimonial card */
+    .testimonial-card {
+      transition: transform 0.2s ease;
+    }
+    .testimonial-card:hover {
+      transform: translateY(-2px);
+    }
+
+    /* Pricing toggle highlight */
+    .pricing-card-featured {
+      background: linear-gradient(135deg, #16a34a, #15803d);
+    }
   </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body class="antialiased bg-zinc-50 text-zinc-800 font-body">
 
-  <!-- HEADER -->
-  <header class="sticky top-0 z-40 border-b border-white/[0.07] bg-[#0f172a]/90 backdrop-blur-md">
-    <div class="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
-      <div class="flex items-center gap-2">
-        <span class="w-7 h-7 rounded-lg bg-indigo-500 flex items-center justify-center shrink-0" aria-hidden="true">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="5" height="5" rx="1" fill="white" opacity=".9"/><rect x="8" y="1" width="5" height="5" rx="1" fill="white" opacity=".6"/><rect x="1" y="8" width="5" height="5" rx="1" fill="white" opacity=".6"/><rect x="8" y="8" width="5" height="5" rx="1" fill="white" opacity=".3"/></svg>
-        </span>
-        <h1 class="font-bold text-base tracking-tight">CRUD<span class="text-indigo-400">Simple</span> <span class="font-normal text-slate-400">— Product Store</span></h1>
+  <!-- ===== HEADER ===== -->
+  <header class="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-zinc-100 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+
+        <!-- Logo -->
+        <a href="#" class="flex items-center gap-2 font-display font-800 text-xl text-zinc-900" aria-label="CRUDSimple home">
+          <span class="w-8 h-8 rounded-lg bg-accent-500 flex items-center justify-center text-white text-sm font-bold">CS</span>
+          <span>CRUD<span class="gradient-text">Simple</span></span>
+        </a>
+
+        <!-- Desktop Nav -->
+        <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-zinc-600" aria-label="Main navigation">
+          <a href="#features" class="hover:text-accent-600 transition-colors">Features</a>
+          <a href="#how-it-works" class="hover:text-accent-600 transition-colors">How it works</a>
+          <a href="#testimonials" class="hover:text-accent-600 transition-colors">Customers</a>
+          <a href="#pricing" class="hover:text-accent-600 transition-colors">Pricing</a>
+          <a href="#faq" class="hover:text-accent-600 transition-colors">FAQ</a>
+        </nav>
+
+        <!-- CTA + Mobile toggle -->
+        <div class="flex items-center gap-3">
+          <a href="#pricing" class="hidden sm:inline-flex items-center gap-1.5 bg-accent-500 hover:bg-accent-600 text-white text-sm font-semibold px-4 py-2 rounded-xl transition-colors shadow-sm">
+            Start free
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+          </a>
+
+          <!-- Hamburger -->
+          <button id="menu-toggle" class="md:hidden p-2 rounded-lg text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 transition-colors" aria-expanded="false" aria-controls="mobile-menu" aria-label="Toggle navigation menu">
+            <svg id="icon-open" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>
+            <svg id="icon-close" class="w-5 h-5 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+
       </div>
-      <button
-        id="btn-open-add"
-        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-semibold transition-colors shadow-lg shadow-indigo-500/20"
-        aria-label="Add new product"
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <span class="hidden sm:inline">Add product</span>
-        <span class="sm:hidden">Add</span>
-      </button>
+
+      <!-- Mobile Menu -->
+      <nav id="mobile-menu" class="pb-4 space-y-1 md:hidden" aria-label="Mobile navigation">
+        <a href="#features" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">Features</a>
+        <a href="#how-it-works" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">How it works</a>
+        <a href="#testimonials" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">Customers</a>
+        <a href="#pricing" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">Pricing</a>
+        <a href="#faq" class="block px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 hover:bg-zinc-100 transition-colors">FAQ</a>
+        <a href="#pricing" class="block px-3 py-2 rounded-lg text-sm font-medium text-white bg-accent-500 hover:bg-accent-600 transition-colors text-center mt-2">Start free</a>
+      </nav>
     </div>
   </header>
 
-  <main class="flex-1 max-w-5xl mx-auto w-full px-4 sm:px-6 py-6 sm:py-8">
+  <main>
 
-    <!-- SEARCH / FILTER BAR -->
-    <div class="flex flex-col sm:flex-row gap-3 mb-6">
-      <div class="relative flex-1">
-        <svg class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
-          <path d="M10.5 10.5l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <label for="search" class="sr-only">Search products</label>
-        <input
-          id="search"
-          type="search"
-          placeholder="Search products…"
-          class="w-full pl-9 pr-3 py-2 rounded-lg glass text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500/60 transition-colors"
-        />
+    <!-- ===== HERO ===== -->
+    <section class="hero-bg pt-20 pb-24 px-4 sm:px-6 lg:px-8 overflow-hidden" aria-labelledby="hero-heading">
+      <div class="max-w-7xl mx-auto">
+        <div class="flex flex-col lg:flex-row items-center gap-12 lg:gap-16">
+
+          <!-- Text -->
+          <div class="flex-1 text-center lg:text-left max-w-2xl mx-auto lg:mx-0">
+            <span class="inline-flex items-center gap-2 text-xs font-semibold text-accent-700 bg-accent-50 border border-accent-200 px-3 py-1.5 rounded-full mb-6">
+              <span class="w-1.5 h-1.5 rounded-full bg-accent-500 animate-pulse"></span>
+              Supabase-native · Zero configuration
+            </span>
+
+            <h1 id="hero-heading" class="font-display font-extrabold text-4xl sm:text-5xl lg:text-6xl text-zinc-900 leading-[1.1] tracking-tight mb-6">
+              CRUD your Supabase<br />
+              tables in <span class="gradient-text">seconds,</span><br />
+              not days.
+            </h1>
+
+            <p class="text-lg sm:text-xl text-zinc-500 leading-relaxed mb-8 max-w-xl mx-auto lg:mx-0">
+              Connect your Supabase project, pick any table, and instantly get a
+              polished admin interface with create, read, update, and delete — no
+              backend code, no ORM wiring, no boilerplate.
+            </p>
+
+            <div class="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
+              <a href="#pricing" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-accent-500 hover:bg-accent-600 text-white font-semibold text-base px-6 py-3.5 rounded-2xl transition-colors shadow-md shadow-accent-500/20">
+                Start for free
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+              </a>
+              <a href="#how-it-works" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 text-zinc-700 hover:text-zinc-900 font-semibold text-base px-6 py-3.5 rounded-2xl border border-zinc-200 hover:border-zinc-300 bg-white hover:bg-zinc-50 transition-colors">
+                <svg class="w-4 h-4 text-accent-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112Z"/></svg>
+                See how it works
+              </a>
+            </div>
+
+            <p class="mt-4 text-xs text-zinc-400">No credit card required · Free plan available · Setup in under 2 minutes</p>
+          </div>
+
+          <!-- Mock UI -->
+          <div class="flex-1 w-full max-w-xl lg:max-w-none" aria-hidden="true">
+            <div class="rounded-2xl shadow-2xl shadow-zinc-900/10 border border-zinc-200 overflow-hidden bg-white">
+              <!-- Window chrome -->
+              <div class="flex items-center gap-1.5 px-4 py-3 border-b border-zinc-100 bg-zinc-50">
+                <span class="w-3 h-3 rounded-full bg-red-400"></span>
+                <span class="w-3 h-3 rounded-full bg-yellow-400"></span>
+                <span class="w-3 h-3 rounded-full bg-green-400"></span>
+                <span class="ml-3 flex-1 bg-white border border-zinc-200 rounded text-xs text-zinc-400 px-2 py-0.5">app.crudsimple.io/tables/products</span>
+              </div>
+              <!-- Mock toolbar -->
+              <div class="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold text-zinc-800">products</span>
+                  <span class="text-xs text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-full">24 rows</span>
+                </div>
+                <button class="flex items-center gap-1.5 text-xs font-semibold text-white bg-accent-500 px-3 py-1.5 rounded-lg" tabindex="-1">
+                  <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+                  Add row
+                </button>
+              </div>
+              <!-- Mock table -->
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                  <thead>
+                    <tr class="border-b border-zinc-100 bg-zinc-50">
+                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">id</th>
+                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">name</th>
+                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">price</th>
+                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500">stock</th>
+                      <th class="text-left px-4 py-2.5 font-semibold text-zinc-500"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="border-b border-zinc-50 hover:bg-zinc-50/50">
+                      <td class="px-4 py-2.5 text-zinc-400 font-mono">1</td>
+                      <td class="px-4 py-2.5 text-zinc-800 font-medium">Running Shoes Pro</td>
+                      <td class="px-4 py-2.5 text-zinc-600">$129.00</td>
+                      <td class="px-4 py-2.5"><span class="bg-accent-50 text-accent-700 px-1.5 py-0.5 rounded font-medium">48</span></td>
+                      <td class="px-4 py-2.5 flex gap-1.5">
+                        <span class="cursor-pointer text-zinc-400 hover:text-accent-600">✏</span>
+                        <span class="cursor-pointer text-zinc-400 hover:text-red-500">✕</span>
+                      </td>
+                    </tr>
+                    <tr class="border-b border-zinc-50 hover:bg-zinc-50/50">
+                      <td class="px-4 py-2.5 text-zinc-400 font-mono">2</td>
+                      <td class="px-4 py-2.5 text-zinc-800 font-medium">Yoga Mat Premium</td>
+                      <td class="px-4 py-2.5 text-zinc-600">$64.99</td>
+                      <td class="px-4 py-2.5"><span class="bg-accent-50 text-accent-700 px-1.5 py-0.5 rounded font-medium">112</span></td>
+                      <td class="px-4 py-2.5 flex gap-1.5">
+                        <span class="cursor-pointer text-zinc-400 hover:text-accent-600">✏</span>
+                        <span class="cursor-pointer text-zinc-400 hover:text-red-500">✕</span>
+                      </td>
+                    </tr>
+                    <tr class="hover:bg-zinc-50/50">
+                      <td class="px-4 py-2.5 text-zinc-400 font-mono">3</td>
+                      <td class="px-4 py-2.5 text-zinc-800 font-medium">Resistance Bands Set</td>
+                      <td class="px-4 py-2.5 text-zinc-600">$34.00</td>
+                      <td class="px-4 py-2.5"><span class="bg-yellow-50 text-yellow-700 px-1.5 py-0.5 rounded font-medium">7</span></td>
+                      <td class="px-4 py-2.5 flex gap-1.5">
+                        <span class="cursor-pointer text-zinc-400 hover:text-accent-600">✏</span>
+                        <span class="cursor-pointer text-zinc-400 hover:text-red-500">✕</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+        </div>
       </div>
-      <div>
-        <label for="sort" class="sr-only">Sort products</label>
-        <select id="sort" class="px-3 py-2 rounded-lg glass text-sm text-slate-300 focus:outline-none focus:border-indigo-500/60 transition-colors bg-transparent cursor-pointer">
-          <option value="name-asc">Name A–Z</option>
-          <option value="name-desc">Name Z–A</option>
-          <option value="price-asc">Price low–high</option>
-          <option value="price-desc">Price high–low</option>
-          <option value="newest">Newest first</option>
-        </select>
+    </section>
+
+    <!-- ===== TRUST STRIP ===== -->
+    <section class="border-y border-zinc-100 bg-white py-10 px-4 sm:px-6 lg:px-8" aria-label="Trusted by teams worldwide">
+      <div class="max-w-5xl mx-auto">
+        <p class="text-center text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-8">Trusted by teams building on Supabase</p>
+        <div class="flex flex-wrap items-center justify-center gap-8 sm:gap-12 opacity-60">
+          <!-- Placeholder logos as styled text marks -->
+          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Acmecorp</span>
+          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Devstack</span>
+          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Shiphero</span>
+          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Launchpad</span>
+          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Forgeio</span>
+          <span class="font-display font-bold text-lg text-zinc-400 tracking-tight">Buildnow</span>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- PRODUCT COUNT BADGE -->
-    <p class="text-slate-500 text-xs mb-3" id="product-count" aria-live="polite">0 products</p>
+    <!-- ===== FEATURES ===== -->
+    <section id="features" class="py-24 px-4 sm:px-6 lg:px-8 bg-zinc-50" aria-labelledby="features-heading">
+      <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">Features</span>
+          <h2 id="features-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
+            Everything you need, nothing you don't
+          </h2>
+          <p class="text-zinc-500 text-lg max-w-2xl mx-auto">
+            CRUDSimple gives your team a clean interface to manage Supabase data
+            without writing a single line of backend code.
+          </p>
+        </div>
 
-    <!-- PRODUCT TABLE (desktop) -->
-    <div class="glass rounded-xl overflow-hidden hidden sm:block" id="table-wrapper">
-      <table class="w-full text-sm" aria-label="Product catalog">
-        <thead>
-          <tr class="border-b border-white/[0.06] text-slate-400 text-xs uppercase tracking-wide">
-            <th class="px-5 py-3 text-left font-semibold">Product name</th>
-            <th class="px-5 py-3 text-left font-semibold">Category</th>
-            <th class="px-5 py-3 text-right font-semibold">Price</th>
-            <th class="px-5 py-3 text-left font-semibold">Status</th>
-            <th class="px-5 py-3 text-right font-semibold">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="product-tbody">
-          <!-- rows injected by JS -->
-        </tbody>
-      </table>
-    </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
 
-    <!-- PRODUCT CARDS (mobile) -->
-    <div class="sm:hidden space-y-3" id="product-cards">
-      <!-- cards injected by JS -->
-    </div>
+          <!-- Feature 1 -->
+          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244"/></svg>
+            </div>
+            <h3 class="font-display font-bold text-zinc-900 mb-2">One-click Supabase connect</h3>
+            <p class="text-zinc-500 text-sm leading-relaxed">Paste your Supabase URL and anon key. CRUDSimple introspects your schema automatically — no manual table setup.</p>
+          </div>
 
-    <!-- EMPTY STATE -->
-    <div id="empty-state" class="hidden text-center py-20">
-      <div class="w-14 h-14 rounded-2xl bg-indigo-500/10 flex items-center justify-center mx-auto mb-4" aria-hidden="true">
-        <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="3" y="6" width="22" height="16" rx="3" stroke="#818cf8" stroke-width="1.5"/><path d="M9 14h10M9 18h6" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/><path d="M14 6V4" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <!-- Feature 2 -->
+          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z"/></svg>
+            </div>
+            <h3 class="font-display font-bold text-zinc-900 mb-2">Full CRUD out of the box</h3>
+            <p class="text-zinc-500 text-sm leading-relaxed">Create, read, update, and delete rows across any table. Inline editing, bulk delete, and optimistic UI updates included.</p>
+          </div>
+
+          <!-- Feature 3 -->
+          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
+            </div>
+            <h3 class="font-display font-bold text-zinc-900 mb-2">Instant search & filter</h3>
+            <p class="text-zinc-500 text-sm leading-relaxed">Filter by any column, sort ascending or descending, and search across text fields — all without writing a single SQL query.</p>
+          </div>
+
+          <!-- Feature 4 -->
+          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 0 1 21.75 8.25Z"/></svg>
+            </div>
+            <h3 class="font-display font-bold text-zinc-900 mb-2">Row-Level Security aware</h3>
+            <p class="text-zinc-500 text-sm leading-relaxed">CRUDSimple respects your existing Supabase RLS policies. Your data stays protected — no admin backdoors, no bypasses.</p>
+          </div>
+
+          <!-- Feature 5 -->
+          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"/></svg>
+            </div>
+            <h3 class="font-display font-bold text-zinc-900 mb-2">Team access controls</h3>
+            <p class="text-zinc-500 text-sm leading-relaxed">Invite teammates with viewer or editor roles. Keep sensitive tables read-only for junior members while admins get full write access.</p>
+          </div>
+
+          <!-- Feature 6 -->
+          <div class="feature-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="w-10 h-10 rounded-xl bg-accent-50 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg class="w-5 h-5 text-accent-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+            </div>
+            <h3 class="font-display font-bold text-zinc-900 mb-2">CSV export in one click</h3>
+            <p class="text-zinc-500 text-sm leading-relaxed">Export any table or filtered view to CSV instantly. Share data with stakeholders or import it into spreadsheets without touching Supabase Studio.</p>
+          </div>
+
+        </div>
       </div>
-      <p class="text-slate-300 font-semibold text-lg mb-1" id="empty-title">No products yet</p>
-      <p class="text-slate-500 text-sm mb-5" id="empty-sub">Add your first product to get started.</p>
-      <button id="btn-empty-add" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white text-sm font-semibold transition-colors">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        Add product
-      </button>
-    </div>
+    </section>
+
+    <!-- ===== HOW IT WORKS ===== -->
+    <section id="how-it-works" class="py-24 px-4 sm:px-6 lg:px-8 bg-white" aria-labelledby="how-heading">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-16">
+          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">How it works</span>
+          <h2 id="how-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
+            From zero to CRUD in three steps
+          </h2>
+        </div>
+
+        <div class="space-y-20">
+
+          <!-- Step 1 -->
+          <div class="flex flex-col md:flex-row items-center gap-10 lg:gap-16">
+            <div class="flex-1 order-2 md:order-1">
+              <span class="inline-block text-5xl font-display font-extrabold text-accent-100 mb-2 leading-none">01</span>
+              <h3 class="font-display font-bold text-2xl text-zinc-900 mb-3">Connect your Supabase project</h3>
+              <p class="text-zinc-500 leading-relaxed">
+                Enter your Supabase project URL and API key. CRUDSimple reads your
+                database schema in real time — every table, column type, and foreign
+                key relationship is automatically discovered. Nothing to configure manually.
+              </p>
+            </div>
+            <div class="flex-1 order-1 md:order-2" aria-hidden="true">
+              <div class="rounded-2xl bg-zinc-50 border border-zinc-100 p-6 shadow-sm">
+                <label class="block text-xs font-semibold text-zinc-500 mb-1">Supabase Project URL</label>
+                <div class="bg-white border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-400 font-mono mb-4">https://xyzcompany.supabase.co</div>
+                <label class="block text-xs font-semibold text-zinc-500 mb-1">Anon / Service key</label>
+                <div class="bg-white border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-400 font-mono mb-5">eyJhbGci••••••••••••••••••••</div>
+                <button class="w-full bg-accent-500 text-white text-sm font-semibold py-2.5 rounded-xl" tabindex="-1">Connect project →</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="flex flex-col md:flex-row items-center gap-10 lg:gap-16">
+            <div class="flex-1" aria-hidden="true">
+              <div class="rounded-2xl bg-zinc-50 border border-zinc-100 p-5 shadow-sm">
+                <p class="text-xs font-semibold text-zinc-400 mb-3">Tables discovered</p>
+                <div class="space-y-2">
+                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border border-accent-200 shadow-sm">
+                    <span class="w-2 h-2 rounded-full bg-accent-500"></span>
+                    <span class="text-sm font-medium text-zinc-800">products</span>
+                    <span class="ml-auto text-xs text-zinc-400">24 rows</span>
+                  </div>
+                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5">
+                    <span class="w-2 h-2 rounded-full bg-zinc-300"></span>
+                    <span class="text-sm text-zinc-600">orders</span>
+                    <span class="ml-auto text-xs text-zinc-400">1,204 rows</span>
+                  </div>
+                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5">
+                    <span class="w-2 h-2 rounded-full bg-zinc-300"></span>
+                    <span class="text-sm text-zinc-600">customers</span>
+                    <span class="ml-auto text-xs text-zinc-400">382 rows</span>
+                  </div>
+                  <div class="flex items-center gap-3 bg-white rounded-xl px-3 py-2.5">
+                    <span class="w-2 h-2 rounded-full bg-zinc-300"></span>
+                    <span class="text-sm text-zinc-600">categories</span>
+                    <span class="ml-auto text-xs text-zinc-400">12 rows</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="flex-1">
+              <span class="inline-block text-5xl font-display font-extrabold text-accent-100 mb-2 leading-none">02</span>
+              <h3 class="font-display font-bold text-2xl text-zinc-900 mb-3">Pick a table, start editing</h3>
+              <p class="text-zinc-500 leading-relaxed">
+                Select any table from the sidebar. CRUDSimple renders a paginated,
+                sortable data grid with the correct input types for each column —
+                text fields, number inputs, toggles for booleans, date pickers for
+                timestamps, and dropdowns for foreign keys.
+              </p>
+            </div>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="flex flex-col md:flex-row items-center gap-10 lg:gap-16">
+            <div class="flex-1 order-2 md:order-1">
+              <span class="inline-block text-5xl font-display font-extrabold text-accent-100 mb-2 leading-none">03</span>
+              <h3 class="font-display font-bold text-2xl text-zinc-900 mb-3">Share with your team</h3>
+              <p class="text-zinc-500 leading-relaxed">
+                Invite content editors, customer support agents, or operations staff
+                by email. Assign viewer or editor roles per-project. Your teammates
+                get a clean, simple interface — no Supabase account needed, no SQL
+                knowledge required.
+              </p>
+            </div>
+            <div class="flex-1 order-1 md:order-2" aria-hidden="true">
+              <div class="rounded-2xl bg-zinc-50 border border-zinc-100 p-6 shadow-sm">
+                <p class="text-xs font-semibold text-zinc-400 mb-3">Team members</p>
+                <div class="space-y-2.5">
+                  <div class="flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-accent-500 flex items-center justify-center text-white text-xs font-bold">SM</span>
+                    <span class="flex-1 text-sm text-zinc-800">sarah@company.io</span>
+                    <span class="text-xs font-semibold text-accent-700 bg-accent-50 px-2 py-0.5 rounded-full">Admin</span>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-blue-400 flex items-center justify-center text-white text-xs font-bold">JL</span>
+                    <span class="flex-1 text-sm text-zinc-800">james@company.io</span>
+                    <span class="text-xs font-semibold text-zinc-600 bg-zinc-100 px-2 py-0.5 rounded-full">Editor</span>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <span class="w-8 h-8 rounded-full bg-purple-400 flex items-center justify-center text-white text-xs font-bold">AK</span>
+                    <span class="flex-1 text-sm text-zinc-800">anya@company.io</span>
+                    <span class="text-xs font-semibold text-zinc-500 bg-zinc-100 px-2 py-0.5 rounded-full">Viewer</span>
+                  </div>
+                </div>
+                <div class="mt-4 flex gap-2">
+                  <input class="flex-1 bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs text-zinc-400" value="colleague@company.io" readonly tabindex="-1" aria-label="Invite email" />
+                  <button class="text-xs font-semibold bg-accent-500 text-white px-3 py-2 rounded-lg" tabindex="-1">Invite</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== TESTIMONIALS ===== -->
+    <section id="testimonials" class="py-24 px-4 sm:px-6 lg:px-8 bg-zinc-50" aria-labelledby="testimonials-heading">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">Social proof</span>
+          <h2 id="testimonials-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
+            Loved by builders everywhere
+          </h2>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+          <!-- Testimonial 1 -->
+          <div class="testimonial-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="flex gap-1 mb-4" aria-label="5 out of 5 stars">
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+            </div>
+            <blockquote>
+              <p class="text-zinc-700 text-sm leading-relaxed mb-5">"We replaced a 400-line internal admin panel with CRUDSimple in an afternoon. Our customer support team can now update order records themselves — no more pinging engineers."</p>
+            </blockquote>
+            <div class="flex items-center gap-3">
+              <span class="w-9 h-9 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">MR</span>
+              <div>
+                <p class="text-sm font-semibold text-zinc-900">Marcus Reid</p>
+                <p class="text-xs text-zinc-400">CTO · Shiphero Commerce</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Testimonial 2 -->
+          <div class="testimonial-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="flex gap-1 mb-4" aria-label="5 out of 5 stars">
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+            </div>
+            <blockquote>
+              <p class="text-zinc-700 text-sm leading-relaxed mb-5">"I was about to spend two weeks building a bespoke admin dashboard. CRUDSimple connected to my Supabase project in literally 90 seconds. I shipped my actual product feature instead."</p>
+            </blockquote>
+            <div class="flex items-center gap-3">
+              <span class="w-9 h-9 rounded-full bg-purple-500 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">PK</span>
+              <div>
+                <p class="text-sm font-semibold text-zinc-900">Priya Krishnan</p>
+                <p class="text-xs text-zinc-400">Founder · Launchpad SaaS</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Testimonial 3 -->
+          <div class="testimonial-card bg-white rounded-2xl p-6 shadow-sm border border-zinc-100">
+            <div class="flex gap-1 mb-4" aria-label="5 out of 5 stars">
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+              <svg class="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 0 0 .95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 0 0-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 0 0-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 0 0-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 0 0 .951-.69l1.07-3.292Z"/></svg>
+            </div>
+            <blockquote>
+              <p class="text-zinc-700 text-sm leading-relaxed mb-5">"Our ops team manages 12 Supabase tables daily. CRUDSimple made that effortless — clean UI, fast search, and the RLS integration means we never worry about accidentally exposing data."</p>
+            </blockquote>
+            <div class="flex items-center gap-3">
+              <span class="w-9 h-9 rounded-full bg-orange-400 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">TN</span>
+              <div>
+                <p class="text-sm font-semibold text-zinc-900">Tomás Navarro</p>
+                <p class="text-xs text-zinc-400">Head of Operations · Forgeio</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== PRICING ===== -->
+    <section id="pricing" class="py-24 px-4 sm:px-6 lg:px-8 bg-white" aria-labelledby="pricing-heading">
+      <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">Pricing</span>
+          <h2 id="pricing-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2 mb-4">
+            Simple pricing for every team
+          </h2>
+          <p class="text-zinc-500 text-lg max-w-xl mx-auto">Start free, upgrade when you need it. No hidden fees, no per-seat surprises on the free plan.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+
+          <!-- Free -->
+          <div class="rounded-2xl border border-zinc-200 p-7 flex flex-col">
+            <p class="text-sm font-semibold text-zinc-500 mb-1">Free</p>
+            <p class="font-display font-extrabold text-4xl text-zinc-900 mb-1">$0</p>
+            <p class="text-xs text-zinc-400 mb-6">Forever free · No card needed</p>
+            <ul class="space-y-3 text-sm text-zinc-600 mb-8 flex-1">
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> 1 Supabase project</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Up to 5 tables</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> 2 team members</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> 1,000 row reads/day</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> CSV export</li>
+            </ul>
+            <a href="#" class="block text-center text-sm font-semibold py-3 rounded-xl border border-zinc-300 hover:border-accent-400 hover:text-accent-600 transition-colors">Get started free</a>
+          </div>
+
+          <!-- Pro (featured) -->
+          <div class="pricing-card-featured rounded-2xl p-7 flex flex-col text-white relative shadow-xl shadow-accent-900/20">
+            <span class="absolute -top-3 left-1/2 -translate-x-1/2 text-xs font-bold text-accent-700 bg-accent-100 px-3 py-1 rounded-full">Most popular</span>
+            <p class="text-sm font-semibold text-accent-200 mb-1">Pro</p>
+            <p class="font-display font-extrabold text-4xl mb-1">$29</p>
+            <p class="text-xs text-accent-300 mb-6">per month · billed monthly</p>
+            <ul class="space-y-3 text-sm text-green-100 mb-8 flex-1">
+              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Unlimited projects</li>
+              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Unlimited tables</li>
+              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Up to 10 team members</li>
+              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Unlimited row reads</li>
+              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Viewer/editor roles</li>
+              <li class="flex items-start gap-2"><span class="text-accent-200 mt-0.5" aria-hidden="true">✓</span> Priority support</li>
+            </ul>
+            <a href="#" class="block text-center text-sm font-semibold py-3 rounded-xl bg-white text-accent-700 hover:bg-accent-50 transition-colors">Start Pro trial</a>
+          </div>
+
+          <!-- Team -->
+          <div class="rounded-2xl border border-zinc-200 p-7 flex flex-col">
+            <p class="text-sm font-semibold text-zinc-500 mb-1">Team</p>
+            <p class="font-display font-extrabold text-4xl text-zinc-900 mb-1">$99</p>
+            <p class="text-xs text-zinc-400 mb-6">per month · billed monthly</p>
+            <ul class="space-y-3 text-sm text-zinc-600 mb-8 flex-1">
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Everything in Pro</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Unlimited team members</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Custom domain</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Audit log (30 days)</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> SSO / SAML</li>
+              <li class="flex items-start gap-2"><span class="text-accent-500 mt-0.5" aria-hidden="true">✓</span> Dedicated support</li>
+            </ul>
+            <a href="#" class="block text-center text-sm font-semibold py-3 rounded-xl border border-zinc-300 hover:border-accent-400 hover:text-accent-600 transition-colors">Contact sales</a>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FAQ ===== -->
+    <section id="faq" class="py-24 px-4 sm:px-6 lg:px-8 bg-zinc-50" aria-labelledby="faq-heading">
+      <div class="max-w-3xl mx-auto">
+        <div class="text-center mb-14">
+          <span class="text-xs font-semibold text-accent-600 uppercase tracking-widest">FAQ</span>
+          <h2 id="faq-heading" class="font-display font-extrabold text-3xl sm:text-4xl text-zinc-900 mt-2">
+            Common questions
+          </h2>
+        </div>
+
+        <div class="space-y-3" role="list">
+
+          <!-- FAQ Item 1 -->
+          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
+            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
+              <span>Is my Supabase data safe with CRUDSimple?</span>
+              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
+                Yes. CRUDSimple never stores your data — all reads and writes go directly
+                from your browser to your Supabase project via the official Supabase JS client.
+                We only store your project URL and a hashed reference to your key. Your
+                Supabase Row Level Security policies are fully enforced.
+              </p>
+            </div>
+          </div>
+
+          <!-- FAQ Item 2 -->
+          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
+            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
+              <span>Do I need to know SQL to use CRUDSimple?</span>
+              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
+                Not at all. CRUDSimple abstracts all database interactions into a
+                point-and-click interface. Filtering, sorting, searching, and editing
+                rows requires zero SQL knowledge — it's designed for non-technical
+                teammates, content editors, and operations staff.
+              </p>
+            </div>
+          </div>
+
+          <!-- FAQ Item 3 -->
+          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
+            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
+              <span>What's the difference between CRUDSimple and the Supabase Table Editor?</span>
+              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
+                The Supabase Table Editor is a developer tool built for engineers who own the project.
+                CRUDSimple is an end-user admin panel designed for non-technical teammates. It hides
+                schema management, dangerous operations, and raw SQL, exposing only the data operations
+                that are safe for your team to perform.
+              </p>
+            </div>
+          </div>
+
+          <!-- FAQ Item 4 -->
+          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
+            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
+              <span>Can I limit which tables my teammates can see?</span>
+              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
+                Yes. Admins can configure table-level visibility per project. If a teammate only
+                needs access to the <code class="bg-zinc-100 px-1 rounded text-xs font-mono">orders</code> and
+                <code class="bg-zinc-100 px-1 rounded text-xs font-mono">customers</code> tables, you can hide everything
+                else from their view entirely. Combined with Supabase RLS, this gives you fine-grained control.
+              </p>
+            </div>
+          </div>
+
+          <!-- FAQ Item 5 -->
+          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
+            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
+              <span>Does CRUDSimple support Supabase Storage and Auth tables?</span>
+              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
+                CRUDSimple focuses on your database (public schema) tables. Support for
+                Supabase Storage buckets and Auth user management is on the roadmap for Q3 2026.
+                Subscribe to the newsletter to be notified when these ship.
+              </p>
+            </div>
+          </div>
+
+          <!-- FAQ Item 6 -->
+          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
+            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
+              <span>Can I self-host CRUDSimple?</span>
+              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
+                A self-hosted Community Edition is planned and will be open-sourced on GitHub.
+                Enterprise customers on the Team plan can request early access to the on-prem
+                package — reach out via the contact form below.
+              </p>
+            </div>
+          </div>
+
+          <!-- FAQ Item 7 -->
+          <div class="bg-white rounded-2xl border border-zinc-100 shadow-sm overflow-hidden" role="listitem">
+            <button class="faq-toggle w-full text-left flex items-center justify-between gap-4 px-6 py-5 font-semibold text-zinc-900 text-sm hover:bg-zinc-50 transition-colors" aria-expanded="false">
+              <span>What happens if I exceed the free plan row limit?</span>
+              <svg class="faq-chevron w-5 h-5 text-zinc-400 shrink-0 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-5 text-sm text-zinc-500 leading-relaxed">
+                The interface becomes read-only for the rest of that calendar day — no data is
+                lost and no surprise charges are applied. You'll see a banner prompting you to
+                upgrade. Limits reset at midnight UTC each day.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FINAL CTA ===== -->
+    <section class="py-24 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-accent-600 via-accent-700 to-accent-800" aria-labelledby="cta-heading">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 id="cta-heading" class="font-display font-extrabold text-3xl sm:text-4xl lg:text-5xl text-white mb-6 leading-tight">
+          Stop building admin panels.<br />Start shipping features.
+        </h2>
+        <p class="text-accent-200 text-lg mb-10 max-w-xl mx-auto">
+          Connect your Supabase project in under two minutes.
+          Your team can start managing data today — no engineers required.
+        </p>
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <a href="#pricing" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white text-accent-700 font-bold text-base px-8 py-4 rounded-2xl hover:bg-accent-50 transition-colors shadow-lg shadow-accent-900/30">
+            Start for free
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3"/></svg>
+          </a>
+          <a href="#how-it-works" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 border border-accent-400 text-white hover:bg-white/10 font-semibold text-base px-8 py-4 rounded-2xl transition-colors">
+            See how it works
+          </a>
+        </div>
+        <p class="mt-6 text-sm text-accent-300">No credit card required · Free forever plan · 2-minute setup</p>
+      </div>
+    </section>
 
   </main>
 
-  <!-- FOOTER -->
-  <footer class="border-t border-white/[0.06] py-4 text-center text-xs text-slate-600">
-    CRUDSimple &mdash; stateless product store &mdash; data resets on refresh
+  <!-- ===== FOOTER ===== -->
+  <footer class="bg-zinc-900 text-zinc-400 py-16 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-7xl mx-auto">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
+
+        <!-- Brand col -->
+        <div class="col-span-2 md:col-span-1">
+          <a href="#" class="flex items-center gap-2 font-display font-bold text-lg text-white mb-3" aria-label="CRUDSimple home">
+            <span class="w-7 h-7 rounded-lg bg-accent-500 flex items-center justify-center text-white text-xs font-bold" aria-hidden="true">CS</span>
+            CRUDSimple
+          </a>
+          <p class="text-sm leading-relaxed text-zinc-500">Instant Supabase admin interfaces for the whole team.</p>
+        </div>
+
+        <!-- Product links -->
+        <div>
+          <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest mb-4">Product</h3>
+          <ul class="space-y-2.5 text-sm">
+            <li><a href="#features" class="hover:text-white transition-colors">Features</a></li>
+            <li><a href="#pricing" class="hover:text-white transition-colors">Pricing</a></li>
+            <li><a href="#how-it-works" class="hover:text-white transition-colors">How it works</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Changelog</a></li>
+          </ul>
+        </div>
+
+        <!-- Company links -->
+        <div>
+          <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest mb-4">Company</h3>
+          <ul class="space-y-2.5 text-sm">
+            <li><a href="#" class="hover:text-white transition-colors">About</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Blog</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Careers</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Contact</a></li>
+          </ul>
+        </div>
+
+        <!-- Legal links -->
+        <div>
+          <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest mb-4">Legal</h3>
+          <ul class="space-y-2.5 text-sm">
+            <li><a href="#" class="hover:text-white transition-colors">Privacy Policy</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Terms of Service</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Cookie Policy</a></li>
+            <li><a href="#" class="hover:text-white transition-colors">Security</a></li>
+          </ul>
+        </div>
+
+      </div>
+
+      <div class="border-t border-zinc-800 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <p class="text-xs text-zinc-600">&copy; 2026 CRUDSimple. All rights reserved.</p>
+
+        <!-- Social icons -->
+        <div class="flex items-center gap-4">
+          <a href="#" class="text-zinc-500 hover:text-white transition-colors" aria-label="CRUDSimple on X (Twitter)">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+          </a>
+          <a href="#" class="text-zinc-500 hover:text-white transition-colors" aria-label="CRUDSimple on GitHub">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0 1 12 6.844a9.59 9.59 0 0 1 2.504.337c1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.02 10.02 0 0 0 22 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"/></svg>
+          </a>
+          <a href="#" class="text-zinc-500 hover:text-white transition-colors" aria-label="CRUDSimple on LinkedIn">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 0 1-2.063-2.065 2.064 2.064 0 1 1 2.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+          </a>
+        </div>
+      </div>
+    </div>
   </footer>
 
-  <!-- ============================================================ -->
-  <!-- ADD / EDIT MODAL -->
-  <!-- ============================================================ -->
-  <div
-    id="modal-backdrop"
-    class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 hidden"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="modal-title"
-  >
-    <div class="glass rounded-2xl w-full max-w-md p-6 shadow-2xl shadow-black/60" id="modal-box">
-      <div class="flex items-center justify-between mb-5">
-        <h2 id="modal-title" class="font-bold text-lg text-white">Add product</h2>
-        <button id="btn-modal-close" class="text-slate-400 hover:text-white transition-colors rounded" aria-label="Close dialog">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        </button>
-      </div>
-
-      <form id="product-form" novalidate>
-        <!-- Hidden id field -->
-        <input type="hidden" id="field-id" />
-
-        <!-- Product name -->
-        <div class="mb-4">
-          <label for="field-name" class="block text-sm font-medium text-slate-300 mb-1.5">
-            Product name <span class="text-red-400" aria-hidden="true">*</span>
-          </label>
-          <input
-            id="field-name"
-            type="text"
-            autocomplete="off"
-            placeholder="e.g. Wireless Headphones"
-            maxlength="120"
-            class="w-full px-3 py-2 rounded-lg glass text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500/70 transition-colors"
-          />
-          <p class="mt-1 text-xs text-red-400 hidden" id="err-name" role="alert">Product name is required.</p>
-        </div>
-
-        <!-- Category -->
-        <div class="mb-4">
-          <label for="field-category" class="block text-sm font-medium text-slate-300 mb-1.5">Category</label>
-          <input
-            id="field-category"
-            type="text"
-            autocomplete="off"
-            placeholder="e.g. Electronics"
-            maxlength="60"
-            class="w-full px-3 py-2 rounded-lg glass text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500/70 transition-colors"
-          />
-        </div>
-
-        <!-- Price -->
-        <div class="mb-4">
-          <label for="field-price" class="block text-sm font-medium text-slate-300 mb-1.5">
-            Price (USD) <span class="text-red-400" aria-hidden="true">*</span>
-          </label>
-          <div class="relative">
-            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm" aria-hidden="true">$</span>
-            <input
-              id="field-price"
-              type="number"
-              min="0"
-              step="0.01"
-              placeholder="0.00"
-              class="w-full pl-7 pr-3 py-2 rounded-lg glass text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500/70 transition-colors"
-            />
-          </div>
-          <p class="mt-1 text-xs text-red-400 hidden" id="err-price" role="alert">Enter a valid price (≥ 0).</p>
-        </div>
-
-        <!-- Status -->
-        <div class="mb-6">
-          <label for="field-status" class="block text-sm font-medium text-slate-300 mb-1.5">Status</label>
-          <select
-            id="field-status"
-            class="w-full px-3 py-2 rounded-lg glass text-sm text-slate-300 focus:outline-none focus:border-indigo-500/70 transition-colors bg-transparent cursor-pointer"
-          >
-            <option value="active">Active</option>
-            <option value="draft">Draft</option>
-            <option value="archived">Archived</option>
-          </select>
-        </div>
-
-        <!-- Form actions -->
-        <div class="flex gap-3">
-          <button
-            type="submit"
-            id="btn-form-submit"
-            class="flex-1 px-4 py-2.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 text-white font-semibold text-sm transition-colors shadow-lg shadow-indigo-500/20"
-          >
-            Save product
-          </button>
-          <button
-            type="button"
-            id="btn-form-cancel"
-            class="px-4 py-2.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 font-semibold text-sm transition-colors"
-          >
-            Cancel
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- DELETE CONFIRM MODAL -->
-  <div
-    id="delete-backdrop"
-    class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center px-4 hidden"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="delete-title"
-  >
-    <div class="glass rounded-2xl w-full max-w-sm p-6 shadow-2xl shadow-black/60">
-      <div class="flex items-start gap-4 mb-5">
-        <div class="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0" aria-hidden="true">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M3 4.5h12M7.5 4.5V3h3v1.5M4.5 4.5l.75 10.5h7.5l.75-10.5" stroke="#f87171" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-        <div>
-          <h2 id="delete-title" class="font-bold text-white mb-1">Delete product?</h2>
-          <p class="text-slate-400 text-sm" id="delete-desc">This will permanently remove <strong id="delete-product-name" class="text-slate-200"></strong> from your store.</p>
-        </div>
-      </div>
-      <div class="flex gap-3">
-        <button id="btn-confirm-delete" class="flex-1 px-4 py-2.5 rounded-lg bg-red-500 hover:bg-red-400 text-white font-semibold text-sm transition-colors">
-          Yes, delete
-        </button>
-        <button id="btn-cancel-delete" class="px-4 py-2.5 rounded-lg border border-white/10 text-slate-300 hover:text-white hover:border-white/20 font-semibold text-sm transition-colors">
-          Cancel
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- TOAST -->
-  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden pointer-events-none">
-    <div id="toast-inner" class="toast flex items-center gap-2.5 px-4 py-2.5 rounded-xl shadow-xl text-sm font-medium glass border">
-      <span id="toast-icon" aria-hidden="true"></span>
-      <span id="toast-msg"></span>
-    </div>
-  </div>
-
   <script>
-    // ─── State ──────────────────────────────────────────────────────────────
-    let products = [
-      { id: uid(), name: 'Wireless Headphones', category: 'Electronics', price: 79.99, status: 'active' },
-      { id: uid(), name: 'Leather Wallet',      category: 'Accessories',  price: 34.50, status: 'active' },
-      { id: uid(), name: 'Running Shoes',        category: 'Footwear',     price: 119.00, status: 'active' },
-      { id: uid(), name: 'Desk Lamp',            category: 'Home',         price: 45.00, status: 'draft'  },
-    ];
+    // Mobile menu toggle
+    const menuToggle = document.getElementById('menu-toggle');
+    const mobileMenu = document.getElementById('mobile-menu');
+    const iconOpen = document.getElementById('icon-open');
+    const iconClose = document.getElementById('icon-close');
 
-    let editingId  = null;
-    let deleteTargetId = null;
-    let searchQ    = '';
-    let sortKey    = 'newest';
-
-    // ─── Utilities ──────────────────────────────────────────────────────────
-    function uid() {
-      return Math.random().toString(36).slice(2, 10);
-    }
-
-    function fmt(price) {
-      return '$' + Number(price).toFixed(2);
-    }
-
-    function statusBadge(status) {
-      const map = {
-        active:   'bg-emerald-500/15 text-emerald-400',
-        draft:    'bg-yellow-500/15 text-yellow-400',
-        archived: 'bg-slate-500/15 text-slate-400',
-      };
-      return map[status] || map.draft;
-    }
-
-    // ─── Toast ──────────────────────────────────────────────────────────────
-    let toastTimer;
-    function showToast(msg, type = 'success') {
-      const el    = document.getElementById('toast');
-      const inner = document.getElementById('toast-inner');
-      const icon  = document.getElementById('toast-icon');
-      const msgEl = document.getElementById('toast-msg');
-
-      clearTimeout(toastTimer);
-      msgEl.textContent = msg;
-
-      if (type === 'success') {
-        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8.5l3.5 3.5 6.5-7" stroke="#34d399" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        inner.className = inner.className.replace(/border-\S+/, '');
-        inner.style.borderColor = 'rgba(52,211,153,0.3)';
-      } else if (type === 'error') {
-        icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 5v4M8 11v.5" stroke="#f87171" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="8" r="6" stroke="#f87171" stroke-width="1.4"/></svg>';
-        inner.style.borderColor = 'rgba(248,113,113,0.3)';
-      }
-
-      el.classList.remove('hidden');
-      toastTimer = setTimeout(() => el.classList.add('hidden'), 2800);
-    }
-
-    // ─── Render ─────────────────────────────────────────────────────────────
-    function getFiltered() {
-      let list = [...products];
-
-      if (searchQ) {
-        const q = searchQ.toLowerCase();
-        list = list.filter(p =>
-          p.name.toLowerCase().includes(q) ||
-          (p.category || '').toLowerCase().includes(q)
-        );
-      }
-
-      const sorters = {
-        'name-asc':    (a, b) => a.name.localeCompare(b.name),
-        'name-desc':   (a, b) => b.name.localeCompare(a.name),
-        'price-asc':   (a, b) => a.price - b.price,
-        'price-desc':  (a, b) => b.price - a.price,
-        'newest':      (a, b) => products.indexOf(b) - products.indexOf(a),
-      };
-
-      list.sort(sorters[sortKey] || sorters['newest']);
-      return list;
-    }
-
-    function render(animateId = null) {
-      const list   = getFiltered();
-      const tbody  = document.getElementById('product-tbody');
-      const cards  = document.getElementById('product-cards');
-      const empty  = document.getElementById('empty-state');
-      const count  = document.getElementById('product-count');
-      const table  = document.getElementById('table-wrapper');
-
-      // Count
-      const total = products.length;
-      count.textContent = total === 1 ? '1 product' : `${total} products`;
-
-      if (list.length === 0) {
-        tbody.innerHTML = '';
-        cards.innerHTML = '';
-        table.classList.add('hidden');
-        cards.classList.add('hidden');
-        empty.classList.remove('hidden');
-
-        if (searchQ) {
-          document.getElementById('empty-title').textContent = 'No results found';
-          document.getElementById('empty-sub').textContent   = `No products match "${searchQ}".`;
-          document.getElementById('btn-empty-add').classList.add('hidden');
-        } else {
-          document.getElementById('empty-title').textContent = 'No products yet';
-          document.getElementById('empty-sub').textContent   = 'Add your first product to get started.';
-          document.getElementById('btn-empty-add').classList.remove('hidden');
-        }
-        return;
-      }
-
-      empty.classList.add('hidden');
-      table.classList.remove('hidden');
-      cards.classList.remove('hidden');
-
-      // ── Desktop table rows ──
-      tbody.innerHTML = list.map(p => `
-        <tr
-          class="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors ${animateId === p.id ? 'row-new' : ''}"
-          data-id="${p.id}"
-        >
-          <td class="px-5 py-3 font-medium text-slate-100">${esc(p.name)}</td>
-          <td class="px-5 py-3 text-slate-400">${esc(p.category || '—')}</td>
-          <td class="px-5 py-3 text-right font-mono text-slate-200">${fmt(p.price)}</td>
-          <td class="px-5 py-3">
-            <span class="px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(p.status)}">${cap(p.status)}</span>
-          </td>
-          <td class="px-5 py-3 text-right">
-            <div class="flex items-center justify-end gap-1">
-              <button
-                class="p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-300 transition-colors"
-                aria-label="Edit ${esc(p.name)}"
-                onclick="openEdit('${p.id}')"
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
-              </button>
-              <button
-                class="p-1.5 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors"
-                aria-label="Delete ${esc(p.name)}"
-                onclick="openDelete('${p.id}')"
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M2.5 3.5h9M5.5 3.5V2.5h3v1M3.5 3.5l.75 8.5h5.5l.75-8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </button>
-            </div>
-          </td>
-        </tr>
-      `).join('');
-
-      // ── Mobile cards ──
-      cards.innerHTML = list.map(p => `
-        <div class="glass rounded-xl p-4 ${animateId === p.id ? 'row-new' : ''}" data-id="${p.id}">
-          <div class="flex items-start justify-between gap-3 mb-2">
-            <div>
-              <p class="font-semibold text-slate-100 text-sm">${esc(p.name)}</p>
-              <p class="text-slate-400 text-xs">${esc(p.category || 'No category')}</p>
-            </div>
-            <span class="px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(p.status)} shrink-0">${cap(p.status)}</span>
-          </div>
-          <div class="flex items-center justify-between mt-3 pt-3 border-t border-white/[0.06]">
-            <span class="font-mono font-semibold text-indigo-300">${fmt(p.price)}</span>
-            <div class="flex gap-2">
-              <button
-                class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white hover:bg-indigo-500/20 transition-colors"
-                onclick="openEdit('${p.id}')"
-                aria-label="Edit ${esc(p.name)}"
-              >
-                <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
-                Edit
-              </button>
-              <button
-                class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/15 transition-colors"
-                onclick="openDelete('${p.id}')"
-                aria-label="Delete ${esc(p.name)}"
-              >
-                <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M2.5 3.5h9M5.5 3.5V2.5h3v1M3.5 3.5l.75 8.5h5.5l.75-8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    function esc(str) {
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    }
-
-    function cap(s) {
-      return s.charAt(0).toUpperCase() + s.slice(1);
-    }
-
-    // ─── Modal helpers ───────────────────────────────────────────────────────
-    function openModal() {
-      document.getElementById('modal-backdrop').classList.remove('hidden');
-      document.getElementById('field-name').focus();
-    }
-
-    function closeModal() {
-      document.getElementById('modal-backdrop').classList.add('hidden');
-      clearFormErrors();
-      document.getElementById('product-form').reset();
-      editingId = null;
-    }
-
-    function openAdd() {
-      editingId = null;
-      document.getElementById('modal-title').textContent = 'Add product';
-      document.getElementById('btn-form-submit').textContent = 'Save product';
-      document.getElementById('field-id').value = '';
-      document.getElementById('field-name').value = '';
-      document.getElementById('field-category').value = '';
-      document.getElementById('field-price').value = '';
-      document.getElementById('field-status').value = 'active';
-      openModal();
-    }
-
-    function openEdit(id) {
-      const p = products.find(x => x.id === id);
-      if (!p) return;
-      editingId = id;
-      document.getElementById('modal-title').textContent = 'Edit product';
-      document.getElementById('btn-form-submit').textContent = 'Update product';
-      document.getElementById('field-id').value = p.id;
-      document.getElementById('field-name').value = p.name;
-      document.getElementById('field-category').value = p.category || '';
-      document.getElementById('field-price').value = p.price;
-      document.getElementById('field-status').value = p.status;
-      openModal();
-    }
-
-    // ─── Delete confirm ──────────────────────────────────────────────────────
-    function openDelete(id) {
-      const p = products.find(x => x.id === id);
-      if (!p) return;
-      deleteTargetId = id;
-      document.getElementById('delete-product-name').textContent = p.name;
-      document.getElementById('delete-backdrop').classList.remove('hidden');
-      document.getElementById('btn-confirm-delete').focus();
-    }
-
-    function closeDeleteModal() {
-      document.getElementById('delete-backdrop').classList.add('hidden');
-      deleteTargetId = null;
-    }
-
-    // ─── Form validation ─────────────────────────────────────────────────────
-    function clearFormErrors() {
-      document.getElementById('err-name').classList.add('hidden');
-      document.getElementById('err-price').classList.add('hidden');
-      document.getElementById('field-name').classList.remove('border-red-500/60');
-      document.getElementById('field-price').classList.remove('border-red-500/60');
-    }
-
-    function validateForm() {
-      clearFormErrors();
-      let ok = true;
-
-      const name  = document.getElementById('field-name').value.trim();
-      const price = document.getElementById('field-price').value;
-
-      if (!name) {
-        document.getElementById('err-name').classList.remove('hidden');
-        document.getElementById('field-name').classList.add('border-red-500/60');
-        ok = false;
-      }
-
-      if (price === '' || isNaN(Number(price)) || Number(price) < 0) {
-        document.getElementById('err-price').classList.remove('hidden');
-        document.getElementById('field-price').classList.add('border-red-500/60');
-        ok = false;
-      }
-
-      if (!ok) {
-        const box = document.getElementById('modal-box');
-        box.classList.add('shake');
-        setTimeout(() => box.classList.remove('shake'), 350);
-      }
-
-      return ok;
-    }
-
-    // ─── CRUD handlers ───────────────────────────────────────────────────────
-    document.getElementById('product-form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      if (!validateForm()) return;
-
-      const name     = document.getElementById('field-name').value.trim();
-      const category = document.getElementById('field-category').value.trim();
-      const price    = parseFloat(document.getElementById('field-price').value);
-      const status   = document.getElementById('field-status').value;
-
-      if (editingId) {
-        // ── Optimistic update ──
-        const idx     = products.findIndex(x => x.id === editingId);
-        const backup  = { ...products[idx] };
-
-        products[idx] = { ...products[idx], name, category, price, status };
-        closeModal();
-        render(editingId);
-
-        // Simulate save (always succeeds, UI-only)
-        // If it were async and failed: products[idx] = backup; render(); showToast('Update failed', 'error');
-        showToast('Product updated.');
-
-      } else {
-        // ── Optimistic add ──
-        const newProduct = { id: uid(), name, category, price, status };
-        products.unshift(newProduct);
-        closeModal();
-        render(newProduct.id);
-        showToast('Product added.');
-      }
+    menuToggle.addEventListener('click', () => {
+      const isOpen = mobileMenu.classList.toggle('open');
+      menuToggle.setAttribute('aria-expanded', String(isOpen));
+      iconOpen.classList.toggle('hidden', isOpen);
+      iconClose.classList.toggle('hidden', !isOpen);
     });
 
-    document.getElementById('btn-confirm-delete').addEventListener('click', function () {
-      const id  = deleteTargetId;
-      const idx = products.findIndex(x => x.id === id);
-      if (idx === -1) { closeDeleteModal(); return; }
-
-      const backup = products[idx];
-      products.splice(idx, 1);
-      closeDeleteModal();
-      render();
-      showToast('Product deleted.');
+    // Close mobile menu on nav link click
+    mobileMenu.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', () => {
+        mobileMenu.classList.remove('open');
+        menuToggle.setAttribute('aria-expanded', 'false');
+        iconOpen.classList.remove('hidden');
+        iconClose.classList.add('hidden');
+      });
     });
 
-    // ─── Search & sort ───────────────────────────────────────────────────────
-    document.getElementById('search').addEventListener('input', function () {
-      searchQ = this.value.trim();
-      render();
+    // FAQ accordion
+    document.querySelectorAll('.faq-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const answer = btn.nextElementSibling;
+        const isOpen = answer.classList.toggle('open');
+        btn.setAttribute('aria-expanded', String(isOpen));
+        const chevron = btn.querySelector('.faq-chevron');
+        chevron.style.transform = isOpen ? 'rotate(180deg)' : '';
+      });
     });
-
-    document.getElementById('sort').addEventListener('change', function () {
-      sortKey = this.value;
-      render();
-    });
-
-    // ─── Button wiring ───────────────────────────────────────────────────────
-    document.getElementById('btn-open-add').addEventListener('click', openAdd);
-    document.getElementById('btn-empty-add').addEventListener('click', openAdd);
-    document.getElementById('btn-modal-close').addEventListener('click', closeModal);
-    document.getElementById('btn-form-cancel').addEventListener('click', closeModal);
-    document.getElementById('btn-cancel-delete').addEventListener('click', closeDeleteModal);
-
-    // Close modals on backdrop click
-    document.getElementById('modal-backdrop').addEventListener('click', function (e) {
-      if (e.target === this) closeModal();
-    });
-    document.getElementById('delete-backdrop').addEventListener('click', function (e) {
-      if (e.target === this) closeDeleteModal();
-    });
-
-    // Escape key
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') {
-        closeModal();
-        closeDeleteModal();
-      }
-    });
-
-    // ─── Init ────────────────────────────────────────────────────────────────
-    render();
   </script>
 </body>
 </html>
