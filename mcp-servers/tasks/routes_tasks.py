@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 import uuid
 
@@ -38,22 +38,76 @@ async def _get_owned_task(s, task_id: UUID, email: str) -> TaskItem:
 async def list_tasks(
     status: str = "pending",
     slug: str | None = None,
+    has_built_app: bool = False,
+    is_project: bool = False,
     limit: int = 50,
     user: AdminUser = Depends(current_admin),
 ):
-    if status not in STATUS_BY_TAB:
+    """List tasks with flexible filters.
+
+    - `is_project=true`: returns every BUILD task plus every task with a
+      built_app_slug (any status) that the current user owns or is a
+      member of. Team-bucket tasks are NOT included — projects are
+      strictly private to their owner + explicitly-invited members.
+    - `has_built_app=true`: legacy filter for projects with a completed
+      slug; now also excludes the team bucket.
+    - Default (neither flag): the admin task-panel view — all tasks for
+      this user plus the shared team bucket.
+    """
+    if status not in STATUS_BY_TAB and not is_project:
         raise HTTPException(status_code=400, detail="Invalid status filter")
 
+    from models import ProjectMember
+    member_slugs_subq = (
+        select(ProjectMember.slug)
+        .where(ProjectMember.user_email == user.email)
+        .scalar_subquery()
+    )
+
     async with session() as s:
-        q = (
-            select(TaskItem)
-            .where(
-                TaskItem.assignee_email.in_([user.email, TEAM_EMAIL]),
-                TaskItem.status.in_(STATUS_BY_TAB[status]),
+        if is_project:
+            # Strict per-project access: owners and invited members only.
+            # No team bucket. Only BUILD tasks show up on the app-builder
+            # page — research, integrate, ask-user, and other non-app
+            # tasks stay in the admin task panel instead.
+            access_clause = or_(
+                TaskItem.assignee_email == user.email,
+                TaskItem.built_app_slug.in_(member_slugs_subq),
             )
-            .order_by(TaskItem.created_at.desc())
-            .limit(limit)
-        )
+            q = (
+                select(TaskItem)
+                .where(access_clause, TaskItem.action_type == "BUILD")
+                .order_by(TaskItem.created_at.desc())
+                .limit(limit)
+            )
+        elif has_built_app:
+            # Legacy: built-only projects, still strict per-user.
+            access_clause = or_(
+                TaskItem.assignee_email == user.email,
+                TaskItem.built_app_slug.in_(member_slugs_subq),
+            )
+            q = (
+                select(TaskItem)
+                .where(
+                    access_clause,
+                    TaskItem.built_app_slug.isnot(None),
+                    TaskItem.status.in_(STATUS_BY_TAB[status]),
+                )
+                .order_by(TaskItem.created_at.desc())
+                .limit(limit)
+            )
+        else:
+            # Default: admin task panel — includes team bucket.
+            access_clause = TaskItem.assignee_email.in_([user.email, TEAM_EMAIL])
+            q = (
+                select(TaskItem)
+                .where(
+                    access_clause,
+                    TaskItem.status.in_(STATUS_BY_TAB[status]),
+                )
+                .order_by(TaskItem.created_at.desc())
+                .limit(limit)
+            )
         if slug:
             q = q.where(TaskItem.built_app_slug == slug)
         rows = (await s.execute(q)).scalars().all()
@@ -103,6 +157,38 @@ async def history(
         )
         rows = (await s.execute(q)).scalars().all()
     return rows
+
+
+@router.get("/{task_id}", response_model=TaskOut)
+async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin)):
+    """Return a single task. Used by preview.html to watch build status.
+
+    Read access extends beyond assignee — project members (people invited
+    via the 👥 Members modal) can also view tasks for projects they're
+    part of. Writes stay restricted to the assignee / team bucket.
+    """
+    from models import ProjectMember
+    async with session() as s:
+        item = (
+            await s.execute(select(TaskItem).where(TaskItem.id == task_id))
+        ).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if item.assignee_email in (user.email, TEAM_EMAIL):
+            return item
+        # Not the assignee — check project membership.
+        if item.built_app_slug:
+            member = (
+                await s.execute(
+                    select(ProjectMember).where(
+                        ProjectMember.slug == item.built_app_slug,
+                        ProjectMember.user_email == user.email,
+                    ).limit(1)
+                )
+            ).scalar_one_or_none()
+            if member is not None:
+                return item
+        raise HTTPException(status_code=403, detail="Not your task")
 
 
 @router.post("", response_model=TaskOut, status_code=201)
@@ -327,6 +413,11 @@ async def enhance(
                 detail="Source task has no built_app_slug — nothing to enhance",
             )
 
+        # Editors and owners on the project may enhance shared apps.
+        from routes_projects import _require_role
+        await _require_role(s, source.built_app_slug, user.email, "editor",
+                            is_admin=user.is_admin)
+
         # 2. Reject concurrent enhancements on same app
         in_flight = (await s.execute(
             select(TaskItem).where(
@@ -395,7 +486,17 @@ async def cancel_task(
     """
     TERMINAL = {"completed", "failed"}
     async with session() as s:
-        item = await _get_owned_task(s, task_id, user.email)
+        item = (
+            await s.execute(select(TaskItem).where(TaskItem.id == task_id))
+        ).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if item.built_app_slug:
+            from routes_projects import _require_role
+            await _require_role(s, item.built_app_slug, user.email, "editor",
+                                is_admin=user.is_admin)
+        elif item.assignee_email not in (user.email, TEAM_EMAIL):
+            raise HTTPException(status_code=403, detail="Not your task")
         if item.status in TERMINAL:
             raise HTTPException(
                 status_code=409,
