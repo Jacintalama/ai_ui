@@ -61,11 +61,29 @@ async def execute_sql(
                 detail="Could not decrypt the stored DB URI — re-paste it in the Database tab.",
             )
 
+    # Parse the URI ourselves and pass kwargs to asyncpg.connect — passing
+    # the raw DSN trips Python's urlparse on Supabase passwords containing
+    # unescaped special characters (':', '@', '/', etc.).
+    from urllib.parse import unquote, urlsplit
+    parts = urlsplit(db_uri)
+    if parts.scheme not in ("postgres", "postgresql"):
+        raise HTTPException(status_code=400, detail="DB URI must start with postgresql://")
+    user = unquote(parts.username) if parts.username else "postgres"
+    password = unquote(parts.password) if parts.password else None
+    host = parts.hostname
+    port = parts.port or 5432
+    database = (parts.path or "/postgres").lstrip("/") or "postgres"
+    if not host:
+        raise HTTPException(status_code=400, detail="DB URI missing host — re-copy from Supabase.")
+
     started = time.perf_counter()
     conn = None
     try:
         conn = await asyncio.wait_for(
-            asyncpg.connect(db_uri, statement_cache_size=0),
+            asyncpg.connect(
+                host=host, port=port, user=user, password=password,
+                database=database, statement_cache_size=0,
+            ),
             timeout=CONNECT_TIMEOUT_SECONDS,
         )
         result = await asyncio.wait_for(
