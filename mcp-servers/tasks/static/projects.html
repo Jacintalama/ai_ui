@@ -612,10 +612,11 @@
         <div>
           <label class="form-label" for="np-template">Template</label>
           <select id="np-template" class="form-select">
-            <option value="landing">🌐 Landing page</option>
-            <option value="dashboard">📊 Dashboard</option>
-            <option value="crud">📝 CRUD app</option>
-            <option value="blank">🧱 Blank (describe anything)</option>
+            <option value="landing">🌐 Landing page — marketing / product page</option>
+            <option value="dashboard">📊 Dashboard — stats + charts + tables</option>
+            <option value="crud">📝 CRUD app — list / create / edit / delete records</option>
+            <option value="crm">👥 CRM — contacts, deals, pipeline</option>
+            <option value="blank">🧱 Blank — agent will clarify in chat first</option>
           </select>
         </div>
         <div>
@@ -841,24 +842,83 @@
 
     const TEMPLATE_RULES = {
       landing: [
-        "Type: LANDING PAGE",
-        "• Sections (in order): (1) sticky nav with logo + CTA, (2) hero with H1, tagline, primary CTA, and supporting visual, (3) 3-6 features/benefits with icons, (4) social-proof row (testimonials or logos) if implied, (5) FAQ accordion if the product has common objections, (6) final CTA band, (7) footer with nav links, contact, social.",
-        "• Design: 1 primary accent color + 1 neutral palette; Tailwind's 'zinc' or 'slate' for grays. Use 1 Google Font for headings (e.g. Inter, Manrope, or Plus Jakarta Sans).",
-        "• Hero must have a clear primary CTA above the fold.",
-        "• Smooth-scroll for internal #anchor links.",
+        "TYPE: LANDING PAGE (marketing / product page)",
+        "GOAL: convert visitors. Optimise for clarity above the fold and a strong CTA.",
+        "STRUCTURE — sections in this order, each in its own <section>:",
+        "  1. Sticky <header> with logo + 4-6 nav links + primary CTA button on the right.",
+        "  2. Hero: large H1 (2-3 short lines), one-paragraph subhead, primary CTA + secondary 'See how it works' link, supporting visual on the right or below (image, illustration, or a styled mock).",
+        "  3. Trust strip: a row of customer logos / press mentions / review badges (or a tasteful skeleton if none implied).",
+        "  4. Three-to-six 'Features' or 'Benefits' tiles with icon + heading + 1-2 line description. Use a 3-column grid that collapses to 1 column on mobile.",
+        "  5. 'How it works' or 'Use cases' — alternating 50/50 image+text rows, max 3.",
+        "  6. Social proof: 2-3 testimonial cards with avatar, name, role, company, and a short quote.",
+        "  7. Pricing or product detail (if hinted at in the description).",
+        "  8. FAQ — 5-8 questions in an accessible accordion (proper aria-expanded).",
+        "  9. Final CTA band: full-width gradient/solid section, big H2, primary CTA.",
+        " 10. Footer with 3-4 link columns + small print + social icons.",
+        "DESIGN: one accent color + one neutral grey ramp (Tailwind zinc/slate). One headline font + one body font (Plus Jakarta Sans + Inter, or similar). Soft shadows, rounded-2xl cards. Smooth-scroll on internal #anchor links. Above-the-fold must paint without scrolling on a 1366×768 laptop. Lazy-load images below the hero.",
+        "DON'T: build a dashboard. No data tables. No CRUD forms. No login UI unless user-explicitly requested. No persistence — this is a brochure page.",
       ].join("\n"),
+
       dashboard: [
-        "Type: DASHBOARD",
-        "• Layout: top bar (brand + user menu), left sidebar with sections, main area with stat cards on top + a primary data view (table, chart, or grid).",
-        "• At least 3 stat cards with icons and trend indicators.",
-        "• Use Tailwind; prefer dark mode by default with a toggle.",
+        "TYPE: DASHBOARD (operational analytics view)",
+        "GOAL: surface key metrics and let users drill in. Density-first.",
+        "STRUCTURE: app shell with: (a) top bar 56px tall with brand + global search + user menu, (b) left sidebar 240px with grouped nav sections (icons + labels), (c) main area scrollable with breadcrumbs + page title at top.",
+        "MAIN AREA — in this order:",
+        "  1. Header strip: page title + date-range picker + 'Refresh' button.",
+        "  2. KPI row: 4-6 stat cards (one per metric) — large number, trend % vs previous period, sparkline. Use a 2/3/6 column responsive grid.",
+        "  3. Primary chart (~480px tall) — line / area / bar depending on metric. Use a JS chart lib via CDN (Chart.js v4 from jsDelivr is the default).",
+        "  4. Two-up secondary view: data table (sortable, paginated 25/page) on the left, supporting chart or breakdown list on the right.",
+        "  5. Activity feed at bottom (optional) — recent events with relative timestamps.",
+        "DESIGN: dark mode by default with a toggle in the user menu (persist choice in localStorage). Monospace font for numbers (JetBrains Mono / SF Mono). Cool, restrained palette — accent color reserved for actionable elements only.",
+        "BEHAVIOUR: Keyboard shortcuts (`/` focuses search, `g h` to home, `?` shows help). Skeleton loaders while data is fetched. Empty/error states for every chart and table. Charts must scale on window resize.",
+        "DON'T: build a marketing page. No big CTA. No pricing section. Don't auto-refresh more than once a minute.",
       ].join("\n"),
+
       crud: [
-        "Type: CRUD APP",
-        "• List view + add/edit/delete with inline form validation and clear empty/error states.",
-        "• Optimistic UI for add/edit; revert on failure.",
+        "TYPE: CRUD APP (Create / Read / Update / Delete records)",
+        "GOAL: let the user manage one main entity (and possibly a nested one). Prioritise speed of editing and discoverability of records.",
+        "STRUCTURE:",
+        "  1. Top bar: app title, search input, primary 'New <Entity>' button.",
+        "  2. Main view = table (default) or card grid, with column sort, filter chips, and a bulk-select checkbox column.",
+        "  3. Row click → side drawer (640px wide) opens with the record's full detail in edit mode. ESC or X closes.",
+        "  4. 'New' button opens the same drawer with empty fields.",
+        "  5. Inline actions per row: pencil (edit) and trash (delete). Delete prompts a confirm modal naming the record.",
+        "BEHAVIOUR: Optimistic UI — apply add/edit immediately, revert on server failure with a toast. Empty state with illustration + 'Add your first <entity>' CTA. Validation inline (under each input), not on submit only. Required-field markers (red asterisk).",
+        "DESIGN: clean, neutral palette. Borders for separation rather than shadows. Compact row height (44-48px) by default with a 'comfortable' toggle for 60-64px. Icons from Lucide (CDN).",
+        "PERSISTENCE: if Supabase is configured, use a single table with RLS scoped to `auth.uid() = user_id`. If not, use localStorage under a versioned key.",
+        "DON'T: invent extra entities the user didn't mention. No analytics dashboard. No marketing copy.",
       ].join("\n"),
-      blank: "Type: CUSTOM",
+
+      crm: [
+        "TYPE: CRM (Contacts + Deals + Pipeline)",
+        "GOAL: a salesperson manages contacts and tracks deals through a pipeline. Three core entities: Contact, Deal, Activity.",
+        "STRUCTURE: app shell similar to Dashboard, but the main area has 4 distinct top-level views (left sidebar nav):",
+        "  1. **Pipeline** (default): Kanban board with a column per deal stage (Lead → Qualified → Proposal → Won / Lost). Cards show contact name + deal value + close-date badge. Drag-and-drop between columns.",
+        "  2. **Contacts**: searchable, sortable table with name / company / email / phone / last-contacted. Row click opens detail drawer.",
+        "  3. **Deals**: same pattern as Contacts but with stage / value / probability / close-date columns.",
+        "  4. **Activities**: timeline of calls / emails / meetings, filterable by contact or deal.",
+        "ENTITIES & FIELDS:",
+        "  - Contact: id, name, email, phone, company, role, owner, notes, created_at, last_contacted_at",
+        "  - Deal: id, contact_id (FK), title, value (number), stage (enum), probability (0-100), expected_close_date, owner, notes",
+        "  - Activity: id, type (call/email/meeting), subject, contact_id, deal_id (nullable), happened_at, notes",
+        "BEHAVIOUR: clicking a Deal card on the Pipeline board opens a side panel with the linked Contact, recent Activities, and inline edit. Stage changes via drag-drop persist immediately and post an Activity row 'Stage changed: Lead → Qualified'.",
+        "DESIGN: corporate-friendly — Tailwind's slate or stone neutrals + one distinguishing accent (blue or emerald). Avatar circles with initials for contacts. Currency formatted ($X,XXX). Date-times relative (e.g. '3 days ago').",
+        "PERSISTENCE: STRONGLY prefers Supabase. Use 3 tables (contacts, deals, activities) with foreign keys. RLS by `owner = auth.uid()`. If only localStorage is available, warn the user that data won't sync across devices.",
+        "DON'T: build a marketing landing page. No 'sign up' CTA in the main UI (the user IS the salesperson — they're already in).",
+      ].join("\n"),
+
+      blank: [
+        "TYPE: CUSTOM (free-form — exact requirements unclear)",
+        "MODE: This was created from the 'Blank' template. Before writing ANY code, switch to the Chat panel and ask the user 3-5 clarifying questions to scope the build properly.",
+        "ASK ABOUT:",
+        "  • Who's the primary user (admin? customer? specific role)?",
+        "  • What's the SINGLE most important thing the app must do well?",
+        "  • Visual style: minimal / playful / corporate / dark / something specific?",
+        "  • Persistence: none / localStorage / Supabase tables?",
+        "  • Out-of-scope: what should the app explicitly NOT do?",
+        "Once you have answers, write a one-paragraph spec, confirm with the user, THEN start building.",
+        "If the user's original description is already detailed enough (>200 chars and includes UI sections + behaviour), skip clarification and proceed with a Plan step before Execute.",
+      ].join("\n"),
     };
 
     const STORAGE_INSTRUCTIONS = {
@@ -877,10 +937,11 @@
     }
 
     const TEMPLATE_PLACEHOLDERS = {
-      landing:   "e.g. Landing page for a coffee shop called 'Bean There'. Include hero with logo and tagline, menu with 6 drinks, opening hours, and a contact form.",
-      dashboard: "e.g. Team activity dashboard showing tasks completed this week, top contributors, and a burndown chart.",
-      crud:      "e.g. Recipe manager — add, edit, delete recipes with ingredients, prep time, and difficulty.",
-      blank:     "Describe what you want the AIUI Agent to build. Be specific about look, sections, and behavior.",
+      landing:   "e.g. Landing page for a coffee shop called 'Bean There'. Include hero with logo and tagline, menu with 6 drinks, opening hours, and a contact form. Warm earthy palette (browns + cream), one body font.",
+      dashboard: "e.g. Team activity dashboard. KPIs: tasks completed this week, average cycle time, deploys, error rate. Burndown chart, recent activity feed, dark mode default.",
+      crud:      "e.g. Recipe manager — add, edit, delete recipes with name, ingredients (multi-line), prep time, difficulty (easy/medium/hard), and an optional photo URL.",
+      crm:       "e.g. CRM for a small consulting firm. Pipeline: Lead → Discovery → Proposal → Closed Won / Lost. Contacts have company, role, last-call-date. Deals show value + expected close.",
+      blank:     "Describe what you want the AIUI Agent to build. Don't worry if it's vague — the agent will ask follow-up questions in chat before writing code.",
     };
     function applyTemplatePlaceholder() {
       npDesc.placeholder = TEMPLATE_PLACEHOLDERS[npTemplate.value] || "";
