@@ -29,6 +29,22 @@ async def _lookup_supabase_url(s, slug: str | None) -> str | None:
     )).scalar_one_or_none()
     return row.supabase_url if row else None
 
+
+async def _lookup_supabase_config(s, slug: str | None) -> tuple[str | None, bool]:
+    """Return (supabase_url, has_db_uri) for a project slug.
+
+    has_db_uri is True iff the row has a non-empty db_uri_encrypted value —
+    signals to prompt builders that the SQL-execute tool is available.
+    """
+    if not slug:
+        return None, False
+    row = (await s.execute(
+        select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+    )).scalar_one_or_none()
+    if not row:
+        return None, False
+    return row.supabase_url, bool(row.db_uri_encrypted)
+
 logger = logging.getLogger("tasks")
 router = APIRouter(prefix="/api/tasks")
 
@@ -76,7 +92,9 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             is_loop = task.max_attempts > 1
             attempt = task.attempt_count
             max_att = task.max_attempts
-            supabase_url = await _lookup_supabase_url(s, task.built_app_slug)
+            supabase_url, has_db_uri = await _lookup_supabase_config(s, task.built_app_slug)
+            assignee_email = task.assignee_email or ""
+            built_slug = task.built_app_slug or ""
 
         slug = None
         if outcome.kind == "completed":
@@ -111,6 +129,9 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                 max_attempts=max_att,
                 error_context=outcome.payload,
                 supabase_url=supabase_url,
+                has_db_uri=has_db_uri,
+                slug=built_slug,
+                user_email=assignee_email,
             )
             await _run_execution(task_id, new_exec.id, retry_prompt)
             return
@@ -159,6 +180,9 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                     max_attempts=max_att,
                     error_context=f"Build completed but verification failed: {test_result.detail}",
                     supabase_url=supabase_url,
+                    has_db_uri=has_db_uri,
+                    slug=built_slug,
+                    user_email=assignee_email,
                 )
                 await _run_execution(task_id, new_exec.id, retry_prompt)
                 return
@@ -271,8 +295,10 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         await s.commit()
         await s.refresh(item)
         await s.refresh(execution)
-        supabase_url = await _lookup_supabase_url(s, item.built_app_slug)
+        supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
+    item_slug = item.built_app_slug or ""
+    item_email = item.assignee_email or ""
     if item.max_attempts > 1 and item.plan and item.plan_status == "approved":
         prompt = build_tdd_execute_prompt(
             description=item.description,
@@ -286,6 +312,9 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
             max_attempts=item.max_attempts,
             error_context=item.result or "",
             supabase_url=supabase_url,
+            has_db_uri=has_db_uri,
+            slug=item_slug,
+            user_email=item_email,
         )
     else:
         prompt = build_prompt(
@@ -295,6 +324,9 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
             meeting_title=str(item.meeting_id),
             meeting_date="",
             supabase_url=supabase_url,
+            has_db_uri=has_db_uri,
+            slug=item_slug,
+            user_email=item_email,
         )
     # Create a holder dict so the subprocess can register its own reference
     # for hard-kill on cancel.

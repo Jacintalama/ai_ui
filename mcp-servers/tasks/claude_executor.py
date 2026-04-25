@@ -85,11 +85,54 @@ URL: {url}
 """
 
 
-def _supabase_block(supabase_url: str | None) -> str:
+SUPABASE_SQL_TOOL_TEMPLATE = """
+
+## You can manage the Supabase schema yourself
+
+This project has a Postgres connection URI configured. You have a tool —
+DO NOT ask the user to run SQL in the Supabase dashboard. Run it yourself:
+
+```bash
+curl -sS -X POST 'http://api-gateway:8080/api/projects/{slug}/db/sql' \\
+     -H 'X-User-Email: {user_email}' \\
+     -H 'X-User-Admin: true' \\
+     -H 'Content-Type: application/json' \\
+     -d '{{"sql": "CREATE TABLE …"}}'
+```
+
+The endpoint returns JSON: `{{"rows": [...], "rowcount": N, "executed_ms": M}}`
+on success, or `{{"detail": "SQL error: ..."}}` with HTTP 400 on failure.
+On 502 the Postgres host is unreachable — give up and tell the user, do
+not retry.
+
+Use this tool to:
+- CREATE TABLE … (start by checking `\\d` via `SELECT table_name FROM
+  information_schema.tables WHERE table_schema = 'public'`)
+- ALTER TABLE … (add columns, change types)
+- Enable RLS: `ALTER TABLE foo ENABLE ROW LEVEL SECURITY`
+- CREATE POLICY … (RLS policies — typically `auth.uid() = user_id`)
+- CREATE INDEX … (for query performance)
+
+ALWAYS verify with a follow-up `SELECT` that the change took effect before
+moving on. Quote identifiers properly. Run statements one at a time — the
+endpoint executes a single statement per call.
+"""
+
+
+def _supabase_block(supabase_url: str | None,
+                    has_db_uri: bool = False,
+                    slug: str = "",
+                    user_email: str = "") -> str:
     """Return the Supabase prompt block, or '' if no config."""
     if not supabase_url:
         return ""
-    return SUPABASE_BLOCK_TEMPLATE.format(url=supabase_url)
+    block = SUPABASE_BLOCK_TEMPLATE.format(url=supabase_url)
+    if has_db_uri:
+        block += SUPABASE_SQL_TOOL_TEMPLATE.format(
+            slug=slug or "<slug>",
+            user_email=user_email or "<your-email>",
+        )
+    return block
 
 
 def build_prompt(
@@ -100,6 +143,9 @@ def build_prompt(
     meeting_title: str,
     meeting_date: str,
     supabase_url: str | None = None,
+    has_db_uri: bool = False,
+    slug: str = "",
+    user_email: str = "",
 ) -> str:
     return PROMPT_TEMPLATE.format(
         description=description,
@@ -107,7 +153,9 @@ def build_prompt(
         priority=priority,
         meeting_title=meeting_title,
         meeting_date=meeting_date,
-        supabase_block=_supabase_block(supabase_url),
+        supabase_block=_supabase_block(
+            supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
+        ),
     )
 
 
@@ -320,6 +368,8 @@ def build_enhance_prompt(
     max_attempts: int = 3,
     error_context: str = "",
     supabase_url: str | None = None,
+    has_db_uri: bool = False,
+    user_email: str = "",
 ) -> str:
     if error_context:
         err_block = (
@@ -333,7 +383,9 @@ def build_enhance_prompt(
         slug=slug,
         user_request=user_request,
         error_context_block=err_block,
-        supabase_block=_supabase_block(supabase_url),
+        supabase_block=_supabase_block(
+            supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
+        ),
     )
 
 
@@ -395,6 +447,9 @@ def build_tdd_execute_prompt(
     max_attempts: int = 1,
     error_context: str = "",
     supabase_url: str | None = None,
+    has_db_uri: bool = False,
+    slug: str = "",
+    user_email: str = "",
 ) -> str:
     history_block = _format_conversation_history(conversation_history)
     if error_context:
@@ -414,7 +469,9 @@ def build_tdd_execute_prompt(
         plan=plan,
         conversation_history_block=history_block,
         error_context_block=error_block,
-        supabase_block=_supabase_block(supabase_url),
+        supabase_block=_supabase_block(
+            supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
+        ),
     )
 
 
