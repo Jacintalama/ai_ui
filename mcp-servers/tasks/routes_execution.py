@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sse_starlette.sse import EventSourceResponse
 
 from auth import AdminUser, current_admin
@@ -195,6 +195,17 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             await s.execute(
                 update(TaskItem).where(TaskItem.id == task_id).values(**update_values)
             )
+            # Auto-add the creator as owner of this project (idempotent).
+            if slug:
+                await s.execute(
+                    text(
+                        "INSERT INTO tasks.project_members (slug, user_email, role, added_by) "
+                        "SELECT :slug, assignee_email, 'owner', assignee_email "
+                        "FROM tasks.items WHERE id = :task_id AND assignee_email IS NOT NULL "
+                        "ON CONFLICT (slug, user_email) DO NOTHING"
+                    ),
+                    {"slug": slug, "task_id": task_id},
+                )
             await s.commit()
     except Exception as exc:
         logger.exception("Execution failed: %s", exc)
@@ -221,7 +232,11 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         ).scalar_one_or_none()
         if item is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if item.assignee_email not in (user.email, TEAM_EMAIL):
+        if item.built_app_slug:
+            from routes_projects import _require_role
+            await _require_role(s, item.built_app_slug, user.email, "editor",
+                                is_admin=user.is_admin)
+        elif item.assignee_email not in (user.email, TEAM_EMAIL):
             raise HTTPException(status_code=403, detail="Not your task")
         if item.action_type not in ("BUILD", "INTEGRATE", "RESEARCH"):
             raise HTTPException(status_code=400, detail="AI execution not allowed for this task type")
@@ -313,7 +328,11 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
         if item is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if item.assignee_email not in (user.email, TEAM_EMAIL):
+        if item.built_app_slug:
+            from routes_projects import _require_role
+            await _require_role(s, item.built_app_slug, user.email, "editor",
+                                is_admin=user.is_admin)
+        elif item.assignee_email not in (user.email, TEAM_EMAIL):
             raise HTTPException(status_code=403, detail="Not your task")
         if item.max_attempts <= 1:
             raise HTTPException(status_code=400, detail="Clarify only for loop mode")
@@ -420,7 +439,11 @@ async def start_plan(task_id: UUID, user: AdminUser = Depends(current_admin)):
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
         if item is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if item.assignee_email not in (user.email, TEAM_EMAIL):
+        if item.built_app_slug:
+            from routes_projects import _require_role
+            await _require_role(s, item.built_app_slug, user.email, "editor",
+                                is_admin=user.is_admin)
+        elif item.assignee_email not in (user.email, TEAM_EMAIL):
             raise HTTPException(status_code=403, detail="Not your task")
         if item.max_attempts <= 1:
             raise HTTPException(status_code=400, detail="Plan step only for loop mode")
