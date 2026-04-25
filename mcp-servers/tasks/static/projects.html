@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>App Builder — AIUI</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Crect%20width%3D%2224%22%20height%3D%2224%22%20rx%3D%226%22%20fill%3D%22%237c8cff%22%2F%3E%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M12%204L14%2010L20%2012L14%2014L12%2020L10%2014L4%2012L10%2010Z%22%2F%3E%3C%2Fsvg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%237c8cff%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2222%22%20text-anchor%3D%22middle%22%20font-family%3D%22sans-serif%22%20font-size%3D%2217%22%20font-weight%3D%22700%22%20fill%3D%22white%22%3EOI%3C%2Ftext%3E%3C%2Fsvg%3E">
   <style>
     :root[data-theme="dark"] {
       --bg:           #0a0a0b;
@@ -90,7 +90,7 @@
       box-shadow: 0 4px 12px rgba(124, 140, 255, 0.35);
       flex-shrink: 0;
     }
-    .topbar .brand-logo svg { width: 18px; height: 18px; color: white; }
+    .topbar .brand-logo svg { width: 28px; height: 28px; }
     .topbar .brand-text {
       display: flex;
       flex-direction: column;
@@ -529,9 +529,12 @@
   <div class="topbar">
     <div class="brand">
       <div class="brand-logo" aria-hidden="true">
-        <!-- Lucide "sparkles" — marks AI-built work -->
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.813 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.813a2 2 0 0 1 1.287-1.288L21 12l-5.813-1.9a2 2 0 0 1-1.287-1.287z"/>
+        <!-- "OI" wordmark — matches the AIUI / Open WebUI brand. -->
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <text x="16" y="22" text-anchor="middle"
+                font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+                font-size="17" font-weight="700" fill="white"
+                letter-spacing="-0.5">OI</text>
         </svg>
       </div>
       <div class="brand-text">
@@ -632,14 +635,15 @@
           <div class="form-hint">The AI will build it. Be as specific as you can about look, sections, copy, colors.</div>
         </div>
         <div>
-          <label class="form-label" for="np-storage">Backend</label>
+          <label class="form-label" for="np-storage">App type</label>
           <select id="np-storage" class="form-select">
-            <option value="none" selected>None — UI only, no data</option>
-            <option value="supabase">Supabase — connect after creating</option>
+            <option value="none" selected>🪶 Static — no database (frontend only)</option>
+            <option value="supabase">⚡ Dynamic — with database (Supabase backend)</option>
           </select>
           <div class="form-hint" style="font-size:11px; margin-top:4px; color:var(--muted);">
-            Supabase gives you auth, database, and file storage. After creating the project, open
-            the Publish modal to paste your Supabase URL and anon key.
+            <strong>Static</strong> apps run entirely in the browser — fast, no servers, no auth.
+            <strong>Dynamic</strong> apps use Supabase for auth, tables, and file storage —
+            after creating, open the Database tab to paste your Supabase URL and keys.
           </div>
         </div>
         <details class="rules-box">

@@ -1255,26 +1255,27 @@
         });
         // Add an explicit clean tooltip in its place.
         entry.setAttribute("title", "App Builder — create and manage AI-built apps");
-        // Replace the cloned Workspace SVG with a sparkle icon so the
-        // entry is visually distinct from Workspace.
+        // Replace the cloned Workspace SVG with the AIUI "OI" wordmark.
         const cloneIcon = entry.querySelector("svg");
         if (cloneIcon) {
           const ns = "http://www.w3.org/2000/svg";
           const newIcon = document.createElementNS(ns, "svg");
-          // Copy over width/height/class so sizing matches Workspace.
           newIcon.setAttribute("width",  cloneIcon.getAttribute("width")  || "20");
           newIcon.setAttribute("height", cloneIcon.getAttribute("height") || "20");
-          newIcon.setAttribute("viewBox", "0 0 24 24");
-          newIcon.setAttribute("fill", "none");
-          newIcon.setAttribute("stroke", "currentColor");
-          newIcon.setAttribute("stroke-width", "2");
-          newIcon.setAttribute("stroke-linecap", "round");
-          newIcon.setAttribute("stroke-linejoin", "round");
+          newIcon.setAttribute("viewBox", "0 0 32 32");
           if (cloneIcon.getAttribute("class")) newIcon.setAttribute("class", cloneIcon.getAttribute("class"));
-          // Lucide "sparkles" — two 4-point stars. Symbolises "AI-built".
-          const p1 = document.createElementNS(ns, "path");
-          p1.setAttribute("d", "m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.813 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.813a2 2 0 0 1 1.287-1.288L21 12l-5.813-1.9a2 2 0 0 1-1.287-1.287z");
-          newIcon.appendChild(p1);
+          // "OI" wordmark — matches the AIUI brand on the App Builder page.
+          const txt = document.createElementNS(ns, "text");
+          txt.setAttribute("x", "16");
+          txt.setAttribute("y", "22");
+          txt.setAttribute("text-anchor", "middle");
+          txt.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif");
+          txt.setAttribute("font-size", "17");
+          txt.setAttribute("font-weight", "700");
+          txt.setAttribute("fill", "currentColor");
+          txt.setAttribute("letter-spacing", "-0.5");
+          txt.textContent = "OI";
+          newIcon.appendChild(txt);
           cloneIcon.replaceWith(newIcon);
         }
         // Replace the "Workspace" text label with "Build Website" wherever
