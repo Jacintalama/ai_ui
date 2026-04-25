@@ -30,11 +30,13 @@ _URL_RE = re.compile(r"^https://[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(:\d+)?(/.*)?$")
 class SupabaseConfigRequest(BaseModel):
     supabase_url: str = Field(min_length=10, max_length=300)
     anon_key: str = Field(min_length=20, max_length=2000)
+    db_uri: str | None = Field(default=None, max_length=500)
 
 
 class SupabaseConfigStatus(BaseModel):
     configured: bool
     supabase_url: str | None = None
+    has_db_uri: bool = False
     configured_by: str | None = None
     configured_at: str | None = None
 
@@ -52,6 +54,7 @@ async def get_supabase(slug: str, user: AdminUser = Depends(current_admin)):
     return SupabaseConfigStatus(
         configured=True,
         supabase_url=row.supabase_url,
+        has_db_uri=bool(row.db_uri_encrypted),
         configured_by=row.configured_by,
         configured_at=row.configured_at.isoformat() if row.configured_at else None,
     )
@@ -67,7 +70,11 @@ async def set_supabase(
     url = body.supabase_url.strip()
     if not _URL_RE.match(url):
         raise HTTPException(status_code=400, detail="supabase_url must be an https://… URL")
+    db_uri = (body.db_uri or "").strip() or None
+    if db_uri and not db_uri.startswith("postgresql://"):
+        raise HTTPException(status_code=400, detail="db_uri must start with postgresql://")
     enc_key = crypto_utils.encrypt(body.anon_key.strip())
+    enc_db = crypto_utils.encrypt(db_uri) if db_uri else None
 
     async with session() as s:
         await _require_role(s, slug, user.email, "owner")
@@ -77,12 +84,14 @@ async def set_supabase(
         if existing:
             existing.supabase_url = url
             existing.anon_key_encrypted = enc_key
+            existing.db_uri_encrypted = enc_db if enc_db is not None else existing.db_uri_encrypted
             existing.configured_by = user.email
             existing.updated_at = datetime.utcnow()
             row = existing
         else:
             row = ProjectSupabase(
                 slug=slug, supabase_url=url, anon_key_encrypted=enc_key,
+                db_uri_encrypted=enc_db,
                 configured_by=user.email,
             )
             s.add(row)
@@ -91,6 +100,7 @@ async def set_supabase(
     return SupabaseConfigStatus(
         configured=True,
         supabase_url=row.supabase_url,
+        has_db_uri=bool(row.db_uri_encrypted),
         configured_by=row.configured_by,
         configured_at=row.configured_at.isoformat() if row.configured_at else None,
     )

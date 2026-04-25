@@ -86,6 +86,7 @@ class ProjectSupabase(Base):
     slug = Column(Text, primary_key=True)
     supabase_url = Column(Text, nullable=False)
     anon_key_encrypted = Column(Text, nullable=False)
+    db_uri_encrypted = Column(Text, nullable=True)
     configured_by = Column(Text, nullable=False)
     configured_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
