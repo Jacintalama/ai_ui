@@ -624,11 +624,15 @@
           <div class="form-hint">The AI will build it. Be as specific as you can about look, sections, copy, colors.</div>
         </div>
         <div>
-          <label class="form-label" for="np-storage">Storage (data persistence)</label>
+          <label class="form-label" for="np-storage">Backend</label>
           <select id="np-storage" class="form-select">
-            <option value="none" selected>None — no backend</option>
-            <option value="localstorage">Browser localStorage — saves data in the browser</option>
+            <option value="none" selected>None — UI only, no data</option>
+            <option value="supabase">Supabase — connect after creating</option>
           </select>
+          <div class="form-hint" style="font-size:11px; margin-top:4px; color:var(--muted);">
+            Supabase gives you auth, database, and file storage. After creating the project, open
+            the Publish modal to paste your Supabase URL and anon key.
+          </div>
         </div>
         <details class="rules-box">
           <summary>Build rules Claude will follow</summary>
@@ -818,8 +822,8 @@
     };
 
     const STORAGE_INSTRUCTIONS = {
-      none: "• Storage: NO persistence. App is stateless in-memory only.",
-      localstorage: "• Storage: use window.localStorage under a clear namespace key (e.g. 'myapp:v1:items'). Handle JSON parse failures. Don't store sensitive data.",
+      none: "• Storage: NO persistence. The app is stateless / UI-only.",
+      supabase: "• Storage: a Supabase project will be attached after creation. Read URL/key from `window.SUPABASE_URL` / `window.SUPABASE_ANON_KEY` (injected by the host). Use `supabase-js` v2 from jsDelivr. Enable RLS on any table you create. Document your schema in `schema.sql` at the app root.",
     };
 
     function buildPromptPrefix() {
