@@ -616,6 +616,13 @@
             <option value="dashboard">📊 Dashboard — stats + charts + tables</option>
             <option value="crud">📝 CRUD app — list / create / edit / delete records</option>
             <option value="crm">👥 CRM — contacts, deals, pipeline</option>
+            <option value="portfolio">🎨 Portfolio — personal site, projects showcase</option>
+            <option value="docs">📚 Docs — technical documentation site</option>
+            <option value="ecommerce">🛒 E-commerce — products, cart, checkout</option>
+            <option value="booking">📅 Booking — appointment scheduler</option>
+            <option value="chat">💬 Chat — messaging app with rooms</option>
+            <option value="auth">🔐 Auth-gated app — login wall + protected pages</option>
+            <option value="blog">✍️ Blog — posts, tags, archive</option>
             <option value="blank">🧱 Blank — agent will clarify in chat first</option>
           </select>
         </div>
@@ -907,6 +914,119 @@
         "DON'T: build a marketing landing page. No 'sign up' CTA in the main UI (the user IS the salesperson — they're already in).",
       ].join("\n"),
 
+      portfolio: [
+        "TYPE: PORTFOLIO (personal site for a designer / dev / writer / creative)",
+        "GOAL: showcase the person and their work. Strong identity, fast-loading, scannable.",
+        "STRUCTURE — single-page scroll, sections in this order:",
+        "  1. Minimal header: name (or monogram) on the left, 4 nav anchors on the right (Work / About / Writing / Contact).",
+        "  2. Hero: large name H1, one-sentence elevator pitch, optional avatar/photo on the right, social links (GitHub/LinkedIn/Twitter/Email).",
+        "  3. Selected work: a 2- or 3-column grid of project cards. Each card = thumbnail + title + 1-line role + tags. Cards link to a /work/<slug> detail page (or anchor).",
+        "  4. Project detail (if multi-page): header image, problem, approach, outcome, role + timeline, screenshots.",
+        "  5. About: 2-paragraph bio + skill tags + 'Currently' line ('Currently building X at Y').",
+        "  6. Writing/Blog (optional): list of recent posts with date + reading time.",
+        "  7. Contact: email + booking link or simple form.",
+        "  8. Footer with copyright + 'Last updated' line.",
+        "DESIGN: Strong opinion. Either ultra-minimal (white/black with one accent) OR expressive (custom illustration, varied type sizes, asymmetric grid). Use a serif for headings to add personality (Fraunces, Playfair, EB Garamond). Pick ONE direction and commit.",
+        "BEHAVIOUR: keyboard nav (j/k between sections). Smooth-scroll. Open external links in new tab.",
+        "DON'T: build a CMS. No login. No data persistence — content is hard-coded by the user editing the source.",
+      ].join("\n"),
+
+      docs: [
+        "TYPE: DOCS SITE (technical documentation)",
+        "GOAL: developers find an answer in <30 seconds. Search-first, links-everywhere.",
+        "STRUCTURE: 3-column layout when ≥1280px wide, 2-column at 768-1279, single-column on mobile.",
+        "  1. Top bar: brand + global search (cmd+K) + version selector + GitHub link.",
+        "  2. Left sidebar (240px): nav grouped by section ('Getting Started' / 'API Reference' / 'Guides' / 'Changelog'). Each leaf is a page.",
+        "  3. Main content (flexible): markdown-rendered article. Use semantic h1-h4. Include 'On this page' table of contents on the right when there are ≥3 h2s.",
+        "  4. Right sidebar (200px): TOC of headings with current-section highlighted via IntersectionObserver.",
+        "  5. Per-page footer: 'Was this helpful? 👍 👎' + 'Edit this page on GitHub' + Prev/Next links.",
+        "CONTENT PATTERNS: code blocks with language label + copy button. Tabs for showing same example in multiple languages. Callout boxes (note / warning / tip) with distinct colors + icons.",
+        "DESIGN: Light by default with dark toggle (system pref by default). Generous line-height (1.6+) and max-width on prose (~70 chars). Monospace for inline code (Inter for body, JetBrains Mono for code).",
+        "BEHAVIOUR: keyboard search (cmd/ctrl + K opens overlay), arrow-keys to navigate results. Anchor links beside every heading on hover. URL hash sync for deep-linking.",
+        "DON'T: build a marketing landing page. No big CTA. Optimize density over flash.",
+      ].join("\n"),
+
+      ecommerce: [
+        "TYPE: E-COMMERCE (product catalog + cart + checkout)",
+        "GOAL: visitor browses → adds to cart → checks out. Conversion-focused.",
+        "STRUCTURE: multi-page (or hash-routed single-page) — list, detail, cart, checkout.",
+        "  1. Header: brand + search + nav categories + cart icon with badge (item count).",
+        "  2. Product list page: filter sidebar (categories, price range, tags) + responsive product grid (3-4 cols desktop, 2 mobile). Each card: image, name, price, quick-add button.",
+        "  3. Product detail: image gallery (left), name + price + variants (size/color) + qty + 'Add to cart' (right), description below, related products at bottom.",
+        "  4. Cart drawer or page: line items with thumbnail/name/qty stepper/price, subtotal, 'Checkout' CTA. Empty state with 'Continue shopping' link.",
+        "  5. Checkout: 3-step form — shipping → payment → review. Inline validation. Order summary always visible on the right (sticky).",
+        "  6. Confirmation page: 'Thanks for your order #1234' + items + total + 'Order tracking' link.",
+        "ENTITIES (if Supabase): products (id, name, price, image_url, category, stock), orders (id, user_id, total, status, created_at), order_items (order_id, product_id, qty, price_at_purchase).",
+        "DESIGN: clean, photo-forward. Generous product images (square or 4:5). Price in large bold. Use a hover state on cards. Sale prices in red, regular in default.",
+        "BEHAVIOUR: cart persists in localStorage (or DB if logged in). Quantity changes update totals immediately. Out-of-stock items disabled with reason.",
+        "DON'T: integrate real payment processors (Stripe etc.) — stub with a 'Pay now (demo)' button that just confirms the order. Make this clear in placeholder copy.",
+      ].join("\n"),
+
+      booking: [
+        "TYPE: BOOKING (appointment scheduler — like Calendly / SimplyBook)",
+        "GOAL: a visitor picks a service, a date, a time slot, and books. Provider sees their schedule.",
+        "TWO USER ROLES: visitor (books) and provider (configures availability + sees bookings). Build BOTH unless user requests only one.",
+        "VISITOR FLOW:",
+        "  1. Service picker: card grid of services with name, duration, price.",
+        "  2. Date picker: calendar grid (current month + nav arrows). Days with available slots are clickable; days without are dimmed.",
+        "  3. Time slot picker: list of available slots for the selected day, in the visitor's local timezone (show timezone label).",
+        "  4. Details form: name, email, phone, notes. Submit → confirmation screen with calendar add (.ics download).",
+        "PROVIDER FLOW (if requested or implied):",
+        "  1. Login (use Supabase Auth if configured).",
+        "  2. Dashboard with today's appointments + upcoming.",
+        "  3. Availability editor: weekly recurring schedule (Mon-Sun, time ranges per day) + override individual dates.",
+        "  4. Service editor: name, duration, buffer, price, description.",
+        "ENTITIES (Supabase): services, availability_rules, bookings, blocked_dates.",
+        "DESIGN: friendly + trustworthy (Stripe-like). Step indicator at top of visitor flow. Confirmation states are celebratory — small green check animation.",
+        "BEHAVIOUR: timezone-aware throughout (use the visitor's browser tz). Disable past dates. Show 'X spots left' if capacity-limited.",
+        "DON'T: integrate real payments. No SMS sending — stub email confirmation as a console.log only.",
+      ].join("\n"),
+
+      chat: [
+        "TYPE: CHAT (messaging app with rooms or DMs — like Slack-lite)",
+        "GOAL: real-time-ish conversation. Multiple rooms, scroll-back, typing indicator.",
+        "STRUCTURE:",
+        "  1. Left sidebar (240px): user avatar at top, list of rooms / DMs with unread count badges, '+ New room' button at bottom.",
+        "  2. Main area: room header (room name + member count + room settings cog), message list (newest at bottom, auto-scroll), typing indicator, message input with send button + emoji picker.",
+        "  3. Right panel (collapsible): room members list with online indicator dots.",
+        "MESSAGE BUBBLE: avatar + name + timestamp on hover, body, hover actions (react / reply / edit / delete for own messages).",
+        "ENTITIES (Supabase strongly preferred): users, rooms, room_members, messages.",
+        "REAL-TIME: use Supabase Realtime channels (`supabase.channel('room:...').on('postgres_changes', ...)`). Fall back to polling every 3s if realtime fails.",
+        "DESIGN: dark mode default. Compact bubble style (no avatar repeated for same author within 60s). Subtle 'NEW' separator line where the user last left off.",
+        "BEHAVIOUR: scroll position preserved per room (cache in memory). Markdown rendering for messages (bold/italic/code). @mention auto-complete from members list. Press / for command palette.",
+        "DON'T: try to add voice or video. No file uploads (mention as future feature).",
+      ].join("\n"),
+
+      auth: [
+        "TYPE: AUTH-GATED APP (login wall + protected pages)",
+        "GOAL: a small app that gates content behind login. The user fills in 'what's behind the wall' in the description.",
+        "STRUCTURE:",
+        "  1. Public pages: marketing-style home + login + signup + forgot-password.",
+        "  2. Protected app (after login): app-shell with top bar + main content + user menu (logout).",
+        "  3. Profile page: edit name/avatar/email; change password; delete account.",
+        "AUTH FLOW: use Supabase Auth (email + password by default). If user requested OAuth (Google/GitHub), use `supabase.auth.signInWithOAuth({provider: '...'})`.",
+        "ROUTING: every protected route checks `supabase.auth.getSession()` on mount; redirects to /login if absent. Show a 'Loading…' state during the check.",
+        "DESIGN: marketing pages use the LANDING template's conventions; protected pages use clean app-shell styling.",
+        "BEHAVIOUR: 'Remember me' persists session for 30 days. Show clear error states ('Email not confirmed', 'Wrong password' — match Supabase error codes). Email-confirmation pending state with 'Resend' button.",
+        "DON'T: build the full app behind the auth wall — that's a separate request. Make the protected area a placeholder that says 'You're logged in as <email>. Build the protected app via a follow-up enhancement.'",
+      ].join("\n"),
+
+      blog: [
+        "TYPE: BLOG (article-publishing site)",
+        "GOAL: a writer publishes posts; visitors read. Reading-first layout.",
+        "STRUCTURE:",
+        "  1. Header: blog name + nav (Latest / Tags / About / RSS).",
+        "  2. Home: list of post previews (title + excerpt + date + tag). Newest first.",
+        "  3. Post detail: title (large H1), date + reading time, optional cover image, body (markdown-rendered), tags at bottom, prev/next post links, optional comments section.",
+        "  4. Tag pages: posts filtered by a tag.",
+        "  5. About: 2-paragraph bio + photo + social links.",
+        "  6. RSS feed at /rss.xml (generated from posts).",
+        "ENTITIES (Supabase): posts (id, slug, title, excerpt, body_markdown, tags[], cover_image_url, published_at), or use markdown files in a `/posts` folder if no DB.",
+        "DESIGN: serif body font (Charter / Lora / Source Serif), comfortable line-height (1.65+), max-width 680px on prose. Clear visual hierarchy. Photos full-bleed on post detail.",
+        "BEHAVIOUR: code blocks have copy button + syntax highlighting (highlight.js from CDN). Internal links open same tab; external in new tab. URL slugs from titles.",
+        "DON'T: build a CMS UI in the same project unless requested — assume the writer edits markdown / Supabase rows directly.",
+      ].join("\n"),
+
       blank: [
         "TYPE: CUSTOM (free-form — exact requirements unclear)",
         "MODE: This was created from the 'Blank' template. Before writing ANY code, switch to the Chat panel and ask the user 3-5 clarifying questions to scope the build properly.",
@@ -937,11 +1057,18 @@
     }
 
     const TEMPLATE_PLACEHOLDERS = {
-      landing:   "e.g. Landing page for a coffee shop called 'Bean There'. Include hero with logo and tagline, menu with 6 drinks, opening hours, and a contact form. Warm earthy palette (browns + cream), one body font.",
-      dashboard: "e.g. Team activity dashboard. KPIs: tasks completed this week, average cycle time, deploys, error rate. Burndown chart, recent activity feed, dark mode default.",
-      crud:      "e.g. Recipe manager — add, edit, delete recipes with name, ingredients (multi-line), prep time, difficulty (easy/medium/hard), and an optional photo URL.",
-      crm:       "e.g. CRM for a small consulting firm. Pipeline: Lead → Discovery → Proposal → Closed Won / Lost. Contacts have company, role, last-call-date. Deals show value + expected close.",
-      blank:     "Describe what you want the AIUI Agent to build. Don't worry if it's vague — the agent will ask follow-up questions in chat before writing code.",
+      landing:    "e.g. Landing page for a coffee shop called 'Bean There'. Include hero with logo and tagline, menu with 6 drinks, opening hours, and a contact form. Warm earthy palette (browns + cream), one body font.",
+      dashboard:  "e.g. Team activity dashboard. KPIs: tasks completed this week, average cycle time, deploys, error rate. Burndown chart, recent activity feed, dark mode default.",
+      crud:       "e.g. Recipe manager — add, edit, delete recipes with name, ingredients (multi-line), prep time, difficulty (easy/medium/hard), and an optional photo URL.",
+      crm:        "e.g. CRM for a small consulting firm. Pipeline: Lead → Discovery → Proposal → Closed Won / Lost. Contacts have company, role, last-call-date. Deals show value + expected close.",
+      portfolio:  "e.g. Portfolio site for a UX designer named Maya. 4 case-study projects, About section, link to her writing on Medium. Clean serif headers, off-white background.",
+      docs:       "e.g. Docs site for a JavaScript library called 'snapdb'. Sections: Getting Started, API Reference, Recipes, Migration. Code samples in JS and TypeScript tabs.",
+      ecommerce:  "e.g. Plant shop with 12 sample plants. Filters: indoor/outdoor, light needs, price. Cart drawer. Demo checkout (no real payment). Earthy green palette.",
+      booking:    "e.g. Booking page for a yoga instructor. 3 services (60-min private, 90-min couples, 75-min group). Mon/Wed/Fri 8am–6pm available. Calendar picker → time slots → confirm.",
+      chat:       "e.g. Team chat with 3 default rooms (#general, #random, #dev). Messages, typing indicator, online dot, emoji reactions. Supabase Realtime for live updates.",
+      auth:       "e.g. A members-only journal app. Email+password sign up, email confirmation, login, forgot-password. After login, simple journal-entry editor. Use Supabase Auth.",
+      blog:       "e.g. Personal blog with 5 sample posts about indie game dev. Tags: design, code, postmortem. RSS feed. About page with photo + Twitter link. Serif body font.",
+      blank:      "Describe what you want the AIUI Agent to build. Don't worry if it's vague — the agent will ask follow-up questions in chat before writing code.",
     };
     function applyTemplatePlaceholder() {
       npDesc.placeholder = TEMPLATE_PLACEHOLDERS[npTemplate.value] || "";
