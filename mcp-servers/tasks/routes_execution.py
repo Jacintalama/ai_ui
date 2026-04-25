@@ -16,8 +16,18 @@ from claude_executor import (
     parse_plan, parse_test_outcome, run_claude_subprocess,
 )
 from db import session
-from models import TaskExecution, TaskItem
+from models import ProjectSupabase, TaskExecution, TaskItem
 from schemas import PlanReviewRequest, TaskOut
+
+
+async def _lookup_supabase_url(s, slug: str | None) -> str | None:
+    """Return Supabase URL configured for a project slug, or None."""
+    if not slug:
+        return None
+    row = (await s.execute(
+        select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+    )).scalar_one_or_none()
+    return row.supabase_url if row else None
 
 logger = logging.getLogger("tasks")
 router = APIRouter(prefix="/api/tasks")
@@ -66,6 +76,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             is_loop = task.max_attempts > 1
             attempt = task.attempt_count
             max_att = task.max_attempts
+            supabase_url = await _lookup_supabase_url(s, task.built_app_slug)
 
         slug = None
         if outcome.kind == "completed":
@@ -99,6 +110,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                 attempt_count=attempt + 1,
                 max_attempts=max_att,
                 error_context=outcome.payload,
+                supabase_url=supabase_url,
             )
             await _run_execution(task_id, new_exec.id, retry_prompt)
             return
@@ -146,6 +158,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                     attempt_count=attempt + 1,
                     max_attempts=max_att,
                     error_context=f"Build completed but verification failed: {test_result.detail}",
+                    supabase_url=supabase_url,
                 )
                 await _run_execution(task_id, new_exec.id, retry_prompt)
                 return
@@ -258,6 +271,7 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         await s.commit()
         await s.refresh(item)
         await s.refresh(execution)
+        supabase_url = await _lookup_supabase_url(s, item.built_app_slug)
 
     if item.max_attempts > 1 and item.plan and item.plan_status == "approved":
         prompt = build_tdd_execute_prompt(
@@ -271,6 +285,7 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
             attempt_count=item.attempt_count,
             max_attempts=item.max_attempts,
             error_context=item.result or "",
+            supabase_url=supabase_url,
         )
     else:
         prompt = build_prompt(
@@ -279,6 +294,7 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
             priority=item.priority,
             meeting_title=str(item.meeting_id),
             meeting_date="",
+            supabase_url=supabase_url,
         )
     # Create a holder dict so the subprocess can register its own reference
     # for hard-kill on cancel.

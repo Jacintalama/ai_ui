@@ -63,7 +63,33 @@ Complete the task autonomously. If you cannot proceed because of:
   - Hard blocker -> respond ending with: NEEDS_STEPS: <numbered manual steps>
 
 When done successfully, respond ending with: COMPLETED: <summary of what you did>
-(include the short commit hash if you made one: "COMPLETED: ... (commit abc1234)")"""
+(include the short commit hash if you made one: "COMPLETED: ... (commit abc1234)")
+
+{supabase_block}"""
+
+
+SUPABASE_BLOCK_TEMPLATE = """## Supabase integration available
+
+A Supabase project is attached to this app. Use it for any data persistence,
+auth, or file storage needs. Do NOT roll your own backend.
+
+- Read URL/key from `window.SUPABASE_URL` and `window.SUPABASE_ANON_KEY`.
+  These are injected by the host on every request — never hardcode them.
+- Import the SDK in your HTML:
+  `<script type="module">import {{ createClient }} from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"; window.supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);</script>`
+- Auth: `supabase.auth.signUp` / `signInWithPassword` / `signOut` / `onAuthStateChange`.
+- Tables: enable Row Level Security (RLS) on every table; document the schema
+  the app expects in `schema.sql` at the app root so the user can apply it.
+
+URL: {url}
+"""
+
+
+def _supabase_block(supabase_url: str | None) -> str:
+    """Return the Supabase prompt block, or '' if no config."""
+    if not supabase_url:
+        return ""
+    return SUPABASE_BLOCK_TEMPLATE.format(url=supabase_url)
 
 
 def build_prompt(
@@ -73,6 +99,7 @@ def build_prompt(
     priority: str,
     meeting_title: str,
     meeting_date: str,
+    supabase_url: str | None = None,
 ) -> str:
     return PROMPT_TEMPLATE.format(
         description=description,
@@ -80,6 +107,7 @@ def build_prompt(
         priority=priority,
         meeting_title=meeting_title,
         meeting_date=meeting_date,
+        supabase_block=_supabase_block(supabase_url),
     )
 
 
@@ -198,7 +226,9 @@ When ALL tests pass and the app is complete:
 
 If you cannot proceed:
   NEEDS_INPUT: <what you need from the admin>
-  FAILED: <what went wrong>"""
+  FAILED: <what went wrong>
+
+{supabase_block}"""
 
 VERIFY_PROMPT_TEMPLATE = """You are verifying a completed build task.
 
@@ -277,6 +307,8 @@ Example of a good COMPLETED block:
 If you cannot proceed:
   NEEDS_INPUT: <what you need>
   FAILED: <what went wrong>
+
+{supabase_block}
 """
 
 
@@ -287,6 +319,7 @@ def build_enhance_prompt(
     attempt_count: int = 0,
     max_attempts: int = 3,
     error_context: str = "",
+    supabase_url: str | None = None,
 ) -> str:
     if error_context:
         err_block = (
@@ -300,6 +333,7 @@ def build_enhance_prompt(
         slug=slug,
         user_request=user_request,
         error_context_block=err_block,
+        supabase_block=_supabase_block(supabase_url),
     )
 
 
@@ -360,6 +394,7 @@ def build_tdd_execute_prompt(
     attempt_count: int = 0,
     max_attempts: int = 1,
     error_context: str = "",
+    supabase_url: str | None = None,
 ) -> str:
     history_block = _format_conversation_history(conversation_history)
     if error_context:
@@ -379,6 +414,7 @@ def build_tdd_execute_prompt(
         plan=plan,
         conversation_history_block=history_block,
         error_context_block=error_block,
+        supabase_block=_supabase_block(supabase_url),
     )
 
 

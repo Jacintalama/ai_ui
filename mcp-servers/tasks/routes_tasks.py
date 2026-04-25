@@ -303,7 +303,7 @@ async def answer(
             import asyncio
             from claude_executor import build_prompt, build_tdd_execute_prompt, build_enhance_prompt
             from models import TaskExecution
-            from routes_execution import _run_execution, _RUNNING
+            from routes_execution import _run_execution, _RUNNING, _lookup_supabase_url
 
             history = list(item.conversation_history or [])
             history.append({"role": "admin", "content": body.answer})
@@ -314,6 +314,7 @@ async def answer(
             await s.commit()
             await s.refresh(item)
             await s.refresh(new_exec)
+            supabase_url = await _lookup_supabase_url(s, item.built_app_slug)
 
             # Enhance tasks need `build_enhance_prompt` so Claude stays in the
             # app's existing stack/dir and follows the enhance rules. Using the
@@ -348,6 +349,7 @@ async def answer(
                     user_request=user_request,
                     attempt_count=item.attempt_count,
                     max_attempts=item.max_attempts,
+                    supabase_url=supabase_url,
                 )
             elif item.max_attempts > 1 and item.plan:
                 prompt = build_tdd_execute_prompt(
@@ -361,6 +363,7 @@ async def answer(
                     attempt_count=item.attempt_count,
                     max_attempts=item.max_attempts,
                     error_context="",
+                    supabase_url=supabase_url,
                 )
             else:
                 prompt = (
@@ -370,6 +373,7 @@ async def answer(
                         priority=item.priority,
                         meeting_title=str(item.meeting_id),
                         meeting_date="",
+                        supabase_url=supabase_url,
                     )
                     + f"\n\nADMIN PROVIDED THIS ANSWER: {body.answer}"
                 )
@@ -396,7 +400,7 @@ async def enhance(
     import asyncio
     from claude_executor import build_enhance_prompt
     from models import TaskExecution
-    from routes_execution import _run_execution, _RUNNING
+    from routes_execution import _run_execution, _RUNNING, _lookup_supabase_url
 
     async with session() as s:
         # 1. Validate source
@@ -453,6 +457,7 @@ async def enhance(
         s.add(execution)
         await s.commit()
         await s.refresh(execution)
+        supabase_url = await _lookup_supabase_url(s, source.built_app_slug)
 
     # 4. Fire background execution with ENHANCE prompt
     prompt = build_enhance_prompt(
@@ -460,6 +465,7 @@ async def enhance(
         user_request=body.prompt.strip(),
         attempt_count=0,
         max_attempts=new_task.max_attempts,
+        supabase_url=supabase_url,
     )
     _RUNNING[new_task.id] = {"task": None, "proc": None}
     bg = asyncio.create_task(_run_execution(new_task.id, execution.id, prompt))
