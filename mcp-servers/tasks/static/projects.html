@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>App Builder — AIUI</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%3E%3Crect%20width%3D%2224%22%20height%3D%2224%22%20rx%3D%226%22%20fill%3D%22%237c8cff%22%2F%3E%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M12%204L14%2010L20%2012L14%2014L12%2020L10%2014L4%2012L10%2010Z%22%2F%3E%3C%2Fsvg%3E">
+  <style>
+    :root[data-theme="dark"] {
+      --bg:           #0a0a0b;
+      --surface:      #111113;
+      --surface-2:    #17171a;
+      --surface-3:    #1e1e22;
+      --border:       #24242a;
+      --border-2:     #2e2e36;
+      --text:         #ededee;
+      --text-2:       #b8b8c0;
+      --muted:        #74747e;
+      --accent:       #7c8cff;
+      --accent-2:     #5d6cff;
+      --accent-soft:  #1e2140;
+      --success:      #22c55e;
+      --success-soft: #0d2a1a;
+      --danger:       #f87171;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+    }
+    :root {
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-2); }
+    button { font-family: inherit; color: inherit; cursor: pointer; }
+    /* Consistent pointer cursor on anything clickable. */
+    button:not(:disabled),
+    a.btn,
+    a.back,
+    [role="button"]:not([aria-disabled="true"]),
+    [data-close],
+    .close,
+    .members-btn,
+    .rollback-btn:not([disabled]) { cursor: pointer; }
+    button:disabled, .btn:disabled, .rollback-btn[disabled] { cursor: not-allowed; }
+    /* summary (the disclosure toggle) */
+    details.rules-box > summary { cursor: pointer; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .topbar .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #7c8cff 0%, #a78bfa 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(124, 140, 255, 0.35);
+      flex-shrink: 0;
+    }
+    .topbar .brand-logo svg { width: 18px; height: 18px; color: white; }
+    .topbar .brand-text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
+    .topbar .brand-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .topbar .brand-subtitle {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .topbar h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .topbar .back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      color: var(--text-2);
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .topbar .back:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+    .header-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .header-row h2 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .count-pill {
+      display: inline-block;
+      padding: 3px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--text-2);
+      margin-left: 8px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+    }
+    .card:hover {
+      border-color: var(--border-2);
+      box-shadow: var(--shadow-md);
+    }
+    .card .slug-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card .slug {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .card .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 500;
+      background: var(--success-soft);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.25);
+    }
+    .card .badge.building  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
+    .card .badge.pending   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
+    .card .badge.failed    { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+    .badge .spinner-sm {
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 2px solid currentColor; border-top-color: transparent;
+      animation: spin 0.7s linear infinite;
+    }
+    .card .desc {
+      color: var(--text-2);
+      font-size: 13px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: 58px;
+    }
+    .card .meta {
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      justify-content: space-between;
+    }
+    .card .meta .left { display: flex; align-items: center; gap: 6px; }
+    .card .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .btn {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
+      text-align: center;
+    }
+    .btn:hover { background: var(--surface-3); border-color: var(--accent); }
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0a0a0b;
+    }
+    .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+    .btn.btn-lg { flex: 0 0 auto; padding: 10px 18px; font-size: 14px; }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      width: 100%;
+      max-width: 520px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-header h3 { font-size: 16px; font-weight: 600; }
+    .modal-header .close {
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+    }
+    .modal-header .close:hover { background: var(--surface-2); color: var(--text); }
+    .modal-body {
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .form-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-2);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      border-color: var(--accent);
+    }
+    .form-textarea { resize: vertical; min-height: 100px; font-family: var(--font-ui); }
+    .form-hint { font-size: 11px; color: var(--muted); }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--success-soft);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.35);
+      padding: 10px 18px;
+      border-radius: var(--radius-lg);
+      font-size: 13px;
+      z-index: 200;
+      box-shadow: var(--shadow-md);
+    }
+    .toast.error {
+      background: var(--danger-soft);
+      color: var(--danger);
+      border-color: rgba(248, 113, 113, 0.35);
+    }
+
+    .members-btn {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 3px 10px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .members-btn:hover {
+      background: var(--surface-3);
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .member-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .member-row .email { flex: 1; font-size: 13px; word-break: break-all; }
+    .member-row .role-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      background: var(--accent-soft);
+      color: var(--accent);
+      text-transform: capitalize;
+    }
+    .member-row .role-badge.owner { background: var(--warning-soft); color: var(--warning); }
+    .member-row .remove {
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+    }
+    .member-row .remove:hover { color: var(--danger); background: var(--danger-soft); }
+    .invite-row {
+      display: grid;
+      grid-template-columns: 1fr 120px auto;
+      gap: 8px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .members-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 18px; }
+
+    /* Rules disclosure inside the New Project modal */
+    details.rules-box {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      padding: 10px 14px;
+    }
+    details.rules-box > summary {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-2);
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    details.rules-box > summary::-webkit-details-marker { display: none; }
+    details.rules-box > summary::before {
+      content: "▸";
+      transition: transform 0.15s;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    details.rules-box[open] > summary::before { transform: rotate(90deg); }
+    details.rules-box .rules-list {
+      margin-top: 10px;
+      padding: 0;
+      list-style: none;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-2);
+    }
+    details.rules-box .rules-list li {
+      padding: 3px 0;
+      padding-left: 18px;
+      position: relative;
+    }
+    details.rules-box .rules-list li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: var(--success);
+      font-weight: 700;
+    }
+
+    /* Version history modal */
+    .version-list { display: flex; flex-direction: column; gap: 6px; }
+    .version-row {
+      display: grid;
+      grid-template-columns: 70px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .version-row.current { border-color: var(--accent); background: var(--accent-soft); }
+    .version-row.error   { border-color: rgba(248,113,113,0.45); }
+    .version-row .sha {
+      font-family: var(--font-ui);
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+    .version-row .msg {
+      font-size: 13px;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .version-row .msg .primary {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .version-row .msg .secondary {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .version-row .status-pill {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+    .version-row .status-pill.ok       { background: var(--success-soft); color: var(--success); }
+    .version-row .status-pill.error    { background: var(--danger-soft);  color: var(--danger); }
+    .version-row .status-pill.rollback { background: var(--warning-soft); color: var(--warning); }
+    .version-row .status-pill.current  { background: var(--accent);       color: #0a0a0b; }
+    .version-row .rollback-btn {
+      padding: 5px 10px;
+      font-size: 11px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-3);
+      border: 1px solid var(--border-2);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .version-row .rollback-btn:hover { background: var(--accent); color: #0a0a0b; border-color: var(--accent); }
+    .version-row .rollback-btn:disabled { opacity: 0.4; cursor: default; }
+
+    .empty, .error, .loading {
+      text-align: center;
+      padding: 64px 24px;
+      color: var(--muted);
+    }
+    .empty h3 { font-size: 16px; color: var(--text-2); margin-bottom: 8px; }
+    .error { color: var(--danger); }
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true">
+        <!-- Lucide "sparkles" — marks AI-built work -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.813 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.813a2 2 0 0 1 1.287-1.288L21 12l-5.813-1.9a2 2 0 0 1-1.287-1.287z"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">AIUI App Builder</div>
+        <div class="brand-subtitle">Build web apps with AI</div>
+      </div>
+    </div>
+    <a href="/" class="back">← Back to Chat</a>
+  </div>
+
+  <div class="container">
+    <div class="header-row">
+      <h2>Built apps<span id="count" class="count-pill" hidden></span></h2>
+      <button id="new-project-btn" class="btn primary btn-lg">+ New Project</button>
+    </div>
+    <div id="content">
+      <div class="loading"><div class="spinner"></div>Loading your projects…</div>
+    </div>
+  </div>
+
+  <div id="history-modal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3>🕒 Version history — <span id="hm-slug"></span></h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint" style="margin-bottom:6px;">Each row is a build commit. Rollback creates a new commit on top — the old version stays in history.</div>
+        <div id="hm-list" class="version-list">
+          <div class="members-empty">Loading…</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" id="mm-leave" title="Remove yourself from this project">Leave project</button>
+        <span style="flex:1;"></span>
+        <button type="button" class="btn" data-close>Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="members-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h3>👥 Members of <span id="mm-slug"></span></h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div id="mm-list"><div class="members-empty">Loading…</div></div>
+        <div class="invite-row">
+          <input id="mm-email" type="email" class="form-input" placeholder="email@example.com">
+          <select id="mm-role" class="form-select">
+            <option value="editor">Editor</option>
+            <option value="viewer">Viewer</option>
+            <option value="owner">Owner</option>
+          </select>
+          <button type="button" class="btn primary" id="mm-invite">Invite</button>
+        </div>
+        <div class="form-hint">The invited email must match the address they log in with.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close>Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="new-project-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h3>New project</h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div>
+          <label class="form-label" for="np-name">Project name</label>
+          <input id="np-name" class="form-input" placeholder="my-coffee-shop" maxlength="50">
+          <div class="form-hint">Lowercase letters, digits, and hyphens. Leave blank to let AI pick one.</div>
+        </div>
+        <div>
+          <label class="form-label" for="np-template">Template</label>
+          <select id="np-template" class="form-select">
+            <option value="landing">🌐 Landing page</option>
+            <option value="dashboard">📊 Dashboard</option>
+            <option value="crud">📝 CRUD app</option>
+            <option value="blank">🧱 Blank (describe anything)</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label" for="np-description">What should it do?</label>
+          <textarea id="np-description" class="form-textarea" placeholder="e.g. Landing page for a coffee shop called 'Bean There', hero, menu, opening hours, contact form."></textarea>
+          <div class="form-hint">The AI will build it. Be as specific as you can about look, sections, copy, colors.</div>
+        </div>
+        <div>
+          <label class="form-label" for="np-storage">Storage (data persistence)</label>
+          <select id="np-storage" class="form-select">
+            <option value="none" selected>None — no backend</option>
+            <option value="localstorage">Browser localStorage — saves data in the browser</option>
+          </select>
+        </div>
+        <details class="rules-box">
+          <summary>Build rules Claude will follow</summary>
+          <ul class="rules-list">
+            <li>Static HTML + Tailwind CDN + vanilla JS only (no build step).</li>
+            <li>Semantic HTML5: <code>&lt;header&gt;</code> / <code>&lt;main&gt;</code> / <code>&lt;footer&gt;</code>, one <code>&lt;h1&gt;</code>.</li>
+            <li>Mobile-first responsive, works from 320px up.</li>
+            <li>Accessibility: alt text, form labels, visible focus, contrast ≥4.5:1.</li>
+            <li>No Lorem ipsum — real copy from your description.</li>
+            <li>Whitelisted CDNs only (Tailwind, Google Fonts, jsDelivr, unpkg).</li>
+            <li>Every commit is a version — you can rollback later from the project's History panel.</li>
+          </ul>
+        </details>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn primary" id="np-submit">Create project</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const content = document.getElementById("content");
+    const countPill = document.getElementById("count");
+
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    function relativeTime(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return "just now";
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // Map task status → display info. Separated so we can tweak copy
+    // without touching the rendering loop.
+    function statusInfo(t) {
+      const hasSlug = !!t.built_app_slug;
+      const s = t.status;
+      if (hasSlug && s === "completed") return { cls: "", label: "✓ built", action: "preview" };
+      if (s === "running" || s === "planning" || s === "awaiting_input") return { cls: "building", label: '<span class="spinner-sm"></span> Building…', action: "watch" };
+      if (s === "pending" || s === "awaiting_plan_review" || s === "claimed_manual") return { cls: "pending", label: "⏳ Waiting to start", action: "approve" };
+      if (s === "failed") return { cls: "failed", label: "❌ Failed", action: "retry" };
+      if (hasSlug) return { cls: "", label: "✓ built", action: "preview" };
+      return { cls: "pending", label: s, action: "approve" };
+    }
+
+    function renderCards(tasks) {
+      // Dedupe tasks by slug, but keep every slugless task as its own card
+      // (new projects that haven't been built yet don't have a slug yet).
+      const bySlug = new Map();
+      const slugless = [];
+      for (const t of tasks) {
+        if (!t.built_app_slug) {
+          slugless.push(t);
+          continue;
+        }
+        const prev = bySlug.get(t.built_app_slug);
+        if (!prev || new Date(t.completed_at || t.created_at) > new Date(prev.completed_at || prev.created_at)) {
+          bySlug.set(t.built_app_slug, t);
+        }
+      }
+      const unique = [...slugless, ...Array.from(bySlug.values())].sort(
+        (a, b) => new Date(b.created_at) - new Date(a.created_at)
+      );
+      countPill.hidden = false;
+      countPill.textContent = unique.length;
+
+      if (!unique.length) {
+        content.innerHTML = `
+          <div class="empty">
+            <h3>No projects yet</h3>
+            <p>Click <strong>+ New Project</strong> above to create your first one.</p>
+          </div>`;
+        return;
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      for (const t of unique) {
+        const card = document.createElement("div");
+        card.className = "card";
+        const built = t.completed_at || t.created_at;
+        const info = statusInfo(t);
+        const title = t.built_app_slug || (t.description || "").slice(0, 60) + "…";
+
+        let actionBtn = "";
+        if (info.action === "preview") {
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open preview</a>`;
+        } else if (info.action === "watch") {
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Watch progress</a>`;
+        } else if (info.action === "approve") {
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open &amp; start</a>`;
+        } else {
+          actionBtn = `<a class="btn" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open in preview</a>`;
+        }
+
+        const membersBtn = t.built_app_slug
+          ? `<button type="button" class="members-btn" data-slug="${escapeHtml(t.built_app_slug)}">👥 Members</button>`
+          : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="Members available once the build completes">👥 Members</span>`;
+        const historyBtn = t.built_app_slug
+          ? `<button type="button" class="members-btn history-btn" data-slug="${escapeHtml(t.built_app_slug)}">🕒 History</button>`
+          : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="History available once the build completes">🕒 History</span>`;
+
+        card.innerHTML = `
+          <div class="slug-row">
+            <span class="slug">${escapeHtml(title)}</span>
+            <span class="badge ${info.cls}">${info.label}</span>
+          </div>
+          <div class="desc">${escapeHtml(t.description || "")}</div>
+          <div class="meta">
+            <span class="left">🕒 ${escapeHtml(relativeTime(built))}</span>
+            <span style="display:flex; gap:6px;">${historyBtn}${membersBtn}</span>
+          </div>
+          <div class="actions">${actionBtn}</div>`;
+        grid.appendChild(card);
+      }
+      // Wire Members + History buttons (delegated listeners)
+      grid.querySelectorAll("button.members-btn:not(.history-btn)").forEach((b) => {
+        b.addEventListener("click", () => openMembersModal(b.dataset.slug));
+      });
+      grid.querySelectorAll("button.history-btn").forEach((b) => {
+        b.addEventListener("click", () => openHistoryModal(b.dataset.slug));
+      });
+      content.innerHTML = "";
+      content.appendChild(grid);
+    }
+
+    // ===== New project modal =====
+    const modal = document.getElementById("new-project-modal");
+    const npBtn = document.getElementById("new-project-btn");
+    const npName = document.getElementById("np-name");
+    const npTemplate = document.getElementById("np-template");
+    const npDesc = document.getElementById("np-description");
+    const npStorage = document.getElementById("np-storage");
+    const npSubmit = document.getElementById("np-submit");
+    const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,49}$/;
+
+    // Shared rules applied to every BUILD request (kept short — Claude's
+    // PROMPT_TEMPLATE already knows the broad strokes).
+    const UNIVERSAL_RULES = [
+      "RULES (strict):",
+      "• Tech: static HTML + Tailwind CDN + vanilla JS only. No build step. Single index.html unless the app genuinely needs multiple pages.",
+      "• Semantic HTML5: use <header>, <main>, <section>, <footer>. One <h1> per page.",
+      "• Responsive: mobile-first, must work from 320px up. Test header/nav collapse at <768px.",
+      "• Accessibility: alt text on all images, labels on form fields, visible focus states, contrast ≥4.5:1 for body text.",
+      "• Performance: inline critical CSS in <style>, no JS frameworks, lazy-load images below the fold.",
+      "• Whitelisted CDNs only: cdn.tailwindcss.com, fonts.googleapis.com, cdn.jsdelivr.net, unpkg.com. No random script tags.",
+      "• No placeholder copy like 'Lorem ipsum' — write real, plausible copy based on the user's description.",
+    ].join("\n");
+
+    const TEMPLATE_RULES = {
+      landing: [
+        "Type: LANDING PAGE",
+        "• Sections (in order): (1) sticky nav with logo + CTA, (2) hero with H1, tagline, primary CTA, and supporting visual, (3) 3-6 features/benefits with icons, (4) social-proof row (testimonials or logos) if implied, (5) FAQ accordion if the product has common objections, (6) final CTA band, (7) footer with nav links, contact, social.",
+        "• Design: 1 primary accent color + 1 neutral palette; Tailwind's 'zinc' or 'slate' for grays. Use 1 Google Font for headings (e.g. Inter, Manrope, or Plus Jakarta Sans).",
+        "• Hero must have a clear primary CTA above the fold.",
+        "• Smooth-scroll for internal #anchor links.",
+      ].join("\n"),
+      dashboard: [
+        "Type: DASHBOARD",
+        "• Layout: top bar (brand + user menu), left sidebar with sections, main area with stat cards on top + a primary data view (table, chart, or grid).",
+        "• At least 3 stat cards with icons and trend indicators.",
+        "• Use Tailwind; prefer dark mode by default with a toggle.",
+      ].join("\n"),
+      crud: [
+        "Type: CRUD APP",
+        "• List view + add/edit/delete with inline form validation and clear empty/error states.",
+        "• Optimistic UI for add/edit; revert on failure.",
+      ].join("\n"),
+      blank: "Type: CUSTOM",
+    };
+
+    const STORAGE_INSTRUCTIONS = {
+      none: "• Storage: NO persistence. App is stateless in-memory only.",
+      localstorage: "• Storage: use window.localStorage under a clear namespace key (e.g. 'myapp:v1:items'). Handle JSON parse failures. Don't store sensitive data.",
+    };
+
+    function buildPromptPrefix() {
+      const tpl = npTemplate.value;
+      const storage = npStorage.value;
+      return [
+        UNIVERSAL_RULES,
+        TEMPLATE_RULES[tpl] || "",
+        STORAGE_INSTRUCTIONS[storage] || "",
+      ].filter(Boolean).join("\n\n");
+    }
+
+    const TEMPLATE_PLACEHOLDERS = {
+      landing:   "e.g. Landing page for a coffee shop called 'Bean There'. Include hero with logo and tagline, menu with 6 drinks, opening hours, and a contact form.",
+      dashboard: "e.g. Team activity dashboard showing tasks completed this week, top contributors, and a burndown chart.",
+      crud:      "e.g. Recipe manager — add, edit, delete recipes with ingredients, prep time, and difficulty.",
+      blank:     "Describe what you want Claude to build. Be specific about look, sections, and behavior.",
+    };
+    function applyTemplatePlaceholder() {
+      npDesc.placeholder = TEMPLATE_PLACEHOLDERS[npTemplate.value] || "";
+    }
+    npTemplate.addEventListener("change", applyTemplatePlaceholder);
+    applyTemplatePlaceholder();
+
+    function openModal() {
+      modal.hidden = false;
+      applyTemplatePlaceholder();
+      setTimeout(() => npDesc.focus(), 50);
+    }
+    function closeModal() {
+      modal.hidden = true;
+      npDesc.value = "";
+      npSubmit.disabled = false;
+      npSubmit.textContent = "Create project";
+    }
+    npBtn.addEventListener("click", openModal);
+    modal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", closeModal));
+    modal.addEventListener("click", (ev) => { if (ev.target === modal) closeModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !modal.hidden) closeModal(); });
+
+    function showToast(msg, isError) {
+      const t = document.createElement("div");
+      t.className = "toast" + (isError ? " error" : "");
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    }
+
+    async function submitNewProject() {
+      const desc = npDesc.value.trim();
+      if (!desc) {
+        npDesc.focus();
+        showToast("Please describe what you want to build.", true);
+        return;
+      }
+      const name = (npName.value || "").trim().toLowerCase();
+      if (name && !SLUG_RE.test(name)) {
+        npName.focus();
+        showToast("Invalid name. Use lowercase letters, digits, and hyphens (3–50 chars).", true);
+        return;
+      }
+      const prefix = buildPromptPrefix();
+      const slugInstr = name
+        ? `PROJECT NAME: "${name}". Create the app at apps/${name}/ and use this exact slug throughout.\n\n`
+        : "";
+      const fullDesc = `${slugInstr}${prefix}\n\nUSER REQUEST:\n${desc}`;
+      npSubmit.disabled = true;
+      npSubmit.textContent = "Creating…";
+      try {
+        const resp = await fetch("/api/tasks", {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({
+            description: fullDesc,
+            action_type: "BUILD",
+            priority: "IMPORTANT",
+            assignee: "self",
+          }),
+        });
+        if (!resp.ok) {
+          let detail = "";
+          try {
+            const j = await resp.json();
+            detail = j.detail ? JSON.stringify(j.detail) : JSON.stringify(j);
+          } catch (_) {
+            detail = await resp.text();
+          }
+          throw new Error(`HTTP ${resp.status} — ${detail.slice(0, 300)}`);
+        }
+        const newTask = await resp.json();
+        // Auto-kick-off the AI build. Failure is non-fatal — the task
+        // sits as pending and an admin can approve via the task panel.
+        try {
+          await fetch(`/api/tasks/${encodeURIComponent(newTask.id)}/execute`, {
+            method: "POST",
+            headers: authHeaders(),
+            credentials: "include",
+          });
+        } catch (e) {
+          console.warn("[projects] auto-execute failed; task sits as pending", e);
+        }
+        closeModal();
+        // Take the user straight into the live-build view.
+        window.location.href = `/tasks/static/preview.html?task=${encodeURIComponent(newTask.id)}`;
+      } catch (err) {
+        console.error("[projects] create failed", err);
+        showToast("Could not create project: " + (err.message || err), true);
+      } finally {
+        npSubmit.disabled = false;
+        npSubmit.textContent = "Create project";
+      }
+    }
+    npSubmit.addEventListener("click", submitNewProject);
+    // Cmd/Ctrl+Enter anywhere inside the modal submits.
+    modal.addEventListener("keydown", (ev) => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+        ev.preventDefault();
+        submitNewProject();
+      }
+    });
+
+    // ===== Members modal =====
+    const mmModal = document.getElementById("members-modal");
+    const mmSlug = document.getElementById("mm-slug");
+    const mmList = document.getElementById("mm-list");
+    const mmEmail = document.getElementById("mm-email");
+    const mmRole = document.getElementById("mm-role");
+    const mmInvite = document.getElementById("mm-invite");
+    let mmCurrentSlug = null;
+
+    mmModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => (mmModal.hidden = true)));
+    mmModal.addEventListener("click", (ev) => { if (ev.target === mmModal) mmModal.hidden = true; });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !mmModal.hidden) mmModal.hidden = true; });
+
+    async function openMembersModal(slug) {
+      if (!slug) return;
+      mmCurrentSlug = slug;
+      mmSlug.textContent = slug;
+      mmList.innerHTML = `<div class="members-empty">Loading…</div>`;
+      mmModal.hidden = false;
+      await refreshMembers();
+    }
+
+    async function refreshMembers() {
+      try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members`, {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          mmList.innerHTML = `<div class="members-empty">Failed: ${escapeHtml(text).slice(0, 200)}</div>`;
+          return;
+        }
+        const rows = await resp.json();
+        if (!rows.length) {
+          mmList.innerHTML = `<div class="members-empty">No members yet.</div>`;
+          return;
+        }
+        mmList.innerHTML = "";
+        for (const m of rows) {
+          const row = document.createElement("div");
+          row.className = "member-row";
+          row.innerHTML = `
+            <span class="email">${escapeHtml(m.user_email)}</span>
+            <span class="role-badge ${m.role === "owner" ? "owner" : ""}">${escapeHtml(m.role)}</span>
+            <button type="button" class="remove" title="Remove" data-email="${escapeHtml(m.user_email)}">✕</button>`;
+          mmList.appendChild(row);
+        }
+        mmList.querySelectorAll(".remove").forEach((b) => {
+          b.addEventListener("click", async () => {
+            if (!confirm(`Remove ${b.dataset.email} from ${mmCurrentSlug}?`)) return;
+            try {
+              const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members/${encodeURIComponent(b.dataset.email)}`, {
+                method: "DELETE",
+                headers: authHeaders(),
+                credentials: "include",
+              });
+              if (!r.ok && r.status !== 204) {
+                const t = await r.text();
+                showToast("Remove failed: " + t.slice(0, 200), true);
+                return;
+              }
+              await refreshMembers();
+            } catch (err) {
+              showToast("Network error: " + err.message, true);
+            }
+          });
+        });
+      } catch (err) {
+        mmList.innerHTML = `<div class="members-empty">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    // ===== History modal (version list + rollback) =====
+    const hmModal = document.getElementById("history-modal");
+    const hmSlug  = document.getElementById("hm-slug");
+    const hmList  = document.getElementById("hm-list");
+    let hmCurrentSlug = null;
+
+    hmModal.querySelectorAll("[data-close]").forEach((b) =>
+      b.addEventListener("click", () => (hmModal.hidden = true))
+    );
+    hmModal.addEventListener("click", (ev) => {
+      if (ev.target === hmModal) hmModal.hidden = true;
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && !hmModal.hidden) hmModal.hidden = true;
+    });
+
+    async function openHistoryModal(slug) {
+      if (!slug) return;
+      hmCurrentSlug = slug;
+      hmSlug.textContent = slug;
+      hmList.innerHTML = `<div class="members-empty">Loading version history…</div>`;
+      hmModal.hidden = false;
+      await refreshHistory();
+    }
+
+    function renderVersions(rows) {
+      if (!rows.length) {
+        hmList.innerHTML = `<div class="members-empty">No versions yet — the first build hasn't been committed.</div>`;
+        return;
+      }
+      hmList.innerHTML = "";
+      for (const v of rows) {
+        const row = document.createElement("div");
+        row.className = "version-row" + (v.is_current ? " current" : "") + (v.status === "error" ? " error" : "");
+        const d = new Date(v.date);
+        const when = d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        let pillCls = v.status, pillLabel = v.status;
+        if (v.is_current) { pillCls = "current"; pillLabel = "current"; }
+        const canRollback = !v.is_current;
+        row.innerHTML = `
+          <span class="sha">${escapeHtml(v.short_sha)}</span>
+          <div class="msg">
+            <span class="primary">${escapeHtml(v.message)}</span>
+            <span class="secondary">${escapeHtml(when)} · ${escapeHtml(v.author)}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="status-pill ${pillCls}">${escapeHtml(pillLabel)}</span>
+            <button type="button" class="rollback-btn" data-sha="${escapeHtml(v.sha)}" ${canRollback ? "" : "disabled"}>${canRollback ? "Rollback" : "—"}</button>
+          </div>
+        `;
+        hmList.appendChild(row);
+      }
+      hmList.querySelectorAll(".rollback-btn:not([disabled])").forEach((b) =>
+        b.addEventListener("click", () => doRollback(b.dataset.sha))
+      );
+    }
+
+    async function refreshHistory() {
+      try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(hmCurrentSlug)}/versions`, {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          hmList.innerHTML = `<div class="members-empty">Failed: ${escapeHtml(text).slice(0, 200)}</div>`;
+          return;
+        }
+        const rows = await resp.json();
+        renderVersions(rows);
+      } catch (err) {
+        hmList.innerHTML = `<div class="members-empty">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function doRollback(sha) {
+      if (!confirm(`Rollback "${hmCurrentSlug}" to version ${sha.slice(0, 7)}? A new commit will be added on top — the old versions stay in history.`)) return;
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(hmCurrentSlug)}/rollback`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ sha }),
+        });
+        if (!r.ok) {
+          const t = await r.text();
+          showToast("Rollback failed: " + t.slice(0, 240), true);
+          return;
+        }
+        const res = await r.json();
+        showToast(res.noop ? "Already at that version." : `✅ Rolled back to ${sha.slice(0, 7)}.`);
+        await refreshHistory();
+        load();  // refresh project cards — status may shift
+      } catch (err) {
+        showToast("Network error: " + err.message, true);
+      }
+    }
+
+    mmInvite.addEventListener("click", async () => {
+      const email = (mmEmail.value || "").trim().toLowerCase();
+      if (!email || !email.includes("@")) {
+        mmEmail.focus();
+        showToast("Enter a valid email.", true);
+        return;
+      }
+      mmInvite.disabled = true;
+      mmInvite.textContent = "…";
+      try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ user_email: email, role: mmRole.value }),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          showToast("Invite failed: " + text.slice(0, 200), true);
+          return;
+        }
+        mmEmail.value = "";
+        showToast(`Invited ${email}`);
+        await refreshMembers();
+      } catch (err) {
+        showToast("Network error: " + err.message, true);
+      } finally {
+        mmInvite.disabled = false;
+        mmInvite.textContent = "Invite";
+      }
+    });
+
+    const $mmLeave = document.getElementById("mm-leave");
+    if ($mmLeave) {
+      $mmLeave.addEventListener("click", async () => {
+        if (!mmCurrentSlug) return;
+        if (!confirm(`Leave the project "${mmCurrentSlug}"? You'll lose access immediately.`)) return;
+        $mmLeave.disabled = true;
+        $mmLeave.textContent = "Leaving…";
+        try {
+          const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/leave`, {
+            method: "POST",
+            headers: authHeaders(),
+            credentials: "include",
+          });
+          if (r.status === 404) {
+            showToast("You're not a member of that project.", true);
+            return;
+          }
+          if (!r.ok && r.status !== 204) {
+            const t = await r.text();
+            showToast("Couldn't leave: " + t.slice(0, 200), true);
+            return;
+          }
+          mmModal.hidden = true;
+          showToast(`Left ${mmCurrentSlug}.`);
+          if (typeof load === "function") load();  // refresh the project cards
+        } catch (err) {
+          showToast("Network error: " + err.message, true);
+        } finally {
+          $mmLeave.disabled = false;
+          $mmLeave.textContent = "Leave project";
+        }
+      });
+    }
+
+    async function load() {
+      try {
+        const resp = await fetch("/api/tasks?is_project=true&limit=100", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (resp.status === 401 || resp.status === 403) {
+          content.innerHTML = `<div class="error">You must be signed in as an admin to view projects.</div>`;
+          return;
+        }
+        if (!resp.ok) {
+          const text = await resp.text();
+          content.innerHTML = `<div class="error">Failed to load projects (${resp.status}).<br><small>${escapeHtml(text).slice(0, 500)}</small></div>`;
+          return;
+        }
+        const tasks = await resp.json();
+        renderCards(tasks);
+      } catch (err) {
+        content.innerHTML = `<div class="error">Network error: ${escapeHtml(String(err))}</div>`;
+      }
+    }
+
+    load();
+    // Poll so status badges flip from pending → building → built on their
+    // own without the user needing to refresh. 8s is a good middle ground
+    // between snappy updates and not hammering the API.
+    setInterval(load, 8000);
+  </script>
+</body>
+</html>
