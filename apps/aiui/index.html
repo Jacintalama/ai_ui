@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI UI — Your AI Workspace, Supercharged</title>
+  <meta name="description" content="AI UI brings powerful AI models, task management, meeting notes, and integrations into one seamless interface. Work smarter, not harder." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .gradient-text {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-glow {
+      background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,0.15) 0%, transparent 70%);
+    }
+    .card-hover {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card-hover:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 32px rgba(99,102,241,0.15);
+    }
+    .faq-answer {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+    }
+    .faq-answer.open {
+      max-height: 300px;
+    }
+    .faq-icon {
+      transition: transform 0.3s ease;
+    }
+    .faq-item.open .faq-icon {
+      transform: rotate(45deg);
+    }
+    :focus-visible {
+      outline: 2px solid #6366f1;
+      outline-offset: 3px;
+      border-radius: 4px;
+    }
+    .nav-scrolled {
+      box-shadow: 0 1px 16px rgba(0,0,0,0.18);
+    }
+    /* Mobile nav */
+    #mobile-menu { display: none; }
+    #mobile-menu.open { display: block; }
+  </style>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50:  '#eef2ff',
+              100: '#e0e7ff',
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased">
+
+  <!-- ===== STICKY NAV ===== -->
+  <header id="site-nav" class="fixed top-0 left-0 right-0 z-50 transition-shadow duration-300">
+    <div class="bg-slate-950/90 backdrop-blur-md border-b border-slate-800/60">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
+        <!-- Logo -->
+        <a href="#hero" class="flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded-md" aria-label="AI UI home">
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-purple-500 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="9" cy="9" r="3.5" fill="white"/>
+              <path d="M9 1v3M9 14v3M1 9h3M14 9h3" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <span class="text-lg font-extrabold tracking-tight text-white">AI<span class="text-brand-400">UI</span></span>
+        </a>
+
+        <!-- Desktop nav links -->
+        <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-400" aria-label="Primary navigation">
+          <a href="#features" class="hover:text-white transition-colors">Features</a>
+          <a href="#testimonials" class="hover:text-white transition-colors">Testimonials</a>
+          <a href="#faq" class="hover:text-white transition-colors">FAQ</a>
+        </nav>
+
+        <!-- CTA + mobile hamburger -->
+        <div class="flex items-center gap-3">
+          <a href="https://ai-ui.coolestdomain.win/" class="hidden sm:inline-flex text-sm font-medium text-slate-300 hover:text-white transition-colors px-3 py-1.5">Sign in</a>
+          <a href="https://ai-ui.coolestdomain.win/" class="inline-flex items-center gap-1.5 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
+            Get started
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <!-- Hamburger (mobile only) -->
+          <button id="menu-toggle" class="md:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors" aria-label="Toggle menu" aria-expanded="false" aria-controls="mobile-menu">
+            <svg id="menu-icon-open" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <svg id="menu-icon-close" class="hidden" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 4l12 12M16 4L4 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Mobile nav -->
+      <div id="mobile-menu" class="md:hidden border-t border-slate-800/60">
+        <nav class="flex flex-col px-4 py-3 gap-1 text-sm font-medium" aria-label="Mobile navigation">
+          <a href="#features" class="py-2 px-3 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors" onclick="closeMobileMenu()">Features</a>
+          <a href="#testimonials" class="py-2 px-3 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors" onclick="closeMobileMenu()">Testimonials</a>
+          <a href="#faq" class="py-2 px-3 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors" onclick="closeMobileMenu()">FAQ</a>
+          <a href="https://ai-ui.coolestdomain.win/" class="py-2 px-3 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition-colors">Sign in</a>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ===== HERO ===== -->
+    <section id="hero" class="hero-glow pt-32 pb-20 px-4 sm:px-6 text-center">
+      <div class="max-w-4xl mx-auto">
+        <div class="inline-flex items-center gap-2 bg-slate-800/70 border border-slate-700 rounded-full px-4 py-1.5 text-xs font-medium text-slate-300 mb-8">
+          <span class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" aria-hidden="true"></span>
+          Now live at ai-ui.coolestdomain.win
+        </div>
+
+        <h1 class="text-4xl sm:text-5xl md:text-6xl font-extrabold tracking-tight leading-tight mb-6">
+          Your AI workspace,<br />
+          <span class="gradient-text">finally supercharged</span>
+        </h1>
+
+        <p class="text-lg sm:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+          AI UI combines the best AI models with task management, meeting notes, and smart integrations — all in a single, beautiful interface built for real work.
+        </p>
+
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <a href="https://ai-ui.coolestdomain.win/"
+             class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-semibold text-base px-8 py-3.5 rounded-xl transition-colors shadow-lg shadow-brand-500/25">
+            Start for free
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a href="#features"
+             class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-base px-8 py-3.5 rounded-xl transition-colors border border-slate-700">
+            See how it works
+          </a>
+        </div>
+
+        <!-- Hero visual -->
+        <div class="mt-16 relative mx-auto max-w-3xl">
+          <div class="rounded-2xl border border-slate-700/60 bg-slate-900 shadow-2xl shadow-brand-500/10 overflow-hidden">
+            <!-- Fake browser chrome -->
+            <div class="flex items-center gap-1.5 px-4 py-3 bg-slate-800/80 border-b border-slate-700/60" aria-hidden="true">
+              <span class="w-3 h-3 rounded-full bg-red-500/70"></span>
+              <span class="w-3 h-3 rounded-full bg-yellow-500/70"></span>
+              <span class="w-3 h-3 rounded-full bg-green-500/70"></span>
+              <div class="ml-3 flex-1 bg-slate-700/60 rounded-md h-5 text-xs flex items-center justify-center text-slate-500 max-w-xs mx-auto px-3">
+                ai-ui.coolestdomain.win
+              </div>
+            </div>
+            <!-- UI preview -->
+            <div class="p-4 sm:p-6 min-h-[220px] sm:min-h-[280px] flex flex-col gap-4" aria-label="AI UI chat interface preview">
+              <div class="flex gap-3 items-start">
+                <div class="w-7 h-7 rounded-full bg-brand-500/30 border border-brand-500/40 flex-shrink-0 flex items-center justify-center" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="3" fill="#818cf8"/></svg>
+                </div>
+                <div class="bg-slate-800 rounded-xl rounded-tl-sm px-4 py-2.5 text-sm text-slate-300 max-w-xs">
+                  Summarize my meetings from this week and create action items.
+                </div>
+              </div>
+              <div class="flex gap-3 items-start justify-end">
+                <div class="bg-brand-500/20 border border-brand-500/30 rounded-xl rounded-tr-sm px-4 py-2.5 text-sm text-brand-200 max-w-sm text-left">
+                  Here are 4 action items from your 3 meetings this week. I've added them to your task board and set due dates based on context...
+                </div>
+                <div class="w-7 h-7 rounded-full bg-purple-500/30 border border-purple-500/40 flex-shrink-0 flex items-center justify-center" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1l1.2 3.8H11L8.4 6.9l1 3.1L6 8.2 2.6 10l1-3.1L1 4.8h3.8z" fill="#c4b5fd"/></svg>
+                </div>
+              </div>
+              <div class="mt-auto flex flex-wrap gap-2">
+                <div class="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-400">
+                  <span class="w-2 h-2 rounded-full bg-green-400" aria-hidden="true"></span> 3 tasks completed
+                </div>
+                <div class="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-400">
+                  <span class="w-2 h-2 rounded-full bg-yellow-400" aria-hidden="true"></span> 2 in progress
+                </div>
+                <div class="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-400">
+                  <span class="w-2 h-2 rounded-full bg-brand-400" aria-hidden="true"></span> Meeting notes synced
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="absolute -inset-x-10 bottom-0 h-32 bg-gradient-to-t from-slate-950 to-transparent pointer-events-none" aria-hidden="true"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FEATURES ===== -->
+    <section id="features" class="py-20 px-4 sm:px-6">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-14">
+          <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4">Everything you need, nothing you don't</h2>
+          <p class="text-slate-400 text-lg max-w-2xl mx-auto">Built to remove friction between you and your best work. AI UI handles the busywork so you can focus on what matters.</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+
+          <article class="card-hover bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <div class="w-11 h-11 rounded-xl bg-brand-500/15 border border-brand-500/20 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 6h14M4 11h10M4 16h7" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Multi-model AI chat</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">Switch between Claude, GPT-4, and open-source models in a single conversation. Compare answers side by side and always pick the best.</p>
+          </article>
+
+          <article class="card-hover bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <div class="w-11 h-11 rounded-xl bg-purple-500/15 border border-purple-500/20 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="#a78bfa" stroke-width="1.8"/><rect x="12" y="3" width="7" height="7" rx="1.5" stroke="#a78bfa" stroke-width="1.8"/><rect x="3" y="12" width="7" height="7" rx="1.5" stroke="#a78bfa" stroke-width="1.8"/><path d="M12 15.5h7M15.5 12v7" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Smart task management</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">Create, assign, and track tasks directly from chat. AI auto-extracts action items from conversations and keeps your board up to date.</p>
+          </article>
+
+          <article class="card-hover bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <div class="w-11 h-11 rounded-xl bg-teal-500/15 border border-teal-500/20 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M3 5h16v12a1 1 0 01-1 1H4a1 1 0 01-1-1V5z" stroke="#2dd4bf" stroke-width="1.8"/><path d="M3 5l8 7 8-7" stroke="#2dd4bf" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Meeting notes &amp; summaries</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">Paste or record meeting transcripts and get instant summaries, decisions, and follow-ups. Search your entire meeting history in seconds.</p>
+          </article>
+
+          <article class="card-hover bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <div class="w-11 h-11 rounded-xl bg-orange-500/15 border border-orange-500/20 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 2a9 9 0 100 18A9 9 0 0011 2z" stroke="#fb923c" stroke-width="1.8"/><path d="M11 6v5l3 3" stroke="#fb923c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Google Drive &amp; Gmail</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">Connect your Drive and Gmail so AI can reference your documents and emails when answering questions or drafting responses on your behalf.</p>
+          </article>
+
+          <article class="card-hover bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <div class="w-11 h-11 rounded-xl bg-pink-500/15 border border-pink-500/20 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M15 8a4 4 0 11-8 0 4 4 0 018 0z" stroke="#f472b6" stroke-width="1.8"/><path d="M3 19c0-3.314 3.582-6 8-6s8 2.686 8 6" stroke="#f472b6" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Team workspace</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">Invite your team and collaborate in shared projects. Control who sees what with per-project permissions — from solo use to large teams.</p>
+          </article>
+
+          <article class="card-hover bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <div class="w-11 h-11 rounded-xl bg-green-500/15 border border-green-500/20 flex items-center justify-center mb-4" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="11" width="16" height="9" rx="1.5" stroke="#4ade80" stroke-width="1.8"/><path d="M7 11V7a4 4 0 018 0v4" stroke="#4ade80" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <h3 class="text-lg font-bold mb-2">Private &amp; self-hosted</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">Your data stays on your infrastructure. No third-party model training on your content. Deploy on any VPS in minutes with our one-command setup.</p>
+          </article>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== SOCIAL PROOF ===== -->
+    <section id="testimonials" class="py-20 px-4 sm:px-6 bg-slate-900/50">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-12">
+          <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4">Loved by builders &amp; teams</h2>
+          <p class="text-slate-400 text-lg">Here's what early users are saying.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+
+          <figure class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-4">
+            <div class="flex gap-1" aria-label="5 out of 5 stars">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+            </div>
+            <blockquote class="text-slate-300 text-sm leading-relaxed flex-1">
+              "We replaced three separate tools — our chat AI, task tracker, and note-taking app — with AI UI. Setup took under an hour and the team immediately felt the difference."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-brand-500/30 border border-brand-500/20 flex items-center justify-center font-bold text-brand-300 text-sm" aria-hidden="true">SJ</div>
+              <div>
+                <p class="text-sm font-semibold text-white">Sarah J.</p>
+                <p class="text-xs text-slate-500">CTO, early-stage startup</p>
+              </div>
+            </figcaption>
+          </figure>
+
+          <figure class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-4">
+            <div class="flex gap-1" aria-label="5 out of 5 stars">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+            </div>
+            <blockquote class="text-slate-300 text-sm leading-relaxed flex-1">
+              "The self-hosted aspect was the deciding factor for us. Our clients' data stays on our servers, and the AI performance is genuinely impressive. I can't imagine going back."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-teal-500/30 border border-teal-500/20 flex items-center justify-center font-bold text-teal-300 text-sm" aria-hidden="true">MK</div>
+              <div>
+                <p class="text-sm font-semibold text-white">Marcus K.</p>
+                <p class="text-xs text-slate-500">Indie developer &amp; consultant</p>
+              </div>
+            </figcaption>
+          </figure>
+
+          <figure class="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex flex-col gap-4">
+            <div class="flex gap-1" aria-label="5 out of 5 stars">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="#fbbf24" aria-hidden="true"><path d="M8 1l1.8 4.8H15l-4.2 3 1.6 5L8 11 3.6 13.8l1.6-5L1 4.8h5.2z"/></svg>
+            </div>
+            <blockquote class="text-slate-300 text-sm leading-relaxed flex-1">
+              "Meeting notes with automatic action items saved my team at least 2 hours a week. The Gmail integration means our AI actually knows the context behind every task."
+            </blockquote>
+            <figcaption class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-full bg-pink-500/30 border border-pink-500/20 flex items-center justify-center font-bold text-pink-300 text-sm" aria-hidden="true">AL</div>
+              <div>
+                <p class="text-sm font-semibold text-white">Anika L.</p>
+                <p class="text-xs text-slate-500">Product manager, remote team</p>
+              </div>
+            </figcaption>
+          </figure>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FAQ ===== -->
+    <section id="faq" class="py-20 px-4 sm:px-6">
+      <div class="max-w-3xl mx-auto">
+        <div class="text-center mb-12">
+          <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4">Frequently asked questions</h2>
+          <p class="text-slate-400 text-lg">Have another question? <a href="https://ai-ui.coolestdomain.win/" class="text-brand-400 hover:text-brand-300 underline underline-offset-2">Reach out directly.</a></p>
+        </div>
+
+        <div class="flex flex-col gap-3" id="faq-list">
+
+          <div class="faq-item bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <button
+              class="w-full flex items-center justify-between px-6 py-4 text-left font-semibold text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-expanded="false"
+              onclick="toggleFaq(this)"
+            >
+              <span>Is my data really private with self-hosting?</span>
+              <svg class="faq-icon flex-shrink-0 ml-4 text-slate-400" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 10h10M10 5v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-4 text-sm text-slate-400 leading-relaxed">
+                Yes. When self-hosted, all your data, conversations, and files live entirely on your server. We never receive your content. You control which AI models to connect, and you can run local models that never leave your machine. No usage telemetry is sent without your explicit consent.
+              </p>
+            </div>
+          </div>
+
+          <div class="faq-item bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <button
+              class="w-full flex items-center justify-between px-6 py-4 text-left font-semibold text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-expanded="false"
+              onclick="toggleFaq(this)"
+            >
+              <span>What AI models are supported?</span>
+              <svg class="faq-icon flex-shrink-0 ml-4 text-slate-400" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 10h10M10 5v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-4 text-sm text-slate-400 leading-relaxed">
+                AI UI supports any OpenAI-compatible API, including Claude (Anthropic), GPT-4o (OpenAI), Gemini (Google), and local models via Ollama. You bring your own API keys and pay providers directly — we don't mark up model costs.
+              </p>
+            </div>
+          </div>
+
+          <div class="faq-item bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <button
+              class="w-full flex items-center justify-between px-6 py-4 text-left font-semibold text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-expanded="false"
+              onclick="toggleFaq(this)"
+            >
+              <span>How does the Google Drive and Gmail integration work?</span>
+              <svg class="faq-icon flex-shrink-0 ml-4 text-slate-400" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 10h10M10 5v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-4 text-sm text-slate-400 leading-relaxed">
+                After authorizing via OAuth, AI UI can read relevant files from your Drive and summarize or reference emails from Gmail during conversations. You can revoke access at any time from your Google account settings. No data is permanently stored by the integration layer beyond a short-lived session cache.
+              </p>
+            </div>
+          </div>
+
+          <div class="faq-item bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <button
+              class="w-full flex items-center justify-between px-6 py-4 text-left font-semibold text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-expanded="false"
+              onclick="toggleFaq(this)"
+            >
+              <span>Can I use this solo, or is it only for teams?</span>
+              <svg class="faq-icon flex-shrink-0 ml-4 text-slate-400" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 10h10M10 5v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-4 text-sm text-slate-400 leading-relaxed">
+                AI UI works great as a personal workspace for solo users, and scales up naturally when you're ready to add a team. Many users start solo and invite collaborators months later without any migration headaches.
+              </p>
+            </div>
+          </div>
+
+          <div class="faq-item bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <button
+              class="w-full flex items-center justify-between px-6 py-4 text-left font-semibold text-slate-100 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-expanded="false"
+              onclick="toggleFaq(this)"
+            >
+              <span>What does setup look like on my own server?</span>
+              <svg class="faq-icon flex-shrink-0 ml-4 text-slate-400" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M5 10h10M10 5v10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <div class="faq-answer">
+              <p class="px-6 pb-4 text-sm text-slate-400 leading-relaxed">
+                Spin up a VPS (any cloud provider), run <code class="bg-slate-800 px-1.5 py-0.5 rounded text-brand-300">docker compose up -d</code>, point your domain, and you're live. The whole process typically takes under 30 minutes including DNS propagation. Detailed docs are available after signup.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== FINAL CTA ===== -->
+    <section class="py-20 px-4 sm:px-6">
+      <div class="max-w-3xl mx-auto text-center">
+        <div class="bg-gradient-to-br from-brand-600/20 via-slate-900 to-purple-600/10 border border-brand-500/20 rounded-3xl px-8 py-14 shadow-2xl shadow-brand-500/10">
+          <h2 class="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4">
+            Ready to upgrade your workflow?
+          </h2>
+          <p class="text-slate-400 text-lg mb-8 max-w-xl mx-auto">
+            Join hundreds of developers and teams who've moved their entire AI workflow to a single, private, powerful platform.
+          </p>
+          <a href="https://ai-ui.coolestdomain.win/"
+             class="inline-flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white font-bold text-base px-10 py-4 rounded-xl transition-colors shadow-lg shadow-brand-500/30">
+            Get started for free
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <p class="mt-4 text-xs text-slate-500">No credit card required. Self-host or use our managed instance.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="border-t border-slate-800 py-10 px-4 sm:px-6">
+    <div class="max-w-6xl mx-auto">
+      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
+
+        <div class="flex flex-col gap-2">
+          <a href="#hero" class="flex items-center gap-2" aria-label="AI UI home">
+            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-brand-500 to-purple-500 flex items-center justify-center" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="2.5" fill="white"/><path d="M7 1.5v2M7 10.5v2M1.5 7h2M10.5 7h2" stroke="white" stroke-width="1.4" stroke-linecap="round"/></svg>
+            </div>
+            <span class="text-base font-extrabold tracking-tight text-white">AI<span class="text-brand-400">UI</span></span>
+          </a>
+          <p class="text-xs text-slate-500 max-w-xs">Your AI workspace, supercharged. Self-hosted or managed.</p>
+        </div>
+
+        <nav class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-400" aria-label="Footer navigation">
+          <a href="#features" class="hover:text-white transition-colors">Features</a>
+          <a href="#testimonials" class="hover:text-white transition-colors">Testimonials</a>
+          <a href="#faq" class="hover:text-white transition-colors">FAQ</a>
+          <a href="https://ai-ui.coolestdomain.win/" class="hover:text-white transition-colors">Sign in</a>
+        </nav>
+
+        <div class="flex items-center gap-3">
+          <a href="https://ai-ui.coolestdomain.win/" class="text-slate-400 hover:text-white transition-colors" aria-label="Contact us">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M2 4h14v10a1 1 0 01-1 1H3a1 1 0 01-1-1V4z" stroke="currentColor" stroke-width="1.5"/><path d="M2 4l7 6 7-6" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          </a>
+        </div>
+
+      </div>
+      <p class="mt-8 text-xs text-slate-600 text-center md:text-left">&copy; 2026 AI UI. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script>
+    // Nav shadow on scroll
+    const nav = document.getElementById('site-nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('nav-scrolled', window.scrollY > 8);
+    }, { passive: true });
+
+    // Mobile menu toggle
+    const menuToggle = document.getElementById('menu-toggle');
+    const mobileMenu = document.getElementById('mobile-menu');
+    const menuIconOpen = document.getElementById('menu-icon-open');
+    const menuIconClose = document.getElementById('menu-icon-close');
+
+    menuToggle.addEventListener('click', () => {
+      const isOpen = mobileMenu.classList.toggle('open');
+      menuToggle.setAttribute('aria-expanded', isOpen);
+      menuIconOpen.classList.toggle('hidden', isOpen);
+      menuIconClose.classList.toggle('hidden', !isOpen);
+    });
+
+    function closeMobileMenu() {
+      mobileMenu.classList.remove('open');
+      menuToggle.setAttribute('aria-expanded', 'false');
+      menuIconOpen.classList.remove('hidden');
+      menuIconClose.classList.add('hidden');
+    }
+
+    // FAQ accordion
+    function toggleFaq(btn) {
+      const item = btn.closest('.faq-item');
+      const answer = item.querySelector('.faq-answer');
+      const isOpen = item.classList.contains('open');
+
+      document.querySelectorAll('.faq-item.open').forEach(el => {
+        el.classList.remove('open');
+        el.querySelector('.faq-answer').classList.remove('open');
+        el.querySelector('button').setAttribute('aria-expanded', 'false');
+      });
+
+      if (!isOpen) {
+        item.classList.add('open');
+        answer.classList.add('open');
+        btn.setAttribute('aria-expanded', 'true');
+      }
+    }
+  </script>
+</body>
+</html>
