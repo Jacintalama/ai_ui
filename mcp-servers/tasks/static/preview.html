@@ -2204,6 +2204,16 @@
               <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">Find it in Project Settings → API → Project API keys → <strong>anon public</strong>. Never paste your service-role key here — that one stays on your machine.</div>
             </div>
 
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Database connection URI <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;">(optional — required for AI-managed tables)</span></label>
+              <div style="background: var(--warning-soft); color: var(--warning); border: 1px solid rgba(245,158,11,0.35); border-radius: var(--radius); padding: 8px 12px; font-size: 11px; line-height: 1.5; margin-bottom: 8px;">
+                ⚠ <strong>Powerful credential.</strong> This gives the build AI admin access to your Supabase database — it can create / drop / alter tables, run migrations, set up RLS policies. Use a Supabase project you own. Encrypted at rest with the same Fernet key as your anon key.
+              </div>
+              <textarea id="db-uri" rows="2" placeholder="postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres" autocomplete="off" spellcheck="false"
+                        style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical;"></textarea>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">Find it in Project Settings → Database → Connection string → URI tab. Use the <strong>Pooler</strong> URI (port 6543) for reliable connections.</div>
+            </div>
+
             <div style="display: flex; gap: 8px; align-items: center;">
               <button class="btn btn-primary" id="db-save" type="button">Save & connect</button>
               <button class="btn btn-danger" id="db-clear" type="button" hidden>Disconnect</button>
@@ -2215,6 +2225,7 @@
               <div>URL: <code style="font-family:var(--font-mono);font-size:11px;" id="db-info-url"></code></div>
               <div>Configured by: <strong id="db-info-by"></strong></div>
               <div>Configured at: <span id="db-info-at"></span></div>
+              <div id="db-info-aimanage" style="margin-top:6px;padding:4px 10px;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent);border-radius:999px;border:1px solid rgba(124,140,255,0.3);" hidden>✓ AI can manage tables</div>
               <div style="margin-top:10px;font-size:11px;color:var(--muted);">
                 In your app code, use <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> and
                 <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>. The Build sidebar
@@ -3247,6 +3258,16 @@
       $dbUrl.value = cfg.supabase_url || "";
       $dbAnon.value = "";
       $dbAnon.placeholder = "(saved — paste again only to change)";
+      const $dbUri = document.getElementById("db-uri");
+      if ($dbUri) {
+        $dbUri.value = "";
+        $dbUri.placeholder = cfg.has_db_uri
+          ? "(saved — paste again only to change)"
+          : "postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
+      }
+      // AI-can-manage-tables badge.
+      const $aiBadge = document.getElementById("db-info-aimanage");
+      if ($aiBadge) $aiBadge.hidden = !cfg.has_db_uri;
       // Topbar tab badge — green dot when connected.
       if ($badgeDb) {
         $badgeDb.hidden = false;
@@ -3260,6 +3281,11 @@
       $dbClear.hidden = true;
       $dbInfo.hidden = true;
       $dbAnon.placeholder = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+      const $dbUri = document.getElementById("db-uri");
+      if ($dbUri) {
+        $dbUri.value = "";
+        $dbUri.placeholder = "postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
+      }
       if ($badgeDb) $badgeDb.hidden = true;
     }
   }
@@ -3309,7 +3335,11 @@
         method: "POST",
         headers: authHeaders(),
         credentials: "include",
-        body: JSON.stringify({ supabase_url: url, anon_key: key }),
+        body: JSON.stringify({
+          supabase_url: url,
+          anon_key: key,
+          db_uri: (document.getElementById("db-uri").value || "").trim() || undefined,
+        }),
       });
       if (!r.ok) {
         const txt = await r.text();
