@@ -2743,6 +2743,7 @@
       const data = await apiFetch("GET", "/" + taskId + "/files");
       slug = data.slug || "";
       loadEnhanceHistory();
+      loadChatHistory();
       files = data.files || [];
       $slugName.textContent = slug || "unknown";
       document.title = "Preview: " + slug + " — AIUI Tasks";
@@ -4484,6 +4485,15 @@
 
   async function submitChat(text) {
     renderChatBubble("user", text);
+    // Persist user message (fire-and-forget — chat must never feel slow).
+    if (slug) {
+      fetch(`/api/projects/${encodeURIComponent(slug)}/chat`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ role: "user", content: text }),
+      }).catch(() => {});
+    }
     const aiBubble = renderChatBubble("ai", null);  // "thinking…"
     setSendDisabled(true);
     try {
@@ -4494,7 +4504,17 @@
       });
       aiBubble.classList.remove("thinking");
       const parts = splitChatReply(resp.reply || "");
-      aiBubble.querySelector(".markdown").innerHTML = renderMarkdown(parts.body || resp.reply);
+      const replyText = parts.body || resp.reply;
+      aiBubble.querySelector(".markdown").innerHTML = renderMarkdown(replyText);
+      // Persist assistant reply.
+      if (slug && replyText) {
+        fetch(`/api/projects/${encodeURIComponent(slug)}/chat`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ role: "assistant", content: replyText }),
+        }).catch(() => {});
+      }
       if (parts.buildSuggestion) attachBuildSuggestion(aiBubble, parts.buildSuggestion);
 
       // Store clean history (without BUILD_SUGGESTION line) for next turn
@@ -4612,6 +4632,26 @@
       $prompt.focus();
     }
   });
+
+  async function loadChatHistory() {
+    if (!slug) return;
+    try {
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/chat?limit=200`, {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok) return;
+      const rows = await r.json();
+      if (!rows.length) return;
+      const empty = document.getElementById("enhance-empty");
+      if (empty) empty.remove();
+      for (const m of rows) {
+        if (m.role === "user")      renderChatBubble("user", m.content);
+        else if (m.role === "assistant") renderChatBubble("ai", m.content);
+      }
+      $log.scrollTop = $log.scrollHeight;
+    } catch (_) {}
+  }
 
   async function loadEnhanceHistory() {
     if (!slug) return;
