@@ -2055,6 +2055,13 @@
         <span class="tab-label">History</span>
         <span class="tab-badge" id="badge-history" hidden></span>
       </button>
+      <button class="tab" data-tab="database" title="Connect a Supabase backend (auth + database + storage)">
+        <span class="tab-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        </span>
+        <span class="tab-label">Database</span>
+        <span class="tab-badge" id="badge-database" hidden></span>
+      </button>
     </nav>
 
     <div class="panels">
@@ -2159,6 +2166,61 @@
           <div class="empty">
             <div class="empty-icon">🕒</div>
             <div class="empty-title">Loading versions…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Database (Supabase) panel -->
+      <div class="panel" id="panel-database">
+        <div class="panel-body" id="database-body" style="padding: 24px; overflow-y: auto;">
+          <div style="max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px;">
+            <div>
+              <h2 style="font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; margin: 0;">
+                <span style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#3ecf8e,#2db374);display:flex;align-items:center;justify-content:center;color:white;flex-shrink:0;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+                </span>
+                Supabase backend
+                <span class="badge-soft" id="db-badge" style="font-size:10px;padding:3px 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">Not connected</span>
+              </h2>
+              <div class="body" style="color: var(--text-2); font-size: 13px; line-height: 1.55; margin-top: 10px;">
+                Paste your Supabase URL + anon public key below. We encrypt the key at rest
+                and inject <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> /
+                <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>
+                into your live app at runtime. Claude is told how to use it on every build.
+              </div>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Project URL</label>
+              <input id="db-url" type="url" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off" spellcheck="false"
+                     style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:12px;outline:none;">
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">Find it in Project Settings → API → Project URL.</div>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Anon public key</label>
+              <textarea id="db-anon" rows="3" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." autocomplete="off" spellcheck="false"
+                        style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical;"></textarea>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">Find it in Project Settings → API → Project API keys → <strong>anon public</strong>. Never paste your service-role key here — that one stays on your machine.</div>
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button class="btn btn-primary" id="db-save" type="button">Save & connect</button>
+              <button class="btn btn-danger" id="db-clear" type="button" hidden>Disconnect</button>
+              <span id="db-status" style="font-size:12px;color:var(--muted);"></span>
+            </div>
+
+            <div id="db-info" hidden style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;font-size:12px;color:var(--text-2);line-height:1.6;">
+              <div style="font-weight:600;color:var(--text);margin-bottom:6px;">✓ Connected</div>
+              <div>URL: <code style="font-family:var(--font-mono);font-size:11px;" id="db-info-url"></code></div>
+              <div>Configured by: <strong id="db-info-by"></strong></div>
+              <div>Configured at: <span id="db-info-at"></span></div>
+              <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+                In your app code, use <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> and
+                <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>. The Build sidebar
+                already knows about Supabase — ask it to add auth, tables, etc.
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -2655,6 +2717,7 @@
     if (tab === "logs") loadLogs();
     if (tab === "tests") loadTests();
     if (tab === "history") loadVersions();
+    if (tab === "database") loadDatabase();
   }
   document.getElementById("tabs").addEventListener("click", function (e) {
     const btn = e.target.closest(".tab");
@@ -3148,6 +3211,150 @@
   }
 
   if ($historyRefresh) $historyRefresh.addEventListener("click", loadVersions);
+
+  // ────────────────────────────────────────────────────────────────────
+  // DATABASE PANEL (Supabase)
+  // ────────────────────────────────────────────────────────────────────
+  const $dbUrl     = document.getElementById("db-url");
+  const $dbAnon    = document.getElementById("db-anon");
+  const $dbSave    = document.getElementById("db-save");
+  const $dbClear   = document.getElementById("db-clear");
+  const $dbStatus  = document.getElementById("db-status");
+  const $dbBadge   = document.getElementById("db-badge");
+  const $dbInfo    = document.getElementById("db-info");
+  const $dbInfoUrl = document.getElementById("db-info-url");
+  const $dbInfoBy  = document.getElementById("db-info-by");
+  const $dbInfoAt  = document.getElementById("db-info-at");
+  const $badgeDb   = document.getElementById("badge-database");
+
+  let _dbState = null;
+
+  function _renderDatabase() {
+    const cfg = _dbState || {};
+    if (cfg.configured) {
+      $dbBadge.textContent = "Connected";
+      $dbBadge.style.background = "rgba(34,197,94,0.15)";
+      $dbBadge.style.color = "var(--success)";
+      $dbClear.hidden = false;
+      $dbInfo.hidden = false;
+      $dbInfoUrl.textContent = cfg.supabase_url || "";
+      $dbInfoBy.textContent = (cfg.configured_by || "").split("@")[0] || "—";
+      try {
+        $dbInfoAt.textContent = cfg.configured_at
+          ? new Date(cfg.configured_at).toLocaleString()
+          : "";
+      } catch (_) { $dbInfoAt.textContent = ""; }
+      $dbUrl.value = cfg.supabase_url || "";
+      $dbAnon.value = "";
+      $dbAnon.placeholder = "(saved — paste again only to change)";
+      // Topbar tab badge — green dot when connected.
+      if ($badgeDb) {
+        $badgeDb.hidden = false;
+        $badgeDb.dataset.kind = "active";
+        $badgeDb.textContent = "●";
+      }
+    } else {
+      $dbBadge.textContent = "Not connected";
+      $dbBadge.style.background = "var(--surface-2)";
+      $dbBadge.style.color = "var(--muted)";
+      $dbClear.hidden = true;
+      $dbInfo.hidden = true;
+      $dbAnon.placeholder = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+      if ($badgeDb) $badgeDb.hidden = true;
+    }
+  }
+
+  async function loadDatabase() {
+    if (!slug) {
+      $dbStatus.textContent = "Loading project…";
+      return;
+    }
+    $dbStatus.textContent = "";
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (r.ok) {
+        _dbState = await r.json();
+      } else {
+        $dbStatus.textContent = "Could not load: HTTP " + r.status;
+        return;
+      }
+    } catch (err) {
+      $dbStatus.textContent = "Could not load: " + (err.message || err);
+      return;
+    }
+    _renderDatabase();
+  }
+
+  $dbSave.addEventListener("click", async () => {
+    const url = ($dbUrl.value || "").trim();
+    const key = ($dbAnon.value || "").trim();
+    if (!url) { $dbUrl.focus(); $dbStatus.textContent = "Paste your Project URL."; return; }
+    if (!key) {
+      if (!(_dbState && _dbState.configured)) {
+        $dbAnon.focus();
+        $dbStatus.textContent = "Paste your anon public key.";
+        return;
+      }
+      $dbStatus.textContent = "Paste your anon key again to change the config (we don't keep it in plaintext).";
+      return;
+    }
+    $dbSave.disabled = true;
+    $dbSave.textContent = "Saving…";
+    $dbStatus.textContent = "";
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ supabase_url: url, anon_key: key }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        $dbStatus.textContent = "Save failed: " + txt.slice(0, 240);
+        toast("Save failed", "error", 4000);
+        return;
+      }
+      _dbState = await r.json();
+      _renderDatabase();
+      toast("Supabase saved. Future builds + the live app will use it.", "success", 4500);
+      $dbStatus.textContent = "✓ Saved.";
+      setTimeout(() => { if ($dbStatus.textContent === "✓ Saved.") $dbStatus.textContent = ""; }, 4000);
+    } catch (err) {
+      $dbStatus.textContent = "Network error: " + err.message;
+    } finally {
+      $dbSave.disabled = false;
+      $dbSave.textContent = "Save & connect";
+    }
+  });
+
+  $dbClear.addEventListener("click", async () => {
+    if (!confirm("Disconnect Supabase from this project? The live app will lose access immediately.")) return;
+    $dbClear.disabled = true;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+        method: "DELETE",
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        $dbStatus.textContent = "Disconnect failed: " + txt.slice(0, 240);
+        return;
+      }
+      _dbState = { configured: false };
+      _renderDatabase();
+      toast("Supabase disconnected.", "success", 3000);
+      $dbStatus.textContent = "Disconnected.";
+      setTimeout(() => { if ($dbStatus.textContent === "Disconnected.") $dbStatus.textContent = ""; }, 4000);
+    } catch (err) {
+      $dbStatus.textContent = "Network error: " + err.message;
+    } finally {
+      $dbClear.disabled = false;
+    }
+  });
 
   // ────────────────────────────────────────────────────────────────────
   // PUBLISH (host app at <slug>.ai-ui.coolestdomain.win)
