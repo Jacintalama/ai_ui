@@ -33,7 +33,8 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.execute(text(
             "TRUNCATE tasks.items, tasks.executions, "
-            "tasks.published_apps, tasks.project_members CASCADE"
+            "tasks.published_apps, tasks.project_members, "
+            "tasks.project_supabase CASCADE"
         ))
     async with maker() as s:
         yield s
