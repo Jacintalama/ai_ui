@@ -105,3 +105,54 @@ async def test_delete_removes_config(db_session, transport):
         assert r.status_code == 204
         r = await c.get("/api/projects/alpha/supabase", headers=OWNER_HDR)
         assert r.json()["configured"] is False
+
+
+async def test_set_with_db_uri_encrypts_and_flags(db_session, transport):
+    _setup_owner(db_session)
+    await db_session.commit()
+
+    db_uri = "postgresql://postgres.refxyz:hunter2@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.post("/api/projects/alpha/supabase", headers=OWNER_HDR, json={
+            "supabase_url": "https://refxyz.supabase.co",
+            "anon_key": ANON_KEY,
+            "db_uri": db_uri,
+        })
+        assert r.status_code == 200
+        body = r.json()
+        assert body["has_db_uri"] is True
+        # URI must NEVER be returned.
+        assert "db_uri" not in body
+        assert "db_uri_encrypted" not in body
+
+    row = (await db_session.execute(
+        select(ProjectSupabase).where(ProjectSupabase.slug == "alpha")
+    )).scalar_one()
+    assert row.db_uri_encrypted is not None
+    assert row.db_uri_encrypted != db_uri  # encrypted, not plaintext
+
+
+async def test_set_rejects_non_postgres_db_uri(db_session, transport):
+    _setup_owner(db_session)
+    await db_session.commit()
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.post("/api/projects/alpha/supabase", headers=OWNER_HDR, json={
+            "supabase_url": "https://refxyz.supabase.co",
+            "anon_key": ANON_KEY,
+            "db_uri": "mysql://nope",
+        })
+    assert r.status_code == 400
+
+
+async def test_get_indicates_has_db_uri(db_session, transport):
+    _setup_owner(db_session)
+    db_session.add(ProjectSupabase(
+        slug="alpha", supabase_url="https://refxyz.supabase.co",
+        anon_key_encrypted="enc", db_uri_encrypted="enc-uri",
+        configured_by="ralph@aiui.com",
+    ))
+    await db_session.commit()
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/api/projects/alpha/supabase", headers=OWNER_HDR)
+    assert r.status_code == 200
+    assert r.json()["has_db_uri"] is True
