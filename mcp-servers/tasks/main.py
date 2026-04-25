@@ -184,6 +184,46 @@ async def _supabase_inject_for(slug: str) -> str:
     )
 
 
+@app.get("/__preview_config.js", include_in_schema=False)
+async def preview_config_js() -> Response:
+    """Return JS that sets window.SUPABASE_URL/KEY for the currently-running
+    preview app. Caddy routes /tasks/preview-app/aiui-config.js → here BEFORE
+    the dev-server proxy (more-specific path wins)."""
+    import json
+    import app_runner as _ar
+    from models import ProjectSupabase as _ProjSb
+    import crypto_utils as _crypto
+
+    cur = getattr(_ar, "_current", None)
+    if not cur or not cur.get("slug"):
+        return Response("// No preview running.\n", media_type="text/javascript")
+
+    slug = cur["slug"]
+    async with _db_session() as s:
+        row = (await s.execute(
+            _select(_ProjSb).where(_ProjSb.slug == slug)
+        )).scalar_one_or_none()
+    if row is None:
+        return Response(
+            f"// Slug {slug!r} has no Supabase config.\n",
+            media_type="text/javascript",
+        )
+    try:
+        anon = _crypto.decrypt(row.anon_key_encrypted)
+    except Exception:
+        return Response("// Could not decrypt anon key.\n", media_type="text/javascript")
+    body = (
+        f"window.SUPABASE_URL={json.dumps(row.supabase_url)};"
+        f"window.SUPABASE_ANON_KEY={json.dumps(anon)};"
+        f"window.AIUI_SLUG={json.dumps(slug)};\n"
+    )
+    return Response(
+        content=body,
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/__public/{slug}", include_in_schema=False)
 @app.get("/__public/{slug}/", include_in_schema=False)
 @app.get("/__public/{slug}/{file_path:path}", include_in_schema=False)
@@ -200,6 +240,30 @@ async def serve_published_app(
         rel = "index.html"
     if ".." in rel.split("/") or rel.startswith("/") or "\x00" in rel:
         raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Synthesize aiui-config.js for the published path so the same agent code
+    # works both in preview and published contexts.
+    if rel == "aiui-config.js":
+        import json as _json
+        from models import ProjectSupabase as _ProjSb2
+        import crypto_utils as _crypto2
+        async with _db_session() as s:
+            row = (await s.execute(
+                _select(_ProjSb2).where(_ProjSb2.slug == slug)
+            )).scalar_one_or_none()
+        if row is None:
+            return Response("// No Supabase config.\n", media_type="text/javascript")
+        try:
+            anon = _crypto2.decrypt(row.anon_key_encrypted)
+        except Exception:
+            return Response("// Could not decrypt anon key.\n", media_type="text/javascript")
+        js_body = (
+            f"window.SUPABASE_URL={_json.dumps(row.supabase_url)};"
+            f"window.SUPABASE_ANON_KEY={_json.dumps(anon)};"
+            f"window.AIUI_SLUG={_json.dumps(slug)};\n"
+        )
+        return Response(content=js_body, media_type="text/javascript",
+                        headers={"Cache-Control": "no-store"})
 
     async with _db_session() as s:
         row = (

@@ -71,15 +71,33 @@ When done successfully, respond ending with: COMPLETED: <summary of what you did
 SUPABASE_BLOCK_TEMPLATE = """## Supabase integration available
 
 A Supabase project is attached to this app. Use it for any data persistence,
-auth, or file storage needs. Do NOT roll your own backend.
+auth, or file storage. Do NOT roll your own backend.
 
-- Read URL/key from `window.SUPABASE_URL` and `window.SUPABASE_ANON_KEY`.
-  These are injected by the host on every request — never hardcode them.
-- Import the SDK in your HTML:
-  `<script type="module">import {{ createClient }} from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"; window.supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);</script>`
-- Auth: `supabase.auth.signUp` / `signInWithPassword` / `signOut` / `onAuthStateChange`.
+### MANDATORY pattern — copy this exactly into <head>:
+
+```html
+<head>
+  <!-- Loads window.SUPABASE_URL / SUPABASE_ANON_KEY from the host. ALWAYS first. -->
+  <script src="aiui-config.js"></script>
+  <!-- Imports the SDK once, attaches to window. -->
+  <script type="module">
+    import {{ createClient }} from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+    if (!window.supabase) {{
+      window.supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+    }}
+  </script>
+</head>
+```
+
+### Rules
+
+- NEVER write `const supabase = ...` at top-level. The dev server hot-reloads
+  the same file — a top-level `const` redeclares and throws.
+  Always use `window.supabase = createClient(...)` guarded by `if (!window.supabase)`.
+- ALL code that touches Supabase reads `window.supabase` (or destructures from it).
+- Auth: `window.supabase.auth.signUp` / `signInWithPassword` / `signOut` / `onAuthStateChange`.
 - Tables: enable Row Level Security (RLS) on every table; document the schema
-  the app expects in `schema.sql` at the app root so the user can apply it.
+  in `schema.sql` at the app root.
 
 URL: {url}
 """
