@@ -92,12 +92,20 @@ async def _user_can_see_project(s, slug: str, email: str) -> bool:
 ROLE_RANK = {"viewer": 0, "editor": 1, "owner": 2}
 
 
-async def _require_role(s, slug: str, email: str, min_role: str) -> str:
+async def _require_role(s, slug: str, email: str, min_role: str,
+                        *, is_admin: bool = False) -> str:
     """Raise 403 unless the user has at least `min_role` on the project.
 
-    Admins (X-User-Admin: true → user.is_admin) bypass to "owner".
+    When `is_admin=True`, the user bypasses the role check entirely (returns
+    "owner"). Callers should pass `user.is_admin` to opt in. The helper
+    looks up the user's role in `tasks.project_members`; if there's no
+    membership row but the user is the original assignee on a TaskItem
+    with that slug, they're treated as implicit owner.
+
     Returns the user's effective role (for callers that want to log it).
     """
+    if is_admin:
+        return "owner"
     member = (
         await s.execute(
             select(ProjectMember).where(
