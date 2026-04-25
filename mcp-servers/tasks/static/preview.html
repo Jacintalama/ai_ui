@@ -2217,8 +2217,9 @@
               <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">Find it in Project Settings → Database → Connection string → URI tab. Use the <strong>Pooler</strong> URI (port 6543) for reliable connections.</div>
             </div>
 
-            <div style="display: flex; gap: 8px; align-items: center;">
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
               <button class="btn btn-primary" id="db-save" type="button">Save & connect</button>
+              <button class="btn" id="db-test" type="button" hidden>Test connection</button>
               <button class="btn btn-danger" id="db-clear" type="button" hidden>Disconnect</button>
               <span id="db-status" style="font-size:12px;color:var(--muted);"></span>
             </div>
@@ -3269,9 +3270,12 @@
           ? "(saved — paste again only to change)"
           : "postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
       }
-      // AI-can-manage-tables badge.
+      // AI-can-manage-tables badge — only when DB URI is also stored.
       const $aiBadge = document.getElementById("db-info-aimanage");
       if ($aiBadge) $aiBadge.hidden = !cfg.has_db_uri;
+      // Test-connection button is only useful when we have a DB URI to query.
+      const $dbTestBtn = document.getElementById("db-test");
+      if ($dbTestBtn) $dbTestBtn.hidden = !cfg.has_db_uri;
       // Topbar tab badge — green dot when connected.
       if ($badgeDb) {
         $badgeDb.hidden = false;
@@ -3290,6 +3294,8 @@
         $dbUri.value = "";
         $dbUri.placeholder = "postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
       }
+      const $dbTestBtn = document.getElementById("db-test");
+      if ($dbTestBtn) $dbTestBtn.hidden = true;
       if ($badgeDb) $badgeDb.hidden = true;
     }
   }
@@ -3363,6 +3369,45 @@
       $dbSave.textContent = "Save & connect";
     }
   });
+
+  // Test connection — runs a tiny query through the /db/sql endpoint to
+  // confirm the stored DB URI actually works against the user's Postgres.
+  const $dbTestBtn = document.getElementById("db-test");
+  if ($dbTestBtn) {
+    $dbTestBtn.addEventListener("click", async () => {
+      $dbTestBtn.disabled = true;
+      const orig = $dbTestBtn.textContent;
+      $dbTestBtn.innerHTML = '<span class="btn-spinner"></span>Testing…';
+      $dbStatus.style.color = "var(--muted)";
+      $dbStatus.textContent = "";
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/db/sql", {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ sql: "SELECT NOW() AS now, current_database() AS db, version() AS version" }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          $dbStatus.style.color = "var(--danger)";
+          $dbStatus.textContent = "✗ " + (data.detail || "HTTP " + r.status);
+          return;
+        }
+        const row = (data.rows && data.rows[0]) || {};
+        const ms = data.executed_ms;
+        const dbName = row.db || "—";
+        const ver = (row.version || "").split(" ").slice(0, 2).join(" ");
+        $dbStatus.style.color = "var(--success)";
+        $dbStatus.textContent = `✓ Connected to ${dbName} (${ver}) · ${ms}ms`;
+      } catch (err) {
+        $dbStatus.style.color = "var(--danger)";
+        $dbStatus.textContent = "✗ Network: " + err.message;
+      } finally {
+        $dbTestBtn.disabled = false;
+        $dbTestBtn.textContent = orig;
+      }
+    });
+  }
 
   $dbClear.addEventListener("click", async () => {
     if (!confirm("Disconnect Supabase from this project? The live app will lose access immediately.")) return;
