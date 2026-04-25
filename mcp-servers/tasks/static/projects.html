@@ -635,7 +635,7 @@
           </div>
         </div>
         <details class="rules-box">
-          <summary>Build rules Claude will follow</summary>
+          <summary>Build rules the AIUI Agent will follow</summary>
           <ul class="rules-list">
             <li>Static HTML + Tailwind CDN + vanilla JS only (no build step).</li>
             <li>Semantic HTML5: <code>&lt;header&gt;</code> / <code>&lt;main&gt;</code> / <code>&lt;footer&gt;</code>, one <code>&lt;h1&gt;</code>.</li>
@@ -826,7 +826,7 @@
       });
     }
 
-    // Shared rules applied to every BUILD request (kept short — Claude's
+    // Shared rules applied to every BUILD request (kept short — the agent's
     // PROMPT_TEMPLATE already knows the broad strokes).
     const UNIVERSAL_RULES = [
       "RULES (strict):",
@@ -880,7 +880,7 @@
       landing:   "e.g. Landing page for a coffee shop called 'Bean There'. Include hero with logo and tagline, menu with 6 drinks, opening hours, and a contact form.",
       dashboard: "e.g. Team activity dashboard showing tasks completed this week, top contributors, and a burndown chart.",
       crud:      "e.g. Recipe manager — add, edit, delete recipes with ingredients, prep time, and difficulty.",
-      blank:     "Describe what you want Claude to build. Be specific about look, sections, and behavior.",
+      blank:     "Describe what you want the AIUI Agent to build. Be specific about look, sections, and behavior.",
     };
     function applyTemplatePlaceholder() {
       npDesc.placeholder = TEMPLATE_PLACEHOLDERS[npTemplate.value] || "";

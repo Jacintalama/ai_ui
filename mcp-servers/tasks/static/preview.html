@@ -599,7 +599,7 @@
     .pub-verify-result.ok    { background: var(--success-soft); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
     .pub-verify-result.fail  { background: var(--danger-soft);  color: var(--danger);  border: 1px solid rgba(248,113,113,0.3); }
 
-    /* Full-screen "Claude is building" overlay shown while task is not yet done */
+    /* Full-screen "AIUI Agent is building" overlay shown while task is not yet done */
     .build-overlay {
       position: fixed;
       inset: 0;
@@ -1908,7 +1908,7 @@
       Your anon key is encrypted at rest and injected into the live app
       at runtime (<code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> /
       <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>).
-      Claude is told how to use it on every build.
+      The AIUI Agent is told how to use it on every build.
     </div>
     <div class="pub-domain-input-row">
       <input type="url" class="pub-domain-input" id="pub-sb-url"
@@ -1935,7 +1935,7 @@
 
 <div class="build-overlay" id="build-overlay" hidden>
   <div class="wand">🪄</div>
-  <h2 id="build-title">Claude is building your app…</h2>
+  <h2 id="build-title">AIUI Agent is building your app…</h2>
   <div class="sub" id="build-sub">Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.</div>
   <div class="phase-chip" id="build-phase">Starting up</div>
   <div class="progress-bar"></div>
@@ -2186,7 +2186,7 @@
                 Paste your Supabase URL + anon public key below. We encrypt the key at rest
                 and inject <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> /
                 <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>
-                into your live app at runtime. Claude is told how to use it on every build.
+                into your live app at runtime. The AIUI Agent is told how to use it on every build.
               </div>
             </div>
 
@@ -2331,7 +2331,7 @@
   }
 
   // ────────────────────────────────────────────────────────────────────
-  // BUILD OVERLAY — show "Claude is building" animation while the task
+  // BUILD OVERLAY — show "AIUI Agent is building" animation while the task
   // is not yet completed. Polls task status + latest execution log so the
   // user can watch files being written in real time.
   // ────────────────────────────────────────────────────────────────────
@@ -2379,7 +2379,7 @@
       if (task.status === "failed") {
         $bov.classList.add("failed");
         $bovTitle.textContent = "🪄 Build ran into a problem";
-        $bovSub.textContent = task.result || "Claude had trouble with this build. You can retry or adjust the description.";
+        $bovSub.textContent = task.result || "The AIUI Agent had trouble with this build. You can retry or adjust the description.";
         $bovPhase.textContent = "Error";
         $bovRetry.hidden = false;
         $bov.hidden = false;
@@ -2401,10 +2401,10 @@
         try {
           const execs = await apiFetch("GET", "/" + taskId + "/executions");
           if (!execs || execs.length === 0) {
-            $bovTitle.textContent = "🚀 Starting Claude…";
+            $bovTitle.textContent = "🚀 Starting AIUI Agent…";
             try {
               await apiFetch("POST", "/" + taskId + "/execute");
-              $bovTitle.textContent = "Claude is building your app…";
+              $bovTitle.textContent = "AIUI Agent is building your app…";
             } catch (e) {
               // Couldn't start — show manual Start button so user has a way out.
               $bovTitle.textContent = "⚠ Build didn't start automatically";
@@ -2452,11 +2452,11 @@
   if ($bovStart) {
     $bovStart.addEventListener("click", async () => {
       $bovStart.hidden = true;
-      $bovTitle.textContent = "🚀 Starting Claude…";
+      $bovTitle.textContent = "🚀 Starting AIUI Agent…";
       $bovSub.textContent = "Kicking off the build…";
       try {
         await apiFetch("POST", "/" + taskId + "/execute");
-        $bovTitle.textContent = "Claude is building your app…";
+        $bovTitle.textContent = "AIUI Agent is building your app…";
         $bovSub.textContent = "Sit tight — creating files, writing code, and running tests.";
       } catch (err) {
         $bovTitle.textContent = "⚠ Could not start";
@@ -2471,7 +2471,7 @@
       $bovRetry.hidden = true;
       $bov.classList.remove("failed");
       $bovTitle.textContent = "Restarting build…";
-      $bovSub.textContent = "Claude is picking things back up.";
+      $bovSub.textContent = "AIUI Agent is picking things back up.";
       _bovLastLog = "";
       $bovLog.innerHTML = '<span class="cursor"></span>';
       try {
@@ -2758,7 +2758,7 @@
         $fileTree.innerHTML = '<div class="tree-empty" style="color:var(--danger)">' + escapeHtml(msg) + '</div>';
         toast("Could not load files: " + msg, "error", 6000);
       } else {
-        $fileTree.innerHTML = '<div class="tree-empty">Waiting for Claude to write the first files…</div>';
+        $fileTree.innerHTML = '<div class="tree-empty">Waiting for the AIUI Agent to write the first files…</div>';
       }
       // Never set slug-name to "(error)" — it leaks into presence URLs.
       // Leave it as "loading…" so presence waits for a real slug.
@@ -4130,7 +4130,7 @@
   // INIT
   // ────────────────────────────────────────────────────────────────────
   async function init() {
-    // If task is still being built by Claude, the build overlay owns the
+    // If task is still being built by the AIUI Agent, the build overlay owns the
     // loading sequence — it'll call loadFileTree + startPolling + loadLogs
     // once the build reaches completed. Kicking them off now would just
     // produce noisy 404s. For completed/failed tasks, run normally.
@@ -4161,12 +4161,12 @@
   const activeBubbles = new Map();
   // When non-null, the Send button submits an `answer` to this task instead
   // of creating a new /enhance — enables conversational back-and-forth when
-  // Claude asks a clarifying question (task status = awaiting_input).
+  // The AIUI Agent asks a clarifying question (task status = awaiting_input).
   let awaitingReplyTo = null;
   const $replyBanner = document.getElementById("reply-banner");
   const $replyClear = document.getElementById("reply-clear");
 
-  // Chat mode: lightweight Claude chat with no build pipeline. Default to
+  // Chat mode: lightweight agent chat with no build pipeline. Default to
   // Chat so greetings/questions don't trigger expensive build runs that fail.
   // In-memory history only (per session) — persists on page reload via task.
   let chatMode = "chat";  // "chat" | "build"
