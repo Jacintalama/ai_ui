@@ -606,8 +606,8 @@
       <div class="modal-body">
         <div>
           <label class="form-label" for="np-name">Project name</label>
-          <input id="np-name" class="form-input" placeholder="my-coffee-shop" maxlength="50">
-          <div class="form-hint">Lowercase letters, digits, and hyphens. Leave blank to let AI pick one.</div>
+          <input id="np-name" class="form-input" placeholder="my coffee shop" maxlength="60">
+          <div class="form-hint" id="np-name-hint">Spaces are fine — we'll convert them to hyphens. Leave blank to let AI pick one.</div>
         </div>
         <div>
           <label class="form-label" for="np-template">Template</label>
@@ -786,6 +786,46 @@
     const npSubmit = document.getElementById("np-submit");
     const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,49}$/;
 
+    // Convert a free-text name (with spaces, mixed case, accents) to a
+    // URL-safe slug. e.g. "aiui landing page" → "aiui-landing-page".
+    function _normalizeSlug(raw) {
+      if (!raw) return "";
+      return raw
+        .normalize("NFKD")              // strip accents
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")   // anything not [a-z0-9-] → hyphen
+        .replace(/-+/g, "-")            // collapse runs of hyphens
+        .replace(/^-|-$/g, "")          // trim leading/trailing hyphens
+        .slice(0, 50);
+    }
+
+    // Live preview of the normalized slug under the input.
+    const npNameHint = document.getElementById("np-name-hint");
+    const _npNameDefaultHint =
+      "Spaces are fine — we'll convert them to hyphens. Leave blank to let AI pick one.";
+    const npNameInput = document.getElementById("np-name");
+    if (npNameInput && npNameHint) {
+      npNameInput.addEventListener("input", () => {
+        const raw = npNameInput.value || "";
+        const norm = _normalizeSlug(raw);
+        if (!raw.trim()) {
+          npNameHint.textContent = _npNameDefaultHint;
+          npNameHint.style.color = "";
+          return;
+        }
+        if (!SLUG_RE.test(norm)) {
+          npNameHint.textContent = norm
+            ? `URL would be: "${norm}" — needs at least 3 characters and must start with a letter or digit.`
+            : "Use letters, digits, spaces, or hyphens. At least 3 chars.";
+          npNameHint.style.color = "var(--danger)";
+        } else {
+          npNameHint.textContent = `URL slug: ${norm}`;
+          npNameHint.style.color = "var(--success)";
+        }
+      });
+    }
+
     // Shared rules applied to every BUILD request (kept short — Claude's
     // PROMPT_TEMPLATE already knows the broad strokes).
     const UNIVERSAL_RULES = [
@@ -879,10 +919,16 @@
         showToast("Please describe what you want to build.", true);
         return;
       }
-      const name = (npName.value || "").trim().toLowerCase();
-      if (name && !SLUG_RE.test(name)) {
+      const rawName = (npName.value || "").trim();
+      const name = _normalizeSlug(rawName);  // "aiui landing" → "aiui-landing"
+      if (rawName && !SLUG_RE.test(name)) {
         npName.focus();
-        showToast("Invalid name. Use lowercase letters, digits, and hyphens (3–50 chars).", true);
+        showToast(
+          name
+            ? `"${rawName}" → "${name}" is too short (minimum 3 characters).`
+            : "Use letters, digits, spaces, or hyphens (at least 3 chars).",
+          true
+        );
         return;
       }
       const prefix = buildPromptPrefix();
