@@ -80,7 +80,7 @@ class ChatResponse(BaseModel):
 class CreateTaskRequest(BaseModel):
     """Body for admin-created tasks from the panel."""
 
-    description: str = Field(min_length=1, max_length=2000)
+    description: str = Field(min_length=1, max_length=20_000)
     action_type: ActionType
     priority: Priority
     assignee: str = Field(default="self", description="'self', 'team', or a name prefix in the assignee map")
@@ -95,3 +95,16 @@ class PlanReviewRequest(BaseModel):
 class EnhanceRequest(BaseModel):
     source_task_id: UUID
     prompt: str = Field(min_length=1, max_length=2000)
+
+
+class MemberOut(BaseModel):
+    slug: str
+    user_email: str
+    role: Literal["owner", "editor", "viewer"]
+    added_by: str
+    added_at: datetime
+
+
+class InviteRequest(BaseModel):
+    user_email: str = Field(min_length=3, max_length=200)
+    role: Literal["owner", "editor", "viewer"] = "editor"
