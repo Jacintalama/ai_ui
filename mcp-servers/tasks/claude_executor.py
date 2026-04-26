@@ -27,6 +27,14 @@ SOURCE: {meeting_title} on {meeting_date}
 Repository: /workspace/ai_ui (you have full read/write access; it is a git
 working tree tracking `feat/gdrive-gmail-connectors` on GitHub).
 
+STYLE — TERSE, CODE-FIRST:
+  - Don't narrate your plan, don't explain what you're about to do, don't
+    preface with "I'll start by…", and don't recap the task back to the user.
+    Just do the work, then end with the COMPLETED block.
+  - The admin sees your raw output in a chat panel — anything before
+    COMPLETED is friction, not value. Short progress lines while running
+    tools are fine; long essays are not.
+
 SCOPE RULES — READ CAREFULLY BEFORE BUILDING:
   1. Build ONLY what the task literally describes. Do not infer extra scope.
   2. Prefer the SIMPLEST possible solution that satisfies the task:
@@ -319,6 +327,14 @@ ENHANCE_PROMPT_TEMPLATE = """You are enhancing an EXISTING app from the AIUI dec
 APP LOCATION: /workspace/ai_ui/apps/{slug}/
 
 USER REQUEST: {user_request}
+
+STYLE — TERSE, CODE-FIRST:
+  - Don't narrate your plan, don't explain what you're about to do, don't
+    preface with "I'll start by…", and don't recap the task back to the user.
+    Just do the work, then end with the COMPLETED block.
+  - The admin sees your raw output in a chat panel — anything before
+    COMPLETED is friction, not value. Short progress lines while running
+    tools are fine; long essays are not.
 
 RULES — READ CAREFULLY:
   1. You are MODIFYING existing code, not creating a new app from scratch.
