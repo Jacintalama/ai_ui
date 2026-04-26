@@ -2212,13 +2212,45 @@
               <div style="background: var(--warning-soft); color: var(--warning); border: 1px solid rgba(245,158,11,0.35); border-radius: var(--radius); padding: 8px 12px; font-size: 11px; line-height: 1.5; margin-bottom: 8px;">
                 ⚠ <strong>Powerful credential.</strong> This gives the build AI admin access to your Supabase database — it can create / drop / alter tables, run migrations, set up RLS policies. Use a Supabase project you own. Encrypted at rest with the same Fernet key as your anon key.
               </div>
+              <!-- Easy-mode builder: just paste password + pick region, we build the URI. -->
+              <div style="background: var(--accent-soft); border: 1px solid rgba(124,140,255,0.3); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;">
+                <div style="font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 6px;">⚡ Quick setup — let us build the URI for you</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                  <input type="password" id="db-easy-password" placeholder="Database password" autocomplete="off" spellcheck="false"
+                         style="padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;">
+                  <select id="db-easy-region"
+                         style="padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;outline:none;">
+                    <option value="">Region…</option>
+                    <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                    <option value="us-west-1">us-west-1 (N. California)</option>
+                    <option value="us-west-2">us-west-2 (Oregon)</option>
+                    <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+                    <option value="eu-west-1">eu-west-1 (Ireland)</option>
+                    <option value="eu-west-2">eu-west-2 (London)</option>
+                    <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+                    <option value="ap-northeast-2">ap-northeast-2 (Seoul)</option>
+                    <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
+                    <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
+                    <option value="ap-south-1">ap-south-1 (Mumbai)</option>
+                    <option value="sa-east-1">sa-east-1 (São Paulo)</option>
+                  </select>
+                </div>
+                <button type="button" id="db-easy-build"
+                        style="margin-top:6px;padding:6px 12px;font-size:11px;background:var(--accent);color:#0a0a0b;border:0;border-radius:var(--radius-sm);font-weight:600;cursor:pointer;">
+                  ↓ Fill URI below
+                </button>
+                <span id="db-easy-status" style="font-size:11px;color:var(--muted);margin-left:8px;"></span>
+                <div style="font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.5;">
+                  Find your region in your Supabase dashboard URL or in Project Settings → General → Region.
+                  Find your database password in Project Settings → Database → Database password.
+                </div>
+              </div>
               <textarea id="db-uri" rows="2" placeholder="postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres" autocomplete="off" spellcheck="false"
                         style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical;"></textarea>
               <div style="font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.6;">
-                <strong>Supabase → Project Settings → Database → Connection string → URI tab.</strong><br>
-                <strong style="color: var(--warning);">⚠ Use the "Transaction pooler"</strong> dropdown option (port <strong>6543</strong>, host <code style="font-family:var(--font-mono);font-size:11px;">aws-0-&lt;region&gt;.pooler.supabase.com</code>).
-                The "Direct connection" (<code style="font-family:var(--font-mono);font-size:11px;">db.&lt;ref&gt;.supabase.co</code>) is IPv6-only and won't work.<br>
-                <strong style="color: var(--warning);">⚠ Replace the literal text <code style="font-family:var(--font-mono);font-size:11px;">[YOUR-PASSWORD]</code></strong> with your actual database password (Supabase shows it as a placeholder for safety).
+                <strong>Or paste manually</strong> from Supabase → Project Settings → Database → Connection string → URI tab.<br>
+                <strong style="color: var(--warning);">⚠ Use "Transaction pooler"</strong> (port 6543, host <code style="font-family:var(--font-mono);font-size:11px;">aws-0-&lt;region&gt;.pooler.supabase.com</code>) — the "Direct connection" (<code style="font-family:var(--font-mono);font-size:11px;">db.&lt;ref&gt;.supabase.co</code>) is IPv6-only and won't work.<br>
+                <strong style="color: var(--warning);">⚠ NO brackets around the password</strong> — replace <code style="font-family:var(--font-mono);font-size:11px;">[YOUR-PASSWORD]</code> with the actual password (don't keep the brackets).
               </div>
             </div>
 
@@ -3374,6 +3406,39 @@
       $dbSave.textContent = "Save & connect";
     }
   });
+
+  // ── Quick URI builder: project ref (from saved Supabase URL) + password
+  // + region → full Transaction-pooler URI. Saves users from copy-pasting
+  // the wrong URI from Supabase's dashboard.
+  const $dbEasyPw = document.getElementById("db-easy-password");
+  const $dbEasyRegion = document.getElementById("db-easy-region");
+  const $dbEasyBuild = document.getElementById("db-easy-build");
+  const $dbEasyStatus = document.getElementById("db-easy-status");
+  if ($dbEasyBuild) {
+    $dbEasyBuild.addEventListener("click", () => {
+      // Extract project ref from supabase_url (e.g. "abc.supabase.co" → "abc").
+      const url = ($dbUrl.value || "").trim();
+      const m = url.match(/https?:\/\/([a-z0-9-]+)\.supabase\.(co|in)/i);
+      if (!m) {
+        $dbEasyStatus.style.color = "var(--danger)";
+        $dbEasyStatus.textContent = "Save Supabase URL first.";
+        return;
+      }
+      const ref = m[1];
+      const pw = ($dbEasyPw.value || "").trim();
+      if (!pw) { $dbEasyPw.focus(); $dbEasyStatus.textContent = "Enter password."; $dbEasyStatus.style.color = "var(--danger)"; return; }
+      const region = $dbEasyRegion.value;
+      if (!region) { $dbEasyRegion.focus(); $dbEasyStatus.textContent = "Pick region."; $dbEasyStatus.style.color = "var(--danger)"; return; }
+      // URL-encode any special characters in the password.
+      const encoded = encodeURIComponent(pw);
+      const uri = `postgresql://postgres.${ref}:${encoded}@aws-0-${region}.pooler.supabase.com:6543/postgres`;
+      const $dbUri = document.getElementById("db-uri");
+      if ($dbUri) $dbUri.value = uri;
+      $dbEasyStatus.style.color = "var(--success)";
+      $dbEasyStatus.textContent = "✓ URI built — click Save & connect.";
+      $dbEasyPw.value = "";  // clear plaintext from memory
+    });
+  }
 
   // Test connection — runs a tiny query through the /db/sql endpoint to
   // confirm the stored DB URI actually works against the user's Postgres.
