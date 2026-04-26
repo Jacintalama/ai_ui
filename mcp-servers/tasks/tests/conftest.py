@@ -30,7 +30,21 @@ async def db_session():
     await init_db()
     engine = create_async_engine(SQLA_DB_URL)
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    # SAFETY: refuse to TRUNCATE in production. Tests may only run when
+    # AIUI_TEST_DB=1 is set explicitly, OR when the DB has zero user data.
+    # Without this guard, running pytest against the live DATABASE_URL wipes
+    # users' projects (which is exactly what happened — never again).
     async with engine.begin() as conn:
+        if os.environ.get("AIUI_TEST_DB") != "1":
+            existing = (await conn.execute(text(
+                "SELECT COUNT(*) FROM tasks.items "
+                "WHERE built_app_slug IS NOT NULL AND built_app_slug NOT IN ('alpha','beta')"
+            ))).scalar() or 0
+            if existing > 0:
+                raise RuntimeError(
+                    f"Refusing to TRUNCATE — database has {existing} real project rows. "
+                    "Set AIUI_TEST_DB=1 to override (only on a dedicated test DB)."
+                )
         await conn.execute(text(
             "TRUNCATE tasks.items, tasks.executions, "
             "tasks.published_apps, tasks.project_members, "
