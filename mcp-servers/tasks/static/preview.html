@@ -2214,7 +2214,12 @@
               </div>
               <textarea id="db-uri" rows="2" placeholder="postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres" autocomplete="off" spellcheck="false"
                         style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical;"></textarea>
-              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">In your Supabase dashboard → <strong>Project Settings → Database → Connection string → URI</strong> tab. Use the <strong>Transaction pooler</strong> URI (port 6543). The "postgres" you see in the URL is just Supabase's underlying engine — there's no other database, this IS your Supabase.</div>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.6;">
+                <strong>Supabase → Project Settings → Database → Connection string → URI tab.</strong><br>
+                <strong style="color: var(--warning);">⚠ Use the "Transaction pooler"</strong> dropdown option (port <strong>6543</strong>, host <code style="font-family:var(--font-mono);font-size:11px;">aws-0-&lt;region&gt;.pooler.supabase.com</code>).
+                The "Direct connection" (<code style="font-family:var(--font-mono);font-size:11px;">db.&lt;ref&gt;.supabase.co</code>) is IPv6-only and won't work.<br>
+                <strong style="color: var(--warning);">⚠ Replace the literal text <code style="font-family:var(--font-mono);font-size:11px;">[YOUR-PASSWORD]</code></strong> with your actual database password (Supabase shows it as a placeholder for safety).
+              </div>
             </div>
 
             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">

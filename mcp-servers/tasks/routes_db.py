@@ -90,6 +90,24 @@ async def execute_sql(
     if not host:
         raise HTTPException(status_code=400, detail="DB URI missing host — re-copy from Supabase.")
 
+    # Common Supabase mistakes — surface a clear fix instead of an asyncpg error.
+    if password and password.upper() in ("YOUR-PASSWORD", "[YOUR-PASSWORD]", "PASSWORD"):
+        raise HTTPException(
+            status_code=400,
+            detail="Your DB URI still has the literal placeholder '[YOUR-PASSWORD]'. "
+                   "Replace it with your actual database password from Supabase → "
+                   "Project Settings → Database → Database password.",
+        )
+    if host.startswith("db.") and host.endswith(".supabase.co"):
+        raise HTTPException(
+            status_code=400,
+            detail="That's the DIRECT connection (db.<ref>.supabase.co). It's IPv6-only "
+                   "and our server can't reach it. Use the TRANSACTION POOLER URI instead "
+                   "(port 6543, host aws-0-<region>.pooler.supabase.com). Find it in "
+                   "Supabase → Project Settings → Database → Connection string → switch "
+                   "the dropdown to 'Transaction pooler'.",
+        )
+
     started = time.perf_counter()
     conn = None
     try:
