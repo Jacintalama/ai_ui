@@ -142,6 +142,24 @@ Use this tool to:
 ALWAYS verify with a follow-up `SELECT` that the change took effect before
 moving on. Quote identifiers properly. Run statements one at a time — the
 endpoint executes a single statement per call.
+
+### RLS is MANDATORY on every table you create
+
+Never leave a table with RLS off. Without RLS, anon-key access exposes the
+entire table to anyone with the project URL — Supabase will warn the user,
+and you will have shipped a security hole. Every `CREATE TABLE` MUST be
+followed (in separate calls) by:
+
+  1. `CREATE TABLE <name> (…);`
+  2. `ALTER TABLE <name> ENABLE ROW LEVEL SECURITY;`
+  3. At least one policy:
+     - For apps that DO NOT use Supabase Auth (no sign-in flow yet):
+       `CREATE POLICY "allow_all_anon" ON <name> FOR ALL TO anon USING (true) WITH CHECK (true);`
+     - For apps that DO use Supabase Auth and have a `user_id` column:
+       `CREATE POLICY "user_owns_row" ON <name> FOR ALL TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);`
+
+Pick the policy that matches the app's auth model. Apply all three steps for
+every new table — no exceptions.
 """
 
 

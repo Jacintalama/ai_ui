@@ -18,9 +18,11 @@ Tokens are encrypted with the same key before persisting.
 """
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from urllib.parse import urlencode
 
 import httpx
@@ -36,6 +38,16 @@ from models import ProjectSupabase
 from routes_projects import _require_role, _validate_slug
 
 router = APIRouter()  # mounted at root; this module's paths are absolute
+
+_KNOWN_REGIONS: list[str] = [
+    "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+    "ca-central-1", "eu-west-1", "eu-west-2", "eu-west-3",
+    "eu-central-1", "eu-central-2", "eu-north-1",
+    "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ap-northeast-1",
+    "ap-northeast-2", "sa-east-1",
+]
+
+_PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9-]{2,40}$")
 
 CLIENT_ID = os.environ.get("AIUI_SUPABASE_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("AIUI_SUPABASE_CLIENT_SECRET", "")
@@ -82,7 +94,7 @@ async def oauth_start(slug: str, user: AdminUser = Depends(current_admin)):
             detail="Supabase OAuth is not configured on this server.",
         )
     async with session() as s:
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
+        await _require_role(s, slug, user.email, "owner")
     state = _make_state(slug, user.email)
     params = {
         "client_id": CLIENT_ID,
@@ -271,6 +283,50 @@ class LinkProjectResponse(BaseModel):
     supabase_url: str
 
 
+async def _link_project(s, row: ProjectSupabase, project_ref: str,
+                        access: str) -> LinkProjectResponse:
+    """Fetch project + anon key from Management API and persist them on `row`.
+
+    Caller must have already validated slug + ownership and obtained a fresh
+    access token. Commits via the supplied session.
+    """
+    headers = {"Authorization": f"Bearer {access}"}
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        det = await c.get(f"https://api.supabase.com/v1/projects/{project_ref}",
+                          headers=headers)
+        if det.status_code == 404:
+            raise HTTPException(status_code=404, detail="Project not found in your Supabase organization.")
+        if det.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Supabase API: {det.status_code} — {det.text[:300]}")
+        project = det.json()
+        project_name = project.get("name") or project_ref
+
+        keys = await c.get(f"https://api.supabase.com/v1/projects/{project_ref}/api-keys",
+                           headers=headers)
+        if keys.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Supabase keys API: {keys.status_code} — {keys.text[:300]}")
+        anon_key = None
+        for k in keys.json() or []:
+            if k.get("name") == "anon" or k.get("api_key", "").startswith("eyJ"):
+                anon_key = k.get("api_key")
+                break
+        if not anon_key:
+            raise HTTPException(status_code=502, detail="No anon key found for this project.")
+
+    supabase_url = f"https://{project_ref}.supabase.co"
+    row.linked_project_ref = project_ref
+    row.supabase_url = supabase_url
+    row.anon_key_encrypted = crypto_utils.encrypt(anon_key)
+    row.updated_at = datetime.utcnow()
+    await s.commit()
+
+    return LinkProjectResponse(
+        project_ref=project_ref,
+        project_name=project_name,
+        supabase_url=supabase_url,
+    )
+
+
 @router.post("/api/projects/{slug}/supabase/oauth/link",
              response_model=LinkProjectResponse)
 async def link_oauth_project(
@@ -293,49 +349,276 @@ async def link_oauth_project(
         if row is None or not row.oauth_access_token_encrypted:
             raise HTTPException(status_code=409, detail="Connect Supabase first.")
         access = await _ensure_fresh_token(s, row)
+        return await _link_project(s, row, project_ref, access)
 
-    headers = {"Authorization": f"Bearer {access}"}
-    async with httpx.AsyncClient(timeout=15.0) as c:
-        # Fetch project details to confirm it exists and get the name.
-        det = await c.get(f"https://api.supabase.com/v1/projects/{project_ref}",
-                          headers=headers)
-        if det.status_code == 404:
-            raise HTTPException(status_code=404, detail="Project not found in your Supabase organization.")
-        if det.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Supabase API: {det.status_code} — {det.text[:300]}")
-        project = det.json()
-        project_name = project.get("name") or project_ref
 
-        # Fetch the API keys (anon key).
-        keys = await c.get(f"https://api.supabase.com/v1/projects/{project_ref}/api-keys",
-                           headers=headers)
-        if keys.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"Supabase keys API: {keys.status_code} — {keys.text[:300]}")
-        anon_key = None
-        for k in keys.json() or []:
-            if k.get("name") == "anon" or k.get("api_key", "").startswith("eyJ"):
-                anon_key = k.get("api_key")
-                break
-        if not anon_key:
-            raise HTTPException(status_code=502, detail="No anon key found for this project.")
+def _sanitize_suggested_name(slug: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9-]", "-", slug).strip("-")
+    if len(cleaned) < 2:
+        cleaned = (cleaned + "-app")[:40]
+    return cleaned[:40]
 
-    supabase_url = f"https://{project_ref}.supabase.co"
 
+class AutoLinkLinked(BaseModel):
+    action: Literal["linked"] = "linked"
+    project_ref: str
+    project_name: str
+    supabase_url: str
+
+
+class _PickProject(BaseModel):
+    ref: str
+    name: str
+    region: str | None = None
+    organization_id: str | None = None
+
+
+class AutoLinkPick(BaseModel):
+    action: Literal["pick"] = "pick"
+    projects: list[_PickProject]
+
+
+class _Org(BaseModel):
+    slug: str
+    name: str
+
+
+class AutoLinkCreate(BaseModel):
+    action: Literal["create"] = "create"
+    organizations: list[_Org]
+    regions: list[str]
+    suggested_name: str
+
+
+@router.post("/api/projects/{slug}/supabase/oauth/auto-link")
+async def auto_link_oauth(
+    slug: str,
+    user: AdminUser = Depends(current_admin),
+) -> AutoLinkLinked | AutoLinkPick | AutoLinkCreate:
+    """Decide what to do after OAuth based on project count.
+
+    - 0 projects -> action: "create" (frontend shows a create form)
+    - 1 project  -> action: "linked" (auto-linked using `_link_project`)
+    - 2+         -> action: "pick"   (frontend shows a picker)
+    """
+    _validate_slug(slug)
     async with session() as s:
+        await _require_role(s, slug, user.email, "owner")
         row = (await s.execute(
             select(ProjectSupabase).where(ProjectSupabase.slug == slug)
-        )).scalar_one()
-        row.linked_project_ref = project_ref
-        row.supabase_url = supabase_url
-        row.anon_key_encrypted = crypto_utils.encrypt(anon_key)
+        )).scalar_one_or_none()
+        if row is None or not row.oauth_access_token_encrypted:
+            raise HTTPException(status_code=409,
+                                detail="Connect Supabase first (no OAuth token stored).")
+        access = await _ensure_fresh_token(s, row)
+
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            resp = await c.get(
+                "https://api.supabase.com/v1/projects",
+                headers={"Authorization": f"Bearer {access}"},
+            )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Supabase API error (HTTP {resp.status_code}): {resp.text[:300]}",
+            )
+        projects = resp.json() or []
+
+        if len(projects) == 1:
+            ref = projects[0].get("id") or ""
+            return await _link_project(s, row, ref, access)
+
+        if len(projects) >= 2:
+            return AutoLinkPick(projects=[
+                _PickProject(
+                    ref=p.get("id") or "",
+                    name=p.get("name") or "(unnamed)",
+                    region=p.get("region"),
+                    organization_id=p.get("organization_id"),
+                )
+                for p in projects
+            ])
+
+        # Zero projects -> need to create one.
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            org_resp = await c.get(
+                "https://api.supabase.com/v1/organizations",
+                headers={"Authorization": f"Bearer {access}"},
+            )
+        if org_resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Supabase organizations API: {org_resp.status_code} — {org_resp.text[:300]}",
+            )
+        orgs = org_resp.json() or []
+        return AutoLinkCreate(
+            organizations=[_Org(slug=o.get("slug") or "",
+                                name=o.get("name") or o.get("slug") or "(unnamed)")
+                           for o in orgs],
+            regions=list(_KNOWN_REGIONS),
+            suggested_name=_sanitize_suggested_name(slug),
+        )
+
+
+class CreateProjectRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=40)
+    region: str
+    organization_id: str = Field(min_length=1)
+    db_password: str = Field(min_length=12, max_length=72)
+
+
+class CreateProjectResponse(BaseModel):
+    action: Literal["creating"] = "creating"
+    project_ref: str
+    status: str
+
+
+@router.post("/api/projects/{slug}/supabase/oauth/create-project",
+             response_model=CreateProjectResponse)
+async def create_oauth_project(
+    slug: str,
+    body: CreateProjectRequest,
+    user: AdminUser = Depends(current_admin),
+):
+    """Create a brand-new Supabase project on behalf of the user.
+
+    Returns immediately after the POST — provisioning happens asynchronously
+    on Supabase's side (30-90s). Frontend polls /create-status to watch it.
+    """
+    _validate_slug(slug)
+    if not _PROJECT_NAME_RE.match(body.name):
+        raise HTTPException(status_code=400,
+                            detail="Project name must be 2-40 chars, alphanumeric + dashes.")
+    if body.region not in _KNOWN_REGIONS:
+        raise HTTPException(status_code=400, detail="Unknown region.")
+
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner")
+        row = (await s.execute(
+            select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+        )).scalar_one_or_none()
+        if row is None or not row.oauth_access_token_encrypted:
+            raise HTTPException(status_code=409, detail="Connect Supabase first.")
+        access = await _ensure_fresh_token(s, row)
+
+        payload = {
+            "name": body.name,
+            "organization_id": body.organization_id,
+            "region": body.region,
+            "plan": "free",
+            "db_pass": body.db_password,
+        }
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            resp = await c.post(
+                "https://api.supabase.com/v1/projects",
+                headers={"Authorization": f"Bearer {access}",
+                         "Content-Type": "application/json"},
+                json=payload,
+            )
+        if resp.status_code == 403:
+            raise HTTPException(
+                status_code=422,
+                detail=("Your Supabase OAuth app doesn't have permission to "
+                        "create projects. Open the Supabase dashboard, create "
+                        "a project there, then come back and click 'Refresh "
+                        "projects'."),
+            )
+        if resp.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=502,
+                detail=f"Supabase create-project API: {resp.status_code} — {resp.text[:300]}",
+            )
+        created = resp.json() or {}
+        ref = created.get("id") or created.get("ref") or ""
+        if not ref:
+            raise HTTPException(status_code=502,
+                                detail="Supabase did not return a project_ref.")
+
+        # Persist NOW so /create-status can poll. anon key + url come later.
+        row.linked_project_ref = ref
         row.updated_at = datetime.utcnow()
         await s.commit()
 
-    return LinkProjectResponse(
-        project_ref=project_ref,
-        project_name=project_name,
-        supabase_url=supabase_url,
+    return CreateProjectResponse(
+        project_ref=ref,
+        status=created.get("status") or "COMING_UP",
     )
+
+
+_TERMINAL_FAIL_STATUSES = {"INIT_FAILED", "REMOVED", "RESTORE_FAILED",
+                           "PAUSE_FAILED", "UNKNOWN"}
+
+
+class CreateStatusCreating(BaseModel):
+    status: Literal["creating"] = "creating"
+    message: str
+
+
+class CreateStatusReady(BaseModel):
+    status: Literal["ready"] = "ready"
+    project_ref: str
+    supabase_url: str
+    anon_key_present: bool = True
+
+
+class CreateStatusFailed(BaseModel):
+    status: Literal["failed"] = "failed"
+    message: str
+
+
+@router.get("/api/projects/{slug}/supabase/oauth/create-status")
+async def create_status(
+    slug: str,
+    user: AdminUser = Depends(current_admin),
+) -> CreateStatusCreating | CreateStatusReady | CreateStatusFailed:
+    """Polled by the frontend while a newly-created project is provisioning."""
+    _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner")
+        row = (await s.execute(
+            select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+        )).scalar_one_or_none()
+        if row is None or not row.oauth_access_token_encrypted:
+            raise HTTPException(status_code=409, detail="Connect Supabase first.")
+        ref = row.linked_project_ref
+        if not ref:
+            raise HTTPException(status_code=409, detail="No project being provisioned.")
+        access = await _ensure_fresh_token(s, row)
+
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            resp = await c.get(
+                f"https://api.supabase.com/v1/projects/{ref}",
+                headers={"Authorization": f"Bearer {access}"},
+            )
+        if resp.status_code == 404:
+            return CreateStatusFailed(
+                message="Project not found — it may have been deleted on Supabase.",
+            )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Supabase API: {resp.status_code} — {resp.text[:300]}",
+            )
+        project = resp.json() or {}
+        status = (project.get("status") or "").upper()
+
+        if status == "ACTIVE_HEALTHY":
+            # Auto-link now: project finished provisioning, so its anon key
+            # is live. Reuse `_link_project` to fetch + persist.
+            linked = await _link_project(s, row, ref, access)
+            return CreateStatusReady(
+                project_ref=linked.project_ref,
+                supabase_url=linked.supabase_url,
+                anon_key_present=True,
+            )
+        if status in _TERMINAL_FAIL_STATUSES:
+            return CreateStatusFailed(
+                message=f"Project provisioning failed (status={status}). "
+                        "Try creating a new project on supabase.com directly.",
+            )
+        return CreateStatusCreating(
+            message="Provisioning your Supabase project — usually 30-90s...",
+        )
 
 
 @router.delete("/api/projects/{slug}/supabase/oauth", status_code=204)
