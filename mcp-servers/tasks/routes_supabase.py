@@ -71,8 +71,37 @@ async def set_supabase(
     if not _URL_RE.match(url):
         raise HTTPException(status_code=400, detail="supabase_url must be an https://… URL")
     db_uri = (body.db_uri or "").strip() or None
-    if db_uri and not db_uri.startswith("postgresql://"):
-        raise HTTPException(status_code=400, detail="db_uri must start with postgresql://")
+    if db_uri:
+        if not db_uri.startswith("postgresql://"):
+            raise HTTPException(status_code=400, detail="db_uri must start with postgresql://")
+        # Catch the two most common Supabase pasting mistakes UP FRONT so we
+        # never save something we know won't work.
+        import re as _re
+        from urllib.parse import unquote as _unq
+        m = _re.match(
+            r"^postgres(?:ql)?://(?:([^:@/]+)(?::([^@]+))?@)?\[?([^:/\]]+)\]?",
+            db_uri,
+        )
+        if not m:
+            raise HTTPException(status_code=400, detail="DB URI must look like postgresql://user:password@host:port/dbname")
+        password = _unq(m.group(2)) if m.group(2) else ""
+        host = m.group(3) or ""
+        if password.upper() in ("YOUR-PASSWORD", "[YOUR-PASSWORD]", "PASSWORD"):
+            raise HTTPException(
+                status_code=400,
+                detail="Your DB URI still has the literal placeholder '[YOUR-PASSWORD]'. "
+                       "Replace it with the real database password from Supabase → "
+                       "Project Settings → Database → Database password.",
+            )
+        if host.startswith("db.") and host.endswith(".supabase.co"):
+            raise HTTPException(
+                status_code=400,
+                detail="That's Supabase's DIRECT connection (IPv6-only — our server can't "
+                       "reach it). In Supabase → Project Settings → Database → Connection "
+                       "string, change the dropdown from 'Direct connection' to "
+                       "'Transaction pooler' (port 6543, aws-0-<region>.pooler.supabase.com), "
+                       "then paste THAT URI here.",
+            )
     enc_key = crypto_utils.encrypt(body.anon_key.strip())
     enc_db = crypto_utils.encrypt(db_uri) if db_uri else None
 
