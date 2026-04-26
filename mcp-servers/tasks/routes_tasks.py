@@ -1,4 +1,5 @@
 """Task CRUD + state transitions (manual mode)."""
+import logging
 from datetime import datetime
 from uuid import UUID
 
@@ -12,6 +13,9 @@ from auth import AdminUser, current_admin
 from db import session
 from models import TaskItem
 from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, EnhanceRequest, TaskOut
+from templates import build_rules_for, is_valid_key
+
+logger = logging.getLogger("tasks.routes")
 
 router = APIRouter(prefix="/api/tasks")
 
@@ -207,12 +211,36 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
         assignee_name = assignee_raw
         assignee_email = amap.resolve(assignee_raw)
 
+    # Legacy `rules` / `template_rules` fields are accepted but ignored —
+    # rules now come from the server-side template lookup (Phase D).
+    if (body.rules and body.rules.strip()) or (body.template_rules and body.template_rules.strip()):
+        logger.info(
+            "Ignoring legacy `rules` field — using server-side template `%s` instead.",
+            body.template_key or "<none>",
+        )
+
+    description = (body.description or "").strip()
+    if body.action_type == "BUILD" and body.template_key:
+        if not is_valid_key(body.template_key):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Unknown template_key: {body.template_key!r}",
+            )
+        prefix = build_rules_for(body.template_key, body.storage)
+        slug = (body.slug or "").strip()
+        slug_instr = (
+            f'PROJECT NAME: "{slug}". Create the app at apps/{slug}/ and use this exact slug throughout.\n\n'
+            if slug
+            else ""
+        )
+        description = f"{slug_instr}{prefix}\n\nUSER REQUEST:\n{description}"
+
     item = TaskItem(
         meeting_id=uuid.uuid4(),  # synthetic — no real meeting
         action_type=body.action_type,
         assignee_name=assignee_name,
         assignee_email=assignee_email,
-        description=body.description.strip()[:20_000],
+        description=description[:20_000],
         priority=body.priority,
         status="pending",
         max_attempts=body.max_attempts,

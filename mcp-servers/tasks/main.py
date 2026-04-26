@@ -16,6 +16,7 @@ from routes_projects import router as projects_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
+from routes_templates import router as templates_router
 from routes_webhook import router as webhook_router
 
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +41,7 @@ app.include_router(supabase_router)
 app.include_router(supabase_oauth_router)
 app.include_router(db_router)
 app.include_router(chat_history_router)
+app.include_router(templates_router)
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
 
 

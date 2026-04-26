@@ -78,13 +78,26 @@ class ChatResponse(BaseModel):
 
 
 class CreateTaskRequest(BaseModel):
-    """Body for admin-created tasks from the panel."""
+    """Body for admin-created tasks from the panel.
+
+    `template_key` + `storage` + `slug` are the new (secure) BUILD inputs —
+    when present, the server looks up the canonical rules text from
+    templates.py and assembles the prompt prefix server-side. Legacy
+    `rules` / `template_rules` fields are accepted but ignored.
+    """
 
     description: str = Field(min_length=1, max_length=20_000)
     action_type: ActionType
     priority: Priority
     assignee: str = Field(default="self", description="'self', 'team', or a name prefix in the assignee map")
     max_attempts: int = Field(default=1, ge=1, le=10, description="1=one-shot, >1=loop mode")
+    template_key: str | None = Field(default=None, description="Server-side template lookup key (BUILD only)")
+    storage: str | None = Field(default=None, description="'none' or 'supabase' (BUILD only)")
+    slug: str | None = Field(default=None, max_length=200, description="Optional project slug to inject into the build prompt")
+    # Deprecated — accepted for backwards compat for one release, ignored
+    # server-side. Caller should switch to `template_key`.
+    rules: str | None = Field(default=None, max_length=50_000)
+    template_rules: str | None = Field(default=None, max_length=50_000)
 
 
 class PlanReviewRequest(BaseModel):
