@@ -61,18 +61,32 @@ async def execute_sql(
                 detail="Could not decrypt the stored DB URI — re-paste it in the Database tab.",
             )
 
-    # Parse the URI ourselves and pass kwargs to asyncpg.connect — passing
-    # the raw DSN trips Python's urlparse on Supabase passwords containing
-    # unescaped special characters (':', '@', '/', etc.).
-    from urllib.parse import unquote, urlsplit
-    parts = urlsplit(db_uri)
-    if parts.scheme not in ("postgres", "postgresql"):
-        raise HTTPException(status_code=400, detail="DB URI must start with postgresql://")
-    user = unquote(parts.username) if parts.username else "postgres"
-    password = unquote(parts.password) if parts.password else None
-    host = parts.hostname
-    port = parts.port or 5432
-    database = (parts.path or "/postgres").lstrip("/") or "postgres"
+    # Parse the URI with a regex (NOT urllib) — Python's urlparse trips on
+    # Supabase URIs that contain unescaped special chars in the password
+    # AND on hostnames it mistakes for IPv6 (Supabase sometimes ships URIs
+    # with stray `[...]` brackets around the host). Regex-only is robust.
+    import re
+    from urllib.parse import unquote
+    db_uri_clean = db_uri.strip()
+    m = re.match(
+        r"^(?P<scheme>postgres(?:ql)?)://"
+        r"(?:(?P<user>[^:@/]+)(?::(?P<password>[^@]+))?@)?"
+        r"\[?(?P<host>[^:/\]]+)\]?"   # optional brackets around host
+        r"(?::(?P<port>\d+))?"
+        r"(?:/(?P<database>[^?]+))?"
+        r"(?:\?.*)?$",
+        db_uri_clean,
+    )
+    if not m:
+        raise HTTPException(
+            status_code=400,
+            detail="DB URI didn't match expected shape postgresql://user:password@host:port/dbname",
+        )
+    user = unquote(m.group("user") or "postgres")
+    password = unquote(m.group("password")) if m.group("password") else None
+    host = m.group("host")
+    port = int(m.group("port")) if m.group("port") else 5432
+    database = m.group("database") or "postgres"
     if not host:
         raise HTTPException(status_code=400, detail="DB URI missing host — re-copy from Supabase.")
 
