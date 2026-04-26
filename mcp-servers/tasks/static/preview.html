@@ -2237,6 +2237,47 @@
                   Disconnect Supabase
                 </button>
               </div>
+
+              <div id="db-oauth-state-d" hidden style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;display:flex;flex-direction:column;gap:14px;">
+                <div style="font-weight:600;font-size:14px;color:var(--text);">
+                  🆕 Create your first Supabase project
+                </div>
+                <div style="font-size:12px;color:var(--text-2);line-height:1.5;">
+                  You don't have any Supabase projects yet. We'll create one named after this app — takes 30–90 seconds.
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Project name
+                    <input id="db-oauth-cp-name" type="text" autocomplete="off" spellcheck="false"
+                           style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                  </label>
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Organization
+                    <select id="db-oauth-cp-org"
+                            style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                    </select>
+                  </label>
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Region
+                    <select id="db-oauth-cp-region"
+                            style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                    </select>
+                  </label>
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Database password
+                    <input id="db-oauth-cp-pw" type="password" autocomplete="new-password" spellcheck="false"
+                           style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                    <span style="font-size:10px;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400;">12+ characters. You'll need this for direct DB connections — store it somewhere.</span>
+                  </label>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;">
+                  <button class="btn btn-primary" id="db-oauth-cp-submit" type="button"
+                          style="background:#22c55e;border-color:#22c55e;color:#0a0a0b;font-weight:600;">
+                    Create project
+                  </button>
+                  <span id="db-oauth-cp-status" style="font-size:12px;color:var(--muted);"></span>
+                </div>
+              </div>
             </div>
 
             <details id="db-manual-wrap" style="border:1px solid var(--border);border-radius:var(--radius);padding:0;">
@@ -3348,13 +3389,22 @@
   const $dbOauthStateA     = document.getElementById("db-oauth-state-a");
   const $dbOauthStateB     = document.getElementById("db-oauth-state-b");
   const $dbOauthStateC     = document.getElementById("db-oauth-state-c");
+  const $dbOauthStateD     = document.getElementById("db-oauth-state-d");
   const $dbOauthConnect    = document.getElementById("db-oauth-connect");
   const $dbOauthDisconnect = document.getElementById("db-oauth-disconnect");
   const $dbOauthDisconnectB = document.getElementById("db-oauth-disconnect-b");
   const $dbOauthProjects   = document.getElementById("db-oauth-projects");
   const $dbOauthLinkedName = document.getElementById("db-oauth-linked-name");
   const $dbOauthStatus     = document.getElementById("db-oauth-status");
+  const $dbOauthCpName     = document.getElementById("db-oauth-cp-name");
+  const $dbOauthCpOrg      = document.getElementById("db-oauth-cp-org");
+  const $dbOauthCpRegion   = document.getElementById("db-oauth-cp-region");
+  const $dbOauthCpPw       = document.getElementById("db-oauth-cp-pw");
+  const $dbOauthCpSubmit   = document.getElementById("db-oauth-cp-submit");
+  const $dbOauthCpStatus   = document.getElementById("db-oauth-cp-status");
   const $dbManualWrap      = document.getElementById("db-manual-wrap");
+  let _createPollTimer = null;
+  let _createPollCount = 0;
 
   function _stopOauthPolling() {
     if (_oauthPollTimer) {
@@ -3372,6 +3422,7 @@
     $dbOauthStateA.hidden = true;
     $dbOauthStateB.hidden = true;
     $dbOauthStateC.hidden = true;
+    if ($dbOauthStateD) $dbOauthStateD.hidden = true;
     if (!connected) {
       $dbOauthStateA.hidden = false;
       // If user has a manual config but no OAuth, expand manual so they see what's saved.
@@ -3527,15 +3578,255 @@
           _stopOauthPolling();
           _dbState = cfg;
           if ($dbOauthStatus) $dbOauthStatus.textContent = "";
-          _renderDatabase();
+          await _runAutoLink(cfg);
         }
       } catch (_) { /* keep polling */ }
     }, 2000);
   }
 
+  async function _runAutoLink(cfg) {
+    if (!slug) return;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/auto-link", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Auto-link failed: " + txt.slice(0, 200), "error", 4500);
+        _renderDatabase();
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      if (data.action === "linked") {
+        toast("Linked to " + (data.project_name || data.project_ref || "Supabase"), "success", 3500);
+        await loadDatabase();
+        return;
+      }
+      if (data.action === "pick") {
+        if ($dbOauthStateA) $dbOauthStateA.hidden = true;
+        if ($dbOauthStateC) $dbOauthStateC.hidden = true;
+        if ($dbOauthStateD) $dbOauthStateD.hidden = true;
+        if ($dbOauthStateB) $dbOauthStateB.hidden = false;
+        _renderProjectList(Array.isArray(data.projects) ? data.projects : []);
+        return;
+      }
+      if (data.action === "create") {
+        _renderCreateForm(data);
+        return;
+      }
+      _renderDatabase();
+    } catch (err) {
+      toast("Network error: " + (err.message || err), "error", 4500);
+      _renderDatabase();
+    }
+  }
+
+  function _renderProjectList(projects) {
+    if (!$dbOauthProjects) return;
+    $dbOauthProjects.innerHTML = "";
+    if (!projects.length) {
+      $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--muted);">No projects found in your Supabase account.</div>';
+      return;
+    }
+    projects.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "oauth-project-row";
+      btn.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;cursor:pointer;text-align:left;width:100%;transition:background 0.12s;";
+      btn.addEventListener("mouseenter", () => { btn.style.background = "var(--surface-2)"; });
+      btn.addEventListener("mouseleave", () => { btn.style.background = "var(--surface)"; });
+      const name = document.createElement("span");
+      name.style.cssText = "flex:1;font-weight:600;";
+      name.textContent = "📦 " + (p.name || p.ref);
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      meta.style.cssText = "color:var(--muted);font-family:var(--font-mono);font-size:11px;";
+      meta.textContent = (p.region || "?") + " · " + (p.ref || "");
+      btn.appendChild(name);
+      btn.appendChild(meta);
+      btn.addEventListener("click", () => _linkOauthProject(p.ref, btn));
+      $dbOauthProjects.appendChild(btn);
+    });
+  }
+
+  function _renderCreateForm(data) {
+    if (!$dbOauthStateD) return;
+    if ($dbOauthStateA) $dbOauthStateA.hidden = true;
+    if ($dbOauthStateB) $dbOauthStateB.hidden = true;
+    if ($dbOauthStateC) $dbOauthStateC.hidden = true;
+    $dbOauthStateD.hidden = false;
+
+    const orgs = Array.isArray(data.organizations) ? data.organizations : [];
+    if ($dbOauthCpOrg) {
+      $dbOauthCpOrg.innerHTML = "";
+      orgs.forEach((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.slug || o.id || "";
+        opt.textContent = o.name || o.slug || o.id || "";
+        $dbOauthCpOrg.appendChild(opt);
+      });
+    }
+
+    const regions = Array.isArray(data.regions) ? data.regions : [];
+    if ($dbOauthCpRegion) {
+      $dbOauthCpRegion.innerHTML = "";
+      regions.forEach((reg) => {
+        const opt = document.createElement("option");
+        opt.value = reg;
+        opt.textContent = reg;
+        $dbOauthCpRegion.appendChild(opt);
+      });
+      if (regions.indexOf("us-east-1") !== -1) {
+        $dbOauthCpRegion.value = "us-east-1";
+      } else if (regions.length > 0) {
+        $dbOauthCpRegion.value = regions[0];
+      }
+    }
+
+    if ($dbOauthCpName) $dbOauthCpName.value = data.suggested_name || "";
+    if ($dbOauthCpPw) $dbOauthCpPw.value = "";
+    if ($dbOauthCpStatus) {
+      $dbOauthCpStatus.style.color = "var(--muted)";
+      $dbOauthCpStatus.textContent = "";
+    }
+    if ($dbOauthCpSubmit) {
+      $dbOauthCpSubmit.disabled = false;
+      $dbOauthCpSubmit.style.opacity = "1";
+    }
+  }
+
+  async function _submitCreateProject() {
+    if (!slug || !$dbOauthCpStatus) return;
+    const name = ($dbOauthCpName && $dbOauthCpName.value || "").trim();
+    const org = $dbOauthCpOrg && $dbOauthCpOrg.value || "";
+    const region = $dbOauthCpRegion && $dbOauthCpRegion.value || "";
+    const pw = $dbOauthCpPw && $dbOauthCpPw.value || "";
+    const setErr = (msg) => {
+      $dbOauthCpStatus.style.color = "var(--danger)";
+      $dbOauthCpStatus.textContent = msg;
+    };
+    if (!/^[a-zA-Z0-9-]{2,40}$/.test(name)) {
+      setErr("Project name: 2–40 chars, letters/numbers/dashes only.");
+      return;
+    }
+    if (pw.length < 12) {
+      setErr("Database password must be at least 12 characters.");
+      return;
+    }
+    if (!org) {
+      setErr("Pick an organization.");
+      return;
+    }
+    if (!region) {
+      setErr("Pick a region.");
+      return;
+    }
+    if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = true; $dbOauthCpSubmit.style.opacity = "0.6"; }
+    $dbOauthCpStatus.style.color = "var(--muted)";
+    $dbOauthCpStatus.textContent = "Creating project (30–90s)…";
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/create-project", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ name: name, region: region, organization_id: org, db_password: pw }),
+      });
+      if (r.status === 422) {
+        const data = await r.json().catch(() => ({}));
+        const detail = (data && (data.detail || data.message)) || "Missing required scope.";
+        $dbOauthCpStatus.style.color = "var(--danger)";
+        $dbOauthCpStatus.innerHTML = "";
+        const span = document.createElement("span");
+        span.textContent = detail + " ";
+        const link = document.createElement("a");
+        link.href = "https://supabase.com/dashboard";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.style.color = "var(--accent)";
+        link.textContent = "Open Supabase dashboard";
+        $dbOauthCpStatus.appendChild(span);
+        $dbOauthCpStatus.appendChild(link);
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+        return;
+      }
+      if (!r.ok) {
+        const txt = await r.text();
+        setErr("Create failed: " + txt.slice(0, 200));
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      if (data.project_ref) {
+        _pollCreateStatus(data.project_ref);
+      } else {
+        setErr("Unexpected response from server.");
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+      }
+    } catch (err) {
+      setErr("Network error: " + (err.message || err));
+      if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+    }
+  }
+
+  function _stopCreatePolling() {
+    if (_createPollTimer) {
+      clearInterval(_createPollTimer);
+      _createPollTimer = null;
+    }
+    _createPollCount = 0;
+  }
+
+  function _pollCreateStatus(projectRef) {
+    if (!slug || !projectRef) return;
+    _stopCreatePolling();
+    _createPollCount = 0;
+    _createPollTimer = setInterval(async () => {
+      _createPollCount += 1;
+      if (_createPollCount > 60) {
+        _stopCreatePolling();
+        if ($dbOauthCpStatus) {
+          $dbOauthCpStatus.style.color = "var(--warning)";
+          $dbOauthCpStatus.textContent = "Still provisioning. Refresh this page in a minute to see status.";
+        }
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+        return;
+      }
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/create-status", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) return;
+        const data = await r.json().catch(() => ({}));
+        if ($dbOauthCpStatus && data.message) {
+          $dbOauthCpStatus.style.color = "var(--muted)";
+          $dbOauthCpStatus.textContent = data.message;
+        }
+        if (data.status === "ready") {
+          _stopCreatePolling();
+          toast("✓ Project created and linked", "success", 3500);
+          await loadDatabase();
+          return;
+        }
+        if (data.status === "failed") {
+          _stopCreatePolling();
+          if ($dbOauthCpStatus) {
+            $dbOauthCpStatus.style.color = "var(--danger)";
+            $dbOauthCpStatus.textContent = data.message || "Project creation failed.";
+          }
+          if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+          return;
+        }
+      } catch (_) { /* keep polling */ }
+    }, 3000);
+  }
+
   if ($dbOauthConnect) $dbOauthConnect.addEventListener("click", _openOauthPopup);
   if ($dbOauthDisconnect) $dbOauthDisconnect.addEventListener("click", _disconnectOauth);
   if ($dbOauthDisconnectB) $dbOauthDisconnectB.addEventListener("click", _disconnectOauth);
+  if ($dbOauthCpSubmit) $dbOauthCpSubmit.addEventListener("click", _submitCreateProject);
 
   function _updateDbTabBadge(cfg) {
     if (!$badgeDb) return;
