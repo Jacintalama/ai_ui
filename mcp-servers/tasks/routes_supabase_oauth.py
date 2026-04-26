@@ -26,6 +26,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import crypto_utils
@@ -175,3 +176,184 @@ async def oauth_callback(
         url=f"{PUBLIC_BASE_URL}/tasks/app-builder?{urlencode({'supabase_oauth_ok': slug})}",
         status_code=302,
     )
+
+
+async def _ensure_fresh_token(s, row) -> str:
+    """Return a usable access_token, refreshing via OAuth if expired or near expiry."""
+    if not row.oauth_access_token_encrypted:
+        raise HTTPException(status_code=409, detail="Project is not connected via OAuth.")
+    expires_at = row.oauth_expires_at
+    needs_refresh = expires_at is None or expires_at <= datetime.now(timezone.utc) + timedelta(seconds=30)
+    access = crypto_utils.decrypt(row.oauth_access_token_encrypted)
+    if not needs_refresh:
+        return access
+    if not row.oauth_refresh_token_encrypted:
+        raise HTTPException(status_code=401, detail="OAuth token expired and no refresh token. Re-connect Supabase.")
+    refresh = crypto_utils.decrypt(row.oauth_refresh_token_encrypted)
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        resp = await c.post(
+            TOKEN_URL,
+            data={"grant_type": "refresh_token", "refresh_token": refresh},
+            auth=(CLIENT_ID, CLIENT_SECRET),
+        )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=401,
+            detail=f"OAuth refresh failed (HTTP {resp.status_code}). Re-connect Supabase.",
+        )
+    tok = resp.json()
+    new_access = tok.get("access_token")
+    new_refresh = tok.get("refresh_token") or refresh  # may not always rotate
+    expires_in = int(tok.get("expires_in", 3600))
+    row.oauth_access_token_encrypted = crypto_utils.encrypt(new_access)
+    row.oauth_refresh_token_encrypted = crypto_utils.encrypt(new_refresh)
+    row.oauth_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
+    row.updated_at = datetime.utcnow()
+    await s.commit()
+    return new_access
+
+
+class SupabaseProjectListItem(BaseModel):
+    ref: str
+    name: str
+    region: str | None = None
+    organization_id: str | None = None
+    is_linked: bool = False
+
+
+@router.get("/api/projects/{slug}/supabase/oauth/projects",
+            response_model=list[SupabaseProjectListItem])
+async def list_oauth_projects(slug: str, user: AdminUser = Depends(current_admin)):
+    """List the user's Supabase projects (via Management API).
+    Owner-only on our project, requires the OAuth token."""
+    _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner")
+        row = (await s.execute(
+            select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+        )).scalar_one_or_none()
+        if row is None or not row.oauth_access_token_encrypted:
+            raise HTTPException(status_code=409,
+                                detail="Connect Supabase first (no OAuth token stored).")
+        access = await _ensure_fresh_token(s, row)
+        currently_linked = row.linked_project_ref
+
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        resp = await c.get(
+            "https://api.supabase.com/v1/projects",
+            headers={"Authorization": f"Bearer {access}"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Supabase API error (HTTP {resp.status_code}): {resp.text[:300]}",
+        )
+    data = resp.json() or []
+    return [
+        SupabaseProjectListItem(
+            ref=p.get("id") or "",
+            name=p.get("name") or "(unnamed)",
+            region=p.get("region"),
+            organization_id=p.get("organization_id"),
+            is_linked=(p.get("id") == currently_linked),
+        )
+        for p in data
+    ]
+
+
+class LinkProjectRequest(BaseModel):
+    project_ref: str = Field(min_length=10, max_length=40)
+
+
+class LinkProjectResponse(BaseModel):
+    project_ref: str
+    project_name: str
+    supabase_url: str
+
+
+@router.post("/api/projects/{slug}/supabase/oauth/link",
+             response_model=LinkProjectResponse)
+async def link_oauth_project(
+    slug: str,
+    body: LinkProjectRequest,
+    user: AdminUser = Depends(current_admin),
+):
+    """Link a Supabase project: fetches its anon key + URL via Management API
+    and stores them on project_supabase. Owner-only."""
+    _validate_slug(slug)
+    project_ref = body.project_ref.strip()
+    if not project_ref or not project_ref.replace("-", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid project_ref.")
+
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner")
+        row = (await s.execute(
+            select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+        )).scalar_one_or_none()
+        if row is None or not row.oauth_access_token_encrypted:
+            raise HTTPException(status_code=409, detail="Connect Supabase first.")
+        access = await _ensure_fresh_token(s, row)
+
+    headers = {"Authorization": f"Bearer {access}"}
+    async with httpx.AsyncClient(timeout=15.0) as c:
+        # Fetch project details to confirm it exists and get the name.
+        det = await c.get(f"https://api.supabase.com/v1/projects/{project_ref}",
+                          headers=headers)
+        if det.status_code == 404:
+            raise HTTPException(status_code=404, detail="Project not found in your Supabase organization.")
+        if det.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Supabase API: {det.status_code} — {det.text[:300]}")
+        project = det.json()
+        project_name = project.get("name") or project_ref
+
+        # Fetch the API keys (anon key).
+        keys = await c.get(f"https://api.supabase.com/v1/projects/{project_ref}/api-keys",
+                           headers=headers)
+        if keys.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Supabase keys API: {keys.status_code} — {keys.text[:300]}")
+        anon_key = None
+        for k in keys.json() or []:
+            if k.get("name") == "anon" or k.get("api_key", "").startswith("eyJ"):
+                anon_key = k.get("api_key")
+                break
+        if not anon_key:
+            raise HTTPException(status_code=502, detail="No anon key found for this project.")
+
+    supabase_url = f"https://{project_ref}.supabase.co"
+
+    async with session() as s:
+        row = (await s.execute(
+            select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+        )).scalar_one()
+        row.linked_project_ref = project_ref
+        row.supabase_url = supabase_url
+        row.anon_key_encrypted = crypto_utils.encrypt(anon_key)
+        row.updated_at = datetime.utcnow()
+        await s.commit()
+
+    return LinkProjectResponse(
+        project_ref=project_ref,
+        project_name=project_name,
+        supabase_url=supabase_url,
+    )
+
+
+@router.delete("/api/projects/{slug}/supabase/oauth", status_code=204)
+async def disconnect_oauth(slug: str, user: AdminUser = Depends(current_admin)):
+    """Drop OAuth tokens + linked_project_ref. Manual config (URL/key/db_uri)
+    stays put if previously set."""
+    _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner")
+        row = (await s.execute(
+            select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+        )).scalar_one_or_none()
+        if row is None:
+            return None
+        row.oauth_access_token_encrypted = None
+        row.oauth_refresh_token_encrypted = None
+        row.oauth_expires_at = None
+        row.linked_project_ref = None
+        row.oauth_org_slug = None
+        await s.commit()
+    return None

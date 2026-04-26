@@ -39,6 +39,9 @@ class SupabaseConfigStatus(BaseModel):
     has_db_uri: bool = False
     configured_by: str | None = None
     configured_at: str | None = None
+    # OAuth state
+    oauth_connected: bool = False
+    linked_project_ref: str | None = None
 
 
 @router.get("/{slug}/supabase", response_model=SupabaseConfigStatus)
@@ -57,6 +60,8 @@ async def get_supabase(slug: str, user: AdminUser = Depends(current_admin)):
         has_db_uri=bool(row.db_uri_encrypted),
         configured_by=row.configured_by,
         configured_at=row.configured_at.isoformat() if row.configured_at else None,
+        oauth_connected=bool(row.oauth_access_token_encrypted),
+        linked_project_ref=row.linked_project_ref,
     )
 
 
@@ -86,12 +91,21 @@ async def set_supabase(
             raise HTTPException(status_code=400, detail="DB URI must look like postgresql://user:password@host:port/dbname")
         password = _unq(m.group(2)) if m.group(2) else ""
         host = m.group(3) or ""
-        if password.upper() in ("YOUR-PASSWORD", "[YOUR-PASSWORD]", "PASSWORD"):
+        # If the user wrapped their real password in [brackets] (kept them
+        # from Supabase's [YOUR-PASSWORD] placeholder), auto-strip them and
+        # rewrite the URI to use the cleaned password.
+        if password.startswith("[") and password.endswith("]") and len(password) > 2:
+            inner = password[1:-1]
+            if inner.upper() not in ("YOUR-PASSWORD", "PASSWORD") and inner:
+                # Re-build URI with stripped brackets.
+                db_uri = db_uri.replace(f":{password}@", f":{inner}@", 1)
+                password = inner
+        if password.upper() in ("YOUR-PASSWORD", "[YOUR-PASSWORD]", "PASSWORD") or not password:
             raise HTTPException(
                 status_code=400,
                 detail="Your DB URI still has the literal placeholder '[YOUR-PASSWORD]'. "
-                       "Replace it with the real database password from Supabase → "
-                       "Project Settings → Database → Database password.",
+                       "Replace it with your real database password from Supabase → "
+                       "Project Settings → Database → Database password (DON'T keep the brackets).",
             )
         if host.startswith("db.") and host.endswith(".supabase.co"):
             raise HTTPException(
@@ -99,7 +113,7 @@ async def set_supabase(
                 detail="That's Supabase's DIRECT connection (IPv6-only — our server can't "
                        "reach it). In Supabase → Project Settings → Database → Connection "
                        "string, change the dropdown from 'Direct connection' to "
-                       "'Transaction pooler' (port 6543, aws-0-<region>.pooler.supabase.com), "
+                       "'Transaction pooler' (port 6543, host aws-0-<region>.pooler.supabase.com), "
                        "then paste THAT URI here.",
             )
     enc_key = crypto_utils.encrypt(body.anon_key.strip())
@@ -132,6 +146,8 @@ async def set_supabase(
         has_db_uri=bool(row.db_uri_encrypted),
         configured_by=row.configured_by,
         configured_at=row.configured_at.isoformat() if row.configured_at else None,
+        oauth_connected=bool(row.oauth_access_token_encrypted),
+        linked_project_ref=row.linked_project_ref,
     )
 
 
