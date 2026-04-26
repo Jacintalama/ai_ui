@@ -2193,6 +2193,58 @@
               </div>
             </div>
 
+            <!-- OAuth one-click connect block (Z4) -->
+            <div id="db-oauth-block">
+              <div id="db-oauth-state-a" hidden style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.35);border-radius:var(--radius);padding:18px 20px;display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;color:var(--text);">
+                  <span style="font-size:18px;">🟢</span> Connect Supabase
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                  <button class="btn btn-primary" id="db-oauth-connect" type="button"
+                          style="background:#22c55e;border-color:#22c55e;color:#0a0a0b;font-weight:600;">
+                    Connect with Supabase →
+                  </button>
+                  <span style="font-size:12px;color:var(--text-2);line-height:1.5;flex:1;min-width:200px;">
+                    one-click — we'll handle the URL, anon key, and DB connection automatically.
+                  </span>
+                </div>
+                <span id="db-oauth-status" style="font-size:11px;color:var(--muted);"></span>
+              </div>
+
+              <div id="db-oauth-state-b" hidden style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                  <div style="font-weight:600;font-size:13px;color:var(--text);">
+                    ✓ Connected to Supabase. Pick a project to link:
+                  </div>
+                  <button id="db-oauth-disconnect-b" type="button"
+                          style="background:transparent;border:0;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline;">
+                    Disconnect
+                  </button>
+                </div>
+                <div id="db-oauth-projects" style="display:flex;flex-direction:column;gap:6px;">
+                  <div style="font-size:12px;color:var(--muted);">Loading projects…</div>
+                </div>
+              </div>
+
+              <div id="db-oauth-state-c" hidden style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.35);border-radius:var(--radius);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);">
+                  <span style="color:#22c55e;font-weight:700;">✓ Connected</span>
+                  <span style="color:var(--muted);">·</span>
+                  <span>Linked: <strong id="db-oauth-linked-name" style="font-family:var(--font-mono);font-size:12px;">—</strong></span>
+                </div>
+                <button class="btn" id="db-oauth-disconnect" type="button"
+                        style="font-size:12px;padding:6px 12px;">
+                  Disconnect Supabase
+                </button>
+              </div>
+            </div>
+
+            <details id="db-manual-wrap" style="border:1px solid var(--border);border-radius:var(--radius);padding:0;">
+              <summary style="cursor:pointer;padding:10px 14px;font-size:12px;color:var(--text-2);user-select:none;">
+                or paste credentials manually ▾
+              </summary>
+              <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:14px;">
+
             <div>
               <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Project URL</label>
               <input id="db-url" type="url" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off" spellcheck="false"
@@ -2273,6 +2325,8 @@
                 already knows about Supabase — ask it to add auth, tables, etc.
               </div>
             </div>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -3281,9 +3335,205 @@
   const $badgeDb   = document.getElementById("badge-database");
 
   let _dbState = null;
+  let _oauthPollTimer = null;
+  let _oauthPollCount = 0;
+
+  const $dbOauthBlock      = document.getElementById("db-oauth-block");
+  const $dbOauthStateA     = document.getElementById("db-oauth-state-a");
+  const $dbOauthStateB     = document.getElementById("db-oauth-state-b");
+  const $dbOauthStateC     = document.getElementById("db-oauth-state-c");
+  const $dbOauthConnect    = document.getElementById("db-oauth-connect");
+  const $dbOauthDisconnect = document.getElementById("db-oauth-disconnect");
+  const $dbOauthDisconnectB = document.getElementById("db-oauth-disconnect-b");
+  const $dbOauthProjects   = document.getElementById("db-oauth-projects");
+  const $dbOauthLinkedName = document.getElementById("db-oauth-linked-name");
+  const $dbOauthStatus     = document.getElementById("db-oauth-status");
+  const $dbManualWrap      = document.getElementById("db-manual-wrap");
+
+  function _stopOauthPolling() {
+    if (_oauthPollTimer) {
+      clearInterval(_oauthPollTimer);
+      _oauthPollTimer = null;
+    }
+    _oauthPollCount = 0;
+  }
+
+  function _renderOauthBlock(cfg) {
+    cfg = cfg || {};
+    const connected = !!cfg.oauth_connected;
+    const linked = !!cfg.linked_project_ref;
+    if (!$dbOauthBlock) return;
+    $dbOauthStateA.hidden = true;
+    $dbOauthStateB.hidden = true;
+    $dbOauthStateC.hidden = true;
+    if (!connected) {
+      $dbOauthStateA.hidden = false;
+      // If user has a manual config but no OAuth, expand manual so they see what's saved.
+      if ($dbManualWrap) $dbManualWrap.open = !!cfg.configured;
+    } else if (connected && !linked) {
+      $dbOauthStateB.hidden = false;
+      if ($dbManualWrap) $dbManualWrap.open = false;
+      _loadOauthProjects();
+    } else {
+      $dbOauthStateC.hidden = false;
+      $dbOauthLinkedName.textContent = cfg.linked_project_ref || "—";
+      if ($dbManualWrap) $dbManualWrap.open = false;
+    }
+  }
+
+  async function _loadOauthProjects() {
+    if (!slug || !$dbOauthProjects) return;
+    $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--muted);">Loading projects…</div>';
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/projects", {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (r.status === 409) {
+        // Token went stale — show reconnect.
+        $dbOauthProjects.innerHTML = "";
+        const div = document.createElement("div");
+        div.style.cssText = "display:flex;flex-direction:column;gap:8px;";
+        const msg = document.createElement("div");
+        msg.style.cssText = "font-size:12px;color:var(--warning);";
+        msg.textContent = "Your Supabase session expired. Reconnect to continue.";
+        const btn = document.createElement("button");
+        btn.className = "btn btn-primary";
+        btn.type = "button";
+        btn.style.cssText = "background:#22c55e;border-color:#22c55e;color:#0a0a0b;font-weight:600;align-self:flex-start;";
+        btn.textContent = "Reconnect with Supabase →";
+        btn.addEventListener("click", _openOauthPopup);
+        div.appendChild(msg);
+        div.appendChild(btn);
+        $dbOauthProjects.appendChild(div);
+        return;
+      }
+      if (!r.ok) {
+        const txt = await r.text();
+        $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--danger);">Could not load projects: ' + txt.slice(0, 200) + '</div>';
+        return;
+      }
+      const projects = await r.json();
+      if (!Array.isArray(projects) || projects.length === 0) {
+        $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--muted);">No projects found in your Supabase account.</div>';
+        return;
+      }
+      $dbOauthProjects.innerHTML = "";
+      projects.forEach((p) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "oauth-project-row";
+        btn.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;cursor:pointer;text-align:left;width:100%;transition:background 0.12s;";
+        btn.addEventListener("mouseenter", () => { btn.style.background = "var(--surface-2)"; });
+        btn.addEventListener("mouseleave", () => { btn.style.background = "var(--surface)"; });
+        const name = document.createElement("span");
+        name.style.cssText = "flex:1;font-weight:600;";
+        name.textContent = "📦 " + (p.name || p.ref);
+        const meta = document.createElement("span");
+        meta.className = "muted";
+        meta.style.cssText = "color:var(--muted);font-family:var(--font-mono);font-size:11px;";
+        meta.textContent = (p.region || "?") + " · " + (p.ref || "");
+        btn.appendChild(name);
+        btn.appendChild(meta);
+        btn.addEventListener("click", () => _linkOauthProject(p.ref, btn));
+        $dbOauthProjects.appendChild(btn);
+      });
+    } catch (err) {
+      $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--danger);">Network error: ' + (err.message || err) + '</div>';
+    }
+  }
+
+  async function _linkOauthProject(ref, btn) {
+    if (!slug || !ref) return;
+    if (btn) { btn.disabled = true; btn.style.opacity = "0.6"; }
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/link", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ project_ref: ref }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Link failed: " + txt.slice(0, 200), "error", 4500);
+        if (btn) { btn.disabled = false; btn.style.opacity = "1"; }
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      toast("Linked to " + (data.project_name || ref), "success", 3500);
+      await loadDatabase();
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 4500);
+      if (btn) { btn.disabled = false; btn.style.opacity = "1"; }
+    }
+  }
+
+  async function _disconnectOauth() {
+    if (!slug) return;
+    if (!confirm("Disconnect Supabase OAuth from this project? Manual credentials (if any) will be kept.")) return;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth", {
+        method: "DELETE",
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        toast("Disconnect failed: " + txt.slice(0, 200), "error", 4500);
+        return;
+      }
+      toast("Supabase OAuth disconnected.", "success", 3000);
+      await loadDatabase();
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 4500);
+    }
+  }
+
+  function _openOauthPopup() {
+    if (!slug) return;
+    const url = "/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/start";
+    window.open(url, "aiui_supabase_oauth", "width=720,height=820");
+    if ($dbOauthStatus) {
+      $dbOauthStatus.style.color = "var(--muted)";
+      $dbOauthStatus.textContent = "Waiting for authorization…";
+    }
+    _stopOauthPolling();
+    _oauthPollCount = 0;
+    _oauthPollTimer = setInterval(async () => {
+      _oauthPollCount += 1;
+      // 2 sec * 150 = 5 min cap.
+      if (_oauthPollCount > 150) {
+        _stopOauthPolling();
+        if ($dbOauthStatus) {
+          $dbOauthStatus.style.color = "var(--danger)";
+          $dbOauthStatus.textContent = "Timed out waiting for authorization. Try again.";
+        }
+        return;
+      }
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) return;
+        const cfg = await r.json();
+        if (cfg && cfg.oauth_connected) {
+          _stopOauthPolling();
+          _dbState = cfg;
+          if ($dbOauthStatus) $dbOauthStatus.textContent = "";
+          _renderDatabase();
+        }
+      } catch (_) { /* keep polling */ }
+    }, 2000);
+  }
+
+  if ($dbOauthConnect) $dbOauthConnect.addEventListener("click", _openOauthPopup);
+  if ($dbOauthDisconnect) $dbOauthDisconnect.addEventListener("click", _disconnectOauth);
+  if ($dbOauthDisconnectB) $dbOauthDisconnectB.addEventListener("click", _disconnectOauth);
 
   function _renderDatabase() {
     const cfg = _dbState || {};
+    _renderOauthBlock(cfg);
     if (cfg.configured) {
       $dbBadge.textContent = "Connected";
       $dbBadge.style.background = "rgba(34,197,94,0.15)";
