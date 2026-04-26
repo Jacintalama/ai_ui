@@ -277,6 +277,17 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
             raise HTTPException(status_code=403, detail="Not your task")
         if item.action_type not in ("BUILD", "INTEGRATE", "RESEARCH"):
             raise HTTPException(status_code=400, detail="AI execution not allowed for this task type")
+
+        # Serialize check+insert per slug so two parallel /execute calls
+        # can't both transition the same task from pending to running.
+        # Falls back to per-task-id lock when there's no slug yet.
+        lock_key = f"build:{item.built_app_slug}" if item.built_app_slug else f"task:{item.id}"
+        await s.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+            {"k": lock_key},
+        )
+        # Re-read status under the lock — another writer may have just changed it.
+        await s.refresh(item)
         if item.status not in ("pending", "awaiting_input", "failed", "awaiting_plan_review"):
             raise HTTPException(status_code=409, detail=f"Task is {item.status}")
 

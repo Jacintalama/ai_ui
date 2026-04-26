@@ -26,7 +26,7 @@ from sqlalchemy import and_, or_, select
 from auth import AdminUser, current_admin
 from db import session
 from models import ProjectMember, PublishedApp, TaskItem
-from schemas import InviteRequest, MemberOut
+from schemas import InviteRequest, MemberOut, RoleUpdate
 
 # Domain that wildcard-published apps live under. Override via env if needed.
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
@@ -106,6 +106,9 @@ async def _require_role(s, slug: str, email: str, min_role: str,
     """
     if is_admin:
         return "owner"
+    # Defense-in-depth: even though current_admin lowercases, callers may
+    # pass an unnormalized value from elsewhere (e.g. path params).
+    email = (email or "").strip().lower()
     member = (
         await s.execute(
             select(ProjectMember).where(
@@ -249,6 +252,49 @@ async def remove_member(
         await s.delete(row)
         await s.commit()
     return None
+
+
+@router.patch("/{slug}/members/{email}", response_model=MemberOut)
+async def update_member_role(
+    slug: str,
+    email: str,
+    body: RoleUpdate,
+    user: AdminUser = Depends(current_admin),
+):
+    """Change a member's role. Owner-only. Refuses to demote the last owner."""
+    target = email.strip().lower()
+    if body.role not in ("owner", "editor", "viewer"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
+        row = (
+            await s.execute(
+                select(ProjectMember).where(
+                    and_(ProjectMember.slug == slug, ProjectMember.user_email == target)
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Member not found")
+        if row.role == "owner" and body.role != "owner":
+            owner_count = len(
+                (
+                    await s.execute(
+                        select(ProjectMember).where(
+                            and_(ProjectMember.slug == slug, ProjectMember.role == "owner")
+                        )
+                    )
+                ).scalars().all()
+            )
+            if owner_count <= 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot demote the last owner — invite another owner first or transfer ownership",
+                )
+        row.role = body.role
+        await s.commit()
+        await s.refresh(row)
+    return row
 
 
 @router.post("/{slug}/leave", status_code=204)

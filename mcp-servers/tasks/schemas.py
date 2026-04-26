@@ -108,3 +108,7 @@ class MemberOut(BaseModel):
 class InviteRequest(BaseModel):
     user_email: str = Field(min_length=3, max_length=200)
     role: Literal["owner", "editor", "viewer"] = "editor"
+
+
+class RoleUpdate(BaseModel):
+    role: Literal["owner", "editor", "viewer"]

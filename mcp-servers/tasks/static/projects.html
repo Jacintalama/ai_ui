@@ -1200,14 +1200,36 @@
     async function openMembersModal(slug) {
       if (!slug) return;
       mmCurrentSlug = slug;
+      mmCurrentMe = null;
       mmSlug.textContent = slug;
       mmList.innerHTML = `<div class="members-empty">Loading…</div>`;
       mmModal.hidden = false;
       await refreshMembers();
     }
 
+    let mmCurrentMe = null;
+
+    async function _fetchMe() {
+      // Reuse the presence POST as a side-effect-free way to learn the
+      // authenticated user's email (server returns {ok, me}).
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/presence`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ is_building: false }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          return (data && data.me) ? String(data.me).toLowerCase() : null;
+        }
+      } catch (_) { /* ignore */ }
+      return null;
+    }
+
     async function refreshMembers() {
       try {
+        if (!mmCurrentMe) mmCurrentMe = await _fetchMe();
         const resp = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members`, {
           headers: authHeaders(),
           credentials: "include",
@@ -1222,18 +1244,32 @@
           mmList.innerHTML = `<div class="members-empty">No members yet.</div>`;
           return;
         }
+        const me = (mmCurrentMe || "").toLowerCase();
+        const myRow = rows.find((r) => (r.user_email || "").toLowerCase() === me);
+        const iAmOwner = !!(myRow && myRow.role === "owner");
         mmList.innerHTML = "";
         for (const m of rows) {
           const row = document.createElement("div");
           row.className = "member-row";
+          const isMe = (m.user_email || "").toLowerCase() === me;
+          const roles = ["viewer", "editor", "owner"];
+          // Owners get a dropdown for everyone except themselves; non-owners
+          // see a static badge. Disabling the self-row prevents accidental
+          // self-demotion (use Leave instead).
+          const roleCell = iAmOwner
+            ? `<select class="role-select form-select" data-email="${escapeHtml(m.user_email)}" ${isMe ? "disabled" : ""}>${
+                roles.map((r) => `<option value="${r}" ${r === m.role ? "selected" : ""}>${r}</option>`).join("")
+              }</select>`
+            : `<span class="role-badge ${m.role === "owner" ? "owner" : ""}">${escapeHtml(m.role)}</span>`;
           row.innerHTML = `
             <span class="email">${escapeHtml(m.user_email)}</span>
-            <span class="role-badge ${m.role === "owner" ? "owner" : ""}">${escapeHtml(m.role)}</span>
-            <button type="button" class="remove" title="Remove" data-email="${escapeHtml(m.user_email)}">✕</button>`;
+            ${roleCell}
+            <button type="button" class="remove" title="Remove" data-email="${escapeHtml(m.user_email)}" ${isMe || !iAmOwner ? "disabled" : ""}>✕</button>`;
           mmList.appendChild(row);
         }
         mmList.querySelectorAll(".remove").forEach((b) => {
           b.addEventListener("click", async () => {
+            if (b.disabled) return;
             if (!confirm(`Remove ${b.dataset.email} from ${mmCurrentSlug}?`)) return;
             try {
               const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members/${encodeURIComponent(b.dataset.email)}`, {
@@ -1249,6 +1285,35 @@
               await refreshMembers();
             } catch (err) {
               showToast("Network error: " + err.message, true);
+            }
+          });
+        });
+        mmList.querySelectorAll(".role-select").forEach((sel) => {
+          const original = sel.value;
+          sel.addEventListener("change", async () => {
+            const target = sel.dataset.email;
+            const newRole = sel.value;
+            sel.disabled = true;
+            try {
+              const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members/${encodeURIComponent(target)}`, {
+                method: "PATCH",
+                headers: authHeaders(),
+                credentials: "include",
+                body: JSON.stringify({ role: newRole }),
+              });
+              if (!r.ok) {
+                const t = await r.text();
+                showToast("Role change failed: " + t.slice(0, 200), true);
+                sel.value = original;
+                sel.disabled = false;
+                return;
+              }
+              showToast(`Role updated for ${target} → ${newRole}`);
+              await refreshMembers();
+            } catch (err) {
+              showToast("Network error: " + err.message, true);
+              sel.value = original;
+              sel.disabled = false;
             }
           });
         });

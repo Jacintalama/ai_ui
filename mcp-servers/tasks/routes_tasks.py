@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 
 import uuid
 
@@ -431,6 +431,14 @@ async def enhance(
         from routes_projects import _require_role
         await _require_role(s, source.built_app_slug, user.email, "editor",
                             is_admin=user.is_admin)
+
+        # Serialize the check+insert per slug via a transaction-scoped
+        # advisory lock so two parallel /enhance calls cannot both see
+        # "no in-flight" and proceed. The lock auto-releases on commit.
+        await s.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+            {"k": f"build:{source.built_app_slug}"},
+        )
 
         # 2. Reject concurrent enhancements on same app
         in_flight = (await s.execute(

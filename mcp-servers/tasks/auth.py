@@ -12,7 +12,10 @@ class AdminUser:
 
 def current_admin(request: Request) -> AdminUser:
     """FastAPI dependency. Returns the current admin or raises 401/403."""
-    email = request.headers.get("x-user-email", "").strip()
+    # Normalize email to lowercase here so every downstream comparison sees
+    # the canonical form. The gateway does not normalize; mismatched case
+    # would otherwise silently fail role checks against lowercased DB rows.
+    email = request.headers.get("x-user-email", "").strip().lower()
     is_admin = request.headers.get("x-user-admin", "").strip().lower() == "true"
     if not email:
         raise HTTPException(status_code=401, detail="Missing X-User-Email")

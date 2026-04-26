@@ -110,3 +110,28 @@ async def test_enhance_requires_auth(db_session):
         )
     # auth module returns 401 when headers missing
     assert r.status_code in (401, 403)
+
+
+async def test_enhance_concurrent_one_succeeds(db_session):
+    """Bug C: two parallel /enhance calls for the same slug must not both
+    create new running tasks — exactly one wins, the other gets 409."""
+    import asyncio
+
+    source = _make_task()
+    db_session.add(source)
+    await db_session.commit()
+    await db_session.refresh(source)
+
+    async def _fire():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+            return await c.post(
+                "/api/tasks/enhance",
+                headers=ADMIN_HEADERS,
+                json={"source_task_id": str(source.id), "prompt": "concurrent"},
+            )
+
+    results = await asyncio.gather(_fire(), _fire())
+    statuses = sorted(r.status_code for r in results)
+    assert statuses == [202, 409], f"expected one 202 + one 409, got {statuses}"
+    losers = [r for r in results if r.status_code == 409]
+    assert "in progress" in losers[0].json()["detail"].lower()
