@@ -2030,6 +2030,13 @@
         </span>
         <span class="tab-label">Code</span>
       </button>
+      <button class="tab" data-tab="database" title="Connect Supabase to enable database, auth, storage.">
+        <span class="tab-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        </span>
+        <span class="tab-label">Supabase</span>
+        <span class="tab-badge" id="badge-database" hidden></span>
+      </button>
       <button class="tab" data-tab="preview">
         <span class="tab-icon">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -2057,13 +2064,6 @@
         </span>
         <span class="tab-label">History</span>
         <span class="tab-badge" id="badge-history" hidden></span>
-      </button>
-      <button class="tab" data-tab="database" title="Connect a Supabase backend (auth + database + storage)">
-        <span class="tab-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
-        </span>
-        <span class="tab-label">Supabase</span>
-        <span class="tab-badge" id="badge-database" hidden></span>
       </button>
     </nav>
 
@@ -2467,6 +2467,7 @@
         await loadFileTree();
         try { startPolling(); } catch (_) {}
         try { loadLogs(); } catch (_) {}
+        try { loadDatabase(); } catch (_) {}
         try { loadEnhanceHistory(); } catch (_) {}
         if (typeof toast === "function") toast("✨ Your app is ready!", "success", 4000);
         return true;
@@ -3337,6 +3338,11 @@
   let _dbState = null;
   let _oauthPollTimer = null;
   let _oauthPollCount = 0;
+  if ($badgeDb) {
+    $badgeDb.hidden = false;
+    $badgeDb.dataset.kind = "warning";
+    $badgeDb.textContent = "Not connected";
+  }
 
   const $dbOauthBlock      = document.getElementById("db-oauth-block");
   const $dbOauthStateA     = document.getElementById("db-oauth-state-a");
@@ -3531,9 +3537,31 @@
   if ($dbOauthDisconnect) $dbOauthDisconnect.addEventListener("click", _disconnectOauth);
   if ($dbOauthDisconnectB) $dbOauthDisconnectB.addEventListener("click", _disconnectOauth);
 
+  function _updateDbTabBadge(cfg) {
+    if (!$badgeDb) return;
+    cfg = cfg || {};
+    const oauth = !!cfg.oauth_connected;
+    const linked = !!cfg.linked_project_ref;
+    const configured = !!cfg.configured;
+    if (configured || (oauth && linked)) {
+      $badgeDb.hidden = false;
+      $badgeDb.dataset.kind = "success";
+      $badgeDb.textContent = "✓";
+    } else if (oauth && !linked) {
+      $badgeDb.hidden = false;
+      $badgeDb.dataset.kind = "active";
+      $badgeDb.textContent = "Pick project";
+    } else {
+      $badgeDb.hidden = false;
+      $badgeDb.dataset.kind = "warning";
+      $badgeDb.textContent = "Not connected";
+    }
+  }
+
   function _renderDatabase() {
     const cfg = _dbState || {};
     _renderOauthBlock(cfg);
+    _updateDbTabBadge(cfg);
     if (cfg.configured) {
       $dbBadge.textContent = "Connected";
       $dbBadge.style.background = "rgba(34,197,94,0.15)";
@@ -3563,12 +3591,6 @@
       // Test-connection button is only useful when we have a DB URI to query.
       const $dbTestBtn = document.getElementById("db-test");
       if ($dbTestBtn) $dbTestBtn.hidden = !cfg.has_db_uri;
-      // Topbar tab badge — green dot when connected.
-      if ($badgeDb) {
-        $badgeDb.hidden = false;
-        $badgeDb.dataset.kind = "active";
-        $badgeDb.textContent = "●";
-      }
     } else {
       $dbBadge.textContent = "Not connected";
       $dbBadge.style.background = "var(--surface-2)";
@@ -3583,7 +3605,6 @@
       }
       const $dbTestBtn = document.getElementById("db-test");
       if ($dbTestBtn) $dbTestBtn.hidden = true;
-      if ($badgeDb) $badgeDb.hidden = true;
     }
   }
 
@@ -4514,6 +4535,7 @@
     await loadFileTree();
     startPolling();
     loadLogs();
+    try { loadDatabase(); } catch (_) {}
   }
   init();
 
