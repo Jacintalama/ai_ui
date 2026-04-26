@@ -834,6 +834,7 @@ async def verify_custom_domain(slug: str, user: AdminUser = Depends(current_admi
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
         pub = (
             await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
         ).scalar_one_or_none()

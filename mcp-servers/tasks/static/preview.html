@@ -4034,6 +4034,7 @@
       _renderPubModal();
       $pubUrlOpen.style.display = "";
       toast("✨ App is now live at " + _publishedState.public_url, "success", 5000);
+      _closePub();
     } catch (err) {
       toast("Network error: " + err.message, "error", 6000);
     } finally {
@@ -4317,6 +4318,7 @@
       $cdResult.innerHTML = `<span class="pub-verify-result fail">Network error: ${escapeHtml(err.message)}</span>`;
     } finally {
       $cdVerify.disabled = false;
+      $cdVerify.textContent = "Verify DNS";
     }
   });
 
