@@ -1,9 +1,19 @@
 """SQL execution endpoint for project-owned Supabase databases.
 
 `POST /api/projects/{slug}/db/sql` runs arbitrary SQL on the project's
-Postgres connection (URI stored encrypted in tasks.project_supabase). Used
-by Claude during BUILD to create tables, set up RLS, etc. autonomously.
-Owner-only.
+Postgres connection. There are two execution paths:
+
+1. **OAuth / Management API** — preferred. If the project row has an
+   `oauth_access_token_encrypted` AND `linked_project_ref`, we POST the
+   query to `https://api.supabase.com/v1/projects/{ref}/database/query`
+   with a bearer token. On 401 we refresh the token once and retry.
+
+2. **asyncpg + URI** — legacy / manual config fallback. If only
+   `db_uri_encrypted` is set, we open a direct Postgres connection via
+   asyncpg and run the SQL there.
+
+Used by Claude during BUILD to create tables, set up RLS, etc.
+autonomously. Owner-only.
 """
 import asyncio
 import time
@@ -47,20 +57,106 @@ async def execute_sql(
         row = (await s.execute(
             select(ProjectSupabase).where(ProjectSupabase.slug == slug)
         )).scalar_one_or_none()
-        if row is None or not row.db_uri_encrypted:
+        if row is None:
             raise HTTPException(
                 status_code=409,
-                detail="No database connection URI configured for this project. "
-                       "Add one in the Database tab → 'Database connection URI'.",
-            )
-        try:
-            db_uri = crypto_utils.decrypt(row.db_uri_encrypted)
-        except Exception:
-            raise HTTPException(
-                status_code=500,
-                detail="Could not decrypt the stored DB URI — re-paste it in the Database tab.",
+                detail="No database connection is configured for this project — "
+                       "connect Supabase via OAuth (recommended) or paste a Postgres "
+                       "connection URI in the Database tab.",
             )
 
+        # OAuth path takes precedence — uses Supabase Management API.
+        if row.oauth_access_token_encrypted and row.linked_project_ref:
+            return await _exec_via_management_api(s, row, body.sql)
+
+        # Legacy / manual path — asyncpg direct connection via URI.
+        if row.db_uri_encrypted:
+            try:
+                db_uri = crypto_utils.decrypt(row.db_uri_encrypted)
+            except Exception:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Could not decrypt the stored DB URI — re-paste it in the Database tab.",
+                )
+            return await _exec_via_asyncpg(db_uri, body.sql)
+
+        raise HTTPException(
+            status_code=409,
+            detail="No database connection is configured for this project — "
+                   "connect Supabase via OAuth (recommended) or paste a Postgres "
+                   "connection URI in the Database tab.",
+        )
+
+
+async def _exec_via_management_api(s, row, sql: str) -> SqlResponse:
+    """Run SQL via Supabase Management API using the OAuth bearer token.
+
+    On 401 we treat the cached access token as stale, force a refresh
+    through `_ensure_fresh_token`, and retry the request once.
+    """
+    # Local import to avoid a circular import at module load time —
+    # routes_supabase_oauth itself imports nothing from this module.
+    from routes_supabase_oauth import _ensure_fresh_token
+
+    started = time.perf_counter()
+    access = await _ensure_fresh_token(s, row)
+    project_ref = row.linked_project_ref
+    url = f"https://api.supabase.com/v1/projects/{project_ref}/database/query"
+    headers = {
+        "Authorization": f"Bearer {access}",
+        "Content-Type": "application/json",
+    }
+    payload = {"query": sql}
+
+    import httpx as _httpx
+    async with _httpx.AsyncClient(timeout=QUERY_TIMEOUT_SECONDS + 5) as c:
+        try:
+            resp = await c.post(url, headers=headers, json=payload)
+        except _httpx.TimeoutException:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Management API call exceeded {QUERY_TIMEOUT_SECONDS}s.",
+            )
+        # If the cached token is rejected, mark it stale, refresh, retry once.
+        if resp.status_code == 401:
+            row.oauth_expires_at = None
+            access = await _ensure_fresh_token(s, row)
+            headers["Authorization"] = f"Bearer {access}"
+            try:
+                resp = await c.post(url, headers=headers, json=payload)
+            except _httpx.TimeoutException:
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Management API call exceeded {QUERY_TIMEOUT_SECONDS}s.",
+                )
+
+    if resp.status_code == 400:
+        # Surface the SQL error message from Postgres.
+        try:
+            err = resp.json().get("message") or resp.text
+        except Exception:
+            err = resp.text
+        raise HTTPException(status_code=400, detail=f"SQL error: {err[:500]}")
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Management API returned HTTP {resp.status_code}: {resp.text[:300]}",
+        )
+    rows = resp.json() or []
+    if not isinstance(rows, list):
+        rows = []
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    return SqlResponse(rows=rows, rowcount=len(rows), executed_ms=elapsed_ms)
+
+
+async def _exec_via_asyncpg(db_uri: str, sql: str) -> SqlResponse:
+    """Run SQL via a direct asyncpg connection parsed from a Postgres URI.
+
+    This is the legacy / manual-config path. The URI parser uses a regex
+    rather than urllib because Supabase URIs can contain unescaped
+    special chars in passwords and stray brackets around the host that
+    confuse urlparse.
+    """
     # Parse the URI with a regex (NOT urllib) — Python's urlparse trips on
     # Supabase URIs that contain unescaped special chars in the password
     # AND on hostnames it mistakes for IPv6 (Supabase sometimes ships URIs
@@ -119,7 +215,7 @@ async def execute_sql(
             timeout=CONNECT_TIMEOUT_SECONDS,
         )
         result = await asyncio.wait_for(
-            conn.fetch(body.sql),
+            conn.fetch(sql),
             timeout=QUERY_TIMEOUT_SECONDS,
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
