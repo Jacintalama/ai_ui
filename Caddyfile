@@ -140,6 +140,10 @@
 	handle /api/tasks/* {
 		reverse_proxy api-gateway:8080
 	}
+	# /api/supabase/* (OAuth callback + future endpoints) → gateway → tasks
+	handle /api/supabase/* {
+		reverse_proxy api-gateway:8080
+	}
 	# Static frontend (panel JS + history page) — public, no auth on assets
 	handle /tasks/static/* {
 		header Cache-Control "no-cache, no-store, must-revalidate"
