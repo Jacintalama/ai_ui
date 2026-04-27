@@ -1,7 +1,7 @@
 export function portfolio() {
   return {
-    name: 'Ralph Benitez',
-    initials: 'RB',
+    name: 'Ralph Thunder',
+    initials: 'RT',
     theme: 'light',
     filter: 'All',
     contact: { name: '', email: '', message: '', sending: false },
