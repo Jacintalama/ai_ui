@@ -216,7 +216,7 @@ Run inside the tasks container, with a test-only `DATABASE_URL`:
 
 ```bash
 ssh -i ~/.ssh/aiui_vps root@46.224.193.25 \
-  "docker exec -e AIUI_TEST_DB=1 -e DATABASE_URL='postgresql://openwebui:mcpproxy2026secure@postgres:5432/openwebui_test' \
+  "docker exec -e AIUI_TEST_DB=1 -e DATABASE_URL='postgresql://openwebui:<DB_PASSWORD>@postgres:5432/openwebui_test' \
    tasks pytest tests/test_template_preview_route.py -v --tb=short"
 ```
 
