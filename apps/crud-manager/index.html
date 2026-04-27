@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CRUD Manager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    /* Critical CSS */
+    *, *::before, *::after { box-sizing: border-box; }
+    html { font-size: 16px; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #1e293b; }
+    :focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+
+    /* Drawer */
+    #drawer-overlay { display: none; }
+    #drawer-overlay.open { display: block; }
+    #drawer { transform: translateX(100%); transition: transform 0.25s ease; }
+    #drawer.open { transform: translateX(0); }
+
+    /* Compact / comfortable toggle */
+    .row-compact td { height: 44px; }
+    .row-comfortable td { height: 60px; }
+
+    /* Toast */
+    #toast { transition: opacity 0.3s ease; }
+    #toast.hidden { opacity: 0; pointer-events: none; }
+
+    /* Sort indicator */
+    th[data-col].asc::after { content: ' ↑'; }
+    th[data-col].desc::after { content: ' ↓'; }
+
+    /* Checkbox column */
+    input[type="checkbox"] { cursor: pointer; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+    @media (max-width: 767px) {
+      #drawer { width: 100% !important; }
+      .hide-mobile { display: none !important; }
+    }
+  </style>
+</head>
+<body class="min-h-screen">
+
+<!-- ── Top Bar ─────────────────────────────────────────────────── -->
+<header class="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-3 sticky top-0 z-30">
+  <h1 class="text-lg font-semibold text-slate-800 whitespace-nowrap">CRUD Manager</h1>
+  <div class="flex-1 relative max-w-xs ml-2">
+    <i data-lucide="search" class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+    <input id="search-input" type="search" placeholder="Search items…" aria-label="Search items"
+      class="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded focus:border-blue-400 bg-slate-50"/>
+  </div>
+  <div class="flex items-center gap-2 ml-auto">
+    <label class="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer hide-mobile">
+      <input id="density-toggle" type="checkbox" class="rounded"/> Comfortable
+    </label>
+    <button id="new-btn"
+      class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 py-1.5 rounded transition-colors">
+      <i data-lucide="plus" class="w-4 h-4"></i>
+      <span>New Item</span>
+    </button>
+  </div>
+</header>
+
+<!-- ── Filter Chips ───────────────────────────────────────────── -->
+<div class="bg-white border-b border-slate-200 px-4 py-2 flex items-center gap-2 flex-wrap">
+  <span class="text-xs font-medium text-slate-500 mr-1">Status:</span>
+  <button data-filter="status" data-value="" class="chip chip-active text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">All</button>
+  <button data-filter="status" data-value="active" class="chip text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">Active</button>
+  <button data-filter="status" data-value="pending" class="chip text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">Pending</button>
+  <button data-filter="status" data-value="inactive" class="chip text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">Inactive</button>
+  <span class="text-xs font-medium text-slate-500 ml-3 mr-1">Priority:</span>
+  <button data-filter="priority" data-value="" class="chip chip-active text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">All</button>
+  <button data-filter="priority" data-value="high" class="chip text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">High</button>
+  <button data-filter="priority" data-value="medium" class="chip text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">Medium</button>
+  <button data-filter="priority" data-value="low" class="chip text-xs px-2.5 py-1 rounded-full border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 transition-colors">Low</button>
+  <span id="bulk-bar" class="hidden ml-auto flex items-center gap-2">
+    <span id="bulk-count" class="text-xs text-slate-500"></span>
+    <button id="bulk-delete-btn" class="flex items-center gap-1 text-xs text-red-600 hover:text-red-700 border border-red-200 px-2 py-1 rounded hover:bg-red-50 transition-colors">
+      <i data-lucide="trash-2" class="w-3 h-3"></i> Delete selected
+    </button>
+  </span>
+</div>
+
+<!-- ── Main ───────────────────────────────────────────────────── -->
+<main class="p-4">
+  <div class="bg-white border border-slate-200 rounded overflow-x-auto">
+    <table id="items-table" class="w-full text-sm border-collapse">
+      <thead>
+        <tr class="border-b border-slate-200 bg-slate-50 text-xs font-medium text-slate-500 uppercase tracking-wide">
+          <th class="w-10 px-3 py-2">
+            <input id="select-all" type="checkbox" aria-label="Select all" class="rounded border-slate-300"/>
+          </th>
+          <th data-col="name" class="px-3 py-2 text-left cursor-pointer hover:text-slate-700 select-none">Name</th>
+          <th data-col="category" class="px-3 py-2 text-left cursor-pointer hover:text-slate-700 select-none hide-mobile">Category</th>
+          <th data-col="status" class="px-3 py-2 text-left cursor-pointer hover:text-slate-700 select-none">Status</th>
+          <th data-col="priority" class="px-3 py-2 text-left cursor-pointer hover:text-slate-700 select-none hide-mobile">Priority</th>
+          <th data-col="created_at" class="px-3 py-2 text-left cursor-pointer hover:text-slate-700 select-none hide-mobile">Created</th>
+          <th class="px-3 py-2 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <!-- rows injected by JS -->
+      </tbody>
+    </table>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="hidden flex flex-col items-center justify-center py-20 text-center">
+      <svg class="w-16 h-16 text-slate-200 mb-4" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="8" y="12" width="48" height="40" rx="4" stroke="currentColor" stroke-width="2"/>
+        <line x1="8" y1="24" x2="56" y2="24" stroke="currentColor" stroke-width="2"/>
+        <line x1="20" y1="12" x2="20" y2="52" stroke="currentColor" stroke-width="2"/>
+        <circle cx="38" cy="38" r="10" fill="#e2e8f0"/>
+        <line x1="44" y1="44" x2="50" y2="50" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <p class="text-slate-500 font-medium mb-1">No items found</p>
+      <p class="text-slate-400 text-sm mb-4">Get started by adding your first item.</p>
+      <button id="empty-new-btn" class="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded transition-colors">
+        <i data-lucide="plus" class="w-4 h-4"></i> Add your first Item
+      </button>
+    </div>
+  </div>
+  <p id="row-count" class="text-xs text-slate-400 mt-2"></p>
+</main>
+
+<!-- ── Side Drawer ────────────────────────────────────────────── -->
+<div id="drawer-overlay" class="fixed inset-0 bg-black/30 z-40" role="dialog" aria-modal="true" aria-label="Item details"></div>
+<aside id="drawer" class="fixed top-0 right-0 h-full w-full sm:w-[640px] bg-white border-l border-slate-200 z-50 flex flex-col shadow-xl overflow-y-auto">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 sticky top-0 bg-white z-10">
+    <h2 id="drawer-title" class="text-base font-semibold text-slate-800">New Item</h2>
+    <button id="drawer-close" aria-label="Close drawer" class="p-1 rounded hover:bg-slate-100 text-slate-500">
+      <i data-lucide="x" class="w-5 h-5"></i>
+    </button>
+  </div>
+
+  <form id="item-form" novalidate class="flex-1 px-5 py-4 space-y-4">
+    <input type="hidden" id="field-id"/>
+
+    <div>
+      <label for="field-name" class="block text-sm font-medium text-slate-700 mb-1">
+        Name <span class="text-red-500" aria-hidden="true">*</span>
+      </label>
+      <input id="field-name" type="text" required maxlength="200" placeholder="Enter item name"
+        class="w-full px-3 py-2 border border-slate-200 rounded text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30 transition-colors"/>
+      <p id="err-name" class="text-xs text-red-500 mt-1 hidden">Name is required.</p>
+    </div>
+
+    <div>
+      <label for="field-description" class="block text-sm font-medium text-slate-700 mb-1">Description</label>
+      <textarea id="field-description" rows="3" maxlength="500" placeholder="Brief description of this item"
+        class="w-full px-3 py-2 border border-slate-200 rounded text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30 transition-colors resize-y"></textarea>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label for="field-category" class="block text-sm font-medium text-slate-700 mb-1">Category</label>
+        <input id="field-category" type="text" maxlength="100" placeholder="e.g. Projects, HR, Finance"
+          class="w-full px-3 py-2 border border-slate-200 rounded text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30 transition-colors"/>
+      </div>
+      <div>
+        <label for="field-status" class="block text-sm font-medium text-slate-700 mb-1">
+          Status <span class="text-red-500" aria-hidden="true">*</span>
+        </label>
+        <select id="field-status" required class="w-full px-3 py-2 border border-slate-200 rounded text-sm focus:border-blue-400 bg-white transition-colors">
+          <option value="active">Active</option>
+          <option value="pending">Pending</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <label for="field-priority" class="block text-sm font-medium text-slate-700 mb-1">
+        Priority <span class="text-red-500" aria-hidden="true">*</span>
+      </label>
+      <div id="field-priority" role="group" aria-label="Priority" class="flex gap-2">
+        <label class="flex-1">
+          <input type="radio" name="priority" value="low" class="sr-only peer"/>
+          <span class="block text-center py-2 border border-slate-200 rounded text-sm cursor-pointer peer-checked:bg-blue-50 peer-checked:border-blue-400 peer-checked:text-blue-700 hover:bg-slate-50 transition-colors">Low</span>
+        </label>
+        <label class="flex-1">
+          <input type="radio" name="priority" value="medium" checked class="sr-only peer"/>
+          <span class="block text-center py-2 border border-slate-200 rounded text-sm cursor-pointer peer-checked:bg-blue-50 peer-checked:border-blue-400 peer-checked:text-blue-700 hover:bg-slate-50 transition-colors">Medium</span>
+        </label>
+        <label class="flex-1">
+          <input type="radio" name="priority" value="high" class="sr-only peer"/>
+          <span class="block text-center py-2 border border-slate-200 rounded text-sm cursor-pointer peer-checked:bg-blue-50 peer-checked:border-blue-400 peer-checked:text-blue-700 hover:bg-slate-50 transition-colors">High</span>
+        </label>
+      </div>
+    </div>
+
+    <div>
+      <label for="field-notes" class="block text-sm font-medium text-slate-700 mb-1">Notes</label>
+      <textarea id="field-notes" rows="3" maxlength="1000" placeholder="Additional notes or context"
+        class="w-full px-3 py-2 border border-slate-200 rounded text-sm focus:border-blue-400 focus:ring-1 focus:ring-blue-400/30 transition-colors resize-y"></textarea>
+    </div>
+
+    <div class="pt-2 flex gap-3 sticky bottom-0 bg-white py-4 border-t border-slate-100 -mx-5 px-5">
+      <button type="submit" id="save-btn"
+        class="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-medium text-sm py-2.5 rounded transition-colors">
+        Save Item
+      </button>
+      <button type="button" id="cancel-btn"
+        class="px-4 py-2.5 text-sm text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">
+        Cancel
+      </button>
+    </div>
+  </form>
+</aside>
+
+<!-- ── Confirm Delete Modal ───────────────────────────────────── -->
+<div id="confirm-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-lg border border-slate-200 w-full max-w-sm p-5 shadow-xl">
+    <div class="flex items-start gap-3 mb-4">
+      <div class="p-2 bg-red-50 rounded-full">
+        <i data-lucide="trash-2" class="w-5 h-5 text-red-500"></i>
+      </div>
+      <div>
+        <h3 class="font-semibold text-slate-800 text-sm">Delete item?</h3>
+        <p class="text-slate-500 text-sm mt-1">
+          Are you sure you want to delete <strong id="confirm-name" class="text-slate-700"></strong>? This cannot be undone.
+        </p>
+      </div>
+    </div>
+    <div class="flex gap-2 justify-end">
+      <button id="confirm-cancel" class="px-3 py-1.5 text-sm text-slate-600 border border-slate-200 rounded hover:bg-slate-50 transition-colors">Cancel</button>
+      <button id="confirm-ok" class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition-colors">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ──────────────────────────────────────────────────── -->
+<div id="toast" role="status" aria-live="polite"
+  class="hidden fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border text-sm font-medium shadow-lg max-w-xs">
+  <i id="toast-icon" class="w-4 h-4 flex-shrink-0"></i>
+  <span id="toast-msg"></span>
+</div>
+
+<script>
+// ── Supabase init ─────────────────────────────────────────────
+const SUPABASE_URL = window.SUPABASE_URL || '';
+const SUPABASE_KEY = window.SUPABASE_ANON_KEY || '';
+const TABLE = 'items';
+const LS_KEY = 'aiui_crud_v1_items';
+
+let supabase = null;
+let useSupabase = false;
+
+if (SUPABASE_URL && SUPABASE_KEY) {
+  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  useSupabase = true;
+}
+
+// ── State ─────────────────────────────────────────────────────
+let allItems = [];
+let filteredItems = [];
+let selectedIds = new Set();
+let sortCol = 'created_at';
+let sortDir = 'desc';
+let filterStatus = '';
+let filterPriority = '';
+let searchQuery = '';
+let comfortable = false;
+let pendingDeleteId = null;
+let pendingDeleteIds = null;
+
+// ── LocalStorage helpers ──────────────────────────────────────
+function lsLoad() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : seedData();
+  } catch { return seedData(); }
+}
+
+function lsSave(items) {
+  localStorage.setItem(LS_KEY, JSON.stringify(items));
+}
+
+function seedData() {
+  const now = new Date().toISOString();
+  const data = [
+    { id: crypto.randomUUID(), name: 'Website Redesign', description: 'Overhaul the company website', category: 'Projects', status: 'active', priority: 'high', notes: 'Design mockups approved', created_at: now, updated_at: now },
+    { id: crypto.randomUUID(), name: 'Q2 Budget Review', description: 'Review department budgets for Q2', category: 'Finance', status: 'pending', priority: 'high', notes: 'Waiting on HR figures', created_at: now, updated_at: now },
+    { id: crypto.randomUUID(), name: 'Onboarding Docs', description: 'Update employee onboarding documentation', category: 'HR', status: 'active', priority: 'medium', notes: 'New hire starts soon', created_at: now, updated_at: now },
+    { id: crypto.randomUUID(), name: 'Server Migration', description: 'Migrate legacy servers to cloud', category: 'IT', status: 'inactive', priority: 'low', notes: 'Scheduled for next quarter', created_at: now, updated_at: now },
+    { id: crypto.randomUUID(), name: 'Product Roadmap', description: 'Draft 12-month product roadmap', category: 'Strategy', status: 'active', priority: 'medium', notes: 'Initial draft done', created_at: now, updated_at: now },
+  ];
+  lsSave(data);
+  return data;
+}
+
+// ── DB helpers ────────────────────────────────────────────────
+async function dbLoad() {
+  if (useSupabase) {
+    const { data, error } = await supabase.from(TABLE).select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+  return lsLoad();
+}
+
+async function dbInsert(item) {
+  if (useSupabase) {
+    const { data, error } = await supabase.from(TABLE).insert(item).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const rec = { ...item, id: crypto.randomUUID(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  const items = lsLoad();
+  items.unshift(rec);
+  lsSave(items);
+  return rec;
+}
+
+async function dbUpdate(id, patch) {
+  if (useSupabase) {
+    const { data, error } = await supabase.from(TABLE).update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw error;
+    return data;
+  }
+  const items = lsLoad();
+  const idx = items.findIndex(i => i.id === id);
+  if (idx === -1) throw new Error('Not found');
+  items[idx] = { ...items[idx], ...patch, updated_at: new Date().toISOString() };
+  lsSave(items);
+  return items[idx];
+}
+
+async function dbDelete(id) {
+  if (useSupabase) {
+    const { error } = await supabase.from(TABLE).delete().eq('id', id);
+    if (error) throw error;
+    return;
+  }
+  const items = lsLoad().filter(i => i.id !== id);
+  lsSave(items);
+}
+
+async function dbDeleteMany(ids) {
+  if (useSupabase) {
+    const { error } = await supabase.from(TABLE).delete().in('id', ids);
+    if (error) throw error;
+    return;
+  }
+  const set = new Set(ids);
+  lsSave(lsLoad().filter(i => !set.has(i.id)));
+}
+
+// ── Toast ─────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  const icon = document.getElementById('toast-icon');
+  const msgEl = document.getElementById('toast-msg');
+  el.className = 'fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border text-sm font-medium shadow-lg max-w-xs';
+  if (type === 'success') {
+    el.classList.add('bg-white', 'border-green-200', 'text-green-800');
+    icon.setAttribute('data-lucide', 'check-circle-2');
+  } else {
+    el.classList.add('bg-white', 'border-red-200', 'text-red-800');
+    icon.setAttribute('data-lucide', 'alert-circle');
+  }
+  msgEl.textContent = msg;
+  lucide.createIcons({ icons: { 'check-circle-2': lucide.icons['check-circle-2'], 'alert-circle': lucide.icons['alert-circle'] } });
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 3500);
+}
+
+// ── Render helpers ────────────────────────────────────────────
+const STATUS_COLORS = {
+  active: 'bg-green-50 text-green-700 border-green-200',
+  pending: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+  inactive: 'bg-slate-50 text-slate-500 border-slate-200',
+};
+const PRIORITY_COLORS = {
+  high: 'bg-red-50 text-red-700 border-red-200',
+  medium: 'bg-orange-50 text-orange-700 border-orange-200',
+  low: 'bg-blue-50 text-blue-600 border-blue-200',
+};
+
+function badge(val, map) {
+  const cls = map[val] || 'bg-slate-50 text-slate-500 border-slate-200';
+  return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${cls} capitalize">${val}</span>`;
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// ── Filter + Sort + Render ────────────────────────────────────
+function applyFiltersAndSort() {
+  let items = [...allItems];
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    items = items.filter(i =>
+      (i.name || '').toLowerCase().includes(q) ||
+      (i.description || '').toLowerCase().includes(q) ||
+      (i.category || '').toLowerCase().includes(q)
+    );
+  }
+
+  if (filterStatus) items = items.filter(i => i.status === filterStatus);
+  if (filterPriority) items = items.filter(i => i.priority === filterPriority);
+
+  items.sort((a, b) => {
+    let av = a[sortCol] ?? '';
+    let bv = b[sortCol] ?? '';
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av < bv) return sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return sortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  filteredItems = items;
+}
+
+function renderTable() {
+  applyFiltersAndSort();
+  const tbody = document.getElementById('table-body');
+  const emptyState = document.getElementById('empty-state');
+  const rowCount = document.getElementById('row-count');
+  const rowClass = comfortable ? 'row-comfortable' : 'row-compact';
+
+  // Sort header
+  document.querySelectorAll('th[data-col]').forEach(th => {
+    th.classList.remove('asc', 'desc');
+    if (th.dataset.col === sortCol) th.classList.add(sortDir);
+  });
+
+  if (filteredItems.length === 0) {
+    tbody.innerHTML = '';
+    emptyState.classList.remove('hidden');
+    rowCount.textContent = '';
+    return;
+  }
+  emptyState.classList.add('hidden');
+
+  tbody.innerHTML = filteredItems.map(item => `
+    <tr class="${rowClass} border-b border-slate-100 hover:bg-slate-50/60 cursor-pointer group transition-colors" data-id="${item.id}">
+      <td class="px-3" onclick="event.stopPropagation()">
+        <input type="checkbox" class="row-check rounded border-slate-300" data-id="${item.id}" aria-label="Select ${item.name}" ${selectedIds.has(item.id) ? 'checked' : ''}/>
+      </td>
+      <td class="px-3 font-medium text-slate-800 max-w-[200px]">
+        <span class="truncate block">${escHtml(item.name)}</span>
+        ${item.description ? `<span class="text-xs text-slate-400 truncate block">${escHtml(item.description)}</span>` : ''}
+      </td>
+      <td class="px-3 text-slate-500 hide-mobile">${escHtml(item.category || '—')}</td>
+      <td class="px-3">${badge(item.status, STATUS_COLORS)}</td>
+      <td class="px-3 hide-mobile">${badge(item.priority, PRIORITY_COLORS)}</td>
+      <td class="px-3 text-slate-400 text-xs hide-mobile">${fmtDate(item.created_at)}</td>
+      <td class="px-3 text-right" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <button class="edit-btn p-1.5 rounded hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors" data-id="${item.id}" aria-label="Edit ${item.name}" title="Edit">
+            <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+          </button>
+          <button class="delete-btn p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors" data-id="${item.id}" data-name="${escHtml(item.name)}" aria-label="Delete ${item.name}" title="Delete">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  rowCount.textContent = `${filteredItems.length} of ${allItems.length} item${allItems.length !== 1 ? 's' : ''}`;
+  lucide.createIcons();
+  updateBulkBar();
+}
+
+function escHtml(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Drawer ────────────────────────────────────────────────────
+function openDrawer(item = null) {
+  const drawer = document.getElementById('drawer');
+  const overlay = document.getElementById('drawer-overlay');
+  const title = document.getElementById('drawer-title');
+
+  document.getElementById('field-id').value = item?.id || '';
+  document.getElementById('field-name').value = item?.name || '';
+  document.getElementById('field-description').value = item?.description || '';
+  document.getElementById('field-category').value = item?.category || '';
+  document.getElementById('field-status').value = item?.status || 'active';
+  document.getElementById('field-notes').value = item?.notes || '';
+
+  const pri = item?.priority || 'medium';
+  document.querySelectorAll('input[name="priority"]').forEach(r => { r.checked = r.value === pri; });
+
+  clearErrors();
+  title.textContent = item ? 'Edit Item' : 'New Item';
+  drawer.classList.add('open');
+  overlay.classList.add('open');
+  document.getElementById('field-name').focus();
+}
+
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+}
+
+function clearErrors() {
+  document.getElementById('err-name').classList.add('hidden');
+}
+
+function validateForm() {
+  let ok = true;
+  const name = document.getElementById('field-name').value.trim();
+  if (!name) {
+    document.getElementById('err-name').classList.remove('hidden');
+    document.getElementById('field-name').focus();
+    ok = false;
+  } else {
+    document.getElementById('err-name').classList.add('hidden');
+  }
+  return ok;
+}
+
+// ── Form submit ───────────────────────────────────────────────
+document.getElementById('item-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!validateForm()) return;
+
+  const id = document.getElementById('field-id').value;
+  const payload = {
+    name: document.getElementById('field-name').value.trim(),
+    description: document.getElementById('field-description').value.trim(),
+    category: document.getElementById('field-category').value.trim(),
+    status: document.getElementById('field-status').value,
+    priority: document.querySelector('input[name="priority"]:checked')?.value || 'medium',
+    notes: document.getElementById('field-notes').value.trim(),
+  };
+
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  if (id) {
+    // Optimistic update
+    const idx = allItems.findIndex(i => i.id === id);
+    const prev = idx !== -1 ? { ...allItems[idx] } : null;
+    if (idx !== -1) { allItems[idx] = { ...allItems[idx], ...payload }; renderTable(); }
+    try {
+      const updated = await dbUpdate(id, payload);
+      if (idx !== -1) allItems[idx] = updated;
+      renderTable();
+      closeDrawer();
+      showToast('Item updated.');
+    } catch (err) {
+      if (idx !== -1 && prev) allItems[idx] = prev;
+      renderTable();
+      showToast('Failed to update item. Changes reverted.', 'error');
+    }
+  } else {
+    // Optimistic add
+    const temp = { ...payload, id: '__temp__', created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    allItems.unshift(temp);
+    renderTable();
+    try {
+      const created = await dbInsert(payload);
+      allItems[0] = created;
+      renderTable();
+      closeDrawer();
+      showToast('Item added.');
+    } catch (err) {
+      allItems.shift();
+      renderTable();
+      showToast('Failed to add item. Changes reverted.', 'error');
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Save Item';
+});
+
+// ── Delete ────────────────────────────────────────────────────
+function promptDelete(id, name) {
+  pendingDeleteId = id;
+  pendingDeleteIds = null;
+  document.getElementById('confirm-name').textContent = name;
+  document.getElementById('confirm-modal').classList.remove('hidden');
+}
+
+function promptDeleteMany(ids) {
+  pendingDeleteId = null;
+  pendingDeleteIds = ids;
+  document.getElementById('confirm-name').textContent = `${ids.length} items`;
+  document.getElementById('confirm-modal').classList.remove('hidden');
+}
+
+document.getElementById('confirm-cancel').addEventListener('click', () => {
+  document.getElementById('confirm-modal').classList.add('hidden');
+  pendingDeleteId = null;
+  pendingDeleteIds = null;
+});
+
+document.getElementById('confirm-ok').addEventListener('click', async () => {
+  document.getElementById('confirm-modal').classList.add('hidden');
+
+  if (pendingDeleteIds) {
+    const ids = pendingDeleteIds;
+    pendingDeleteIds = null;
+    const removed = allItems.filter(i => ids.includes(i.id));
+    allItems = allItems.filter(i => !ids.includes(i.id));
+    selectedIds.clear();
+    renderTable();
+    try {
+      await dbDeleteMany(ids);
+      showToast(`${ids.length} items deleted.`);
+    } catch {
+      allItems.unshift(...removed);
+      renderTable();
+      showToast('Failed to delete items.', 'error');
+    }
+    return;
+  }
+
+  if (pendingDeleteId) {
+    const id = pendingDeleteId;
+    pendingDeleteId = null;
+    const idx = allItems.findIndex(i => i.id === id);
+    const removed = idx !== -1 ? allItems.splice(idx, 1)[0] : null;
+    renderTable();
+    try {
+      await dbDelete(id);
+      showToast('Item deleted.');
+    } catch {
+      if (removed) allItems.splice(idx, 0, removed);
+      renderTable();
+      showToast('Failed to delete item.', 'error');
+    }
+  }
+});
+
+// ── Bulk select ───────────────────────────────────────────────
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  const count = document.getElementById('bulk-count');
+  const selectAll = document.getElementById('select-all');
+
+  if (selectedIds.size > 0) {
+    bar.classList.remove('hidden');
+    bar.classList.add('flex');
+    count.textContent = `${selectedIds.size} selected`;
+  } else {
+    bar.classList.add('hidden');
+    bar.classList.remove('flex');
+  }
+
+  const visibleIds = filteredItems.map(i => i.id);
+  const allSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+  const someSelected = visibleIds.some(id => selectedIds.has(id));
+  selectAll.checked = allSelected;
+  selectAll.indeterminate = someSelected && !allSelected;
+}
+
+document.getElementById('select-all').addEventListener('change', (e) => {
+  const visibleIds = filteredItems.map(i => i.id);
+  if (e.target.checked) visibleIds.forEach(id => selectedIds.add(id));
+  else visibleIds.forEach(id => selectedIds.delete(id));
+  renderTable();
+});
+
+document.getElementById('bulk-delete-btn').addEventListener('click', () => {
+  if (selectedIds.size === 0) return;
+  promptDeleteMany([...selectedIds]);
+});
+
+// ── Table event delegation ────────────────────────────────────
+document.getElementById('table-body').addEventListener('click', (e) => {
+  const editBtn = e.target.closest('.edit-btn');
+  const deleteBtn = e.target.closest('.delete-btn');
+  const check = e.target.closest('.row-check');
+  const row = e.target.closest('tr[data-id]');
+
+  if (editBtn) {
+    const item = allItems.find(i => i.id === editBtn.dataset.id);
+    if (item) openDrawer(item);
+    return;
+  }
+  if (deleteBtn) {
+    promptDelete(deleteBtn.dataset.id, deleteBtn.dataset.name);
+    return;
+  }
+  if (check) {
+    const id = check.dataset.id;
+    if (check.checked) selectedIds.add(id);
+    else selectedIds.delete(id);
+    updateBulkBar();
+    return;
+  }
+  if (row) {
+    const item = allItems.find(i => i.id === row.dataset.id);
+    if (item) openDrawer(item);
+  }
+});
+
+// ── Sort ──────────────────────────────────────────────────────
+document.querySelectorAll('th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    else { sortCol = col; sortDir = 'asc'; }
+    renderTable();
+  });
+});
+
+// ── Filters ───────────────────────────────────────────────────
+document.querySelectorAll('[data-filter]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const filter = btn.dataset.filter;
+    const value = btn.dataset.value;
+    if (filter === 'status') {
+      filterStatus = value;
+      document.querySelectorAll('[data-filter="status"]').forEach(b => b.classList.toggle('chip-active', b.dataset.value === value));
+      document.querySelectorAll('[data-filter="status"]').forEach(b => {
+        b.classList.toggle('bg-slate-100', b.dataset.value === value);
+        b.classList.toggle('bg-white', b.dataset.value !== value);
+      });
+    } else if (filter === 'priority') {
+      filterPriority = value;
+      document.querySelectorAll('[data-filter="priority"]').forEach(b => {
+        b.classList.toggle('bg-slate-100', b.dataset.value === value);
+        b.classList.toggle('bg-white', b.dataset.value !== value);
+      });
+    }
+    renderTable();
+  });
+});
+
+// ── Search ────────────────────────────────────────────────────
+document.getElementById('search-input').addEventListener('input', (e) => {
+  searchQuery = e.target.value;
+  renderTable();
+});
+
+// ── New button ────────────────────────────────────────────────
+document.getElementById('new-btn').addEventListener('click', () => openDrawer());
+document.getElementById('empty-new-btn').addEventListener('click', () => openDrawer());
+document.getElementById('drawer-close').addEventListener('click', closeDrawer);
+document.getElementById('cancel-btn').addEventListener('click', closeDrawer);
+document.getElementById('drawer-overlay').addEventListener('click', closeDrawer);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (!document.getElementById('confirm-modal').classList.contains('hidden')) {
+      document.getElementById('confirm-modal').classList.add('hidden');
+    } else {
+      closeDrawer();
+    }
+  }
+});
+
+// ── Density toggle ────────────────────────────────────────────
+document.getElementById('density-toggle').addEventListener('change', (e) => {
+  comfortable = e.target.checked;
+  renderTable();
+});
+
+// ── Init ──────────────────────────────────────────────────────
+(async function init() {
+  try {
+    allItems = await dbLoad();
+  } catch (err) {
+    console.error('Load error:', err);
+    allItems = lsLoad(); // fallback
+    showToast('Could not connect to database. Using local data.', 'error');
+  }
+  renderTable();
+  lucide.createIcons();
+})();
+</script>
+</body>
+</html>
