@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 ActionType = Literal["RESEARCH", "BUILD", "INTEGRATE", "ASK_USER"]
 Priority = Literal["CRITICAL", "IMPORTANT", "NICE_TO_HAVE"]
-Status = Literal["pending", "planning", "awaiting_plan_review", "claimed_manual", "running", "awaiting_input", "completed", "failed"]
+Status = Literal["pending", "planning", "awaiting_plan_review", "claimed_manual", "running", "awaiting_input", "awaiting_supabase", "completed", "failed"]
 Mode = Literal["ai", "manual"]
 PlanStatus = Literal["pending_review", "approved", "rejected"]
 

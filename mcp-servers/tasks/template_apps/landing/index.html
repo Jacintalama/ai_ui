@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Ship faster, scale calmer</title>
+  <meta name="description" content="<%= APP_NAME %> is the all-in-one workspace that helps modern teams plan, build, and launch without the chaos." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="bg-white text-slate-900 antialiased">
+  <div x-data="landingPage" x-init="init()">
+
+    <!-- Header -->
+    <header class="sticky top-0 z-40 backdrop-blur bg-white/80 border-b border-slate-200">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <a href="#" class="flex items-center gap-2 font-semibold text-slate-900">
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
+            <i data-lucide="sparkles" class="w-4 h-4"></i>
+          </span>
+          <span><%= APP_NAME %></span>
+        </a>
+        <nav class="hidden md:flex items-center gap-8 text-sm text-slate-600">
+          <a href="#features" class="hover:text-slate-900">Features</a>
+          <a href="#how" class="hover:text-slate-900">How it works</a>
+          <a href="#pricing" class="hover:text-slate-900">Pricing</a>
+          <a href="#faq" class="hover:text-slate-900">FAQ</a>
+        </nav>
+        <div class="flex items-center gap-3">
+          <a href="#" class="hidden sm:inline text-sm text-slate-600 hover:text-slate-900">Sign in</a>
+          <a href="#cta" class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+            Get started <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+          <button @click="mobileMenu = !mobileMenu" class="md:hidden p-2 rounded-md hover:bg-slate-100" aria-label="Toggle menu">
+            <i data-lucide="menu" class="w-5 h-5" x-show="!mobileMenu"></i>
+            <i data-lucide="x" class="w-5 h-5" x-show="mobileMenu" x-cloak></i>
+          </button>
+        </div>
+      </div>
+      <div x-show="mobileMenu" x-cloak class="md:hidden border-t border-slate-200 px-4 py-3 space-y-2 bg-white">
+        <a href="#features" @click="mobileMenu = false" class="block py-2 text-slate-700">Features</a>
+        <a href="#how" @click="mobileMenu = false" class="block py-2 text-slate-700">How it works</a>
+        <a href="#pricing" @click="mobileMenu = false" class="block py-2 text-slate-700">Pricing</a>
+        <a href="#faq" @click="mobileMenu = false" class="block py-2 text-slate-700">FAQ</a>
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="relative overflow-hidden">
+      <div class="absolute inset-0 -z-10 bg-gradient-to-b from-indigo-50 via-white to-white"></div>
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 lg:py-28 grid lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <span class="inline-flex items-center gap-2 rounded-full bg-indigo-100 px-3 py-1 text-xs font-medium text-indigo-700">
+            <span class="h-1.5 w-1.5 rounded-full bg-indigo-600"></span>
+            New: AI-assisted reports
+          </span>
+          <h1 class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-tight">
+            Ship faster.<br/>
+            Scale calmer.<br/>
+            <span class="text-indigo-600">Stay sane.</span>
+          </h1>
+          <p class="mt-6 text-lg text-slate-600 max-w-xl">
+            <%= APP_NAME %> brings your roadmap, sprints, docs, and reviews into one focused workspace — so the right work happens at the right time, without the noise.
+          </p>
+          <div class="mt-8 flex flex-col sm:flex-row gap-3">
+            <a href="#cta" class="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-6 py-3 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+              Start free <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </a>
+            <a href="#how" class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-6 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+              <i data-lucide="play" class="w-4 h-4"></i> See how it works
+            </a>
+          </div>
+          <p class="mt-4 text-sm text-slate-500">Free for 14 days · No credit card required</p>
+        </div>
+        <div class="relative">
+          <div class="rounded-2xl bg-white shadow-xl border border-slate-200 overflow-hidden">
+            <div class="bg-slate-50 border-b border-slate-200 px-4 py-2 flex items-center gap-2">
+              <span class="h-3 w-3 rounded-full bg-rose-400"></span>
+              <span class="h-3 w-3 rounded-full bg-amber-400"></span>
+              <span class="h-3 w-3 rounded-full bg-emerald-400"></span>
+              <span class="ml-3 text-xs text-slate-500">app.<%= APP_SLUG %>.com/dashboard</span>
+            </div>
+            <div class="p-5 space-y-4">
+              <div class="flex items-center justify-between">
+                <h3 class="font-semibold">This week</h3>
+                <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">On track</span>
+              </div>
+              <div class="grid grid-cols-3 gap-3">
+                <div class="rounded-lg bg-indigo-50 p-3">
+                  <div class="text-xs text-slate-500">Shipped</div>
+                  <div class="text-2xl font-semibold text-indigo-700">42</div>
+                </div>
+                <div class="rounded-lg bg-emerald-50 p-3">
+                  <div class="text-xs text-slate-500">In review</div>
+                  <div class="text-2xl font-semibold text-emerald-700">11</div>
+                </div>
+                <div class="rounded-lg bg-amber-50 p-3">
+                  <div class="text-xs text-slate-500">Blocked</div>
+                  <div class="text-2xl font-semibold text-amber-700">3</div>
+                </div>
+              </div>
+              <div class="space-y-2">
+                <div class="flex items-center gap-3 text-sm p-2 rounded hover:bg-slate-50">
+                  <span class="h-2 w-2 rounded-full bg-indigo-600"></span>
+                  <span class="flex-1">Improve onboarding flow</span>
+                  <span class="text-xs text-slate-400">2d</span>
+                </div>
+                <div class="flex items-center gap-3 text-sm p-2 rounded hover:bg-slate-50">
+                  <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                  <span class="flex-1">Audit billing dashboards</span>
+                  <span class="text-xs text-slate-400">4d</span>
+                </div>
+                <div class="flex items-center gap-3 text-sm p-2 rounded hover:bg-slate-50">
+                  <span class="h-2 w-2 rounded-full bg-amber-500"></span>
+                  <span class="flex-1">Fix activation drop on mobile</span>
+                  <span class="text-xs text-slate-400">today</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="hidden lg:block absolute -top-4 -right-4 rounded-xl bg-white shadow-lg border border-slate-200 p-3 w-56">
+            <div class="flex items-center gap-2">
+              <i data-lucide="zap" class="w-4 h-4 text-indigo-600"></i>
+              <span class="text-sm font-medium">Auto-prioritized</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">3 tasks rescheduled based on team capacity.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Logo strip -->
+    <section class="border-y border-slate-200 bg-slate-50">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
+        <p class="text-center text-sm font-medium text-slate-500 uppercase tracking-wider">Trusted by teams at</p>
+        <div class="mt-6 flex flex-wrap items-center justify-center gap-3 sm:gap-6">
+          <template x-for="brand in brands" :key="brand">
+            <span class="px-4 py-2 rounded-full bg-white border border-slate-200 text-slate-600 text-sm font-medium" x-text="brand"></span>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Everything your team needs to stay aligned</h2>
+          <p class="mt-4 text-lg text-slate-600">From planning to retro, <%= APP_NAME %> reduces context-switching and gives every contributor the picture they need.</p>
+        </div>
+        <div class="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <template x-for="f in features" :key="f.title">
+            <div class="rounded-xl border border-slate-200 p-6 hover:shadow-md hover:border-indigo-200 transition">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+                <i :data-lucide="f.icon" class="w-5 h-5"></i>
+              </div>
+              <h3 class="mt-4 font-semibold text-lg" x-text="f.title"></h3>
+              <p class="mt-2 text-slate-600 text-sm leading-relaxed" x-text="f.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section id="how" class="bg-slate-50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Up and running in minutes</h2>
+          <p class="mt-4 text-lg text-slate-600">No long onboarding. No migration weekend. Just sign in and start shipping.</p>
+        </div>
+        <div class="mt-14 grid gap-8 md:grid-cols-3">
+          <template x-for="(step, i) in steps" :key="step.title">
+            <div class="relative">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white font-semibold" x-text="i + 1"></div>
+              <h3 class="mt-4 text-lg font-semibold" x-text="step.title"></h3>
+              <p class="mt-2 text-slate-600 text-sm leading-relaxed" x-text="step.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Loved by builders, designers, and PMs</h2>
+          <p class="mt-4 text-lg text-slate-600">Stories from teams who switched and never looked back.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3">
+          <template x-for="t in testimonials" :key="t.name">
+            <figure class="rounded-xl border border-slate-200 p-6 bg-white">
+              <blockquote class="text-slate-700 text-sm leading-relaxed">
+                <span x-text="`“${t.quote}”`"></span>
+              </blockquote>
+              <figcaption class="mt-4 flex items-center gap-3">
+                <img :src="t.avatar" :alt="t.name" class="h-10 w-10 rounded-full" />
+                <div>
+                  <div class="text-sm font-medium" x-text="t.name"></div>
+                  <div class="text-xs text-slate-500" x-text="t.role"></div>
+                </div>
+              </figcaption>
+            </figure>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing -->
+    <section id="pricing" class="bg-slate-50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Simple pricing. Cancel any time.</h2>
+          <p class="mt-4 text-lg text-slate-600">Start free. Upgrade when your team grows.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3 max-w-5xl mx-auto">
+          <template x-for="plan in plans" :key="plan.name">
+            <div class="rounded-2xl border bg-white p-8 flex flex-col" :class="plan.featured ? 'border-indigo-600 shadow-lg ring-1 ring-indigo-100' : 'border-slate-200'">
+              <div class="flex items-center justify-between">
+                <h3 class="text-lg font-semibold" x-text="plan.name"></h3>
+                <span x-show="plan.featured" class="text-xs px-2 py-0.5 rounded bg-indigo-600 text-white">Most popular</span>
+              </div>
+              <div class="mt-4 flex items-baseline gap-1">
+                <span class="text-4xl font-bold" x-text="plan.price"></span>
+                <span class="text-slate-500 text-sm" x-text="plan.cadence"></span>
+              </div>
+              <p class="mt-2 text-sm text-slate-600" x-text="plan.description"></p>
+              <ul class="mt-6 space-y-2 text-sm flex-1">
+                <template x-for="feat in plan.features" :key="feat">
+                  <li class="flex items-start gap-2">
+                    <i data-lucide="check" class="w-4 h-4 text-indigo-600 mt-0.5"></i>
+                    <span x-text="feat"></span>
+                  </li>
+                </template>
+              </ul>
+              <a href="#cta" class="mt-8 inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                :class="plan.featured ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'border border-slate-300 text-slate-700 hover:bg-slate-50'">
+                <span x-text="plan.cta"></span>
+              </a>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-center">Frequently asked questions</h2>
+        <div class="mt-12 divide-y divide-slate-200 border-y border-slate-200">
+          <template x-for="(item, i) in faqs" :key="item.q">
+            <div class="py-5">
+              <button @click="openFaq = openFaq === i ? null : i" class="w-full flex items-center justify-between text-left gap-4 group focus:outline-none">
+                <span class="font-medium text-slate-900 group-hover:text-indigo-700" x-text="item.q"></span>
+                <i data-lucide="chevron-down" class="w-5 h-5 text-slate-400 transition-transform" :class="openFaq === i ? 'rotate-180' : ''"></i>
+              </button>
+              <div x-show="openFaq === i" x-collapse class="mt-3 text-slate-600 text-sm leading-relaxed" x-text="item.a"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA band -->
+    <section id="cta" class="relative overflow-hidden bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-700">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 lg:py-24 text-center text-white">
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">Ready when you are.</h2>
+        <p class="mt-4 text-lg text-indigo-100 max-w-2xl mx-auto">Join 12,000+ teams who replaced 4 tools with <%= APP_NAME %>. Free for 14 days, no credit card.</p>
+        <a href="#" class="mt-8 inline-flex items-center gap-2 rounded-lg bg-white px-6 py-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-indigo-700">
+          Start free <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </a>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-200 bg-white">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 grid gap-8 md:grid-cols-4">
+        <div>
+          <div class="flex items-center gap-2 font-semibold">
+            <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
+              <i data-lucide="sparkles" class="w-4 h-4"></i>
+            </span>
+            <span><%= APP_NAME %></span>
+          </div>
+          <p class="mt-3 text-sm text-slate-500">The calm workspace for shipping teams.</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Product</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#features" class="hover:text-slate-900">Features</a></li>
+            <li><a href="#pricing" class="hover:text-slate-900">Pricing</a></li>
+            <li><a href="#" class="hover:text-slate-900">Changelog</a></li>
+            <li><a href="#" class="hover:text-slate-900">Roadmap</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Company</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#" class="hover:text-slate-900">About</a></li>
+            <li><a href="#" class="hover:text-slate-900">Customers</a></li>
+            <li><a href="#" class="hover:text-slate-900">Careers</a></li>
+            <li><a href="#" class="hover:text-slate-900">Contact</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Resources</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#" class="hover:text-slate-900">Docs</a></li>
+            <li><a href="#" class="hover:text-slate-900">Guides</a></li>
+            <li><a href="#" class="hover:text-slate-900">Help center</a></li>
+            <li><a href="#" class="hover:text-slate-900">Status</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-slate-200">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-slate-500">
+          <p>&copy; <span x-text="new Date().getFullYear()"></span> <%= APP_NAME %>. All rights reserved.</p>
+          <div class="flex items-center gap-4">
+            <a href="#" class="hover:text-slate-700">Privacy</a>
+            <a href="#" class="hover:text-slate-700">Terms</a>
+            <a href="#" class="hover:text-slate-700">Security</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -27,14 +27,57 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+
+
+def _popup_close_html(slug: str, ok: bool, msg: str = "") -> str:
+    """Tiny HTML page that closes the OAuth popup and tells the parent.
+
+    If `window.opener` exists (popup mode): postMessage + window.close().
+    Otherwise: full-page redirect to /tasks/app-builder so the user lands
+    somewhere sensible if they navigated to /oauth/start in a tab instead
+    of the chat-driven popup.
+    """
+    import html as _h
+    safe_slug = _h.escape(slug, quote=True)
+    safe_msg = _h.escape(msg, quote=True)
+    status = "ok" if ok else "error"
+    fallback_qs = f"supabase_oauth_ok={safe_slug}" if ok else f"supabase_oauth_error={safe_msg}"
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Supabase {status}</title>
+<style>body{{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;
+display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}}
+.card{{padding:32px;border-radius:12px;background:#1e293b;max-width:380px}}</style></head>
+<body><div class="card">
+<h2>{"Supabase connected ✓" if ok else "Supabase connect failed"}</h2>
+<p>{"You can return to the App Builder." if ok else _h.escape(msg)}</p>
+</div>
+<script>
+(function(){{
+  var status = {status!r};
+  var slug = {slug!r};
+  var msg = {msg!r};
+  try {{
+    if (window.opener && !window.opener.closed) {{
+      window.opener.postMessage({{type:"supabase_oauth_"+status, slug:slug, msg:msg}}, "*");
+      setTimeout(function(){{ try {{ window.close(); }} catch(e){{}} }}, 250);
+      return;
+    }}
+  }} catch(e){{}}
+  // Not in a popup — full-page navigate back to App Builder.
+  setTimeout(function(){{
+    window.location.href = "/tasks/app-builder?{fallback_qs}";
+  }}, 600);
+}})();
+</script>
+</body></html>"""
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import crypto_utils
 from auth import AdminUser, current_admin
 from db import session
-from models import ProjectSupabase
+from models import ChatMessage, ProjectSupabase
 from routes_projects import _require_role, _validate_slug
 
 router = APIRouter()  # mounted at root; this module's paths are absolute
@@ -120,12 +163,16 @@ async def oauth_callback(
     browser), but the encrypted state binds the callback to (slug, email).
     """
     if error:
-        # Build a redirect to the App Builder with the error in a query string.
+        # Render a popup-aware page: closes the popup and notifies the parent
+        # if opened from preview's Connect button, otherwise navigates to the
+        # App Builder. Try to recover slug from state for a nicer parent message.
         msg = (error_description or error)[:300]
-        return RedirectResponse(
-            url=f"{PUBLIC_BASE_URL}/tasks/app-builder?{urlencode({'supabase_oauth_error': msg})}",
-            status_code=302,
-        )
+        try:
+            payload = _read_state(state)
+            err_slug = payload.get("slug", "")
+        except Exception:
+            err_slug = ""
+        return HTMLResponse(_popup_close_html(err_slug, ok=False, msg=msg))
 
     payload = _read_state(state)
     slug = payload["slug"]
@@ -142,7 +189,7 @@ async def oauth_callback(
             },
             auth=(CLIENT_ID, CLIENT_SECRET),
         )
-    if resp.status_code != 200:
+    if not resp.is_success:
         raise HTTPException(
             status_code=502,
             detail=f"Supabase token exchange failed: HTTP {resp.status_code} — {resp.text[:300]}",
@@ -180,14 +227,22 @@ async def oauth_callback(
                 oauth_expires_at=expires_at,
             )
             s.add(row)
+        # Surface the OAuth handshake in chat so the user sees what just
+        # happened even if the popup closes before they click Resume. We
+        # don't auto-resume here — the frontend's popup-close detection
+        # owns that, so the user gets visual confirmation first.
+        s.add(ChatMessage(
+            slug=slug,
+            user_email=email,
+            role="assistant",
+            content="Supabase account connected ✓",
+        ))
         await s.commit()
 
-    # Bounce the user back to the App Builder preview where the Supabase tab
-    # will see the new tokens and show the project picker.
-    return RedirectResponse(
-        url=f"{PUBLIC_BASE_URL}/tasks/app-builder?{urlencode({'supabase_oauth_ok': slug})}",
-        status_code=302,
-    )
+    # If we were opened in a popup (chat-driven Connect button), close it
+    # and notify the parent — preview.html's polling will pick up the new
+    # tokens and resume the build. Otherwise fall back to the App Builder.
+    return HTMLResponse(_popup_close_html(slug, ok=True))
 
 
 async def _ensure_fresh_token(s, row) -> str:
@@ -208,7 +263,7 @@ async def _ensure_fresh_token(s, row) -> str:
             data={"grant_type": "refresh_token", "refresh_token": refresh},
             auth=(CLIENT_ID, CLIENT_SECRET),
         )
-    if resp.status_code != 200:
+    if not resp.is_success:
         raise HTTPException(
             status_code=401,
             detail=f"OAuth refresh failed (HTTP {resp.status_code}). Re-connect Supabase.",
@@ -255,7 +310,7 @@ async def list_oauth_projects(slug: str, user: AdminUser = Depends(current_admin
             "https://api.supabase.com/v1/projects",
             headers={"Authorization": f"Bearer {access}"},
         )
-    if resp.status_code != 200:
+    if not resp.is_success:
         raise HTTPException(
             status_code=502,
             detail=f"Supabase API error (HTTP {resp.status_code}): {resp.text[:300]}",
@@ -296,14 +351,14 @@ async def _link_project(s, row: ProjectSupabase, project_ref: str,
                           headers=headers)
         if det.status_code == 404:
             raise HTTPException(status_code=404, detail="Project not found in your Supabase organization.")
-        if det.status_code != 200:
+        if not det.is_success:
             raise HTTPException(status_code=502, detail=f"Supabase API: {det.status_code} — {det.text[:300]}")
         project = det.json()
         project_name = project.get("name") or project_ref
 
         keys = await c.get(f"https://api.supabase.com/v1/projects/{project_ref}/api-keys",
                            headers=headers)
-        if keys.status_code != 200:
+        if not keys.is_success:
             raise HTTPException(status_code=502, detail=f"Supabase keys API: {keys.status_code} — {keys.text[:300]}")
         anon_key = None
         for k in keys.json() or []:
@@ -417,7 +472,7 @@ async def auto_link_oauth(
                 "https://api.supabase.com/v1/projects",
                 headers={"Authorization": f"Bearer {access}"},
             )
-        if resp.status_code != 200:
+        if not resp.is_success:
             raise HTTPException(
                 status_code=502,
                 detail=f"Supabase API error (HTTP {resp.status_code}): {resp.text[:300]}",
@@ -445,7 +500,7 @@ async def auto_link_oauth(
                 "https://api.supabase.com/v1/organizations",
                 headers={"Authorization": f"Bearer {access}"},
             )
-        if org_resp.status_code != 200:
+        if not org_resp.is_success:
             raise HTTPException(
                 status_code=502,
                 detail=f"Supabase organizations API: {org_resp.status_code} — {org_resp.text[:300]}",
@@ -594,7 +649,7 @@ async def create_status(
             return CreateStatusFailed(
                 message="Project not found — it may have been deleted on Supabase.",
             )
-        if resp.status_code != 200:
+        if not resp.is_success:
             raise HTTPException(
                 status_code=502,
                 detail=f"Supabase API: {resp.status_code} — {resp.text[:300]}",

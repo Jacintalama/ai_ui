@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en" x-data="portfolio" x-init="init()" :class="{ 'dark': theme === 'dark' }">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Designer & Developer</title>
+  <meta name="description" content="Portfolio of <%= APP_NAME %>, a designer and developer crafting calm digital products." />
+  <script>
+    // tailwind dark mode via class
+    tailwind = window.tailwind || {};
+    if (typeof tailwind === 'object') tailwind.config = { darkMode: 'class' };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased transition-colors">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-30 backdrop-blur bg-white/80 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2 font-semibold">
+        <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-sm" x-text="initials"></span>
+        <span x-text="name"></span>
+      </a>
+      <nav class="hidden md:flex items-center gap-8 text-sm text-slate-600 dark:text-slate-400">
+        <a href="#work" class="hover:text-slate-900 dark:hover:text-white">Work</a>
+        <a href="#about" class="hover:text-slate-900 dark:hover:text-white">About</a>
+        <a href="#skills" class="hover:text-slate-900 dark:hover:text-white">Skills</a>
+        <a href="#contact" class="hover:text-slate-900 dark:hover:text-white">Contact</a>
+      </nav>
+      <div class="flex items-center gap-2">
+        <button @click="toggleTheme()" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800" :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+          <i data-lucide="sun" class="w-5 h-5" x-show="theme === 'dark'"></i>
+          <i data-lucide="moon" class="w-5 h-5" x-show="theme !== 'dark'"></i>
+        </button>
+        <a href="#contact" class="hidden sm:inline-flex items-center gap-1.5 rounded-lg bg-slate-900 dark:bg-white dark:text-slate-900 text-white px-4 py-2 text-sm font-medium hover:opacity-90">
+          Get in touch
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-20 lg:py-28">
+    <p class="text-sm uppercase tracking-widest text-indigo-600 dark:text-indigo-400 font-medium">Designer &amp; Developer</p>
+    <h1 class="mt-4 text-4xl sm:text-5xl lg:text-7xl font-bold tracking-tight">
+      Hi, I'm <span x-text="name"></span>.
+    </h1>
+    <p class="mt-6 max-w-2xl text-lg text-slate-600 dark:text-slate-400">
+      I design and build calm, considered digital products — from early concept sketches to production-grade interfaces. Currently based in Lisbon, available for selected projects.
+    </p>
+    <div class="mt-8 flex items-center gap-4">
+      <a href="https://github.com" class="inline-flex items-center gap-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" aria-label="GitHub">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2.05c-3.2.69-3.87-1.36-3.87-1.36-.52-1.31-1.27-1.66-1.27-1.66-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.69 1.25 3.35.96.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.27-5.24-5.66 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.16 1.18.92-.26 1.9-.39 2.88-.39s1.96.13 2.88.39c2.2-1.49 3.16-1.18 3.16-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.4-2.7 5.36-5.27 5.65.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.79.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+      </a>
+      <a href="https://twitter.com" class="inline-flex items-center gap-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" aria-label="Twitter">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2H21l-6.52 7.45L22 22h-6.156l-4.81-6.29L5.62 22H2.86l6.97-7.96L2 2h6.31l4.34 5.74L18.244 2zm-2.16 18h1.69L7.99 4H6.21l9.875 16z"/></svg>
+      </a>
+      <a href="https://linkedin.com" class="inline-flex items-center gap-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" aria-label="LinkedIn">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.95v5.66H9.36V9h3.41v1.56h.05c.47-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zm1.78 13.02H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>
+      </a>
+      <a href="mailto:hello@example.com" class="inline-flex items-center gap-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" aria-label="Email">
+        <i data-lucide="mail" class="w-5 h-5"></i>
+      </a>
+    </div>
+  </section>
+
+  <!-- Selected work -->
+  <section id="work" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-12">
+    <div class="flex items-end justify-between flex-wrap gap-4">
+      <div>
+        <h2 class="text-3xl font-bold tracking-tight">Selected work</h2>
+        <p class="mt-2 text-slate-600 dark:text-slate-400">A small slice of recent client and personal projects.</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <template x-for="tag in ['All','Web','Mobile','Branding']" :key="tag">
+          <button @click="filter = tag"
+            :class="filter === tag ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'"
+            class="px-3 py-1.5 rounded-full text-sm font-medium transition">
+            <span x-text="tag"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <template x-for="(p, idx) in filteredProjects" :key="p.title">
+        <a href="#" class="group relative overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <img :src="`https://picsum.photos/seed/${p.seed}/600/400`" :alt="p.title" class="w-full aspect-[3/2] object-cover transition group-hover:scale-105" />
+          <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/0 to-black/0 opacity-0 group-hover:opacity-100 transition flex items-end p-4">
+            <span class="text-white text-sm font-medium">View case study →</span>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="font-semibold" x-text="p.title"></h3>
+              <span class="text-xs text-slate-500" x-text="p.year"></span>
+            </div>
+            <p class="mt-1 text-sm text-slate-600 dark:text-slate-400" x-text="p.summary"></p>
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <template x-for="tag in p.tags" :key="tag">
+                <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" x-text="tag"></span>
+              </template>
+            </div>
+          </div>
+        </a>
+      </template>
+    </div>
+    <p x-show="filteredProjects.length === 0" class="mt-8 text-center text-slate-500">No projects in this category yet.</p>
+  </section>
+
+  <!-- About -->
+  <section id="about" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-20">
+    <div class="grid gap-10 lg:grid-cols-2 items-center">
+      <div class="rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-900 aspect-[4/5] max-w-md mx-auto w-full">
+        <img src="https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=800&q=80" alt="Portrait placeholder" class="w-full h-full object-cover" />
+      </div>
+      <div>
+        <h2 class="text-3xl font-bold tracking-tight">About</h2>
+        <p class="mt-4 text-slate-600 dark:text-slate-400 leading-relaxed">
+          I've spent the last decade designing and shipping software for startups and established teams. My focus is the slow, careful work of turning rough ideas into interfaces that feel obvious in retrospect.
+        </p>
+        <p class="mt-4 text-slate-600 dark:text-slate-400 leading-relaxed">
+          Before going independent in 2022, I led design at two YC-backed startups and helped build the design system at a public fintech. I write occasionally about craft, attention, and small tools.
+        </p>
+        <div class="mt-6 grid grid-cols-3 gap-4 max-w-md">
+          <div>
+            <div class="text-2xl font-bold">42</div>
+            <div class="text-xs text-slate-500">Projects shipped</div>
+          </div>
+          <div>
+            <div class="text-2xl font-bold">10y</div>
+            <div class="text-xs text-slate-500">In product</div>
+          </div>
+          <div>
+            <div class="text-2xl font-bold">14</div>
+            <div class="text-xs text-slate-500">Countries worked from</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Skills -->
+  <section id="skills" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-12">
+    <h2 class="text-3xl font-bold tracking-tight">Skills &amp; tools</h2>
+    <div class="mt-8 grid gap-8 md:grid-cols-3">
+      <div>
+        <h3 class="text-sm uppercase tracking-widest text-slate-500">Design</h3>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <template x-for="s in skills.design" :key="s">
+            <span class="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-sm" x-text="s"></span>
+          </template>
+        </div>
+      </div>
+      <div>
+        <h3 class="text-sm uppercase tracking-widest text-slate-500">Engineering</h3>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <template x-for="s in skills.eng" :key="s">
+            <span class="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-sm" x-text="s"></span>
+          </template>
+        </div>
+      </div>
+      <div>
+        <h3 class="text-sm uppercase tracking-widest text-slate-500">Tooling</h3>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <template x-for="s in skills.tools" :key="s">
+            <span class="px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-sm" x-text="s"></span>
+          </template>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Contact -->
+  <section id="contact" class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-20">
+    <h2 class="text-3xl font-bold tracking-tight">Let's talk</h2>
+    <p class="mt-2 text-slate-600 dark:text-slate-400">Have a project in mind, or just want to say hi? Drop a note — I read every message.</p>
+    <form @submit.prevent="submitContact" class="mt-8 grid gap-4">
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+          <label for="c-name" class="block text-sm font-medium mb-1">Your name</label>
+          <input id="c-name" x-model="contact.name" required type="text" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div>
+          <label for="c-email" class="block text-sm font-medium mb-1">Email</label>
+          <input id="c-email" x-model="contact.email" required type="email" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+      </div>
+      <div>
+        <label for="c-msg" class="block text-sm font-medium mb-1">Message</label>
+        <textarea id="c-msg" x-model="contact.message" required rows="5" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+      </div>
+      <div class="flex items-center justify-between">
+        <p class="text-xs text-slate-500">Typically replies within 24 hours.</p>
+        <button type="submit" :disabled="contact.sending" class="inline-flex items-center gap-2 rounded-lg bg-slate-900 dark:bg-white dark:text-slate-900 text-white px-5 py-2.5 text-sm font-medium hover:opacity-90 disabled:opacity-60">
+          <span x-show="!contact.sending">Send message</span>
+          <span x-show="contact.sending">Sending…</span>
+          <i data-lucide="send" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </form>
+
+    <!-- Toast -->
+    <div x-show="toast.visible" x-transition x-cloak class="fixed bottom-6 right-6 z-50 rounded-lg bg-emerald-600 text-white px-4 py-3 shadow-lg flex items-center gap-2">
+      <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+      <span x-text="toast.message"></span>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-200 dark:border-slate-800">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-slate-500">
+      <p>&copy; <span x-text="new Date().getFullYear()"></span> <%= APP_NAME %>. Made with care.</p>
+      <div class="flex items-center gap-4">
+        <a href="https://github.com" class="hover:text-slate-700 dark:hover:text-slate-300">GitHub</a>
+        <a href="https://twitter.com" class="hover:text-slate-700 dark:hover:text-slate-300">Twitter</a>
+        <a href="https://linkedin.com" class="hover:text-slate-700 dark:hover:text-slate-300">LinkedIn</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

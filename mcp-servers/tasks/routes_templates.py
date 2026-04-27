@@ -19,10 +19,16 @@ class TemplateOut(BaseModel):
     emoji: str
     description: str
     placeholder: str
+    storage: str  # "none" | "supabase" — UI hint for the new-project modal.
+    role_tag: str = ""
+    feature_bullets: list[str] = []
+    has_app: bool = False  # True iff a base app exists; gallery only shows these.
+    svg_mockup: str = ""  # inline SVG preview rendered in the gallery card.
 
 
 @router.get("/templates", response_model=list[TemplateOut])
 async def list_templates(user: AdminUser = Depends(current_admin)) -> list[TemplateOut]:
+    from templates import _has_template_app
     return [
         TemplateOut(
             key=t.key,
@@ -30,6 +36,11 @@ async def list_templates(user: AdminUser = Depends(current_admin)) -> list[Templ
             emoji=t.emoji,
             description=t.description,
             placeholder=t.placeholder,
+            storage=t.storage,
+            role_tag=t.role_tag,
+            feature_bullets=list(t.feature_bullets),
+            has_app=_has_template_app(t.key),
+            svg_mockup=t.svg_mockup,
         )
         for t in TEMPLATES
     ]

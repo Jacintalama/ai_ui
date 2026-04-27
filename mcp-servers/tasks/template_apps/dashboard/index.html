@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en" x-data="appShell" x-init="init()" :class="{ 'dark': theme === 'dark' }">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Analytics</title>
+  <script>tailwind = window.tailwind || {}; if (typeof tailwind === 'object') tailwind.config = { darkMode: 'class' };</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased min-h-screen transition-colors">
+
+  <!-- Connection notice -->
+  <div x-show="!supabaseConnected" x-cloak class="bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-sm">
+    <div class="px-4 py-2 flex items-center gap-2">
+      <i data-lucide="info" class="w-4 h-4 shrink-0"></i>
+      <span>Showing demo data. Connect Supabase to query your real <code class="font-mono text-xs">events</code> table.</span>
+    </div>
+  </div>
+
+  <!-- Login -->
+  <section x-show="!session" x-cloak class="min-h-screen flex items-center justify-center px-4">
+    <div x-data="loginForm" x-init="init()" class="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 shadow-sm">
+      <div class="flex items-center gap-2 font-semibold mb-6">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white">
+          <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+        </span>
+        <span class="text-lg"><%= APP_NAME %></span>
+      </div>
+      <h1 class="text-2xl font-semibold tracking-tight" x-text="mode === 'signup' ? 'Create your account' : 'Sign in'"></h1>
+      <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">Real-time analytics for your product.</p>
+      <form @submit.prevent="submit" class="mt-6 space-y-4">
+        <div>
+          <label class="block text-sm font-medium mb-1">Email</label>
+          <input x-model="email" type="email" required class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Password</label>
+          <input x-model="password" type="password" required minlength="6" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <p x-show="error" x-cloak class="text-sm text-rose-500" x-text="error"></p>
+        <button type="submit" :disabled="loading" class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">
+          <span x-show="!loading" x-text="mode === 'signup' ? 'Create account' : 'Sign in'"></span>
+          <span x-show="loading">Please wait…</span>
+        </button>
+      </form>
+      <div class="mt-6 text-center text-sm text-slate-500">
+        <span x-show="mode === 'signin'">No account?
+          <button @click="mode = 'signup'; error = null" class="text-indigo-600 hover:underline">Sign up</button>
+        </span>
+        <span x-show="mode === 'signup'">Have one?
+          <button @click="mode = 'signin'; error = null" class="text-indigo-600 hover:underline">Sign in</button>
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Dashboard shell -->
+  <div x-show="session" x-cloak class="flex min-h-screen">
+
+    <!-- Sidebar -->
+    <aside class="hidden md:flex md:w-60 shrink-0 flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800">
+      <div class="h-16 flex items-center gap-2 px-5 font-semibold border-b border-slate-200 dark:border-slate-800">
+        <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
+          <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+        </span>
+        <span><%= APP_NAME %></span>
+      </div>
+      <nav class="flex-1 p-3 space-y-1 text-sm">
+        <template x-for="link in navLinks" :key="link.label">
+          <a href="#" @click.prevent="page = link.label"
+             :class="page === link.label ? 'bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+             class="flex items-center gap-2.5 rounded-lg px-3 py-2 font-medium">
+            <i :data-lucide="link.icon" class="w-4 h-4"></i>
+            <span x-text="link.label"></span>
+          </a>
+        </template>
+      </nav>
+    </aside>
+
+    <main class="flex-1 min-w-0">
+      <!-- Top bar -->
+      <header class="h-16 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between px-4 lg:px-6">
+        <div class="flex-1 max-w-md relative">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+          <input type="search" placeholder="Search events, users, reports…" class="w-full rounded-lg bg-slate-100 dark:bg-slate-800 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div class="flex items-center gap-2 relative" x-data="{ menu: false }">
+          <button @click="menu = !menu" class="flex items-center gap-2 rounded-lg pl-2 pr-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <span class="inline-flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-200 text-sm font-medium" x-text="(session?.user?.email || 'U')[0].toUpperCase()"></span>
+            <span class="hidden sm:inline text-sm" x-text="session?.user?.email || ''"></span>
+            <i data-lucide="chevron-down" class="w-4 h-4 text-slate-400"></i>
+          </button>
+          <div x-show="menu" x-cloak @click.outside="menu = false" class="absolute right-0 top-12 w-56 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-lg p-1.5 text-sm z-30">
+            <button @click="$root.toggleTheme(); menu = false" class="w-full text-left flex items-center gap-2 px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-800">
+              <i :data-lucide="$root.theme === 'dark' ? 'sun' : 'moon'" class="w-4 h-4"></i>
+              <span x-text="$root.theme === 'dark' ? 'Light mode' : 'Dark mode'"></span>
+            </button>
+            <button @click="$root.signOut()" class="w-full text-left flex items-center gap-2 px-3 py-2 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-rose-600">
+              <i data-lucide="log-out" class="w-4 h-4"></i> Sign out
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Overview page -->
+      <div x-show="page === 'Overview'" x-cloak class="p-6 lg:p-8" x-data="overviewPage" x-init="init()">
+        <div class="flex items-end justify-between flex-wrap gap-3">
+          <div>
+            <h1 class="text-2xl font-bold tracking-tight">Overview</h1>
+            <p class="text-sm text-slate-500" x-text="`Performance for the last ${range} days`"></p>
+          </div>
+          <div class="flex items-center gap-2">
+            <select x-model="range" @change="reload()" class="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm">
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+            <button @click="reload()" :disabled="loading" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="loading && 'animate-spin'"></i> Refresh
+            </button>
+          </div>
+        </div>
+
+        <!-- KPIs -->
+        <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <template x-for="kpi in kpis" :key="kpi.label">
+            <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5">
+              <div class="text-sm text-slate-500" x-text="kpi.label"></div>
+              <div class="mt-1 flex items-baseline gap-2">
+                <div class="text-2xl font-bold" x-text="kpi.value"></div>
+                <span class="text-xs" :class="kpi.trend >= 0 ? 'text-emerald-500' : 'text-rose-500'" x-text="(kpi.trend >= 0 ? '+' : '') + kpi.trend + '%'"></span>
+              </div>
+              <canvas class="mt-3 w-full h-10" x-ref="`spark${$index}`" x-init="$root.drawSparkline($el, kpi.spark)"></canvas>
+            </div>
+          </template>
+        </div>
+
+        <!-- Primary chart -->
+        <div class="mt-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="font-semibold">Sessions over time</h2>
+              <p class="text-sm text-slate-500">Daily active sessions, last <span x-text="range"></span> days</p>
+            </div>
+          </div>
+          <div class="mt-4 relative h-72">
+            <canvas x-ref="lineChart"></canvas>
+            <div x-show="loading" class="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-slate-900/60">
+              <div class="animate-pulse text-slate-400 text-sm">Loading…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Two-up: events table + bar chart -->
+        <div class="mt-6 grid gap-4 lg:grid-cols-3">
+          <div class="lg:col-span-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div class="px-5 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <h2 class="font-semibold">Recent events</h2>
+              <span class="text-xs text-slate-500" x-text="`${events.length} total`"></span>
+            </div>
+            <table class="w-full text-sm">
+              <thead class="text-xs uppercase tracking-wider text-slate-500 bg-slate-50 dark:bg-slate-800/40">
+                <tr>
+                  <th class="text-left font-medium px-5 py-2 cursor-pointer" @click="setSort('created_at')">Time</th>
+                  <th class="text-left font-medium px-5 py-2 cursor-pointer" @click="setSort('user')">User</th>
+                  <th class="text-left font-medium px-5 py-2 cursor-pointer" @click="setSort('event_type')">Event</th>
+                  <th class="text-left font-medium px-5 py-2">Details</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                <template x-for="e in pageRows" :key="e.id">
+                  <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <td class="px-5 py-3 text-slate-500 whitespace-nowrap" x-text="formatTime(e.created_at)"></td>
+                    <td class="px-5 py-3 text-slate-700 dark:text-slate-300" x-text="e.user"></td>
+                    <td class="px-5 py-3"><span class="px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300" x-text="e.event_type"></span></td>
+                    <td class="px-5 py-3 text-slate-500 truncate max-w-xs" x-text="JSON.stringify(e.details)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="events.length === 0 && !loading" class="p-10 text-center text-sm text-slate-500">No events recorded in this window.</div>
+            <div x-show="events.length > 0" class="px-5 py-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-sm">
+              <span class="text-slate-500" x-text="`Page ${page} of ${totalPages}`"></span>
+              <div class="flex gap-2">
+                <button @click="page = Math.max(1, page-1)" :disabled="page === 1" class="px-3 py-1 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-50">Previous</button>
+                <button @click="page = Math.min(totalPages, page+1)" :disabled="page === totalPages" class="px-3 py-1 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-50">Next</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5">
+            <h2 class="font-semibold">Top events</h2>
+            <p class="text-sm text-slate-500">By volume in selected window</p>
+            <div class="mt-4 relative h-72">
+              <canvas x-ref="barChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Other pages (placeholders kept polished) -->
+      <div x-show="page === 'Reports'" x-cloak class="p-8 max-w-3xl">
+        <h1 class="text-2xl font-bold tracking-tight">Reports</h1>
+        <p class="mt-2 text-slate-500">Saved reports will appear here. Build one from the Overview page using the date range picker.</p>
+        <div class="mt-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-500">
+          <i data-lucide="line-chart" class="w-10 h-10 mx-auto opacity-50"></i>
+          <p class="mt-3 text-sm">No saved reports yet.</p>
+        </div>
+      </div>
+      <div x-show="page === 'Users'" x-cloak class="p-8 max-w-3xl">
+        <h1 class="text-2xl font-bold tracking-tight">Users</h1>
+        <p class="mt-2 text-slate-500">A directory of users and their recent activity.</p>
+        <div class="mt-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-10 text-center text-slate-500">
+          <i data-lucide="users" class="w-10 h-10 mx-auto opacity-50"></i>
+          <p class="mt-3 text-sm">No users yet.</p>
+        </div>
+      </div>
+      <div x-show="page === 'Settings'" x-cloak class="p-8 max-w-xl">
+        <h1 class="text-2xl font-bold tracking-tight">Settings</h1>
+        <p class="mt-2 text-slate-500">Personalize your dashboard.</p>
+        <div class="mt-6 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="font-medium">Theme</div>
+              <div class="text-sm text-slate-500">Choose light or dark.</div>
+            </div>
+            <button @click="toggleTheme()" class="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm" x-text="theme === 'dark' ? 'Light' : 'Dark'"></button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

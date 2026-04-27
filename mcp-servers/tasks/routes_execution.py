@@ -5,6 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import select, text, update
 from sse_starlette.sse import EventSourceResponse
 
@@ -16,7 +17,7 @@ from claude_executor import (
     parse_plan, parse_test_outcome, run_claude_subprocess,
 )
 from db import session
-from models import ProjectSupabase, TaskExecution, TaskItem
+from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
 from schemas import PlanReviewRequest, TaskOut
 
 
@@ -261,6 +262,46 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
         _RUNNING.pop(task_id, None)
 
 
+def _build_execute_prompt(
+    item: TaskItem,
+    supabase_url: str | None,
+    has_db_uri: bool,
+) -> str:
+    """Compose the right execute-style prompt for an item that's about to
+    transition into `running`. Shared by /execute and /resume.
+    """
+    item_slug = item.built_app_slug or ""
+    item_email = item.assignee_email or ""
+    if item.max_attempts > 1 and item.plan and item.plan_status == "approved":
+        return build_tdd_execute_prompt(
+            description=item.description,
+            action_type=item.action_type,
+            priority=item.priority,
+            meeting_title=str(item.meeting_id),
+            meeting_date="",
+            plan=item.plan,
+            conversation_history=item.conversation_history or [],
+            attempt_count=item.attempt_count,
+            max_attempts=item.max_attempts,
+            error_context=item.result or "",
+            supabase_url=supabase_url,
+            has_db_uri=has_db_uri,
+            slug=item_slug,
+            user_email=item_email,
+        )
+    return build_prompt(
+        description=item.description,
+        action_type=item.action_type,
+        priority=item.priority,
+        meeting_title=str(item.meeting_id),
+        meeting_date="",
+        supabase_url=supabase_url,
+        has_db_uri=has_db_uri,
+        slug=item_slug,
+        user_email=item_email,
+    )
+
+
 @router.post("/{task_id}/execute", response_model=TaskOut)
 async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
     async with session() as s:
@@ -269,6 +310,11 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         ).scalar_one_or_none()
         if item is None:
             raise HTTPException(status_code=404, detail="Task not found")
+        if item.status == "awaiting_supabase":
+            raise HTTPException(
+                status_code=409,
+                detail="Connect Supabase first or skip",
+            )
         if item.built_app_slug:
             from routes_projects import _require_role
             await _require_role(s, item.built_app_slug, user.email, "editor",
@@ -308,39 +354,99 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         await s.refresh(execution)
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
-    item_slug = item.built_app_slug or ""
-    item_email = item.assignee_email or ""
-    if item.max_attempts > 1 and item.plan and item.plan_status == "approved":
-        prompt = build_tdd_execute_prompt(
-            description=item.description,
-            action_type=item.action_type,
-            priority=item.priority,
-            meeting_title=str(item.meeting_id),
-            meeting_date="",
-            plan=item.plan,
-            conversation_history=item.conversation_history or [],
-            attempt_count=item.attempt_count,
-            max_attempts=item.max_attempts,
-            error_context=item.result or "",
-            supabase_url=supabase_url,
-            has_db_uri=has_db_uri,
-            slug=item_slug,
-            user_email=item_email,
-        )
-    else:
-        prompt = build_prompt(
-            description=item.description,
-            action_type=item.action_type,
-            priority=item.priority,
-            meeting_title=str(item.meeting_id),
-            meeting_date="",
-            supabase_url=supabase_url,
-            has_db_uri=has_db_uri,
-            slug=item_slug,
-            user_email=item_email,
-        )
+    prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
     # Create a holder dict so the subprocess can register its own reference
     # for hard-kill on cancel.
+    _RUNNING[item.id] = {"task": None, "proc": None}
+    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
+    _RUNNING[item.id]["task"] = bg
+    return item
+
+
+class ResumeRequest(BaseModel):
+    skip: bool = False
+
+
+@router.post("/{task_id}/resume", response_model=TaskOut)
+async def resume(
+    task_id: UUID,
+    body: ResumeRequest,
+    user: AdminUser = Depends(current_admin),
+):
+    """Resume a build that's been gated waiting for Supabase.
+
+    Two paths:
+    - `skip=False` (default): verify Supabase is now linked for the project's
+      slug. If yes, transition to `pending`/`running` and kick off the build.
+      If not, 412 — the user needs to finish the connect popup first.
+    - `skip=True`: append a localStorage-only marker to the description and
+      build a frontend-only version.
+
+    Either way, an assistant chat message is appended so the chat UI reflects
+    what just happened.
+    """
+    async with session() as s:
+        item = (
+            await s.execute(select(TaskItem).where(TaskItem.id == task_id))
+        ).scalar_one_or_none()
+        if item is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if item.built_app_slug:
+            from routes_projects import _require_role
+            await _require_role(s, item.built_app_slug, user.email, "editor",
+                                is_admin=user.is_admin)
+        elif item.assignee_email not in (user.email, TEAM_EMAIL):
+            raise HTTPException(status_code=403, detail="Not your task")
+        if item.status != "awaiting_supabase":
+            raise HTTPException(
+                status_code=409,
+                detail="Task is not awaiting Supabase",
+            )
+
+        if body.skip:
+            new_desc = (item.description or "") + (
+                "\n\nNOTE: User chose to build WITHOUT a backend. "
+                "Use localStorage only."
+            )
+            item.description = new_desc[:20_000]
+            chat_text = "Building frontend-only version…"
+        else:
+            # Verify Supabase is actually linked for this slug.
+            supa_row = None
+            if item.built_app_slug:
+                supa_row = (await s.execute(
+                    select(ProjectSupabase).where(
+                        ProjectSupabase.slug == item.built_app_slug
+                    )
+                )).scalar_one_or_none()
+            linked = bool(
+                supa_row
+                and (supa_row.linked_project_ref or supa_row.supabase_url)
+            )
+            if not linked:
+                raise HTTPException(
+                    status_code=412,
+                    detail="Supabase still not linked",
+                )
+            chat_text = "Supabase connected ✓ — building now…"
+
+        item.status = "running"
+        item.mode = "ai"
+        execution = TaskExecution(task_id=item.id, status="running", log="")
+        s.add(execution)
+        if item.built_app_slug:
+            s.add(ChatMessage(
+                slug=item.built_app_slug,
+                user_email=user.email,
+                role="assistant",
+                content=chat_text,
+            ))
+        await s.commit()
+        await s.refresh(item)
+        await s.refresh(execution)
+        supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
+
+    prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
     _RUNNING[item.id] = {"task": None, "proc": None}
     bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
     _RUNNING[item.id]["task"] = bg

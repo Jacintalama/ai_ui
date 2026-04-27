@@ -688,13 +688,31 @@
       overflow-y: auto;
       overflow-x: hidden;
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 13px;
       color: #a0a8b6;
-      line-height: 1.6;
+      line-height: 1.55;
       white-space: pre-wrap;
       word-break: break-word;
       box-shadow: inset 0 0 40px rgba(124,140,255,0.06);
     }
+    .build-overlay .live-log .ll-row {
+      display: block;
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .build-overlay .live-log .ll-verb {
+      display: inline-block;
+      width: 7ch;
+      font-weight: 600;
+    }
+    .build-overlay .live-log .ll-write { color: #2dd4bf; }
+    .build-overlay .live-log .ll-edit  { color: #2dd4bf; }
+    .build-overlay .live-log .ll-read  { color: #6b7280; }
+    .build-overlay .live-log .ll-bash  { color: #f59e0b; }
+    .build-overlay .live-log .ll-error { color: #ef4444; }
+    .build-overlay .live-log .ll-text  { color: #8a93a3; font-style: italic; opacity: 0.85; }
+    .build-overlay .live-log .ll-dim   { color: #6b7280; opacity: 0.7; }
     .build-overlay .live-log .cursor {
       display: inline-block;
       width: 6px;
@@ -1815,7 +1833,7 @@
 
 <div class="pub-overlay" id="pub-overlay" hidden>
   <div class="pub-card">
-    <h3 id="pub-title">🌐 Publish app</h3>
+    <h3 id="pub-title">Publish app</h3>
     <div class="body" id="pub-body">
       Make <strong id="pub-slug-name"></strong> reachable at a public URL anyone can visit.
     </div>
@@ -1850,7 +1868,7 @@
     <!-- ─── Custom domain section ─── -->
     <div class="pub-section-divider" id="pub-cd-divider"></div>
     <div class="pub-section-title" id="pub-cd-title">
-      <span>🌍 Use your own domain</span>
+      <span>Use your own domain</span>
       <span class="badge-soft" id="pub-cd-badge">Optional</span>
     </div>
     <div class="body" id="pub-cd-body">
@@ -1900,7 +1918,7 @@
     <!-- ─── Supabase backend section ─── -->
     <div class="pub-section-divider"></div>
     <div class="pub-section-title">
-      <span>🗄 Supabase backend</span>
+      <span>Supabase backend</span>
       <span class="badge-soft" id="pub-sb-badge">Optional</span>
     </div>
     <div class="body" id="pub-sb-body">
@@ -1934,7 +1952,7 @@
 </div>
 
 <div class="build-overlay" id="build-overlay" hidden>
-  <div class="wand">🪄</div>
+  <div class="wand"></div>
   <h2 id="build-title">AIUI Agent is building your app…</h2>
   <div class="sub" id="build-sub">Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.</div>
   <div class="phase-chip" id="build-phase">Starting up</div>
@@ -2046,9 +2064,9 @@
       </button>
       <button class="tab" data-tab="tests">
         <span class="tab-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><line x1="6" y1="8.5" x2="6" y2="15.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/><line x1="8.5" y1="18" x2="15.5" y2="18"/><line x1="18" y1="8.5" x2="18" y2="15.5"/></svg>
         </span>
-        <span class="tab-label">Tests</span>
+        <span class="tab-label">Structure</span>
         <span class="tab-badge" id="badge-tests" hidden></span>
       </button>
       <button class="tab" data-tab="logs">
@@ -2117,19 +2135,157 @@
         <div class="preview-loading" id="preview-loading"><div class="spinner"></div><span>Loading preview…</span></div>
       </div>
 
-      <!-- Tests panel -->
+      <!-- Tests panel — repurposed as a project File/System Connection Graph -->
       <div class="panel" id="panel-tests">
-        <div class="tests-summary" id="tests-summary" hidden>
-          <span class="pill" data-kind="success" id="tests-pass"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>0 passed</span></span>
-          <span class="pill" data-kind="danger" id="tests-fail"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>0 failed</span></span>
-          <span class="pill" data-kind="muted" id="tests-source"></span>
-        </div>
-        <div class="panel-body">
-          <div class="tests-output" id="tests-output">
-            <div class="empty">
-              <div class="empty-icon">✓</div>
-              <div class="empty-title">No tests yet</div>
-              <div class="empty-sub">Tests appear here after a <strong>VERIFY</strong> step runs in an execution.</div>
+        <style>
+          .graph-view {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+          }
+          .graph-view .graph-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-2);
+            flex: 0 0 auto;
+          }
+          .graph-view .graph-head .summary {
+            font-weight: 600;
+            color: var(--text);
+          }
+          .graph-view .graph-head .summary .dim { color: var(--muted); font-weight: 400; }
+          .graph-view .graph-head .legend {
+            display: flex; align-items: center; gap: 10px;
+            font-size: 11px; color: var(--muted);
+          }
+          .graph-view .graph-head .legend .swatch {
+            display: inline-flex; align-items: center; gap: 4px;
+          }
+          .graph-view .graph-head .legend .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block;
+          }
+          .graph-view .graph-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: auto;
+            padding: 12px;
+            background: var(--surface, #0f1115);
+          }
+          .graph-view svg.graph-svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+          }
+          .graph-view .node {
+            animation: graph-node-in 360ms ease both, graph-float 6s ease-in-out infinite;
+            transform-origin: center;
+            transform-box: fill-box;
+          }
+          .graph-view .node circle {
+            cursor: pointer;
+            transition: r 180ms ease, stroke-width 180ms ease, opacity 180ms ease, filter 180ms ease;
+            stroke: rgba(255,255,255,0.18);
+            stroke-width: 1.4;
+            filter: drop-shadow(0 0 0 transparent);
+          }
+          .graph-view .node circle.glow {
+            animation: graph-glow 2.4s ease-in-out infinite;
+          }
+          .graph-view .node text {
+            font-family: var(--font-mono, ui-monospace, monospace);
+            font-size: 10.5px;
+            fill: var(--text-2, #c8c8c8);
+            pointer-events: none;
+            text-anchor: middle;
+          }
+          .graph-view .node[data-clickable="true"] circle:hover {
+            stroke: var(--text, #ffffff);
+            stroke-width: 2.2;
+            filter: drop-shadow(0 0 12px currentColor);
+          }
+          @keyframes graph-node-in {
+            from { opacity: 0; transform: scale(0.3); }
+            to   { opacity: 1; transform: scale(1); }
+          }
+          @keyframes graph-float {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-4px); }
+          }
+          @keyframes graph-glow {
+            0%, 100% { filter: drop-shadow(0 0 4px currentColor); }
+            50%      { filter: drop-shadow(0 0 14px currentColor); }
+          }
+          .graph-view .edge {
+            fill: none;
+            stroke: rgba(170,170,170,0.45);
+            stroke-width: 1.3;
+            transition: opacity 180ms ease, stroke-width 180ms ease;
+            stroke-dasharray: 6 4;
+            animation: graph-edge-flow 1.4s linear infinite, graph-edge-in 480ms ease both;
+          }
+          @keyframes graph-edge-flow {
+            to { stroke-dashoffset: -10; }
+          }
+          @keyframes graph-edge-in {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+          }
+          .graph-view .edge.kind-external,
+          .graph-view .edge.kind-api {
+            stroke-dasharray: 4 4;
+          }
+          .graph-view .edge.kind-external { stroke: rgba(160,160,160,0.65); }
+          .graph-view .edge.kind-api      { stroke: rgba(76,175,80,0.75); }
+          .graph-view.dim-others .edge { opacity: 0.18; }
+          .graph-view.dim-others .node circle { opacity: 0.35; }
+          .graph-view.dim-others .edge.is-incident { opacity: 1; stroke-width: 2.2; }
+          .graph-view.dim-others .node.is-incident circle { opacity: 1; }
+          .graph-view.dim-others .node.is-incident text { fill: var(--text); }
+          .graph-view .empty-state {
+            display: flex; align-items: center; justify-content: center;
+            height: 100%; flex-direction: column; gap: 8px;
+            color: var(--muted);
+          }
+          .graph-view .empty-state .ico { font-size: 32px; opacity: 0.7; }
+          .graph-view .refresh-btn {
+            background: transparent; color: var(--text-2);
+            border: 1px solid var(--border); border-radius: 6px;
+            padding: 4px 10px; font-size: 11px; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 5px;
+          }
+          .graph-view .refresh-btn:hover { color: var(--text); border-color: var(--border-2, var(--border)); }
+        </style>
+        <div class="graph-view" id="graph-view">
+          <div class="graph-head">
+            <span class="summary" id="graph-summary">
+              <span class="dim">Loading project graph…</span>
+            </span>
+            <span class="legend" id="graph-legend">
+              <span class="swatch"><span class="dot" style="background:#f59e0b;"></span> html</span>
+              <span class="swatch"><span class="dot" style="background:#14b8a6;"></span> css</span>
+              <span class="swatch"><span class="dot" style="background:#3b82f6;"></span> js</span>
+              <span class="swatch"><span class="dot" style="background:#a855f7;"></span> sql</span>
+              <span class="swatch"><span class="dot" style="background:#22c55e;"></span> api</span>
+              <span class="swatch"><span class="dot" style="background:#9ca3af;"></span> external</span>
+              <button type="button" class="refresh-btn" id="graph-refresh" title="Re-fetch graph">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                Refresh
+              </button>
+            </span>
+          </div>
+          <div class="graph-body" id="graph-body">
+            <div class="empty-state" id="graph-empty">
+              <div class="ico">◌</div>
+              <div>Loading project graph…</div>
             </div>
           </div>
         </div>
@@ -2167,7 +2323,7 @@
         </div>
         <div class="panel-body history-body" id="history-body">
           <div class="empty">
-            <div class="empty-icon">🕒</div>
+            <div class="empty-icon"></div>
             <div class="empty-title">Loading versions…</div>
           </div>
         </div>
@@ -2307,7 +2463,7 @@
               </div>
               <!-- Easy-mode builder: just paste password + pick region, we build the URI. -->
               <div style="background: var(--accent-soft); border: 1px solid rgba(124,140,255,0.3); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;">
-                <div style="font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 6px;">⚡ Quick setup — let us build the URI for you</div>
+                <div style="font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 6px;">Quick setup — let us build the URI for you</div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                   <input type="password" id="db-easy-password" placeholder="Database password" autocomplete="off" spellcheck="false"
                          style="padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;">
@@ -2379,21 +2535,21 @@
   <!-- Enhance sidebar (right) -->
   <aside id="enhance-sidebar" class="sidebar-enhance">
     <button id="enhance-rail" class="enhance-rail" title="Open Enhance panel" type="button">
-      <span class="rail-icon">✨</span>
+      <span class="rail-icon"></span>
       <span class="rail-label">Enhance</span>
     </button>
     <div class="enhance-full">
       <div class="enhance-header">
-        <span class="title"><span class="spark">✨</span>Enhance</span>
+        <span class="title">Enhance</span>
         <div class="mode-toggle" id="mode-toggle" role="tablist">
           <button data-mode="chat" class="active" type="button" title="Talk — no code changes">💬 Chat</button>
-          <button data-mode="build" type="button" title="Commit an enhancement — runs the build pipeline">⚡ Build</button>
+          <button data-mode="build" type="button" title="Commit an enhancement — runs the build pipeline">Build</button>
         </div>
         <button id="enhance-collapse" title="Minimize" type="button">−</button>
       </div>
       <div class="enhance-log" id="enhance-log">
         <div class="enhance-empty" id="enhance-empty">
-          <div class="spark">✨</div>
+          <div class="spark"></div>
           <div class="hint">Describe a change you want — I'll update the app and tell you what shipped.</div>
           <div class="examples">
             <button class="ex-btn" data-prompt="Add a header section with the app title">Add a header section</button>
@@ -2499,6 +2655,109 @@
     );
   }
 
+  // Render one stream-json log line into a short, professional progress row.
+  // Returns an HTML string (already escaped) or null to skip this line.
+  function _bovRenderLogLine(rawLine) {
+    if (!rawLine) return null;
+    const trimmed = rawLine.trim();
+    if (!trimmed) return null;
+
+    // Try to parse as one stream-json event. If it fails, fall back to plain
+    // dimmed text — older executions log raw text instead of stream-json.
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch (_) {
+      // Skip noisy framing lines that are obviously internal markers.
+      if (trimmed.startsWith("---") && trimmed.endsWith("---")) return null;
+      return '<span class="ll-row ll-dim">' + _escapeHtmlBov(trimmed.slice(0, 200)) + '</span>';
+    }
+
+    const truncate = (s, n) => {
+      if (!s) return "";
+      s = String(s).replace(/\s+/g, " ").trim();
+      return s.length > n ? s.slice(0, n - 1) + "…" : s;
+    };
+    const verbRow = (cls, verb, rest) =>
+      '<span class="ll-row"><span class="ll-verb ' + cls + '">' +
+      _escapeHtmlBov(verb) + '</span>' + _escapeHtmlBov(rest) + '</span>';
+
+    try {
+      const t = evt && evt.type;
+      if (t === "assistant" && evt.message && Array.isArray(evt.message.content)) {
+        const rows = [];
+        for (const c of evt.message.content) {
+          if (!c) continue;
+          if (c.type === "text" && c.text) {
+            const text = truncate(c.text, 80);
+            if (text) {
+              rows.push(
+                '<span class="ll-row ll-text">' +
+                _escapeHtmlBov('"' + text + '"') + '</span>'
+              );
+            }
+          } else if (c.type === "tool_use") {
+            const name = c.name || "";
+            const inp = c.input || {};
+            if (name === "Write") {
+              rows.push(verbRow("ll-write", "Write", truncate(inp.file_path || "", 90)));
+            } else if (name === "Edit" || name === "MultiEdit") {
+              rows.push(verbRow("ll-edit", "Edit", truncate(inp.file_path || "", 90)));
+            } else if (name === "Read") {
+              rows.push(verbRow("ll-read", "Read", truncate(inp.file_path || "", 90)));
+            } else if (name === "Bash") {
+              rows.push(verbRow("ll-bash", "Bash", truncate(inp.command || "", 70)));
+            } else if (name === "Glob" || name === "Grep") {
+              const q = inp.pattern || inp.query || "";
+              rows.push(verbRow("ll-read", name, truncate(q, 70)));
+            } else if (name) {
+              // Generic tool — show the name + the first string-ish field.
+              let arg = "";
+              for (const k of Object.keys(inp)) {
+                if (typeof inp[k] === "string") { arg = inp[k]; break; }
+              }
+              rows.push(verbRow("ll-dim", name.slice(0, 6), truncate(arg, 70)));
+            }
+          }
+        }
+        return rows.length ? rows.join("\n") : null;
+      }
+
+      if (t === "user" && evt.message && Array.isArray(evt.message.content)) {
+        // tool_result events: skip successes (the next line tells the story);
+        // only surface errors so the user knows something went wrong.
+        for (const c of evt.message.content) {
+          if (c && c.type === "tool_result" && c.is_error) {
+            let msg = "";
+            if (typeof c.content === "string") msg = c.content;
+            else if (Array.isArray(c.content) && c.content[0] && c.content[0].text) msg = c.content[0].text;
+            const firstLine = (msg || "").split("\n")[0];
+            return verbRow("ll-error", "Error", truncate(firstLine, 90));
+          }
+        }
+        return null;
+      }
+
+      // system / result / other meta events — skip silently.
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function _bovRenderLog(fullLog) {
+    if (!fullLog) return "";
+    const rawLines = fullLog.split("\n");
+    const rendered = [];
+    for (const ln of rawLines) {
+      const html = _bovRenderLogLine(ln);
+      if (html) rendered.push(html);
+    }
+    // Cap to most recent 30 visible rows.
+    const tail = rendered.slice(-30);
+    return tail.join("\n");
+  }
+
   async function _bovCheck() {
     try {
       const task = await apiFetch("GET", "/" + taskId);
@@ -2510,12 +2769,14 @@
         try { loadLogs(); } catch (_) {}
         try { loadDatabase(); } catch (_) {}
         try { loadEnhanceHistory(); } catch (_) {}
-        if (typeof toast === "function") toast("✨ Your app is ready!", "success", 4000);
+        try { loadGraph(); } catch (_) {}
+        try { refreshPreviewIframeIfVisible(); } catch (_) {}
+        if (typeof toast === "function") toast("Your app is ready", "success", 4000);
         return true;
       }
       if (task.status === "failed") {
         $bov.classList.add("failed");
-        $bovTitle.textContent = "🪄 Build ran into a problem";
+        $bovTitle.textContent = "Build ran into a problem";
         $bovSub.textContent = task.result || "The AIUI Agent had trouble with this build. You can retry or adjust the description.";
         $bovPhase.textContent = "Error";
         $bovRetry.hidden = false;
@@ -2538,7 +2799,7 @@
         try {
           const execs = await apiFetch("GET", "/" + taskId + "/executions");
           if (!execs || execs.length === 0) {
-            $bovTitle.textContent = "🚀 Starting AIUI Agent…";
+            $bovTitle.textContent = "Starting AIUI Agent…";
             try {
               await apiFetch("POST", "/" + taskId + "/execute");
               $bovTitle.textContent = "AIUI Agent is building your app…";
@@ -2558,8 +2819,8 @@
         if (execs && execs.length) {
           const latest = execs[0];
           if (latest.log && latest.log !== _bovLastLog) {
-            const lines = latest.log.split("\n").slice(-40).join("\n");
-            $bovLog.innerHTML = _escapeHtmlBov(lines) + '<span class="cursor"></span>';
+            const html = _bovRenderLog(latest.log);
+            $bovLog.innerHTML = (html || "") + '<span class="cursor"></span>';
             $bovLog.scrollTop = $bovLog.scrollHeight;
             _bovLastLog = latest.log;
           }
@@ -2589,7 +2850,7 @@
   if ($bovStart) {
     $bovStart.addEventListener("click", async () => {
       $bovStart.hidden = true;
-      $bovTitle.textContent = "🚀 Starting AIUI Agent…";
+      $bovTitle.textContent = "Starting AIUI Agent…";
       $bovSub.textContent = "Kicking off the build…";
       try {
         await apiFetch("POST", "/" + taskId + "/execute");
@@ -2634,7 +2895,6 @@
   let pollTimer = null;
   let allExecs = [];
   let logFilter = "all";
-  let lastTestOutput = null;
   const FOLDER_STATE_KEY = "aiui-folder-state-v1";
   const THEME_KEY = "aiui-theme";
   const LS_FILES_WIDTH = "aiui-sb-files-w";
@@ -2661,11 +2921,11 @@
   const $previewRefresh = document.getElementById("preview-refresh");
   const $previewLoading = document.getElementById("preview-loading");
   const $panelTests = document.getElementById("panel-tests");
-  const $testsSummary = document.getElementById("tests-summary");
-  const $testsPass = document.getElementById("tests-pass");
-  const $testsFail = document.getElementById("tests-fail");
-  const $testsSource = document.getElementById("tests-source");
-  const $testsOutput = document.getElementById("tests-output");
+  // Tests tab is now a project graph view. Element refs prefixed `$graph…`.
+  const $graphView    = document.getElementById("graph-view");
+  const $graphSummary = document.getElementById("graph-summary");
+  const $graphBody    = document.getElementById("graph-body");
+  const $graphRefresh = document.getElementById("graph-refresh");
   const $panelLogs = document.getElementById("panel-logs");
   const $logsToolbar = document.getElementById("logs-toolbar");
   const $logsBody = document.getElementById("logs-body");
@@ -3101,53 +3361,222 @@
   $previewRefresh.addEventListener("click", refreshPreviewFrame);
 
   // ────────────────────────────────────────────────────────────────────
-  // TESTS
+  // PROJECT GRAPH (Tests tab — repurposed)
   // ────────────────────────────────────────────────────────────────────
-  async function loadTests() {
-    try {
-      const execs = allExecs.length ? allExecs : await apiFetch("GET", "/" + taskId + "/executions");
-      let testOutput = "", sourceExecN = null;
-      for (let i = 0; i < execs.length; i++) {
-        const log = execs[i].log || "";
-        const idx = log.indexOf("--- VERIFY STEP ---");
-        if (idx !== -1) {
-          testOutput = log.substring(idx);
-          sourceExecN = execs.length - i;
-          break;
-        }
-      }
-      lastTestOutput = testOutput;
-      if (testOutput) {
-        const passes = (testOutput.match(/\b(PASS|PASSED|passed|ok|OK|✓)\b/g) || []).length;
-        const fails  = (testOutput.match(/\b(FAIL|FAILED|failed|error|ERROR|✗)\b/g) || []).length;
-        $testsSummary.hidden = false;
-        $testsPass.querySelector("span").textContent = passes + " passed";
-        $testsFail.querySelector("span").textContent = fails + " failed";
-        if (sourceExecN !== null) {
-          $testsSource.innerHTML = '<span>from Run ' + sourceExecN + '</span>';
-        }
-        // Tab badge
-        if (fails > 0) {
-          $badgeTests.hidden = false;
-          $badgeTests.dataset.kind = "danger";
-          $badgeTests.textContent = fails;
-        } else if (passes > 0) {
-          $badgeTests.hidden = false;
-          $badgeTests.dataset.kind = "success";
-          $badgeTests.textContent = passes;
-        }
-        const colored = escapeHtml(testOutput)
-          .replace(/\b(PASS|PASSED|passed|ok|OK|✓)\b/g, '<span class="ok">$1</span>')
-          .replace(/\b(FAIL|FAILED|failed|error|ERROR|✗)\b/g, '<span class="bad">$1</span>');
-        $testsOutput.innerHTML = colored;
-      } else {
-        $testsSummary.hidden = true;
-        $badgeTests.hidden = true;
-        $testsOutput.innerHTML = '<div class="empty"><div class="empty-icon">✓</div><div class="empty-title">No tests yet</div><div class="empty-sub">Tests appear after a <strong>VERIFY</strong> step runs in an execution.</div></div>';
-      }
-    } catch (err) {
-      $testsOutput.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load tests</div><div class="empty-sub">' + escapeHtml(err.message) + '</div></div>';
+  // Node-type colors must match the legend in the Tests panel header.
+  const GRAPH_COLORS = {
+    html:     "#f59e0b",
+    css:      "#14b8a6",
+    js:       "#3b82f6",
+    sql:      "#a855f7",
+    api:      "#22c55e",
+    external: "#9ca3af",
+  };
+  // Left-to-right column order. Anything not in this list goes at the end.
+  const GRAPH_COLUMN_ORDER = ["html", "css", "js", "sql", "api", "external"];
+
+  async function loadGraph() {
+    if (!slug) {
+      $graphSummary.innerHTML = '<span class="dim">No project yet</span>';
+      $graphBody.innerHTML =
+        '<div class="empty-state">' +
+        '<div class="ico">◌</div>' +
+        '<div>No files yet — start a build</div>' +
+        '</div>';
+      return;
     }
+    $graphSummary.innerHTML = '<span class="dim">Loading project graph…</span>';
+    // The graph endpoint lives on /api/projects (not /api/tasks), so we
+    // bypass apiFetch and hit it directly with the same admin auth headers.
+    let data;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/graph", {
+        method: "GET",
+        credentials: "include",
+        headers: authHeaders(),
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => r.statusText);
+        throw new Error(r.status + " " + text);
+      }
+      data = await r.json();
+    } catch (err) {
+      $graphSummary.innerHTML = '<span class="dim">Could not load graph</span>';
+      $graphBody.innerHTML =
+        '<div class="empty-state">' +
+        '<div class="ico">⚠️</div>' +
+        '<div>' + escapeHtml((err && err.message) || "Failed") + '</div>' +
+        '</div>';
+      return;
+    }
+
+    renderGraph(data);
+  }
+
+  // Backwards-compat alias — switchTab() still calls loadTests().
+  async function loadTests() { return loadGraph(); }
+
+  function renderGraph(data) {
+    const nodes = (data && data.nodes) || [];
+    const edges = (data && data.edges) || [];
+
+    if (!nodes.length) {
+      $graphSummary.innerHTML = '<span class="dim">0 files · 0 connections</span>';
+      $graphBody.innerHTML =
+        '<div class="empty-state">' +
+        '<div class="ico">◌</div>' +
+        '<div>No files yet — start a build</div>' +
+        '</div>';
+      return;
+    }
+
+    $graphSummary.innerHTML =
+      '<strong>Project Graph</strong> ' +
+      '<span class="dim">— ' + nodes.length + ' files, ' + edges.length + ' connection' +
+      (edges.length === 1 ? '' : 's') + '</span>';
+
+    // Group nodes into columns by type.
+    const buckets = {};
+    nodes.forEach((n) => {
+      const key = GRAPH_COLORS[n.type] ? n.type : "external";
+      (buckets[key] = buckets[key] || []).push(n);
+    });
+    // Stable sort within each bucket by id so the layout is deterministic.
+    Object.keys(buckets).forEach((k) => buckets[k].sort((a, b) => a.id.localeCompare(b.id)));
+
+    const columns = GRAPH_COLUMN_ORDER.filter((k) => buckets[k] && buckets[k].length);
+    Object.keys(buckets).forEach((k) => { if (columns.indexOf(k) === -1) columns.push(k); });
+
+    // Layout constants
+    const COL_W      = 180;          // horizontal spacing per column
+    const ROW_H      = 78;           // vertical spacing per node within a column
+    const PAD_X      = 60;
+    const PAD_Y      = 50;
+    const RADIUS     = 28;
+    const labelOffsetY = RADIUS + 14;
+
+    // Compute (x, y) for every node.
+    const pos = {};
+    let maxRows = 0;
+    columns.forEach((col, ci) => {
+      const items = buckets[col];
+      maxRows = Math.max(maxRows, items.length);
+      items.forEach((n, ri) => {
+        pos[n.id] = {
+          x: PAD_X + ci * COL_W,
+          y: PAD_Y + ri * ROW_H,
+          type: n.type,
+          label: n.label,
+        };
+      });
+    });
+
+    const width  = PAD_X * 2 + (columns.length - 1) * COL_W;
+    const height = PAD_Y * 2 + Math.max(0, maxRows - 1) * ROW_H + 20;
+
+    // Build SVG.
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "graph-svg");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+    // Edges first so they paint behind nodes.
+    const edgeG = document.createElementNS(svgNS, "g");
+    edgeG.setAttribute("class", "edges");
+    const edgeEls = [];
+    edges.forEach((e, idx) => {
+      const a = pos[e.from], b = pos[e.to];
+      if (!a || !b) return;
+      const path = document.createElementNS(svgNS, "path");
+      // Bezier curve with horizontal control handles
+      const dx = (b.x - a.x);
+      const c1x = a.x + dx * 0.5;
+      const c2x = b.x - dx * 0.5;
+      const d = "M " + a.x + " " + a.y +
+                " C " + c1x + " " + a.y + ", " + c2x + " " + b.y + ", " + b.x + " " + b.y;
+      path.setAttribute("d", d);
+      path.setAttribute("class", "edge kind-" + (e.kind || "import"));
+      path.dataset.from = e.from;
+      path.dataset.to   = e.to;
+      // Staggered fade-in per edge so they appear in sequence.
+      path.style.animationDelay = (idx * 60 + 200) + "ms";
+      edgeG.appendChild(path);
+      edgeEls.push({ path: path, from: e.from, to: e.to });
+    });
+    svg.appendChild(edgeG);
+
+    // Nodes
+    const nodeG = document.createElementNS(svgNS, "g");
+    nodeG.setAttribute("class", "nodes");
+    nodes.forEach((n, idx) => {
+      const p = pos[n.id];
+      if (!p) return;
+      const g = document.createElementNS(svgNS, "g");
+      g.setAttribute("class", "node");
+      g.dataset.nodeId = n.id;
+      const isFile = !n.id.startsWith("@"); // file paths vs synthetic externals
+      g.dataset.clickable = isFile ? "true" : "false";
+      // Staggered pop-in. Float-loop continues after.
+      g.style.animationDelay = (idx * 70) + "ms, " + ((idx % 4) * 1500) + "ms";
+
+      const c = document.createElementNS(svgNS, "circle");
+      c.setAttribute("cx", p.x);
+      c.setAttribute("cy", p.y);
+      c.setAttribute("r", RADIUS);
+      c.setAttribute("fill", GRAPH_COLORS[n.type] || GRAPH_COLORS.external);
+      // External nodes (Supabase, CDNs, APIs) get a soft glow to set them apart.
+      if (n.type === "external" || n.type === "api") c.classList.add("glow");
+      g.appendChild(c);
+
+      const t = document.createElementNS(svgNS, "text");
+      t.setAttribute("x", p.x);
+      t.setAttribute("y", p.y + labelOffsetY);
+      t.textContent = n.label || n.id;
+      g.appendChild(t);
+
+      // Hover: highlight incident edges + nodes.
+      g.addEventListener("mouseenter", () => highlightNode(n.id, true));
+      g.addEventListener("mouseleave", () => highlightNode(n.id, false));
+
+      // Click: open in Code tab if it's a real file.
+      if (isFile) {
+        g.style.cursor = "pointer";
+        g.addEventListener("click", () => {
+          // The Code tab's loadFile() expects an app-relative file path.
+          if (typeof loadFile === "function") {
+            loadFile(n.id);
+          }
+        });
+      }
+
+      nodeG.appendChild(g);
+    });
+    svg.appendChild(nodeG);
+
+    $graphBody.innerHTML = "";
+    $graphBody.appendChild(svg);
+
+    function highlightNode(id, on) {
+      $graphView.classList.toggle("dim-others", on);
+      const incident = new Set();
+      edgeEls.forEach((e) => {
+        const isInc = (e.from === id || e.to === id);
+        e.path.classList.toggle("is-incident", on && isInc);
+        if (on && isInc) {
+          incident.add(e.from);
+          incident.add(e.to);
+        }
+      });
+      nodeG.querySelectorAll(".node").forEach((nEl) => {
+        const nid = nEl.dataset.nodeId;
+        nEl.classList.toggle("is-incident", on && (nid === id || incident.has(nid)));
+      });
+    }
+  }
+
+  if ($graphRefresh) {
+    $graphRefresh.addEventListener("click", () => loadGraph());
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -3240,7 +3669,7 @@
     if (!rows || !rows.length) {
       $historyBody.innerHTML =
         '<div class="empty">' +
-        '<div class="empty-icon">🕒</div>' +
+        '<div class="empty-icon"></div>' +
         '<div class="empty-title">No versions yet</div>' +
         '<div class="empty-sub">Every build commit becomes a version you can roll back to. Run a build from the Enhance sidebar.</div>' +
         '</div>';
@@ -3274,7 +3703,7 @@
         '<div class="info">' +
           '<div class="message">' + escapeHtml(v.message) + '</div>' +
           '<div class="meta">' +
-            '<span>🕒 ' + escapeHtml(formatVersionDate(v.date)) + '</span>' +
+            '<span>' + escapeHtml(formatVersionDate(v.date)) + '</span>' +
             '<span class="by">· by <strong>' + escapeHtml(actor) + '</strong></span>' +
             '<span class="sha">' + escapeHtml(v.short_sha) + '</span>' +
           '</div>' +
@@ -3298,14 +3727,14 @@
     if (!slug) {
       $historyBody.innerHTML =
         '<div class="empty">' +
-        '<div class="empty-icon">🕒</div>' +
+        '<div class="empty-icon"></div>' +
         '<div class="empty-title">Waiting for build</div>' +
         '<div class="empty-sub">Version history will appear here once the app has its first commit.</div>' +
         '</div>';
       return;
     }
     $historyBody.innerHTML =
-      '<div class="empty"><div class="empty-icon">🕒</div><div class="empty-title">Loading versions…</div></div>';
+      '<div class="empty"><div class="empty-icon"></div><div class="empty-title">Loading versions…</div></div>';
     try {
       const token = localStorage.getItem("token");
       const headers = { "Content-Type": "application/json" };
@@ -3352,6 +3781,8 @@
       await loadVersions();
       // Refresh file tree so Code panel shows the rolled-back files.
       await loadFileTree();
+      // Graph reflects the new file structure.
+      try { loadGraph(); } catch (_) {}
       // If a preview server is running, its files on disk just changed.
       if (activeTab === "preview") refreshPreviewFrame();
     } catch (err) {
@@ -4345,7 +4776,7 @@
       _renderPubButton(_publishedState, _customDomainState);
       _renderPubModal();
       $pubUrlOpen.style.display = "";
-      toast("✨ App is now live at " + _publishedState.public_url, "success", 5000);
+      toast("App is now live at " + _publishedState.public_url, "success", 5000);
       _closePub();
     } catch (err) {
       toast("Network error: " + err.message, "error", 6000);
@@ -4827,6 +5258,7 @@
     startPolling();
     loadLogs();
     try { loadDatabase(); } catch (_) {}
+    try { loadGraph(); } catch (_) {}
   }
   init();
 
@@ -4973,7 +5405,7 @@
     if (task.status === "running") {
       if (attempt > 0) return { icon: "🔄", text: "Retrying (" + attempt + "/" + max + ")", terminal: false };
       if (log.indexOf("--- VERIFY STEP ---") !== -1) return { icon: "✅", text: "Verifying…", terminal: false };
-      return { icon: "⚡", text: "Building…", terminal: false };
+      return { icon: "", text: "Building…", terminal: false };
     }
     return { icon: "⏳", text: "Queued", terminal: false };
   }
@@ -5053,7 +5485,10 @@
   }
 
   function refreshPreviewIframeIfVisible() {
-    if (activeTab !== "preview") return;
+    // Always reload — the user might be on Code or Logs while a build runs
+    // and only switch to Preview after it finishes. Without this, the iframe
+    // stays on the pre-build version and the AIUI Agent's edits look like
+    // they didn't take effect.
     const iframe = document.querySelector("#panel-preview iframe");
     if (!iframe) return;
     try {
@@ -5150,20 +5585,38 @@
   }
 
   function attachBuildSuggestion(bubbleEl, suggestion) {
+    // Auto-fire the enhance pipeline so chat feels conversational —
+    // user asks for a change, the agent just makes it. The build kicks
+    // off in the background; the existing Enhance flow handles streaming
+    // logs + completion. We still surface the suggestion text inline so
+    // the user can see what the agent committed to building.
     const wrap = document.createElement("div");
-    wrap.className = "build-suggestion";
+    wrap.className = "build-suggestion auto";
     wrap.innerHTML =
-      '<span class="bs-label">Ready to build?</span>' +
-      '<div class="bs-text"></div>' +
-      '<button class="bs-btn" type="button">⚡ Build this</button>';
+      '<span class="bs-label">Building this now…</span>' +
+      '<div class="bs-text"></div>';
     wrap.querySelector(".bs-text").textContent = suggestion;
-    wrap.querySelector(".bs-btn").addEventListener("click", function () {
-      setMode("build");
-      $prompt.value = suggestion;
-      $prompt.focus();
-      toast("Switched to Build mode — click Send to commit this change.", "info", 3500);
-    });
     bubbleEl.querySelector(".body").appendChild(wrap);
+    // Switch the Enhance pane to Build mode (so any streaming logs land
+    // there) and fire the request. submitEnhance accepts a text override
+    // and handles UI state for us.
+    try {
+      setMode("build");
+      submitEnhance(suggestion);
+    } catch (err) {
+      // If submitEnhance isn't ready (rare timing edge), surface the
+      // failure inline so the user can retry from the existing button.
+      const retry = document.createElement("button");
+      retry.className = "bs-btn";
+      retry.type = "button";
+      retry.textContent = "Build this";
+      retry.addEventListener("click", () => {
+        setMode("build");
+        $prompt.value = suggestion;
+        $prompt.focus();
+      });
+      wrap.appendChild(retry);
+    }
   }
 
   async function submitChat(text) {
@@ -5187,15 +5640,22 @@
       });
       aiBubble.classList.remove("thinking");
       const parts = splitChatReply(resp.reply || "");
-      const replyText = parts.body || resp.reply;
+      let replyText = parts.body || resp.reply || "";
+      // Detect the agent-emitted Connect-Supabase sentinel and render the
+      // button under the bubble (same flow as the new-project chat prompt).
+      const hasConnectAction = replyText.includes(SUPABASE_CONNECT_MARKER);
+      const persistText = replyText;  // keep the marker so reload re-attaches the button
+      if (hasConnectAction) replyText = replyText.replace(SUPABASE_CONNECT_MARKER, "").trim();
       aiBubble.querySelector(".markdown").innerHTML = renderMarkdown(replyText);
-      // Persist assistant reply.
-      if (slug && replyText) {
+      if (hasConnectAction) _attachSupabaseConnectActions(aiBubble);
+      // Persist assistant reply (with the sentinel preserved so a reload
+      // re-renders the button rather than losing it).
+      if (slug && persistText) {
         fetch(`/api/projects/${encodeURIComponent(slug)}/chat`, {
           method: "POST",
           headers: authHeaders(),
           credentials: "include",
-          body: JSON.stringify({ role: "assistant", content: replyText }),
+          body: JSON.stringify({ role: "assistant", content: persistText }),
         }).catch(() => {});
       }
       if (parts.buildSuggestion) attachBuildSuggestion(aiBubble, parts.buildSuggestion);
@@ -5240,7 +5700,7 @@
           const iconEl = aiBubble.querySelector(".phase-icon");
           const textEl = aiBubble.querySelector(".phase-text");
           const contentEl = aiBubble.querySelector(".content");
-          if (iconEl) iconEl.textContent = "⚡";
+          if (iconEl) iconEl.textContent = "";
           if (textEl) textEl.textContent = "Building…";
           if (contentEl) contentEl.innerHTML = "";
           markMyBuildStart(replyToTask);
@@ -5316,6 +5776,130 @@
     }
   });
 
+  const SUPABASE_CONNECT_MARKER = "[ACTION:supabase_connect]";
+
+  function _attachSupabaseConnectActions(bubbleEl) {
+    const wrap = document.createElement("div");
+    wrap.className = "supabase-connect-actions";
+    wrap.style.cssText = "display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;";
+    const connectBtn = document.createElement("button");
+    connectBtn.type = "button";
+    connectBtn.className = "btn primary";
+    connectBtn.textContent = "Connect Supabase";
+    connectBtn.style.cssText = "padding:8px 14px;background:var(--accent,#3ecf8e);color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer;";
+    const skipBtn = document.createElement("button");
+    skipBtn.type = "button";
+    skipBtn.className = "btn secondary";
+    skipBtn.textContent = "Skip — build frontend-only";
+    skipBtn.style.cssText = "padding:8px 14px;background:var(--surface-2,#222);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;";
+    wrap.appendChild(connectBtn);
+    wrap.appendChild(skipBtn);
+    const body = bubbleEl.querySelector(".body") || bubbleEl;
+    body.appendChild(wrap);
+
+    connectBtn.addEventListener("click", () => _handleSupabaseConnectClick(connectBtn, skipBtn));
+    skipBtn.addEventListener("click", () => _handleSupabaseSkipClick(connectBtn, skipBtn));
+  }
+
+  async function _resumeBuild(skip) {
+    if (!taskId) return false;
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/resume`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ skip: !!skip }),
+      });
+      if (!r.ok) {
+        let detail = "";
+        try { detail = (await r.json()).detail || ""; } catch (_) {}
+        toast("Resume failed: " + (detail || `HTTP ${r.status}`), "error", 5000);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      toast("Network error: " + (e.message || e), "error", 4500);
+      return false;
+    }
+  }
+
+  async function _handleSupabaseSkipClick(connectBtn, skipBtn) {
+    const ok = window.confirm(
+      "Build a frontend-only version? Your data will only be saved in the browser " +
+      "and won't sync between devices."
+    );
+    if (!ok) return;
+    connectBtn.disabled = true;
+    skipBtn.disabled = true;
+    skipBtn.textContent = "Skipping…";
+    const succeeded = await _resumeBuild(true);
+    if (succeeded) {
+      // Refresh chat to show the "Building frontend-only…" assistant msg.
+      try { await loadChatHistory(); } catch (_) {}
+    } else {
+      connectBtn.disabled = false;
+      skipBtn.disabled = false;
+      skipBtn.textContent = "Skip — build frontend-only";
+    }
+  }
+
+  async function _handleSupabaseConnectClick(connectBtn, skipBtn) {
+    if (!slug) {
+      toast("Slug not loaded yet — try again in a moment.", "error", 3500);
+      return;
+    }
+    connectBtn.disabled = true;
+    skipBtn.disabled = true;
+    connectBtn.textContent = "Waiting for Supabase…";
+    const popup = window.open(
+      "/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/start",
+      "aiui_supabase_oauth",
+      "width=720,height=820"
+    );
+    // Poll the project's Supabase config until it shows linked_project_ref
+    // or supabase_url, then call /resume and refresh chat.
+    let polls = 0;
+    const MAX_POLLS = 150;  // 5 minutes at 2s
+    const tick = async () => {
+      polls += 1;
+      if (popup && popup.closed) {
+        // Popup closed — keep polling a few more rounds in case the
+        // callback writes the row a moment after window close.
+      }
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (r.ok) {
+          const cfg = await r.json();
+          const linked = !!(cfg && (cfg.linked_project_ref || cfg.supabase_url));
+          if (linked) {
+            const ok = await _resumeBuild(false);
+            if (ok) {
+              try { await loadChatHistory(); } catch (_) {}
+              return;  // stop polling
+            } else {
+              connectBtn.disabled = false;
+              skipBtn.disabled = false;
+              connectBtn.textContent = "Connect Supabase";
+              return;
+            }
+          }
+        }
+      } catch (_) { /* keep polling */ }
+      if (polls >= MAX_POLLS) {
+        connectBtn.disabled = false;
+        skipBtn.disabled = false;
+        connectBtn.textContent = "Connect Supabase";
+        toast("Timed out waiting for Supabase. Try again.", "error", 5000);
+        return;
+      }
+      setTimeout(tick, 2000);
+    };
+    setTimeout(tick, 2000);
+  }
+
   async function loadChatHistory() {
     if (!slug) return;
     try {
@@ -5328,9 +5912,21 @@
       if (!rows.length) return;
       const empty = document.getElementById("enhance-empty");
       if (empty) empty.remove();
+      // Re-render from scratch so reload after /resume doesn't double up.
+      $log.innerHTML = "";
       for (const m of rows) {
-        if (m.role === "user")      renderChatBubble("user", m.content);
-        else if (m.role === "assistant") renderChatBubble("ai", m.content);
+        if (m.role === "user") {
+          renderChatBubble("user", m.content);
+        } else if (m.role === "assistant") {
+          const content = m.content || "";
+          if (content.startsWith(SUPABASE_CONNECT_MARKER)) {
+            const display = content.slice(SUPABASE_CONNECT_MARKER.length).trim();
+            const bubble = renderChatBubble("ai", display);
+            _attachSupabaseConnectActions(bubble);
+          } else {
+            renderChatBubble("ai", content);
+          }
+        }
       }
       $log.scrollTop = $log.scrollHeight;
     } catch (_) {}

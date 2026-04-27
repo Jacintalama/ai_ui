@@ -5,6 +5,7 @@ this list via GET /api/templates and only sends `template_key` when creating
 a project — the rules text is looked up server-side, NOT trusted from the
 browser. Closes a prompt-injection vector.
 """
+import os
 from dataclasses import dataclass
 
 
@@ -16,25 +17,145 @@ class Template:
     description: str
     placeholder: str
     rules: str
+    # Either "supabase" (template needs a DB to be useful) or "none"
+    # (purely static / localStorage). Used by the chat-driven Supabase
+    # connect flow to decide whether to gate the build on a DB link.
+    storage: str = "none"
+    # Short role tag shown in the gallery banner (e.g. "Auth + CRUD"). Empty
+    # string means the gallery falls back to `label`.
+    role_tag: str = ""
+    # 3 short feature bullets shown on the gallery card body. Surfaces what
+    # the template actually delivers so users can pick without guessing.
+    # Tuple keeps the dataclass frozen-friendly.
+    feature_bullets: tuple[str, ...] = ()
+    # Stylized SVG mockup (string) shown as the card visual in the gallery.
+    # Hand-crafted preview that depicts the template's layout — bypasses the
+    # service-worker / live-iframe issues. Empty string falls back to the
+    # gradient placeholder.
+    svg_mockup: str = ""
 
     @property
     def display(self) -> str:
         return f"{self.emoji} {self.label} — {self.description}"
 
 
-# Universal rules prefix prepended to every template's rules block before
-# being sent to the agent. Kept short — the agent's PROMPT_TEMPLATE already
-# knows the broad strokes.
-UNIVERSAL_RULES: str = "\n".join([
+# Strict, always-on tech rules — these apply whether the agent is generating
+# from scratch OR customizing a pre-built base app.
+_BASE_RULES: str = "\n".join([
     "RULES (strict):",
-    "• Tech: static HTML + Tailwind CDN + vanilla JS only. No build step. Single index.html unless the app genuinely needs multiple pages.",
+    "• Tech: static HTML + Tailwind CDN + Alpine.js + vanilla ES modules. No build step (no webpack/rollup/vite). No npm install.",
     "• Semantic HTML5: use <header>, <main>, <section>, <footer>. One <h1> per page.",
     "• Responsive: mobile-first, must work from 320px up. Test header/nav collapse at <768px.",
     "• Accessibility: alt text on all images, labels on form fields, visible focus states, contrast ≥4.5:1 for body text.",
-    "• Performance: inline critical CSS in <style>, no JS frameworks, lazy-load images below the fold.",
+    "• Performance: keep critical CSS small, lazy-load images below the fold.",
     "• Whitelisted CDNs only: cdn.tailwindcss.com, fonts.googleapis.com, cdn.jsdelivr.net, unpkg.com. No random script tags.",
     "• No placeholder copy like 'Lorem ipsum' — write real, plausible copy based on the user's description.",
 ])
+
+
+# Layout/structure block used when generating an app from scratch (no
+# pre-built template app on disk). The CUSTOMIZE directive replaces this
+# block when a base app is being copied in.
+_GENERATION_LAYOUT: str = "\n".join([
+    "FILE LAYOUT (MANDATORY — create the project folder first, then the subfolders, then files):",
+    "  apps/<slug>/                    ← project root, always created first",
+    "    index.html                    # ~30 lines: <head>, mount target, CDN scripts, link to main.css + main.js",
+    "    README.md                     # 1-paragraph description of what was built + how to run",
+    "    styles/",
+    "      main.css                    # project-specific CSS overrides (Tailwind handles 95%)",
+    "    src/",
+    "      main.js                     # bootstraps Alpine + initializes things",
+    "      components/                 # one file per Alpine x-data component (e.g. LoginForm.js, DashboardTable.js)",
+    "      lib/",
+    "        supabase.js               # createClient(...) — ONLY for storage=\"supabase\" templates",
+    "        api.js                    # thin fetch wrappers for REST/RPC calls — ONLY for storage=\"supabase\"",
+    "    schema.sql                    # Supabase tables + RLS — ONLY for storage=\"supabase\" templates",
+    "    public/                       # static assets (favicon, images); keep tiny — empty is fine",
+    "",
+    "INDEX.HTML CDN BLOCK (in <head>, in this exact order):",
+    "    <script src=\"https://cdn.tailwindcss.com\"></script>",
+    "    <link rel=\"stylesheet\" href=\"styles/main.css\">",
+    "    <script defer src=\"https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js\"></script>",
+    "    <script src=\"https://unpkg.com/lucide@latest/dist/umd/lucide.min.js\"></script>  <!-- icons; optional -->",
+    "    <script type=\"module\" src=\"src/main.js\"></script>",
+    "  For Supabase apps, also load before main.js:",
+    "    <script src=\"https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js\"></script>",
+    "",
+    "ALPINE.JS USAGE (your reactivity layer):",
+    "• Components live in src/components/<Name>.js as ES modules exporting an Alpine x-data factory:",
+    "      export function loginForm() { return { email: '', password: '', async submit() { /* ... */ } }; }",
+    "• Register them in src/main.js:",
+    "      import { loginForm } from './components/LoginForm.js';",
+    "      document.addEventListener('alpine:init', () => { Alpine.data('loginForm', loginForm); });",
+    "• In HTML: <form x-data=\"loginForm\" @submit.prevent=\"submit\"> … </form>",
+    "• Prefer x-data, x-show, x-if, x-on, x-bind for reactivity. Don't write addEventListener spaghetti.",
+    "",
+    "• index.html MUST be a thin entry — markup skeleton only. NO inline <style> blocks beyond a tiny <style> for the initial loading screen if needed. NO inline app logic.",
+    "• src/main.js uses native ES modules: `import { Foo } from './components/Foo.js';`. The browser resolves these directly — no bundler. Every component file must be a valid ES module.",
+    "• styles/main.css holds project-specific overrides. Tailwind utility classes handle most styling.",
+    "• Static-only templates (landing/portfolio/docs/blog/form-builder/etc.) DO NOT include src/lib/supabase.js, src/lib/api.js, or schema.sql. Everything else stays.",
+    "• Do NOT cram everything into a single index.html. The single-file pattern is FORBIDDEN. Components MUST be separate files in src/components/.",
+])
+
+
+# Customize-mode directive — replaces _GENERATION_LAYOUT when a pre-built
+# base app exists for this template key on disk. Tells the agent to PERSONALIZE
+# the already-copied base app rather than regenerating it from scratch.
+_CUSTOMIZE_DIRECTIVE: str = "\n".join([
+    "CUSTOMIZE MODE — DO NOT REGENERATE FROM SCRATCH",
+    "",
+    "A working base app already exists at apps/<slug>/. It uses our standard stack",
+    "(HTML + Tailwind CDN + Alpine.js + ES modules; Supabase CDN for dynamic apps).",
+    "Your job is to PERSONALIZE this base app per the user's description below.",
+    "You may:",
+    "  • Edit the copy / wording in HTML to match the user's brand and use case.",
+    "  • Update the color palette via Tailwind utility class swaps and styles/main.css.",
+    "  • Replace placeholder names, taglines, sample data, sample categories.",
+    "  • Add small features the user specifically mentions (a new page, a new field).",
+    "  • If the user wants a feature outside the base app's scope, ADD it — but",
+    "    keep the base structure intact (don't move files, don't rename existing",
+    "    components, don't change the CDN block in index.html).",
+    "You may NOT:",
+    "  • Delete and recreate index.html, src/main.js, or schema.sql from scratch.",
+    "  • Switch to a different framework (no React, no Vue, no build step).",
+    "  • Remove Alpine.js or replace it with addEventListener spaghetti.",
+    "",
+    "The base app's README.md describes what it does and how it's structured.",
+    "Read that first. Then read index.html and src/main.js. Then make targeted",
+    "edits using the Edit tool — not Write — for files that already exist.",
+    "",
+    "When done, run a quick mental check: does index.html still load main.css +",
+    "main.js? Are all imports in main.js still valid (i.e. did you delete a",
+    "component file without removing its import)? If so, you broke the app —",
+    "fix it before claiming completion.",
+])
+
+
+# Backwards-compatible alias. Some external imports / tests still reference
+# UNIVERSAL_RULES; preserve the old "base + generation layout" concatenation
+# they expect. Newer code should use _BASE_RULES / _GENERATION_LAYOUT directly
+# via build_rules_for().
+UNIVERSAL_RULES: str = _BASE_RULES + "\n\n" + _GENERATION_LAYOUT
+
+
+# Cache for `_has_template_app` — the filesystem doesn't change at runtime,
+# so we look up each key at most once.
+_TEMPLATE_APP_CACHE: dict[str, bool] = {}
+
+
+def _has_template_app(key: str) -> bool:
+    """Return True iff a pre-built base app exists at template_apps/<key>/index.html.
+
+    Path is resolved relative to this module's location (the templates.py
+    file). Result is cached per-key in a module-level dict.
+    """
+    if key in _TEMPLATE_APP_CACHE:
+        return _TEMPLATE_APP_CACHE[key]
+    here = os.path.dirname(os.path.abspath(__file__))
+    index_path = os.path.join(here, "template_apps", key, "index.html")
+    exists = os.path.isfile(index_path)
+    _TEMPLATE_APP_CACHE[key] = exists
+    return exists
 
 
 _RULES_LANDING = "\n".join([
@@ -321,6 +442,20 @@ STORAGE_INSTRUCTIONS: dict[str, str] = {
 }
 
 
+# Hand-crafted SVG mockups shown in the templates gallery. Each one is a
+# stylized depiction of the template's layout — header bars, content blocks,
+# accent-colored interactive elements. ViewBox 0 0 320 180 (16:9-ish).
+_SVG_LANDING = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="lbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e1b4b"/><stop offset="1" stop-color="#0a0a0b"/></linearGradient></defs><rect width="320" height="180" fill="url(#lbg)"/><rect x="0" y="0" width="320" height="14" fill="#000" opacity="0.4"/><rect x="14" y="5" width="34" height="4" rx="1" fill="#a78bfa"/><circle cx="248" cy="7" r="1.5" fill="#fff" opacity="0.4"/><circle cx="258" cy="7" r="1.5" fill="#fff" opacity="0.4"/><circle cx="268" cy="7" r="1.5" fill="#fff" opacity="0.4"/><rect x="278" y="3" width="28" height="8" rx="2" fill="#a78bfa"/><rect x="14" y="38" width="170" height="9" rx="2" fill="#fff" opacity="0.85"/><rect x="14" y="52" width="120" height="6" rx="1" fill="#fff" opacity="0.55"/><rect x="14" y="66" width="140" height="4" rx="1" fill="#fff" opacity="0.3"/><rect x="14" y="84" width="50" height="14" rx="3" fill="#a78bfa"/><rect x="70" y="84" width="50" height="14" rx="3" fill="none" stroke="#a78bfa" stroke-width="1"/><rect x="208" y="32" width="98" height="64" rx="6" fill="#a78bfa" opacity="0.18"/><rect x="222" y="46" width="56" height="3" rx="1" fill="#a78bfa" opacity="0.7"/><rect x="222" y="55" width="40" height="3" rx="1" fill="#a78bfa" opacity="0.5"/><rect x="222" y="68" width="56" height="14" rx="2" fill="#a78bfa" opacity="0.4"/><rect x="14" y="118" width="92" height="46" rx="4" fill="#fff" opacity="0.06"/><rect x="114" y="118" width="92" height="46" rx="4" fill="#fff" opacity="0.06"/><rect x="214" y="118" width="92" height="46" rx="4" fill="#fff" opacity="0.06"/><circle cx="26" cy="130" r="4" fill="#a78bfa"/><rect x="36" y="128" width="40" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="20" y="142" width="78" height="2" rx="1" fill="#fff" opacity="0.3"/><rect x="20" y="148" width="60" height="2" rx="1" fill="#fff" opacity="0.3"/><circle cx="126" cy="130" r="4" fill="#a78bfa"/><rect x="136" y="128" width="40" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="120" y="142" width="78" height="2" rx="1" fill="#fff" opacity="0.3"/><rect x="120" y="148" width="60" height="2" rx="1" fill="#fff" opacity="0.3"/><circle cx="226" cy="130" r="4" fill="#a78bfa"/><rect x="236" y="128" width="40" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="220" y="142" width="78" height="2" rx="1" fill="#fff" opacity="0.3"/><rect x="220" y="148" width="60" height="2" rx="1" fill="#fff" opacity="0.3"/></svg>"""
+
+_SVG_PORTFOLIO = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="pbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4c1d4a"/><stop offset="1" stop-color="#0a0a0b"/></linearGradient></defs><rect width="320" height="180" fill="url(#pbg)"/><rect x="0" y="0" width="320" height="14" fill="#000" opacity="0.4"/><circle cx="22" cy="7" r="3.5" fill="#ec4899"/><rect x="248" y="5" width="20" height="4" rx="1" fill="#fff" opacity="0.4"/><rect x="272" y="5" width="20" height="4" rx="1" fill="#fff" opacity="0.4"/><rect x="296" y="5" width="14" height="4" rx="1" fill="#fff" opacity="0.4"/><rect x="14" y="32" width="200" height="11" rx="2" fill="#fff" opacity="0.9"/><rect x="14" y="48" width="120" height="6" rx="1" fill="#ec4899" opacity="0.8"/><rect x="14" y="62" width="180" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="14" y="68" width="160" height="3" rx="1" fill="#fff" opacity="0.4"/><circle cx="20" cy="84" r="3" fill="#ec4899"/><circle cx="32" cy="84" r="3" fill="#ec4899" opacity="0.7"/><circle cx="44" cy="84" r="3" fill="#ec4899" opacity="0.4"/><rect x="14" y="100" width="92" height="60" rx="5" fill="#ec4899" opacity="0.18"/><rect x="14" y="100" width="92" height="44" rx="5" fill="#ec4899" opacity="0.32"/><rect x="20" y="148" width="50" height="3" rx="1" fill="#fff" opacity="0.85"/><rect x="20" y="154" width="36" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="114" y="100" width="92" height="60" rx="5" fill="#ec4899" opacity="0.16"/><rect x="114" y="100" width="92" height="44" rx="5" fill="#fff" opacity="0.18"/><rect x="120" y="148" width="50" height="3" rx="1" fill="#fff" opacity="0.85"/><rect x="120" y="154" width="42" height="2" rx="1" fill="#fff" opacity="0.4"/><rect x="214" y="100" width="92" height="60" rx="5" fill="#ec4899" opacity="0.18"/><rect x="214" y="100" width="92" height="44" rx="5" fill="#ec4899" opacity="0.42"/><rect x="220" y="148" width="50" height="3" rx="1" fill="#fff" opacity="0.85"/><rect x="220" y="154" width="38" height="2" rx="1" fill="#fff" opacity="0.4"/></svg>"""
+
+_SVG_CRUD = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="cbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#064e3b"/><stop offset="1" stop-color="#0a0a0b"/></linearGradient></defs><rect width="320" height="180" fill="url(#cbg)"/><rect x="0" y="0" width="320" height="18" fill="#000" opacity="0.45"/><circle cx="22" cy="9" r="4" fill="#10b981"/><rect x="32" y="7" width="40" height="4" rx="1" fill="#fff" opacity="0.7"/><rect x="248" y="4" width="58" height="10" rx="3" fill="#10b981"/><rect x="258" y="7" width="38" height="4" rx="1" fill="#fff" opacity="0.9"/><rect x="14" y="32" width="60" height="6" rx="1" fill="#fff" opacity="0.6"/><rect x="14" y="42" width="40" height="3" rx="1" fill="#fff" opacity="0.3"/><rect x="14" y="56" width="292" height="22" rx="4" fill="#fff" opacity="0.06"/><rect x="22" y="64" width="6" height="6" rx="1" fill="#10b981"/><rect x="34" y="65" width="100" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="34" y="71" width="60" height="2" rx="1" fill="#fff" opacity="0.3"/><circle cx="290" cy="67" r="2" fill="#fff" opacity="0.4"/><rect x="14" y="82" width="292" height="22" rx="4" fill="#fff" opacity="0.06"/><rect x="22" y="90" width="6" height="6" rx="1" fill="#10b981" opacity="0.5"/><rect x="34" y="91" width="120" height="3" rx="1" fill="#fff" opacity="0.55"/><rect x="34" y="97" width="50" height="2" rx="1" fill="#fff" opacity="0.3"/><circle cx="290" cy="93" r="2" fill="#fff" opacity="0.4"/><rect x="14" y="108" width="292" height="22" rx="4" fill="#fff" opacity="0.06"/><rect x="22" y="116" width="6" height="6" rx="1" fill="#10b981"/><rect x="34" y="117" width="80" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="34" y="123" width="70" height="2" rx="1" fill="#fff" opacity="0.3"/><circle cx="290" cy="119" r="2" fill="#fff" opacity="0.4"/><rect x="14" y="134" width="292" height="22" rx="4" fill="#fff" opacity="0.06"/><rect x="22" y="142" width="6" height="6" rx="1" fill="#fff" opacity="0.18" stroke="#10b981" stroke-width="0.6"/><rect x="34" y="143" width="110" height="3" rx="1" fill="#fff" opacity="0.55"/><rect x="34" y="149" width="40" height="2" rx="1" fill="#fff" opacity="0.3"/><circle cx="290" cy="145" r="2" fill="#fff" opacity="0.4"/><rect x="14" y="160" width="100" height="14" rx="3" fill="#10b981" opacity="0.3"/><rect x="118" y="160" width="60" height="14" rx="3" fill="#fff" opacity="0.06"/><rect x="182" y="160" width="76" height="14" rx="3" fill="#fff" opacity="0.06"/></svg>"""
+
+_SVG_INVOICE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="ibg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#422006"/><stop offset="1" stop-color="#0a0a0b"/></linearGradient></defs><rect width="320" height="180" fill="url(#ibg)"/><rect x="0" y="0" width="56" height="180" fill="#000" opacity="0.45"/><rect x="56" y="0" width="264" height="18" fill="#000" opacity="0.35"/><circle cx="14" cy="14" r="4" fill="#f59e0b"/><rect x="8" y="32" width="40" height="3" rx="1" fill="#f59e0b" opacity="0.55"/><rect x="8" y="42" width="40" height="2" rx="1" fill="#fff" opacity="0.35"/><rect x="8" y="50" width="40" height="2" rx="1" fill="#fff" opacity="0.35"/><rect x="8" y="58" width="40" height="2" rx="1" fill="#fff" opacity="0.35"/><rect x="8" y="66" width="40" height="2" rx="1" fill="#fff" opacity="0.7"/><rect x="8" y="74" width="40" height="2" rx="1" fill="#fff" opacity="0.35"/><rect x="64" y="6" width="60" height="6" rx="1" fill="#fff" opacity="0.7"/><rect x="240" y="4" width="70" height="10" rx="3" fill="#f59e0b"/><rect x="64" y="30" width="100" height="6" rx="1" fill="#fff" opacity="0.85"/><rect x="64" y="40" width="40" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="64" y="58" width="244" height="14" rx="2" fill="#fff" opacity="0.08"/><rect x="70" y="63" width="60" height="3" rx="1" fill="#fff" opacity="0.55"/><rect x="160" y="63" width="40" height="3" rx="1" fill="#fff" opacity="0.55"/><rect x="220" y="63" width="40" height="3" rx="1" fill="#fff" opacity="0.55"/><rect x="280" y="63" width="22" height="3" rx="1" fill="#fff" opacity="0.55"/><rect x="64" y="76" width="244" height="14" rx="2" fill="#fff" opacity="0.05"/><rect x="70" y="81" width="80" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="160" y="81" width="20" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="220" y="81" width="30" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="280" y="81" width="22" height="3" rx="1" fill="#f59e0b" opacity="0.85"/><rect x="64" y="92" width="244" height="14" rx="2" fill="#fff" opacity="0.05"/><rect x="70" y="97" width="100" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="160" y="97" width="20" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="220" y="97" width="30" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="280" y="97" width="22" height="3" rx="1" fill="#f59e0b" opacity="0.85"/><rect x="64" y="108" width="244" height="14" rx="2" fill="#fff" opacity="0.05"/><rect x="70" y="113" width="70" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="160" y="113" width="20" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="220" y="113" width="30" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="280" y="113" width="22" height="3" rx="1" fill="#f59e0b" opacity="0.85"/><rect x="200" y="138" width="108" height="32" rx="4" fill="#f59e0b" opacity="0.18"/><rect x="208" y="146" width="40" height="3" rx="1" fill="#fff" opacity="0.6"/><rect x="208" y="155" width="60" height="6" rx="1" fill="#f59e0b"/><rect x="74" y="148" width="50" height="14" rx="3" fill="#f59e0b" opacity="0.6"/><rect x="78" y="153" width="42" height="4" rx="1" fill="#fff" opacity="0.85"/></svg>"""
+
+_SVG_DASHBOARD = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="dbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1e3a8a"/><stop offset="1" stop-color="#0a0a0b"/></linearGradient></defs><rect width="320" height="180" fill="url(#dbg)"/><rect x="0" y="0" width="320" height="16" fill="#000" opacity="0.45"/><circle cx="14" cy="8" r="3.5" fill="#3b82f6"/><rect x="22" y="6" width="36" height="4" rx="1" fill="#fff" opacity="0.7"/><rect x="120" y="4" width="80" height="8" rx="2" fill="#fff" opacity="0.08"/><circle cx="296" cy="8" r="3" fill="#3b82f6" opacity="0.6"/><circle cx="306" cy="8" r="3" fill="#fff" opacity="0.3"/><rect x="0" y="16" width="48" height="164" fill="#000" opacity="0.35"/><rect x="6" y="26" width="36" height="6" rx="2" fill="#3b82f6"/><rect x="6" y="38" width="30" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="6" y="48" width="30" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="6" y="58" width="30" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="6" y="68" width="30" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="56" y="26" width="62" height="38" rx="4" fill="#fff" opacity="0.07"/><rect x="62" y="32" width="32" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="62" y="40" width="22" height="8" rx="1" fill="#fff" opacity="0.85"/><polyline points="62,58 70,52 78,55 86,46 94,50 102,42 110,46" stroke="#3b82f6" stroke-width="1.4" fill="none"/><rect x="124" y="26" width="62" height="38" rx="4" fill="#fff" opacity="0.07"/><rect x="130" y="32" width="32" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="130" y="40" width="22" height="8" rx="1" fill="#fff" opacity="0.85"/><polyline points="130,58 138,55 146,50 154,52 162,45 170,48 178,42" stroke="#3b82f6" stroke-width="1.4" fill="none"/><rect x="192" y="26" width="62" height="38" rx="4" fill="#fff" opacity="0.07"/><rect x="198" y="32" width="32" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="198" y="40" width="22" height="8" rx="1" fill="#fff" opacity="0.85"/><polyline points="198,52 206,55 214,50 222,54 230,48 238,52 246,46" stroke="#3b82f6" stroke-width="1.4" fill="none"/><rect x="260" y="26" width="50" height="38" rx="4" fill="#fff" opacity="0.07"/><rect x="266" y="32" width="32" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="266" y="40" width="22" height="8" rx="1" fill="#fff" opacity="0.85"/><polyline points="266,58 273,52 280,55 287,46 294,50 301,46" stroke="#3b82f6" stroke-width="1.4" fill="none"/><rect x="56" y="72" width="254" height="58" rx="4" fill="#fff" opacity="0.05"/><polyline points="62,118 80,108 100,112 120,98 140,104 160,90 180,96 200,82 220,88 240,80 260,76 280,68 300,72" stroke="#3b82f6" stroke-width="1.6" fill="none"/><polyline points="62,118 80,108 100,112 120,98 140,104 160,90 180,96 200,82 220,88 240,80 260,76 280,68 300,72 300,128 62,128 Z" fill="#3b82f6" opacity="0.18" stroke="none"/><rect x="56" y="138" width="254" height="36" rx="4" fill="#fff" opacity="0.05"/><rect x="64" y="146" width="60" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="138" y="146" width="40" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="190" y="146" width="50" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="252" y="146" width="50" height="3" rx="1" fill="#fff" opacity="0.4"/><rect x="64" y="156" width="80" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="148" y="156" width="30" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="190" y="156" width="40" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="252" y="156" width="50" height="3" rx="1" fill="#3b82f6" opacity="0.85"/><rect x="64" y="164" width="70" height="3" rx="1" fill="#fff" opacity="0.7"/><rect x="148" y="164" width="30" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="190" y="164" width="40" height="3" rx="1" fill="#fff" opacity="0.5"/><rect x="252" y="164" width="50" height="3" rx="1" fill="#fff" opacity="0.5"/></svg>"""
+
+
 # Order matters — controls dropdown order in the UI.
 TEMPLATES: list[Template] = [
     Template(
@@ -330,6 +465,13 @@ TEMPLATES: list[Template] = [
         description="marketing / product page",
         placeholder="e.g. Landing page for a coffee shop called 'Bean There'. Include hero with logo and tagline, menu with 6 drinks, opening hours, and a contact form. Warm earthy palette (browns + cream), one body font.",
         rules=_RULES_LANDING,
+        role_tag="Marketing site",
+        feature_bullets=(
+            "Hero, features, testimonials, pricing, FAQ",
+            "Smooth-scroll anchors and Alpine accordion",
+            "Mobile-ready in one file — no backend needed",
+        ),
+        svg_mockup=_SVG_LANDING,
     ),
     Template(
         key="dashboard",
@@ -338,6 +480,14 @@ TEMPLATES: list[Template] = [
         description="metrics + charts",
         placeholder="e.g. Team activity dashboard. KPIs: tasks completed this week, average cycle time, deploys, error rate. Burndown chart, recent activity feed, dark mode default.",
         rules=_RULES_DASHBOARD,
+        storage="supabase",
+        role_tag="Analytics",
+        feature_bullets=(
+            "KPI cards with sparklines and trend %",
+            "Chart.js line chart + sortable events table",
+            "Top bar + sidebar shell, dark-mode default",
+        ),
+        svg_mockup=_SVG_DASHBOARD,
     ),
     Template(
         key="crud",
@@ -346,6 +496,14 @@ TEMPLATES: list[Template] = [
         description="manage records",
         placeholder="e.g. Recipe manager — add, edit, delete recipes with name, ingredients (multi-line), prep time, difficulty (easy/medium/hard), and an optional photo URL.",
         rules=_RULES_CRUD,
+        storage="supabase",
+        role_tag="Auth + CRUD",
+        feature_bullets=(
+            "Supabase email login and signup, RLS-scoped",
+            "Add / edit / delete with realtime sync",
+            "Filter tabs and a single `todos` table",
+        ),
+        svg_mockup=_SVG_CRUD,
     ),
     Template(
         key="crm",
@@ -354,6 +512,7 @@ TEMPLATES: list[Template] = [
         description="contacts + deals",
         placeholder="e.g. CRM for a small consulting firm. Pipeline: Lead → Discovery → Proposal → Closed Won / Lost. Contacts have company, role, last-call-date. Deals show value + expected close.",
         rules=_RULES_CRM,
+        storage="supabase",
     ),
     Template(
         key="portfolio",
@@ -362,6 +521,13 @@ TEMPLATES: list[Template] = [
         description="personal showcase",
         placeholder="e.g. Portfolio site for a UX designer named Maya. 4 case-study projects, About section, link to her writing on Medium. Clean serif headers, off-white background.",
         rules=_RULES_PORTFOLIO,
+        role_tag="Personal site",
+        feature_bullets=(
+            "Hero, project grid with category filter",
+            "About, skills, contact form (simulated submit)",
+            "Light / dark theme toggle, persisted",
+        ),
+        svg_mockup=_SVG_PORTFOLIO,
     ),
     Template(
         key="docs",
@@ -378,6 +544,7 @@ TEMPLATES: list[Template] = [
         description="catalog + cart",
         placeholder="e.g. Plant shop with 12 sample plants. Filters: indoor/outdoor, light needs, price. Cart drawer. Demo checkout (no real payment). Earthy green palette.",
         rules=_RULES_ECOMMERCE,
+        storage="supabase",
     ),
     Template(
         key="booking",
@@ -386,6 +553,7 @@ TEMPLATES: list[Template] = [
         description="appointment scheduler",
         placeholder="e.g. Booking page for a yoga instructor. 3 services (60-min private, 90-min couples, 75-min group). Mon/Wed/Fri 8am–6pm available. Calendar picker → time slots → confirm.",
         rules=_RULES_BOOKING,
+        storage="supabase",
     ),
     Template(
         key="chat",
@@ -394,6 +562,7 @@ TEMPLATES: list[Template] = [
         description="messaging app",
         placeholder="e.g. Team chat with 3 default rooms (#general, #random, #dev). Messages, typing indicator, online dot, emoji reactions. Supabase Realtime for live updates.",
         rules=_RULES_CHAT,
+        storage="supabase",
     ),
     Template(
         key="auth",
@@ -402,6 +571,7 @@ TEMPLATES: list[Template] = [
         description="login + protected pages",
         placeholder="e.g. A members-only journal app. Email+password sign up, email confirmation, login, forgot-password. After login, simple journal-entry editor. Use Supabase Auth.",
         rules=_RULES_AUTH,
+        storage="supabase",
     ),
     Template(
         key="blog",
@@ -410,6 +580,7 @@ TEMPLATES: list[Template] = [
         description="article publishing",
         placeholder="e.g. Personal blog with 5 sample posts about indie game dev. Tags: design, code, postmortem. RSS feed. About page with photo + Twitter link. Serif body font.",
         rules=_RULES_BLOG,
+        storage="supabase",
     ),
     Template(
         key="blank",
@@ -426,6 +597,14 @@ TEMPLATES: list[Template] = [
         description="invoice editor + print",
         placeholder="e.g. Invoice editor for a freelance designer. USD default, 12% tax, fields for client name/email/address, 5 line-item rows by default, status badges (draft/sent/paid). Print-ready A4 preview on the right.",
         rules=_RULES_INVOICE,
+        storage="supabase",
+        role_tag="Billing",
+        feature_bullets=(
+            "Customers, invoices, line items — 4 tables with RLS",
+            "Auth-gated dashboard with KPI cards",
+            "Printable invoice detail view, status badges",
+        ),
+        svg_mockup=_SVG_INVOICE,
     ),
     Template(
         key="project-tracker",
@@ -434,6 +613,7 @@ TEMPLATES: list[Template] = [
         description="Kanban + timeline",
         placeholder="e.g. Tracker for a 4-person dev team. Backlog/In Progress/Review/Done columns. Cards show title, assignee, due date, priority. Toggle to a 14-day timeline view. Filter by assignee.",
         rules=_RULES_PROJECT_TRACKER,
+        storage="supabase",
     ),
     Template(
         key="ai-chatbot",
@@ -442,6 +622,7 @@ TEMPLATES: list[Template] = [
         description="streaming chat + KB",
         placeholder="e.g. Customer-support bot for 'Acme Plants'. System prompt: friendly, concise, plant-care expert. Knowledge base: paste in our care guide. Persona: Friendly. Streams responses.",
         rules=_RULES_AI_CHATBOT,
+        storage="supabase",
     ),
     Template(
         key="expense-tracker",
@@ -450,6 +631,7 @@ TEMPLATES: list[Template] = [
         description="categories + budgets",
         placeholder="e.g. Personal expense tracker. Default categories: Food, Transport, Housing, Entertainment, Health, Other. Pie chart for the month, 6-month bar chart, $1000 budget on Food.",
         rules=_RULES_EXPENSE_TRACKER,
+        storage="supabase",
     ),
     Template(
         key="form-builder",
@@ -458,6 +640,7 @@ TEMPLATES: list[Template] = [
         description="drag-drop forms + responses",
         placeholder="e.g. Customer feedback form: name, email, rating (1-5), 'How did you hear about us?' (single choice), comments (long text). Share via public URL, view responses in a table.",
         rules=_RULES_FORM_BUILDER,
+        storage="supabase",
     ),
     Template(
         key="social-feed",
@@ -466,6 +649,7 @@ TEMPLATES: list[Template] = [
         description="microblog + likes + follows",
         placeholder="e.g. Microblog for a small writers' community. 280-char posts, optional image URL, likes, threaded comments, follow other handles. Single 600px column.",
         rules=_RULES_SOCIAL_FEED,
+        storage="supabase",
     ),
 ]
 
@@ -481,8 +665,34 @@ def is_valid_key(key: str) -> bool:
     return key in _BY_KEY
 
 
+def storage_for(key: str) -> str:
+    """Return the template's `storage` field ("supabase" or "none").
+
+    Returns "none" for unknown keys — callers that care should pre-validate
+    via `is_valid_key`.
+    """
+    t = _BY_KEY.get(key)
+    return t.storage if t is not None else "none"
+
+
+def requires_supabase(key: str, user_storage_choice: str | None) -> bool:
+    """Return True iff the template *and* the user's storage choice both
+    say "supabase". Used by the create-task flow to decide whether to gate
+    the build on a connected Supabase project.
+    """
+    return storage_for(key) == "supabase" and (user_storage_choice or "") == "supabase"
+
+
 def build_rules_for(key: str, storage: str | None = None) -> str:
-    """Return the universal rules + the template's rules + optional storage block.
+    """Return the rules block for an agent BUILD prompt.
+
+    Two modes:
+      • Generation mode (default): _BASE_RULES + _GENERATION_LAYOUT + the
+        template's rules. The agent creates the project from scratch.
+      • Customize mode: _BASE_RULES + _CUSTOMIZE_DIRECTIVE + the template's
+        rules. Activated when a pre-built base app exists on disk for this
+        key (see `_has_template_app`); the agent personalizes the already-
+        copied base app instead of regenerating it.
 
     Returns an empty string for unknown keys — the caller should validate
     the key before calling this if you want stricter behavior.
@@ -490,7 +700,10 @@ def build_rules_for(key: str, storage: str | None = None) -> str:
     t = _BY_KEY.get(key)
     if t is None:
         return ""
-    parts = [UNIVERSAL_RULES.strip(), t.rules.strip()]
+    if _has_template_app(key):
+        parts = [_BASE_RULES.strip(), _CUSTOMIZE_DIRECTIVE.strip(), t.rules.strip()]
+    else:
+        parts = [_BASE_RULES.strip(), _GENERATION_LAYOUT.strip(), t.rules.strip()]
     if storage and storage in STORAGE_INSTRUCTIONS:
         parts.append(STORAGE_INSTRUCTIONS[storage].strip())
     return "\n\n".join(parts)

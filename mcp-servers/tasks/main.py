@@ -11,6 +11,7 @@ from routes_chat_history import router as chat_history_router
 from routes_cron import router as cron_router
 from routes_db import router as db_router
 from routes_execution import router as execution_router
+from routes_graph import router as graph_router
 from routes_preview import router as preview_router
 from routes_projects import router as projects_router
 from routes_supabase import router as supabase_router
@@ -27,6 +28,31 @@ logger = logging.getLogger("tasks")
 async def lifespan(app: FastAPI):
     await init_db()
     logger.info("DB initialized")
+    # Reap orphan tasks: anything in `running` status at startup belongs to
+    # a dead worker process (this process can't have started one yet). If we
+    # don't reap, the UI shows "Building…" forever for a build whose claude
+    # subprocess died silently — exactly the symptom users hit after the OOM
+    # cascade on 2026-04-27.
+    try:
+        from db import session as _sess
+        from sqlalchemy import text as _txt
+        async with _sess() as s:
+            r = await s.execute(_txt(
+                "UPDATE tasks.items SET status='failed', completed_at=now(), "
+                "result=COALESCE(result,'') || E'\\n\\nBuild orphaned at restart — subprocess died silently. Click Retry or delete this project.' "
+                "WHERE status='running' RETURNING id"
+            ))
+            reaped = list(r.fetchall())
+            await s.execute(_txt(
+                "UPDATE tasks.executions SET status='failed', finished_at=now(), "
+                "error=COALESCE(error,'') || ' [reaped at restart]' "
+                "WHERE status IN ('running','pending') AND finished_at IS NULL"
+            ))
+            await s.commit()
+        if reaped:
+            logger.warning("Reaped %d orphan running task(s) at startup", len(reaped))
+    except Exception as exc:
+        logger.error("Orphan reap failed at startup: %s", exc)
     yield
 
 
@@ -37,12 +63,21 @@ app.include_router(execution_router)
 app.include_router(cron_router)
 app.include_router(preview_router)
 app.include_router(projects_router)
+app.include_router(graph_router)
 app.include_router(supabase_router)
 app.include_router(supabase_oauth_router)
 app.include_router(db_router)
 app.include_router(chat_history_router)
 app.include_router(templates_router)
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
+# Read-only public mount of the bundled template reference apps. The
+# /tasks/template-apps path is intercepted by Open WebUI's service worker
+# (which claims the /tasks/ scope) and returns a stale 404. The
+# /api/template-preview path is NOT under any SW scope (the gallery's
+# /api/templates JSON call already proves /api/* bypasses the SW), so we
+# expose the same files there for use as live iframe previews.
+app.mount("/tasks/template-apps", StaticFiles(directory="template_apps", html=True), name="template-apps")
+app.mount("/api/template-preview", StaticFiles(directory="template_apps", html=True), name="template-preview")
 
 
 @app.get("/health")

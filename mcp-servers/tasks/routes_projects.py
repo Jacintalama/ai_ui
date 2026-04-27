@@ -25,7 +25,7 @@ from sqlalchemy import and_, or_, select
 
 from auth import AdminUser, current_admin
 from db import session
-from models import ProjectMember, PublishedApp, TaskItem
+from models import ChatMessage, ProjectMember, ProjectSupabase, PublishedApp, TaskItem
 from schemas import InviteRequest, MemberOut, RoleUpdate
 
 # Domain that wildcard-published apps live under. Override via env if needed.
@@ -1095,4 +1095,36 @@ async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
             return None
         await s.delete(existing)
         await s.commit()
+    return None
+
+
+@router.delete("/{slug}", status_code=204)
+async def delete_project(slug: str, user: AdminUser = Depends(current_admin)):
+    """Owner-only hard delete: removes the app folder on disk and every DB
+    row that references this slug — items, executions (cascade), members,
+    chat history, supabase config, published mapping. There's no undo."""
+    from sqlalchemy import delete as _del
+    import shutil
+    _validate_slug(slug)
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
+        # DB cascade: items first (executions FK-cascade off items),
+        # then per-slug tables.
+        await s.execute(_del(TaskItem).where(TaskItem.built_app_slug == slug))
+        await s.execute(_del(ChatMessage).where(ChatMessage.slug == slug))
+        await s.execute(_del(ProjectSupabase).where(ProjectSupabase.slug == slug))
+        await s.execute(_del(PublishedApp).where(PublishedApp.slug == slug))
+        await s.execute(_del(ProjectMember).where(ProjectMember.slug == slug))
+        await s.commit()
+    # Filesystem: remove the app's folder if present. Best-effort — DB is
+    # already wiped, so we don't fail the whole call on rmtree errors.
+    workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
+    app_dir = os.path.join(workspace, "apps", slug)
+    if os.path.isdir(app_dir):
+        try:
+            shutil.rmtree(app_dir)
+        except Exception:
+            pass
     return None

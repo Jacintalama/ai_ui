@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Templates — AIUI App Builder</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%237c8cff%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2222%22%20text-anchor%3D%22middle%22%20font-family%3D%22sans-serif%22%20font-size%3D%2217%22%20font-weight%3D%22700%22%20fill%3D%22white%22%3EOI%3C%2Ftext%3E%3C%2Fsvg%3E">
+  <style>
+    :root[data-theme="dark"] {
+      --bg:           #0a0a0b;
+      --surface:      #111113;
+      --surface-2:    #17171a;
+      --surface-3:    #1e1e22;
+      --border:       #24242a;
+      --border-2:     #2e2e36;
+      --text:         #ededee;
+      --text-2:       #b8b8c0;
+      --muted:        #74747e;
+      --accent:       #7c8cff;
+      --accent-2:     #5d6cff;
+      --accent-soft:  #1e2140;
+      --success:      #22c55e;
+      --success-soft: #0d2a1a;
+      --warning:      #f59e0b;
+      --warning-soft: #2a1d05;
+      --danger:       #f87171;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+    }
+    :root {
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    button { font-family: inherit; color: inherit; cursor: pointer; }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+    .topbar .close-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 6px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+    }
+    .topbar .close-btn:hover { background: var(--surface-2); color: var(--text); }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+    .page-header {
+      margin-bottom: 28px;
+    }
+    .page-header h2 {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .page-header p { color: var(--text-2); font-size: 14px; }
+
+    .filter-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .filter-pill {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .filter-pill:hover { color: var(--text); border-color: var(--border-2); }
+    .filter-pill.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(124,140,255,0.4);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .tcard {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+    }
+    .tcard:hover {
+      border-color: var(--border-2);
+      box-shadow: var(--shadow-md);
+    }
+    .tcard.featured {
+      border-color: rgba(124,140,255,0.35);
+    }
+    .tcard .visual {
+      height: 140px;
+      background: linear-gradient(135deg, #1e2140 0%, #0a0a0b 100%);
+      position: relative;
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+    }
+    .tcard .visual.has-iframe { background: #ffffff; }
+    .tcard .visual iframe {
+      width: 200%;
+      height: 200%;
+      border: 0;
+      transform: scale(0.5);
+      transform-origin: top left;
+      pointer-events: none;
+    }
+    .tcard .visual .placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .tcard .body {
+      padding: 16px 18px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+    }
+    .tcard .row1 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .tcard .name { font-size: 15px; font-weight: 600; color: var(--text); }
+    .tcard .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 500;
+    }
+    .tcard .badge.featured {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid rgba(124,140,255,0.3);
+    }
+    .tcard .badge.storage-supabase {
+      background: var(--success-soft);
+      color: var(--success);
+      border: 1px solid rgba(34,197,94,0.25);
+    }
+    .tcard .badge.storage-none {
+      background: var(--surface-2);
+      color: var(--text-2);
+      border: 1px solid var(--border);
+    }
+    .tcard .desc {
+      color: var(--text-2);
+      font-size: 13px;
+      flex: 1;
+    }
+    .tcard .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .tcard .btn {
+      padding: 8px 12px;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .tcard .btn:hover { background: var(--surface-3); border-color: var(--accent); }
+    .tcard .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+      flex: 1;
+    }
+    .tcard .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+
+    .empty {
+      text-align: center;
+      padding: 64px 16px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Templates</h1>
+    <button type="button" class="close-btn" id="close-btn">Close</button>
+  </div>
+
+  <div class="container">
+    <div class="page-header">
+      <h2>Pick a starting point</h2>
+      <p>Featured templates ship with a working base app — files land in your project the moment you click Use this template, then the AIUI Agent personalizes the copy and brand for you.</p>
+    </div>
+
+    <div class="filter-row" id="filter-row">
+      <button type="button" class="filter-pill active" data-filter="all">All</button>
+      <button type="button" class="filter-pill" data-filter="featured">Featured (ready apps)</button>
+      <button type="button" class="filter-pill" data-filter="static">Static</button>
+      <button type="button" class="filter-pill" data-filter="supabase">With database</button>
+    </div>
+
+    <div id="grid" class="grid">
+      <div class="empty">Loading templates…</div>
+    </div>
+  </div>
+
+  <script>
+    // Featured templates have a pre-built reference app under
+    // mcp-servers/tasks/template_apps/<key>/. We surface them first.
+    const FEATURED_KEYS = new Set(["landing", "portfolio", "crud", "invoice", "dashboard"]);
+
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, (c) => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;",
+      }[c]));
+    }
+
+    let _templates = [];
+    let _activeFilter = "all";
+
+    async function load() {
+      try {
+        const r = await fetch("/api/templates", { headers: authHeaders(), credentials: "include" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        _templates = await r.json();
+        // Featured templates first, then alphabetical.
+        _templates.sort((a, b) => {
+          const fa = FEATURED_KEYS.has(a.key) ? 0 : 1;
+          const fb = FEATURED_KEYS.has(b.key) ? 0 : 1;
+          if (fa !== fb) return fa - fb;
+          return a.label.localeCompare(b.label);
+        });
+        render();
+      } catch (e) {
+        document.getElementById("grid").innerHTML =
+          '<div class="empty">Couldn\'t load templates — ' + escapeHtml(e.message || String(e)) + '</div>';
+      }
+    }
+
+    function render() {
+      const grid = document.getElementById("grid");
+      const filtered = _templates.filter((t) => {
+        if (_activeFilter === "all") return true;
+        if (_activeFilter === "featured") return FEATURED_KEYS.has(t.key);
+        if (_activeFilter === "static") return t.storage !== "supabase";
+        if (_activeFilter === "supabase") return t.storage === "supabase";
+        return true;
+      });
+      if (!filtered.length) {
+        grid.innerHTML = '<div class="empty">No templates match this filter.</div>';
+        return;
+      }
+      grid.innerHTML = filtered.map(renderCard).join("");
+      filtered.forEach((t) => wireCard(t.key));
+    }
+
+    function renderCard(t) {
+      const isFeatured = FEATURED_KEYS.has(t.key);
+      const previewUrl = isFeatured ? `/tasks/template-apps/${encodeURIComponent(t.key)}/index.html` : null;
+      const visual = isFeatured
+        ? `<div class="visual has-iframe"><iframe src="${previewUrl}" loading="lazy" sandbox="allow-scripts" title="${escapeHtml(t.label)} preview"></iframe></div>`
+        : `<div class="visual"><div class="placeholder">${escapeHtml(t.label)}</div></div>`;
+      const storageBadge = t.storage === "supabase"
+        ? '<span class="badge storage-supabase">Database</span>'
+        : '<span class="badge storage-none">Static</span>';
+      const featuredBadge = isFeatured ? '<span class="badge featured">Featured</span>' : "";
+      return `
+        <div class="tcard ${isFeatured ? 'featured' : ''}" data-key="${escapeHtml(t.key)}">
+          ${visual}
+          <div class="body">
+            <div class="row1">
+              <span class="name">${escapeHtml(t.label)}</span>
+              <span style="display:flex; gap:6px;">${featuredBadge}${storageBadge}</span>
+            </div>
+            <div class="desc">${escapeHtml(t.description)}</div>
+            <div class="actions">
+              ${previewUrl ? `<button type="button" class="btn" data-action="preview">Preview</button>` : ""}
+              <button type="button" class="btn primary" data-action="use">Use this template</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function wireCard(key) {
+      const card = document.querySelector(`.tcard[data-key="${CSS.escape(key)}"]`);
+      if (!card) return;
+      const previewBtn = card.querySelector('[data-action="preview"]');
+      const useBtn = card.querySelector('[data-action="use"]');
+      if (previewBtn) {
+        previewBtn.addEventListener("click", () => {
+          window.open(`/tasks/template-apps/${encodeURIComponent(key)}/index.html`, "_blank", "noopener");
+        });
+      }
+      useBtn.addEventListener("click", () => {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage({ type: "aiui:template-selected", key }, "*");
+          window.close();
+        } else {
+          // Standalone navigation — bounce back to the App Builder with the selection in the hash.
+          location.href = "/tasks/app-builder#template=" + encodeURIComponent(key);
+        }
+      });
+    }
+
+    document.getElementById("filter-row").addEventListener("click", (ev) => {
+      const btn = ev.target.closest(".filter-pill");
+      if (!btn) return;
+      _activeFilter = btn.dataset.filter;
+      document.querySelectorAll(".filter-pill").forEach((b) => b.classList.toggle("active", b === btn));
+      render();
+    });
+
+    document.getElementById("close-btn").addEventListener("click", () => {
+      if (window.opener && !window.opener.closed) window.close();
+      else location.href = "/tasks/app-builder";
+    });
+
+    load();
+  </script>
+</body>
+</html>

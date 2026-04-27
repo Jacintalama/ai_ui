@@ -11,9 +11,17 @@ import uuid
 from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import AdminUser, current_admin
 from db import session
-from models import TaskItem
+from models import ChatMessage, ProjectSupabase, TaskItem
 from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, EnhanceRequest, TaskOut
-from templates import build_rules_for, is_valid_key
+from templates import _has_template_app, build_rules_for, is_valid_key, requires_supabase
+
+SUPABASE_CONNECT_PROMPT = (
+    "[ACTION:supabase_connect]\n"
+    "This app needs a database to work properly. Connect your Supabase "
+    "account so I can create the tables and APIs for you.\n\n"
+    "Click \"Connect Supabase\" below — takes ~30 seconds. Or skip to "
+    "build a frontend-only version (data only saved in your browser)."
+)
 
 logger = logging.getLogger("tasks.routes")
 
@@ -220,6 +228,7 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
         )
 
     description = (body.description or "").strip()
+    slug = (body.slug or "").strip()
     if body.action_type == "BUILD" and body.template_key:
         if not is_valid_key(body.template_key):
             raise HTTPException(
@@ -227,7 +236,6 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
                 detail=f"Unknown template_key: {body.template_key!r}",
             )
         prefix = build_rules_for(body.template_key, body.storage)
-        slug = (body.slug or "").strip()
         slug_instr = (
             f'PROJECT NAME: "{slug}". Create the app at apps/{slug}/ and use this exact slug throughout.\n\n'
             if slug
@@ -235,21 +243,209 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
         )
         description = f"{slug_instr}{prefix}\n\nUSER REQUEST:\n{description}"
 
-    item = TaskItem(
-        meeting_id=uuid.uuid4(),  # synthetic — no real meeting
-        action_type=body.action_type,
-        assignee_name=assignee_name,
-        assignee_email=assignee_email,
-        description=description[:20_000],
-        priority=body.priority,
-        status="pending",
-        max_attempts=body.max_attempts,
+    needs_supabase_gate_candidate = (
+        body.action_type == "BUILD"
+        and body.template_key
+        and slug
+        and requires_supabase(body.template_key, body.storage)
     )
+
     async with session() as s:
+        needs_supabase_gate = False
+        if needs_supabase_gate_candidate:
+            existing = (await s.execute(
+                select(ProjectSupabase).where(ProjectSupabase.slug == slug)
+            )).scalar_one_or_none()
+            already_linked = bool(
+                existing
+                and (existing.linked_project_ref or existing.supabase_url)
+            )
+            needs_supabase_gate = not already_linked
+
+        # When gating on Supabase we set `built_app_slug` up-front so the chat
+        # message and the resume endpoint can find this task by slug; the
+        # regular build flow leaves it unset (Claude populates it after the
+        # build runs).
+        item = TaskItem(
+            meeting_id=uuid.uuid4(),  # synthetic — no real meeting
+            action_type=body.action_type,
+            assignee_name=assignee_name,
+            assignee_email=assignee_email,
+            description=description[:20_000],
+            priority=body.priority,
+            status="awaiting_supabase" if needs_supabase_gate else "pending",
+            max_attempts=body.max_attempts,
+            built_app_slug=slug if needs_supabase_gate else None,
+        )
         s.add(item)
+        if needs_supabase_gate:
+            s.add(ChatMessage(
+                slug=slug,
+                user_email=user.email,
+                role="assistant",
+                content=SUPABASE_CONNECT_PROMPT,
+            ))
         await s.commit()
         await s.refresh(item)
+
+    # Pre-create the canonical folder skeleton on disk so the Structure tab
+    # has something to render before the agent runs, and so the agent always
+    # finds the layout it's told to use. Only for BUILD with a slug. Idempotent.
+    #
+    # When a pre-built base app exists for the chosen template_key, copy it
+    # into apps/<slug>/ instead of creating an empty skeleton — this is the
+    # "customize, don't regenerate" path. The 13 templates without a base
+    # app folder still go through the original empty-skeleton path.
+    template_app_used = False
+    if body.action_type == "BUILD" and slug:
+        try:
+            if body.template_key and _has_template_app(body.template_key):
+                _copy_template_app(
+                    body.template_key, slug, app_name=_humanize_slug(slug)
+                )
+                template_app_used = True
+            else:
+                _ensure_app_skeleton(slug, body.storage)
+        except Exception:
+            # Disk failures shouldn't block the task creation. The agent will
+            # mkdir as needed during build.
+            pass
+
+    # INSTANT BUILD: when a working base app is already on disk AND the user's
+    # description is generic ("build me an X"), skip the agent entirely. The
+    # base app is already a polished, working app — running the agent just to
+    # personalize copy is overkill when the user hasn't asked for anything
+    # specific. They can always refine later via chat.
+    if (
+        template_app_used
+        and not needs_supabase_gate
+        and _is_generic_description(body.description or "")
+    ):
+        async with session() as s:
+            row = (await s.execute(
+                select(TaskItem).where(TaskItem.id == item.id)
+            )).scalar_one()
+            row.status = "completed"
+            row.built_app_slug = slug
+            row.completed_at = datetime.utcnow()
+            row.result = (
+                f"Used the {body.template_key} template as-is — no agent run needed. "
+                "Refine the app via the Chat tab when you're ready."
+            )
+            await s.commit()
+            await s.refresh(row)
+            item = row
+
     return item
+
+
+# Heuristic: is the user's description generic enough that the base template
+# is already a complete answer? If yes, skip the agent run. Real descriptions
+# (with brand, copy, features, specific colors, etc.) bypass this and trigger
+# the personalize agent. The bar is intentionally low — we'd rather run the
+# agent on a borderline case than skip it incorrectly.
+def _is_generic_description(desc: str) -> bool:
+    s = (desc or "").strip().lower()
+    if not s:
+        return True
+    # Anything under 30 chars is too short to encode real intent.
+    if len(s) <= 30:
+        return True
+    # Strip leading "build/make/create me a/an ..." — what's left tells us if
+    # the user actually said something substantive.
+    import re as _re
+    stripped = _re.sub(
+        r"^(please\s+)?(can you\s+)?(make|build|create|generate|give me|i want|i need|i'd like)\s+(me\s+)?(an?\s+)?",
+        "",
+        s,
+    ).strip()
+    # If after stripping the boilerplate, the remainder is short and nondescript
+    # (e.g. "crud app", "invoice app", "todo list"), still generic.
+    if len(stripped) <= 14:
+        return True
+    return False
+
+
+def _ensure_app_skeleton(slug: str, storage: str | None) -> None:
+    """Create the empty folder layout matching the BUILD prompt's spec."""
+    import os
+    workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
+    base = os.path.join(workspace, "apps", slug)
+    subdirs = ["styles", "src", "src/components", "src/lib", "public"]
+    for sub in [""] + subdirs:
+        os.makedirs(os.path.join(base, sub), exist_ok=True)
+    # Drop a placeholder README so the folder isn't empty when the build
+    # hasn't started yet.
+    readme = os.path.join(base, "README.md")
+    if not os.path.exists(readme):
+        storage_label = "Supabase backend" if storage == "supabase" else "frontend-only (no backend)"
+        with open(readme, "w", encoding="utf-8") as f:
+            f.write(f"# {slug}\n\nApp scaffolded by AIUI App Builder. Storage: {storage_label}.\n")
+
+
+def _humanize_slug(slug: str) -> str:
+    """Turn a kebab-case slug into a Title Case display name.
+
+    e.g. "my-todo-list" -> "My Todo List". Empty input returns "".
+    """
+    if not slug:
+        return ""
+    parts = [p for p in slug.replace("_", "-").split("-") if p]
+    return " ".join(p[:1].upper() + p[1:] for p in parts)
+
+
+# Files we never want to copy out of a template_apps/<key>/ source tree.
+_TEMPLATE_COPY_IGNORE: frozenset[str] = frozenset({".DS_Store", "Thumbs.db"})
+
+# Extensions that get placeholder substitution. Anything else is treated as
+# a binary blob and copied verbatim with shutil.copy2.
+_TEMPLATE_TEXT_EXTS: frozenset[str] = frozenset({".html", ".js", ".css", ".md", ".sql"})
+
+
+def _copy_template_app(key: str, slug: str, app_name: str) -> None:
+    """Copy template_apps/<key>/ into apps/<slug>/, substituting placeholders.
+
+    On every text file (.html, .js, .css, .md, .sql), replaces:
+      • <%= APP_NAME %> with `app_name` (falls back to humanized slug if blank)
+      • <%= APP_SLUG %> with `slug`
+
+    Binary files are copied verbatim via shutil.copy2. Files matching
+    _TEMPLATE_COPY_IGNORE (.DS_Store, Thumbs.db) are skipped. Idempotent —
+    overwrites destination files if they already exist.
+    """
+    import os
+    import shutil
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    src_root = os.path.join(here, "template_apps", key)
+    workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
+    dst_root = os.path.join(workspace, "apps", slug)
+
+    name = app_name or _humanize_slug(slug) or slug
+
+    for src_dir, _dirs, files in os.walk(src_root):
+        rel_dir = os.path.relpath(src_dir, src_root)
+        dst_dir = dst_root if rel_dir == "." else os.path.join(dst_root, rel_dir)
+        os.makedirs(dst_dir, exist_ok=True)
+        for fname in files:
+            if fname in _TEMPLATE_COPY_IGNORE:
+                continue
+            src_file = os.path.join(src_dir, fname)
+            dst_file = os.path.join(dst_dir, fname)
+            ext = os.path.splitext(fname)[1].lower()
+            if ext in _TEMPLATE_TEXT_EXTS:
+                try:
+                    text_content = open(src_file, "r", encoding="utf-8").read()
+                except UnicodeDecodeError:
+                    # Mislabelled binary — fall back to verbatim copy.
+                    shutil.copy2(src_file, dst_file)
+                    continue
+                text_content = text_content.replace("<%= APP_NAME %>", name)
+                text_content = text_content.replace("<%= APP_SLUG %>", slug)
+                with open(dst_file, "w", encoding="utf-8", newline="") as f:
+                    f.write(text_content)
+            else:
+                shutil.copy2(src_file, dst_file)
 
 
 @router.delete("/{task_id}", status_code=204)
@@ -614,6 +810,28 @@ async def chat(
 
     slug = source.built_app_slug
     app_dir = os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps", slug)
+
+    # Look up Supabase state for this project — whether it's linked decides
+    # how the agent answers DB/backend questions.
+    supabase_linked = False
+    supabase_summary = ""
+    try:
+        from sqlalchemy import select as _sel
+        from models import ProjectSupabase as _PS
+        async with session() as s2:
+            ps = (await s2.execute(
+                _sel(_PS).where(_PS.slug == slug)
+            )).scalar_one_or_none()
+        if ps and (ps.linked_project_ref or ps.supabase_url):
+            supabase_linked = True
+            ref = ps.linked_project_ref or "(manual URL)"
+            url = ps.supabase_url or "(via Management API)"
+            supabase_summary = f"linked Supabase project: {ref}; URL: {url}"
+        else:
+            supabase_summary = "not connected"
+    except Exception:
+        supabase_summary = "(status unknown)"
+
     # Gather a compact file listing for context (file names only, no content)
     file_listing = ""
     try:
@@ -632,23 +850,73 @@ async def chat(
     except Exception:
         file_listing = "(file list unavailable)"
 
+    if supabase_linked:
+        backend_block = (
+            f"BACKEND STATUS: Supabase IS connected ({supabase_summary}). "
+            f"Use it freely for any feature that needs persistence, auth, file storage, "
+            f"or APIs. The build pipeline can run SQL via the platform's SQL endpoint, "
+            f"create tables with RLS, set up edge functions, and configure auth providers. "
+            f"Never tell the user a backend feature is impossible — it isn't.\n\n"
+        )
+    else:
+        backend_block = (
+            f"BACKEND STATUS: Supabase is NOT connected for this project ({supabase_summary}). "
+            f"If the user asks for ANY feature that needs persistence, auth, file storage, "
+            f"webhooks, or APIs (e.g. \"connect to my Supabase\", \"save users\", "
+            f"\"send a webhook\", \"add login\"), DO NOT refuse and DO NOT say it's "
+            f"out of scope. Instead, emit the sentinel `[ACTION:supabase_connect]` on "
+            f"its own line at the END of your reply — the UI will render a Connect "
+            f"Supabase button. Briefly explain (1-2 sentences) what you'll build once "
+            f"they connect. Example:\n"
+            f"  Sure — once Supabase is connected I'll add a `users` table with email "
+            f"and password fields, plus a login form wired to Supabase Auth.\n"
+            f"  [ACTION:supabase_connect]\n"
+            f"Only emit this sentinel when the request actually needs a backend.\n\n"
+        )
+
     system_prompt = (
-        f"You are a helpful assistant for the AIUI decision engine, chatting with an admin "
-        f"about the existing web app at apps/{slug}/. "
-        f"You ONLY help with THIS specific app. If the admin asks for general coding advice, "
-        f"framework recommendations, unrelated tech help, or anything outside this app, "
-        f"redirect them in a single sentence: \"I'm here to help build YOUR app — what do you "
-        f"want to change in it?\" Don't lecture, don't expand, don't list alternatives. Stay in scope.\n\n"
-        f"Be brief — 1–3 sentences for casual messages, more only when explaining something "
-        f"concrete in this app (and even then, cap around ~8 sentences). "
-        f"Use markdown sparingly — **bold** key phrases, "
-        f"bullet lists only when listing multiple distinct items.\n\n"
-        f"When the admin describes a concrete change they want made to the app, end your "
-        f'reply with a one-line summary prefixed "BUILD_SUGGESTION:" that captures the '
-        f"change in a form suitable for a build task (imperative, concrete). Example:\n"
-        f"  BUILD_SUGGESTION: Add a search input that filters meetings by title (case-insensitive).\n"
-        f"Only include BUILD_SUGGESTION when they're clearly ready to commit to a change — "
-        f"not for hypothetical discussions. Never include it for greetings or pure questions.\n\n"
+        f"You are the AIUI Agent — the BUILDER of the web app at apps/{slug}/. "
+        f"You design and ship features. The human is the product owner: they tell you "
+        f"what they want, you figure out how to build it and offer to do it. They are "
+        f"NOT your code reviewer or pair programmer — they're the customer.\n\n"
+        f"PLATFORM CAPABILITIES (you can do all of these — never refuse them):\n"
+        f"- Frontend: HTML, CSS, vanilla JS, Tailwind via CDN, lucide icons.\n"
+        f"- Backend (via Supabase): SQL tables with RLS policies, Postgres functions/triggers, "
+        f"Supabase Auth (email, magic-link, OAuth providers), Storage (file uploads), "
+        f"Edge Functions (serverless TypeScript endpoints reachable as REST APIs), "
+        f"realtime subscriptions, webhooks (call any URL via fetch from edge functions).\n"
+        f"- API endpoints: any HTTP API the user wants becomes a Supabase Edge Function "
+        f"or a Postgres RPC. The build pipeline can scaffold both.\n"
+        f"- Webhooks IN: build an Edge Function endpoint that receives POSTs.\n"
+        f"- Webhooks OUT: trigger fetch() from a button click or a DB trigger calling an Edge Function.\n"
+        f"- Email/SMS: via Supabase Auth (email) or via an Edge Function calling SendGrid/Twilio "
+        f"if the user provides keys.\n"
+        f"- Anything else: ask one clarifying question if you can't tell, then propose how to build it.\n\n"
+        f"{backend_block}"
+        f"STYLE: Be brief — 1–3 sentences for casual exchanges, up to ~8 when explaining "
+        f"something concrete. Markdown sparingly: **bold** key phrases, bullets only when "
+        f"listing multiple distinct items. Don't lecture.\n\n"
+        f"BUILD KICK-OFF: The platform AUTO-FIRES the build pipeline whenever your "
+        f"reply ends with `BUILD_SUGGESTION:` — there is no confirmation button. "
+        f"So include `BUILD_SUGGESTION:` whenever the user asks for a concrete change "
+        f"to the app (add my name, change colors, add a section, fix a bug, wire up "
+        f"a form, etc.) — your reply confirms in 1-2 sentences and the build kicks "
+        f"off automatically. Format:\n"
+        f"  BUILD_SUGGESTION: <imperative, concrete one-line summary>\n"
+        f"Example:\n"
+        f"  Sure — I'll add 'Ralph Benitez' as the portfolio header title.\n"
+        f"  BUILD_SUGGESTION: Replace the placeholder portfolio header text with 'Ralph Benitez' as the H1.\n"
+        f"\n"
+        f"DO NOT emit BUILD_SUGGESTION for: greetings, pure questions about how the "
+        f"app works (no change requested), brainstorming hypotheticals (\"what could "
+        f"I do?\"), or asks for clarification before you can build. In those cases, "
+        f"answer in plain text and ask follow-up questions.\n"
+        f"DO emit BUILD_SUGGESTION when the user clearly wants the change made now "
+        f"(\"add X\", \"change Y to Z\", \"yes do it\", \"build it\", or any specific "
+        f"feature description). The user expects you to just do it.\n\n"
+        f"NEVER refuse with phrases like \"out of scope\", \"beyond what we can do\", "
+        f"\"this is a frontend-only app\". The platform handles backend; your job is to "
+        f"figure out the design and ship it.\n\n"
         f"APP FILES:\n{file_listing}"
     )
 
