@@ -13,15 +13,19 @@ These tests cover:
     reference app and substitutes the APP_NAME placeholder
   • build_rules_for — switches between CUSTOMIZE MODE and FILE LAYOUT
 """
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import os
 
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 from httpx import ASGITransport, AsyncClient
 
 import templates as templates_mod
 from main import app
 from routes_tasks import _copy_template_app, _humanize_slug
+
 
 ADMIN_HEADERS = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 

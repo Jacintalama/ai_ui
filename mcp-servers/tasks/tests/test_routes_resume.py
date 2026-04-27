@@ -8,10 +8,13 @@ Covers three paths:
 We monkey-patch `routes_execution._run_execution` to a no-op so the test
 doesn't try to spawn the real Claude subprocess.
 """
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import os
 import uuid
 
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -20,6 +23,7 @@ from sqlalchemy import select
 from main import app
 import routes_execution
 from models import ChatMessage, ProjectMember, ProjectSupabase, TaskItem
+
 
 ADMIN_HEADERS = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 

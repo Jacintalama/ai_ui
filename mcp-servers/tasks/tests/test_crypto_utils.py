@@ -1,9 +1,13 @@
 """Round-trip + key-handling tests for crypto_utils."""
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import pytest
 
 
+
 def test_encrypt_decrypt_round_trip(monkeypatch):
-    monkeypatch.setenv("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+    monkeypatch.setenv("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
     from importlib import reload
     import crypto_utils
     reload(crypto_utils)
@@ -15,13 +19,13 @@ def test_encrypt_decrypt_round_trip(monkeypatch):
 
 
 def test_decrypt_with_wrong_key_raises(monkeypatch):
-    monkeypatch.setenv("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+    monkeypatch.setenv("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
     from importlib import reload
     import crypto_utils
     reload(crypto_utils)
     enc = crypto_utils.encrypt("hello")
 
-    monkeypatch.setenv("AIUI_FERNET_KEY", "yvULp7B9z1Hbj2vU9GvrPK0p3Z4F5K1d_W6mV5L9bIo=")
+    monkeypatch.setenv("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
     reload(crypto_utils)
     from cryptography.fernet import InvalidToken
     with pytest.raises(InvalidToken):

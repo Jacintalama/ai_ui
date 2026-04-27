@@ -1,9 +1,12 @@
 """Tests for Supabase config endpoints (GET / POST / DELETE)."""
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import os
 import uuid
 
 # Set the Fernet key BEFORE importing app so crypto_utils initializes cleanly.
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +14,7 @@ from sqlalchemy import select
 
 from main import app
 from models import ProjectMember, ProjectSupabase, TaskItem
+
 
 OWNER_HDR = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example.signature"

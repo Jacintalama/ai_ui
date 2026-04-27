@@ -1,8 +1,11 @@
 """Tests for the SQL execution endpoint POST /api/projects/{slug}/db/sql."""
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import os
 import uuid
 
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -10,6 +13,7 @@ from httpx import ASGITransport, AsyncClient
 import crypto_utils
 from main import app
 from models import ProjectMember, ProjectSupabase, TaskItem
+
 
 OWNER_HDR = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 

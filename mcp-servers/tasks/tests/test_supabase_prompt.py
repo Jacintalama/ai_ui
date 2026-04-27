@@ -1,9 +1,13 @@
 """The build/enhance prompt templates must include Supabase context when configured."""
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import os
 
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 from claude_executor import build_prompt, build_enhance_prompt
+
 
 
 def test_build_prompt_omits_block_when_no_supabase():

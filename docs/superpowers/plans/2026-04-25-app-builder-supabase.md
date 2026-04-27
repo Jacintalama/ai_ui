@@ -52,7 +52,7 @@ This is one-time setup before any code runs.
 docker run --rm python:3.12-slim python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Save the printed string — it'll look like `v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=`.
+Save the printed string — it'll look like `<REDACTED-TEST-KEY-44CHARS>`.
 
 - [ ] **Step 2: Append to host .env**
 
@@ -99,7 +99,7 @@ import pytest
 
 
 def test_encrypt_decrypt_round_trip(monkeypatch):
-    monkeypatch.setenv("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+    monkeypatch.setenv("AIUI_FERNET_KEY", "<REDACTED-TEST-KEY-44CHARS>")
     from importlib import reload
     import crypto_utils
     reload(crypto_utils)
@@ -112,13 +112,13 @@ def test_encrypt_decrypt_round_trip(monkeypatch):
 
 def test_decrypt_with_wrong_key_raises(monkeypatch):
     """Tokens encrypted under a different key must fail to decrypt."""
-    monkeypatch.setenv("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+    monkeypatch.setenv("AIUI_FERNET_KEY", "<REDACTED-TEST-KEY-44CHARS>")
     from importlib import reload
     import crypto_utils
     reload(crypto_utils)
     enc = crypto_utils.encrypt("hello")
 
-    monkeypatch.setenv("AIUI_FERNET_KEY", "yvULp7B9z1Hbj2vU9GvrPK0p3Z4F5K1d_W6mV5L9bIo=")
+    monkeypatch.setenv("AIUI_FERNET_KEY", "<REDACTED-TEST-KEY-44CHARS>")
     reload(crypto_utils)
     from cryptography.fernet import InvalidToken
     with pytest.raises(InvalidToken):
@@ -298,7 +298,7 @@ import os
 import uuid
 
 # Set the Fernet key BEFORE importing app so crypto_utils initializes cleanly.
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", "<REDACTED-TEST-KEY-44CHARS>")
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -582,7 +582,7 @@ import os
 import uuid
 from datetime import datetime
 
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", "<REDACTED-TEST-KEY-44CHARS>")
 
 import pytest
 from httpx import ASGITransport, AsyncClient

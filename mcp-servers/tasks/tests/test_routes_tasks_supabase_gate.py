@@ -7,16 +7,20 @@ Three scenarios:
      status="pending" (no gate, build kicks off normally).
   3. Static template (storage="none") → status="pending" regardless.
 """
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import os
 import uuid
 
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from main import app
 from models import ChatMessage, ProjectSupabase
+
 
 ADMIN_HEADERS = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 

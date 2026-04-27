@@ -1,14 +1,18 @@
 """Tests for chat history endpoints."""
+from cryptography.fernet import Fernet as _Fernet
+_AIUI_TEST_KEY = _Fernet.generate_key().decode()
+
 import os
 import uuid
 
-os.environ.setdefault("AIUI_FERNET_KEY", "v3KGZ9ZpQAQ-HeaR_R-nXvI3T8cPOFYYJQHe3VJYJpw=")
+os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from main import app
 from models import ChatMessage, ProjectMember, TaskItem
+
 
 OWNER_HDR = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 BOB_HDR   = {"X-User-Email": "bob@aiui.com",   "X-User-Admin": "true"}
