@@ -1,0 +1,322 @@
+{
+  "name": "Search → Scrape → Knowledge Base",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "search-to-kb",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "id": "webhook-node",
+      "webhookId": "search-to-kb"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract search query and config from webhook\nconst input = $input.first().json.body || $input.first().json;\nconst query = input.query || input.q || '';\nconst maxResults = input.max_results || 5;\nconst collectionName = input.collection || 'Web Search';\n\nif (!query) {\n  throw new Error('Missing required field: query');\n}\n\nreturn [{ json: { query, maxResults, collectionName } }];"
+      },
+      "name": "Parse Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "id": "parse-query-node"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.duckduckgo.com/",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.query }}" },
+            { "name": "format", "value": "json" },
+            { "name": "no_html", "value": "1" },
+            { "name": "skip_disambig", "value": "1" }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": { "responseFormat": "json" }
+          },
+          "timeout": 15000
+        }
+      },
+      "name": "DuckDuckGo Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 200],
+      "id": "ddg-search-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://html.duckduckgo.com/html/?q={{ encodeURIComponent($json.query) }}",
+        "options": {
+          "response": {
+            "response": { "responseFormat": "text" }
+          },
+          "timeout": 15000
+        }
+      },
+      "name": "DuckDuckGo HTML Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 400],
+      "id": "ddg-html-search-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine results from DuckDuckGo API and HTML search\nconst query = $('Parse Query').first().json.query;\nconst maxResults = $('Parse Query').first().json.maxResults;\n\n// Try API results first\nconst apiData = $('DuckDuckGo Search').first().json;\nlet urls = [];\n\n// API instant answer\nif (apiData.AbstractURL) {\n  urls.push({ url: apiData.AbstractURL, title: apiData.Heading || query, snippet: apiData.AbstractText || '' });\n}\n\n// Related topics from API\nif (apiData.RelatedTopics) {\n  for (const topic of apiData.RelatedTopics) {\n    if (topic.FirstURL && urls.length < maxResults) {\n      urls.push({ url: topic.FirstURL, title: topic.Text ? topic.Text.substring(0, 100) : '', snippet: topic.Text || '' });\n    }\n  }\n}\n\n// Parse HTML results as fallback/supplement\ntry {\n  const html = $('DuckDuckGo HTML Search').first().json.data || '';\n  const linkRegex = /class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>([^<]+)/g;\n  let match;\n  while ((match = linkRegex.exec(html)) !== null && urls.length < maxResults) {\n    let url = match[1];\n    const title = match[2].trim();\n    // DuckDuckGo wraps URLs in a redirect\n    if (url.includes('uddg=')) {\n      url = decodeURIComponent(url.split('uddg=')[1].split('&')[0]);\n    }\n    if (url.startsWith('http') && !urls.find(u => u.url === url)) {\n      urls.push({ url, title, snippet: '' });\n    }\n  }\n} catch (e) { /* ignore parse errors */ }\n\n// If still no results, try a simple approach\nif (urls.length === 0) {\n  return [{ json: { error: 'No search results found for: ' + query, urls: [], query } }];\n}\n\nreturn [{ json: { query, urls: urls.slice(0, maxResults), resultCount: urls.length } }];"
+      },
+      "name": "Extract URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "id": "extract-urls-node"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if we have URLs to scrape\nconst data = $input.first().json;\nif (data.error || !data.urls || data.urls.length === 0) {\n  return [{ json: { skip: true, error: data.error || 'No URLs found' } }];\n}\n\n// Output each URL as a separate item for scraping\nreturn data.urls.map(u => ({ json: { ...u, query: data.query } }));"
+      },
+      "name": "Split URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300],
+      "id": "split-urls-node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Has Results?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1320, 300],
+      "id": "has-results-check"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": { "responseFormat": "text" }
+          },
+          "timeout": 10000,
+          "redirect": { "redirect": { "followRedirects": true, "maxRedirects": 3 } }
+        }
+      },
+      "name": "Scrape Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 400],
+      "id": "scrape-page-node",
+      "onError": "continueRegularOutput",
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// Convert scraped HTML to clean markdown text\nconst item = $input.first().json;\nconst url = $('Split URLs').first().json.url;\nconst title = $('Split URLs').first().json.title || url;\nconst query = $('Split URLs').first().json.query;\n\nlet html = item.data || item.body || '';\nif (!html || typeof html !== 'string') {\n  return [{ json: { skip: true, url, title, error: 'Empty page' } }];\n}\n\n// Strip scripts, styles, nav, footer, header\nhtml = html.replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '');\nhtml = html.replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '');\nhtml = html.replace(/<nav[^>]*>[\\s\\S]*?<\\/nav>/gi, '');\nhtml = html.replace(/<footer[^>]*>[\\s\\S]*?<\\/footer>/gi, '');\nhtml = html.replace(/<header[^>]*>[\\s\\S]*?<\\/header>/gi, '');\n\n// Convert headings\nhtml = html.replace(/<h1[^>]*>(.*?)<\\/h1>/gi, '# $1\\n\\n');\nhtml = html.replace(/<h2[^>]*>(.*?)<\\/h2>/gi, '## $1\\n\\n');\nhtml = html.replace(/<h3[^>]*>(.*?)<\\/h3>/gi, '### $1\\n\\n');\n\n// Convert formatting\nhtml = html.replace(/<strong[^>]*>(.*?)<\\/strong>/gi, '**$1**');\nhtml = html.replace(/<b[^>]*>(.*?)<\\/b>/gi, '**$1**');\nhtml = html.replace(/<em[^>]*>(.*?)<\\/em>/gi, '*$1*');\nhtml = html.replace(/<i[^>]*>(.*?)<\\/i>/gi, '*$1*');\n\n// Convert links\nhtml = html.replace(/<a[^>]*href=\"([^\"]*?)\"[^>]*>(.*?)<\\/a>/gi, '[$2]($1)');\n\n// Convert lists\nhtml = html.replace(/<li[^>]*>(.*?)<\\/li>/gi, '- $1\\n');\n\n// Convert paragraphs and breaks\nhtml = html.replace(/<p[^>]*>(.*?)<\\/p>/gi, '$1\\n\\n');\nhtml = html.replace(/<br\\s*\\/?>/gi, '\\n');\n\n// Strip remaining HTML tags\nhtml = html.replace(/<[^>]+>/g, '');\n\n// Decode entities\nhtml = html.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ');\n\n// Clean up whitespace\nhtml = html.replace(/\\n{3,}/g, '\\n\\n').trim();\n\n// Truncate to 50KB max per page\nconst maxLen = 50000;\nlet markdown = html.substring(0, maxLen);\nif (html.length > maxLen) markdown += '\\n\\n[Content truncated]';\n\n// Build the final document\nconst doc = '# ' + title + '\\n\\n' +\n  '**Source:** ' + url + '\\n' +\n  '**Search Query:** ' + query + '\\n' +\n  '**Scraped:** ' + new Date().toISOString().split('T')[0] + '\\n\\n' +\n  '---\\n\\n' + markdown;\n\nreturn [{ json: { skip: false, url, title, query, content: doc, contentLength: doc.length } }];"
+      },
+      "name": "HTML to Markdown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 400],
+      "id": "html-to-md-node"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "leftValue": "", "typeValidation": "strict" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "name": "Page Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1980, 400],
+      "id": "page-valid-check"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Find or create the 'Web Search' Knowledge Base collection\nconst OPENWEBUI_URL = 'CONFIGURE_OPENWEBUI_URL';\nconst API_KEY = 'CONFIGURE_API_KEY';\nconst collectionName = $('Parse Query').first().json.collectionName;\n\n// List existing KBs\nconst listResp = await this.helpers.httpRequest({\n  method: 'GET',\n  url: OPENWEBUI_URL + '/api/v1/knowledge/',\n  headers: { 'Authorization': 'Bearer ' + API_KEY },\n  json: true\n});\n\nconst items = listResp.items || (Array.isArray(listResp) ? listResp : []);\nconst existing = items.find(kb => kb.name === collectionName);\n\nif (existing) {\n  return [{ json: { kb_id: existing.id, kb_name: collectionName, created: false } }];\n}\n\n// Create new KB\nconst createResp = await this.helpers.httpRequest({\n  method: 'POST',\n  url: OPENWEBUI_URL + '/api/v1/knowledge/create',\n  headers: { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' },\n  body: { name: collectionName, description: 'Auto-scraped web search results for knowledge base' },\n  json: true\n});\n\nreturn [{ json: { kb_id: createResp.id, kb_name: collectionName, created: true } }];"
+      },
+      "name": "Find or Create KB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 400],
+      "id": "find-create-kb-node"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Upload scraped content as a file to Open WebUI and add to KB\nconst OPENWEBUI_URL = 'CONFIGURE_OPENWEBUI_URL';\nconst API_KEY = 'CONFIGURE_API_KEY';\nconst kb_id = $('Find or Create KB').first().json.kb_id;\n\nconst content = $('HTML to Markdown').first().json.content;\nconst title = $('HTML to Markdown').first().json.title || 'search-result';\nconst query = $('HTML to Markdown').first().json.query;\n\n// Create filename\nconst cleanTitle = title.replace(/[^a-zA-Z0-9 ]/g, '').substring(0, 40).trim();\nconst fileName = '[Search] ' + cleanTitle + '_' + Date.now() + '.md';\n\n// Upload file\nconst FormData = require('form-data');\nconst form = new FormData();\nform.append('file', Buffer.from(content, 'utf-8'), { filename: fileName, contentType: 'text/markdown' });\n\nconst uploadResp = await this.helpers.httpRequest({\n  method: 'POST',\n  url: OPENWEBUI_URL + '/api/v1/files/',\n  headers: {\n    'Authorization': 'Bearer ' + API_KEY,\n    ...form.getHeaders()\n  },\n  body: form,\n  json: true\n});\n\nif (!uploadResp.id) {\n  return [{ json: { error: 'Upload failed', title } }];\n}\n\n// Add file to KB\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: OPENWEBUI_URL + '/api/v1/knowledge/' + kb_id + '/file/add',\n    headers: { 'Authorization': 'Bearer ' + API_KEY, 'Content-Type': 'application/json' },\n    body: { file_id: uploadResp.id },\n    json: true\n  });\n} catch (e) {\n  // Continue even if KB add fails\n}\n\nreturn [{ json: { success: true, file_id: uploadResp.id, fileName, title, kb_id } }];"
+      },
+      "name": "Upload to KB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, 400],
+      "id": "upload-to-kb-node",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all results and build summary\nconst query = $('Parse Query').first().json.query;\nconst allResults = $('Upload to KB').all();\n\nconst successful = allResults.filter(r => r.json.success);\nconst failed = allResults.filter(r => !r.json.success);\n\nreturn [{ json: {\n  query,\n  total_scraped: successful.length,\n  total_failed: failed.length,\n  files: successful.map(r => ({ file_id: r.json.file_id, title: r.json.title, fileName: r.json.fileName })),\n  kb_id: successful.length > 0 ? successful[0].json.kb_id : null,\n  message: 'Scraped ' + successful.length + ' pages for \"' + query + '\" and added to Knowledge Base'\n} }];"
+      },
+      "name": "Build Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 400],
+      "id": "build-summary-node"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2860, 400],
+      "id": "respond-success-node"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: $json.error || 'No results found', query: $json.query || '' }) }}"
+      },
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1540, 200],
+      "id": "respond-error-node"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          { "node": "Parse Query", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Parse Query": {
+      "main": [
+        [
+          { "node": "DuckDuckGo Search", "type": "main", "index": 0 },
+          { "node": "DuckDuckGo HTML Search", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "DuckDuckGo Search": {
+      "main": [
+        [
+          { "node": "Extract URLs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "DuckDuckGo HTML Search": {
+      "main": [
+        [
+          { "node": "Extract URLs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract URLs": {
+      "main": [
+        [
+          { "node": "Split URLs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Split URLs": {
+      "main": [
+        [
+          { "node": "Has Results?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Results?": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Scrape Page", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Scrape Page": {
+      "main": [
+        [
+          { "node": "HTML to Markdown", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "HTML to Markdown": {
+      "main": [
+        [
+          { "node": "Page Valid?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Page Valid?": {
+      "main": [
+        [],
+        [
+          { "node": "Find or Create KB", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Find or Create KB": {
+      "main": [
+        [
+          { "node": "Upload to KB", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Upload to KB": {
+      "main": [
+        [
+          { "node": "Build Summary", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Summary": {
+      "main": [
+        [
+          { "node": "Respond Success", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
