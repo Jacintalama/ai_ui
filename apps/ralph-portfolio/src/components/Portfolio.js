@@ -1,6 +1,6 @@
 export function portfolio() {
   return {
-    name: 'Ralph Benítez',
+    name: 'Ralph Benitez',
     initials: 'RB',
     theme: 'light',
     filter: 'All',
