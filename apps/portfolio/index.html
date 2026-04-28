@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jacinta Alama — Software Engineer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --accent: #6366f1;
+      --accent-light: #818cf8;
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #22222f;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --radius: 12px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.6; }
+
+    a { color: var(--accent-light); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(15,15,19,0.85); backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding: 0 2rem; height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    nav .brand { font-weight: 700; font-size: 1rem; color: var(--text); letter-spacing: -0.02em; }
+    nav ul { list-style: none; display: flex; gap: 1.75rem; }
+    nav ul a { color: var(--muted); font-size: 0.9rem; transition: color 0.2s; }
+    nav ul a:hover { color: var(--text); text-decoration: none; }
+
+    /* ── Section wrapper ── */
+    section { padding: 6rem 2rem; max-width: 960px; margin: 0 auto; }
+    h2 { font-size: 1.75rem; font-weight: 700; margin-bottom: 2.5rem; color: var(--text); letter-spacing: -0.03em; }
+    h2 span { color: var(--accent-light); }
+
+    /* ── Hero ── */
+    #hero {
+      min-height: 100vh;
+      max-width: 100%;
+      padding: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #0f0f13 0%, #1a1232 45%, #0f1a2e 100%);
+      position: relative; overflow: hidden;
+    }
+    #hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 70% 60% at 60% 40%, rgba(99,102,241,0.18) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-inner { text-align: center; position: relative; z-index: 1; padding: 2rem; }
+    .hero-inner h1 {
+      font-size: clamp(2.8rem, 7vw, 5rem);
+      font-weight: 800; letter-spacing: -0.04em; line-height: 1.1;
+      background: linear-gradient(135deg, #e2e8f0 0%, var(--accent-light) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+      margin-bottom: 1rem;
+    }
+    .hero-inner .tagline {
+      font-size: clamp(1rem, 2.5vw, 1.25rem);
+      color: var(--muted); margin-bottom: 1.5rem;
+    }
+    .hero-inner .intro {
+      max-width: 540px; margin: 0 auto;
+      color: #8892a4; font-size: 1rem; line-height: 1.75;
+    }
+    .cta {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      margin-top: 2.25rem; padding: 0.75rem 1.75rem;
+      background: var(--accent); color: #fff; border-radius: 8px;
+      font-weight: 600; font-size: 0.95rem; transition: background 0.2s, transform 0.15s;
+    }
+    .cta:hover { background: var(--accent-light); text-decoration: none; transform: translateY(-2px); }
+
+    /* ── About ── */
+    #about { border-top: 1px solid rgba(255,255,255,0.06); }
+    #about p { color: var(--muted); font-size: 1.05rem; line-height: 1.85; max-width: 680px; }
+    #about p + p { margin-top: 1rem; }
+
+    /* ── Projects ── */
+    #projects { border-top: 1px solid rgba(255,255,255,0.06); }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 1.25rem; }
+    .card {
+      background: var(--surface); border: 1px solid rgba(255,255,255,0.07);
+      border-radius: var(--radius); padding: 1.5rem;
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+      display: flex; flex-direction: column; gap: 0.75rem;
+    }
+    .card:hover { transform: translateY(-5px); box-shadow: 0 12px 32px rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.4); }
+    .card-icon { font-size: 1.6rem; }
+    .card h3 { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+    .card p { color: var(--muted); font-size: 0.9rem; line-height: 1.65; flex: 1; }
+    .card-link {
+      display: inline-flex; align-items: center; gap: 0.3rem;
+      font-size: 0.85rem; font-weight: 600; color: var(--accent-light);
+      margin-top: 0.25rem;
+    }
+    .card-link::after { content: '→'; }
+    .card-link:hover { text-decoration: none; color: #fff; }
+
+    /* ── Skills ── */
+    #skills { border-top: 1px solid rgba(255,255,255,0.06); }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+    .chip {
+      background: var(--surface2); border: 1px solid rgba(255,255,255,0.08);
+      color: var(--muted); padding: 0.4rem 1rem; border-radius: 999px;
+      font-size: 0.875rem; font-weight: 500; transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .chip:hover { background: rgba(99,102,241,0.15); color: var(--accent-light); border-color: var(--accent); }
+
+    /* ── Contact ── */
+    #contact { border-top: 1px solid rgba(255,255,255,0.06); }
+    .contact-links { display: flex; flex-wrap: wrap; gap: 1.25rem; margin-top: 0.5rem; }
+    .contact-link {
+      display: flex; align-items: center; gap: 0.6rem;
+      background: var(--surface); border: 1px solid rgba(255,255,255,0.07);
+      color: var(--text); padding: 0.75rem 1.25rem; border-radius: var(--radius);
+      font-size: 0.95rem; font-weight: 500; transition: border-color 0.2s, background 0.2s;
+    }
+    .contact-link:hover { border-color: var(--accent); background: rgba(99,102,241,0.08); text-decoration: none; }
+    .contact-link .icon { font-size: 1.1rem; }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center; padding: 2rem;
+      color: #4a5568; font-size: 0.8rem;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      nav ul { gap: 1rem; }
+      .cards { grid-template-columns: 1fr; }
+      section { padding: 4rem 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <span class="brand">Jacinta Alama</span>
+  <ul>
+    <li><a href="#about">About</a></li>
+    <li><a href="#projects">Projects</a></li>
+    <li><a href="#skills">Skills</a></li>
+    <li><a href="#contact">Contact</a></li>
+  </ul>
+</nav>
+
+<section id="hero">
+  <div class="hero-inner">
+    <h1>Jacinta Alama</h1>
+    <p class="tagline">Software engineer building AI-driven internal tools</p>
+    <p class="intro">
+      I design and ship full-stack AI platforms — from multi-tenant infrastructure<br>
+      to the interfaces engineers actually want to use every day.
+    </p>
+    <a class="cta" href="#projects">See my work</a>
+  </div>
+</section>
+
+<section id="about">
+  <h2>About <span>me</span></h2>
+  <p>
+    I'm a software engineer specialising in AI platform engineering, with a focus on multi-tenant systems that let teams move fast without stepping on each other. I've built and operated production platforms that combine large-language-model orchestration, workflow automation, and real-time task management into cohesive, self-improving products.
+  </p>
+  <p>
+    I care deeply about end-to-end ownership — from infrastructure and data pipelines to the UI the user opens in the morning. My background spans backend services in Python and FastAPI, containerised deployments with Docker and Caddy, and lightweight frontends that stay out of the way of the people using them.
+  </p>
+</section>
+
+<section id="projects">
+  <h2>Featured <span>projects</span></h2>
+  <div class="cards">
+
+    <div class="card">
+      <div class="card-icon">🧩</div>
+      <h3>AIUI Platform</h3>
+      <p>Multi-service AI platform running Open WebUI, n8n, an MCP proxy, and a tasks service — all orchestrated with Docker Compose and served over a custom Caddy reverse-proxy at ai-ui.coolestdomain.win.</p>
+      <a class="card-link" href="https://ai-ui.coolestdomain.win" target="_blank" rel="noopener">Visit platform</a>
+    </div>
+
+    <div class="card">
+      <div class="card-icon">🔄</div>
+      <h3>Decision Engine</h3>
+      <p>A self-improving task loop that cycles through Plan → Build → Verify → Retry stages automatically. Each iteration includes a live preview so reviewers can see outcomes without digging through logs.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-icon">🚀</div>
+      <h3>Published AI Apps</h3>
+      <p>Snapshot/runtime/publish system that packages AI-built apps and serves each one at its own subdomain (<em>slug</em>.ai-ui.coolestdomain.win) — giving every project an instant public URL with zero manual deploy steps.</p>
+    </div>
+
+  </div>
+</section>
+
+<section id="skills">
+  <h2>Skills &amp; <span>tools</span></h2>
+  <div class="chips">
+    <span class="chip">Python</span>
+    <span class="chip">FastAPI</span>
+    <span class="chip">TypeScript</span>
+    <span class="chip">Docker</span>
+    <span class="chip">Postgres</span>
+    <span class="chip">n8n</span>
+    <span class="chip">Claude Code</span>
+    <span class="chip">Playwright</span>
+    <span class="chip">Caddy</span>
+    <span class="chip">GitHub Actions</span>
+  </div>
+</section>
+
+<section id="contact">
+  <h2>Get in <span>touch</span></h2>
+  <p style="color:var(--muted);margin-bottom:1.5rem;">Open to interesting collaborations and conversations.</p>
+  <div class="contact-links">
+    <a class="contact-link" href="mailto:alamajacintg04@gmail.com">
+      <span class="icon">✉</span> alamajacintg04@gmail.com
+    </a>
+    <a class="contact-link" href="https://github.com/Jacintalama" target="_blank" rel="noopener">
+      <span class="icon">⌥</span> github.com/Jacintalama
+    </a>
+  </div>
+</section>
+
+<footer>
+  &copy; 2026 Jacinta Alama. Built with care, no frameworks harmed.
+</footer>
+
+</body>
+</html>
