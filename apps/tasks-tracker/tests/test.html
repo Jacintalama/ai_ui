@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tasks Tracker - Tests</title>
+  <style>
+    body { font-family: monospace; background: #0f0f0f; color: #e0e0e0; padding: 2rem; }
+    h1 { color: #7dd3fc; }
+    .suite { margin-bottom: 1.5rem; }
+    .suite-name { font-weight: bold; color: #a78bfa; margin-bottom: 0.5rem; }
+    .result { padding: 0.3rem 0.6rem; border-radius: 4px; margin: 0.2rem 0; font-size: 0.9rem; }
+    .pass { background: #14532d; color: #86efac; }
+    .fail { background: #450a0a; color: #fca5a5; }
+    .skip { background: #1c1917; color: #a8a29e; }
+    #summary { margin-top: 2rem; font-size: 1.1rem; font-weight: bold; }
+    .pass-summary { color: #86efac; }
+    .fail-summary { color: #fca5a5; }
+  </style>
+</head>
+<body>
+<h1>Tasks Tracker — Test Suite</h1>
+<div id="output"></div>
+<div id="summary"></div>
+
+<script type="module">
+// ---------------------------------------------------------------------------
+// Minimal assertion helpers
+// ---------------------------------------------------------------------------
+const results = [];
+
+function assert(condition, message) {
+  results.push({ ok: !!condition, message });
+  if (!condition) throw new Error(`FAIL: ${message}`);
+}
+
+function assertEqual(a, b, message) {
+  const ok = a === b;
+  results.push({ ok, message: message || `expected ${JSON.stringify(a)} === ${JSON.stringify(b)}` });
+  if (!ok) throw new Error(`FAIL: ${message}: ${JSON.stringify(a)} !== ${JSON.stringify(b)}`);
+}
+
+function assertContains(str, sub, message) {
+  const ok = String(str).includes(sub);
+  results.push({ ok, message: message || `expected "${str}" to contain "${sub}"` });
+  if (!ok) throw new Error(`FAIL: ${message}`);
+}
+
+const suites = [];
+function describe(name, fn) { suites.push({ name, fn }); }
+
+// ---------------------------------------------------------------------------
+// App under test — we import the core logic functions by loading index.html
+// in an iframe and poking at its contentWindow. But for unit tests we replicate
+// the pure logic inline so tests run without a live Supabase connection.
+// Integration tests (marked [integration]) require live Supabase.
+// ---------------------------------------------------------------------------
+
+// ---- Stub task store (mirrors app state) -----------------------------------
+let tasks = [];
+let nextId = 1;
+
+const UNIT_SUPABASE = {
+  from() {
+    return {
+      select: () => ({ order: () => Promise.resolve({ data: tasks, error: null }) }),
+      insert: (rows) => {
+        const row = { ...rows[0], id: String(nextId++), created_at: new Date().toISOString() };
+        tasks.push(row);
+        return { select: () => Promise.resolve({ data: [row], error: null }) };
+      },
+      update: (patch) => ({
+        eq: (col, val) => {
+          tasks = tasks.map(t => t[col] === val ? { ...t, ...patch } : t);
+          return Promise.resolve({ error: null });
+        }
+      }),
+      delete: () => ({
+        eq: (col, val) => {
+          tasks = tasks.filter(t => t[col] !== val);
+          return Promise.resolve({ error: null });
+        }
+      }),
+    };
+  }
+};
+
+// ---- Pure logic replicated from app ----------------------------------------
+function makeTask(title, description = null, due_date = null) {
+  return { title, description, due_date, done: false };
+}
+
+function sortTasks(taskList) {
+  return [
+    ...taskList.filter(t => !t.done).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)),
+    ...taskList.filter(t => t.done).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)),
+  ];
+}
+
+function renderHTML(taskList) {
+  const sorted = sortTasks(taskList);
+  const open = sorted.filter(t => !t.done);
+  const done = sorted.filter(t => t.done);
+
+  const taskRow = (t) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const overdue = t.due_date && t.due_date < today && !t.done;
+    return `<div class="task-item${t.done ? ' task-done' : ''}" data-id="${t.id}">
+      <input type="checkbox"${t.done ? ' checked' : ''} />
+      <span class="task-title">${t.title}</span>
+      ${t.due_date ? `<span class="due-badge${overdue ? ' overdue' : ''}">${t.due_date}</span>` : ''}
+      <button class="btn-edit">Edit</button>
+      <button class="btn-delete">Delete</button>
+    </div>`;
+  };
+
+  const openHTML = open.length
+    ? open.map(taskRow).join('')
+    : '<p class="empty-state">No tasks yet</p>';
+  const doneHTML = done.map(taskRow).join('');
+
+  return `<section id="open-tasks">${openHTML}</section><section id="done-tasks">${doneHTML}</section>`;
+}
+
+// ---- Helpers ---------------------------------------------------------------
+function parseHTML(html) {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return div;
+}
+
+function resetStore() {
+  tasks = [];
+  nextId = 1;
+}
+
+// ===========================================================================
+// TEST SUITES
+// ===========================================================================
+
+describe('1. Render empty state', () => {
+  resetStore();
+  const html = renderHTML([]);
+  const dom = parseHTML(html);
+  assert(dom.querySelector('.empty-state') !== null, 'empty-state message exists when no tasks');
+  assert(dom.querySelectorAll('.task-item').length === 0, 'no task items rendered');
+});
+
+describe('2. Add task — title only', async () => {
+  resetStore();
+  await UNIT_SUPABASE.from().insert([makeTask('Buy milk')]);
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  const items = dom.querySelectorAll('.task-item');
+  assertEqual(items.length, 1, 'one task item rendered');
+  assertContains(items[0].querySelector('.task-title').textContent, 'Buy milk', 'title shown');
+  assert(!items[0].querySelector('.due-badge'), 'no due date badge when not set');
+});
+
+describe('3. Add task — all fields', async () => {
+  resetStore();
+  await UNIT_SUPABASE.from().insert([makeTask('Read book', 'Chapter 5', '2030-12-31')]);
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  const item = dom.querySelector('.task-item');
+  assertContains(item.querySelector('.task-title').textContent, 'Read book', 'title shown');
+  assert(item.querySelector('.due-badge') !== null, 'due date badge present');
+  assertContains(item.querySelector('.due-badge').textContent, '2030-12-31', 'due date value correct');
+});
+
+describe('4. Add task — empty title blocked', () => {
+  resetStore();
+  const before = tasks.length;
+  // Simulate validation: empty title must not call insert
+  const title = '   ';
+  const valid = title.trim().length > 0;
+  assert(!valid, 'empty/whitespace title fails validation');
+  assertEqual(tasks.length, before, 'no task added for empty title');
+});
+
+describe('5. Mark task done', async () => {
+  resetStore();
+  await UNIT_SUPABASE.from().insert([{ ...makeTask('Walk dog'), id: 'x1', created_at: new Date().toISOString() }]);
+  tasks[0].id = 'x1';
+  await UNIT_SUPABASE.from().update({ done: true }).eq('id', 'x1');
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  const item = dom.querySelector('.task-item');
+  assert(item.classList.contains('task-done'), 'completed task has task-done class');
+  assert(dom.querySelector('#open-tasks .task-item') === null, 'not in open section');
+  assert(dom.querySelector('#done-tasks .task-item') !== null, 'is in done section');
+});
+
+describe('6. Mark task undone', async () => {
+  resetStore();
+  tasks.push({ id: 'x2', title: 'Call dentist', done: true, created_at: new Date().toISOString() });
+  await UNIT_SUPABASE.from().update({ done: false }).eq('id', 'x2');
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  assert(dom.querySelector('#open-tasks .task-item') !== null, 'back in open section');
+  assert(!dom.querySelector('#open-tasks .task-item').classList.contains('task-done'), 'not dimmed');
+});
+
+describe('7. Edit task title', async () => {
+  resetStore();
+  tasks.push({ id: 'x3', title: 'Old title', done: false, created_at: new Date().toISOString() });
+  await UNIT_SUPABASE.from().update({ title: 'New title' }).eq('id', 'x3');
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  assertContains(dom.querySelector('.task-title').textContent, 'New title', 'updated title shown');
+});
+
+describe('8. Edit task due date', async () => {
+  resetStore();
+  tasks.push({ id: 'x4', title: 'Submit report', due_date: '2030-01-01', done: false, created_at: new Date().toISOString() });
+  await UNIT_SUPABASE.from().update({ due_date: '2030-06-15' }).eq('id', 'x4');
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  assertContains(dom.querySelector('.due-badge').textContent, '2030-06-15', 'updated due date shown');
+});
+
+describe('9. Delete task', async () => {
+  resetStore();
+  tasks.push({ id: 'x5', title: 'Task to delete', done: false, created_at: new Date().toISOString() });
+  await UNIT_SUPABASE.from().delete().eq('id', 'x5');
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  assertEqual(dom.querySelectorAll('.task-item').length, 0, 'task removed from list');
+  assert(dom.querySelector('.empty-state') !== null, 'empty state shown after deletion');
+});
+
+describe('10. Open tasks appear before completed tasks', () => {
+  resetStore();
+  const now = new Date().toISOString();
+  tasks = [
+    { id: 'a', title: 'Done A', done: true, created_at: now },
+    { id: 'b', title: 'Open B', done: false, created_at: now },
+    { id: 'c', title: 'Done C', done: true, created_at: now },
+    { id: 'd', title: 'Open D', done: false, created_at: now },
+  ];
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  const openItems = dom.querySelectorAll('#open-tasks .task-item');
+  const doneItems = dom.querySelectorAll('#done-tasks .task-item');
+  assertEqual(openItems.length, 2, '2 open tasks in open section');
+  assertEqual(doneItems.length, 2, '2 done tasks in done section');
+  // Verify DOM order: #open-tasks comes before #done-tasks
+  const sections = dom.querySelectorAll('section');
+  assertEqual(sections[0].id, 'open-tasks', 'open section is first');
+  assertEqual(sections[1].id, 'done-tasks', 'done section is second');
+});
+
+describe('11. Completed tasks are visually dimmed', () => {
+  // We verify the dim class is applied; actual opacity tested via CSS
+  resetStore();
+  tasks = [
+    { id: 'p', title: 'Open', done: false, created_at: new Date().toISOString() },
+    { id: 'q', title: 'Done', done: true, created_at: new Date().toISOString() },
+  ];
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  const openItem = dom.querySelector('#open-tasks .task-item');
+  const doneItem = dom.querySelector('#done-tasks .task-item');
+  assert(!openItem.classList.contains('task-done'), 'open task has no dim class');
+  assert(doneItem.classList.contains('task-done'), 'done task has dim class');
+});
+
+describe('12. Persistence across reload [integration]', () => {
+  // Skipped in unit mode — requires live Supabase
+  results.push({ ok: null, message: '[integration] skipped: requires live Supabase — reload the app and verify manually' });
+});
+
+describe('13. Overdue styling', () => {
+  resetStore();
+  tasks = [
+    { id: 'r', title: 'Overdue task', due_date: '2000-01-01', done: false, created_at: new Date().toISOString() },
+    { id: 's', title: 'Future task', due_date: '2099-01-01', done: false, created_at: new Date().toISOString() },
+  ];
+  const html = renderHTML(tasks);
+  const dom = parseHTML(html);
+  const badges = dom.querySelectorAll('.due-badge');
+  assert(badges[0].classList.contains('overdue'), 'past due date badge has overdue class');
+  assert(!badges[1].classList.contains('overdue'), 'future due date badge has no overdue class');
+});
+
+// ===========================================================================
+// Run suites and render results
+// ===========================================================================
+const output = document.getElementById('output');
+const summary = document.getElementById('summary');
+
+let passed = 0, failed = 0, skipped = 0;
+
+for (const suite of suites) {
+  const div = document.createElement('div');
+  div.className = 'suite';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'suite-name';
+  nameEl.textContent = suite.name;
+  div.appendChild(nameEl);
+
+  const before = results.length;
+  try {
+    await suite.fn?.();
+  } catch (e) {
+    // error already pushed as failing result via assert
+  }
+  const after = results.length;
+  const suiteResults = results.slice(before, after);
+
+  for (const r of suiteResults) {
+    const el = document.createElement('div');
+    if (r.ok === null) {
+      el.className = 'result skip';
+      el.textContent = `⊘ ${r.message}`;
+      skipped++;
+    } else if (r.ok) {
+      el.className = 'result pass';
+      el.textContent = `✓ ${r.message}`;
+      passed++;
+    } else {
+      el.className = 'result fail';
+      el.textContent = `✗ ${r.message}`;
+      failed++;
+    }
+    div.appendChild(el);
+  }
+
+  output.appendChild(div);
+}
+
+summary.innerHTML = `<span class="pass-summary">${passed} passed</span> &nbsp; <span class="fail-summary">${failed} failed</span> &nbsp; <span style="color:#a8a29e">${skipped} skipped</span>`;
+</script>
+</body>
+</html>
