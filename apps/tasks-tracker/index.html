@@ -33,7 +33,7 @@
       padding: 2rem 1rem 4rem;
     }
 
-    #error-banner {
+    #error-banner, #error-banner-auth {
       display: none;
       background: #450a0a;
       color: #fca5a5;
@@ -280,13 +280,116 @@
       font-size: 0.9rem;
       padding: 1rem 0;
     }
+
+    /* ---- Auth ---- */
+    #auth-section {
+      max-width: 360px;
+      margin: 4rem auto 0;
+    }
+
+    #auth-section h1 {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    #auth-form {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+
+    #auth-form .field { margin-bottom: 1rem; }
+
+    #auth-form label {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 0.3rem;
+    }
+
+    input[type="email"], input[type="password"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.95rem;
+      padding: 0.5rem 0.7rem;
+      outline: none;
+      width: 100%;
+    }
+
+    input[type="email"]:focus, input[type="password"]:focus {
+      border-color: var(--accent);
+    }
+
+    #auth-form .btn-primary { width: 100%; margin-top: 0.5rem; padding: 0.65rem; }
+
+    #auth-toggle {
+      text-align: center;
+      margin-top: 1rem;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+    }
+
+    #auth-toggle a {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    #app-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+    }
+
+    #app-header h1 { margin-bottom: 0; }
+
+    #signout-btn {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.3rem 0.7rem;
+      cursor: pointer;
+    }
+
+    #signout-btn:hover { color: var(--text); border-color: var(--text-muted); }
   </style>
 </head>
 <body>
-<div class="container">
+<!-- Auth section (shown when logged out) -->
+<div id="auth-section" style="display:none">
+  <h1>Tasks</h1>
+  <div id="error-banner-auth"></div>
+  <div id="auth-form">
+    <div class="field">
+      <label for="auth-email">Email</label>
+      <input type="email" id="auth-email" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="field">
+      <label for="auth-password">Password</label>
+      <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password" />
+    </div>
+    <button id="auth-submit" class="btn-primary">Sign in</button>
+  </div>
+  <div id="auth-toggle">
+    <span id="auth-toggle-text">No account?</span>
+    <a id="auth-toggle-link">Sign up</a>
+  </div>
+</div>
+
+<!-- App section (shown when logged in) -->
+<div class="container" id="app-section" style="display:none">
   <div id="error-banner"></div>
 
-  <h1>Tasks</h1>
+  <div id="app-header">
+    <h1>Tasks</h1>
+    <button id="signout-btn">Sign out</button>
+  </div>
 
   <!-- Add form -->
   <form id="add-form" autocomplete="off">
@@ -344,20 +447,84 @@ const SUPABASE_URL = window.SUPABASE_URL || window.ENV?.SUPABASE_URL;
 const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || window.ENV?.SUPABASE_ANON_KEY;
 
 const errorBanner = document.getElementById('error-banner');
+const errorBannerAuth = document.getElementById('error-banner-auth');
+const authSection = document.getElementById('auth-section');
+const appSection = document.getElementById('app-section');
 
 function showError(msg) {
   errorBanner.textContent = msg;
   errorBanner.style.display = 'block';
 }
 
+function showAuthError(msg) {
+  errorBannerAuth.textContent = msg;
+  errorBannerAuth.style.display = 'block';
+}
+
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  showError('Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in the environment.');
-  document.getElementById('loading').style.display = 'none';
+  authSection.style.display = 'block';
+  showAuthError('Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in the environment.');
 }
 
 const db = (SUPABASE_URL && SUPABASE_ANON_KEY)
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
+
+// ---- Auth UI ---------------------------------------------------------------
+let authMode = 'signin'; // 'signin' | 'signup'
+
+const authSubmit = document.getElementById('auth-submit');
+const authToggleLink = document.getElementById('auth-toggle-link');
+const authToggleText = document.getElementById('auth-toggle-text');
+
+authToggleLink?.addEventListener('click', () => {
+  authMode = authMode === 'signin' ? 'signup' : 'signin';
+  authSubmit.textContent = authMode === 'signin' ? 'Sign in' : 'Sign up';
+  authToggleText.textContent = authMode === 'signin' ? 'No account?' : 'Already have an account?';
+  authToggleLink.textContent = authMode === 'signin' ? 'Sign up' : 'Sign in';
+  errorBannerAuth.style.display = 'none';
+});
+
+authSubmit?.addEventListener('click', async () => {
+  if (!db) return;
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!email || !password) { showAuthError('Email and password are required.'); return; }
+  errorBannerAuth.style.display = 'none';
+  authSubmit.disabled = true;
+
+  const { error } = authMode === 'signin'
+    ? await db.auth.signInWithPassword({ email, password })
+    : await db.auth.signUp({ email, password });
+
+  authSubmit.disabled = false;
+  if (error) { showAuthError(error.message); return; }
+  if (authMode === 'signup') {
+    showAuthError('Check your email to confirm your account, then sign in.');
+    return;
+  }
+});
+
+document.getElementById('signout-btn')?.addEventListener('click', async () => {
+  await db?.auth.signOut();
+});
+
+// ---- Auth state listener ---------------------------------------------------
+function showApp(session) {
+  if (session) {
+    authSection.style.display = 'none';
+    appSection.style.display = 'block';
+    loadTasks();
+  } else {
+    authSection.style.display = 'block';
+    appSection.style.display = 'none';
+  }
+}
+
+if (db) {
+  db.auth.onAuthStateChange((_event, session) => showApp(session));
+  db.auth.getSession().then(({ data }) => showApp(data.session));
+}
 
 // ---- State -----------------------------------------------------------------
 let tasks = [];
@@ -547,7 +714,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---- Boot ------------------------------------------------------------------
-if (db) loadTasks();
+// Auth state listener handles initial load above.
 </script>
 </body>
 </html>
