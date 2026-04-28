@@ -137,6 +137,113 @@
       border-top: 1px solid rgba(255,255,255,0.04);
     }
 
+    /* ── Scroll fade-in ── */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(28px);
+      transition: opacity 0.65s ease, transform 0.65s ease;
+    }
+    .fade-in.visible { opacity: 1; transform: translateY(0); }
+    .fade-in-delay-1 { transition-delay: 0.1s; }
+    .fade-in-delay-2 { transition-delay: 0.2s; }
+    .fade-in-delay-3 { transition-delay: 0.3s; }
+    .fade-in-delay-4 { transition-delay: 0.4s; }
+
+    /* ── Hero image banner ── */
+    .hero-img {
+      position: absolute; inset: 0;
+      background: url('https://images.unsplash.com/photo-1555949963-ff9fe0c870eb?w=1600&auto=format&fit=crop&q=60') center/cover no-repeat;
+      opacity: 0.07;
+      pointer-events: none;
+    }
+
+    /* ── Hero text glimmer on hover ── */
+    .hero-inner h1 {
+      transition: filter 0.3s;
+    }
+    .hero-inner h1:hover {
+      filter: brightness(1.25) drop-shadow(0 0 20px rgba(255,107,107,0.45));
+    }
+
+    /* ── CTA pulse ── */
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 rgba(255,107,107,0.55); }
+      70%  { box-shadow: 0 0 0 10px rgba(255,107,107,0); }
+      100% { box-shadow: 0 0 0 0 rgba(255,107,107,0); }
+    }
+    .cta {
+      animation: pulse-ring 2.4s ease-out infinite;
+      transition: background 0.2s, transform 0.15s, box-shadow 0.2s;
+    }
+    .cta:hover {
+      animation: none;
+      background: var(--accent-light);
+      transform: translateY(-3px) scale(1.04);
+      box-shadow: 0 8px 24px rgba(255,107,107,0.45);
+    }
+    .cta:active { transform: translateY(0) scale(0.98); }
+
+    /* ── About photo ── */
+    .about-layout { display: flex; gap: 2.5rem; align-items: flex-start; }
+    .about-photo {
+      flex-shrink: 0; width: 160px; height: 160px; border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid rgba(255,107,107,0.4);
+      box-shadow: 0 0 0 6px rgba(255,107,107,0.08);
+      transition: box-shadow 0.35s, transform 0.35s;
+    }
+    .about-photo:hover {
+      box-shadow: 0 0 0 10px rgba(255,107,107,0.18);
+      transform: scale(1.04);
+    }
+    @media (max-width: 600px) { .about-layout { flex-direction: column; } .about-photo { width: 100px; height: 100px; } }
+
+    /* ── Card image ── */
+    .card-img {
+      width: 100%; height: 140px; object-fit: cover;
+      border-radius: 8px; margin-bottom: 0.25rem;
+      transition: transform 0.35s, filter 0.35s;
+      filter: brightness(0.85) saturate(0.8);
+    }
+    .card:hover .card-img { transform: scale(1.03); filter: brightness(1) saturate(1.1); }
+
+    /* ── Chip hover pop ── */
+    .chip {
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.2s;
+    }
+    .chip:hover { transform: scale(1.08) translateY(-2px); }
+
+    /* ── Nav link underline slide ── */
+    nav ul a { position: relative; }
+    nav ul a::after {
+      content: ''; position: absolute; bottom: -3px; left: 0;
+      width: 0; height: 2px; background: var(--accent);
+      transition: width 0.25s ease;
+    }
+    nav ul a:hover::after { width: 100%; }
+
+    /* ── Contact link ripple ── */
+    .contact-link {
+      position: relative; overflow: hidden;
+      transition: border-color 0.2s, background 0.2s, transform 0.2s;
+    }
+    .contact-link:hover { transform: translateY(-3px); }
+    .contact-link::before {
+      content: ''; position: absolute; inset: 0;
+      background: radial-gradient(circle at var(--mx,50%) var(--my,50%), rgba(255,107,107,0.18) 0%, transparent 70%);
+      opacity: 0; transition: opacity 0.3s;
+    }
+    .contact-link:hover::before { opacity: 1; }
+
+    /* ── Section heading underline animation ── */
+    h2 { position: relative; display: inline-block; }
+    h2::after {
+      content: ''; display: block; height: 3px; border-radius: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-light));
+      width: 0; transition: width 0.5s ease 0.2s;
+    }
+    h2.visible::after { width: 60%; }
+
     /* ── Responsive ── */
     @media (max-width: 600px) {
       nav ul { gap: 1rem; }
@@ -158,6 +265,7 @@
 </nav>
 
 <section id="hero">
+  <div class="hero-img"></div>
   <div class="hero-inner">
     <h1>Jacinta Alama</h1>
     <p class="tagline">Software engineer who ships AI tools that actually work</p>
@@ -169,34 +277,42 @@
   </div>
 </section>
 
-<section id="about">
+<section id="about" class="fade-in">
   <h2>About <span>me</span></h2>
+  <div class="about-layout">
+    <img class="about-photo" src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=400&auto=format&fit=crop&q=80" alt="Jacinta Alama" />
+    <div>
   <p>
     I'm a software engineer specialising in AI platform engineering, with a focus on multi-tenant systems that let teams move fast without stepping on each other. I've built and operated production platforms that combine large-language-model orchestration, workflow automation, and real-time task management into cohesive, self-improving products.
   </p>
   <p>
     I care deeply about end-to-end ownership - from infrastructure and data pipelines to the UI the user opens in the morning. My background spans backend services in Python and FastAPI, containerised deployments with Docker and Caddy, and lightweight frontends that stay out of the way of the people using them.
   </p>
+    </div>
+  </div>
 </section>
 
-<section id="projects">
+<section id="projects" class="fade-in">
   <h2>Featured <span>projects</span></h2>
   <div class="cards">
 
-    <div class="card">
+    <div class="card fade-in fade-in-delay-1">
+      <img class="card-img" src="https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=600&auto=format&fit=crop&q=70" alt="AI platform dashboard" />
       <div class="card-icon">🧩</div>
       <h3>AIUI Platform</h3>
       <p>Multi-service AI platform running Open WebUI, n8n, an MCP proxy, and a tasks service - all orchestrated with Docker Compose and served over a custom Caddy reverse-proxy at ai-ui.coolestdomain.win.</p>
       <a class="card-link" href="https://ai-ui.coolestdomain.win" target="_blank" rel="noopener">Visit platform</a>
     </div>
 
-    <div class="card">
+    <div class="card fade-in fade-in-delay-2">
+      <img class="card-img" src="https://images.unsplash.com/photo-1555949963-aa79dcee981c?w=600&auto=format&fit=crop&q=70" alt="Automated workflow loop" />
       <div class="card-icon">🔄</div>
       <h3>Decision Engine</h3>
       <p>A self-improving task loop that cycles through Plan → Build → Verify → Retry stages automatically. Each iteration includes a live preview so reviewers can see outcomes without digging through logs.</p>
     </div>
 
-    <div class="card">
+    <div class="card fade-in fade-in-delay-3">
+      <img class="card-img" src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=600&auto=format&fit=crop&q=70" alt="Published apps on subdomains" />
       <div class="card-icon">🚀</div>
       <h3>Published AI Apps</h3>
       <p>Snapshot/runtime/publish system that packages AI-built apps and serves each one at its own subdomain (<em>slug</em>.ai-ui.coolestdomain.win) - giving every project an instant public URL with zero manual deploy steps.</p>
@@ -205,7 +321,7 @@
   </div>
 </section>
 
-<section id="skills">
+<section id="skills" class="fade-in">
   <h2>Skills &amp; <span>tools</span></h2>
   <div class="chips">
     <span class="chip">Python</span>
@@ -221,7 +337,7 @@
   </div>
 </section>
 
-<section id="contact">
+<section id="contact" class="fade-in">
   <h2>Get in <span>touch</span></h2>
   <p style="color:var(--muted);margin-bottom:1.5rem;">Open to interesting collaborations and conversations.</p>
   <div class="contact-links">
@@ -238,5 +354,29 @@
   &copy; 2026 Jacinta Alama. Built with care, no frameworks harmed.
 </footer>
 
+<script>
+  /* Scroll fade-in observer */
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        /* also animate h2 underline */
+        const h2 = e.target.querySelector('h2');
+        if (h2) h2.classList.add('visible');
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+  /* Contact link radial-gradient follows cursor */
+  document.querySelectorAll('.contact-link').forEach(el => {
+    el.addEventListener('mousemove', ev => {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty('--mx', ((ev.clientX - r.left) / r.width * 100) + '%');
+      el.style.setProperty('--my', ((ev.clientY - r.top) / r.height * 100) + '%');
+    });
+  });
+</script>
 </body>
 </html>
