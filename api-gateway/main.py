@@ -405,6 +405,22 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/api/tasks"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
         backend_path = full_path
+    # /api/projects/* → Tasks service (per-project membership)
+    elif full_path.startswith("/api/projects"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
+    # /api/templates → Tasks service (template catalog for app builder)
+    elif full_path.startswith("/api/templates"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
+    # /api/template-preview/* → Tasks service (static template-app PNG previews)
+    elif full_path.startswith("/api/template-preview"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
+    # /api/supabase/* → Tasks service (Supabase OAuth callback + future endpoints)
+    elif full_path.startswith("/api/supabase"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
     # /mcp/* → MCP Proxy (tool endpoints)
     elif full_path.startswith("/mcp"):
         backend_url = MCP_PROXY_URL

@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Invoices</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased min-h-screen">
+  <div x-data="appShell" x-init="init()">
+
+    <!-- Connection notice -->
+    <div x-show="!supabaseConnected" x-cloak class="bg-amber-50 border-b border-amber-200 text-amber-900 text-sm">
+      <div class="px-4 py-2 flex items-center gap-2">
+        <i data-lucide="info" class="w-4 h-4 shrink-0"></i>
+        <span>Connect Supabase to persist invoices. You're seeing demo data.</span>
+      </div>
+    </div>
+
+    <!-- Login -->
+    <section x-show="route === '/login' || (!session && route !== '/login')" x-cloak class="min-h-screen flex items-center justify-center px-4">
+      <div x-data="loginForm" x-init="init()" class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+        <div class="flex items-center gap-2 font-semibold mb-6">
+          <span class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white">
+            <i data-lucide="file-text" class="w-5 h-5"></i>
+          </span>
+          <span class="text-lg"><%= APP_NAME %></span>
+        </div>
+        <h1 class="text-2xl font-semibold tracking-tight" x-text="mode === 'signup' ? 'Create your account' : 'Welcome back'"></h1>
+        <p class="mt-1 text-sm text-slate-500">Manage customers, invoices, and payments in one place.</p>
+        <form @submit.prevent="submit" class="mt-6 space-y-4">
+          <div>
+            <label for="email" class="block text-sm font-medium mb-1">Email</label>
+            <input id="email" x-model="email" type="email" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label for="password" class="block text-sm font-medium mb-1">Password</label>
+            <input id="password" x-model="password" type="password" required minlength="6" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <p x-show="error" x-cloak class="text-sm text-rose-600" x-text="error"></p>
+          <button type="submit" :disabled="loading" class="w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">
+            <span x-show="!loading" x-text="mode === 'signup' ? 'Create account' : 'Sign in'"></span>
+            <span x-show="loading">Please wait…</span>
+          </button>
+        </form>
+        <div class="mt-6 text-center text-sm text-slate-500">
+          <span x-show="mode === 'signin'">No account?
+            <button @click="mode = 'signup'; error = null" class="text-indigo-600 hover:underline">Sign up</button>
+          </span>
+          <span x-show="mode === 'signup'">Already have one?
+            <button @click="mode = 'signin'; error = null" class="text-indigo-600 hover:underline">Sign in</button>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Authed app shell -->
+    <div x-show="session && route !== '/login'" x-cloak class="flex min-h-screen">
+
+      <!-- Sidebar -->
+      <aside class="hidden md:flex md:w-60 shrink-0 flex-col bg-white border-r border-slate-200">
+        <div class="h-16 flex items-center gap-2 px-5 font-semibold border-b border-slate-200">
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
+            <i data-lucide="file-text" class="w-4 h-4"></i>
+          </span>
+          <span><%= APP_NAME %></span>
+        </div>
+        <nav class="flex-1 p-3 space-y-1 text-sm">
+          <template x-for="link in navLinks" :key="link.route">
+            <a :href="`#${link.route}`"
+               :class="route.startsWith(link.route) && (link.route !== '/' || route === '/') ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-50'"
+               class="flex items-center gap-2.5 rounded-lg px-3 py-2 font-medium">
+              <i :data-lucide="link.icon" class="w-4 h-4"></i>
+              <span x-text="link.label"></span>
+            </a>
+          </template>
+        </nav>
+        <div class="p-3 border-t border-slate-200 text-sm">
+          <div class="px-3 py-2 truncate text-slate-500" x-text="session?.user?.email || ''"></div>
+          <button @click="signOut" class="w-full flex items-center gap-2 rounded-lg px-3 py-2 text-slate-700 hover:bg-slate-50">
+            <i data-lucide="log-out" class="w-4 h-4"></i> Sign out
+          </button>
+        </div>
+      </aside>
+
+      <main class="flex-1 min-w-0">
+        <!-- Mobile header -->
+        <header class="md:hidden h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4">
+          <div class="flex items-center gap-2 font-semibold">
+            <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-indigo-600 text-white">
+              <i data-lucide="file-text" class="w-4 h-4"></i>
+            </span>
+            <span><%= APP_NAME %></span>
+          </div>
+          <button @click="signOut" class="text-sm text-slate-600">Sign out</button>
+        </header>
+
+        <!-- Dashboard -->
+        <section x-show="route === '/'" x-cloak class="p-6 lg:p-8">
+          <div x-data="dashboardPage" x-init="init()">
+            <div class="flex items-end justify-between flex-wrap gap-3">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
+                <p class="text-sm text-slate-500">A quick view of your business this month.</p>
+              </div>
+              <a href="#/invoices/new" class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+                <i data-lucide="plus" class="w-4 h-4"></i> New invoice
+              </a>
+            </div>
+
+            <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <template x-for="kpi in kpis" :key="kpi.label">
+                <div class="rounded-xl bg-white border border-slate-200 p-5">
+                  <div class="text-sm text-slate-500" x-text="kpi.label"></div>
+                  <div class="mt-1 text-2xl font-bold" x-text="kpi.value"></div>
+                  <div class="mt-2 text-xs" :class="kpi.trend >= 0 ? 'text-emerald-600' : 'text-rose-600'">
+                    <span x-text="(kpi.trend >= 0 ? '+' : '') + kpi.trend + '%'"></span>
+                    <span class="text-slate-400 ml-1">vs last month</span>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div class="mt-8 rounded-xl bg-white border border-slate-200">
+              <div class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+                <h2 class="font-semibold">Recent invoices</h2>
+                <a href="#/invoices" class="text-sm text-indigo-600 hover:underline">View all</a>
+              </div>
+              <table class="w-full text-sm">
+                <thead class="text-xs uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th class="text-left font-medium px-5 py-2">Invoice</th>
+                    <th class="text-left font-medium px-5 py-2">Customer</th>
+                    <th class="text-left font-medium px-5 py-2">Issued</th>
+                    <th class="text-right font-medium px-5 py-2">Amount</th>
+                    <th class="text-center font-medium px-5 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <template x-for="inv in recentInvoices" :key="inv.id">
+                    <tr class="hover:bg-slate-50 cursor-pointer" @click="window.location.hash = `#/invoices/${inv.id}`">
+                      <td class="px-5 py-3 font-medium" x-text="inv.invoice_number"></td>
+                      <td class="px-5 py-3" x-text="inv.customer_name"></td>
+                      <td class="px-5 py-3 text-slate-500" x-text="formatDate(inv.issue_date)"></td>
+                      <td class="px-5 py-3 text-right font-medium" x-text="money(inv.total)"></td>
+                      <td class="px-5 py-3 text-center">
+                        <span :class="statusClass(inv.status)" class="inline-block px-2 py-0.5 rounded text-xs font-medium" x-text="inv.status"></span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="recentInvoices.length === 0" class="p-8 text-center text-slate-500 text-sm">No invoices yet.</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Customers -->
+        <section x-show="route === '/customers'" x-cloak class="p-6 lg:p-8">
+          <div x-data="customersPage" x-init="init()">
+            <div class="flex items-end justify-between flex-wrap gap-3">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight">Customers</h1>
+                <p class="text-sm text-slate-500" x-text="`${customers.length} total`"></p>
+              </div>
+              <button @click="openModal()" class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+                <i data-lucide="plus" class="w-4 h-4"></i> Add customer
+              </button>
+            </div>
+
+            <div class="mt-6 rounded-xl bg-white border border-slate-200 overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="text-xs uppercase tracking-wider text-slate-500 bg-slate-50">
+                  <tr>
+                    <th class="text-left font-medium px-5 py-2 cursor-pointer" @click="sortBy = 'name'">Name</th>
+                    <th class="text-left font-medium px-5 py-2 cursor-pointer" @click="sortBy = 'email'">Email</th>
+                    <th class="text-left font-medium px-5 py-2">Address</th>
+                    <th class="text-right font-medium px-5 py-2">Actions</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <template x-for="c in sortedCustomers" :key="c.id">
+                    <tr class="hover:bg-slate-50">
+                      <td class="px-5 py-3 font-medium" x-text="c.name"></td>
+                      <td class="px-5 py-3 text-slate-600" x-text="c.email"></td>
+                      <td class="px-5 py-3 text-slate-500 truncate max-w-xs" x-text="c.address"></td>
+                      <td class="px-5 py-3 text-right">
+                        <button @click="openModal(c)" class="text-slate-500 hover:text-indigo-600 p-1" aria-label="Edit"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+                        <button @click="remove(c)" class="text-slate-500 hover:text-rose-600 p-1" aria-label="Delete"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="customers.length === 0" class="p-8 text-center text-slate-500 text-sm">No customers yet — add your first.</div>
+            </div>
+
+            <!-- Modal -->
+            <div x-show="modalOpen" x-cloak class="fixed inset-0 z-40 flex items-center justify-center p-4 bg-slate-900/50">
+              <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+                <h2 class="text-lg font-semibold" x-text="form.id ? 'Edit customer' : 'New customer'"></h2>
+                <form @submit.prevent="save" class="mt-4 space-y-3">
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Name</label>
+                    <input x-model="form.name" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Email</label>
+                    <input x-model="form.email" type="email" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Address</label>
+                    <textarea x-model="form.address" rows="2" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                  </div>
+                  <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" @click="modalOpen = false" class="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">Cancel</button>
+                    <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white font-medium hover:bg-indigo-700">Save</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Invoices list / new / detail -->
+        <section x-show="route === '/invoices' || route === '/invoices/new' || route.startsWith('/invoices/')" x-cloak class="p-6 lg:p-8">
+          <!-- List -->
+          <div x-show="route === '/invoices'" x-data="invoicesListPage" x-init="init()">
+            <div class="flex items-end justify-between flex-wrap gap-3">
+              <div>
+                <h1 class="text-2xl font-bold tracking-tight">Invoices</h1>
+                <p class="text-sm text-slate-500" x-text="`${filtered.length} of ${invoices.length}`"></p>
+              </div>
+              <a href="#/invoices/new" class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+                <i data-lucide="plus" class="w-4 h-4"></i> New invoice
+              </a>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2 items-center">
+              <select x-model="statusFilter" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+                <option value="">All statuses</option>
+                <option>draft</option><option>sent</option><option>paid</option><option>overdue</option>
+              </select>
+              <input type="date" x-model="from" class="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              <span class="text-slate-400 text-sm">to</span>
+              <input type="date" x-model="to" class="rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+            </div>
+
+            <div class="mt-4 rounded-xl bg-white border border-slate-200 overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="text-xs uppercase tracking-wider text-slate-500 bg-slate-50">
+                  <tr>
+                    <th class="text-left font-medium px-5 py-2">Invoice #</th>
+                    <th class="text-left font-medium px-5 py-2">Customer</th>
+                    <th class="text-left font-medium px-5 py-2">Issued</th>
+                    <th class="text-left font-medium px-5 py-2">Due</th>
+                    <th class="text-right font-medium px-5 py-2">Amount</th>
+                    <th class="text-center font-medium px-5 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <template x-for="inv in filtered" :key="inv.id">
+                    <tr class="hover:bg-slate-50 cursor-pointer" @click="window.location.hash = `#/invoices/${inv.id}`">
+                      <td class="px-5 py-3 font-medium" x-text="inv.invoice_number"></td>
+                      <td class="px-5 py-3" x-text="inv.customer_name"></td>
+                      <td class="px-5 py-3 text-slate-500" x-text="formatDate(inv.issue_date)"></td>
+                      <td class="px-5 py-3 text-slate-500" x-text="formatDate(inv.due_date)"></td>
+                      <td class="px-5 py-3 text-right font-medium" x-text="money(inv.total)"></td>
+                      <td class="px-5 py-3 text-center"><span :class="statusClass(inv.status)" class="inline-block px-2 py-0.5 rounded text-xs font-medium" x-text="inv.status"></span></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="filtered.length === 0" class="p-8 text-center text-slate-500 text-sm">No invoices match.</div>
+            </div>
+          </div>
+
+          <!-- New invoice form -->
+          <div x-show="route === '/invoices/new'" x-data="invoiceFormPage" x-init="init()">
+            <div class="flex items-end justify-between flex-wrap gap-3">
+              <h1 class="text-2xl font-bold tracking-tight">New invoice</h1>
+              <a href="#/invoices" class="text-sm text-slate-600 hover:text-slate-900">← Back</a>
+            </div>
+            <form @submit.prevent="save" class="mt-6 grid gap-6 lg:grid-cols-2">
+              <div class="rounded-xl bg-white border border-slate-200 p-5 space-y-4">
+                <div>
+                  <label class="block text-sm font-medium mb-1">Customer</label>
+                  <select x-model="form.customer_id" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <option value="" disabled>Select a customer…</option>
+                    <template x-for="c in customers" :key="c.id"><option :value="c.id" x-text="c.name"></option></template>
+                  </select>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Issue date</label>
+                    <input x-model="form.issue_date" type="date" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium mb-1">Due date</label>
+                    <input x-model="form.due_date" type="date" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                  </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium mb-1">Notes</label>
+                  <textarea x-model="form.notes" rows="4" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></textarea>
+                </div>
+              </div>
+
+              <div class="rounded-xl bg-white border border-slate-200 p-5">
+                <h2 class="font-semibold">Line items</h2>
+                <div class="mt-3 space-y-2">
+                  <template x-for="(line, idx) in form.items" :key="idx">
+                    <div class="grid grid-cols-12 gap-2 items-center">
+                      <input x-model="line.description" placeholder="Description" class="col-span-6 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm" />
+                      <input x-model.number="line.quantity" type="number" min="0" step="1" class="col-span-2 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-right" />
+                      <input x-model.number="line.unit_price" type="number" min="0" step="0.01" class="col-span-3 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-right" />
+                      <button type="button" @click="form.items.splice(idx, 1)" class="col-span-1 text-slate-400 hover:text-rose-600" aria-label="Remove line">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                      </button>
+                    </div>
+                  </template>
+                </div>
+                <button type="button" @click="addLine" class="mt-3 inline-flex items-center gap-1 text-sm text-indigo-600 hover:underline">
+                  <i data-lucide="plus" class="w-4 h-4"></i> Add line
+                </button>
+                <dl class="mt-5 space-y-1.5 text-sm border-t border-slate-200 pt-4">
+                  <div class="flex justify-between"><dt class="text-slate-500">Subtotal</dt><dd x-text="money(subtotal)"></dd></div>
+                  <div class="flex justify-between"><dt class="text-slate-500" x-text="`Tax (${taxRate}%)`"></dt><dd x-text="money(tax)"></dd></div>
+                  <div class="flex justify-between font-semibold text-base pt-1.5 border-t border-slate-200"><dt>Total</dt><dd x-text="money(total)"></dd></div>
+                </dl>
+              </div>
+
+              <div class="lg:col-span-2 flex justify-end gap-2">
+                <a href="#/invoices" class="rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-50">Cancel</a>
+                <button type="submit" class="rounded-lg bg-indigo-600 px-5 py-2 text-sm text-white font-medium hover:bg-indigo-700">Save invoice</button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Invoice detail -->
+          <div x-show="route !== '/invoices' && route !== '/invoices/new' && route.startsWith('/invoices/')"
+               x-data="invoiceDetailPage" x-init="init()" x-cloak>
+            <div x-show="invoice">
+              <div class="flex items-end justify-between flex-wrap gap-3">
+                <div>
+                  <a href="#/invoices" class="text-sm text-slate-600 hover:text-slate-900">← Back to invoices</a>
+                  <h1 class="mt-1 text-2xl font-bold tracking-tight" x-text="invoice ? `Invoice ${invoice.invoice_number}` : ''"></h1>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span :class="statusClass(invoice?.status)" class="inline-block px-2.5 py-1 rounded text-xs font-medium" x-text="invoice?.status"></span>
+                  <button x-show="invoice && invoice.status !== 'paid'" @click="markPaid" class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
+                    <i data-lucide="check" class="w-4 h-4"></i> Mark as paid
+                  </button>
+                  <button @click="window.print()" class="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+                    <i data-lucide="printer" class="w-4 h-4"></i> Print
+                  </button>
+                </div>
+              </div>
+
+              <div class="mt-6 rounded-xl bg-white border border-slate-200 p-8 print:border-0 print:shadow-none">
+                <div class="flex justify-between flex-wrap gap-6">
+                  <div>
+                    <div class="text-xs uppercase tracking-widest text-slate-500">From</div>
+                    <div class="mt-1 font-semibold text-lg" x-text="company.company_name"></div>
+                    <div class="text-sm text-slate-600" x-text="company.address || ''"></div>
+                  </div>
+                  <div>
+                    <div class="text-xs uppercase tracking-widest text-slate-500">Bill to</div>
+                    <div class="mt-1 font-semibold" x-text="invoice?.customer_name"></div>
+                    <div class="text-sm text-slate-600" x-text="invoice?.customer_email"></div>
+                    <div class="text-sm text-slate-600 whitespace-pre-line" x-text="invoice?.customer_address"></div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-xs uppercase tracking-widest text-slate-500">Issued</div>
+                    <div class="text-sm" x-text="formatDate(invoice?.issue_date)"></div>
+                    <div class="mt-2 text-xs uppercase tracking-widest text-slate-500">Due</div>
+                    <div class="text-sm" x-text="formatDate(invoice?.due_date)"></div>
+                  </div>
+                </div>
+
+                <table class="mt-8 w-full text-sm">
+                  <thead class="text-xs uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                    <tr>
+                      <th class="text-left font-medium py-2">Description</th>
+                      <th class="text-right font-medium py-2">Qty</th>
+                      <th class="text-right font-medium py-2">Unit price</th>
+                      <th class="text-right font-medium py-2">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    <template x-for="line in invoice?.items || []" :key="line.id || line.description">
+                      <tr>
+                        <td class="py-3" x-text="line.description"></td>
+                        <td class="py-3 text-right" x-text="line.quantity"></td>
+                        <td class="py-3 text-right" x-text="money(line.unit_price)"></td>
+                        <td class="py-3 text-right font-medium" x-text="money(line.line_total)"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+
+                <dl class="mt-6 ml-auto max-w-xs space-y-1.5 text-sm">
+                  <div class="flex justify-between"><dt class="text-slate-500">Subtotal</dt><dd x-text="money(invoice?.subtotal)"></dd></div>
+                  <div class="flex justify-between"><dt class="text-slate-500" x-text="`Tax (${invoice?.tax_rate}%)`"></dt><dd x-text="money(invoice?.tax_total)"></dd></div>
+                  <div class="flex justify-between font-semibold text-base pt-2 border-t border-slate-200"><dt>Total</dt><dd x-text="money(invoice?.total)"></dd></div>
+                </dl>
+
+                <div x-show="invoice?.notes" class="mt-8 text-sm text-slate-600">
+                  <div class="text-xs uppercase tracking-widest text-slate-500">Notes</div>
+                  <p class="mt-1 whitespace-pre-line" x-text="invoice?.notes"></p>
+                </div>
+              </div>
+            </div>
+            <div x-show="!invoice" class="py-20 text-center text-slate-500">Invoice not found.</div>
+          </div>
+        </section>
+
+        <!-- Settings -->
+        <section x-show="route === '/settings'" x-cloak class="p-6 lg:p-8">
+          <div x-data="settingsPage" x-init="init()" class="max-w-xl">
+            <h1 class="text-2xl font-bold tracking-tight">Company settings</h1>
+            <p class="text-sm text-slate-500">These details appear on every invoice you issue.</p>
+            <form @submit.prevent="save" class="mt-6 space-y-4 rounded-xl bg-white border border-slate-200 p-6">
+              <div>
+                <label class="block text-sm font-medium mb-1">Company name</label>
+                <input x-model="form.company_name" required class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-1">Logo URL</label>
+                <input x-model="form.logo_url" type="url" placeholder="https://…" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-1">Address</label>
+                <textarea x-model="form.address" rows="3" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"></textarea>
+              </div>
+              <div>
+                <label class="block text-sm font-medium mb-1">Tax rate (%)</label>
+                <input x-model.number="form.tax_rate" type="number" min="0" max="100" step="0.01" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+              </div>
+              <div class="flex justify-end gap-2">
+                <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 text-sm text-white font-medium hover:bg-indigo-700">Save changes</button>
+              </div>
+              <p x-show="saved" x-cloak class="text-sm text-emerald-600">Saved.</p>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

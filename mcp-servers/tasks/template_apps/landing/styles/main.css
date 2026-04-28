@@ -1,0 +1,23 @@
+[x-cloak] { display: none !important; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+}
+
+/* Subtle gradient noise on hero */
+.hero-noise {
+  background-image: radial-gradient(circle at 20% 0%, rgba(99, 102, 241, 0.08), transparent 40%);
+}
+
+/* Smooth FAQ collapse */
+[x-collapse] { transition: all 0.2s ease; }
+
+/* Pretty focus rings on anchors */
+a:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+  border-radius: 4px;
+}

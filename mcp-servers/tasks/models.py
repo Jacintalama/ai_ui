@@ -54,3 +54,56 @@ class TaskExecution(Base):
     error = Column(Text, nullable=True)
 
     task = relationship("TaskItem", back_populates="executions")
+
+
+class ProjectMember(Base):
+    __tablename__ = "project_members"
+    __table_args__ = {"schema": "tasks"}
+
+    slug = Column(Text, primary_key=True)
+    user_email = Column(Text, primary_key=True)
+    role = Column(Text, nullable=False, default="editor")
+    added_by = Column(Text, nullable=False)
+    added_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class PublishedApp(Base):
+    __tablename__ = "published_apps"
+    __table_args__ = {"schema": "tasks"}
+
+    slug = Column(Text, primary_key=True)
+    published_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    published_by = Column(Text, nullable=False)
+    public_host = Column(Text, nullable=False)
+    custom_domain = Column(Text, nullable=True)
+    custom_domain_verified_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class ProjectSupabase(Base):
+    __tablename__ = "project_supabase"
+    __table_args__ = {"schema": "tasks"}
+
+    slug = Column(Text, primary_key=True)
+    supabase_url = Column(Text, nullable=True)
+    anon_key_encrypted = Column(Text, nullable=True)
+    db_uri_encrypted = Column(Text, nullable=True)
+    configured_by = Column(Text, nullable=False)
+    configured_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    oauth_access_token_encrypted = Column(Text, nullable=True)
+    oauth_refresh_token_encrypted = Column(Text, nullable=True)
+    oauth_expires_at = Column(DateTime(timezone=True), nullable=True)
+    linked_project_ref = Column(Text, nullable=True)
+    oauth_org_slug = Column(Text, nullable=True)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_history"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug = Column(Text, nullable=False)
+    user_email = Column(Text, nullable=False)
+    role = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

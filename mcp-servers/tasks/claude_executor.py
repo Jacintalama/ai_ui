@@ -27,13 +27,20 @@ SOURCE: {meeting_title} on {meeting_date}
 Repository: /workspace/ai_ui (you have full read/write access; it is a git
 working tree tracking `feat/gdrive-gmail-connectors` on GitHub).
 
+STYLE — TERSE, CODE-FIRST:
+  - Don't narrate your plan, don't explain what you're about to do, don't
+    preface with "I'll start by…", and don't recap the task back to the user.
+    Just do the work, then end with the COMPLETED block.
+  - The admin sees your raw output in a chat panel — anything before
+    COMPLETED is friction, not value. Short progress lines while running
+    tools are fine; long essays are not.
+
 SCOPE RULES — READ CAREFULLY BEFORE BUILDING:
   1. Build ONLY what the task literally describes. Do not infer extra scope.
   2. Prefer the SIMPLEST possible solution that satisfies the task:
-     - If the task says "web app" with add/delete/list features, build a
-       single-file HTML + CSS + JavaScript page with localStorage. Do NOT
-       add a backend, Docker container, or external API integration unless
-       the task explicitly says so.
+     - Build a static HTML + CSS + vanilla JavaScript app with localStorage
+       (or Supabase if attached). Do NOT add a backend, Docker container,
+       or external API integration unless the task explicitly says so.
      - If the task says "simple" or "keep it simple" or does not mention a
        backend/server/API, assume client-side only.
      - Do NOT integrate with external services (Todoist.com, Trello, etc.)
@@ -42,9 +49,56 @@ SCOPE RULES — READ CAREFULLY BEFORE BUILDING:
        unless the task explicitly requires them.
   3. If the task is ambiguous about scope, respond with NEEDS_INPUT asking
      for clarification — do NOT guess and over-build.
-  4. Place simple standalone apps under `apps/<slug>/` (e.g.
-     `apps/todo-list/index.html`). Do NOT put them under `mcp-servers/`
-     unless they are actually MCP servers.
+  4. Place apps under `apps/<slug>/` (e.g. `apps/todo-list/`). Do NOT put
+     them under `mcp-servers/` unless they are actually MCP servers.
+
+FILE LAYOUT (MANDATORY — create the project folder first, then subfolders, then files):
+
+  apps/<slug>/                    ← project root, always created first
+    index.html                    # ~30 lines: <head>, mount target, CDN scripts, link to styles + main.js
+    README.md                     # 1-paragraph description + how to run
+    styles/
+      main.css                    # project-specific overrides (Tailwind handles 95%)
+    src/
+      main.js                     # bootstraps Alpine + initializes things
+      components/                 # one file per Alpine x-data factory (e.g. LoginForm.js, DashboardTable.js)
+      lib/
+        supabase.js               # createClient(...) — only for storage="supabase"
+        api.js                    # thin fetch wrappers for REST/RPC — only for storage="supabase"
+    schema.sql                    # Supabase tables + RLS — only for storage="supabase"
+    public/                       # static assets (favicon, images); keep tiny — empty is fine
+
+INDEX.HTML CDN BLOCK (in <head>, in this exact order):
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles/main.css">
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>  <!-- icons; optional -->
+    <script type="module" src="src/main.js"></script>
+  For Supabase apps also load before main.js:
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+ALPINE.JS USAGE (your reactivity layer — use this instead of addEventListener spaghetti):
+  • Components live in src/components/<Name>.js as ES modules exporting an Alpine factory:
+        export function loginForm() { return { email: '', password: '', async submit() { /* ... */ } }; }
+  • Register in src/main.js:
+        import { loginForm } from './components/LoginForm.js';
+        document.addEventListener('alpine:init', () => { Alpine.data('loginForm', loginForm); });
+  • In HTML: <form x-data="loginForm" @submit.prevent="submit"> … </form>
+  • Prefer x-data, x-show, x-if, x-on, x-bind, x-model for reactivity.
+
+  • index.html MUST be a thin entry — markup skeleton only. NO inline <style>
+    blocks beyond a tiny one for an initial loading screen if needed. NO
+    inline app logic. The single-file index.html pattern is FORBIDDEN.
+  • src/main.js uses native ES modules: `import { Foo } from './components/Foo.js';`
+    The browser resolves these directly — no bundler, no build step, no npm install.
+  • Every component file in src/components/ must be a valid ES module
+    (top-level `export` statements).
+  • Static-only templates (landing/portfolio/docs/blog/form-builder) DO NOT
+    include src/lib/supabase.js, src/lib/api.js, or schema.sql. Everything
+    else stays.
+  • Caddy serves nested paths under /tasks/preview-app/<slug>/... so the
+    browser will fetch src/main.js, styles/main.css, src/components/*.js,
+    etc., directly. No additional config needed.
 
 If your work modifies files, you MUST:
   1. Stage just the files you changed: `git add <path1> <path2> ...`
@@ -63,7 +117,112 @@ Complete the task autonomously. If you cannot proceed because of:
   - Hard blocker -> respond ending with: NEEDS_STEPS: <numbered manual steps>
 
 When done successfully, respond ending with: COMPLETED: <summary of what you did>
-(include the short commit hash if you made one: "COMPLETED: ... (commit abc1234)")"""
+(include the short commit hash if you made one: "COMPLETED: ... (commit abc1234)")
+
+{supabase_block}"""
+
+
+SUPABASE_BLOCK_TEMPLATE = """## Supabase integration available
+
+A Supabase project is attached to this app. Use it for any data persistence,
+auth, or file storage. Do NOT roll your own backend.
+
+### MANDATORY pattern — copy this exactly into <head>:
+
+```html
+<head>
+  <!-- Loads window.SUPABASE_URL / SUPABASE_ANON_KEY from the host. ALWAYS first. -->
+  <script src="aiui-config.js"></script>
+  <!-- Imports the SDK once, attaches to window. -->
+  <script type="module">
+    import {{ createClient }} from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+    if (!window.supabase) {{
+      window.supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+    }}
+  </script>
+</head>
+```
+
+### Rules
+
+- NEVER write `const supabase = ...` at top-level. The dev server hot-reloads
+  the same file — a top-level `const` redeclares and throws.
+  Always use `window.supabase = createClient(...)` guarded by `if (!window.supabase)`.
+- ALL code that touches Supabase reads `window.supabase` (or destructures from it).
+- Auth: `window.supabase.auth.signUp` / `signInWithPassword` / `signOut` / `onAuthStateChange`.
+- Tables: enable Row Level Security (RLS) on every table; document the schema
+  in `schema.sql` at the app root.
+
+URL: {url}
+"""
+
+
+SUPABASE_SQL_TOOL_TEMPLATE = """
+
+## You can manage the Supabase schema yourself
+
+This project has a Postgres connection URI configured. You have a tool —
+DO NOT ask the user to run SQL in the Supabase dashboard. Run it yourself:
+
+```bash
+curl -sS -X POST 'http://api-gateway:8080/api/projects/{slug}/db/sql' \\
+     -H 'X-User-Email: {user_email}' \\
+     -H 'X-User-Admin: true' \\
+     -H 'Content-Type: application/json' \\
+     -d '{{"sql": "CREATE TABLE …"}}'
+```
+
+The endpoint returns JSON: `{{"rows": [...], "rowcount": N, "executed_ms": M}}`
+on success, or `{{"detail": "SQL error: ..."}}` with HTTP 400 on failure.
+On 502 the Postgres host is unreachable — give up and tell the user, do
+not retry.
+
+Use this tool to:
+- CREATE TABLE … (start by checking `\\d` via `SELECT table_name FROM
+  information_schema.tables WHERE table_schema = 'public'`)
+- ALTER TABLE … (add columns, change types)
+- Enable RLS: `ALTER TABLE foo ENABLE ROW LEVEL SECURITY`
+- CREATE POLICY … (RLS policies — typically `auth.uid() = user_id`)
+- CREATE INDEX … (for query performance)
+
+ALWAYS verify with a follow-up `SELECT` that the change took effect before
+moving on. Quote identifiers properly. Run statements one at a time — the
+endpoint executes a single statement per call.
+
+### RLS is MANDATORY on every table you create
+
+Never leave a table with RLS off. Without RLS, anon-key access exposes the
+entire table to anyone with the project URL — Supabase will warn the user,
+and you will have shipped a security hole. Every `CREATE TABLE` MUST be
+followed (in separate calls) by:
+
+  1. `CREATE TABLE <name> (…);`
+  2. `ALTER TABLE <name> ENABLE ROW LEVEL SECURITY;`
+  3. At least one policy:
+     - For apps that DO NOT use Supabase Auth (no sign-in flow yet):
+       `CREATE POLICY "allow_all_anon" ON <name> FOR ALL TO anon USING (true) WITH CHECK (true);`
+     - For apps that DO use Supabase Auth and have a `user_id` column:
+       `CREATE POLICY "user_owns_row" ON <name> FOR ALL TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);`
+
+Pick the policy that matches the app's auth model. Apply all three steps for
+every new table — no exceptions.
+"""
+
+
+def _supabase_block(supabase_url: str | None,
+                    has_db_uri: bool = False,
+                    slug: str = "",
+                    user_email: str = "") -> str:
+    """Return the Supabase prompt block, or '' if no config."""
+    if not supabase_url:
+        return ""
+    block = SUPABASE_BLOCK_TEMPLATE.format(url=supabase_url)
+    if has_db_uri:
+        block += SUPABASE_SQL_TOOL_TEMPLATE.format(
+            slug=slug or "<slug>",
+            user_email=user_email or "<your-email>",
+        )
+    return block
 
 
 def build_prompt(
@@ -73,6 +232,10 @@ def build_prompt(
     priority: str,
     meeting_title: str,
     meeting_date: str,
+    supabase_url: str | None = None,
+    has_db_uri: bool = False,
+    slug: str = "",
+    user_email: str = "",
 ) -> str:
     return PROMPT_TEMPLATE.format(
         description=description,
@@ -80,6 +243,9 @@ def build_prompt(
         priority=priority,
         meeting_title=meeting_title,
         meeting_date=meeting_date,
+        supabase_block=_supabase_block(
+            supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
+        ),
     )
 
 
@@ -184,8 +350,35 @@ SCOPE RULES:
   1. Build ONLY what the plan describes. Do not infer extra scope.
   2. Prefer the SIMPLEST solution (vanilla HTML/CSS/JS with localStorage
      unless the plan explicitly calls for a framework/backend).
-  3. Place apps under apps/<slug>/ (e.g. apps/todo-list/index.html).
+  3. Place apps under apps/<slug>/ (e.g. apps/todo-list/).
   4. Do NOT add auth, Docker, FastAPI, or deployment unless the plan says so.
+
+FILE LAYOUT (MANDATORY — create these folders BEFORE writing any files):
+
+  apps/<slug>/
+    index.html             # thin entry: markup skeleton only; loads main.js + main.css
+    README.md              # 1-paragraph description + how to run
+    styles/
+      main.css             # all styling
+    src/
+      main.js              # bootstraps the app
+      components/          # one file per logical UI unit (ES modules)
+      lib/
+        supabase.js        # Supabase client init — only for storage="supabase"
+        api.js             # REST/RPC wrappers — only for storage="supabase"
+    schema.sql             # Supabase tables + RLS — only for storage="supabase"
+    public/                # static assets; tiny / empty is fine
+
+  • index.html MUST be a thin entry — markup skeleton + exactly two
+    project asset references:
+        <link rel="stylesheet" href="styles/main.css">
+        <script type="module" src="src/main.js"></script>
+    The single-file index.html pattern is REPLACED by this layout — do
+    not fall back to dumping everything into index.html.
+  • src/main.js uses native ES module imports
+    (`import { Foo } from './components/Foo.js';`). No bundler.
+  • Static-only templates omit src/lib/supabase.js, src/lib/api.js, and
+    schema.sql; everything else stays.
 
 GIT RULES:
   1. Stage just the files you changed: git add <path1> <path2> ...
@@ -198,7 +391,9 @@ When ALL tests pass and the app is complete:
 
 If you cannot proceed:
   NEEDS_INPUT: <what you need from the admin>
-  FAILED: <what went wrong>"""
+  FAILED: <what went wrong>
+
+{supabase_block}"""
 
 VERIFY_PROMPT_TEMPLATE = """You are verifying a completed build task.
 
@@ -224,26 +419,40 @@ APP LOCATION: /workspace/ai_ui/apps/{slug}/
 
 USER REQUEST: {user_request}
 
-RULES — READ CAREFULLY:
-  1. You are MODIFYING existing code, not creating a new app from scratch.
-  2. READ the existing files first (index.html, server.py, etc.) before
-     changing anything. Understand the current structure before you touch it.
-  3. Make the SMALLEST change that satisfies the request. Do not refactor.
-  4. PRESERVE THE EXISTING TECH STACK. If the app is Python/Flask/sqlite3,
-     stay there — do not switch to Node/Prisma or vice versa.
-  5. Preserve existing features. The user is ADDING to the app, not replacing
-     it.
-  6. Do NOT delete the existing database file (apps/{slug}/data/*.db).
-     If you change the schema, write a migration that ALTERs the existing
-     table instead.
-  7. Keep tests passing. If there's a tests/ folder or test file, update it
-     if your change breaks existing tests.
+STYLE — FAST AND SURGICAL:
+  - The admin watches a chat panel for the result. They want the change
+    made FAST. Don't narrate your plan, don't explain, don't preface with
+    "I'll start by…", don't recap. Just edit and exit.
+  - Aim for 1-3 file reads and 1-3 file edits. If you find yourself reading
+    a 5th file or planning a refactor, you're over-thinking — pull back.
 
-You MUST follow Red-Green-Refactor for the change itself:
-  RED:   Write a test (or update an existing one) that proves the new
-         behavior. Run it. Confirm it fails.
-  GREEN: Make the minimal change. Run the test. Confirm it passes.
-  COMMIT: Stage only the files you changed. One commit with clear message.
+RULES (in priority order):
+  1. SCOPE: Make the SMALLEST possible change. Edit the minimum number of
+     files, the minimum number of lines. Do not refactor. Do not "improve"
+     unrelated code you happen to see.
+  2. THOROUGH: When the user replaces a value (a name, a label, a brand,
+     a copy string), grep the WHOLE project for the OLD value first, then
+     update EVERY occurrence in one pass — HTML, JS, CSS, README, schema,
+     comments, page titles, meta tags, alt text, footers. NEVER claim "it
+     was already set" without verifying — read the file before saying so.
+  3. CHECK BEFORE CLAIMING: If your COMPLETED message says "X was already
+     set" or "no change needed in Y", you must have actually read Y first.
+     Hallucinated assertions are a quality bug.
+  4. NO TESTS: Skip writing tests for this change. The user wants the edit
+     to land — quality gates run elsewhere. Use the Edit tool, commit, exit.
+  5. PRESERVE: Keep the existing tech stack and existing features intact.
+     Do not delete data files (apps/{slug}/data/*.db). If schema changes,
+     write an ALTER migration; never drop and recreate.
+  6. COMMIT: Stage only the files you changed. One commit, clear message.
+
+WORKFLOW:
+  1. If the request replaces a placeholder value (name, brand, copy):
+     run `grep -rln "OLD_VALUE" apps/{slug}/` first, then Edit every
+     match in one sweep. Don't stop after the first file.
+  2. Otherwise: read 1-2 key files to locate the exact lines, then Edit.
+  3. Use the Edit tool with exact-match strings. Avoid Write unless
+     creating a brand-new file.
+  4. Commit. Stop. Emit the COMPLETED block.
 
 {error_context_block}
 
@@ -277,6 +486,8 @@ Example of a good COMPLETED block:
 If you cannot proceed:
   NEEDS_INPUT: <what you need>
   FAILED: <what went wrong>
+
+{supabase_block}
 """
 
 
@@ -287,6 +498,9 @@ def build_enhance_prompt(
     attempt_count: int = 0,
     max_attempts: int = 3,
     error_context: str = "",
+    supabase_url: str | None = None,
+    has_db_uri: bool = False,
+    user_email: str = "",
 ) -> str:
     if error_context:
         err_block = (
@@ -300,6 +514,9 @@ def build_enhance_prompt(
         slug=slug,
         user_request=user_request,
         error_context_block=err_block,
+        supabase_block=_supabase_block(
+            supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
+        ),
     )
 
 
@@ -360,6 +577,10 @@ def build_tdd_execute_prompt(
     attempt_count: int = 0,
     max_attempts: int = 1,
     error_context: str = "",
+    supabase_url: str | None = None,
+    has_db_uri: bool = False,
+    slug: str = "",
+    user_email: str = "",
 ) -> str:
     history_block = _format_conversation_history(conversation_history)
     if error_context:
@@ -379,6 +600,9 @@ def build_tdd_execute_prompt(
         plan=plan,
         conversation_history_block=history_block,
         error_context_block=error_block,
+        supabase_block=_supabase_block(
+            supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
+        ),
     )
 
 
@@ -513,12 +737,20 @@ async def run_claude_subprocess(prompt: str, proc_holder: dict | None = None) ->
     # Use stream-json + verbose so each tool call / partial text chunk is
     # emitted immediately on its own line. The panel parses those lines to
     # render "Reading foo.py", "Running: docker restart …", etc.
+    # Bound how hard the agent thinks. `--effort low` is plenty for the
+    # typical "edit two lines, commit" case — high effort burns extra LLM
+    # tokens on planning that just isn't needed for surgical edits.
+    # Override per-environment with AIUI_AGENT_EFFORT=medium|high if you
+    # want richer reasoning at the cost of latency.
+    effort = os.environ.get("AIUI_AGENT_EFFORT", "low")
+    extra_flags: list[str] = ["--effort", effort]
     proc = await asyncio.create_subprocess_exec(
         "claude",
         "--print",
         "--dangerously-skip-permissions",
         "--output-format", "stream-json",
         "--verbose",
+        *extra_flags,
         prompt,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,

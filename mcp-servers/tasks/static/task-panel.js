@@ -81,7 +81,7 @@
     .aiui-tp-btn-answer:hover { background: #d97706; }
     .aiui-tp-btn-stop { background: #7f1d1d; color: #fff; }
     .aiui-tp-live { background: #000; border-radius: 6px; padding: 10px 12px; font-family: Consolas, Menlo, monospace; font-size: 11.5px; color: #d1d5db; margin: 6px 0; max-height: 240px; min-height: 60px; overflow-y: auto; white-space: normal; line-height: 1.5; }
-    .aiui-tp-live:empty::before { content: "Waiting for Claude to start…"; color: #666; font-style: italic; }
+    .aiui-tp-live:empty::before { content: "Waiting for the AIUI Agent to start…"; color: #666; font-style: italic; }
     .aiui-tp-foot { border-top: 1px solid #2a2a2a; padding: 10px 14px; background: #0f0f0f; text-align: center; }
     .aiui-tp-foot a { color: #60a5fa; font-size: 12px; text-decoration: none; cursor: pointer; }
     .aiui-tp-foot a:hover { text-decoration: underline; }
@@ -267,7 +267,7 @@
         <div class="aiui-tp-desc">${escapeHtml(t.description)}</div>
         <div class="aiui-tp-meta"><span class="aiui-tp-assignee">${escapeHtml(t.assignee_name)}</span></div>
         ${t.status === "running"
-          ? `<div class="aiui-tp-live" data-live-id="${t.id}"><span style="color:#888;">◦ Spawning Claude (takes ~10s)…</span></div>
+          ? `<div class="aiui-tp-live" data-live-id="${t.id}"><span style="color:#888;">◦ Spawning AIUI Agent (takes ~10s)…</span></div>
              <div class="aiui-tp-actions"><button class="aiui-tp-btn-stop" data-task-action="cancel" data-task-id="${t.id}">⏹ Stop</button></div>`
           : `<div class="aiui-tp-actions"><button class="aiui-tp-btn-ai" data-task-action="complete-prompt" data-task-id="${t.id}">✓ Mark Done</button></div>`}
       </div>`;
@@ -456,14 +456,14 @@
     el.scrollTop = el.scrollHeight;
   }
 
-  // Convert one line of Claude's stream-json into a readable status
+  // Convert one line of the agent's stream-json into a readable status
   function prettifyStreamLine(line) {
     line = line.trim();
     if (!line || !line.startsWith("{")) return null;
     let obj;
     try { obj = JSON.parse(line); } catch (_) { return null; }
     if (obj.type === "system" && obj.subtype === "init") {
-      return `<span style="color:#60a5fa;">◦ Claude session started</span>`;
+      return `<span style="color:#60a5fa;">◦ AIUI Agent session started</span>`;
     }
     if (obj.type === "assistant" && obj.message && Array.isArray(obj.message.content)) {
       const bits = [];
@@ -1187,6 +1187,125 @@
   }
 
   injectIntegrationsMenuEntry();
+
+  // Inject a "Build Website" entry into the left sidebar, right below
+  // the "Workspace" item. Clicking it opens /tasks/static/projects.html
+  // which lists all of the user's AI-built apps.
+  function injectSidebarBuildWebsiteEntry() {
+    let pending = false;
+    const observer = new MutationObserver(() => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(async () => {
+        pending = false;
+        if (!(await isAdmin())) return;
+        if (document.querySelector("[data-aiui-build-website]")) return;
+
+        // Find the <a>/<button> row whose label text is exactly "Workspace".
+        let workspaceRow = null;
+        const candidates = document.querySelectorAll("a, button, [role='link']");
+        for (const el of candidates) {
+          const txt = (el.textContent || "").trim();
+          if (txt !== "Workspace") continue;
+          workspaceRow = el;
+          break;
+        }
+        if (!workspaceRow || !workspaceRow.parentElement) return;
+
+        // The <a> found may sit inside a row wrapper (e.g. an <li> or
+        // <div>) whose other siblings are sibling nav rows. If its parent
+        // only contains workspaceRow, we need to clone at the parent level
+        // so our new entry becomes a peer of other row wrappers — not a
+        // second child inside Workspace's own row (which would split the
+        // flex-row layout and squeeze both items into one line).
+        let rowWrapper = workspaceRow;
+        while (
+          rowWrapper.parentElement &&
+          rowWrapper.parentElement.children.length === 1 &&
+          rowWrapper.parentElement.tagName.toLowerCase() !== "nav" &&
+          rowWrapper.parentElement.tagName.toLowerCase() !== "aside"
+        ) {
+          rowWrapper = rowWrapper.parentElement;
+        }
+
+        // Clone deep so we inherit icon + Tailwind classes pixel-perfect.
+        const entry = rowWrapper.cloneNode(true);
+        entry.dataset.aiuiBuildWebsite = "1";
+        // Force the clone to take its own row even if Tailwind classes
+        // (flex-1, grow, basis-*) would otherwise let it share width.
+        entry.style.width = "100%";
+        entry.style.flexBasis = "100%";
+        entry.style.minWidth = "0";
+        // Strip href/data-sveltekit-preload on the clone and any nested
+        // anchors so our click handler drives the navigation.
+        // Also strip tooltip-triggering attributes (Open WebUI uses tippy
+        // and the cloned row inherits a "mouseover" tooltip we don't want).
+        function _stripTooltipAttrs(el) {
+          ["title", "data-tippy-content", "data-tooltip", "aria-label",
+           "aria-labelledby", "aria-describedby"].forEach((a) => el.removeAttribute(a));
+        }
+        entry.removeAttribute("href");
+        _stripTooltipAttrs(entry);
+        entry.querySelectorAll("*").forEach((el) => {
+          _stripTooltipAttrs(el);
+          if (el.tagName.toLowerCase() === "a") {
+            el.removeAttribute("data-sveltekit-preload-data");
+            el.removeAttribute("data-sveltekit-preload-code");
+          }
+        });
+        // Add an explicit clean tooltip in its place.
+        entry.setAttribute("title", "App Builder — create and manage AI-built apps");
+        // Replace the cloned Workspace SVG with the AIUI "OI" wordmark.
+        const cloneIcon = entry.querySelector("svg");
+        if (cloneIcon) {
+          const ns = "http://www.w3.org/2000/svg";
+          const newIcon = document.createElementNS(ns, "svg");
+          newIcon.setAttribute("width",  cloneIcon.getAttribute("width")  || "20");
+          newIcon.setAttribute("height", cloneIcon.getAttribute("height") || "20");
+          newIcon.setAttribute("viewBox", "0 0 32 32");
+          if (cloneIcon.getAttribute("class")) newIcon.setAttribute("class", cloneIcon.getAttribute("class"));
+          // "OI" wordmark — matches the AIUI brand on the App Builder page.
+          const txt = document.createElementNS(ns, "text");
+          txt.setAttribute("x", "16");
+          txt.setAttribute("y", "22");
+          txt.setAttribute("text-anchor", "middle");
+          txt.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif");
+          txt.setAttribute("font-size", "17");
+          txt.setAttribute("font-weight", "700");
+          txt.setAttribute("fill", "currentColor");
+          txt.setAttribute("letter-spacing", "-0.5");
+          txt.textContent = "OI";
+          newIcon.appendChild(txt);
+          cloneIcon.replaceWith(newIcon);
+        }
+        // Replace the "Workspace" text label with "Build Website" wherever
+        // it appears inside the cloned subtree.
+        (function rewriteLabel(node) {
+          for (const child of Array.from(node.childNodes)) {
+            if (child.nodeType === 3) {
+              const t = child.nodeValue;
+              if (t && t.includes("Workspace")) {
+                child.nodeValue = t.replace("Workspace", "App Builder");
+              }
+            } else if (child.nodeType === 1) {
+              rewriteLabel(child);
+            }
+          }
+        })(entry);
+        // Capture-phase click so we beat Svelte's own handlers.
+        entry.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          window.location.href = "/tasks/app-builder";
+        }, true);
+        // Insert right after the Workspace row wrapper.
+        rowWrapper.parentElement.insertBefore(entry, rowWrapper.nextSibling);
+        console.log("[AIUI tasks] sidebar 'Build Website' entry injected (wrapper=" + rowWrapper.tagName + ")");
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+  injectSidebarBuildWebsiteEntry();
 
   // ===== SPA navigation watcher =====
   // OpenWebUI is a SvelteKit SPA — sign-in changes URL via pushState without

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Preview — AIUI Tasks</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%237c8cff%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2222%22%20text-anchor%3D%22middle%22%20font-family%3D%22sans-serif%22%20font-size%3D%2217%22%20font-weight%3D%22700%22%20fill%3D%22white%22%3EOI%3C%2Ftext%3E%3C%2Fsvg%3E">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
@@ -94,6 +95,19 @@
       overflow: hidden;
     }
     button { font-family: inherit; color: inherit; }
+    /* Consistent pointer cursor on anything clickable. */
+    button:not(:disabled),
+    a.btn,
+    .tab,
+    .filter-btn,
+    [role="button"]:not([aria-disabled="true"]),
+    [data-close],
+    .close,
+    .rollback-btn:not([disabled]),
+    .ex-btn,
+    .copy-btn,
+    .icon-btn:not(:disabled) { cursor: pointer; }
+    button:disabled, .btn:disabled, .rollback-btn[disabled] { cursor: not-allowed; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { color: var(--accent-2); }
 
@@ -117,6 +131,606 @@
     }
     .topbar-left, .topbar-right { display: flex; align-items: center; gap: var(--s-3); }
     .topbar-left { min-width: 0; }
+
+    /* Brand mark — same look as App Builder index page */
+    .brand-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px 4px 4px;
+      border-radius: var(--radius);
+      flex-shrink: 0;
+      transition: background 0.15s;
+      text-decoration: none;
+      color: var(--text);
+    }
+    .brand-link:hover { background: var(--surface-2); color: var(--text); }
+    .brand-link .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, #7c8cff 0%, #a78bfa 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 8px rgba(124,140,255,0.35);
+      flex-shrink: 0;
+      transition: transform 0.12s;
+    }
+    .brand-link:hover .brand-mark { transform: translateY(-1px); }
+    .brand-link .brand-mark svg { width: 24px; height: 24px; }
+    .brand-link .brand-text {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    /* Presence strip — who else is looking at this project */
+    .presence-strip {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding-left: var(--s-3);
+      margin-left: var(--s-2);
+      border-left: 1px solid var(--border);
+      height: 28px;
+    }
+    .presence-strip:empty { display: none; }
+    .presence-avatar {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      position: relative;
+      border: 2px solid var(--surface);
+      margin-left: -6px;
+      transition: transform 0.15s;
+      cursor: default;
+    }
+    .presence-avatar:first-child { margin-left: 0; }
+    .presence-avatar:hover { transform: translateY(-1px); z-index: 5; }
+    .presence-avatar.is-me {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+    .presence-avatar.is-building::after {
+      content: "";
+      position: absolute;
+      bottom: -2px;
+      right: -2px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--danger);
+      border: 2px solid var(--surface);
+      box-shadow: 0 0 0 0 var(--danger);
+      animation: presence-pulse 1.3s ease-out infinite;
+    }
+    @keyframes presence-pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.7); }
+      70%  { box-shadow: 0 0 0 8px rgba(248, 113, 113, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
+    }
+    .building-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      margin-left: var(--s-3);
+      font-size: 11px;
+      color: var(--danger);
+      background: var(--danger-soft);
+      border: 1px solid rgba(248,113,113,0.3);
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+    .building-banner .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--danger);
+      animation: presence-pulse 1.3s ease-out infinite;
+    }
+
+    /* Version-history panel (inside preview.html) */
+    .history-body { padding: var(--s-4); overflow-y: auto; }
+    .history-list { display: flex; flex-direction: column; gap: 8px; }
+    .history-row {
+      display: grid;
+      grid-template-columns: 58px 1fr auto;
+      gap: 14px;
+      align-items: center;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .history-row:hover { background: var(--surface-2); border-color: var(--border-2); }
+    .history-row.current { border-color: var(--accent); background: var(--accent-soft); }
+    .history-row.error   { border-color: rgba(248,113,113,0.45); }
+    .history-row.rollback { border-color: rgba(245,158,11,0.4); }
+    .history-row .version-tag {
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent);
+      text-align: center;
+      padding: 6px 8px;
+      background: var(--accent-soft);
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(124,140,255,0.3);
+    }
+    .history-row.current .version-tag {
+      background: var(--accent);
+      color: #0a0a0b;
+      border-color: var(--accent);
+    }
+    .history-row .info {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .history-row .info .message {
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-row .info .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .history-row .info .meta .by { color: var(--text-2); }
+    .history-row .info .meta .sha {
+      font-family: var(--font-mono);
+      color: var(--muted);
+      font-size: 10px;
+      padding: 1px 5px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+    .history-row .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .history-row .status-pill {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .history-row .status-pill.ok       { background: var(--success-soft); color: var(--success); }
+    .history-row .status-pill.error    { background: var(--danger-soft);  color: var(--danger); }
+    .history-row .status-pill.rollback { background: var(--warning-soft); color: var(--warning); }
+    .history-row .status-pill.current  { background: var(--accent);       color: #0a0a0b; }
+    .history-row .rollback-btn {
+      padding: 5px 12px;
+      font-size: 11px;
+      font-weight: 500;
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      color: var(--text);
+    }
+    .history-row .rollback-btn:hover:not([disabled]) {
+      background: var(--accent);
+      color: #0a0a0b;
+      border-color: var(--accent);
+    }
+    .history-row .rollback-btn[disabled] { opacity: 0.3; }
+
+    /* Publish modal */
+    .pub-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1500;
+      padding: 16px;
+    }
+    .pub-overlay[hidden] { display: none !important; }
+    .pub-card {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+      width: 100%;
+      max-width: 520px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .pub-card h3 {
+      font-size: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+    }
+    .pub-card .body {
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.55;
+    }
+    .pub-url-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .pub-url-pill .copy {
+      flex-shrink: 0;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm);
+      background: var(--surface-3);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .pub-url-pill .copy:hover { background: var(--accent); color: #0a0a0b; border-color: var(--accent); }
+    .pub-card .pub-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .pub-meta {
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    /* Tri-state Publish badge: Publish (grey) → Preview (amber) → Live (green) */
+    #btn-publish.is-preview {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      border-color: #d97706;
+      color: white;
+    }
+    #btn-publish.is-preview:hover { filter: brightness(1.08); }
+    #btn-publish.is-live {
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+      border-color: #16a34a;
+      color: white;
+    }
+    #btn-publish.is-live:hover { filter: brightness(1.08); }
+
+    /* Custom domain section inside publish modal */
+    .pub-section-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+    .pub-section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pub-section-title .badge-soft {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .pub-section-title .badge-soft.verified {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+    .pub-domain-input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: stretch;
+    }
+    .pub-domain-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+    }
+    .pub-domain-input:focus { border-color: var(--accent); }
+    .pub-dns-table {
+      display: grid;
+      grid-template-columns: minmax(60px,auto) 1fr 1fr;
+      gap: 6px;
+      align-items: stretch;
+      font-size: 11px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+    }
+    .pub-dns-table .col-h {
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 10px;
+      padding: 0 2px;
+    }
+    .pub-dns-cell {
+      display: flex;
+      align-items: stretch;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      transition: border-color 0.12s;
+    }
+    .pub-dns-cell:hover { border-color: var(--border-2); }
+    .pub-dns-cell .val {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text);
+      padding: 6px 8px;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: text;
+      user-select: text;
+    }
+    .pub-dns-cell .copy-mini {
+      flex-shrink: 0;
+      padding: 0 8px;
+      font-size: 10px;
+      font-weight: 500;
+      border: 0;
+      border-left: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-2);
+      transition: background 0.12s, color 0.12s;
+      cursor: pointer;
+    }
+    .pub-dns-cell .copy-mini:hover { background: var(--accent); color: #0a0a0b; }
+    .pub-dns-cell.copied .copy-mini { background: var(--success); color: #0a0a0b; }
+    .pub-dns-note {
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .pub-dns-note strong { color: var(--text-2); }
+    .pub-cf-warn {
+      background: var(--warning-soft);
+      color: var(--warning);
+      border: 1px solid rgba(245,158,11,0.35);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    /* Open external-link icon button (replaces "Detach" on attached state) */
+    .icon-btn-sm {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-2);
+      background: var(--surface-3);
+      color: var(--text-2);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .icon-btn-sm:hover { background: var(--accent); color: #0a0a0b; border-color: var(--accent); }
+    .icon-btn-sm svg { width: 13px; height: 13px; }
+
+    /* Rename row inside publish modal */
+    .pub-rename-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .pub-rename-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      outline: none;
+    }
+    .pub-rename-input:focus { border-color: var(--accent); }
+    .pub-rename-result {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      min-height: 14px;
+    }
+    .pub-verify-result {
+      font-size: 12px;
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pub-verify-result.ok    { background: var(--success-soft); color: var(--success); border: 1px solid rgba(34,197,94,0.3); }
+    .pub-verify-result.fail  { background: var(--danger-soft);  color: var(--danger);  border: 1px solid rgba(248,113,113,0.3); }
+
+    /* Full-screen "AIUI Agent is building" overlay shown while task is not yet done */
+    .build-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 10, 11, 0.94);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      padding: 32px 24px;
+      overflow: auto;
+    }
+    .build-overlay[hidden] { display: none !important; }
+    .build-overlay .wand {
+      font-size: 56px;
+      animation: wand-bounce 1.6s ease-in-out infinite;
+      filter: drop-shadow(0 0 24px rgba(124, 140, 255, 0.45));
+    }
+    @keyframes wand-bounce {
+      0%, 100% { transform: translateY(0) rotate(-8deg); }
+      50%      { transform: translateY(-10px) rotate(10deg); }
+    }
+    .build-overlay h2 {
+      font-size: 22px;
+      font-weight: 700;
+      background: linear-gradient(90deg, var(--accent) 0%, #c084fc 50%, var(--accent) 100%);
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      text-align: center;
+      animation: gradient-shift 3s linear infinite;
+      margin: 0;
+    }
+    @keyframes gradient-shift {
+      0%   { background-position: 0% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .build-overlay .sub {
+      color: var(--text-2);
+      font-size: 13px;
+      max-width: 460px;
+      text-align: center;
+      line-height: 1.55;
+    }
+    .build-overlay .phase-chip {
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      padding: 4px 12px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(124,140,255,0.3);
+      border-radius: 999px;
+    }
+    .build-overlay .progress-bar {
+      width: 240px;
+      height: 3px;
+      background: var(--surface-2);
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+    .build-overlay .progress-bar::after {
+      content: "";
+      position: absolute;
+      top: 0; bottom: 0;
+      left: -40%; width: 40%;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: bo-sweep 1.8s linear infinite;
+    }
+    @keyframes bo-sweep { from { left: -40%; } to { left: 100%; } }
+    .build-overlay .live-log {
+      width: 100%;
+      max-width: 640px;
+      min-height: 160px;
+      max-height: 260px;
+      background: #050507;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: #a0a8b6;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      box-shadow: inset 0 0 40px rgba(124,140,255,0.06);
+    }
+    .build-overlay .live-log .ll-row {
+      display: block;
+      white-space: pre;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .build-overlay .live-log .ll-verb {
+      display: inline-block;
+      width: 7ch;
+      font-weight: 600;
+    }
+    .build-overlay .live-log .ll-write { color: #2dd4bf; }
+    .build-overlay .live-log .ll-edit  { color: #2dd4bf; }
+    .build-overlay .live-log .ll-read  { color: #6b7280; }
+    .build-overlay .live-log .ll-bash  { color: #f59e0b; }
+    .build-overlay .live-log .ll-error { color: #ef4444; }
+    .build-overlay .live-log .ll-text  { color: #8a93a3; font-style: italic; opacity: 0.85; }
+    .build-overlay .live-log .ll-dim   { color: #6b7280; opacity: 0.7; }
+    .build-overlay .live-log .cursor {
+      display: inline-block;
+      width: 6px;
+      height: 11px;
+      background: var(--accent);
+      margin-left: 2px;
+      animation: bo-blink 1s step-end infinite;
+      vertical-align: text-bottom;
+    }
+    @keyframes bo-blink { 50% { opacity: 0; } }
+    .build-overlay.failed h2 {
+      background: linear-gradient(90deg, var(--danger), #fb7185);
+      -webkit-background-clip: text;
+      background-clip: text;
+      animation: none;
+    }
+    .build-overlay .actions { display: flex; gap: 8px; margin-top: 6px; }
+    .build-overlay .actions .btn { padding: 8px 16px; }
 
     .back-link {
       display: inline-flex;
@@ -1217,11 +1831,153 @@
 </head>
 <body>
 
+<div class="pub-overlay" id="pub-overlay" hidden>
+  <div class="pub-card">
+    <h3 id="pub-title">Publish app</h3>
+    <div class="body" id="pub-body">
+      Make <strong id="pub-slug-name"></strong> reachable at a public URL anyone can visit.
+    </div>
+
+    <!-- ─── Auto subdomain section (hidden once a custom domain is verified) ─── -->
+    <div id="pub-auto-section">
+      <div class="pub-url-pill" id="pub-url-row" hidden>
+        <span style="flex:1;" id="pub-url-text"></span>
+        <button type="button" class="copy" id="pub-url-copy">Copy</button>
+        <a href="#" target="_blank" rel="noreferrer" class="copy" id="pub-url-open" style="text-decoration:none;">Open ↗</a>
+      </div>
+      <div class="pub-meta" id="pub-meta" hidden>
+        <span>Published <span id="pub-when"></span> by <strong id="pub-by"></strong>.</span>
+        <span>Re-publish is automatic — every new build is live immediately.</span>
+      </div>
+
+      <!-- Rename project (only shown once published) -->
+      <div id="pub-rename-block" hidden>
+        <div class="pub-section-title" style="margin-top:6px; font-size:11px; text-transform:uppercase; color:var(--muted);">Project name</div>
+        <div class="pub-rename-row">
+          <input type="text" class="pub-rename-input" id="pub-rename-input"
+                 autocomplete="off" spellcheck="false"
+                 placeholder="lowercase-letters-and-hyphens">
+          <button type="button" class="btn" id="pub-rename-btn">Rename</button>
+        </div>
+        <div class="pub-rename-result" id="pub-rename-result">
+          Lowercase letters, digits, and hyphens (3–50 chars). Renaming changes the URL.
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Custom domain section ─── -->
+    <div class="pub-section-divider" id="pub-cd-divider"></div>
+    <div class="pub-section-title" id="pub-cd-title">
+      <span>Use your own domain</span>
+      <span class="badge-soft" id="pub-cd-badge">Optional</span>
+    </div>
+    <div class="body" id="pub-cd-body">
+      Type your domain below and click <strong>Attach</strong> — we'll publish your app and show you the DNS record to add at your registrar.
+      Your app will live at <code style="font-family:var(--font-mono);font-size:11px;" id="pub-cd-example">app.mybrand.com</code>.
+    </div>
+    <div class="pub-domain-input-row" id="pub-cd-input-row" hidden>
+      <input type="text" class="pub-domain-input" id="pub-cd-input"
+             placeholder="mybrand.com" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn btn-primary" id="pub-cd-attach">Attach</button>
+    </div>
+    <div id="pub-cd-attached" hidden>
+      <div class="pub-url-pill">
+        <span style="flex:1;" id="pub-cd-current"></span>
+        <a href="#" target="_blank" rel="noreferrer" class="icon-btn-sm" id="pub-cd-open" title="Open live URL in a new tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+        </a>
+      </div>
+
+      <!-- DNS instructions block — hidden once verified -->
+      <div id="pub-cd-dns-block">
+        <div class="pub-section-title" style="margin-top:14px; font-size:11px; text-transform:uppercase; color:var(--muted);">
+          DNS record to add at your registrar:
+        </div>
+        <div class="pub-dns-table" id="pub-cd-dns"></div>
+        <div class="pub-dns-note">
+          <strong>Important:</strong> use an <strong>A record</strong>, not CNAME. If your DNS provider has a "proxy" / "orange cloud" / "CDN" toggle, leave it <strong>OFF</strong> (DNS-only). DNS may take a few minutes to propagate.
+        </div>
+        <div class="pub-actions" style="margin-top:6px;">
+          <span id="pub-cd-verify-result"></span>
+          <span style="flex:1;"></span>
+          <button type="button" class="btn btn-primary" id="pub-cd-verify">Verify DNS</button>
+        </div>
+      </div>
+
+      <!-- Verified state — only shown when verified -->
+      <div id="pub-cd-verified-msg" hidden>
+        <div class="pub-verify-result ok" style="margin-top:14px;">
+          ✓ Verified — your app is live at <span id="pub-cd-verified-url-text" style="text-decoration:underline;font-weight:600;"></span>
+        </div>
+        <div class="pub-dns-note" style="margin-top:6px;">
+          To stop using your custom domain, click <strong>Unpublish</strong> below.
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Supabase backend section ─── -->
+    <div class="pub-section-divider"></div>
+    <div class="pub-section-title">
+      <span>Supabase backend</span>
+      <span class="badge-soft" id="pub-sb-badge">Optional</span>
+    </div>
+    <div class="body" id="pub-sb-body">
+      Connect a Supabase project for auth, database, and file storage.
+      Your anon key is encrypted at rest and injected into the live app
+      at runtime (<code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> /
+      <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>).
+      The AIUI Agent is told how to use it on every build.
+    </div>
+    <div class="pub-domain-input-row">
+      <input type="url" class="pub-domain-input" id="pub-sb-url"
+             placeholder="https://xxxxx.supabase.co" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn btn-primary" id="pub-sb-save">Save</button>
+    </div>
+    <input type="text" class="pub-domain-input" id="pub-sb-anon"
+           placeholder="anon public key (eyJ…)" autocomplete="off" spellcheck="false"
+           style="margin-top:6px;">
+    <div id="pub-sb-attached" hidden>
+      <div class="pub-url-pill">
+        <span style="flex:1;" id="pub-sb-current"></span>
+        <button type="button" class="copy" id="pub-sb-clear">Disconnect</button>
+      </div>
+    </div>
+
+    <div class="pub-actions">
+      <button type="button" class="btn" id="pub-cancel">Close</button>
+      <button type="button" class="btn btn-danger" id="pub-unpublish" hidden>Unpublish</button>
+      <button type="button" class="btn btn-primary" id="pub-confirm">Publish now</button>
+    </div>
+  </div>
+</div>
+
+<div class="build-overlay" id="build-overlay" hidden>
+  <div class="wand"></div>
+  <h2 id="build-title">AIUI Agent is building your app…</h2>
+  <div class="sub" id="build-sub">Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.</div>
+  <div class="phase-chip" id="build-phase">Starting up</div>
+  <div class="progress-bar"></div>
+  <div class="live-log" id="build-log"><span class="cursor"></span></div>
+  <div class="actions">
+    <button class="btn btn-primary" id="build-start" type="button" hidden>▶ Start build now</button>
+    <button class="btn btn-primary" id="build-retry" type="button" hidden>Try again</button>
+    <a class="btn" href="/tasks/static/projects.html">← Back to my projects</a>
+  </div>
+  <div class="sub" style="font-size:11px; margin-top:4px;">The build keeps running in the background — you can come back anytime.</div>
+</div>
+
 <header class="topbar">
   <div class="topbar-left">
-    <a class="back-link" href="/" title="Back to tasks">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-      Tasks
+    <a class="brand-link" href="/tasks/app-builder" title="App Builder — back to my projects" aria-label="AIUI App Builder">
+      <span class="brand-mark">
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <text x="16" y="22" text-anchor="middle"
+                font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+                font-size="17" font-weight="700" fill="white"
+                letter-spacing="-0.5">OI</text>
+        </svg>
+      </span>
+      <span class="brand-text">App Builder</span>
     </a>
     <div class="slug-pill" id="slug-pill" title="App path">
       <span class="slug-prefix">apps/</span>
@@ -1229,6 +1985,11 @@
       <button class="copy-btn" id="copy-slug" title="Copy apps/<slug>/">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       </button>
+    </div>
+    <div class="presence-strip" id="presence-strip"></div>
+    <div class="building-banner" id="building-banner" hidden>
+      <span class="live-dot"></span>
+      <span id="building-who">someone is editing</span>
     </div>
   </div>
   <div class="topbar-right">
@@ -1244,6 +2005,12 @@
     <button class="btn btn-danger" id="btn-stop" disabled>
       <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14"/></svg>
       Stop
+    </button>
+    <button class="btn" id="btn-publish" type="button" title="Publish this app to a public URL">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+      </svg>
+      <span id="btn-publish-label">Publish</span>
     </button>
     <button class="icon-btn" id="theme-toggle" title="Toggle theme">
       <svg id="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
@@ -1281,6 +2048,13 @@
         </span>
         <span class="tab-label">Code</span>
       </button>
+      <button class="tab" data-tab="database" title="Connect Supabase to enable database, auth, storage.">
+        <span class="tab-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        </span>
+        <span class="tab-label">Supabase</span>
+        <span class="tab-badge" id="badge-database" hidden></span>
+      </button>
       <button class="tab" data-tab="preview">
         <span class="tab-icon">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1290,9 +2064,9 @@
       </button>
       <button class="tab" data-tab="tests">
         <span class="tab-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="18" r="2.5"/><line x1="6" y1="8.5" x2="6" y2="15.5"/><line x1="8.5" y1="6" x2="15.5" y2="6"/><line x1="8.5" y1="18" x2="15.5" y2="18"/><line x1="18" y1="8.5" x2="18" y2="15.5"/></svg>
         </span>
-        <span class="tab-label">Tests</span>
+        <span class="tab-label">Structure</span>
         <span class="tab-badge" id="badge-tests" hidden></span>
       </button>
       <button class="tab" data-tab="logs">
@@ -1301,6 +2075,13 @@
         </span>
         <span class="tab-label">Logs</span>
         <span class="tab-badge" id="badge-logs" hidden></span>
+      </button>
+      <button class="tab" data-tab="history" title="Version history — rollback to a previous build">
+        <span class="tab-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+        </span>
+        <span class="tab-label">History</span>
+        <span class="tab-badge" id="badge-history" hidden></span>
       </button>
     </nav>
 
@@ -1354,19 +2135,157 @@
         <div class="preview-loading" id="preview-loading"><div class="spinner"></div><span>Loading preview…</span></div>
       </div>
 
-      <!-- Tests panel -->
+      <!-- Tests panel — repurposed as a project File/System Connection Graph -->
       <div class="panel" id="panel-tests">
-        <div class="tests-summary" id="tests-summary" hidden>
-          <span class="pill" data-kind="success" id="tests-pass"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>0 passed</span></span>
-          <span class="pill" data-kind="danger" id="tests-fail"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>0 failed</span></span>
-          <span class="pill" data-kind="muted" id="tests-source"></span>
-        </div>
-        <div class="panel-body">
-          <div class="tests-output" id="tests-output">
-            <div class="empty">
-              <div class="empty-icon">✓</div>
-              <div class="empty-title">No tests yet</div>
-              <div class="empty-sub">Tests appear here after a <strong>VERIFY</strong> step runs in an execution.</div>
+        <style>
+          .graph-view {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+          }
+          .graph-view .graph-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            color: var(--text-2);
+            flex: 0 0 auto;
+          }
+          .graph-view .graph-head .summary {
+            font-weight: 600;
+            color: var(--text);
+          }
+          .graph-view .graph-head .summary .dim { color: var(--muted); font-weight: 400; }
+          .graph-view .graph-head .legend {
+            display: flex; align-items: center; gap: 10px;
+            font-size: 11px; color: var(--muted);
+          }
+          .graph-view .graph-head .legend .swatch {
+            display: inline-flex; align-items: center; gap: 4px;
+          }
+          .graph-view .graph-head .legend .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block;
+          }
+          .graph-view .graph-body {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: auto;
+            padding: 12px;
+            background: var(--surface, #0f1115);
+          }
+          .graph-view svg.graph-svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+          }
+          .graph-view .node {
+            animation: graph-node-in 360ms ease both, graph-float 6s ease-in-out infinite;
+            transform-origin: center;
+            transform-box: fill-box;
+          }
+          .graph-view .node circle {
+            cursor: pointer;
+            transition: r 180ms ease, stroke-width 180ms ease, opacity 180ms ease, filter 180ms ease;
+            stroke: rgba(255,255,255,0.18);
+            stroke-width: 1.4;
+            filter: drop-shadow(0 0 0 transparent);
+          }
+          .graph-view .node circle.glow {
+            animation: graph-glow 2.4s ease-in-out infinite;
+          }
+          .graph-view .node text {
+            font-family: var(--font-mono, ui-monospace, monospace);
+            font-size: 10.5px;
+            fill: var(--text-2, #c8c8c8);
+            pointer-events: none;
+            text-anchor: middle;
+          }
+          .graph-view .node[data-clickable="true"] circle:hover {
+            stroke: var(--text, #ffffff);
+            stroke-width: 2.2;
+            filter: drop-shadow(0 0 12px currentColor);
+          }
+          @keyframes graph-node-in {
+            from { opacity: 0; transform: scale(0.3); }
+            to   { opacity: 1; transform: scale(1); }
+          }
+          @keyframes graph-float {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-4px); }
+          }
+          @keyframes graph-glow {
+            0%, 100% { filter: drop-shadow(0 0 4px currentColor); }
+            50%      { filter: drop-shadow(0 0 14px currentColor); }
+          }
+          .graph-view .edge {
+            fill: none;
+            stroke: rgba(170,170,170,0.45);
+            stroke-width: 1.3;
+            transition: opacity 180ms ease, stroke-width 180ms ease;
+            stroke-dasharray: 6 4;
+            animation: graph-edge-flow 1.4s linear infinite, graph-edge-in 480ms ease both;
+          }
+          @keyframes graph-edge-flow {
+            to { stroke-dashoffset: -10; }
+          }
+          @keyframes graph-edge-in {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+          }
+          .graph-view .edge.kind-external,
+          .graph-view .edge.kind-api {
+            stroke-dasharray: 4 4;
+          }
+          .graph-view .edge.kind-external { stroke: rgba(160,160,160,0.65); }
+          .graph-view .edge.kind-api      { stroke: rgba(76,175,80,0.75); }
+          .graph-view.dim-others .edge { opacity: 0.18; }
+          .graph-view.dim-others .node circle { opacity: 0.35; }
+          .graph-view.dim-others .edge.is-incident { opacity: 1; stroke-width: 2.2; }
+          .graph-view.dim-others .node.is-incident circle { opacity: 1; }
+          .graph-view.dim-others .node.is-incident text { fill: var(--text); }
+          .graph-view .empty-state {
+            display: flex; align-items: center; justify-content: center;
+            height: 100%; flex-direction: column; gap: 8px;
+            color: var(--muted);
+          }
+          .graph-view .empty-state .ico { font-size: 32px; opacity: 0.7; }
+          .graph-view .refresh-btn {
+            background: transparent; color: var(--text-2);
+            border: 1px solid var(--border); border-radius: 6px;
+            padding: 4px 10px; font-size: 11px; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 5px;
+          }
+          .graph-view .refresh-btn:hover { color: var(--text); border-color: var(--border-2, var(--border)); }
+        </style>
+        <div class="graph-view" id="graph-view">
+          <div class="graph-head">
+            <span class="summary" id="graph-summary">
+              <span class="dim">Loading project graph…</span>
+            </span>
+            <span class="legend" id="graph-legend">
+              <span class="swatch"><span class="dot" style="background:#f59e0b;"></span> html</span>
+              <span class="swatch"><span class="dot" style="background:#14b8a6;"></span> css</span>
+              <span class="swatch"><span class="dot" style="background:#3b82f6;"></span> js</span>
+              <span class="swatch"><span class="dot" style="background:#a855f7;"></span> sql</span>
+              <span class="swatch"><span class="dot" style="background:#22c55e;"></span> api</span>
+              <span class="swatch"><span class="dot" style="background:#9ca3af;"></span> external</span>
+              <button type="button" class="refresh-btn" id="graph-refresh" title="Re-fetch graph">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                Refresh
+              </button>
+            </span>
+          </div>
+          <div class="graph-body" id="graph-body">
+            <div class="empty-state" id="graph-empty">
+              <div class="ico">◌</div>
+              <div>Loading project graph…</div>
             </div>
           </div>
         </div>
@@ -1390,6 +2309,224 @@
           </div>
         </div>
       </div>
+
+      <!-- History (version-control) panel -->
+      <div class="panel" id="panel-history">
+        <div class="panel-head">
+          <span class="filepath" id="history-title">Version history</span>
+          <div class="panel-actions">
+            <span id="history-count" style="font-size:11px;color:var(--muted);"></span>
+            <button class="icon-btn" id="history-refresh" title="Refresh" type="button">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="panel-body history-body" id="history-body">
+          <div class="empty">
+            <div class="empty-icon"></div>
+            <div class="empty-title">Loading versions…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Database (Supabase) panel -->
+      <div class="panel" id="panel-database">
+        <div class="panel-body" id="database-body" style="padding: 24px; overflow-y: auto;">
+          <div style="max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px;">
+            <div>
+              <h2 style="font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px; margin: 0;">
+                <span style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#3ecf8e,#2db374);display:flex;align-items:center;justify-content:center;color:white;flex-shrink:0;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+                </span>
+                Supabase backend
+                <span class="badge-soft" id="db-badge" style="font-size:10px;padding:3px 8px;border-radius:999px;background:var(--surface-2);color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">Not connected</span>
+              </h2>
+              <div class="body" style="color: var(--text-2); font-size: 13px; line-height: 1.55; margin-top: 10px;">
+                Paste your Supabase URL + anon public key below. We encrypt the key at rest
+                and inject <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> /
+                <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>
+                into your live app at runtime. The AIUI Agent is told how to use it on every build.
+              </div>
+            </div>
+
+            <!-- OAuth one-click connect block (Z4) -->
+            <div id="db-oauth-block">
+              <div id="db-oauth-state-a" hidden style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.35);border-radius:var(--radius);padding:18px 20px;display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;color:var(--text);">
+                  <span style="font-size:18px;">🟢</span> Connect Supabase
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                  <button class="btn btn-primary" id="db-oauth-connect" type="button"
+                          style="background:#22c55e;border-color:#22c55e;color:#0a0a0b;font-weight:600;">
+                    Connect with Supabase →
+                  </button>
+                  <span style="font-size:12px;color:var(--text-2);line-height:1.5;flex:1;min-width:200px;">
+                    one-click — we'll handle the URL, anon key, and DB connection automatically.
+                  </span>
+                </div>
+                <span id="db-oauth-status" style="font-size:11px;color:var(--muted);"></span>
+              </div>
+
+              <div id="db-oauth-state-b" hidden style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                  <div style="font-weight:600;font-size:13px;color:var(--text);">
+                    ✓ Connected to Supabase. Pick a project to link:
+                  </div>
+                  <button id="db-oauth-disconnect-b" type="button"
+                          style="background:transparent;border:0;color:var(--muted);font-size:11px;cursor:pointer;text-decoration:underline;">
+                    Disconnect
+                  </button>
+                </div>
+                <div id="db-oauth-projects" style="display:flex;flex-direction:column;gap:6px;">
+                  <div style="font-size:12px;color:var(--muted);">Loading projects…</div>
+                </div>
+              </div>
+
+              <div id="db-oauth-state-c" hidden style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.35);border-radius:var(--radius);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);">
+                  <span style="color:#22c55e;font-weight:700;">✓ Connected</span>
+                  <span style="color:var(--muted);">·</span>
+                  <span>Linked: <strong id="db-oauth-linked-name" style="font-family:var(--font-mono);font-size:12px;">—</strong></span>
+                </div>
+                <button class="btn" id="db-oauth-disconnect" type="button"
+                        style="font-size:12px;padding:6px 12px;">
+                  Disconnect Supabase
+                </button>
+              </div>
+
+              <div id="db-oauth-state-d" hidden style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;display:flex;flex-direction:column;gap:14px;">
+                <div style="font-weight:600;font-size:14px;color:var(--text);">
+                  🆕 Create your first Supabase project
+                </div>
+                <div style="font-size:12px;color:var(--text-2);line-height:1.5;">
+                  You don't have any Supabase projects yet. We'll create one named after this app — takes 30–90 seconds.
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Project name
+                    <input id="db-oauth-cp-name" type="text" autocomplete="off" spellcheck="false"
+                           style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                  </label>
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Organization
+                    <select id="db-oauth-cp-org"
+                            style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                    </select>
+                  </label>
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Region
+                    <select id="db-oauth-cp-region"
+                            style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                    </select>
+                  </label>
+                  <label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;font-weight:600;">
+                    Database password
+                    <input id="db-oauth-cp-pw" type="password" autocomplete="new-password" spellcheck="false"
+                           style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--text);font-size:13px;">
+                    <span style="font-size:10px;color:var(--muted);text-transform:none;letter-spacing:0;font-weight:400;">12+ characters. You'll need this for direct DB connections — store it somewhere.</span>
+                  </label>
+                </div>
+                <div style="display:flex;gap:10px;align-items:center;">
+                  <button class="btn btn-primary" id="db-oauth-cp-submit" type="button"
+                          style="background:#22c55e;border-color:#22c55e;color:#0a0a0b;font-weight:600;">
+                    Create project
+                  </button>
+                  <span id="db-oauth-cp-status" style="font-size:12px;color:var(--muted);"></span>
+                </div>
+              </div>
+            </div>
+
+            <details id="db-manual-wrap" style="border:1px solid var(--border);border-radius:var(--radius);padding:0;">
+              <summary style="cursor:pointer;padding:10px 14px;font-size:12px;color:var(--text-2);user-select:none;">
+                or paste credentials manually ▾
+              </summary>
+              <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:14px;">
+
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Project URL</label>
+              <input id="db-url" type="url" placeholder="https://xxxxxxxx.supabase.co" autocomplete="off" spellcheck="false"
+                     style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:12px;outline:none;">
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">Find it in Project Settings → API → Project URL.</div>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Anon public key</label>
+              <textarea id="db-anon" rows="3" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." autocomplete="off" spellcheck="false"
+                        style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical;"></textarea>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px;">Find it in Project Settings → API → Project API keys → <strong>anon public</strong>. Never paste your service-role key here — that one stays on your machine.</div>
+            </div>
+
+            <div>
+              <label style="display:block;font-size:11px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">Supabase Postgres connection URI <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;">(optional — required for AI-managed tables)</span></label>
+              <div style="background: var(--warning-soft); color: var(--warning); border: 1px solid rgba(245,158,11,0.35); border-radius: var(--radius); padding: 8px 12px; font-size: 11px; line-height: 1.5; margin-bottom: 8px;">
+                ⚠ <strong>Powerful credential.</strong> This gives the build AI admin access to your Supabase database — it can create / drop / alter tables, run migrations, set up RLS policies. Use a Supabase project you own. Encrypted at rest with the same Fernet key as your anon key.
+              </div>
+              <!-- Easy-mode builder: just paste password + pick region, we build the URI. -->
+              <div style="background: var(--accent-soft); border: 1px solid rgba(124,140,255,0.3); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px;">
+                <div style="font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 6px;">Quick setup — let us build the URI for you</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                  <input type="password" id="db-easy-password" placeholder="Database password" autocomplete="off" spellcheck="false"
+                         style="padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;">
+                  <select id="db-easy-region"
+                         style="padding:8px 10px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius-sm);color:var(--text);font-size:12px;outline:none;">
+                    <option value="">Region…</option>
+                    <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                    <option value="us-west-1">us-west-1 (N. California)</option>
+                    <option value="us-west-2">us-west-2 (Oregon)</option>
+                    <option value="eu-central-1">eu-central-1 (Frankfurt)</option>
+                    <option value="eu-west-1">eu-west-1 (Ireland)</option>
+                    <option value="eu-west-2">eu-west-2 (London)</option>
+                    <option value="ap-northeast-1">ap-northeast-1 (Tokyo)</option>
+                    <option value="ap-northeast-2">ap-northeast-2 (Seoul)</option>
+                    <option value="ap-southeast-1">ap-southeast-1 (Singapore)</option>
+                    <option value="ap-southeast-2">ap-southeast-2 (Sydney)</option>
+                    <option value="ap-south-1">ap-south-1 (Mumbai)</option>
+                    <option value="sa-east-1">sa-east-1 (São Paulo)</option>
+                  </select>
+                </div>
+                <button type="button" id="db-easy-build"
+                        style="margin-top:6px;padding:6px 12px;font-size:11px;background:var(--accent);color:#0a0a0b;border:0;border-radius:var(--radius-sm);font-weight:600;cursor:pointer;">
+                  ↓ Fill URI below
+                </button>
+                <span id="db-easy-status" style="font-size:11px;color:var(--muted);margin-left:8px;"></span>
+                <div style="font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.5;">
+                  Find your region in your Supabase dashboard URL or in Project Settings → General → Region.
+                  Find your database password in Project Settings → Database → Database password.
+                </div>
+              </div>
+              <textarea id="db-uri" rows="2" placeholder="postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres" autocomplete="off" spellcheck="false"
+                        style="width:100%;padding:10px 14px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--radius);color:var(--text);font-family:var(--font-mono);font-size:11px;outline:none;resize:vertical;"></textarea>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.6;">
+                <strong>Or paste manually</strong> from Supabase → Project Settings → Database → Connection string → URI tab.<br>
+                <strong style="color: var(--warning);">⚠ Use "Transaction pooler"</strong> (port 6543, host <code style="font-family:var(--font-mono);font-size:11px;">aws-0-&lt;region&gt;.pooler.supabase.com</code>) — the "Direct connection" (<code style="font-family:var(--font-mono);font-size:11px;">db.&lt;ref&gt;.supabase.co</code>) is IPv6-only and won't work.<br>
+                <strong style="color: var(--warning);">⚠ NO brackets around the password</strong> — replace <code style="font-family:var(--font-mono);font-size:11px;">[YOUR-PASSWORD]</code> with the actual password (don't keep the brackets).
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-primary" id="db-save" type="button">Save & connect</button>
+              <button class="btn" id="db-test" type="button" hidden>Test connection</button>
+              <button class="btn btn-danger" id="db-clear" type="button" hidden>Disconnect</button>
+              <span id="db-status" style="font-size:12px;color:var(--muted);"></span>
+            </div>
+
+            <div id="db-info" hidden style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;font-size:12px;color:var(--text-2);line-height:1.6;">
+              <div style="font-weight:600;color:var(--text);margin-bottom:6px;">✓ Connected</div>
+              <div>URL: <code style="font-family:var(--font-mono);font-size:11px;" id="db-info-url"></code></div>
+              <div>Configured by: <strong id="db-info-by"></strong></div>
+              <div>Configured at: <span id="db-info-at"></span></div>
+              <div id="db-info-aimanage" style="margin-top:6px;padding:4px 10px;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent);border-radius:999px;border:1px solid rgba(124,140,255,0.3);" hidden>✓ AI can manage tables</div>
+              <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+                In your app code, use <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> and
+                <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>. The Build sidebar
+                already knows about Supabase — ask it to add auth, tables, etc.
+              </div>
+            </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -1398,21 +2535,21 @@
   <!-- Enhance sidebar (right) -->
   <aside id="enhance-sidebar" class="sidebar-enhance">
     <button id="enhance-rail" class="enhance-rail" title="Open Enhance panel" type="button">
-      <span class="rail-icon">✨</span>
+      <span class="rail-icon"></span>
       <span class="rail-label">Enhance</span>
     </button>
     <div class="enhance-full">
       <div class="enhance-header">
-        <span class="title"><span class="spark">✨</span>Enhance</span>
+        <span class="title">Enhance</span>
         <div class="mode-toggle" id="mode-toggle" role="tablist">
           <button data-mode="chat" class="active" type="button" title="Talk — no code changes">💬 Chat</button>
-          <button data-mode="build" type="button" title="Commit an enhancement — runs the build pipeline">⚡ Build</button>
+          <button data-mode="build" type="button" title="Commit an enhancement — runs the build pipeline">Build</button>
         </div>
         <button id="enhance-collapse" title="Minimize" type="button">−</button>
       </div>
       <div class="enhance-log" id="enhance-log">
         <div class="enhance-empty" id="enhance-empty">
-          <div class="spark">✨</div>
+          <div class="spark"></div>
           <div class="hint">Describe a change you want — I'll update the app and tell you what shipped.</div>
           <div class="examples">
             <button class="ex-btn" data-prompt="Add a header section with the app title">Add a header section</button>
@@ -1485,6 +2622,269 @@
     return;
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // BUILD OVERLAY — show "AIUI Agent is building" animation while the task
+  // is not yet completed. Polls task status + latest execution log so the
+  // user can watch files being written in real time.
+  // ────────────────────────────────────────────────────────────────────
+  const $bov         = document.getElementById("build-overlay");
+  const $bovTitle    = document.getElementById("build-title");
+  const $bovSub      = document.getElementById("build-sub");
+  const $bovPhase    = document.getElementById("build-phase");
+  const $bovLog      = document.getElementById("build-log");
+  const $bovRetry    = document.getElementById("build-retry");
+  const $bovStart    = document.getElementById("build-start");
+  let _bovAutoKicked = false;  // only fire auto-execute once per page load
+  const BUILDING_STATES = new Set([
+    "pending", "planning", "running", "awaiting_input", "awaiting_plan_review", "claimed_manual",
+  ]);
+  const PHASE_LABELS = {
+    pending: "Queued",
+    planning: "Planning",
+    awaiting_plan_review: "Awaiting plan review",
+    running: "Building",
+    awaiting_input: "Needs your input",
+    claimed_manual: "Manual mode",
+  };
+  let _bovPollTimer = null;
+  let _bovLastLog = "";
+
+  function _escapeHtmlBov(s) {
+    return (s || "").replace(/[&<>"]/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])
+    );
+  }
+
+  // Render one stream-json log line into a short, professional progress row.
+  // Returns an HTML string (already escaped) or null to skip this line.
+  function _bovRenderLogLine(rawLine) {
+    if (!rawLine) return null;
+    const trimmed = rawLine.trim();
+    if (!trimmed) return null;
+
+    // Try to parse as one stream-json event. If it fails, fall back to plain
+    // dimmed text — older executions log raw text instead of stream-json.
+    let evt;
+    try {
+      evt = JSON.parse(trimmed);
+    } catch (_) {
+      // Skip noisy framing lines that are obviously internal markers.
+      if (trimmed.startsWith("---") && trimmed.endsWith("---")) return null;
+      return '<span class="ll-row ll-dim">' + _escapeHtmlBov(trimmed.slice(0, 200)) + '</span>';
+    }
+
+    const truncate = (s, n) => {
+      if (!s) return "";
+      s = String(s).replace(/\s+/g, " ").trim();
+      return s.length > n ? s.slice(0, n - 1) + "…" : s;
+    };
+    const verbRow = (cls, verb, rest) =>
+      '<span class="ll-row"><span class="ll-verb ' + cls + '">' +
+      _escapeHtmlBov(verb) + '</span>' + _escapeHtmlBov(rest) + '</span>';
+
+    try {
+      const t = evt && evt.type;
+      if (t === "assistant" && evt.message && Array.isArray(evt.message.content)) {
+        const rows = [];
+        for (const c of evt.message.content) {
+          if (!c) continue;
+          if (c.type === "text" && c.text) {
+            const text = truncate(c.text, 80);
+            if (text) {
+              rows.push(
+                '<span class="ll-row ll-text">' +
+                _escapeHtmlBov('"' + text + '"') + '</span>'
+              );
+            }
+          } else if (c.type === "tool_use") {
+            const name = c.name || "";
+            const inp = c.input || {};
+            if (name === "Write") {
+              rows.push(verbRow("ll-write", "Write", truncate(inp.file_path || "", 90)));
+            } else if (name === "Edit" || name === "MultiEdit") {
+              rows.push(verbRow("ll-edit", "Edit", truncate(inp.file_path || "", 90)));
+            } else if (name === "Read") {
+              rows.push(verbRow("ll-read", "Read", truncate(inp.file_path || "", 90)));
+            } else if (name === "Bash") {
+              rows.push(verbRow("ll-bash", "Bash", truncate(inp.command || "", 70)));
+            } else if (name === "Glob" || name === "Grep") {
+              const q = inp.pattern || inp.query || "";
+              rows.push(verbRow("ll-read", name, truncate(q, 70)));
+            } else if (name) {
+              // Generic tool — show the name + the first string-ish field.
+              let arg = "";
+              for (const k of Object.keys(inp)) {
+                if (typeof inp[k] === "string") { arg = inp[k]; break; }
+              }
+              rows.push(verbRow("ll-dim", name.slice(0, 6), truncate(arg, 70)));
+            }
+          }
+        }
+        return rows.length ? rows.join("\n") : null;
+      }
+
+      if (t === "user" && evt.message && Array.isArray(evt.message.content)) {
+        // tool_result events: skip successes (the next line tells the story);
+        // only surface errors so the user knows something went wrong.
+        for (const c of evt.message.content) {
+          if (c && c.type === "tool_result" && c.is_error) {
+            let msg = "";
+            if (typeof c.content === "string") msg = c.content;
+            else if (Array.isArray(c.content) && c.content[0] && c.content[0].text) msg = c.content[0].text;
+            const firstLine = (msg || "").split("\n")[0];
+            return verbRow("ll-error", "Error", truncate(firstLine, 90));
+          }
+        }
+        return null;
+      }
+
+      // system / result / other meta events — skip silently.
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function _bovRenderLog(fullLog) {
+    if (!fullLog) return "";
+    const rawLines = fullLog.split("\n");
+    const rendered = [];
+    for (const ln of rawLines) {
+      const html = _bovRenderLogLine(ln);
+      if (html) rendered.push(html);
+    }
+    // Cap to most recent 30 visible rows.
+    const tail = rendered.slice(-30);
+    return tail.join("\n");
+  }
+
+  async function _bovCheck() {
+    try {
+      const task = await apiFetch("GET", "/" + taskId);
+      if (!task) return false;
+      if (task.status === "completed") {
+        $bov.hidden = true;
+        await loadFileTree();
+        try { startPolling(); } catch (_) {}
+        try { loadLogs(); } catch (_) {}
+        try { loadDatabase(); } catch (_) {}
+        try { loadEnhanceHistory(); } catch (_) {}
+        try { loadGraph(); } catch (_) {}
+        try { refreshPreviewIframeIfVisible(); } catch (_) {}
+        if (typeof toast === "function") toast("Your app is ready", "success", 4000);
+        return true;
+      }
+      if (task.status === "failed") {
+        $bov.classList.add("failed");
+        $bovTitle.textContent = "Build ran into a problem";
+        $bovSub.textContent = task.result || "The AIUI Agent had trouble with this build. You can retry or adjust the description.";
+        $bovPhase.textContent = "Error";
+        $bovRetry.hidden = false;
+        $bov.hidden = false;
+        return true;  // stop polling until user retries
+      }
+      // Still working
+      $bov.hidden = false;
+      $bovPhase.textContent = PHASE_LABELS[task.status] || task.status;
+
+      // Auto-kick: a pending BUILD/INTEGRATE/RESEARCH with zero executions
+      // means the initial /execute call never reached the backend. Fire it
+      // now so the user doesn't sit watching a phantom "building" forever.
+      if (
+        !_bovAutoKicked &&
+        task.status === "pending" &&
+        ["BUILD", "INTEGRATE", "RESEARCH"].includes(task.action_type)
+      ) {
+        _bovAutoKicked = true;
+        try {
+          const execs = await apiFetch("GET", "/" + taskId + "/executions");
+          if (!execs || execs.length === 0) {
+            $bovTitle.textContent = "Starting AIUI Agent…";
+            try {
+              await apiFetch("POST", "/" + taskId + "/execute");
+              $bovTitle.textContent = "AIUI Agent is building your app…";
+            } catch (e) {
+              // Couldn't start — show manual Start button so user has a way out.
+              $bovTitle.textContent = "⚠ Build didn't start automatically";
+              $bovSub.textContent = "Click Start below to kick it off manually, or go back to your projects.";
+              $bovStart.hidden = false;
+            }
+          }
+        } catch (_) { /* ignore — we'll retry the overall poll */ }
+      }
+
+      // Pull the latest execution log to stream into the overlay.
+      try {
+        const execs = await apiFetch("GET", "/" + taskId + "/executions");
+        if (execs && execs.length) {
+          const latest = execs[0];
+          if (latest.log && latest.log !== _bovLastLog) {
+            const html = _bovRenderLog(latest.log);
+            $bovLog.innerHTML = (html || "") + '<span class="cursor"></span>';
+            $bovLog.scrollTop = $bovLog.scrollHeight;
+            _bovLastLog = latest.log;
+          }
+        }
+      } catch (_) { /* log fetch errors are non-fatal */ }
+      return false;
+    } catch (err) {
+      console.warn("[build overlay] check failed", err);
+      // Auth error or task missing — don't block the page forever.
+      $bov.hidden = true;
+      return true;
+    }
+  }
+
+  async function _bovStart() {
+    const done = await _bovCheck();
+    if (done) return;
+    _bovPollTimer = setInterval(async () => {
+      const finished = await _bovCheck();
+      if (finished && _bovPollTimer) {
+        clearInterval(_bovPollTimer);
+        _bovPollTimer = null;
+      }
+    }, 2500);
+  }
+
+  if ($bovStart) {
+    $bovStart.addEventListener("click", async () => {
+      $bovStart.hidden = true;
+      $bovTitle.textContent = "Starting AIUI Agent…";
+      $bovSub.textContent = "Kicking off the build…";
+      try {
+        await apiFetch("POST", "/" + taskId + "/execute");
+        $bovTitle.textContent = "AIUI Agent is building your app…";
+        $bovSub.textContent = "Sit tight — creating files, writing code, and running tests.";
+      } catch (err) {
+        $bovTitle.textContent = "⚠ Could not start";
+        $bovSub.textContent = (err && err.message) || "Backend rejected the request.";
+        $bovStart.hidden = false;
+      }
+    });
+  }
+
+  if ($bovRetry) {
+    $bovRetry.addEventListener("click", async () => {
+      $bovRetry.hidden = true;
+      $bov.classList.remove("failed");
+      $bovTitle.textContent = "Restarting build…";
+      $bovSub.textContent = "AIUI Agent is picking things back up.";
+      _bovLastLog = "";
+      $bovLog.innerHTML = '<span class="cursor"></span>';
+      try {
+        await apiFetch("POST", "/" + taskId + "/execute");
+      } catch (err) {
+        if (typeof toast === "function") toast("Retry failed: " + err.message, "error", 5000);
+      }
+      if (_bovPollTimer) clearInterval(_bovPollTimer);
+      _bovStart();
+    });
+  }
+
+  // Kick off immediately (before the rest of the page loads data).
+  _bovStart();
+
   // ── State ──
   let slug = "";
   let files = [];
@@ -1495,7 +2895,6 @@
   let pollTimer = null;
   let allExecs = [];
   let logFilter = "all";
-  let lastTestOutput = null;
   const FOLDER_STATE_KEY = "aiui-folder-state-v1";
   const THEME_KEY = "aiui-theme";
   const LS_FILES_WIDTH = "aiui-sb-files-w";
@@ -1522,11 +2921,11 @@
   const $previewRefresh = document.getElementById("preview-refresh");
   const $previewLoading = document.getElementById("preview-loading");
   const $panelTests = document.getElementById("panel-tests");
-  const $testsSummary = document.getElementById("tests-summary");
-  const $testsPass = document.getElementById("tests-pass");
-  const $testsFail = document.getElementById("tests-fail");
-  const $testsSource = document.getElementById("tests-source");
-  const $testsOutput = document.getElementById("tests-output");
+  // Tests tab is now a project graph view. Element refs prefixed `$graph…`.
+  const $graphView    = document.getElementById("graph-view");
+  const $graphSummary = document.getElementById("graph-summary");
+  const $graphBody    = document.getElementById("graph-body");
+  const $graphRefresh = document.getElementById("graph-refresh");
   const $panelLogs = document.getElementById("panel-logs");
   const $logsToolbar = document.getElementById("logs-toolbar");
   const $logsBody = document.getElementById("logs-body");
@@ -1725,6 +3124,8 @@
     if (tab === "preview") refreshPreviewFrame();
     if (tab === "logs") loadLogs();
     if (tab === "tests") loadTests();
+    if (tab === "history") loadVersions();
+    if (tab === "database") loadDatabase();
   }
   document.getElementById("tabs").addEventListener("click", function (e) {
     const btn = e.target.closest(".tab");
@@ -1739,15 +3140,26 @@
       const data = await apiFetch("GET", "/" + taskId + "/files");
       slug = data.slug || "";
       loadEnhanceHistory();
+      loadChatHistory();
       files = data.files || [];
       $slugName.textContent = slug || "unknown";
       document.title = "Preview: " + slug + " — AIUI Tasks";
       $fileCount.textContent = files.length + " file" + (files.length === 1 ? "" : "s");
       renderFileTree();
     } catch (err) {
-      $fileTree.innerHTML = '<div class="tree-empty" style="color:var(--danger)">' + escapeHtml(err.message) + '</div>';
-      $slugName.textContent = "(error)";
-      toast("Could not load files: " + err.message, "error", 6000);
+      // 404 is expected during build (app not written yet) — stay quiet.
+      // The build overlay watcher will retry loadFileTree once the build
+      // completes. Only surface real errors (5xx, network) to the user.
+      const msg = (err && err.message) || "";
+      const isExpectedDuringBuild = msg.includes("404") || msg.includes("Not Found");
+      if (!isExpectedDuringBuild) {
+        $fileTree.innerHTML = '<div class="tree-empty" style="color:var(--danger)">' + escapeHtml(msg) + '</div>';
+        toast("Could not load files: " + msg, "error", 6000);
+      } else {
+        $fileTree.innerHTML = '<div class="tree-empty">Waiting for the AIUI Agent to write the first files…</div>';
+      }
+      // Never set slug-name to "(error)" — it leaks into presence URLs.
+      // Leave it as "loading…" so presence waits for a real slug.
     }
   }
 
@@ -1949,53 +3361,222 @@
   $previewRefresh.addEventListener("click", refreshPreviewFrame);
 
   // ────────────────────────────────────────────────────────────────────
-  // TESTS
+  // PROJECT GRAPH (Tests tab — repurposed)
   // ────────────────────────────────────────────────────────────────────
-  async function loadTests() {
-    try {
-      const execs = allExecs.length ? allExecs : await apiFetch("GET", "/" + taskId + "/executions");
-      let testOutput = "", sourceExecN = null;
-      for (let i = 0; i < execs.length; i++) {
-        const log = execs[i].log || "";
-        const idx = log.indexOf("--- VERIFY STEP ---");
-        if (idx !== -1) {
-          testOutput = log.substring(idx);
-          sourceExecN = execs.length - i;
-          break;
-        }
-      }
-      lastTestOutput = testOutput;
-      if (testOutput) {
-        const passes = (testOutput.match(/\b(PASS|PASSED|passed|ok|OK|✓)\b/g) || []).length;
-        const fails  = (testOutput.match(/\b(FAIL|FAILED|failed|error|ERROR|✗)\b/g) || []).length;
-        $testsSummary.hidden = false;
-        $testsPass.querySelector("span").textContent = passes + " passed";
-        $testsFail.querySelector("span").textContent = fails + " failed";
-        if (sourceExecN !== null) {
-          $testsSource.innerHTML = '<span>from Run ' + sourceExecN + '</span>';
-        }
-        // Tab badge
-        if (fails > 0) {
-          $badgeTests.hidden = false;
-          $badgeTests.dataset.kind = "danger";
-          $badgeTests.textContent = fails;
-        } else if (passes > 0) {
-          $badgeTests.hidden = false;
-          $badgeTests.dataset.kind = "success";
-          $badgeTests.textContent = passes;
-        }
-        const colored = escapeHtml(testOutput)
-          .replace(/\b(PASS|PASSED|passed|ok|OK|✓)\b/g, '<span class="ok">$1</span>')
-          .replace(/\b(FAIL|FAILED|failed|error|ERROR|✗)\b/g, '<span class="bad">$1</span>');
-        $testsOutput.innerHTML = colored;
-      } else {
-        $testsSummary.hidden = true;
-        $badgeTests.hidden = true;
-        $testsOutput.innerHTML = '<div class="empty"><div class="empty-icon">✓</div><div class="empty-title">No tests yet</div><div class="empty-sub">Tests appear after a <strong>VERIFY</strong> step runs in an execution.</div></div>';
-      }
-    } catch (err) {
-      $testsOutput.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load tests</div><div class="empty-sub">' + escapeHtml(err.message) + '</div></div>';
+  // Node-type colors must match the legend in the Tests panel header.
+  const GRAPH_COLORS = {
+    html:     "#f59e0b",
+    css:      "#14b8a6",
+    js:       "#3b82f6",
+    sql:      "#a855f7",
+    api:      "#22c55e",
+    external: "#9ca3af",
+  };
+  // Left-to-right column order. Anything not in this list goes at the end.
+  const GRAPH_COLUMN_ORDER = ["html", "css", "js", "sql", "api", "external"];
+
+  async function loadGraph() {
+    if (!slug) {
+      $graphSummary.innerHTML = '<span class="dim">No project yet</span>';
+      $graphBody.innerHTML =
+        '<div class="empty-state">' +
+        '<div class="ico">◌</div>' +
+        '<div>No files yet — start a build</div>' +
+        '</div>';
+      return;
     }
+    $graphSummary.innerHTML = '<span class="dim">Loading project graph…</span>';
+    // The graph endpoint lives on /api/projects (not /api/tasks), so we
+    // bypass apiFetch and hit it directly with the same admin auth headers.
+    let data;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/graph", {
+        method: "GET",
+        credentials: "include",
+        headers: authHeaders(),
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => r.statusText);
+        throw new Error(r.status + " " + text);
+      }
+      data = await r.json();
+    } catch (err) {
+      $graphSummary.innerHTML = '<span class="dim">Could not load graph</span>';
+      $graphBody.innerHTML =
+        '<div class="empty-state">' +
+        '<div class="ico">⚠️</div>' +
+        '<div>' + escapeHtml((err && err.message) || "Failed") + '</div>' +
+        '</div>';
+      return;
+    }
+
+    renderGraph(data);
+  }
+
+  // Backwards-compat alias — switchTab() still calls loadTests().
+  async function loadTests() { return loadGraph(); }
+
+  function renderGraph(data) {
+    const nodes = (data && data.nodes) || [];
+    const edges = (data && data.edges) || [];
+
+    if (!nodes.length) {
+      $graphSummary.innerHTML = '<span class="dim">0 files · 0 connections</span>';
+      $graphBody.innerHTML =
+        '<div class="empty-state">' +
+        '<div class="ico">◌</div>' +
+        '<div>No files yet — start a build</div>' +
+        '</div>';
+      return;
+    }
+
+    $graphSummary.innerHTML =
+      '<strong>Project Graph</strong> ' +
+      '<span class="dim">— ' + nodes.length + ' files, ' + edges.length + ' connection' +
+      (edges.length === 1 ? '' : 's') + '</span>';
+
+    // Group nodes into columns by type.
+    const buckets = {};
+    nodes.forEach((n) => {
+      const key = GRAPH_COLORS[n.type] ? n.type : "external";
+      (buckets[key] = buckets[key] || []).push(n);
+    });
+    // Stable sort within each bucket by id so the layout is deterministic.
+    Object.keys(buckets).forEach((k) => buckets[k].sort((a, b) => a.id.localeCompare(b.id)));
+
+    const columns = GRAPH_COLUMN_ORDER.filter((k) => buckets[k] && buckets[k].length);
+    Object.keys(buckets).forEach((k) => { if (columns.indexOf(k) === -1) columns.push(k); });
+
+    // Layout constants
+    const COL_W      = 180;          // horizontal spacing per column
+    const ROW_H      = 78;           // vertical spacing per node within a column
+    const PAD_X      = 60;
+    const PAD_Y      = 50;
+    const RADIUS     = 28;
+    const labelOffsetY = RADIUS + 14;
+
+    // Compute (x, y) for every node.
+    const pos = {};
+    let maxRows = 0;
+    columns.forEach((col, ci) => {
+      const items = buckets[col];
+      maxRows = Math.max(maxRows, items.length);
+      items.forEach((n, ri) => {
+        pos[n.id] = {
+          x: PAD_X + ci * COL_W,
+          y: PAD_Y + ri * ROW_H,
+          type: n.type,
+          label: n.label,
+        };
+      });
+    });
+
+    const width  = PAD_X * 2 + (columns.length - 1) * COL_W;
+    const height = PAD_Y * 2 + Math.max(0, maxRows - 1) * ROW_H + 20;
+
+    // Build SVG.
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "graph-svg");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+    // Edges first so they paint behind nodes.
+    const edgeG = document.createElementNS(svgNS, "g");
+    edgeG.setAttribute("class", "edges");
+    const edgeEls = [];
+    edges.forEach((e, idx) => {
+      const a = pos[e.from], b = pos[e.to];
+      if (!a || !b) return;
+      const path = document.createElementNS(svgNS, "path");
+      // Bezier curve with horizontal control handles
+      const dx = (b.x - a.x);
+      const c1x = a.x + dx * 0.5;
+      const c2x = b.x - dx * 0.5;
+      const d = "M " + a.x + " " + a.y +
+                " C " + c1x + " " + a.y + ", " + c2x + " " + b.y + ", " + b.x + " " + b.y;
+      path.setAttribute("d", d);
+      path.setAttribute("class", "edge kind-" + (e.kind || "import"));
+      path.dataset.from = e.from;
+      path.dataset.to   = e.to;
+      // Staggered fade-in per edge so they appear in sequence.
+      path.style.animationDelay = (idx * 60 + 200) + "ms";
+      edgeG.appendChild(path);
+      edgeEls.push({ path: path, from: e.from, to: e.to });
+    });
+    svg.appendChild(edgeG);
+
+    // Nodes
+    const nodeG = document.createElementNS(svgNS, "g");
+    nodeG.setAttribute("class", "nodes");
+    nodes.forEach((n, idx) => {
+      const p = pos[n.id];
+      if (!p) return;
+      const g = document.createElementNS(svgNS, "g");
+      g.setAttribute("class", "node");
+      g.dataset.nodeId = n.id;
+      const isFile = !n.id.startsWith("@"); // file paths vs synthetic externals
+      g.dataset.clickable = isFile ? "true" : "false";
+      // Staggered pop-in. Float-loop continues after.
+      g.style.animationDelay = (idx * 70) + "ms, " + ((idx % 4) * 1500) + "ms";
+
+      const c = document.createElementNS(svgNS, "circle");
+      c.setAttribute("cx", p.x);
+      c.setAttribute("cy", p.y);
+      c.setAttribute("r", RADIUS);
+      c.setAttribute("fill", GRAPH_COLORS[n.type] || GRAPH_COLORS.external);
+      // External nodes (Supabase, CDNs, APIs) get a soft glow to set them apart.
+      if (n.type === "external" || n.type === "api") c.classList.add("glow");
+      g.appendChild(c);
+
+      const t = document.createElementNS(svgNS, "text");
+      t.setAttribute("x", p.x);
+      t.setAttribute("y", p.y + labelOffsetY);
+      t.textContent = n.label || n.id;
+      g.appendChild(t);
+
+      // Hover: highlight incident edges + nodes.
+      g.addEventListener("mouseenter", () => highlightNode(n.id, true));
+      g.addEventListener("mouseleave", () => highlightNode(n.id, false));
+
+      // Click: open in Code tab if it's a real file.
+      if (isFile) {
+        g.style.cursor = "pointer";
+        g.addEventListener("click", () => {
+          // The Code tab's loadFile() expects an app-relative file path.
+          if (typeof loadFile === "function") {
+            loadFile(n.id);
+          }
+        });
+      }
+
+      nodeG.appendChild(g);
+    });
+    svg.appendChild(nodeG);
+
+    $graphBody.innerHTML = "";
+    $graphBody.appendChild(svg);
+
+    function highlightNode(id, on) {
+      $graphView.classList.toggle("dim-others", on);
+      const incident = new Set();
+      edgeEls.forEach((e) => {
+        const isInc = (e.from === id || e.to === id);
+        e.path.classList.toggle("is-incident", on && isInc);
+        if (on && isInc) {
+          incident.add(e.from);
+          incident.add(e.to);
+        }
+      });
+      nodeG.querySelectorAll(".node").forEach((nEl) => {
+        const nid = nEl.dataset.nodeId;
+        nEl.classList.toggle("is-incident", on && (nid === id || incident.has(nid)));
+      });
+    }
+  }
+
+  if ($graphRefresh) {
+    $graphRefresh.addEventListener("click", () => loadGraph());
   }
 
   // ────────────────────────────────────────────────────────────────────
@@ -2067,6 +3648,1425 @@
     });
     renderLogs();
   });
+
+  // ────────────────────────────────────────────────────────────────────
+  // HISTORY (version control)
+  // ────────────────────────────────────────────────────────────────────
+  const $historyBody    = document.getElementById("history-body");
+  const $historyCount   = document.getElementById("history-count");
+  const $historyRefresh = document.getElementById("history-refresh");
+
+  function formatVersionDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    const today = new Date();
+    const opts = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
+    if (d.getFullYear() !== today.getFullYear()) opts.year = "numeric";
+    return d.toLocaleString(undefined, opts);
+  }
+
+  function renderVersions(rows) {
+    if (!rows || !rows.length) {
+      $historyBody.innerHTML =
+        '<div class="empty">' +
+        '<div class="empty-icon"></div>' +
+        '<div class="empty-title">No versions yet</div>' +
+        '<div class="empty-sub">Every build commit becomes a version you can roll back to. Run a build from the Enhance sidebar.</div>' +
+        '</div>';
+      $historyCount.textContent = "";
+      return;
+    }
+    // Oldest commit = v1, newest = v(N). Rows come newest-first from git log.
+    const total = rows.length;
+    $historyCount.textContent = total + " version" + (total === 1 ? "" : "s");
+
+    const list = document.createElement("div");
+    list.className = "history-list";
+    rows.forEach((v, idx) => {
+      const versionNum = total - idx;
+      const row = document.createElement("div");
+      row.className = "history-row"
+        + (v.is_current ? " current" : "")
+        + (v.status === "error" ? " error" : "")
+        + (v.status === "rollback" ? " rollback" : "");
+
+      const actor = v.actor_email
+        ? v.actor_email.split("@")[0]
+        : (v.author && v.author !== "AIUI Deploy" ? v.author : "system");
+
+      const pillCls = v.is_current ? "current" : v.status;
+      const pillLbl = v.is_current ? "current" : v.status;
+
+      const canRollback = !v.is_current;
+      row.innerHTML =
+        '<div class="version-tag">v' + versionNum + '</div>' +
+        '<div class="info">' +
+          '<div class="message">' + escapeHtml(v.message) + '</div>' +
+          '<div class="meta">' +
+            '<span>' + escapeHtml(formatVersionDate(v.date)) + '</span>' +
+            '<span class="by">· by <strong>' + escapeHtml(actor) + '</strong></span>' +
+            '<span class="sha">' + escapeHtml(v.short_sha) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="actions">' +
+          '<span class="status-pill ' + pillCls + '">' + escapeHtml(pillLbl) + '</span>' +
+          '<button type="button" class="rollback-btn" data-sha="' + escapeHtml(v.sha) + '" data-v="' + versionNum + '"'
+            + (canRollback ? "" : " disabled") + '>' + (canRollback ? "Rollback" : "—") + '</button>' +
+        '</div>';
+      list.appendChild(row);
+    });
+    $historyBody.innerHTML = "";
+    $historyBody.appendChild(list);
+
+    list.querySelectorAll(".rollback-btn:not([disabled])").forEach((b) =>
+      b.addEventListener("click", () => rollbackVersion(b.dataset.sha, b.dataset.v))
+    );
+  }
+
+  async function loadVersions() {
+    if (!slug) {
+      $historyBody.innerHTML =
+        '<div class="empty">' +
+        '<div class="empty-icon"></div>' +
+        '<div class="empty-title">Waiting for build</div>' +
+        '<div class="empty-sub">Version history will appear here once the app has its first commit.</div>' +
+        '</div>';
+      return;
+    }
+    $historyBody.innerHTML =
+      '<div class="empty"><div class="empty-icon"></div><div class="empty-title">Loading versions…</div></div>';
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = "Bearer " + token;
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/versions", {
+        headers: headers,
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        $historyBody.innerHTML =
+          '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load</div><div class="empty-sub">' +
+          escapeHtml(txt).slice(0, 300) + '</div></div>';
+        return;
+      }
+      const rows = await r.json();
+      renderVersions(rows);
+    } catch (err) {
+      $historyBody.innerHTML =
+        '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Network error</div><div class="empty-sub">' +
+        escapeHtml(err.message) + '</div></div>';
+    }
+  }
+
+  async function rollbackVersion(sha, versionNum) {
+    if (!confirm("Rollback apps/" + slug + "/ to v" + versionNum + " (" + sha.slice(0, 7) + ")?\n\nA new commit is added on top — the old versions stay in history so you can always come forward again.")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = "Bearer " + token;
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/rollback", {
+        method: "POST",
+        headers: headers,
+        credentials: "include",
+        body: JSON.stringify({ sha: sha }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Rollback failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      const res = await r.json();
+      toast(res.noop ? "Already at that version." : "✅ Rolled back to v" + versionNum + ".", "success", 4000);
+      await loadVersions();
+      // Refresh file tree so Code panel shows the rolled-back files.
+      await loadFileTree();
+      // Graph reflects the new file structure.
+      try { loadGraph(); } catch (_) {}
+      // If a preview server is running, its files on disk just changed.
+      if (activeTab === "preview") refreshPreviewFrame();
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    }
+  }
+
+  if ($historyRefresh) $historyRefresh.addEventListener("click", loadVersions);
+
+  // ────────────────────────────────────────────────────────────────────
+  // DATABASE PANEL (Supabase)
+  // ────────────────────────────────────────────────────────────────────
+  const $dbUrl     = document.getElementById("db-url");
+  const $dbAnon    = document.getElementById("db-anon");
+  const $dbSave    = document.getElementById("db-save");
+  const $dbClear   = document.getElementById("db-clear");
+  const $dbStatus  = document.getElementById("db-status");
+  const $dbBadge   = document.getElementById("db-badge");
+  const $dbInfo    = document.getElementById("db-info");
+  const $dbInfoUrl = document.getElementById("db-info-url");
+  const $dbInfoBy  = document.getElementById("db-info-by");
+  const $dbInfoAt  = document.getElementById("db-info-at");
+  const $badgeDb   = document.getElementById("badge-database");
+
+  let _dbState = null;
+  let _oauthPollTimer = null;
+  let _oauthPollCount = 0;
+  if ($badgeDb) {
+    $badgeDb.hidden = false;
+    $badgeDb.dataset.kind = "warning";
+    $badgeDb.textContent = "Not connected";
+  }
+
+  const $dbOauthBlock      = document.getElementById("db-oauth-block");
+  const $dbOauthStateA     = document.getElementById("db-oauth-state-a");
+  const $dbOauthStateB     = document.getElementById("db-oauth-state-b");
+  const $dbOauthStateC     = document.getElementById("db-oauth-state-c");
+  const $dbOauthStateD     = document.getElementById("db-oauth-state-d");
+  const $dbOauthConnect    = document.getElementById("db-oauth-connect");
+  const $dbOauthDisconnect = document.getElementById("db-oauth-disconnect");
+  const $dbOauthDisconnectB = document.getElementById("db-oauth-disconnect-b");
+  const $dbOauthProjects   = document.getElementById("db-oauth-projects");
+  const $dbOauthLinkedName = document.getElementById("db-oauth-linked-name");
+  const $dbOauthStatus     = document.getElementById("db-oauth-status");
+  const $dbOauthCpName     = document.getElementById("db-oauth-cp-name");
+  const $dbOauthCpOrg      = document.getElementById("db-oauth-cp-org");
+  const $dbOauthCpRegion   = document.getElementById("db-oauth-cp-region");
+  const $dbOauthCpPw       = document.getElementById("db-oauth-cp-pw");
+  const $dbOauthCpSubmit   = document.getElementById("db-oauth-cp-submit");
+  const $dbOauthCpStatus   = document.getElementById("db-oauth-cp-status");
+  const $dbManualWrap      = document.getElementById("db-manual-wrap");
+  let _createPollTimer = null;
+  let _createPollCount = 0;
+
+  function _stopOauthPolling() {
+    if (_oauthPollTimer) {
+      clearInterval(_oauthPollTimer);
+      _oauthPollTimer = null;
+    }
+    _oauthPollCount = 0;
+  }
+
+  function _renderOauthBlock(cfg) {
+    cfg = cfg || {};
+    const connected = !!cfg.oauth_connected;
+    const linked = !!cfg.linked_project_ref;
+    if (!$dbOauthBlock) return;
+    $dbOauthStateA.hidden = true;
+    $dbOauthStateB.hidden = true;
+    $dbOauthStateC.hidden = true;
+    if ($dbOauthStateD) $dbOauthStateD.hidden = true;
+    if (!connected) {
+      $dbOauthStateA.hidden = false;
+      // If user has a manual config but no OAuth, expand manual so they see what's saved.
+      if ($dbManualWrap) $dbManualWrap.open = !!cfg.configured;
+    } else if (connected && !linked) {
+      $dbOauthStateB.hidden = false;
+      if ($dbManualWrap) $dbManualWrap.open = false;
+      _loadOauthProjects();
+    } else {
+      $dbOauthStateC.hidden = false;
+      $dbOauthLinkedName.textContent = cfg.linked_project_ref || "—";
+      if ($dbManualWrap) $dbManualWrap.open = false;
+    }
+  }
+
+  async function _loadOauthProjects() {
+    if (!slug || !$dbOauthProjects) return;
+    $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--muted);">Loading projects…</div>';
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/projects", {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (r.status === 409) {
+        // Token went stale — show reconnect.
+        $dbOauthProjects.innerHTML = "";
+        const div = document.createElement("div");
+        div.style.cssText = "display:flex;flex-direction:column;gap:8px;";
+        const msg = document.createElement("div");
+        msg.style.cssText = "font-size:12px;color:var(--warning);";
+        msg.textContent = "Your Supabase session expired. Reconnect to continue.";
+        const btn = document.createElement("button");
+        btn.className = "btn btn-primary";
+        btn.type = "button";
+        btn.style.cssText = "background:#22c55e;border-color:#22c55e;color:#0a0a0b;font-weight:600;align-self:flex-start;";
+        btn.textContent = "Reconnect with Supabase →";
+        btn.addEventListener("click", _openOauthPopup);
+        div.appendChild(msg);
+        div.appendChild(btn);
+        $dbOauthProjects.appendChild(div);
+        return;
+      }
+      if (!r.ok) {
+        const txt = await r.text();
+        $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--danger);">Could not load projects: ' + txt.slice(0, 200) + '</div>';
+        return;
+      }
+      const projects = await r.json();
+      if (!Array.isArray(projects) || projects.length === 0) {
+        $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--muted);">No projects found in your Supabase account.</div>';
+        return;
+      }
+      $dbOauthProjects.innerHTML = "";
+      projects.forEach((p) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "oauth-project-row";
+        btn.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;cursor:pointer;text-align:left;width:100%;transition:background 0.12s;";
+        btn.addEventListener("mouseenter", () => { btn.style.background = "var(--surface-2)"; });
+        btn.addEventListener("mouseleave", () => { btn.style.background = "var(--surface)"; });
+        const name = document.createElement("span");
+        name.style.cssText = "flex:1;font-weight:600;";
+        name.textContent = "📦 " + (p.name || p.ref);
+        const meta = document.createElement("span");
+        meta.className = "muted";
+        meta.style.cssText = "color:var(--muted);font-family:var(--font-mono);font-size:11px;";
+        meta.textContent = (p.region || "?") + " · " + (p.ref || "");
+        btn.appendChild(name);
+        btn.appendChild(meta);
+        btn.addEventListener("click", () => _linkOauthProject(p.ref, btn));
+        $dbOauthProjects.appendChild(btn);
+      });
+    } catch (err) {
+      $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--danger);">Network error: ' + (err.message || err) + '</div>';
+    }
+  }
+
+  async function _linkOauthProject(ref, btn) {
+    if (!slug || !ref) return;
+    if (btn) { btn.disabled = true; btn.style.opacity = "0.6"; }
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/link", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ project_ref: ref }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Link failed: " + txt.slice(0, 200), "error", 4500);
+        if (btn) { btn.disabled = false; btn.style.opacity = "1"; }
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      toast("Linked to " + (data.project_name || ref), "success", 3500);
+      await loadDatabase();
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 4500);
+      if (btn) { btn.disabled = false; btn.style.opacity = "1"; }
+    }
+  }
+
+  async function _disconnectOauth() {
+    if (!slug) return;
+    if (!confirm("Disconnect Supabase OAuth from this project? Manual credentials (if any) will be kept.")) return;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth", {
+        method: "DELETE",
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        toast("Disconnect failed: " + txt.slice(0, 200), "error", 4500);
+        return;
+      }
+      toast("Supabase OAuth disconnected.", "success", 3000);
+      await loadDatabase();
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 4500);
+    }
+  }
+
+  function _openOauthPopup() {
+    if (!slug) return;
+    const url = "/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/start";
+    window.open(url, "aiui_supabase_oauth", "width=720,height=820");
+    if ($dbOauthStatus) {
+      $dbOauthStatus.style.color = "var(--muted)";
+      $dbOauthStatus.textContent = "Waiting for authorization…";
+    }
+    _stopOauthPolling();
+    _oauthPollCount = 0;
+    _oauthPollTimer = setInterval(async () => {
+      _oauthPollCount += 1;
+      // 2 sec * 150 = 5 min cap.
+      if (_oauthPollCount > 150) {
+        _stopOauthPolling();
+        if ($dbOauthStatus) {
+          $dbOauthStatus.style.color = "var(--danger)";
+          $dbOauthStatus.textContent = "Timed out waiting for authorization. Try again.";
+        }
+        return;
+      }
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) return;
+        const cfg = await r.json();
+        if (cfg && cfg.oauth_connected) {
+          _stopOauthPolling();
+          _dbState = cfg;
+          if ($dbOauthStatus) $dbOauthStatus.textContent = "";
+          await _runAutoLink(cfg);
+        }
+      } catch (_) { /* keep polling */ }
+    }, 2000);
+  }
+
+  async function _runAutoLink(cfg) {
+    if (!slug) return;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/auto-link", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Auto-link failed: " + txt.slice(0, 200), "error", 4500);
+        _renderDatabase();
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      if (data.action === "linked") {
+        toast("Linked to " + (data.project_name || data.project_ref || "Supabase"), "success", 3500);
+        await loadDatabase();
+        return;
+      }
+      if (data.action === "pick") {
+        if ($dbOauthStateA) $dbOauthStateA.hidden = true;
+        if ($dbOauthStateC) $dbOauthStateC.hidden = true;
+        if ($dbOauthStateD) $dbOauthStateD.hidden = true;
+        if ($dbOauthStateB) $dbOauthStateB.hidden = false;
+        _renderProjectList(Array.isArray(data.projects) ? data.projects : []);
+        return;
+      }
+      if (data.action === "create") {
+        _renderCreateForm(data);
+        return;
+      }
+      _renderDatabase();
+    } catch (err) {
+      toast("Network error: " + (err.message || err), "error", 4500);
+      _renderDatabase();
+    }
+  }
+
+  function _renderProjectList(projects) {
+    if (!$dbOauthProjects) return;
+    $dbOauthProjects.innerHTML = "";
+    if (!projects.length) {
+      $dbOauthProjects.innerHTML = '<div style="font-size:12px;color:var(--muted);">No projects found in your Supabase account.</div>';
+      return;
+    }
+    projects.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "oauth-project-row";
+      btn.style.cssText = "display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;cursor:pointer;text-align:left;width:100%;transition:background 0.12s;";
+      btn.addEventListener("mouseenter", () => { btn.style.background = "var(--surface-2)"; });
+      btn.addEventListener("mouseleave", () => { btn.style.background = "var(--surface)"; });
+      const name = document.createElement("span");
+      name.style.cssText = "flex:1;font-weight:600;";
+      name.textContent = "📦 " + (p.name || p.ref);
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      meta.style.cssText = "color:var(--muted);font-family:var(--font-mono);font-size:11px;";
+      meta.textContent = (p.region || "?") + " · " + (p.ref || "");
+      btn.appendChild(name);
+      btn.appendChild(meta);
+      btn.addEventListener("click", () => _linkOauthProject(p.ref, btn));
+      $dbOauthProjects.appendChild(btn);
+    });
+  }
+
+  function _renderCreateForm(data) {
+    if (!$dbOauthStateD) return;
+    if ($dbOauthStateA) $dbOauthStateA.hidden = true;
+    if ($dbOauthStateB) $dbOauthStateB.hidden = true;
+    if ($dbOauthStateC) $dbOauthStateC.hidden = true;
+    $dbOauthStateD.hidden = false;
+
+    const orgs = Array.isArray(data.organizations) ? data.organizations : [];
+    if ($dbOauthCpOrg) {
+      $dbOauthCpOrg.innerHTML = "";
+      orgs.forEach((o) => {
+        const opt = document.createElement("option");
+        opt.value = o.slug || o.id || "";
+        opt.textContent = o.name || o.slug || o.id || "";
+        $dbOauthCpOrg.appendChild(opt);
+      });
+    }
+
+    const regions = Array.isArray(data.regions) ? data.regions : [];
+    if ($dbOauthCpRegion) {
+      $dbOauthCpRegion.innerHTML = "";
+      regions.forEach((reg) => {
+        const opt = document.createElement("option");
+        opt.value = reg;
+        opt.textContent = reg;
+        $dbOauthCpRegion.appendChild(opt);
+      });
+      if (regions.indexOf("us-east-1") !== -1) {
+        $dbOauthCpRegion.value = "us-east-1";
+      } else if (regions.length > 0) {
+        $dbOauthCpRegion.value = regions[0];
+      }
+    }
+
+    if ($dbOauthCpName) $dbOauthCpName.value = data.suggested_name || "";
+    if ($dbOauthCpPw) $dbOauthCpPw.value = "";
+    if ($dbOauthCpStatus) {
+      $dbOauthCpStatus.style.color = "var(--muted)";
+      $dbOauthCpStatus.textContent = "";
+    }
+    if ($dbOauthCpSubmit) {
+      $dbOauthCpSubmit.disabled = false;
+      $dbOauthCpSubmit.style.opacity = "1";
+    }
+  }
+
+  async function _submitCreateProject() {
+    if (!slug || !$dbOauthCpStatus) return;
+    const name = ($dbOauthCpName && $dbOauthCpName.value || "").trim();
+    const org = $dbOauthCpOrg && $dbOauthCpOrg.value || "";
+    const region = $dbOauthCpRegion && $dbOauthCpRegion.value || "";
+    const pw = $dbOauthCpPw && $dbOauthCpPw.value || "";
+    const setErr = (msg) => {
+      $dbOauthCpStatus.style.color = "var(--danger)";
+      $dbOauthCpStatus.textContent = msg;
+    };
+    if (!/^[a-zA-Z0-9-]{2,40}$/.test(name)) {
+      setErr("Project name: 2–40 chars, letters/numbers/dashes only.");
+      return;
+    }
+    if (pw.length < 12) {
+      setErr("Database password must be at least 12 characters.");
+      return;
+    }
+    if (!org) {
+      setErr("Pick an organization.");
+      return;
+    }
+    if (!region) {
+      setErr("Pick a region.");
+      return;
+    }
+    if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = true; $dbOauthCpSubmit.style.opacity = "0.6"; }
+    $dbOauthCpStatus.style.color = "var(--muted)";
+    $dbOauthCpStatus.textContent = "Creating project (30–90s)…";
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/create-project", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ name: name, region: region, organization_id: org, db_password: pw }),
+      });
+      if (r.status === 422) {
+        const data = await r.json().catch(() => ({}));
+        const detail = (data && (data.detail || data.message)) || "Missing required scope.";
+        $dbOauthCpStatus.style.color = "var(--danger)";
+        $dbOauthCpStatus.innerHTML = "";
+        const span = document.createElement("span");
+        span.textContent = detail + " ";
+        const link = document.createElement("a");
+        link.href = "https://supabase.com/dashboard";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.style.color = "var(--accent)";
+        link.textContent = "Open Supabase dashboard";
+        $dbOauthCpStatus.appendChild(span);
+        $dbOauthCpStatus.appendChild(link);
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+        return;
+      }
+      if (!r.ok) {
+        const txt = await r.text();
+        setErr("Create failed: " + txt.slice(0, 200));
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+        return;
+      }
+      const data = await r.json().catch(() => ({}));
+      if (data.project_ref) {
+        _pollCreateStatus(data.project_ref);
+      } else {
+        setErr("Unexpected response from server.");
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+      }
+    } catch (err) {
+      setErr("Network error: " + (err.message || err));
+      if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+    }
+  }
+
+  function _stopCreatePolling() {
+    if (_createPollTimer) {
+      clearInterval(_createPollTimer);
+      _createPollTimer = null;
+    }
+    _createPollCount = 0;
+  }
+
+  function _pollCreateStatus(projectRef) {
+    if (!slug || !projectRef) return;
+    _stopCreatePolling();
+    _createPollCount = 0;
+    _createPollTimer = setInterval(async () => {
+      _createPollCount += 1;
+      if (_createPollCount > 60) {
+        _stopCreatePolling();
+        if ($dbOauthCpStatus) {
+          $dbOauthCpStatus.style.color = "var(--warning)";
+          $dbOauthCpStatus.textContent = "Still provisioning. Refresh this page in a minute to see status.";
+        }
+        if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+        return;
+      }
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/create-status", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) return;
+        const data = await r.json().catch(() => ({}));
+        if ($dbOauthCpStatus && data.message) {
+          $dbOauthCpStatus.style.color = "var(--muted)";
+          $dbOauthCpStatus.textContent = data.message;
+        }
+        if (data.status === "ready") {
+          _stopCreatePolling();
+          toast("✓ Project created and linked", "success", 3500);
+          await loadDatabase();
+          return;
+        }
+        if (data.status === "failed") {
+          _stopCreatePolling();
+          if ($dbOauthCpStatus) {
+            $dbOauthCpStatus.style.color = "var(--danger)";
+            $dbOauthCpStatus.textContent = data.message || "Project creation failed.";
+          }
+          if ($dbOauthCpSubmit) { $dbOauthCpSubmit.disabled = false; $dbOauthCpSubmit.style.opacity = "1"; }
+          return;
+        }
+      } catch (_) { /* keep polling */ }
+    }, 3000);
+  }
+
+  if ($dbOauthConnect) $dbOauthConnect.addEventListener("click", _openOauthPopup);
+  if ($dbOauthDisconnect) $dbOauthDisconnect.addEventListener("click", _disconnectOauth);
+  if ($dbOauthDisconnectB) $dbOauthDisconnectB.addEventListener("click", _disconnectOauth);
+  if ($dbOauthCpSubmit) $dbOauthCpSubmit.addEventListener("click", _submitCreateProject);
+
+  function _updateDbTabBadge(cfg) {
+    if (!$badgeDb) return;
+    cfg = cfg || {};
+    const oauth = !!cfg.oauth_connected;
+    const linked = !!cfg.linked_project_ref;
+    const configured = !!cfg.configured;
+    if (configured || (oauth && linked)) {
+      $badgeDb.hidden = false;
+      $badgeDb.dataset.kind = "success";
+      $badgeDb.textContent = "✓";
+    } else if (oauth && !linked) {
+      $badgeDb.hidden = false;
+      $badgeDb.dataset.kind = "active";
+      $badgeDb.textContent = "Pick project";
+    } else {
+      $badgeDb.hidden = false;
+      $badgeDb.dataset.kind = "warning";
+      $badgeDb.textContent = "Not connected";
+    }
+  }
+
+  function _renderDatabase() {
+    const cfg = _dbState || {};
+    _renderOauthBlock(cfg);
+    _updateDbTabBadge(cfg);
+    if (cfg.configured) {
+      $dbBadge.textContent = "Connected";
+      $dbBadge.style.background = "rgba(34,197,94,0.15)";
+      $dbBadge.style.color = "var(--success)";
+      $dbClear.hidden = false;
+      $dbInfo.hidden = false;
+      $dbInfoUrl.textContent = cfg.supabase_url || "";
+      $dbInfoBy.textContent = (cfg.configured_by || "").split("@")[0] || "—";
+      try {
+        $dbInfoAt.textContent = cfg.configured_at
+          ? new Date(cfg.configured_at).toLocaleString()
+          : "";
+      } catch (_) { $dbInfoAt.textContent = ""; }
+      $dbUrl.value = cfg.supabase_url || "";
+      $dbAnon.value = "";
+      $dbAnon.placeholder = "(saved — paste again only to change)";
+      const $dbUri = document.getElementById("db-uri");
+      if ($dbUri) {
+        $dbUri.value = "";
+        $dbUri.placeholder = cfg.has_db_uri
+          ? "(saved — paste again only to change)"
+          : "postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
+      }
+      // AI-can-manage-tables badge — only when DB URI is also stored.
+      const $aiBadge = document.getElementById("db-info-aimanage");
+      if ($aiBadge) $aiBadge.hidden = !cfg.has_db_uri;
+      // Test-connection button is only useful when we have a DB URI to query.
+      const $dbTestBtn = document.getElementById("db-test");
+      if ($dbTestBtn) $dbTestBtn.hidden = !cfg.has_db_uri;
+    } else {
+      $dbBadge.textContent = "Not connected";
+      $dbBadge.style.background = "var(--surface-2)";
+      $dbBadge.style.color = "var(--muted)";
+      $dbClear.hidden = true;
+      $dbInfo.hidden = true;
+      $dbAnon.placeholder = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...";
+      const $dbUri = document.getElementById("db-uri");
+      if ($dbUri) {
+        $dbUri.value = "";
+        $dbUri.placeholder = "postgresql://postgres.xxxx:password@aws-0-us-east-1.pooler.supabase.com:6543/postgres";
+      }
+      const $dbTestBtn = document.getElementById("db-test");
+      if ($dbTestBtn) $dbTestBtn.hidden = true;
+    }
+  }
+
+  async function loadDatabase() {
+    if (!slug) {
+      $dbStatus.textContent = "Loading project…";
+      return;
+    }
+    $dbStatus.textContent = "";
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (r.ok) {
+        _dbState = await r.json();
+      } else {
+        $dbStatus.textContent = "Could not load: HTTP " + r.status;
+        return;
+      }
+    } catch (err) {
+      $dbStatus.textContent = "Could not load: " + (err.message || err);
+      return;
+    }
+    _renderDatabase();
+  }
+
+  $dbSave.addEventListener("click", async () => {
+    const url = ($dbUrl.value || "").trim();
+    const key = ($dbAnon.value || "").trim();
+    if (!url) { $dbUrl.focus(); $dbStatus.textContent = "Paste your Project URL."; return; }
+    if (!key) {
+      if (!(_dbState && _dbState.configured)) {
+        $dbAnon.focus();
+        $dbStatus.textContent = "Paste your anon public key.";
+        return;
+      }
+      $dbStatus.textContent = "Paste your anon key again to change the config (we don't keep it in plaintext).";
+      return;
+    }
+    $dbSave.disabled = true;
+    $dbSave.textContent = "Saving…";
+    $dbStatus.textContent = "";
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({
+          supabase_url: url,
+          anon_key: key,
+          db_uri: (document.getElementById("db-uri").value || "").trim() || undefined,
+        }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        $dbStatus.textContent = "Save failed: " + txt.slice(0, 240);
+        toast("Save failed", "error", 4000);
+        return;
+      }
+      _dbState = await r.json();
+      _renderDatabase();
+      toast("Supabase saved. Future builds + the live app will use it.", "success", 4500);
+      $dbStatus.textContent = "✓ Saved.";
+      setTimeout(() => { if ($dbStatus.textContent === "✓ Saved.") $dbStatus.textContent = ""; }, 4000);
+    } catch (err) {
+      $dbStatus.textContent = "Network error: " + err.message;
+    } finally {
+      $dbSave.disabled = false;
+      $dbSave.textContent = "Save & connect";
+    }
+  });
+
+  // ── Quick URI builder: project ref (from saved Supabase URL) + password
+  // + region → full Transaction-pooler URI. Saves users from copy-pasting
+  // the wrong URI from Supabase's dashboard.
+  const $dbEasyPw = document.getElementById("db-easy-password");
+  const $dbEasyRegion = document.getElementById("db-easy-region");
+  const $dbEasyBuild = document.getElementById("db-easy-build");
+  const $dbEasyStatus = document.getElementById("db-easy-status");
+  if ($dbEasyBuild) {
+    $dbEasyBuild.addEventListener("click", () => {
+      // Extract project ref from supabase_url (e.g. "abc.supabase.co" → "abc").
+      const url = ($dbUrl.value || "").trim();
+      const m = url.match(/https?:\/\/([a-z0-9-]+)\.supabase\.(co|in)/i);
+      if (!m) {
+        $dbEasyStatus.style.color = "var(--danger)";
+        $dbEasyStatus.textContent = "Save Supabase URL first.";
+        return;
+      }
+      const ref = m[1];
+      const pw = ($dbEasyPw.value || "").trim();
+      if (!pw) { $dbEasyPw.focus(); $dbEasyStatus.textContent = "Enter password."; $dbEasyStatus.style.color = "var(--danger)"; return; }
+      const region = $dbEasyRegion.value;
+      if (!region) { $dbEasyRegion.focus(); $dbEasyStatus.textContent = "Pick region."; $dbEasyStatus.style.color = "var(--danger)"; return; }
+      // URL-encode any special characters in the password.
+      const encoded = encodeURIComponent(pw);
+      const uri = `postgresql://postgres.${ref}:${encoded}@aws-0-${region}.pooler.supabase.com:6543/postgres`;
+      const $dbUri = document.getElementById("db-uri");
+      if ($dbUri) $dbUri.value = uri;
+      $dbEasyStatus.style.color = "var(--success)";
+      $dbEasyStatus.textContent = "✓ URI built — click Save & connect.";
+      $dbEasyPw.value = "";  // clear plaintext from memory
+    });
+  }
+
+  // Test connection — runs a tiny query through the /db/sql endpoint to
+  // confirm the stored DB URI actually works against the user's Postgres.
+  const $dbTestBtn = document.getElementById("db-test");
+  if ($dbTestBtn) {
+    $dbTestBtn.addEventListener("click", async () => {
+      $dbTestBtn.disabled = true;
+      const orig = $dbTestBtn.textContent;
+      $dbTestBtn.innerHTML = '<span class="btn-spinner"></span>Testing…';
+      $dbStatus.style.color = "var(--muted)";
+      $dbStatus.textContent = "";
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/db/sql", {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ sql: "SELECT NOW() AS now, current_database() AS db, version() AS version" }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          $dbStatus.style.color = "var(--danger)";
+          $dbStatus.textContent = "✗ " + (data.detail || "HTTP " + r.status);
+          return;
+        }
+        const row = (data.rows && data.rows[0]) || {};
+        const ms = data.executed_ms;
+        const dbName = row.db || "—";
+        const ver = (row.version || "").split(" ").slice(0, 2).join(" ");
+        $dbStatus.style.color = "var(--success)";
+        $dbStatus.textContent = `✓ Connected to ${dbName} (${ver}) · ${ms}ms`;
+      } catch (err) {
+        $dbStatus.style.color = "var(--danger)";
+        $dbStatus.textContent = "✗ Network: " + err.message;
+      } finally {
+        $dbTestBtn.disabled = false;
+        $dbTestBtn.textContent = orig;
+      }
+    });
+  }
+
+  $dbClear.addEventListener("click", async () => {
+    if (!confirm("Disconnect Supabase from this project? The live app will lose access immediately.")) return;
+    $dbClear.disabled = true;
+    try {
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+        method: "DELETE",
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        $dbStatus.textContent = "Disconnect failed: " + txt.slice(0, 240);
+        return;
+      }
+      _dbState = { configured: false };
+      _renderDatabase();
+      toast("Supabase disconnected.", "success", 3000);
+      $dbStatus.textContent = "Disconnected.";
+      setTimeout(() => { if ($dbStatus.textContent === "Disconnected.") $dbStatus.textContent = ""; }, 4000);
+    } catch (err) {
+      $dbStatus.textContent = "Network error: " + err.message;
+    } finally {
+      $dbClear.disabled = false;
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // PUBLISH (host app at <slug>.ai-ui.coolestdomain.win)
+  // ────────────────────────────────────────────────────────────────────
+  const $pubOverlay = document.getElementById("pub-overlay");
+  const $pubTitle   = document.getElementById("pub-title");
+  const $pubBody    = document.getElementById("pub-body");
+  const $pubSlug    = document.getElementById("pub-slug-name");
+  const $pubUrlRow  = document.getElementById("pub-url-row");
+  const $pubUrlText = document.getElementById("pub-url-text");
+  const $pubUrlCopy = document.getElementById("pub-url-copy");
+  const $pubUrlOpen = document.getElementById("pub-url-open");
+  const $pubMeta    = document.getElementById("pub-meta");
+  const $pubWhen    = document.getElementById("pub-when");
+  const $pubBy      = document.getElementById("pub-by");
+  const $pubCancel  = document.getElementById("pub-cancel");
+  const $pubConfirm = document.getElementById("pub-confirm");
+  const $pubUnpub   = document.getElementById("pub-unpublish");
+  const $btnPub     = document.getElementById("btn-publish");
+  const $btnPubLbl  = document.getElementById("btn-publish-label");
+
+  let _publishedState = null; // {published, public_url, ...}
+
+  function _closePub() { $pubOverlay.hidden = true; }
+  $pubCancel.addEventListener("click", _closePub);
+  $pubOverlay.addEventListener("click", (ev) => { if (ev.target === $pubOverlay) _closePub(); });
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$pubOverlay.hidden) _closePub(); });
+
+  function _renderPubButton(state, custom) {
+    // Tri-state badge:
+    //   "Publish" (grey)  — nothing published anywhere
+    //   "Preview" (amber) — published only at the generic auto subdomain
+    //                       (visible URL but not yet on the user's real domain)
+    //   "Live"    (green) — a custom domain is attached AND verified;
+    //                       the app is live at the user's real URL.
+    $btnPub.classList.remove("is-live", "is-preview");
+    if (custom && custom.verified) {
+      $btnPub.classList.add("is-live");
+      $btnPubLbl.textContent = "Live";
+      $btnPub.title = "Live at " + (custom.public_url || "") + " — click to manage";
+    } else if (state && state.published) {
+      $btnPub.classList.add("is-preview");
+      $btnPubLbl.textContent = "Preview";
+      $btnPub.title = "Preview at " + (state.public_url || "")
+        + " — attach your own domain to go fully live. Click to manage.";
+    } else {
+      $btnPubLbl.textContent = "Publish";
+      $btnPub.title = "Publish this app — click to set up a public URL or your own domain";
+    }
+  }
+
+  async function refreshPublishStatus() {
+    if (!slug) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/publish", {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (!r.ok) return;
+      _publishedState = await r.json();
+      _renderPubButton(_publishedState, _customDomainState);
+    } catch (_) {}
+  }
+
+  function _renderPubModal() {
+    $pubSlug.textContent = slug || "(unknown)";
+    const $renameBlock = document.getElementById("pub-rename-block");
+    const $renameInput = document.getElementById("pub-rename-input");
+    if (_publishedState && _publishedState.published) {
+      $pubTitle.textContent = "🌐 App is live";
+      $pubBody.innerHTML = "Anyone with this link can view <strong>" + escapeHtml(slug) + "</strong>:";
+      $pubUrlRow.hidden = false;
+      $pubUrlText.textContent = _publishedState.public_url;
+      $pubUrlOpen.href = _publishedState.public_url;
+      $pubMeta.hidden = false;
+      try {
+        const d = new Date(_publishedState.published_at);
+        $pubWhen.textContent = d.toLocaleString();
+      } catch (_) { $pubWhen.textContent = ""; }
+      $pubBy.textContent = (_publishedState.published_by || "").split("@")[0] || "—";
+      $pubConfirm.hidden = true;
+      $pubUnpub.hidden = false;
+      if ($renameBlock) {
+        $renameBlock.hidden = false;
+        if ($renameInput) $renameInput.value = slug || "";
+      }
+    } else {
+      $pubTitle.textContent = "🌐 Publish app";
+      $pubBody.innerHTML = "Make <strong>" + escapeHtml(slug) + "</strong> reachable at a public URL anyone can visit. Publishing is free — you can unpublish anytime.";
+      $pubUrlRow.hidden = false;
+      const previewUrl = "https://" + slug + ".ai-ui.coolestdomain.win/";
+      $pubUrlText.textContent = previewUrl;
+      $pubUrlOpen.href = previewUrl;
+      $pubUrlOpen.style.display = "none";
+      $pubMeta.hidden = true;
+      $pubConfirm.hidden = false;
+      $pubUnpub.hidden = true;
+      if ($renameBlock) $renameBlock.hidden = true;
+    }
+  }
+
+  // ── Supabase config ──
+  const $sbUrl      = document.getElementById("pub-sb-url");
+  const $sbAnon     = document.getElementById("pub-sb-anon");
+  const $sbSave     = document.getElementById("pub-sb-save");
+  const $sbClear    = document.getElementById("pub-sb-clear");
+  const $sbAttached = document.getElementById("pub-sb-attached");
+  const $sbCurrent  = document.getElementById("pub-sb-current");
+  const $sbBadge    = document.getElementById("pub-sb-badge");
+
+  let _sbState = null;
+
+  async function refreshSupabase() {
+    if (!slug) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (r.ok) _sbState = await r.json();
+    } catch (_) {}
+    _renderSupabase();
+  }
+
+  function _renderSupabase() {
+    const cfg = _sbState || {};
+    if (cfg.configured) {
+      $sbBadge.textContent = "Connected";
+      $sbBadge.classList.add("verified");
+      $sbAttached.hidden = false;
+      $sbCurrent.textContent = cfg.supabase_url || "";
+      $sbUrl.value = cfg.supabase_url || "";
+      $sbAnon.value = "";
+      $sbAnon.placeholder = "(saved — paste again only to change)";
+    } else {
+      $sbBadge.textContent = "Optional";
+      $sbBadge.classList.remove("verified");
+      $sbAttached.hidden = true;
+      $sbAnon.placeholder = "anon public key (eyJ…)";
+    }
+  }
+
+  $sbSave.addEventListener("click", async () => {
+    const url = ($sbUrl.value || "").trim();
+    const key = ($sbAnon.value || "").trim();
+    if (!url) { $sbUrl.focus(); return; }
+    if (!key) {
+      if (!(_sbState && _sbState.configured)) {
+        $sbAnon.focus();
+        toast("Paste your anon public key.", "error", 4000);
+        return;
+      }
+      toast("Paste your anon key again to change the config (we don't store it in plaintext).", "error", 5000);
+      return;
+    }
+    $sbSave.disabled = true;
+    $sbSave.textContent = "Saving…";
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+        credentials: "include",
+        body: JSON.stringify({ supabase_url: url, anon_key: key }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Save failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _sbState = await r.json();
+      _renderSupabase();
+      toast("Supabase saved. Future builds + the live app will use it.", "success", 4000);
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $sbSave.disabled = false;
+      $sbSave.textContent = "Save";
+    }
+  });
+
+  $sbClear.addEventListener("click", async () => {
+    if (!confirm("Disconnect Supabase from this project? The live app will lose access immediately.")) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
+        method: "DELETE",
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        toast("Disconnect failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _sbState = { configured: false };
+      _renderSupabase();
+      toast("Supabase disconnected.", "success", 3000);
+    } catch (err) { toast("Network error: " + err.message, "error", 6000); }
+  });
+
+  // Refresh Supabase config every time the publish modal opens.
+  $btnPub.addEventListener("click", () => {
+    setTimeout(refreshSupabase, 100);
+  });
+
+  // ── Rename project ──
+  const $renameInput  = document.getElementById("pub-rename-input");
+  const $renameBtn    = document.getElementById("pub-rename-btn");
+  const $renameResult = document.getElementById("pub-rename-result");
+  const SLUG_RE_PV = /^[a-z0-9][a-z0-9-]{2,49}$/;
+
+  if ($renameBtn) {
+    $renameBtn.addEventListener("click", async () => {
+      const newSlug = ($renameInput.value || "").trim().toLowerCase();
+      if (!newSlug || newSlug === slug) {
+        $renameResult.textContent = "Type a new name (lowercase letters, digits, and hyphens, 3–50 chars).";
+        return;
+      }
+      if (!SLUG_RE_PV.test(newSlug)) {
+        $renameResult.innerHTML = '<span style="color:var(--danger);">Invalid name. Use lowercase letters, digits, and hyphens (3–50 chars).</span>';
+        return;
+      }
+      if (!confirm(`Rename "${slug}" → "${newSlug}"?\n\nThe URL will change. Any custom domain you've attached will need a new DNS record for the new name.`)) return;
+
+      $renameBtn.disabled = true;
+      $renameBtn.textContent = "Renaming…";
+      try {
+        const token = localStorage.getItem("token");
+        const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/rename`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+          credentials: "include",
+          body: JSON.stringify({ new_slug: newSlug }),
+        });
+        if (!r.ok) {
+          const txt = await r.text();
+          $renameResult.innerHTML = '<span style="color:var(--danger);">' + escapeHtml(txt).slice(0, 220) + '</span>';
+          return;
+        }
+        toast(`Renamed to ${newSlug}. Reloading…`, "success", 3000);
+        // Reload the page after a beat — slug is in many places, easiest reset.
+        setTimeout(() => window.location.reload(), 800);
+      } catch (err) {
+        $renameResult.innerHTML = '<span style="color:var(--danger);">Network error: ' + escapeHtml(err.message) + '</span>';
+      } finally {
+        $renameBtn.disabled = false;
+        $renameBtn.textContent = "Rename";
+      }
+    });
+  }
+
+  $btnPub.addEventListener("click", async () => {
+    await refreshPublishStatus();
+    _renderPubModal();
+    $pubOverlay.hidden = false;
+  });
+
+  $pubConfirm.addEventListener("click", async () => {
+    $pubConfirm.disabled = true;
+    $pubConfirm.textContent = "Publishing…";
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Publish failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _publishedState = await r.json();
+      _renderPubButton(_publishedState, _customDomainState);
+      _renderPubModal();
+      $pubUrlOpen.style.display = "";
+      toast("App is now live at " + _publishedState.public_url, "success", 5000);
+      _closePub();
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $pubConfirm.disabled = false;
+      $pubConfirm.textContent = "Publish now";
+    }
+  });
+
+  $pubUnpub.addEventListener("click", async () => {
+    const hadCustom = !!(_customDomainState && _customDomainState.domain);
+    const msg = hadCustom
+      ? `Unpublish ${slug}?\n\nThis stops the public URL AND detaches your custom domain "${_customDomainState.domain}". You can re-attach it later.`
+      : `Unpublish ${slug}? The public URL will stop working.`;
+    if (!confirm(msg)) return;
+    $pubUnpub.disabled = true;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/publish", {
+        method: "DELETE",
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 204) {
+        const txt = await r.text();
+        toast("Unpublish failed: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      // Reset everything: server already deleted the row (which cascades
+      // custom_domain + verified_at), now mirror that locally.
+      _publishedState = { published: false };
+      _customDomainState = null;
+      if ($cdInput) $cdInput.value = "";
+      if ($cdResult) $cdResult.innerHTML = "";
+      if ($cdDnsBlock) $cdDnsBlock.hidden = false;
+      if ($cdVerifiedMsg) $cdVerifiedMsg.hidden = true;
+      if ($autoSection) $autoSection.hidden = false;
+      _renderPubButton(_publishedState, _customDomainState);
+      _renderPubModal();
+      _renderCustomDomain();
+      toast(hadCustom
+        ? "App unpublished and custom domain detached."
+        : "App unpublished.", "success", 3500);
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $pubUnpub.disabled = false;
+    }
+  });
+
+  $pubUrlCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($pubUrlText.textContent);
+      const orig = $pubUrlCopy.textContent;
+      $pubUrlCopy.textContent = "Copied!";
+      setTimeout(() => ($pubUrlCopy.textContent = orig), 1500);
+    } catch (_) {}
+  });
+
+  // Refresh publish status when the slug becomes known (after build).
+  // Hook into the existing loadFileTree which sets `slug`.
+  const _origLoadFileTree2 = loadFileTree;
+  loadFileTree = async function (...args) {
+    const r = await _origLoadFileTree2(...args);
+    refreshPublishStatus();
+    return r;
+  };
+
+  // ── Custom domain (inside the publish modal) ──
+  const $cdDivider = document.getElementById("pub-cd-divider");
+  const $cdTitle   = document.getElementById("pub-cd-title");
+  const $cdBadge   = document.getElementById("pub-cd-badge");
+  const $cdBody    = document.getElementById("pub-cd-body");
+  const $cdInputRow = document.getElementById("pub-cd-input-row");
+  const $cdInput   = document.getElementById("pub-cd-input");
+  const $cdAttach  = document.getElementById("pub-cd-attach");
+  const $cdAttached = document.getElementById("pub-cd-attached");
+  const $cdCurrent = document.getElementById("pub-cd-current");
+  const $cdOpen    = document.getElementById("pub-cd-open");
+  const $cdDns     = document.getElementById("pub-cd-dns");
+  const $cdDnsBlock = document.getElementById("pub-cd-dns-block");
+  const $cdVerifiedMsg = document.getElementById("pub-cd-verified-msg");
+  const $cdVerifiedUrl = document.getElementById("pub-cd-verified-url-text");
+  const $cdVerify  = document.getElementById("pub-cd-verify");
+  const $cdResult  = document.getElementById("pub-cd-verify-result");
+  const $autoSection = document.getElementById("pub-auto-section");
+
+  let _customDomainState = null;
+
+  function _showCdSection(show) {
+    // Always-visible now — kept as a no-op for any legacy callers.
+    [$cdDivider, $cdTitle, $cdBody].forEach((el) => { if (el) el.hidden = false; });
+  }
+
+  function _renderDnsTable(instructions) {
+    if (!instructions || !instructions.length) { $cdDns.innerHTML = ""; return; }
+    let html = '<span class="col-h">TYPE</span><span class="col-h">NAME</span><span class="col-h">VALUE</span>';
+    for (const ins of instructions) {
+      html += `
+        <div class="pub-dns-cell"><span class="val">${escapeHtml(ins.record_type)}</span><button type="button" class="copy-mini" data-copy="${escapeHtml(ins.record_type)}">Copy</button></div>
+        <div class="pub-dns-cell"><span class="val">${escapeHtml(ins.name)}</span><button type="button" class="copy-mini" data-copy="${escapeHtml(ins.name)}">Copy</button></div>
+        <div class="pub-dns-cell"><span class="val">${escapeHtml(ins.value)}</span><button type="button" class="copy-mini" data-copy="${escapeHtml(ins.value)}">Copy</button></div>`;
+    }
+    $cdDns.innerHTML = html;
+    $cdDns.querySelectorAll(".copy-mini").forEach((b) =>
+      b.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(b.dataset.copy);
+          const cell = b.closest(".pub-dns-cell");
+          if (cell) {
+            cell.classList.add("copied");
+            const orig = b.textContent;
+            b.textContent = "✓";
+            setTimeout(() => {
+              cell.classList.remove("copied");
+              b.textContent = orig;
+            }, 1200);
+          }
+        } catch (_) {}
+      })
+    );
+  }
+
+  function _renderCustomDomain() {
+    // Always show the custom-domain section so users can see where to put
+    // their domain. If the app isn't published yet, Attach will auto-publish
+    // first (handled in the Attach handler below).
+    _showCdSection(true);
+    if (!_publishedState || !_publishedState.published) {
+      // Show input row, hide attached/verified state.
+      $cdInputRow.hidden = false;
+      $cdAttached.hidden = true;
+      // Update example URL if slug is known.
+      const ex = document.getElementById("pub-cd-example");
+      if (ex && slug) ex.textContent = `${slug}.mybrand.com`;
+      return;
+    }
+    // Update the example URL in the body using the current slug.
+    const ex = document.getElementById("pub-cd-example");
+    if (ex && slug) ex.textContent = `${slug}.mybrand.com`;
+    const cd = _customDomainState || {};
+    const hasDomain = !!cd.domain;
+    $cdBadge.textContent = hasDomain ? (cd.verified ? "Verified" : "Pending DNS") : "Optional";
+    $cdBadge.classList.toggle("verified", !!cd.verified);
+
+    if (!hasDomain) {
+      $cdInputRow.hidden = false;
+      $cdAttached.hidden = true;
+      // Verified-only UI hidden; auto subdomain section visible.
+      if ($autoSection) $autoSection.hidden = false;
+    } else {
+      $cdInputRow.hidden = true;
+      $cdAttached.hidden = false;
+      const url = cd.public_url || `https://${cd.fqdn || cd.domain}/`;
+      $cdCurrent.textContent = url;
+      $cdOpen.href = url;
+
+      if (cd.verified) {
+        // Verified state: hide DNS block + auto-subdomain section. The
+        // custom domain is now the canonical URL — no point showing the
+        // backup auto subdomain or DNS instructions any more.
+        $cdDnsBlock.hidden = true;
+        $cdVerifiedMsg.hidden = false;
+        $cdVerifiedUrl.textContent = url;
+        if ($autoSection) $autoSection.hidden = true;
+      } else {
+        // Pending: show DNS instructions, hide verified message.
+        $cdDnsBlock.hidden = false;
+        $cdVerifiedMsg.hidden = true;
+        if ($autoSection) $autoSection.hidden = false;
+        _renderDnsTable(cd.instructions);
+        $cdResult.innerHTML = '';
+        $cdVerify.textContent = "Verify DNS";
+      }
+    }
+  }
+
+  async function refreshCustomDomain() {
+    if (!slug) return;
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish/domain`, {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include",
+      });
+      if (r.ok) _customDomainState = await r.json();
+    } catch (_) {}
+    _renderCustomDomain();
+    // Re-render the topbar badge — it now depends on custom-domain state too.
+    _renderPubButton(_publishedState, _customDomainState);
+  }
+
+  $btnPub.addEventListener("click", () => {
+    // Refresh both states when modal opens.
+    setTimeout(refreshCustomDomain, 100);
+  });
+
+  $cdAttach.addEventListener("click", async () => {
+    const domain = ($cdInput.value || "").trim().toLowerCase();
+    if (!domain) { $cdInput.focus(); return; }
+    $cdAttach.disabled = true;
+    $cdAttach.textContent = "Attaching…";
+    try {
+      const token = localStorage.getItem("token");
+      const auth = { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) };
+
+      // If the app isn't published yet, publish to the auto subdomain
+      // first — the custom-domain endpoint requires a publish row.
+      if (!_publishedState || !_publishedState.published) {
+        $cdAttach.textContent = "Publishing…";
+        const pubResp = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish`, {
+          method: "POST",
+          headers: auth,
+          credentials: "include",
+        });
+        if (!pubResp.ok) {
+          const txt = await pubResp.text();
+          toast("Couldn't publish: " + txt.slice(0, 240), "error", 6000);
+          return;
+        }
+        _publishedState = await pubResp.json();
+        _renderPubButton(_publishedState, _customDomainState);
+        _renderPubModal();
+      }
+
+      $cdAttach.textContent = "Attaching…";
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish/domain`, {
+        method: "POST",
+        headers: auth,
+        credentials: "include",
+        body: JSON.stringify({ domain }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        toast("Could not attach: " + txt.slice(0, 240), "error", 6000);
+        return;
+      }
+      _customDomainState = await r.json();
+      _renderCustomDomain();
+      const fq = _customDomainState.fqdn || domain;
+      toast(`Domain attached. Add an A record for "${fq}" → ${_customDomainState.server_ip} at your DNS provider, then click Verify.`, "success", 7000);
+    } catch (err) {
+      toast("Network error: " + err.message, "error", 6000);
+    } finally {
+      $cdAttach.disabled = false;
+      $cdAttach.textContent = "Attach";
+    }
+  });
+
+  $cdVerify.addEventListener("click", async () => {
+    $cdVerify.disabled = true;
+    $cdVerify.textContent = "Checking…";
+    $cdResult.innerHTML = '';
+    try {
+      const token = localStorage.getItem("token");
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish/domain/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        $cdResult.innerHTML = `<span class="pub-verify-result fail">Verify failed: ${escapeHtml(txt).slice(0, 200)}</span>`;
+        return;
+      }
+      _customDomainState = await r.json();
+      const lc = _customDomainState.last_check || {};
+      if (_customDomainState.verified) {
+        toast("✓ DNS verified. The first HTTPS hit may take a few seconds while Caddy issues the cert.", "success", 6000);
+      } else {
+        // Server now returns a human-readable `warning` explaining what
+        // went wrong (e.g. Cloudflare CNAME loop, DNS not propagated).
+        const msg = lc.warning ||
+          ((lc.resolved_ips && lc.resolved_ips.length)
+            ? `DNS not pointing here. Expected ${lc.expected_ip || ""}, got ${lc.resolved_ips.join(", ")}.`
+            : "No A records found yet — DNS may still be propagating.");
+        $cdResult.innerHTML = `<span class="pub-verify-result fail">⚠ ${escapeHtml(msg)}</span>`;
+      }
+      _renderCustomDomain();
+      _renderPubButton(_publishedState, _customDomainState);
+    } catch (err) {
+      $cdResult.innerHTML = `<span class="pub-verify-result fail">Network error: ${escapeHtml(err.message)}</span>`;
+    } finally {
+      $cdVerify.disabled = false;
+      $cdVerify.textContent = "Verify DNS";
+    }
+  });
+
+  // The legacy "Detach" button is replaced by the Open icon (href-driven).
+  // Custom-domain reset is now bundled into the main Unpublish handler above.
 
   // ────────────────────────────────────────────────────────────────────
   // PREVIEW STATUS POLLING
@@ -2244,9 +5244,21 @@
   // INIT
   // ────────────────────────────────────────────────────────────────────
   async function init() {
+    // If task is still being built by the AIUI Agent, the build overlay owns the
+    // loading sequence — it'll call loadFileTree + startPolling + loadLogs
+    // once the build reaches completed. Kicking them off now would just
+    // produce noisy 404s. For completed/failed tasks, run normally.
+    try {
+      const task = await apiFetch("GET", "/" + taskId);
+      if (task && BUILDING_STATES.has(task.status)) {
+        return;  // overlay watcher takes over
+      }
+    } catch (_) { /* fall through to normal init */ }
     await loadFileTree();
     startPolling();
     loadLogs();
+    try { loadDatabase(); } catch (_) {}
+    try { loadGraph(); } catch (_) {}
   }
   init();
 
@@ -2265,12 +5277,12 @@
   const activeBubbles = new Map();
   // When non-null, the Send button submits an `answer` to this task instead
   // of creating a new /enhance — enables conversational back-and-forth when
-  // Claude asks a clarifying question (task status = awaiting_input).
+  // The AIUI Agent asks a clarifying question (task status = awaiting_input).
   let awaitingReplyTo = null;
   const $replyBanner = document.getElementById("reply-banner");
   const $replyClear = document.getElementById("reply-clear");
 
-  // Chat mode: lightweight Claude chat with no build pipeline. Default to
+  // Chat mode: lightweight agent chat with no build pipeline. Default to
   // Chat so greetings/questions don't trigger expensive build runs that fail.
   // In-memory history only (per session) — persists on page reload via task.
   let chatMode = "chat";  // "chat" | "build"
@@ -2393,7 +5405,7 @@
     if (task.status === "running") {
       if (attempt > 0) return { icon: "🔄", text: "Retrying (" + attempt + "/" + max + ")", terminal: false };
       if (log.indexOf("--- VERIFY STEP ---") !== -1) return { icon: "✅", text: "Verifying…", terminal: false };
-      return { icon: "⚡", text: "Building…", terminal: false };
+      return { icon: "", text: "Building…", terminal: false };
     }
     return { icon: "⏳", text: "Queued", terminal: false };
   }
@@ -2473,7 +5485,10 @@
   }
 
   function refreshPreviewIframeIfVisible() {
-    if (activeTab !== "preview") return;
+    // Always reload — the user might be on Code or Logs while a build runs
+    // and only switch to Preview after it finishes. Without this, the iframe
+    // stays on the pre-build version and the AIUI Agent's edits look like
+    // they didn't take effect.
     const iframe = document.querySelector("#panel-preview iframe");
     if (!iframe) return;
     try {
@@ -2507,6 +5522,21 @@
       console.warn("[enhance] poll error", e);
     }
   }
+  // IDs of builds that the current user started in this session. Used by
+  // the presence system to only flag OUR amBuilding=true when we own the
+  // run (history-loaded in-progress builds started by others don't count).
+  const _myBuildIds = new Set();
+  function markMyBuildStart(tid) {
+    _myBuildIds.add(tid);
+    if (window.__aiui_setBuildingState) window.__aiui_setBuildingState(true);
+  }
+  function markMyBuildEnd(tid) {
+    _myBuildIds.delete(tid);
+    if (_myBuildIds.size === 0 && window.__aiui_setBuildingState) {
+      window.__aiui_setBuildingState(false);
+    }
+  }
+
   function startEnhancePolling(tid, bubbleEl) {
     if (activeBubbles.has(tid)) return;
     const timer = setInterval(function () { pollEnhance(tid, bubbleEl); }, 2000);
@@ -2518,6 +5548,7 @@
     if (!entry) return;
     clearInterval(entry.pollTimer);
     activeBubbles.delete(tid);
+    markMyBuildEnd(tid);  // no-op if we didn't own this build
   }
   function setSendDisabled(disabled) {
     $send.disabled = disabled;
@@ -2554,24 +5585,51 @@
   }
 
   function attachBuildSuggestion(bubbleEl, suggestion) {
+    // Auto-fire the enhance pipeline so chat feels conversational —
+    // user asks for a change, the agent just makes it. The build kicks
+    // off in the background; the existing Enhance flow handles streaming
+    // logs + completion. We still surface the suggestion text inline so
+    // the user can see what the agent committed to building.
     const wrap = document.createElement("div");
-    wrap.className = "build-suggestion";
+    wrap.className = "build-suggestion auto";
     wrap.innerHTML =
-      '<span class="bs-label">Ready to build?</span>' +
-      '<div class="bs-text"></div>' +
-      '<button class="bs-btn" type="button">⚡ Build this</button>';
+      '<span class="bs-label">Building this now…</span>' +
+      '<div class="bs-text"></div>';
     wrap.querySelector(".bs-text").textContent = suggestion;
-    wrap.querySelector(".bs-btn").addEventListener("click", function () {
-      setMode("build");
-      $prompt.value = suggestion;
-      $prompt.focus();
-      toast("Switched to Build mode — click Send to commit this change.", "info", 3500);
-    });
     bubbleEl.querySelector(".body").appendChild(wrap);
+    // Switch the Enhance pane to Build mode (so any streaming logs land
+    // there) and fire the request. submitEnhance accepts a text override
+    // and handles UI state for us.
+    try {
+      setMode("build");
+      submitEnhance(suggestion);
+    } catch (err) {
+      // If submitEnhance isn't ready (rare timing edge), surface the
+      // failure inline so the user can retry from the existing button.
+      const retry = document.createElement("button");
+      retry.className = "bs-btn";
+      retry.type = "button";
+      retry.textContent = "Build this";
+      retry.addEventListener("click", () => {
+        setMode("build");
+        $prompt.value = suggestion;
+        $prompt.focus();
+      });
+      wrap.appendChild(retry);
+    }
   }
 
   async function submitChat(text) {
     renderChatBubble("user", text);
+    // Persist user message (fire-and-forget — chat must never feel slow).
+    if (slug) {
+      fetch(`/api/projects/${encodeURIComponent(slug)}/chat`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ role: "user", content: text }),
+      }).catch(() => {});
+    }
     const aiBubble = renderChatBubble("ai", null);  // "thinking…"
     setSendDisabled(true);
     try {
@@ -2582,7 +5640,24 @@
       });
       aiBubble.classList.remove("thinking");
       const parts = splitChatReply(resp.reply || "");
-      aiBubble.querySelector(".markdown").innerHTML = renderMarkdown(parts.body || resp.reply);
+      let replyText = parts.body || resp.reply || "";
+      // Detect the agent-emitted Connect-Supabase sentinel and render the
+      // button under the bubble (same flow as the new-project chat prompt).
+      const hasConnectAction = replyText.includes(SUPABASE_CONNECT_MARKER);
+      const persistText = replyText;  // keep the marker so reload re-attaches the button
+      if (hasConnectAction) replyText = replyText.replace(SUPABASE_CONNECT_MARKER, "").trim();
+      aiBubble.querySelector(".markdown").innerHTML = renderMarkdown(replyText);
+      if (hasConnectAction) _attachSupabaseConnectActions(aiBubble);
+      // Persist assistant reply (with the sentinel preserved so a reload
+      // re-renders the button rather than losing it).
+      if (slug && persistText) {
+        fetch(`/api/projects/${encodeURIComponent(slug)}/chat`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ role: "assistant", content: persistText }),
+        }).catch(() => {});
+      }
       if (parts.buildSuggestion) attachBuildSuggestion(aiBubble, parts.buildSuggestion);
 
       // Store clean history (without BUILD_SUGGESTION line) for next turn
@@ -2625,9 +5700,10 @@
           const iconEl = aiBubble.querySelector(".phase-icon");
           const textEl = aiBubble.querySelector(".phase-text");
           const contentEl = aiBubble.querySelector(".content");
-          if (iconEl) iconEl.textContent = "⚡";
+          if (iconEl) iconEl.textContent = "";
           if (textEl) textEl.textContent = "Building…";
           if (contentEl) contentEl.innerHTML = "";
+          markMyBuildStart(replyToTask);
           startEnhancePolling(replyToTask, aiBubble);
         }
       } catch (e) {
@@ -2648,6 +5724,7 @@
         prompt: text,
       });
       aiBubble.dataset.taskId = resp.id;
+      markMyBuildStart(resp.id);
       startEnhancePolling(resp.id, aiBubble);
     } catch (e) {
       aiBubble.classList.add("failed");
@@ -2699,6 +5776,162 @@
     }
   });
 
+  const SUPABASE_CONNECT_MARKER = "[ACTION:supabase_connect]";
+
+  function _attachSupabaseConnectActions(bubbleEl) {
+    const wrap = document.createElement("div");
+    wrap.className = "supabase-connect-actions";
+    wrap.style.cssText = "display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;";
+    const connectBtn = document.createElement("button");
+    connectBtn.type = "button";
+    connectBtn.className = "btn primary";
+    connectBtn.textContent = "Connect Supabase";
+    connectBtn.style.cssText = "padding:8px 14px;background:var(--accent,#3ecf8e);color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer;";
+    const skipBtn = document.createElement("button");
+    skipBtn.type = "button";
+    skipBtn.className = "btn secondary";
+    skipBtn.textContent = "Skip — build frontend-only";
+    skipBtn.style.cssText = "padding:8px 14px;background:var(--surface-2,#222);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;";
+    wrap.appendChild(connectBtn);
+    wrap.appendChild(skipBtn);
+    const body = bubbleEl.querySelector(".body") || bubbleEl;
+    body.appendChild(wrap);
+
+    connectBtn.addEventListener("click", () => _handleSupabaseConnectClick(connectBtn, skipBtn));
+    skipBtn.addEventListener("click", () => _handleSupabaseSkipClick(connectBtn, skipBtn));
+  }
+
+  async function _resumeBuild(skip) {
+    if (!taskId) return false;
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/resume`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ skip: !!skip }),
+      });
+      if (!r.ok) {
+        let detail = "";
+        try { detail = (await r.json()).detail || ""; } catch (_) {}
+        toast("Resume failed: " + (detail || `HTTP ${r.status}`), "error", 5000);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      toast("Network error: " + (e.message || e), "error", 4500);
+      return false;
+    }
+  }
+
+  async function _handleSupabaseSkipClick(connectBtn, skipBtn) {
+    const ok = window.confirm(
+      "Build a frontend-only version? Your data will only be saved in the browser " +
+      "and won't sync between devices."
+    );
+    if (!ok) return;
+    connectBtn.disabled = true;
+    skipBtn.disabled = true;
+    skipBtn.textContent = "Skipping…";
+    const succeeded = await _resumeBuild(true);
+    if (succeeded) {
+      // Refresh chat to show the "Building frontend-only…" assistant msg.
+      try { await loadChatHistory(); } catch (_) {}
+    } else {
+      connectBtn.disabled = false;
+      skipBtn.disabled = false;
+      skipBtn.textContent = "Skip — build frontend-only";
+    }
+  }
+
+  async function _handleSupabaseConnectClick(connectBtn, skipBtn) {
+    if (!slug) {
+      toast("Slug not loaded yet — try again in a moment.", "error", 3500);
+      return;
+    }
+    connectBtn.disabled = true;
+    skipBtn.disabled = true;
+    connectBtn.textContent = "Waiting for Supabase…";
+    const popup = window.open(
+      "/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/start",
+      "aiui_supabase_oauth",
+      "width=720,height=820"
+    );
+    // Poll the project's Supabase config until it shows linked_project_ref
+    // or supabase_url, then call /resume and refresh chat.
+    let polls = 0;
+    const MAX_POLLS = 150;  // 5 minutes at 2s
+    const tick = async () => {
+      polls += 1;
+      if (popup && popup.closed) {
+        // Popup closed — keep polling a few more rounds in case the
+        // callback writes the row a moment after window close.
+      }
+      try {
+        const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/supabase", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (r.ok) {
+          const cfg = await r.json();
+          const linked = !!(cfg && (cfg.linked_project_ref || cfg.supabase_url));
+          if (linked) {
+            const ok = await _resumeBuild(false);
+            if (ok) {
+              try { await loadChatHistory(); } catch (_) {}
+              return;  // stop polling
+            } else {
+              connectBtn.disabled = false;
+              skipBtn.disabled = false;
+              connectBtn.textContent = "Connect Supabase";
+              return;
+            }
+          }
+        }
+      } catch (_) { /* keep polling */ }
+      if (polls >= MAX_POLLS) {
+        connectBtn.disabled = false;
+        skipBtn.disabled = false;
+        connectBtn.textContent = "Connect Supabase";
+        toast("Timed out waiting for Supabase. Try again.", "error", 5000);
+        return;
+      }
+      setTimeout(tick, 2000);
+    };
+    setTimeout(tick, 2000);
+  }
+
+  async function loadChatHistory() {
+    if (!slug) return;
+    try {
+      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/chat?limit=200`, {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!r.ok) return;
+      const rows = await r.json();
+      if (!rows.length) return;
+      const empty = document.getElementById("enhance-empty");
+      if (empty) empty.remove();
+      // Re-render from scratch so reload after /resume doesn't double up.
+      $log.innerHTML = "";
+      for (const m of rows) {
+        if (m.role === "user") {
+          renderChatBubble("user", m.content);
+        } else if (m.role === "assistant") {
+          const content = m.content || "";
+          if (content.startsWith(SUPABASE_CONNECT_MARKER)) {
+            const display = content.slice(SUPABASE_CONNECT_MARKER.length).trim();
+            const bubble = renderChatBubble("ai", display);
+            _attachSupabaseConnectActions(bubble);
+          } else {
+            renderChatBubble("ai", content);
+          }
+        }
+      }
+      $log.scrollTop = $log.scrollHeight;
+    } catch (_) {}
+  }
+
   async function loadEnhanceHistory() {
     if (!slug) return;
     try {
@@ -2730,6 +5963,173 @@
       console.warn("[enhance] history load failed", e);
     }
   }
+})();
+</script>
+
+<script>
+// ===== Live presence + build lock =====
+// Broadcasts the current user's presence to others looking at the same
+// project, and greys out the Build button when someone else is editing.
+(function () {
+  const slug = (window.__AIUI_SLUG__) ||
+    new URLSearchParams(window.location.search).get("slug") ||
+    null;
+  // preview.html loads task_id and looks up slug async — wait for it.
+  function getSlug() {
+    // slug-name element holds the resolved slug once loaded. Reject any
+    // placeholder / error / unknown values so we never build presence URLs
+    // against nonsense slugs during an in-progress build.
+    const el = document.getElementById("slug-name");
+    const s = (el && el.textContent || "").trim();
+    if (!s) return null;
+    if (s === "loading…" || s === "(error)" || s === "unknown") return null;
+    // Only real slugs: lowercase, digits, hyphens, underscores, dots.
+    if (!/^[a-z0-9][a-z0-9._-]{1,100}$/.test(s)) return null;
+    return s;
+  }
+  const stripEl   = document.getElementById("presence-strip");
+  const bannerEl  = document.getElementById("building-banner");
+  const bannerWho = document.getElementById("building-who");
+  const buildBtn  = document.getElementById("enh-build-btn")
+                 || document.querySelector("[data-enhance-mode='build']")
+                 || null;
+  const sendBtn   = document.getElementById("enh-send")
+                 || document.querySelector("#send")
+                 || null;
+
+  let myEmail = null;
+  let amBuilding = false;
+  let lastRemoteBuilder = null;
+
+  function authHeaders() {
+    const h = { "Content-Type": "application/json" };
+    const token = localStorage.getItem("token");
+    if (token) h.Authorization = "Bearer " + token;
+    return h;
+  }
+
+  function nameFromEmail(e) {
+    if (!e) return "?";
+    const local = e.split("@")[0];
+    return (local[0] || "?").toUpperCase() + (local[1] || "").toLowerCase();
+  }
+
+  async function heartbeat() {
+    const s = getSlug();
+    if (!s) return;
+    try {
+      const resp = await fetch(`/api/projects/${encodeURIComponent(s)}/presence`, {
+        method: "POST",
+        headers: authHeaders(),
+        credentials: "include",
+        body: JSON.stringify({ is_building: amBuilding }),
+      });
+      if (resp.ok) {
+        const j = await resp.json();
+        if (j.me) myEmail = j.me;
+      }
+    } catch (_) { /* network hiccup — retry next tick */ }
+  }
+
+  async function refresh() {
+    const s = getSlug();
+    if (!s) return;
+    try {
+      const resp = await fetch(`/api/projects/${encodeURIComponent(s)}/presence`, {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!resp.ok) return;
+      const rows = await resp.json();
+      render(rows);
+    } catch (_) {}
+  }
+
+  function render(rows) {
+    if (!stripEl) return;
+    stripEl.innerHTML = "";
+    // Put me first, then others by recency.
+    rows.sort((a, b) => {
+      if (a.user_email === myEmail) return -1;
+      if (b.user_email === myEmail) return 1;
+      return a.seconds_since_seen - b.seconds_since_seen;
+    });
+    for (const r of rows) {
+      const el = document.createElement("div");
+      el.className = "presence-avatar" +
+        (r.user_email === myEmail ? " is-me" : "") +
+        (r.is_building ? " is-building" : "");
+      el.title = r.user_email + (r.is_building ? " — editing now" : " — viewing");
+      el.textContent = nameFromEmail(r.user_email);
+      stripEl.appendChild(el);
+    }
+    // Find a remote builder (not me)
+    const remoteBuilder = rows.find((r) => r.is_building && r.user_email !== myEmail);
+    lastRemoteBuilder = remoteBuilder ? remoteBuilder.user_email : null;
+    if (remoteBuilder) {
+      bannerEl.hidden = false;
+      bannerWho.textContent = `${nameFromEmail(remoteBuilder.user_email)} (${remoteBuilder.user_email}) is editing`;
+    } else {
+      bannerEl.hidden = true;
+    }
+    applyLock();
+  }
+
+  function applyLock() {
+    // Disable the enhance send button when someone else is building.
+    // (Chat is read-only and concurrent users can chat safely, so we only
+    // lock when the current enhance mode is BUILD.)
+    const modeBuild = typeof chatMode !== "undefined" ? chatMode === "build"
+                   : (document.querySelector("[data-enhance-mode-active='build']") !== null);
+    const lock = lastRemoteBuilder && modeBuild;
+    if (sendBtn) {
+      sendBtn.disabled = !!lock || (sendBtn.__origDisabled === true);
+      sendBtn.title = lock
+        ? `Locked — ${lastRemoteBuilder} is currently editing`
+        : sendBtn.__origTitle || "";
+    }
+  }
+
+  // Hook into existing build submission to flip amBuilding.
+  // window.__aiui_setBuildingState is called by the main enhance IIFE
+  // whenever it starts/stops a build. We expose it globally via a small
+  // shim that we can retro-fit without touching the big preview.html JS.
+  window.__aiui_setBuildingState = function (flag) {
+    amBuilding = !!flag;
+    heartbeat();  // send updated state immediately
+    refresh();
+  };
+
+  // Heartbeat + poll loops. First fire delayed so slug-name has had a
+  // chance to resolve from the task lookup.
+  setTimeout(() => {
+    heartbeat();
+    refresh();
+    setInterval(heartbeat, 10_000);
+    setInterval(refresh, 3_000);
+  }, 1500);
+
+  // Best-effort sign-off on unload.
+  window.addEventListener("beforeunload", () => {
+    const s = getSlug();
+    if (!s) return;
+    const token = localStorage.getItem("token");
+    const body = new Blob([], { type: "application/json" });
+    try {
+      navigator.sendBeacon(
+        `/api/projects/${encodeURIComponent(s)}/presence?_=${Date.now()}`,
+        body
+      );
+    } catch (_) {}
+    // sendBeacon can't set Authorization or method=DELETE, so also fire
+    // a keepalive DELETE for good measure (best-effort).
+    fetch(`/api/projects/${encodeURIComponent(s)}/presence`, {
+      method: "DELETE",
+      headers: authHeaders(),
+      credentials: "include",
+      keepalive: true,
+    }).catch(() => {});
+  });
 })();
 </script>
 </body>

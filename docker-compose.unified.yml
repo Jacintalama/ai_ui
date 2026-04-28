@@ -243,6 +243,10 @@ services:
       - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
       - CLAUDE_WORKSPACE=/workspace/ai_ui
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AIUI_FERNET_KEY=${AIUI_FERNET_KEY:-}
+      - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
+      - AIUI_SUPABASE_CLIENT_SECRET=${AIUI_SUPABASE_CLIENT_SECRET:-}
+      - AIUI_PUBLIC_BASE_URL=https://ai-ui.coolestdomain.win
     volumes:
       - ./:/workspace/ai_ui
     networks:

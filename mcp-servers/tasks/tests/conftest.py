@@ -30,8 +30,37 @@ async def db_session():
     await init_db()
     engine = create_async_engine(SQLA_DB_URL)
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    # SAFETY: refuse to TRUNCATE on a database that holds real user data.
+    # On 2026-04-27 a careless `pytest` against the live tasks container with
+    # AIUI_TEST_DB=1 wiped 9 production projects, all chat history, and all
+    # Supabase OAuth tokens — recoverable from disk for items, gone for the
+    # rest. The override flag now requires BOTH:
+    #   1. AIUI_TEST_DB=1 explicitly set, AND
+    #   2. The database name contains "test" (e.g. openwebui_test, test_aiui).
+    # The "real project rows" count check still gates non-override runs.
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE tasks.items, tasks.executions CASCADE"))
+        existing = (await conn.execute(text(
+            "SELECT COUNT(*) FROM tasks.items "
+            "WHERE built_app_slug IS NOT NULL AND built_app_slug NOT IN ('alpha','beta')"
+        ))).scalar() or 0
+        if os.environ.get("AIUI_TEST_DB") == "1":
+            db_url_lower = (os.environ.get("DATABASE_URL") or "").lower()
+            if "test" not in db_url_lower:
+                raise RuntimeError(
+                    "Refusing to TRUNCATE — AIUI_TEST_DB=1 is set but DATABASE_URL "
+                    f"({db_url_lower!r}) doesn't look like a test database "
+                    "(name must contain 'test'). Use a dedicated test DB."
+                )
+        elif existing > 0:
+            raise RuntimeError(
+                f"Refusing to TRUNCATE — database has {existing} real project rows. "
+                "Set AIUI_TEST_DB=1 AND point DATABASE_URL at a test DB."
+            )
+        await conn.execute(text(
+            "TRUNCATE tasks.items, tasks.executions, "
+            "tasks.published_apps, tasks.project_members, "
+            "tasks.project_supabase, tasks.chat_history CASCADE"
+        ))
     async with maker() as s:
         yield s
     await engine.dispose()

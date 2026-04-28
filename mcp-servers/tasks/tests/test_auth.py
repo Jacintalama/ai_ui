@@ -37,3 +37,14 @@ def test_rejects_when_not_admin():
         headers={"X-User-Email": "guest@aiui.com", "X-User-Admin": "false"},
     )
     assert r.status_code == 403
+
+
+def test_email_is_lowercased():
+    """Bug A: gateway header may have mixed-case email; auth must normalize."""
+    client = TestClient(_make_app())
+    r = client.get(
+        "/whoami",
+        headers={"X-User-Email": "Alice@Example.COM", "X-User-Admin": "true"},
+    )
+    assert r.status_code == 200
+    assert r.json()["email"] == "alice@example.com"

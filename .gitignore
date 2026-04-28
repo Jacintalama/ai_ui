@@ -18,3 +18,7 @@ n8n-workflows/gdrive-knowledge-cleanup.json
 .vscode/
 .idea/
 mcp-servers/gdrive/docker-compose.test.yml
+
+# Local agent / session state
+.claude/
+.superpowers/

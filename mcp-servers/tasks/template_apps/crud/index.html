@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Todos</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased min-h-screen">
+
+  <div x-data="appShell" x-init="init()" class="min-h-screen flex flex-col">
+
+    <!-- Header (only when authed) -->
+    <header x-show="route === '/' && session" x-cloak class="border-b border-slate-200 bg-white">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 h-14 flex items-center justify-between">
+        <div class="flex items-center gap-2 font-semibold">
+          <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-indigo-600 text-white">
+            <i data-lucide="check-square" class="w-4 h-4"></i>
+          </span>
+          <span><%= APP_NAME %></span>
+        </div>
+        <div class="flex items-center gap-3 text-sm">
+          <span class="text-slate-500 hidden sm:inline" x-text="session?.user?.email || ''"></span>
+          <button @click="signOut" class="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+            <i data-lucide="log-out" class="w-4 h-4"></i> Sign out
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Connection notice -->
+    <div x-show="!supabaseConnected" x-cloak class="bg-amber-50 border-b border-amber-200 text-amber-900 text-sm">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 py-2.5 flex items-center gap-2">
+        <i data-lucide="info" class="w-4 h-4 shrink-0"></i>
+        <span>Connect Supabase to save your todos. Your work is currently kept in this browser only.</span>
+      </div>
+    </div>
+
+    <main class="flex-1">
+
+      <!-- Login / Signup -->
+      <section x-show="route === '/login' || (!session && route === '/')" x-cloak class="mx-auto max-w-md px-4 sm:px-6 py-16">
+        <div x-data="loginForm" x-init="init()" class="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+          <div class="flex items-center gap-2 font-semibold mb-6">
+            <span class="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white">
+              <i data-lucide="check-square" class="w-5 h-5"></i>
+            </span>
+            <span class="text-lg"><%= APP_NAME %></span>
+          </div>
+          <h1 class="text-2xl font-semibold tracking-tight" x-text="mode === 'signup' ? 'Create an account' : 'Welcome back'"></h1>
+          <p class="mt-1 text-sm text-slate-500" x-text="mode === 'signup' ? 'Start organizing your day in seconds.' : 'Sign in to access your todos.'"></p>
+
+          <form @submit.prevent="submit" class="mt-6 space-y-4">
+            <div>
+              <label for="email" class="block text-sm font-medium mb-1">Email</label>
+              <input id="email" x-model="email" type="email" required autocomplete="email" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label for="password" class="block text-sm font-medium mb-1">Password</label>
+              <input id="password" x-model="password" type="password" required autocomplete="current-password" minlength="6" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <p x-show="error" x-cloak class="text-sm text-rose-600" x-text="error"></p>
+            <button type="submit" :disabled="loading" class="w-full inline-flex justify-center items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+              <span x-show="!loading" x-text="mode === 'signup' ? 'Create account' : 'Sign in'"></span>
+              <span x-show="loading">Please wait…</span>
+            </button>
+          </form>
+          <div class="mt-6 text-center text-sm text-slate-500">
+            <span x-show="mode === 'signin'">No account?
+              <button @click="mode = 'signup'; error = null" class="text-indigo-600 hover:underline">Sign up</button>
+            </span>
+            <span x-show="mode === 'signup'">Already have one?
+              <button @click="mode = 'signin'; error = null" class="text-indigo-600 hover:underline">Sign in</button>
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Todo list (auth-gated) -->
+      <section x-show="route === '/' && session" x-cloak class="mx-auto max-w-3xl px-4 sm:px-6 py-10">
+        <div x-data="todoApp" x-init="init()">
+          <div class="flex items-end justify-between flex-wrap gap-3">
+            <div>
+              <h1 class="text-2xl sm:text-3xl font-bold tracking-tight">Your todos</h1>
+              <p class="mt-1 text-sm text-slate-500" x-text="`${remaining} remaining of ${todos.length}`"></p>
+            </div>
+            <div class="flex gap-1 rounded-lg bg-slate-100 p-1">
+              <template x-for="f in ['All','Active','Completed']" :key="f">
+                <button @click="filter = f" :class="filter === f ? 'bg-white shadow-sm text-slate-900' : 'text-slate-600 hover:text-slate-900'" class="px-3 py-1 rounded-md text-sm font-medium transition">
+                  <span x-text="f"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <form @submit.prevent="addTodo" class="mt-6 flex gap-2">
+            <input x-model="newTitle" type="text" placeholder="What needs doing?" maxlength="200" required class="flex-1 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <button type="submit" :disabled="!newTitle.trim()" class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-60">
+              <i data-lucide="plus" class="w-4 h-4"></i> Add
+            </button>
+          </form>
+
+          <div class="mt-6 rounded-xl bg-white border border-slate-200 divide-y divide-slate-100">
+            <template x-for="t in filteredTodos" :key="t.id">
+              <div class="flex items-center gap-3 px-4 py-3 group">
+                <button @click="toggle(t)" :aria-label="t.completed ? 'Mark incomplete' : 'Mark complete'" class="shrink-0">
+                  <span :class="t.completed ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 hover:border-indigo-500'" class="h-5 w-5 rounded-md border-2 flex items-center justify-center transition">
+                    <i x-show="t.completed" data-lucide="check" class="w-3 h-3 text-white"></i>
+                  </span>
+                </button>
+                <span class="flex-1 text-sm" :class="t.completed ? 'line-through text-slate-400' : 'text-slate-800'" x-text="t.title"></span>
+                <button @click="remove(t)" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 p-1" aria-label="Delete">
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </template>
+            <div x-show="filteredTodos.length === 0" class="px-4 py-12 text-center text-sm text-slate-500">
+              <p x-show="filter === 'All'">No todos yet — add one above to get started.</p>
+              <p x-show="filter === 'Active'">No active todos. Nice work!</p>
+              <p x-show="filter === 'Completed'">Nothing completed yet.</p>
+            </div>
+          </div>
+
+          <div x-show="anyCompleted" class="mt-4 text-right">
+            <button @click="clearCompleted" class="text-sm text-slate-500 hover:text-rose-600">Clear completed</button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <footer class="border-t border-slate-200 bg-white">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 py-4 text-xs text-slate-500 text-center">
+        &copy; <span x-text="new Date().getFullYear()"></span> <%= APP_NAME %>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

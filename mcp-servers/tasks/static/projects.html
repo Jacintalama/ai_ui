@@ -1,0 +1,1996 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>App Builder — AIUI</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2032%2032%22%3E%3Crect%20width%3D%2232%22%20height%3D%2232%22%20rx%3D%228%22%20fill%3D%22%237c8cff%22%2F%3E%3Ctext%20x%3D%2216%22%20y%3D%2222%22%20text-anchor%3D%22middle%22%20font-family%3D%22sans-serif%22%20font-size%3D%2217%22%20font-weight%3D%22700%22%20fill%3D%22white%22%3EOI%3C%2Ftext%3E%3C%2Fsvg%3E">
+  <style>
+    :root[data-theme="dark"] {
+      --bg:           #0a0a0b;
+      --surface:      #111113;
+      --surface-2:    #17171a;
+      --surface-3:    #1e1e22;
+      --border:       #24242a;
+      --border-2:     #2e2e36;
+      --text:         #ededee;
+      --text-2:       #b8b8c0;
+      --muted:        #74747e;
+      --accent:       #7c8cff;
+      --accent-2:     #5d6cff;
+      --accent-soft:  #1e2140;
+      --success:      #22c55e;
+      --success-soft: #0d2a1a;
+      --danger:       #f87171;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+    }
+    :root {
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-2); }
+    button { font-family: inherit; color: inherit; cursor: pointer; }
+    /* Consistent pointer cursor on anything clickable. */
+    button:not(:disabled),
+    a.btn,
+    a.back,
+    [role="button"]:not([aria-disabled="true"]),
+    [data-close],
+    .close,
+    .members-btn,
+    .rollback-btn:not([disabled]) { cursor: pointer; }
+    button:disabled, .btn:disabled, .rollback-btn[disabled] { cursor: not-allowed; }
+    /* summary (the disclosure toggle) */
+    details.rules-box > summary { cursor: pointer; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .topbar .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #7c8cff 0%, #a78bfa 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(124, 140, 255, 0.35);
+      flex-shrink: 0;
+    }
+    .topbar .brand-logo svg { width: 28px; height: 28px; }
+    .topbar .brand-text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
+    .topbar .brand-title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .topbar .brand-subtitle {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .topbar h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .topbar .back {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      color: var(--text-2);
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .topbar .back:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+    .header-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .header-row h2 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .count-pill {
+      display: inline-block;
+      padding: 3px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--text-2);
+      margin-left: 8px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+    }
+    .card:hover {
+      border-color: var(--border-2);
+      box-shadow: var(--shadow-md);
+    }
+    .card .slug-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+    }
+    .card .slug-row .spacer { flex: 1; }
+    .card-menu-btn {
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+    }
+    .card-menu-btn:hover { color: var(--text); background: var(--surface-2); }
+    .card-menu-popover {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      margin-top: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-md);
+      min-width: 180px;
+      padding: 4px;
+      z-index: 30;
+    }
+    .card-menu-popover button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 0;
+      padding: 8px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      color: var(--text);
+    }
+    .card-menu-popover button:hover { background: var(--surface-2); }
+    .card-menu-popover button.danger { color: var(--danger); }
+    .card-menu-popover button.danger:hover { background: var(--danger-soft); }
+    .card .slug {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-all;
+    }
+    .card .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      font-size: 11px;
+      font-weight: 500;
+      background: var(--success-soft);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.25);
+    }
+    .card .badge.building  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
+    .card .badge.pending   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
+    .card .badge.failed    { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+    .badge .spinner-sm {
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 2px solid currentColor; border-top-color: transparent;
+      animation: spin 0.7s linear infinite;
+    }
+    .card .desc {
+      color: var(--text-2);
+      font-size: 13px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: 58px;
+    }
+    .card .meta {
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      justify-content: space-between;
+    }
+    .card .meta .left { display: flex; align-items: center; gap: 6px; }
+    .card .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .btn {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
+      text-align: center;
+    }
+    .btn:hover { background: var(--surface-3); border-color: var(--accent); }
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0a0a0b;
+    }
+    .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+    .btn.btn-lg { flex: 0 0 auto; padding: 10px 18px; font-size: 14px; }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 16px;
+    }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-md);
+      width: 100%;
+      max-width: 520px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-header h3 { font-size: 16px; font-weight: 600; }
+    .modal-header .close {
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      font-size: 20px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+    }
+    .modal-header .close:hover { background: var(--surface-2); color: var(--text); }
+    .modal-body {
+      padding: 20px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    /* Templates gallery (in-modal) */
+    #templates-modal { background: rgba(10, 10, 11, 0.96); }
+    #templates-modal .filter-pill {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    #templates-modal .filter-pill:hover { color: var(--text); border-color: var(--border-2); }
+    #templates-modal .filter-pill.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(124,140,255,0.4);
+    }
+    #templates-modal .tcard {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    #templates-modal .tcard:hover { border-color: var(--border-2); box-shadow: var(--shadow-md); }
+    #templates-modal .tcard.featured { border-color: rgba(124,140,255,0.35); }
+    #templates-modal .tcard .visual {
+      height: 170px;
+      position: relative;
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+      background: #0a0a0b;
+    }
+    #templates-modal .tcard .visual.visual-svg {
+      padding: 0;
+    }
+    #templates-modal .tcard .visual.visual-svg svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #templates-modal .tcard .visual.visual-img {
+      background: #0a0a0b;
+      padding: 0;
+    }
+    #templates-modal .tcard .visual.visual-img img.preview {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top center;
+      display: block;
+      z-index: 2;
+      transition: transform 220ms ease;
+    }
+    #templates-modal .tcard:hover .visual.visual-img img.preview {
+      transform: scale(1.03);
+    }
+    #templates-modal .tcard .visual.visual-img img.preview.broken { display: none; }
+    #templates-modal .tcard .visual.visual-img .placeholder.fallback {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+      background: linear-gradient(135deg, #4338ca 0%, #1e1b4b 100%);
+      color: #fff;
+      z-index: 1;
+    }
+    /* Live iframe preview of the actual template app, rendered at desktop
+       width then scaled down to fit. We trust same-origin templates so no
+       sandbox attribute is needed (sandbox blocks the ES-module imports). */
+    #templates-modal .tcard .visual iframe.preview {
+      position: absolute;
+      top: 0; left: 0;
+      width: 1366px;
+      height: 768px;
+      border: 0;
+      transform: scale(0.235);
+      transform-origin: top left;
+      pointer-events: none;
+      background: #ffffff;
+      z-index: 2;  /* sits above the placeholder when alive */
+    }
+    #templates-modal .tcard .visual iframe.preview.broken { display: none; }
+    /* When the iframe is broken/removed, the placeholder beneath shows through. */
+    #templates-modal .tcard.featured .visual { background: linear-gradient(135deg, #4338ca 0%, #1e1b4b 100%); }
+    #templates-modal .tcard.kind-landing.featured  .visual { background: linear-gradient(135deg, #6b46ff 0%, #1e1b4b 100%); }
+    #templates-modal .tcard.kind-portfolio.featured .visual { background: linear-gradient(135deg, #ec4899 0%, #4c1d4a 100%); }
+    #templates-modal .tcard.kind-crud.featured     .visual { background: linear-gradient(135deg, #10b981 0%, #064e3b 100%); }
+    #templates-modal .tcard.kind-invoice.featured  .visual { background: linear-gradient(135deg, #f59e0b 0%, #422006 100%); }
+    #templates-modal .tcard.kind-dashboard.featured .visual { background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%); }
+    #templates-modal .tcard .visual .placeholder {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px;
+      color: var(--text);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
+    #templates-modal .tcard .visual .placeholder .vname {
+      font-size: 18px; font-weight: 700; letter-spacing: -0.02em;
+    }
+    #templates-modal .tcard .visual .placeholder .vsub {
+      font-size: 11px; font-weight: 500; color: rgba(255,255,255,0.7);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    /* Gradient backgrounds for placeholder visuals (non-featured templates). */
+    #templates-modal .tcard.kind-blog          .visual:not(:has(iframe)) { background: linear-gradient(135deg, #14b8a6 0%, #134e4a 100%); }
+    #templates-modal .tcard.kind-blank         .visual:not(:has(iframe)) { background: linear-gradient(135deg, #475569 0%, #1e293b 100%); }
+    #templates-modal .tcard:not(.featured) .visual { background: linear-gradient(135deg, #4338ca 0%, #1e1b4b 100%); }
+    #templates-modal .tcard .body {
+      padding: 14px 16px 16px;
+      display: flex; flex-direction: column; gap: 8px; flex: 1;
+    }
+    #templates-modal .tcard .row1 { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    #templates-modal .tcard .name { font-size: 14px; font-weight: 600; color: var(--text); }
+    #templates-modal .tcard .badges { display:flex; gap:4px; }
+    #templates-modal .tcard .tg-badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 7px; border-radius: var(--radius-sm);
+      font-size: 10.5px; font-weight: 500;
+    }
+    #templates-modal .tcard .tg-badge.featured {
+      background: var(--accent-soft); color: var(--accent);
+      border: 1px solid rgba(124,140,255,0.3);
+    }
+    #templates-modal .tcard .tg-badge.storage-supabase {
+      background: var(--success-soft); color: var(--success);
+      border: 1px solid rgba(34,197,94,0.25);
+    }
+    #templates-modal .tcard .tg-badge.storage-none {
+      background: var(--surface-2); color: var(--text-2);
+      border: 1px solid var(--border);
+    }
+    #templates-modal .tcard .desc { color: var(--text-2); font-size: 12.5px; line-height: 1.45; }
+    #templates-modal .tcard .features {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+    }
+    #templates-modal .tcard .features li {
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.4;
+      padding-left: 16px;
+      position: relative;
+    }
+    #templates-modal .tcard .features li::before {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 7px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    #templates-modal .tcard .actions { display:flex; gap:8px; margin-top: 4px; }
+    #templates-modal .tcard .btn {
+      padding: 7px 11px; border: 1px solid var(--border-2);
+      border-radius: var(--radius); background: var(--surface-2);
+      color: var(--text); font-size: 12.5px; font-weight: 500;
+      cursor: pointer; transition: background 0.15s, border-color 0.15s;
+    }
+    #templates-modal .tcard .btn:hover { background: var(--surface-3); border-color: var(--accent); }
+    #templates-modal .tcard .btn.primary {
+      background: var(--accent); border-color: var(--accent);
+      color: white; flex: 1;
+    }
+    #templates-modal .tcard .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+    .form-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-2);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      border-color: var(--accent);
+    }
+    .form-textarea { resize: vertical; min-height: 100px; font-family: var(--font-ui); }
+    .form-hint { font-size: 11px; color: var(--muted); }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--success-soft);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.35);
+      padding: 10px 18px;
+      border-radius: var(--radius-lg);
+      font-size: 13px;
+      z-index: 200;
+      box-shadow: var(--shadow-md);
+    }
+    .toast.error {
+      background: var(--danger-soft);
+      color: var(--danger);
+      border-color: rgba(248, 113, 113, 0.35);
+    }
+
+    .members-btn {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      padding: 3px 10px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .members-btn:hover {
+      background: var(--surface-3);
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .member-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .member-row .email { flex: 1 1 auto; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .member-row select.role-select { flex: 0 0 110px; width: 110px; }
+    .member-row .role-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      background: var(--accent-soft);
+      color: var(--accent);
+      text-transform: capitalize;
+    }
+    .member-row .role-badge.owner { background: var(--warning-soft); color: var(--warning); }
+    .member-row .remove {
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+    }
+    .member-row .remove:hover { color: var(--danger); background: var(--danger-soft); }
+    .invite-row {
+      display: grid;
+      grid-template-columns: 1fr 120px auto;
+      gap: 8px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .members-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 18px; }
+
+    /* Rules disclosure inside the New Project modal */
+    details.rules-box {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      padding: 10px 14px;
+    }
+    details.rules-box > summary {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-2);
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    details.rules-box > summary::-webkit-details-marker { display: none; }
+    details.rules-box > summary::before {
+      content: "▸";
+      transition: transform 0.15s;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    details.rules-box[open] > summary::before { transform: rotate(90deg); }
+    details.rules-box .rules-list {
+      margin-top: 10px;
+      padding: 0;
+      list-style: none;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text-2);
+    }
+    details.rules-box .rules-list li {
+      padding: 3px 0;
+      padding-left: 18px;
+      position: relative;
+    }
+    details.rules-box .rules-list li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: var(--success);
+      font-weight: 700;
+    }
+
+    /* Version history modal */
+    .version-list { display: flex; flex-direction: column; gap: 6px; }
+    .version-row {
+      display: grid;
+      grid-template-columns: 70px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .version-row.current { border-color: var(--accent); background: var(--accent-soft); }
+    .version-row.error   { border-color: rgba(248,113,113,0.45); }
+    .version-row .sha {
+      font-family: var(--font-ui);
+      font-size: 11px;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+    .version-row .msg {
+      font-size: 13px;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .version-row .msg .primary {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .version-row .msg .secondary {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .version-row .status-pill {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+    .version-row .status-pill.ok       { background: var(--success-soft); color: var(--success); }
+    .version-row .status-pill.error    { background: var(--danger-soft);  color: var(--danger); }
+    .version-row .status-pill.rollback { background: var(--warning-soft); color: var(--warning); }
+    .version-row .status-pill.current  { background: var(--accent);       color: #0a0a0b; }
+    .version-row .rollback-btn {
+      padding: 5px 10px;
+      font-size: 11px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-3);
+      border: 1px solid var(--border-2);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .version-row .rollback-btn:hover { background: var(--accent); color: #0a0a0b; border-color: var(--accent); }
+    .version-row .rollback-btn:disabled { opacity: 0.4; cursor: default; }
+
+    .empty, .error, .loading {
+      text-align: center;
+      padding: 64px 24px;
+      color: var(--muted);
+    }
+    .empty h3 { font-size: 16px; color: var(--text-2); margin-bottom: 8px; }
+    .error { color: var(--danger); }
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-logo" aria-hidden="true">
+        <!-- "OI" wordmark — matches the AIUI / Open WebUI brand. -->
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <text x="16" y="22" text-anchor="middle"
+                font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+                font-size="17" font-weight="700" fill="white"
+                letter-spacing="-0.5">OI</text>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">AIUI App Builder</div>
+        <div class="brand-subtitle">Build web apps with AI</div>
+      </div>
+    </div>
+    <a href="/" class="back">← Back to Chat</a>
+  </div>
+
+  <div class="container">
+    <div class="header-row">
+      <h2>Built apps<span id="count" class="count-pill" hidden></span></h2>
+      <button id="new-project-btn" class="btn primary btn-lg">+ New Project</button>
+    </div>
+    <div id="content">
+      <div class="loading"><div class="spinner"></div>Loading your projects…</div>
+    </div>
+  </div>
+
+  <div id="history-modal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3>Version history — <span id="hm-slug"></span></h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint" style="margin-bottom:6px;">Each row is a build commit. Rollback creates a new commit on top — the old version stays in history.</div>
+        <div id="hm-list" class="version-list">
+          <div class="members-empty">Loading…</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" id="mm-leave" title="Remove yourself from this project">Leave project</button>
+        <span style="flex:1;"></span>
+        <button type="button" class="btn" data-close>Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="members-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Members of <span id="mm-slug"></span></h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div id="mm-list"><div class="members-empty">Loading…</div></div>
+        <div class="invite-row">
+          <input id="mm-email" type="email" class="form-input" placeholder="email@example.com">
+          <select id="mm-role" class="form-select">
+            <option value="editor">Editor</option>
+            <option value="viewer">Viewer</option>
+            <option value="owner">Owner</option>
+          </select>
+          <button type="button" class="btn primary" id="mm-invite">Invite</button>
+        </div>
+        <div class="form-hint">The invited email must match the address they log in with.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close>Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="delete-modal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3>Delete project</h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin:0 0 12px 0; color:var(--text);">
+          Permanently delete <strong id="dm-slug"></strong>?
+        </p>
+        <p style="margin:0 0 8px 0; font-size:13px; color:var(--text-2);">
+          This removes:
+        </p>
+        <ul style="margin:0 0 14px 18px; padding:0; font-size:13px; color:var(--text-2); line-height:1.7;">
+          <li>The app folder on disk</li>
+          <li>All build history &amp; executions</li>
+          <li>Members, chat history, and Supabase config</li>
+        </ul>
+        <p style="margin:0 0 6px 0; font-size:13px; color:var(--danger);">
+          This cannot be undone.
+        </p>
+        <label class="form-label" for="dm-confirm" style="margin-top:12px;">
+          Type <code id="dm-slug-echo" style="background:var(--surface-2); padding:1px 6px; border-radius:4px; font-family:inherit;"></code> to confirm:
+        </label>
+        <input id="dm-confirm" type="text" class="form-input" autocomplete="off" spellcheck="false" />
+        <div id="dm-error" class="form-hint" hidden style="color:var(--danger); margin-top:6px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn" id="dm-delete" style="background:var(--danger); color:white; border-color:var(--danger);" disabled>Delete project</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="preview-modal" class="modal-backdrop" hidden style="z-index: 70; background: rgba(10,10,11,0.96);">
+    <div class="modal" style="max-width: 1280px; width: 95vw; height: 90vh; display:flex; flex-direction:column;">
+      <div class="modal-header">
+        <h3 id="pv-title">Template preview</h3>
+        <span style="flex:1;"></span>
+        <button type="button" id="pv-use" class="btn primary" style="padding:6px 14px; font-size:13px; margin-right:8px;">Use this template</button>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body" style="padding:0; overflow:hidden; flex:1; background:#0a0a0b;">
+        <div id="pv-loading" style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--muted); font-size:13px;">Loading preview…</div>
+        <div id="pv-error" hidden style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--danger); font-size:13px; padding:24px; text-align:center;"></div>
+        <iframe id="pv-frame" hidden style="width:100%; height:100%; border:0; background:#fff;" title="Template preview"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <div id="templates-modal" class="modal-backdrop" hidden style="z-index: 60;">
+    <div class="modal" style="max-width: 1040px; width: 92vw; max-height: 88vh; display:flex; flex-direction:column;">
+      <div class="modal-header">
+        <h3>Pick a template</h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto; flex:1;">
+        <div class="form-hint" style="margin-bottom:14px;">Featured templates ship with a working base app — files land in your project the moment you click <em>Use this template</em>, then the AIUI Agent personalizes the copy and brand for you.</div>
+        <div class="filter-row" id="tg-filter-row" style="display:flex; gap:6px; margin-bottom:18px; flex-wrap:wrap;">
+          <button type="button" class="filter-pill active" data-filter="all">All</button>
+          <button type="button" class="filter-pill" data-filter="static">Static</button>
+          <button type="button" class="filter-pill" data-filter="supabase">With database</button>
+        </div>
+        <div id="tg-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap:14px;">
+          <div class="members-empty">Loading templates…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="new-project-modal" class="modal-backdrop" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h3>New project</h3>
+        <button type="button" id="np-template-browse-top" style="margin-left:auto; margin-right:10px; padding:7px 16px; font-size:13px; font-weight:500; background:var(--accent); color:white; border:0; border-radius:var(--radius); cursor:pointer; transition: background 0.15s;" onmouseover="this.style.background='var(--accent-2)'" onmouseout="this.style.background='var(--accent)'">Select template</button>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div>
+          <label class="form-label" for="np-name">Project name</label>
+          <input id="np-name" class="form-input" placeholder="my coffee shop" maxlength="60">
+          <div class="form-hint" id="np-name-hint">Spaces are fine — we'll convert them to hyphens. Leave blank to let AI pick one.</div>
+        </div>
+        <div id="np-template-status" hidden style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(124,140,255,0.3); border-radius:var(--radius); font-size:13px; color:var(--text);">
+          <span style="color:var(--accent); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Template</span>
+          <span id="np-template-status-label" style="flex:1;"></span>
+          <button type="button" id="np-template-status-change" style="background:transparent; border:0; color:var(--accent); font-size:12px; cursor:pointer; font-weight:500;">Change</button>
+        </div>
+        <select id="np-template" hidden><option value=""></option></select>
+        <div class="form-hint" id="np-template-storage-hint" hidden style="font-size:11px; color:var(--muted);"></div>
+        <div class="form-hint" id="np-template-error" hidden style="color:var(--danger);"></div>
+        <div>
+          <label class="form-label" for="np-description">What should it do?</label>
+          <textarea id="np-description" class="form-textarea" placeholder="e.g. Landing page for a coffee shop called 'Bean There', hero, menu, opening hours, contact form."></textarea>
+          <div class="form-hint">The AI will build it. Be as specific as you can about look, sections, copy, colors.</div>
+        </div>
+        <details class="rules-box">
+          <summary>Build rules the AIUI Agent will follow</summary>
+          <ul class="rules-list">
+            <li>Static HTML + Tailwind CDN + vanilla JS only (no build step).</li>
+            <li>Semantic HTML5: <code>&lt;header&gt;</code> / <code>&lt;main&gt;</code> / <code>&lt;footer&gt;</code>, one <code>&lt;h1&gt;</code>.</li>
+            <li>Mobile-first responsive, works from 320px up.</li>
+            <li>Accessibility: alt text, form labels, visible focus, contrast ≥4.5:1.</li>
+            <li>No Lorem ipsum — real copy from your description.</li>
+            <li>Whitelisted CDNs only (Tailwind, Google Fonts, jsDelivr, unpkg).</li>
+            <li>Every commit is a version — you can rollback later from the project's History panel.</li>
+          </ul>
+        </details>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="button" class="btn primary" id="np-submit">Create project</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const content = document.getElementById("content");
+    const countPill = document.getElementById("count");
+
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    function relativeTime(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return "just now";
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // Map task status → display info. Separated so we can tweak copy
+    // without touching the rendering loop.
+    function statusInfo(t) {
+      const hasSlug = !!t.built_app_slug;
+      const s = t.status;
+      if (hasSlug && s === "completed") return { cls: "", label: "✓ built", action: "preview" };
+      if (s === "running" || s === "planning" || s === "awaiting_input") return { cls: "building", label: '<span class="spinner-sm"></span> Building…', action: "watch" };
+      if (s === "pending" || s === "awaiting_plan_review" || s === "claimed_manual") return { cls: "pending", label: "Waiting to start", action: "approve" };
+      if (s === "failed") return { cls: "failed", label: "Failed", action: "retry" };
+      if (hasSlug) return { cls: "", label: "✓ built", action: "preview" };
+      return { cls: "pending", label: s, action: "approve" };
+    }
+
+    function renderCards(tasks) {
+      // Dedupe tasks by slug, but keep every slugless task as its own card
+      // (new projects that haven't been built yet don't have a slug yet).
+      const bySlug = new Map();
+      const slugless = [];
+      for (const t of tasks) {
+        if (!t.built_app_slug) {
+          slugless.push(t);
+          continue;
+        }
+        const prev = bySlug.get(t.built_app_slug);
+        if (!prev || new Date(t.completed_at || t.created_at) > new Date(prev.completed_at || prev.created_at)) {
+          bySlug.set(t.built_app_slug, t);
+        }
+      }
+      const unique = [...slugless, ...Array.from(bySlug.values())].sort(
+        (a, b) => new Date(b.created_at) - new Date(a.created_at)
+      );
+      countPill.hidden = false;
+      countPill.textContent = unique.length;
+
+      if (!unique.length) {
+        content.innerHTML = `
+          <div class="empty">
+            <h3>No projects yet</h3>
+            <p>Click <strong>+ New Project</strong> above to create your first one.</p>
+          </div>`;
+        return;
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      for (const t of unique) {
+        const card = document.createElement("div");
+        card.className = "card";
+        const built = t.completed_at || t.created_at;
+        const info = statusInfo(t);
+        // Strip the server-side rules prefix from descriptions so cards
+        // show the user's actual request. The prefix ends with the literal
+        // "USER REQUEST:" — anything after that is what the user typed.
+        const _rawDesc = String(t.description || "");
+        const _userIdx = _rawDesc.lastIndexOf("USER REQUEST:");
+        const userDesc = _userIdx >= 0
+          ? _rawDesc.slice(_userIdx + "USER REQUEST:".length).trim()
+          : _rawDesc;
+        const title = t.built_app_slug || userDesc.slice(0, 60) + (userDesc.length > 60 ? "…" : "");
+
+        let actionBtn = "";
+        if (info.action === "preview") {
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open preview</a>`;
+        } else if (info.action === "watch") {
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Watch progress</a>`;
+        } else if (info.action === "approve") {
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open &amp; start</a>`;
+        } else {
+          actionBtn = `<a class="btn" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open in preview</a>`;
+        }
+
+        const membersBtn = t.built_app_slug
+          ? `<button type="button" class="members-btn" data-slug="${escapeHtml(t.built_app_slug)}">Members</button>`
+          : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="Members available once the build completes">Members</span>`;
+        const historyBtn = t.built_app_slug
+          ? `<button type="button" class="members-btn history-btn" data-slug="${escapeHtml(t.built_app_slug)}">History</button>`
+          : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="History available once the build completes">History</span>`;
+
+        const menuBtn = t.built_app_slug
+          ? `<button type="button" class="card-menu-btn" data-slug="${escapeHtml(t.built_app_slug)}" title="More actions" aria-label="Project menu">⋯</button>`
+          : "";
+        card.innerHTML = `
+          <div class="slug-row">
+            <span class="slug">${escapeHtml(title)}</span>
+            <span class="badge ${info.cls}">${info.label}</span>
+            <span class="spacer"></span>
+            ${menuBtn}
+          </div>
+          <div class="desc">${escapeHtml(userDesc)}</div>
+          <div class="meta">
+            <span class="left">${escapeHtml(relativeTime(built))}</span>
+            <span style="display:flex; gap:6px;">${historyBtn}${membersBtn}</span>
+          </div>
+          <div class="actions">${actionBtn}</div>`;
+        grid.appendChild(card);
+      }
+      // Wire Members + History buttons (delegated listeners)
+      grid.querySelectorAll("button.members-btn:not(.history-btn)").forEach((b) => {
+        b.addEventListener("click", () => openMembersModal(b.dataset.slug));
+      });
+      grid.querySelectorAll("button.history-btn").forEach((b) => {
+        b.addEventListener("click", () => openHistoryModal(b.dataset.slug));
+      });
+      // Wire the per-card "⋯" menu — opens a popover with Delete project.
+      grid.querySelectorAll("button.card-menu-btn").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          openCardMenu(btn);
+        });
+      });
+      content.innerHTML = "";
+      content.appendChild(grid);
+    }
+
+    // ===== New project modal =====
+    const modal = document.getElementById("new-project-modal");
+    const npBtn = document.getElementById("new-project-btn");
+    const npName = document.getElementById("np-name");
+    const npTemplate = document.getElementById("np-template");
+    const npDesc = document.getElementById("np-description");
+    const npStorageHint = document.getElementById("np-template-storage-hint");
+    const npSubmit = document.getElementById("np-submit");
+    const SLUG_RE = /^[a-z0-9][a-z0-9-]{2,49}$/;
+
+    // Convert a free-text name (with spaces, mixed case, accents) to a
+    // URL-safe slug. e.g. "aiui landing page" → "aiui-landing-page".
+    function _normalizeSlug(raw) {
+      if (!raw) return "";
+      return raw
+        .normalize("NFKD")              // strip accents
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")   // anything not [a-z0-9-] → hyphen
+        .replace(/-+/g, "-")            // collapse runs of hyphens
+        .replace(/^-|-$/g, "")          // trim leading/trailing hyphens
+        .slice(0, 50);
+    }
+
+    // Live preview of the normalized slug under the input.
+    const npNameHint = document.getElementById("np-name-hint");
+    const _npNameDefaultHint =
+      "Spaces are fine — we'll convert them to hyphens. Leave blank to let AI pick one.";
+    const npNameInput = document.getElementById("np-name");
+    if (npNameInput && npNameHint) {
+      npNameInput.addEventListener("input", () => {
+        const raw = npNameInput.value || "";
+        const norm = _normalizeSlug(raw);
+        if (!raw.trim()) {
+          npNameHint.textContent = _npNameDefaultHint;
+          npNameHint.style.color = "";
+          return;
+        }
+        if (!SLUG_RE.test(norm)) {
+          npNameHint.textContent = norm
+            ? `URL would be: "${norm}" — needs at least 3 characters and must start with a letter or digit.`
+            : "Use letters, digits, spaces, or hyphens. At least 3 chars.";
+          npNameHint.style.color = "var(--danger)";
+        } else {
+          npNameHint.textContent = `URL slug: ${norm}`;
+          npNameHint.style.color = "var(--success)";
+        }
+      });
+    }
+
+    // Templates are loaded from GET /api/templates — the canonical rules
+    // live server-side (see mcp-servers/tasks/templates.py). Cache for the
+    // page lifetime so we only fetch once per "+ New project" session.
+    let _templatesCache = null;
+    const npTemplateError = document.getElementById("np-template-error");
+
+    async function loadTemplates() {
+      if (_templatesCache) return _templatesCache;
+      const resp = await fetch("/api/templates", {
+        headers: authHeaders(),
+        credentials: "include",
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      _templatesCache = await resp.json();
+      return _templatesCache;
+    }
+
+    const npTemplateStatus = document.getElementById("np-template-status");
+    const npTemplateStatusLabel = document.getElementById("np-template-status-label");
+    const npTemplateStatusChange = document.getElementById("np-template-status-change");
+
+    function _populateTemplateSelect(items) {
+      npTemplate.innerHTML = items.map((t) => `<option value="${t.key}">${t.label}</option>`).join("");
+      npTemplate.value = "";  // force the user to pick
+      _refreshTemplateBrowseLabel();
+      applyTemplatePlaceholder();
+    }
+
+    function _refreshTemplateBrowseLabel() {
+      const t = _templatesCache && _templatesCache.find((x) => x.key === npTemplate.value);
+      if (t) {
+        npTemplateStatus.hidden = false;
+        npTemplateStatusLabel.textContent = `${t.label} — ${t.description}`;
+      } else {
+        npTemplateStatus.hidden = true;
+      }
+    }
+
+    function applyTemplatePlaceholder() {
+      if (!_templatesCache) return;
+      const t = _templatesCache.find((x) => x.key === npTemplate.value);
+      npDesc.placeholder = t ? t.placeholder : "";
+      if (npStorageHint) {
+        if (!t) {
+          npStorageHint.textContent = "";
+          npStorageHint.hidden = true;
+        } else if (t.storage === "supabase") {
+          npStorageHint.textContent = "Uses Supabase — you'll connect a database in the next step.";
+          npStorageHint.hidden = false;
+        } else {
+          npStorageHint.textContent = "Frontend-only template (no database).";
+          npStorageHint.hidden = false;
+        }
+      }
+    }
+
+    // Templates gallery (in-page modal).
+    const FEATURED_TEMPLATE_KEYS = new Set(["landing", "portfolio", "crud", "invoice", "dashboard"]);
+    const tgModal = document.getElementById("templates-modal");
+    const tgGrid = document.getElementById("tg-grid");
+    const tgFilterRow = document.getElementById("tg-filter-row");
+    let tgActiveFilter = "all";
+
+    // Track whether the New Project modal was open when we showed the
+    // gallery so we can restore it when the gallery closes.
+    let _tgRestoreNpModal = false;
+    const _npModal = document.getElementById("new-project-modal");
+    function _closeTgModal() {
+      tgModal.hidden = true;
+      if (_tgRestoreNpModal) {
+        _npModal.hidden = false;
+        _tgRestoreNpModal = false;
+      }
+    }
+    tgModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", _closeTgModal));
+    tgModal.addEventListener("click", (ev) => { if (ev.target === tgModal) _closeTgModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !tgModal.hidden) _closeTgModal(); });
+
+    function _renderTgGrid() {
+      if (!_templatesCache) {
+        tgGrid.innerHTML = '<div class="members-empty">Loading templates…</div>';
+        return;
+      }
+      // Only show templates with a working base app — no half-built picks.
+      const ready = _templatesCache.filter((t) => t.has_app);
+      ready.sort((a, b) => a.label.localeCompare(b.label));
+      const filtered = ready.filter((t) => {
+        if (tgActiveFilter === "all") return true;
+        if (tgActiveFilter === "static") return t.storage !== "supabase";
+        if (tgActiveFilter === "supabase") return t.storage === "supabase";
+        return true;
+      });
+      if (!filtered.length) {
+        tgGrid.innerHTML =
+          '<div class="members-empty" style="grid-column:1 / -1;">No templates match this filter.</div>';
+        return;
+      }
+      tgGrid.innerHTML = filtered.map((t) => {
+        const storageBadge = t.storage === "supabase"
+          ? '<span class="tg-badge storage-supabase">Database</span>'
+          : '<span class="tg-badge storage-none">Static</span>';
+        const kindCls = " kind-" + escapeHtml(t.key.replace(/[^a-z]/gi, ""));
+        const bullets = (t.feature_bullets || []).slice(0, 3);
+        const bulletList = bullets.length
+          ? `<ul class="features">${bullets.map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>`
+          : "";
+        // Live iframe preview from /api/template-preview/<key>/index.html. This
+        // path is NOT under Open WebUI's service-worker scope, so requests pass
+        // through to our origin. Iframe is rendered at desktop width and scaled
+        // down via CSS transform. The gradient placeholder underneath is shown
+        // only if the iframe fails (.broken class added by load-handler below).
+        // Pre-rendered PNG screenshot served from /api/template-preview/<key>/preview.png.
+        // The PNG is generated by mcp-servers/tasks/scripts/generate_template_previews.py
+        // and committed to the repo. Static images bypass every service-worker /
+        // CORS / iframe-rendering issue. Re-run the generator after editing a
+        // template (`python scripts/generate_template_previews.py`).
+        const previewUrl = "/api/template-preview/" + encodeURIComponent(t.key) + "/preview.png";
+        const visual = `
+          <div class="visual visual-img">
+            <div class="placeholder fallback">
+              <div class="vname">${escapeHtml(t.label)}</div>
+              <div class="vsub">${escapeHtml(t.role_tag || "Ready app")}</div>
+            </div>
+            <img class="preview" src="${previewUrl}" alt="${escapeHtml(t.label)} preview" loading="lazy">
+          </div>`;
+        return `
+          <div class="tcard featured${kindCls}" data-key="${escapeHtml(t.key)}">
+            ${visual}
+            <div class="body">
+              <div class="row1">
+                <span class="name">${escapeHtml(t.label)}</span>
+                <div class="badges">${storageBadge}</div>
+              </div>
+              <div class="desc">${escapeHtml(t.description)}${t.role_tag ? ` <span style="color:var(--muted);">· ${escapeHtml(t.role_tag)}</span>` : ""}</div>
+              ${bulletList}
+              <div class="actions">
+                <button type="button" class="btn primary" data-action="use">Use this template</button>
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+      // Iframe health check: if a same-origin iframe loads a 404 page, hide
+      // it so the gradient placeholder underneath shows through instead.
+      tgGrid.querySelectorAll("iframe.preview").forEach((ifr) => {
+        ifr.addEventListener("load", () => {
+          try {
+            const doc = ifr.contentDocument;
+            const txt = (doc && doc.body && doc.body.textContent || "").trim();
+            const titleBad = doc && /404|not found|error/i.test(doc.title || "");
+            const tooSmall = txt.length < 200;
+            if (titleBad || tooSmall) ifr.classList.add("broken");
+          } catch (_) {
+            // Cross-origin or DOM error → assume broken, fall back.
+            ifr.classList.add("broken");
+          }
+        });
+        ifr.addEventListener("error", () => ifr.classList.add("broken"));
+      });
+      // Wire action buttons.
+      tgGrid.querySelectorAll(".tcard").forEach((card) => {
+        const key = card.dataset.key;
+        const previewBtn = card.querySelector('[data-action="preview"]');
+        const useBtn = card.querySelector('[data-action="use"]');
+        // PNG preview falls back to the gradient placeholder if the image
+        // fails to load (404, network error, etc.).
+        const previewImg = card.querySelector("img.preview");
+        if (previewImg) {
+          previewImg.addEventListener("error", () => previewImg.classList.add("broken"));
+        }
+        if (previewBtn) {
+          previewBtn.addEventListener("click", () => openPreviewModal(key));
+        }
+        if (useBtn) {
+          useBtn.addEventListener("click", () => {
+            npTemplate.value = key;
+            _refreshTemplateBrowseLabel();
+            applyTemplatePlaceholder();
+            npTemplateError.hidden = true;
+            _closeTgModal();
+          });
+        }
+      });
+    }
+
+    tgFilterRow.addEventListener("click", (ev) => {
+      const btn = ev.target.closest(".filter-pill");
+      if (!btn) return;
+      tgActiveFilter = btn.dataset.filter;
+      tgFilterRow.querySelectorAll(".filter-pill").forEach((b) => b.classList.toggle("active", b === btn));
+      _renderTgGrid();
+    });
+
+    // Preview modal — renders the template app via iframe srcdoc so it
+    // bypasses any same-origin service worker that might intercept a plain
+    // navigation. We fetch the index.html, inject a <base> tag pointing at
+    // the absolute origin URL of the template, and display it as srcdoc.
+    const pvModal = document.getElementById("preview-modal");
+    const pvTitle = document.getElementById("pv-title");
+    const pvFrame = document.getElementById("pv-frame");
+    const pvLoading = document.getElementById("pv-loading");
+    const pvError = document.getElementById("pv-error");
+    const pvUseBtn = document.getElementById("pv-use");
+    let pvCurrentKey = null;
+
+    function _closePvModal() {
+      pvModal.hidden = true;
+      pvFrame.removeAttribute("srcdoc");
+      pvFrame.hidden = true;
+      pvLoading.style.display = "flex";
+      pvError.hidden = true;
+      pvCurrentKey = null;
+    }
+    pvModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", _closePvModal));
+    pvModal.addEventListener("click", (ev) => { if (ev.target === pvModal) _closePvModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !pvModal.hidden) _closePvModal(); });
+    pvUseBtn.addEventListener("click", () => {
+      const key = pvCurrentKey;
+      if (!key) return;
+      npTemplate.value = key;
+      _refreshTemplateBrowseLabel();
+      applyTemplatePlaceholder();
+      _closePvModal();
+      _closeTgModal();  // also close the gallery; user is back at the New Project form
+    });
+
+    async function openPreviewModal(key) {
+      pvCurrentKey = key;
+      const tpl = _templatesCache && _templatesCache.find((x) => x.key === key);
+      pvTitle.textContent = "Preview — " + (tpl ? tpl.label : key);
+      pvFrame.removeAttribute("srcdoc");
+      pvFrame.hidden = true;
+      pvLoading.style.display = "flex";
+      pvLoading.textContent = "Loading preview…";
+      pvError.hidden = true;
+      pvModal.hidden = false;
+      try {
+        const bust = Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+        const url = "/tasks/template-apps/" + encodeURIComponent(key) + "/index.html?v=" + bust;
+        // Fetch with cache:'reload' to bypass any cached 404 a service worker
+        // might have stashed against this path.
+        const r = await fetch(url, { cache: "reload", headers: authHeaders(), credentials: "include" });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        let html = await r.text();
+        // Inject a <base> pointing at the template's absolute URL so that
+        // every relative href/src in the page resolves to our origin.
+        const base = location.origin + "/tasks/template-apps/" + encodeURIComponent(key) + "/";
+        const baseTag = `<base href="${base}">`;
+        if (/<head[^>]*>/i.test(html)) {
+          html = html.replace(/<head[^>]*>/i, (m) => m + baseTag);
+        } else {
+          html = baseTag + html;
+        }
+        pvFrame.srcdoc = html;
+        pvFrame.onload = () => {
+          pvLoading.style.display = "none";
+          pvFrame.hidden = false;
+        };
+      } catch (err) {
+        pvLoading.style.display = "none";
+        pvError.textContent = "Couldn't load preview: " + ((err && err.message) || err);
+        pvError.hidden = false;
+      }
+    }
+
+    async function openTemplatesModal() {
+      // Stash + hide the New Project modal so they don't overlap visually.
+      _tgRestoreNpModal = !_npModal.hidden;
+      _npModal.hidden = true;
+      tgModal.hidden = false;
+      // If we already have the cache, render immediately. Otherwise show
+      // the loading state, fetch, and render — surfacing any error inline.
+      if (_templatesCache) {
+        _renderTgGrid();
+        return;
+      }
+      tgGrid.innerHTML = '<div class="members-empty">Loading templates…</div>';
+      try {
+        const items = await loadTemplates();
+        _populateTemplateSelect(items);
+        _renderTgGrid();
+      } catch (err) {
+        const msg = (err && err.message) || String(err);
+        tgGrid.innerHTML =
+          '<div class="members-empty" style="color:var(--danger);">Couldn\'t load templates: ' +
+          escapeHtml(msg) +
+          '<br><br><button type="button" class="btn" onclick="this.closest(\'.modal-backdrop\').querySelector(\'.filter-pill.active\').click()">Retry</button>' +
+          '</div>';
+        console.error("[templates] fetch failed", err);
+      }
+    }
+
+    document.getElementById("np-template-browse-top").addEventListener("click", openTemplatesModal);
+    npTemplateStatusChange.addEventListener("click", openTemplatesModal);
+
+    async function ensureTemplatesLoaded() {
+      if (_templatesCache) return true;
+      try {
+        const items = await loadTemplates();
+        _populateTemplateSelect(items);
+        npTemplateError.hidden = true;
+        return true;
+      } catch (err) {
+        npTemplateError.textContent = "Couldn't load templates — refresh the page or check your connection.";
+        npTemplateError.hidden = false;
+        return false;
+      }
+    }
+
+    npTemplate.addEventListener("change", applyTemplatePlaceholder);
+
+    // (legacy template-rules JS dicts removed — now server-side in templates.py)
+
+    function openModal() {
+      modal.hidden = false;
+      ensureTemplatesLoaded();
+      setTimeout(() => npDesc.focus(), 50);
+    }
+    function closeModal() {
+      modal.hidden = true;
+      npDesc.value = "";
+      npSubmit.disabled = false;
+      npSubmit.textContent = "Create project";
+    }
+    npBtn.addEventListener("click", openModal);
+    modal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", closeModal));
+    modal.addEventListener("click", (ev) => { if (ev.target === modal) closeModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !modal.hidden) closeModal(); });
+
+    function showToast(msg, isError) {
+      const t = document.createElement("div");
+      t.className = "toast" + (isError ? " error" : "");
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    }
+
+    async function submitNewProject() {
+      const desc = npDesc.value.trim();
+      if (!desc) {
+        npDesc.focus();
+        showToast("Please describe what you want to build.", true);
+        return;
+      }
+      const rawName = (npName.value || "").trim();
+      const name = _normalizeSlug(rawName);  // "aiui landing" → "aiui-landing"
+      if (rawName && !SLUG_RE.test(name)) {
+        npName.focus();
+        showToast(
+          name
+            ? `"${rawName}" → "${name}" is too short (minimum 3 characters).`
+            : "Use letters, digits, spaces, or hyphens (at least 3 chars).",
+          true
+        );
+        return;
+      }
+      // Server-side prompt assembly (Phase D): we only send the raw user
+      // description + template_key + storage + slug. The backend looks up
+      // the canonical rules text from templates.py — the browser never
+      // touches them, closing a prompt-injection hole.
+      const templateKey = npTemplate.value;
+      if (!templateKey) {
+        showToast("Click Select template at the top to pick one.", true);
+        openTemplatesModal();
+        return;
+      }
+      // The template's `storage` field is the source of truth — the modal no
+      // longer asks the user. Static templates → "none", dynamic ones → "supabase".
+      const tpl = _templatesCache && _templatesCache.find((x) => x.key === templateKey);
+      const storage = tpl && tpl.storage === "supabase" ? "supabase" : "none";
+      npSubmit.disabled = true;
+      npSubmit.textContent = "Creating…";
+      try {
+        const resp = await fetch("/api/tasks", {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({
+            description: desc,
+            action_type: "BUILD",
+            priority: "IMPORTANT",
+            assignee: "self",
+            template_key: templateKey,
+            storage,
+            slug: name || null,
+          }),
+        });
+        if (!resp.ok) {
+          let detail = "";
+          try {
+            const j = await resp.json();
+            detail = j.detail ? JSON.stringify(j.detail) : JSON.stringify(j);
+          } catch (_) {
+            detail = await resp.text();
+          }
+          throw new Error(`HTTP ${resp.status} — ${detail.slice(0, 300)}`);
+        }
+        const newTask = await resp.json();
+        // If the backend gated us on Supabase, skip /execute — the chat in
+        // preview.html has already been seeded with a Connect Supabase
+        // prompt and will guide the user through it.
+        // Skip /execute when:
+        //  - awaiting_supabase: chat-driven Connect flow handles it
+        //  - completed: backend used the template as-is (instant build)
+        if (newTask.status !== "awaiting_supabase" && newTask.status !== "completed") {
+          // Auto-kick-off the AI build. Failure is non-fatal — the task
+          // sits as pending and an admin can approve via the task panel.
+          try {
+            await fetch(`/api/tasks/${encodeURIComponent(newTask.id)}/execute`, {
+              method: "POST",
+              headers: authHeaders(),
+              credentials: "include",
+            });
+          } catch (e) {
+            console.warn("[projects] auto-execute failed; task sits as pending", e);
+          }
+        }
+        closeModal();
+        // Take the user straight into the live-build view.
+        window.location.href = `/tasks/static/preview.html?task=${encodeURIComponent(newTask.id)}`;
+      } catch (err) {
+        console.error("[projects] create failed", err);
+        showToast("Could not create project: " + (err.message || err), true);
+      } finally {
+        npSubmit.disabled = false;
+        npSubmit.textContent = "Create project";
+      }
+    }
+    npSubmit.addEventListener("click", submitNewProject);
+    // Cmd/Ctrl+Enter anywhere inside the modal submits.
+    modal.addEventListener("keydown", (ev) => {
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+        ev.preventDefault();
+        submitNewProject();
+      }
+    });
+
+    // ===== Members modal =====
+    const mmModal = document.getElementById("members-modal");
+    const mmSlug = document.getElementById("mm-slug");
+    const mmList = document.getElementById("mm-list");
+    const mmEmail = document.getElementById("mm-email");
+    const mmRole = document.getElementById("mm-role");
+    const mmInvite = document.getElementById("mm-invite");
+    let mmCurrentSlug = null;
+
+    mmModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => (mmModal.hidden = true)));
+    mmModal.addEventListener("click", (ev) => { if (ev.target === mmModal) mmModal.hidden = true; });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !mmModal.hidden) mmModal.hidden = true; });
+
+    // ===== Per-card ⋯ menu (Delete project) =====
+    let _openCardMenu = null;
+    function _closeCardMenu() {
+      if (_openCardMenu) { _openCardMenu.remove(); _openCardMenu = null; }
+    }
+    document.addEventListener("click", _closeCardMenu);
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") _closeCardMenu(); });
+
+    function openCardMenu(triggerBtn) {
+      _closeCardMenu();
+      const slug = triggerBtn.dataset.slug;
+      if (!slug) return;
+      const pop = document.createElement("div");
+      pop.className = "card-menu-popover";
+      pop.innerHTML = `
+        <button type="button" class="danger" data-action="delete">Delete project</button>
+      `;
+      pop.addEventListener("click", (ev) => ev.stopPropagation());
+      pop.querySelector('[data-action="delete"]').addEventListener("click", () => {
+        _closeCardMenu();
+        deleteProject(slug);
+      });
+      triggerBtn.parentElement.appendChild(pop);
+      _openCardMenu = pop;
+    }
+
+    // ===== Delete project modal =====
+    const dmModal = document.getElementById("delete-modal");
+    const dmSlugLabel = document.getElementById("dm-slug");
+    const dmSlugEcho = document.getElementById("dm-slug-echo");
+    const dmConfirmInput = document.getElementById("dm-confirm");
+    const dmDeleteBtn = document.getElementById("dm-delete");
+    const dmError = document.getElementById("dm-error");
+    let dmCurrentSlug = null;
+
+    function _closeDeleteModal() {
+      dmModal.hidden = true;
+      dmConfirmInput.value = "";
+      dmDeleteBtn.disabled = true;
+      dmError.hidden = true;
+      dmCurrentSlug = null;
+    }
+    dmModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", _closeDeleteModal));
+    dmModal.addEventListener("click", (ev) => { if (ev.target === dmModal) _closeDeleteModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !dmModal.hidden) _closeDeleteModal(); });
+    // Enable the delete button only when the typed slug matches exactly.
+    dmConfirmInput.addEventListener("input", () => {
+      dmDeleteBtn.disabled = dmConfirmInput.value !== dmCurrentSlug;
+      dmError.hidden = true;
+    });
+    dmConfirmInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !dmDeleteBtn.disabled) {
+        ev.preventDefault();
+        dmDeleteBtn.click();
+      }
+    });
+
+    async function deleteProject(slug) {
+      dmCurrentSlug = slug;
+      dmSlugLabel.textContent = slug;
+      dmSlugEcho.textContent = slug;
+      dmConfirmInput.value = "";
+      dmDeleteBtn.disabled = true;
+      dmError.hidden = true;
+      dmModal.hidden = false;
+      // Defer focus so the modal is fully rendered before we grab focus.
+      setTimeout(() => dmConfirmInput.focus(), 50);
+    }
+
+    dmDeleteBtn.addEventListener("click", async () => {
+      const slug = dmCurrentSlug;
+      if (!slug || dmConfirmInput.value !== slug) return;
+      dmDeleteBtn.disabled = true;
+      dmDeleteBtn.textContent = "Deleting…";
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(slug)}`, {
+          method: "DELETE",
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok && r.status !== 204) {
+          const t = await r.text();
+          dmError.textContent = `Delete failed: ${t.slice(0, 200)}`;
+          dmError.hidden = false;
+          dmDeleteBtn.disabled = false;
+          dmDeleteBtn.textContent = "Delete project";
+          return;
+        }
+        _closeDeleteModal();
+        showToast(`"${slug}" deleted.`, false);
+        load();
+      } catch (err) {
+        dmError.textContent = "Network error: " + (err.message || err);
+        dmError.hidden = false;
+        dmDeleteBtn.disabled = false;
+        dmDeleteBtn.textContent = "Delete project";
+      }
+    });
+
+    async function openMembersModal(slug) {
+      if (!slug) return;
+      mmCurrentSlug = slug;
+      mmCurrentMe = null;
+      mmSlug.textContent = slug;
+      mmList.innerHTML = `<div class="members-empty">Loading…</div>`;
+      mmModal.hidden = false;
+      await refreshMembers();
+    }
+
+    let mmCurrentMe = null;
+
+    async function _fetchMe() {
+      // Reuse the presence POST as a side-effect-free way to learn the
+      // authenticated user's email (server returns {ok, me}).
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/presence`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ is_building: false }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          return (data && data.me) ? String(data.me).toLowerCase() : null;
+        }
+      } catch (_) { /* ignore */ }
+      return null;
+    }
+
+    async function refreshMembers() {
+      try {
+        if (!mmCurrentMe) mmCurrentMe = await _fetchMe();
+        const resp = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members`, {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          mmList.innerHTML = `<div class="members-empty">Failed: ${escapeHtml(text).slice(0, 200)}</div>`;
+          return;
+        }
+        const rows = await resp.json();
+        if (!rows.length) {
+          mmList.innerHTML = `<div class="members-empty">No members yet.</div>`;
+          return;
+        }
+        const me = (mmCurrentMe || "").toLowerCase();
+        const myRow = rows.find((r) => (r.user_email || "").toLowerCase() === me);
+        const iAmOwner = !!(myRow && myRow.role === "owner");
+        mmList.innerHTML = "";
+        for (const m of rows) {
+          const row = document.createElement("div");
+          row.className = "member-row";
+          const isMe = (m.user_email || "").toLowerCase() === me;
+          const roles = ["viewer", "editor", "owner"];
+          // Owners get a dropdown for everyone except themselves; non-owners
+          // see a static badge. Disabling the self-row prevents accidental
+          // self-demotion (use Leave instead).
+          const roleCell = iAmOwner
+            ? `<select class="role-select form-select" data-email="${escapeHtml(m.user_email)}" ${isMe ? "disabled" : ""}>${
+                roles.map((r) => `<option value="${r}" ${r === m.role ? "selected" : ""}>${r}</option>`).join("")
+              }</select>`
+            : `<span class="role-badge ${m.role === "owner" ? "owner" : ""}">${escapeHtml(m.role)}</span>`;
+          row.innerHTML = `
+            <span class="email">${escapeHtml(m.user_email)}</span>
+            ${roleCell}
+            <button type="button" class="remove" title="Remove" data-email="${escapeHtml(m.user_email)}" ${isMe || !iAmOwner ? "disabled" : ""}>✕</button>`;
+          mmList.appendChild(row);
+        }
+        mmList.querySelectorAll(".remove").forEach((b) => {
+          b.addEventListener("click", async () => {
+            if (b.disabled) return;
+            if (!confirm(`Remove ${b.dataset.email} from ${mmCurrentSlug}?`)) return;
+            try {
+              const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members/${encodeURIComponent(b.dataset.email)}`, {
+                method: "DELETE",
+                headers: authHeaders(),
+                credentials: "include",
+              });
+              if (!r.ok && r.status !== 204) {
+                const t = await r.text();
+                showToast("Remove failed: " + t.slice(0, 200), true);
+                return;
+              }
+              await refreshMembers();
+            } catch (err) {
+              showToast("Network error: " + err.message, true);
+            }
+          });
+        });
+        mmList.querySelectorAll(".role-select").forEach((sel) => {
+          const original = sel.value;
+          sel.addEventListener("change", async () => {
+            const target = sel.dataset.email;
+            const newRole = sel.value;
+            sel.disabled = true;
+            try {
+              const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members/${encodeURIComponent(target)}`, {
+                method: "PATCH",
+                headers: authHeaders(),
+                credentials: "include",
+                body: JSON.stringify({ role: newRole }),
+              });
+              if (!r.ok) {
+                const t = await r.text();
+                showToast("Role change failed: " + t.slice(0, 200), true);
+                sel.value = original;
+                sel.disabled = false;
+                return;
+              }
+              showToast(`Role updated for ${target} → ${newRole}`);
+              await refreshMembers();
+            } catch (err) {
+              showToast("Network error: " + err.message, true);
+              sel.value = original;
+              sel.disabled = false;
+            }
+          });
+        });
+      } catch (err) {
+        mmList.innerHTML = `<div class="members-empty">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    // ===== History modal (version list + rollback) =====
+    const hmModal = document.getElementById("history-modal");
+    const hmSlug  = document.getElementById("hm-slug");
+    const hmList  = document.getElementById("hm-list");
+    let hmCurrentSlug = null;
+
+    hmModal.querySelectorAll("[data-close]").forEach((b) =>
+      b.addEventListener("click", () => (hmModal.hidden = true))
+    );
+    hmModal.addEventListener("click", (ev) => {
+      if (ev.target === hmModal) hmModal.hidden = true;
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && !hmModal.hidden) hmModal.hidden = true;
+    });
+
+    async function openHistoryModal(slug) {
+      if (!slug) return;
+      hmCurrentSlug = slug;
+      hmSlug.textContent = slug;
+      hmList.innerHTML = `<div class="members-empty">Loading version history…</div>`;
+      hmModal.hidden = false;
+      await refreshHistory();
+    }
+
+    function renderVersions(rows) {
+      if (!rows.length) {
+        hmList.innerHTML = `<div class="members-empty">No versions yet — the first build hasn't been committed.</div>`;
+        return;
+      }
+      hmList.innerHTML = "";
+      for (const v of rows) {
+        const row = document.createElement("div");
+        row.className = "version-row" + (v.is_current ? " current" : "") + (v.status === "error" ? " error" : "");
+        const d = new Date(v.date);
+        const when = d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+        let pillCls = v.status, pillLabel = v.status;
+        if (v.is_current) { pillCls = "current"; pillLabel = "current"; }
+        const canRollback = !v.is_current;
+        row.innerHTML = `
+          <span class="sha">${escapeHtml(v.short_sha)}</span>
+          <div class="msg">
+            <span class="primary">${escapeHtml(v.message)}</span>
+            <span class="secondary">${escapeHtml(when)} · ${escapeHtml(v.author)}</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="status-pill ${pillCls}">${escapeHtml(pillLabel)}</span>
+            <button type="button" class="rollback-btn" data-sha="${escapeHtml(v.sha)}" ${canRollback ? "" : "disabled"}>${canRollback ? "Rollback" : "—"}</button>
+          </div>
+        `;
+        hmList.appendChild(row);
+      }
+      hmList.querySelectorAll(".rollback-btn:not([disabled])").forEach((b) =>
+        b.addEventListener("click", () => doRollback(b.dataset.sha))
+      );
+    }
+
+    async function refreshHistory() {
+      try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(hmCurrentSlug)}/versions`, {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          hmList.innerHTML = `<div class="members-empty">Failed: ${escapeHtml(text).slice(0, 200)}</div>`;
+          return;
+        }
+        const rows = await resp.json();
+        renderVersions(rows);
+      } catch (err) {
+        hmList.innerHTML = `<div class="members-empty">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    async function doRollback(sha) {
+      if (!confirm(`Rollback "${hmCurrentSlug}" to version ${sha.slice(0, 7)}? A new commit will be added on top — the old versions stay in history.`)) return;
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(hmCurrentSlug)}/rollback`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ sha }),
+        });
+        if (!r.ok) {
+          const t = await r.text();
+          showToast("Rollback failed: " + t.slice(0, 240), true);
+          return;
+        }
+        const res = await r.json();
+        showToast(res.noop ? "Already at that version." : `Rolled back to ${sha.slice(0, 7)}.`);
+        await refreshHistory();
+        load();  // refresh project cards — status may shift
+      } catch (err) {
+        showToast("Network error: " + err.message, true);
+      }
+    }
+
+    mmInvite.addEventListener("click", async () => {
+      const email = (mmEmail.value || "").trim().toLowerCase();
+      if (!email || !email.includes("@")) {
+        mmEmail.focus();
+        showToast("Enter a valid email.", true);
+        return;
+      }
+      mmInvite.disabled = true;
+      mmInvite.textContent = "…";
+      try {
+        const resp = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members`, {
+          method: "POST",
+          headers: authHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ user_email: email, role: mmRole.value }),
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          showToast("Invite failed: " + text.slice(0, 200), true);
+          return;
+        }
+        mmEmail.value = "";
+        showToast(`Invited ${email}`);
+        await refreshMembers();
+      } catch (err) {
+        showToast("Network error: " + err.message, true);
+      } finally {
+        mmInvite.disabled = false;
+        mmInvite.textContent = "Invite";
+      }
+    });
+
+    const $mmLeave = document.getElementById("mm-leave");
+    if ($mmLeave) {
+      $mmLeave.addEventListener("click", async () => {
+        if (!mmCurrentSlug) return;
+        if (!confirm(`Leave the project "${mmCurrentSlug}"? You'll lose access immediately.`)) return;
+        $mmLeave.disabled = true;
+        $mmLeave.textContent = "Leaving…";
+        try {
+          const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/leave`, {
+            method: "POST",
+            headers: authHeaders(),
+            credentials: "include",
+          });
+          if (r.status === 404) {
+            showToast("You're not a member of that project.", true);
+            return;
+          }
+          if (!r.ok && r.status !== 204) {
+            const t = await r.text();
+            showToast("Couldn't leave: " + t.slice(0, 200), true);
+            return;
+          }
+          mmModal.hidden = true;
+          showToast(`Left ${mmCurrentSlug}.`);
+          if (typeof load === "function") load();  // refresh the project cards
+        } catch (err) {
+          showToast("Network error: " + err.message, true);
+        } finally {
+          $mmLeave.disabled = false;
+          $mmLeave.textContent = "Leave project";
+        }
+      });
+    }
+
+    async function load() {
+      try {
+        const resp = await fetch("/api/tasks?is_project=true&limit=100", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (resp.status === 401 || resp.status === 403) {
+          content.innerHTML = `<div class="error">You must be signed in as an admin to view projects.</div>`;
+          return;
+        }
+        if (!resp.ok) {
+          const text = await resp.text();
+          content.innerHTML = `<div class="error">Failed to load projects (${resp.status}).<br><small>${escapeHtml(text).slice(0, 500)}</small></div>`;
+          return;
+        }
+        const tasks = await resp.json();
+        renderCards(tasks);
+      } catch (err) {
+        content.innerHTML = `<div class="error">Network error: ${escapeHtml(String(err))}</div>`;
+      }
+    }
+
+    load();
+    // Warm the templates cache eagerly so the gallery opens instantly.
+    ensureTemplatesLoaded().catch((e) => console.warn("[templates] eager load failed", e));
+    // Poll so status badges flip from pending → building → built on their
+    // own without the user needing to refresh. 8s is a good middle ground
+    // between snappy updates and not hammering the API.
+    setInterval(load, 8000);
+  </script>
+</body>
+</html>
