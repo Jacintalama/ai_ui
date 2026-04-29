@@ -14,6 +14,11 @@
 	# Disable admin API (not needed for this use case)
 	admin off
 
+	# Custom-domain on-demand TLS — gated by tasks service ask endpoint
+	on_demand_tls {
+		ask http://tasks:8210/__caddy/check_ask
+	}
+
 	# Enable debug logging (set to warn in production)
 	log {
 		level INFO
@@ -30,6 +35,27 @@
 	log {
 		output stdout
 		format console
+	}
+
+	# ---------------------------------------------------------------------------
+	# Wildcard publishing — <slug>.ai-ui.coolestdomain.win serves files from
+	# the apps/<slug>/ directory. The tasks service enforces published state.
+	# ---------------------------------------------------------------------------
+	@aiui_pub_subdomain {
+		header_regexp Host ^(?P<aiui_slug>[a-z0-9][a-z0-9-]{1,80})\.ai-ui\.coolestdomain\.win$
+	}
+
+	# Path-based published apps — https://ai-ui.coolestdomain.win/p/<slug>/...
+	# Uses existing apex cert, no DNS or new cert needed.
+	handle_path /p/* {
+		rewrite * /__public{uri}
+		reverse_proxy tasks:8210
+	}
+
+	handle @aiui_pub_subdomain {
+		header Cache-Control "public, max-age=120"
+		rewrite * /__public/{re.aiui_pub_subdomain.aiui_slug}{uri}
+		reverse_proxy tasks:8210
 	}
 
 	# ---------------------------------------------------------------------------
@@ -122,11 +148,54 @@
 	handle /api/tasks/* {
 		reverse_proxy api-gateway:8080
 	}
+	# /api/supabase/* (OAuth callback + future endpoints) → gateway → tasks
+	handle /api/supabase/* {
+		reverse_proxy api-gateway:8080
+	}
 	# Static frontend (panel JS + history page) — public, no auth on assets
 	handle /tasks/static/* {
 		header Cache-Control "no-cache, no-store, must-revalidate"
 		header Pragma "no-cache"
 		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+
+	# Templates gallery — public read-only access to the bundled reference apps
+	handle /tasks/template-apps/* {
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		reverse_proxy tasks:8210
+	}
+
+	# App Builder page — pretty URL that serves the projects SPA
+	handle /tasks/app-builder {
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		reverse_proxy tasks:8210
+	}
+
+	# Inject Supabase window vars into the preview-app via a special URL.
+	# This MUST come before the catch-all /tasks/preview-app/* below — Caddy
+	# routes by most-specific match and we want this to hit tasks:8210 (the
+	# FastAPI service) instead of tasks:9100 (the user's dev server).
+	handle /tasks/preview-app/aiui-config.js {
+		rewrite * /__preview_config.js
+		header Cache-Control "no-store"
+		reverse_proxy tasks:8210
+	}
+
+	# Defense-in-depth: route the iframe ROOT path through FastAPI so we can
+	# inject window.SUPABASE_URL / SUPABASE_ANON_KEY into the served HTML
+	# even if the app's index.html forgot <script src="aiui-config.js">.
+	# Asset paths (JS / CSS / images) still go to the dev server via the
+	# wildcard handler below.
+	handle /tasks/preview-app/ {
+		rewrite * /__preview_root
+		header Cache-Control "no-store"
+		reverse_proxy tasks:8210
+	}
+	handle /tasks/preview-app/index.html {
+		rewrite * /__preview_root
+		header Cache-Control "no-store"
 		reverse_proxy tasks:8210
 	}
 
@@ -250,3 +319,49 @@
 # 		reverse_proxy api-gateway:8080
 # 	}
 # }
+
+# =============================================================================
+# HTTPS Server (Port 443) — Custom user domains via on-demand TLS
+# =============================================================================
+# When a user attaches their own domain (e.g. mybrand.com) to a published
+# app and points DNS at our server, Caddy auto-provisions a Let's Encrypt
+# cert via on_demand TLS. The /__caddy/check_ask gatekeeper above ensures
+# certs are issued ONLY for domains verified in tasks.published_apps.
+
+:443 {
+	tls {
+		on_demand
+	}
+
+	log {
+		output stdout
+		format console
+	}
+
+	# AIUI published subdomains — <slug>.ai-ui.coolestdomain.win
+	# DNS-only at Cloudflare (gray cloud), so HTTPS terminates here with
+	# Let's Encrypt via on-demand TLS. The ask gate at /__caddy/check_ask
+	# decides whether a slug is allowed to provision a cert.
+	@aiui_pub_subdomain {
+		header_regexp Host ^(?P<aiui_slug>[a-z0-9][a-z0-9-]{1,80})\.ai-ui\.coolestdomain\.win$
+	}
+	handle @aiui_pub_subdomain {
+		header Cache-Control "public, max-age=120"
+		rewrite * /__public/{re.aiui_pub_subdomain.aiui_slug}{uri}
+		reverse_proxy tasks:8210
+	}
+
+	# Don't serve our own domains here — they go through Cloudflare on :80.
+	@aiui_apex host coolestdomain.win *.coolestdomain.win
+	handle @aiui_apex {
+		respond 404
+	}
+
+	# Custom user domains — preserve Host so the backend can resolve to slug.
+	handle {
+		rewrite * /__public_by_host{uri}
+		reverse_proxy tasks:8210 {
+			header_up X-Forwarded-Host {host}
+		}
+	}
+}
