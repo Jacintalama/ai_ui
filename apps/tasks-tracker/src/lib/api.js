@@ -1,17 +1,17 @@
-import { db } from './supabase.js';
+import { getDb } from './supabase.js';
 
 export async function fetchTasks() {
-  return db.from('tasks').select('*').order('done', { ascending: true }).order('created_at', { ascending: true });
+  return getDb().from('tasks').select('*').order('done', { ascending: true }).order('created_at', { ascending: true });
 }
 
 export async function insertTask(row) {
-  return db.from('tasks').insert([row]);
+  return getDb().from('tasks').insert([row]);
 }
 
 export async function updateTask(id, patch) {
-  return db.from('tasks').update(patch).eq('id', id);
+  return getDb().from('tasks').update(patch).eq('id', id);
 }
 
 export async function deleteTask(id) {
-  return db.from('tasks').delete().eq('id', id);
+  return getDb().from('tasks').delete().eq('id', id);
 }

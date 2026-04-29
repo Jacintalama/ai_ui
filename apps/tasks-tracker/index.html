@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tasks</title>
   <link rel="stylesheet" href="styles/main.css">
+  <!-- Loads window.SUPABASE_URL / SUPABASE_ANON_KEY from the host. ALWAYS first. -->
+  <script src="aiui-config.js"></script>
+  <!-- Imports the SDK once, attaches to window. -->
+  <script type="module">
+    import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+    if (!window.supabase) {
+      window.supabase = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+    }
+  </script>
 </head>
 <body>
 <!-- Auth section (shown when logged out) -->

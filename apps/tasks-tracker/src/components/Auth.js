@@ -1,4 +1,4 @@
-export function initAuth({ db, configured, authSection, appSection, onSignedIn }) {
+export function initAuth({ getDb, configured, authSection, appSection, onSignedIn }) {
   const errorBannerAuth = document.getElementById('error-banner-auth');
   const authSubmit = document.getElementById('auth-submit');
   const authToggleLink = document.getElementById('auth-toggle-link');
@@ -9,7 +9,7 @@ export function initAuth({ db, configured, authSection, appSection, onSignedIn }
     errorBannerAuth.style.display = 'block';
   }
 
-  if (!configured) {
+  if (!configured()) {
     authSection.style.display = 'block';
     showAuthError('Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in the environment.');
     return;
@@ -32,6 +32,7 @@ export function initAuth({ db, configured, authSection, appSection, onSignedIn }
     errorBannerAuth.style.display = 'none';
     authSubmit.disabled = true;
 
+    const db = getDb();
     const { error } = authMode === 'signin'
       ? await db.auth.signInWithPassword({ email, password })
       : await db.auth.signUp({ email, password });
@@ -41,7 +42,7 @@ export function initAuth({ db, configured, authSection, appSection, onSignedIn }
   });
 
   document.getElementById('signout-btn').addEventListener('click', async () => {
-    await db.auth.signOut();
+    await getDb().auth.signOut();
   });
 
   function handleSession(session) {
@@ -55,6 +56,7 @@ export function initAuth({ db, configured, authSection, appSection, onSignedIn }
     }
   }
 
-  db.auth.onAuthStateChange((_event, session) => handleSession(session));
-  db.auth.getSession().then(({ data }) => handleSession(data.session));
+  const authDb = getDb();
+  authDb.auth.onAuthStateChange((_event, session) => handleSession(session));
+  authDb.auth.getSession().then(({ data }) => handleSession(data.session));
 }

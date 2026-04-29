@@ -1,4 +1,4 @@
-import { db, configured } from './lib/supabase.js';
+import { getDb, configured } from './lib/supabase.js';
 import { fetchTasks, insertTask, updateTask, deleteTask } from './lib/api.js';
 import { renderTasks } from './components/TaskList.js';
 import { initAuth } from './components/Auth.js';
@@ -32,7 +32,7 @@ let editingId = null;
 const listRefs = { loading, openSection, doneSection, openList, doneList };
 
 async function loadTasks() {
-  if (!db) return;
+  if (!getDb()) return;
   const { data, error } = await fetchTasks();
   if (error) { showError('Failed to load tasks: ' + error.message); return; }
   tasks = data || [];
@@ -133,4 +133,4 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-initAuth({ db, configured, authSection, appSection, onSignedIn: loadTasks });
+initAuth({ getDb, configured, authSection, appSection, onSignedIn: loadTasks });
