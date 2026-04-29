@@ -38,9 +38,6 @@ export function initAuth({ db, configured, authSection, appSection, onSignedIn }
 
     authSubmit.disabled = false;
     if (error) { showAuthError(error.message); return; }
-    if (authMode === 'signup') {
-      showAuthError('Check your email to confirm your account, then sign in.');
-    }
   });
 
   document.getElementById('signout-btn').addEventListener('click', async () => {
