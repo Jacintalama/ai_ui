@@ -740,6 +740,109 @@
       margin: 0 auto 12px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .np-dropzone {
+      margin: 12px 0 4px;
+      padding: 18px;
+      border: 1.5px dashed var(--border-2, var(--border));
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      transition: border-color 160ms ease, background 160ms ease;
+      cursor: pointer;
+      outline: none;
+    }
+    .np-dropzone:hover,
+    .np-dropzone:focus { border-color: var(--accent); }
+    .np-dropzone.is-drag-over {
+      border-color: var(--accent);
+      background: rgba(124, 140, 255, 0.06);
+    }
+    .np-dropzone-empty { text-align: center; padding: 8px 4px; }
+    .np-dropzone-icon {
+      font-size: 26px;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .np-dropzone-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .np-dropzone-sub {
+      font-size: 12.5px;
+      color: var(--text-2);
+      line-height: 1.55;
+    }
+    .np-dropzone-limits {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .np-dropzone-limits code {
+      font-family: var(--font-mono, monospace);
+      background: var(--surface);
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: var(--text-2);
+    }
+    .np-link-btn {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font: inherit;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+    }
+    .np-link-btn:hover { color: var(--text); }
+    .np-link-clear { color: var(--danger, #ef4444); margin-left: auto; }
+    .np-dropzone-staged { display: flex; flex-direction: column; gap: 8px; }
+    .np-dropzone-summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      color: var(--text-2);
+    }
+    .np-dropzone-summary .dim { color: var(--muted); }
+    .np-staged-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      max-height: 180px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .np-staged-list li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-family: var(--font-mono, monospace);
+      color: var(--text-2);
+      border-bottom: 1px solid var(--border);
+    }
+    .np-staged-list li:last-child { border-bottom: none; }
+    .np-staged-list li .path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .np-staged-list li .size { color: var(--muted); flex-shrink: 0; font-size: 11px; }
+    .np-staged-list li .remove {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 0 4px;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .np-staged-list li .remove:hover { color: var(--danger, #ef4444); }
+    .np-staged-list li.skipped .path { color: var(--muted); text-decoration: line-through; }
+    .np-staged-list li.invalid { background: rgba(239, 68, 68, 0.08); }
+    .np-staged-list li.invalid .path { color: var(--danger, #ef4444); }
   </style>
 </head>
 <body>
@@ -913,18 +1016,31 @@
           <textarea id="np-description" class="form-textarea" placeholder="e.g. Landing page for a coffee shop called 'Bean There', hero, menu, opening hours, contact form."></textarea>
           <div class="form-hint">The AI will build it. Be as specific as you can about look, sections, copy, colors.</div>
         </div>
-        <details class="rules-box">
-          <summary>Build rules the AIUI Agent will follow</summary>
-          <ul class="rules-list">
-            <li>Static HTML + Tailwind CDN + vanilla JS only (no build step).</li>
-            <li>Semantic HTML5: <code>&lt;header&gt;</code> / <code>&lt;main&gt;</code> / <code>&lt;footer&gt;</code>, one <code>&lt;h1&gt;</code>.</li>
-            <li>Mobile-first responsive, works from 320px up.</li>
-            <li>Accessibility: alt text, form labels, visible focus, contrast ≥4.5:1.</li>
-            <li>No Lorem ipsum — real copy from your description.</li>
-            <li>Whitelisted CDNs only (Tailwind, Google Fonts, jsDelivr, unpkg).</li>
-            <li>Every commit is a version — you can rollback later from the project's History panel.</li>
-          </ul>
-        </details>
+        <div class="np-dropzone" id="np-dropzone" tabindex="0" role="button" aria-label="Drop project files here, or click to browse">
+          <input type="file" id="np-file-input" multiple hidden>
+          <input type="file" id="np-folder-input" multiple webkitdirectory hidden>
+          <div class="np-dropzone-empty" id="np-dropzone-empty">
+            <div class="np-dropzone-icon">⬆</div>
+            <div class="np-dropzone-title">Drop your project files here</div>
+            <div class="np-dropzone-sub">
+              Drag a folder or files (HTML, CSS, JS, images, fonts) — or
+              <button type="button" class="np-link-btn" id="np-pick-files">choose files</button>
+              ·
+              <button type="button" class="np-link-btn" id="np-pick-folder">choose folder</button>
+            </div>
+            <div class="np-dropzone-limits">
+              Max 50 MB total · 200 files · 5 MB per file. <code>.git</code>, <code>node_modules</code>, <code>.env</code> are skipped automatically.
+            </div>
+          </div>
+          <div class="np-dropzone-staged" id="np-dropzone-staged" hidden>
+            <div class="np-dropzone-summary">
+              <strong id="np-staged-count">0 files</strong>
+              <span id="np-staged-size" class="dim">0 KB</span>
+              <button type="button" class="np-link-btn np-link-clear" id="np-staged-clear">Clear all</button>
+            </div>
+            <ul class="np-staged-list" id="np-staged-list"></ul>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn" data-close>Cancel</button>
