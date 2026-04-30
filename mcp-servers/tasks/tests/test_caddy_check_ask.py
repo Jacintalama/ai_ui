@@ -68,6 +68,9 @@ async def test_invalid_slug_format_rejected(transport, aiui_host, app_on_disk):
 async def test_unrecognized_parent_falls_through_to_db_check(
     db_session, transport, aiui_host, app_on_disk
 ):
+    # db_session is required so conftest TRUNCATEs published_apps before this
+    # test runs — the test relies on the DB fallback returning 404 because
+    # the table is empty (no row matches the unrelated host's parent).
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         r = await c.get(
             "/__caddy/check_ask?domain=anything.unrelated-host.example"
@@ -133,4 +136,14 @@ async def test_malformed_domain_rejected(transport, aiui_host, app_on_disk):
 async def test_empty_domain_rejected(transport, aiui_host, app_on_disk):
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         r = await c.get("/__caddy/check_ask?domain=")
+    assert r.status_code == 404
+
+
+async def test_path_traversal_slug_rejected(transport, aiui_host, app_on_disk):
+    """The slug regex must reject path-traversal attempts before
+    `os.path.isdir(_APP_ROOT_FS / slug)` is called. A bypass would let
+    an attacker probe arbitrary file-system paths and trigger Let's
+    Encrypt issuance for unintended hostnames."""
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/__caddy/check_ask?domain=..bad.ai-ui.test.example")
     assert r.status_code == 404
