@@ -30,6 +30,7 @@ from models import TaskItem
 from upload_validation import (
     MAX_TOTAL_BYTES,
     UploadRejected,
+    ValidatedFile,
     normalize_rel_path,
     safe_join,
     validate_batch,
@@ -123,6 +124,26 @@ async def _do_upload(
             status_code=409,
             detail=f"project '{raw_slug}' already exists — pick a different name",
         )
+
+    # 4b. If there are HTML files but none named index.html, alias the first
+    #     one as index.html so the preview iframe at /tasks/preview-app/<slug>/
+    #     renders without requiring the user to know the filename.
+    rel_paths = [v.rel_path for v in accepted]
+    has_index = any(p == "index.html" or p.endswith("/index.html") for p in rel_paths)
+    if not has_index:
+        html_files = [p for p in rel_paths if p.lower().endswith(".html")]
+        if html_files:
+            # Use the first (sorted) top-level HTML file as index.
+            top_level_html = sorted(
+                p for p in html_files if "/" not in p
+            )
+            alias_src = top_level_html[0] if top_level_html else html_files[0]
+            # body_by_norm will serve double-duty for the alias key too.
+            body_by_norm["index.html"] = body_by_norm[alias_src]
+            accepted = list(accepted) + [ValidatedFile(rel_path="index.html", size=len(body_by_norm["index.html"]), ext=".html")]
+            logger.info(
+                "upload_project: aliased %s → index.html for preview iframe", alias_src
+            )
 
     # 5. Write files atomically: if anything fails, remove the partial dir.
     try:

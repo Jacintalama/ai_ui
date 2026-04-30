@@ -19,9 +19,10 @@ logger = logging.getLogger("tasks.preview")
 
 WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
 PREVIEW_PORT_START = 9100
+PREVIEW_PORT_MAX = 9119  # 20-port pool for concurrent dynamic previews
 IDLE_TIMEOUT = 1800  # 30 minutes
 
-_current: dict | None = None
+_running: dict[str, dict] = {}  # slug -> {kind, port, proc, started}
 
 PYTHON_ENTRY_CANDIDATES = ("server.py", "main.py", "app.py")
 
@@ -79,7 +80,13 @@ def _resolve_command(app_dir: str, port: int) -> tuple[str, str]:
         return ("python", " && ".join(parts))
 
     # ── 3. Static site ────────────────────────────────────────────────────────
-    if os.path.isfile(index_html):
+    # Accept any directory that contains at least one .html file, not just
+    # index.html. npx serve will serve the whole directory; users can navigate
+    # to the file directly, and when index.html exists it will be served at /.
+    has_html = os.path.isfile(index_html) or any(
+        f.endswith(".html") for f in os.listdir(app_dir) if os.path.isfile(os.path.join(app_dir, f))
+    )
+    if has_html:
         return (
             "static",
             f"npx --yes serve -s {shlex.quote(app_dir)} -l {port} --no-clipboard",
@@ -91,17 +98,69 @@ def _resolve_command(app_dir: str, port: int) -> tuple[str, str]:
     )
 
 
-async def start_preview(slug: str) -> int:
-    global _current
-    await stop_preview()
+def _pick_port() -> int | None:
+    used = {info["port"] for info in _running.values() if info.get("port")}
+    for p in range(PREVIEW_PORT_START, PREVIEW_PORT_MAX + 1):
+        if p not in used:
+            return p
+    return None
+
+
+def _url_for(slug: str) -> str:
+    """Per-slug preview URL — works for both static and dynamic apps."""
+    return f"/tasks/preview-app/{slug}/"
+
+
+async def start_preview(slug: str) -> dict:
+    """Start (or rejoin) the preview for one slug. Per-slug isolation —
+    starting one project no longer kills another user's preview.
+
+    Returns: {kind, port, url, slug}. For static apps, port is None and the
+    file server is the FastAPI handler at /tasks/preview-app/{slug}/.
+    For dynamic apps, port is allocated from a 20-port pool (9100-9119).
+    Idempotent — calling twice for the same slug returns the same info.
+    """
+    # Idempotent: if already registered and still healthy, return it.
+    info = _running.get(slug)
+    if info is not None:
+        proc = info.get("proc")
+        if info["kind"] == "static" or (proc is not None and proc.returncode is None):
+            return {
+                "slug": slug,
+                "kind": info["kind"],
+                "port": info.get("port"),
+                "url": _url_for(slug),
+            }
+        # Stale entry (process died) — drop it and re-spawn.
+        _running.pop(slug, None)
 
     app_dir = os.path.join(WORKSPACE, "apps", slug)
     if not os.path.isdir(app_dir):
         raise FileNotFoundError(f"App directory not found: apps/{slug}/")
 
-    port = PREVIEW_PORT_START
-    kind, cmd = _resolve_command(app_dir, port)
+    # Resolve command at port=0 just to detect kind. Static apps don't need
+    # a process at all — the FastAPI /tasks/preview-app/{slug}/ route serves
+    # the files directly from disk.
+    kind, _probe_cmd = _resolve_command(app_dir, 0)
+    if kind == "static":
+        _running[slug] = {
+            "slug": slug,
+            "kind": "static",
+            "port": None,
+            "proc": None,
+            "started": time.time(),
+        }
+        logger.info("Preview ready (static, no spawn): %s", slug)
+        return {"slug": slug, "kind": "static", "port": None, "url": _url_for(slug)}
 
+    # Dynamic app — allocate a port from the pool and spawn.
+    port = _pick_port()
+    if port is None:
+        raise RuntimeError(
+            f"All preview ports in use ({PREVIEW_PORT_START}-{PREVIEW_PORT_MAX}). "
+            "Stop another running preview first."
+        )
+    _, cmd = _resolve_command(app_dir, port)
     logger.info("Preview starting: slug=%s kind=%s port=%d", slug, kind, port)
     logger.info("Preview command: %s", cmd)
 
@@ -114,42 +173,63 @@ async def start_preview(slug: str) -> int:
         start_new_session=True,
     )
 
-    _current = {
+    _running[slug] = {
         "slug": slug,
         "port": port,
         "proc": proc,
         "kind": kind,
         "started": time.time(),
     }
-    logger.info("Preview started: %s (kind=%s, pid=%d)", slug, kind, proc.pid)
-    return port
+    logger.info("Preview started: %s (kind=%s, pid=%d, port=%d)", slug, kind, proc.pid, port)
+    return {"slug": slug, "kind": kind, "port": port, "url": _url_for(slug)}
 
 
-async def stop_preview() -> None:
-    """Kill the whole process group (npm -> node -> serve child chain)."""
-    global _current
-    if _current is None:
+async def stop_preview(slug: str | None = None) -> None:
+    """Stop one preview by slug, or all of them if slug is None.
+
+    Static apps have no process — popping them from _running is enough.
+    Dynamic apps get the whole process group SIGKILLed."""
+    if slug is None:
+        # Stop everything (used at service shutdown).
+        for s in list(_running.keys()):
+            await stop_preview(s)
         return
-    proc = _current["proc"]
-    try:
-        # Kill the whole process group so child serve/node don't orphan.
-        os.killpg(os.getpgid(proc.pid), 9)  # SIGKILL
-        await proc.wait()
-    except (ProcessLookupError, PermissionError):
-        pass
-    logger.info("Preview stopped: %s", _current["slug"])
-    _current = None
+
+    info = _running.pop(slug, None)
+    if info is None:
+        return
+
+    proc = info.get("proc")
+    if proc is not None:
+        try:
+            os.killpg(os.getpgid(proc.pid), 9)  # SIGKILL the whole process group
+            await proc.wait()
+        except (ProcessLookupError, PermissionError):
+            pass
+    logger.info("Preview stopped: %s (kind=%s)", slug, info.get("kind"))
 
 
-def get_status() -> dict | None:
-    if _current is None:
+def get_status(slug: str | None = None) -> dict | None:
+    """Return status for one slug. If slug is None, returns the first
+    running slug for backward-compat (the global slot model is gone)."""
+    if slug is None:
+        if not _running:
+            return None
+        slug = next(iter(_running))
+
+    info = _running.get(slug)
+    if info is None:
         return None
-    elapsed = time.time() - _current["started"]
+
+    elapsed = time.time() - info["started"]
+    proc = info.get("proc")
+    is_running = info["kind"] == "static" or (proc is not None and proc.returncode is None)
     return {
-        "slug": _current["slug"],
-        "port": _current["port"],
-        "pid": _current["proc"].pid,
-        "kind": _current.get("kind"),
-        "running": _current["proc"].returncode is None,
+        "slug": slug,
+        "kind": info.get("kind"),
+        "port": info.get("port"),
+        "pid": proc.pid if proc is not None else None,
+        "running": is_running,
         "elapsed_seconds": int(elapsed),
+        "url": _url_for(slug),
     }
