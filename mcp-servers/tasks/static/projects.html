@@ -1668,6 +1668,241 @@
         npSubmit.textContent = "Create project";
       }
     }
+    // ── Dropzone (project file upload) ──────────────────────────────
+    // Mirrors the server-side limits in upload_validation.py. Client-side
+    // validation is for UX (instant feedback); the server re-validates.
+    const NP_MAX_FILE_BYTES = 5 * 1024 * 1024;
+    const NP_MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+    const NP_MAX_FILES = 200;
+    const NP_MAX_PATH_DEPTH = 8;
+    const NP_ALLOWED_EXTS = new Set([
+      ".html", ".htm", ".css", ".js", ".mjs", ".json", ".svg", ".txt", ".md", ".xml", ".csv",
+      ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".avif",
+      ".woff", ".woff2", ".ttf", ".otf", ".eot",
+      ".sql",
+    ]);
+    const NP_SKIP_DIRS = new Set([".git", ".svn", ".hg", "node_modules", "__pycache__", ".next", ".nuxt", "dist", "build", ".cache", ".idea", ".vscode"]);
+    const NP_SKIP_FILES = new Set([".env", ".env.local", ".env.production", ".env.development", ".ds_store", "thumbs.db"]);
+
+    const npDropzone = document.getElementById("np-dropzone");
+    const npFileInput = document.getElementById("np-file-input");
+    const npFolderInput = document.getElementById("np-folder-input");
+    const npPickFiles = document.getElementById("np-pick-files");
+    const npPickFolder = document.getElementById("np-pick-folder");
+    const npEmpty = document.getElementById("np-dropzone-empty");
+    const npStaged = document.getElementById("np-dropzone-staged");
+    const npStagedList = document.getElementById("np-staged-list");
+    const npStagedCount = document.getElementById("np-staged-count");
+    const npStagedSize = document.getElementById("np-staged-size");
+    const npStagedClear = document.getElementById("np-staged-clear");
+
+    /** Each entry: { file: File, relPath: string, status: "ok"|"skipped"|"invalid", reason?: string } */
+    let npStagedFiles = [];
+
+    function npExt(path) {
+      const i = path.lastIndexOf(".");
+      return i < 0 ? "" : path.slice(i).toLowerCase();
+    }
+    function npFmtBytes(b) {
+      if (b < 1024) return b + " B";
+      if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+      return (b / (1024 * 1024)).toFixed(2) + " MB";
+    }
+
+    /** Decide whether a single file is OK / silently-skipped / invalid.
+     * Mirrors upload_validation.normalize_rel_path + validate_extension. */
+    function npClassify(relPath, size) {
+      if (!relPath) return { status: "invalid", reason: "empty path" };
+      if (relPath.indexOf("\x00") >= 0) return { status: "invalid", reason: "null byte" };
+      if (relPath.indexOf("\\") >= 0) return { status: "invalid", reason: "backslash" };
+      if (relPath.length > 200) return { status: "invalid", reason: "path too long" };
+      const parts = relPath.split("/").filter(p => p !== "");
+      for (const p of parts) {
+        if (p === "." || p === "..") return { status: "invalid", reason: ".. or . in path" };
+      }
+      // Skip dirs/files we always drop (case-insensitive — match server).
+      for (const p of parts.slice(0, -1)) {
+        const low = p.toLowerCase();
+        if (NP_SKIP_DIRS.has(low) || NP_SKIP_FILES.has(low)) return { status: "skipped", reason: "skipped dir " + p };
+      }
+      if (NP_SKIP_FILES.has(parts[parts.length - 1].toLowerCase())) {
+        return { status: "skipped", reason: "skipped file" };
+      }
+      if (parts.length - 1 > NP_MAX_PATH_DEPTH) return { status: "invalid", reason: "too deep" };
+      if (size > NP_MAX_FILE_BYTES) return { status: "invalid", reason: "file > 5 MB" };
+      const ext = npExt(parts[parts.length - 1]);
+      if (!NP_ALLOWED_EXTS.has(ext)) return { status: "invalid", reason: "type " + (ext || "<none>") + " not allowed" };
+      return { status: "ok", reason: null };
+    }
+
+    function npRender() {
+      const ok = npStagedFiles.filter(e => e.status === "ok");
+      const total = ok.reduce((s, e) => s + e.file.size, 0);
+      const hasAny = npStagedFiles.length > 0;
+      npEmpty.hidden = hasAny;
+      npStaged.hidden = !hasAny;
+      npStagedCount.textContent = ok.length + (ok.length === 1 ? " file" : " files");
+      npStagedSize.textContent = npFmtBytes(total);
+      npStagedList.innerHTML = "";
+      for (let i = 0; i < npStagedFiles.length; i++) {
+        const e = npStagedFiles[i];
+        const li = document.createElement("li");
+        if (e.status !== "ok") li.classList.add(e.status);
+        const path = document.createElement("span");
+        path.className = "path";
+        path.textContent = e.relPath + (e.reason ? "  · " + e.reason : "");
+        path.title = e.relPath;
+        const size = document.createElement("span");
+        size.className = "size";
+        size.textContent = npFmtBytes(e.file.size);
+        const rm = document.createElement("button");
+        rm.type = "button";
+        rm.className = "remove";
+        rm.textContent = "✕";
+        rm.title = "Remove";
+        rm.addEventListener("click", () => {
+          npStagedFiles.splice(i, 1);
+          npRender();
+        });
+        li.appendChild(path);
+        li.appendChild(size);
+        li.appendChild(rm);
+        npStagedList.appendChild(li);
+      }
+      // Cap-warning hint via the summary line.
+      if (ok.length > NP_MAX_FILES) {
+        npStagedCount.textContent += "  · TOO MANY (max " + NP_MAX_FILES + ")";
+      }
+      if (total > NP_MAX_TOTAL_BYTES) {
+        npStagedSize.textContent += "  · OVER 50 MB CAP";
+      }
+    }
+
+    function npAddFiles(rawList) {
+      // rawList: Array of {file: File, relPath: string}
+      for (const item of rawList) {
+        const c = npClassify(item.relPath, item.file.size);
+        npStagedFiles.push({ file: item.file, relPath: item.relPath, status: c.status, reason: c.reason });
+      }
+      npRender();
+    }
+
+    /** Recurse a webkit DirectoryEntry into a flat list of {file, relPath}. */
+    function npReadEntry(entry, parentPath) {
+      return new Promise((resolve) => {
+        const here = parentPath ? parentPath + "/" + entry.name : entry.name;
+        if (entry.isFile) {
+          entry.file((f) => resolve([{ file: f, relPath: here }]), () => resolve([]));
+          return;
+        }
+        if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const acc = [];
+          (function readBatch() {
+            reader.readEntries(async (entries) => {
+              if (!entries.length) {
+                resolve(acc);
+                return;
+              }
+              for (const e of entries) {
+                const sub = await npReadEntry(e, here);
+                for (const s of sub) acc.push(s);
+              }
+              readBatch();
+            }, () => resolve(acc));
+          })();
+          return;
+        }
+        resolve([]);
+      });
+    }
+
+    async function npHandleDataTransfer(dt) {
+      const items = dt.items;
+      if (items && items.length && typeof items[0].webkitGetAsEntry === "function") {
+        const out = [];
+        for (let i = 0; i < items.length; i++) {
+          const entry = items[i].webkitGetAsEntry();
+          if (entry) {
+            const sub = await npReadEntry(entry, "");
+            for (const s of sub) out.push(s);
+          }
+        }
+        return out;
+      }
+      // Fallback: just files, no folders.
+      const out = [];
+      for (let i = 0; i < dt.files.length; i++) {
+        const f = dt.files[i];
+        out.push({ file: f, relPath: f.name });
+      }
+      return out;
+    }
+
+    // Drag visuals.
+    ["dragenter", "dragover"].forEach(ev => npDropzone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      npDropzone.classList.add("is-drag-over");
+    }));
+    ["dragleave", "drop"].forEach(ev => npDropzone.addEventListener(ev, (e) => {
+      e.preventDefault();
+      npDropzone.classList.remove("is-drag-over");
+    }));
+    npDropzone.addEventListener("drop", async (e) => {
+      const items = await npHandleDataTransfer(e.dataTransfer);
+      npAddFiles(items);
+    });
+
+    // Click on dropzone (but not its inner buttons) opens file picker.
+    npDropzone.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      npFileInput.click();
+    });
+    npDropzone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        npFileInput.click();
+      }
+    });
+    npPickFiles.addEventListener("click", (e) => {
+      e.stopPropagation();
+      npFileInput.click();
+    });
+    npPickFolder.addEventListener("click", (e) => {
+      e.stopPropagation();
+      npFolderInput.click();
+    });
+    npFileInput.addEventListener("change", () => {
+      const items = [];
+      for (let i = 0; i < npFileInput.files.length; i++) {
+        const f = npFileInput.files[i];
+        items.push({ file: f, relPath: f.webkitRelativePath || f.name });
+      }
+      npAddFiles(items);
+      npFileInput.value = "";
+    });
+    npFolderInput.addEventListener("change", () => {
+      const items = [];
+      for (let i = 0; i < npFolderInput.files.length; i++) {
+        const f = npFolderInput.files[i];
+        items.push({ file: f, relPath: f.webkitRelativePath || f.name });
+      }
+      npAddFiles(items);
+      npFolderInput.value = "";
+    });
+    npStagedClear.addEventListener("click", () => {
+      npStagedFiles = [];
+      npRender();
+    });
+
+    // Reset state when modal opens (called by the existing modal-open code).
+    function npResetDropzone() {
+      npStagedFiles = [];
+      npRender();
+    }
+    // Expose so the modal-open path can call it.
+    window._npResetDropzone = npResetDropzone;
+
     npSubmit.addEventListener("click", submitNewProject);
     // Cmd/Ctrl+Enter anywhere inside the modal submits.
     modal.addEventListener("keydown", (ev) => {
