@@ -1556,6 +1556,7 @@
     function openModal() {
       modal.hidden = false;
       ensureTemplatesLoaded();
+      if (window._npResetDropzone) window._npResetDropzone();
       setTimeout(() => npDesc.focus(), 50);
     }
     function closeModal() {
@@ -1579,9 +1580,10 @@
 
     async function submitNewProject() {
       const desc = npDesc.value.trim();
-      if (!desc) {
+      const stagedOk = npStagedFiles.filter(e => e.status === "ok");
+      if (stagedOk.length === 0 && !desc) {
         npDesc.focus();
-        showToast("Please describe what you want to build.", true);
+        showToast("Either drop project files OR describe what you want to build.", true);
         return;
       }
       const rawName = (npName.value || "").trim();
@@ -1596,6 +1598,55 @@
         );
         return;
       }
+      // If the user staged files, send them as a multipart upload and
+      // skip the AI-build path entirely. The /upload endpoint creates a
+      // completed task row so the existing preview/publish flow takes
+      // over once we navigate to the preview URL.
+      if (stagedOk.length > 0) {
+        const stagedInvalid = npStagedFiles.filter(e => e.status === "invalid");
+        if (stagedInvalid.length > 0) {
+          showToast(stagedInvalid.length + " file(s) are invalid — remove them or fix the names.", true);
+          return;
+        }
+        const totalBytes = stagedOk.reduce((s, e) => s + e.file.size, 0);
+        if (stagedOk.length > NP_MAX_FILES) {
+          showToast("Too many files (max " + NP_MAX_FILES + "). Remove some and retry.", true);
+          return;
+        }
+        if (totalBytes > NP_MAX_TOTAL_BYTES) {
+          showToast("Total size over 50 MB. Remove some files and retry.", true);
+          return;
+        }
+        npSubmit.disabled = true;
+        npSubmit.textContent = "Uploading…";
+        try {
+          const fd = new FormData();
+          fd.append("name", name || "");
+          for (const e of stagedOk) {
+            // Append using the relative path as the filename so the server
+            // sees the directory structure.
+            fd.append("files", e.file, e.relPath);
+          }
+          const resp = await fetch("/api/projects/upload", {
+            method: "POST",
+            headers: authHeaders(),
+            credentials: "include",
+            body: fd,
+          });
+          if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error("Upload failed (" + resp.status + "): " + txt);
+          }
+          const data = await resp.json();
+          window.location.href = "/tasks/static/preview.html?task=" + encodeURIComponent(data.task_id);
+        } catch (err) {
+          showToast("Upload failed: " + err.message, true);
+          npSubmit.disabled = false;
+          npSubmit.textContent = "Create project";
+        }
+        return;
+      }
+
       // Server-side prompt assembly (Phase D): we only send the raw user
       // description + template_key + storage + slug. The backend looks up
       // the canonical rules text from templates.py — the browser never
