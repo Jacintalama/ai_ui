@@ -136,13 +136,14 @@ _MIME_BY_EXT = {
 # Subdomains under this host (e.g. "<slug>.ai-ui.coolestdomain.win") are auto-allowed
 # for on-demand TLS provided the slug's app directory exists on disk.
 def _aiui_parent_host() -> str:
-    base = _os.environ.get("AIUI_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    raw = _os.environ.get("AIUI_PUBLIC_BASE_URL", "").strip().rstrip("/")
     # strip scheme
     for prefix in ("https://", "http://"):
-        if base.lower().startswith(prefix):
-            base = base[len(prefix):]
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix):]
             break
-    return base.lower()
+    # drop any path component — only the host part is the parent
+    return raw.split("/")[0].lower()
 
 
 def _parse_custom_host(host: str) -> tuple[str, str] | None:
