@@ -1787,30 +1787,47 @@
       npRender();
     }
 
-    /** Recurse a webkit DirectoryEntry into a flat list of {file, relPath}. */
+    /** Recurse a webkit DirectoryEntry into a flat list of {file, relPath}.
+     * Errors from sub-traversals are caught and logged via console.warn —
+     * the file is dropped rather than silently swallowed by an async
+     * callback that readEntries doesn't await. */
     function npReadEntry(entry, parentPath) {
       return new Promise((resolve) => {
         const here = parentPath ? parentPath + "/" + entry.name : entry.name;
         if (entry.isFile) {
-          entry.file((f) => resolve([{ file: f, relPath: here }]), () => resolve([]));
+          entry.file(
+            (f) => resolve([{ file: f, relPath: here }]),
+            (err) => { console.warn("dropzone: failed to read file", here, err); resolve([]); }
+          );
           return;
         }
         if (entry.isDirectory) {
           const reader = entry.createReader();
           const acc = [];
-          (function readBatch() {
-            reader.readEntries(async (entries) => {
-              if (!entries.length) {
-                resolve(acc);
-                return;
-              }
-              for (const e of entries) {
-                const sub = await npReadEntry(e, here);
-                for (const s of sub) acc.push(s);
-              }
-              readBatch();
-            }, () => resolve(acc));
-          })();
+          function readBatch() {
+            reader.readEntries(
+              (entries) => {
+                if (!entries.length) {
+                  resolve(acc);
+                  return;
+                }
+                // Recurse all entries in this batch concurrently.
+                // Catch rejections per-entry so one bad file doesn't
+                // abort the whole batch.
+                Promise.all(entries.map(e =>
+                  npReadEntry(e, here).catch(err => {
+                    console.warn("dropzone: failed to read entry", e.name, err);
+                    return [];
+                  })
+                )).then((subs) => {
+                  for (const s of subs) for (const x of s) acc.push(x);
+                  readBatch();
+                });
+              },
+              (err) => { console.warn("dropzone: readEntries failed in", here, err); resolve(acc); }
+            );
+          }
+          readBatch();
           return;
         }
         resolve([]);
@@ -1848,9 +1865,16 @@
       e.preventDefault();
       npDropzone.classList.remove("is-drag-over");
     }));
+    let npDropProcessing = false;
     npDropzone.addEventListener("drop", async (e) => {
-      const items = await npHandleDataTransfer(e.dataTransfer);
-      npAddFiles(items);
+      if (npDropProcessing) return;
+      npDropProcessing = true;
+      try {
+        const items = await npHandleDataTransfer(e.dataTransfer);
+        npAddFiles(items);
+      } finally {
+        npDropProcessing = false;
+      }
     });
 
     // Click on dropzone (but not its inner buttons) opens file picker.
