@@ -287,6 +287,56 @@
       border-color: var(--accent);
       color: #0a0a0b;
     }
+
+    /* Shared confirm modal — replaces native confirm() dialogs. Added 2026-04-30. */
+    .confirm-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      padding: 16px;
+      animation: confirm-fade-in 140ms ease;
+    }
+    @keyframes confirm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    .confirm-card {
+      background: var(--surface, #1a1a1a);
+      border: 1px solid var(--border-2, var(--border));
+      border-radius: var(--radius-lg, 10px);
+      box-shadow: 0 18px 48px rgba(0,0,0,0.65);
+      width: 100%;
+      max-width: 440px;
+      padding: 22px 24px 18px;
+    }
+    .confirm-card .confirm-title {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.3;
+    }
+    .confirm-card .confirm-body {
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.55;
+      white-space: pre-wrap;
+      margin-bottom: 18px;
+    }
+    .confirm-card .confirm-body strong { color: var(--text); }
+    .confirm-card .confirm-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .confirm-card .confirm-actions .btn { flex: 0 0 auto; min-width: 88px; }
+    .confirm-card .confirm-actions .btn.danger {
+      background: var(--danger, #ef4444);
+      border-color: var(--danger, #ef4444);
+      color: #fff;
+    }
     .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
     .btn.btn-lg { flex: 0 0 auto; padding: 10px 18px; font-size: 14px; }
 
@@ -846,6 +896,18 @@
   </style>
 </head>
 <body>
+  <!-- Shared confirm modal (replaces native browser confirm dialogs). -->
+  <div class="confirm-overlay" id="confirm-overlay" hidden>
+    <div class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h3 class="confirm-title" id="confirm-title">Are you sure?</h3>
+      <div class="confirm-body" id="confirm-body"></div>
+      <div class="confirm-actions">
+        <button type="button" class="btn" id="confirm-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="confirm-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
   <div class="topbar">
     <div class="brand">
       <div class="brand-logo" aria-hidden="true">
@@ -1050,11 +1112,84 @@
   </div>
 
   <script>
+    // Drop-in async replacement for window.confirm(). Returns a Promise<boolean>.
+    // Pass a string for a quick yes/no, or an object {title, body, confirmText,
+    // confirmKind ("primary"|"danger"), cancelText} for full control.
+    function confirmModal(opts) {
+      return new Promise(function (resolve) {
+        const overlay = document.getElementById("confirm-overlay");
+        const titleEl = document.getElementById("confirm-title");
+        const bodyEl  = document.getElementById("confirm-body");
+        const okBtn   = document.getElementById("confirm-ok");
+        const cancelBtn = document.getElementById("confirm-cancel");
+        if (!overlay || !okBtn || !cancelBtn) {
+          resolve(window.confirm(typeof opts === "string" ? opts : (opts && opts.body) || "Are you sure?"));
+          return;
+        }
+        let title, body, confirmText, confirmKind, cancelText;
+        if (typeof opts === "string") {
+          title = "Are you sure?";
+          body = opts;
+          confirmText = "OK";
+          confirmKind = "primary";
+          cancelText = "Cancel";
+        } else {
+          opts = opts || {};
+          title = opts.title || "Are you sure?";
+          body = opts.body || "";
+          confirmText = opts.confirmText || "OK";
+          confirmKind = opts.confirmKind || "primary";
+          cancelText = opts.cancelText || "Cancel";
+        }
+        titleEl.textContent = title;
+        bodyEl.textContent = body;
+        okBtn.textContent = confirmText;
+        cancelBtn.textContent = cancelText;
+        // projects.html uses `.btn primary` / `.btn danger` class style.
+        okBtn.className = "btn " + confirmKind;
+
+        function cleanup() {
+          overlay.hidden = true;
+          okBtn.removeEventListener("click", onOk);
+          cancelBtn.removeEventListener("click", onCancel);
+          overlay.removeEventListener("click", onOverlayClick);
+          document.removeEventListener("keydown", onKey);
+        }
+        function onOk() { cleanup(); resolve(true); }
+        function onCancel() { cleanup(); resolve(false); }
+        function onOverlayClick(e) { if (e.target === overlay) onCancel(); }
+        function onKey(e) {
+          if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+          else if (e.key === "Enter") { e.preventDefault(); onOk(); }
+        }
+
+        okBtn.addEventListener("click", onOk);
+        cancelBtn.addEventListener("click", onCancel);
+        overlay.addEventListener("click", onOverlayClick);
+        document.addEventListener("keydown", onKey);
+
+        overlay.hidden = false;
+        setTimeout(function () { okBtn.focus(); }, 0);
+      });
+    }
+
     const content = document.getElementById("content");
     const countPill = document.getElementById("count");
 
     function authHeaders() {
       const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    // For multipart/FormData uploads: omit Content-Type so the browser sets
+    // it automatically with the correct boundary (e.g.
+    // "multipart/form-data; boundary=----WebKitFormBoundary...").
+    // Passing an explicit Content-Type here would override it and strip the
+    // boundary, causing the server to see an empty file list.
+    function multipartAuthHeaders() {
+      const h = {};
       const token = localStorage.getItem("token");
       if (token) h.Authorization = "Bearer " + token;
       return h;
@@ -1629,7 +1764,7 @@
           }
           const resp = await fetch("/api/projects/upload", {
             method: "POST",
-            headers: authHeaders(),
+            headers: multipartAuthHeaders(),
             credentials: "include",
             body: fd,
           });
@@ -2172,7 +2307,12 @@
         mmList.querySelectorAll(".remove").forEach((b) => {
           b.addEventListener("click", async () => {
             if (b.disabled) return;
-            if (!confirm(`Remove ${b.dataset.email} from ${mmCurrentSlug}?`)) return;
+            if (!(await confirmModal({
+              title: "Remove member?",
+              body: `Remove ${b.dataset.email} from ${mmCurrentSlug}?`,
+              confirmText: "Remove",
+              confirmKind: "danger",
+            }))) return;
             try {
               const r = await fetch(`/api/projects/${encodeURIComponent(mmCurrentSlug)}/members/${encodeURIComponent(b.dataset.email)}`, {
                 method: "DELETE",
@@ -2300,7 +2440,12 @@
     }
 
     async function doRollback(sha) {
-      if (!confirm(`Rollback "${hmCurrentSlug}" to version ${sha.slice(0, 7)}? A new commit will be added on top — the old versions stay in history.`)) return;
+      if (!(await confirmModal({
+        title: "Rollback to v" + sha.slice(0, 7) + "?",
+        body: `Rollback "${hmCurrentSlug}" to version ${sha.slice(0, 7)}.\n\nA new commit will be added on top — the old versions stay in history so you can come forward again.`,
+        confirmText: "Rollback",
+        confirmKind: "primary",
+      }))) return;
       try {
         const r = await fetch(`/api/projects/${encodeURIComponent(hmCurrentSlug)}/rollback`, {
           method: "POST",
@@ -2358,7 +2503,12 @@
     if ($mmLeave) {
       $mmLeave.addEventListener("click", async () => {
         if (!mmCurrentSlug) return;
-        if (!confirm(`Leave the project "${mmCurrentSlug}"? You'll lose access immediately.`)) return;
+        if (!(await confirmModal({
+          title: "Leave project?",
+          body: `Leave the project "${mmCurrentSlug}". You'll lose access immediately.`,
+          confirmText: "Leave",
+          confirmKind: "danger",
+        }))) return;
         $mmLeave.disabled = true;
         $mmLeave.textContent = "Leaving…";
         try {
