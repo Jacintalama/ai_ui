@@ -13,6 +13,7 @@ Rejects with 400 on validation failure, 409 if the slug already exists,
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -36,6 +37,12 @@ from upload_validation import (
 
 logger = logging.getLogger(__name__)
 
+# Cap concurrent in-memory uploads. Each holds up to MAX_TOTAL_BYTES (50 MB)
+# of body bytes during the read loop, so unbounded concurrency could OOM the
+# 3.8 GB VPS. Admin auth bounds external abuse; this cap protects against
+# accidental hammering or future credential leaks.
+_UPLOAD_SEM = asyncio.Semaphore(4)
+
 _APP_ROOT_FS = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui") + "/apps"
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
 
@@ -54,6 +61,15 @@ async def upload_project(
     name: str = Form(""),
     files: list[UploadFile] = [],
     user: AdminUser = Depends(current_admin),
+) -> dict:
+    async with _UPLOAD_SEM:
+        return await _do_upload(name, files, user)
+
+
+async def _do_upload(
+    name: str,
+    files: list[UploadFile],
+    user: AdminUser,
 ) -> dict:
     if not files:
         raise HTTPException(status_code=400, detail="no files uploaded")
@@ -129,30 +145,39 @@ async def upload_project(
     #    all NOT NULL — mirror how create_task fills them for admin-created rows.
     task_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
-    async with session() as s:
-        s.add(
-            TaskItem(
-                id=task_id,
-                meeting_id=uuid.uuid4(),  # synthetic — no real meeting
-                action_type="BUILD",
-                assignee_name=user.email.split("@")[0],
-                assignee_email=user.email,
-                description=f"Uploaded project '{raw_slug}' ({len(accepted)} files).",
-                priority="medium",
-                status="completed",
-                built_app_slug=raw_slug,
-                result=f"Uploaded {len(accepted)} files into apps/{raw_slug}/.",
-                completed_at=now,
+    try:
+        async with session() as s:
+            s.add(
+                TaskItem(
+                    id=task_id,
+                    meeting_id=uuid.uuid4(),  # synthetic — no real meeting
+                    action_type="BUILD",
+                    assignee_name=user.email.split("@")[0],
+                    assignee_email=user.email,
+                    description=f"Uploaded project '{raw_slug}' ({len(accepted)} files).",
+                    priority="medium",
+                    status="completed",
+                    built_app_slug=raw_slug,
+                    result=f"Uploaded {len(accepted)} files into apps/{raw_slug}/.",
+                    completed_at=now,
+                )
             )
-        )
-        try:
-            await s.commit()
-        except IntegrityError:
-            shutil.rmtree(dest_dir, ignore_errors=True)
-            raise HTTPException(
-                status_code=409,
-                detail=f"project '{raw_slug}' already exists",
-            )
+            try:
+                await s.commit()
+            except IntegrityError:
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"project '{raw_slug}' already exists",
+                )
+    except HTTPException:
+        # Already-handled HTTP errors (the 409 above) — re-raise as-is.
+        raise
+    except Exception:
+        # Any other DB failure (connection drop, deadlock, etc.) — orphan
+        # cleanup before propagating.
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
 
     logger.info(
         "upload_project: slug=%s files=%d bytes=%d user=%s",
