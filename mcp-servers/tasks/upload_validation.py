@@ -37,7 +37,7 @@ SKIP_DIR_NAMES = frozenset({
 })
 SKIP_FILE_NAMES = frozenset({
     ".env", ".env.local", ".env.production", ".env.development",
-    ".DS_Store", "Thumbs.db",
+    ".ds_store", "thumbs.db",
 })
 
 # ── Windows reserved names (rejected, not dropped — these are suspicious) ─
@@ -93,11 +93,16 @@ def normalize_rel_path(raw: str) -> str | None:
         if stem in WIN_RESERVED:
             raise UploadRejected(f"reserved name in path: {p}")
 
-    # Silent drops — directories or files we never want.
+    # Silent drops — directories or files we never want. Case-insensitive
+    # so uploads from case-insensitive filesystems (macOS HFS+, Windows
+    # NTFS) can't bypass the skip-list with alternate casing. Also check
+    # SKIP_FILE_NAMES against directory segments so a path like
+    # ".env/foo.html" is dropped (otherwise we'd silently mkdir ".env/").
     for p in parts[:-1]:  # all dir segments
-        if p in SKIP_DIR_NAMES:
+        low = p.lower()
+        if low in SKIP_DIR_NAMES or low in SKIP_FILE_NAMES:
             return None
-    if parts[-1] in SKIP_FILE_NAMES:
+    if parts[-1].lower() in SKIP_FILE_NAMES:
         return None
 
     # Depth check (number of directory separators in the relative path).
