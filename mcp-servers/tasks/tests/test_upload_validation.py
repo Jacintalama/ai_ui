@@ -24,7 +24,9 @@ def test_normalize_rejects_dotdot():
         normalize_rel_path("../etc/passwd")
 
 def test_normalize_rejects_dotdot_nested():
-    with pytest.raises(UploadRejected):
+    # match= ensures we're rejecting because of '..' specifically, not
+    # because depth-cap fires first on a deeply-nested adversarial path.
+    with pytest.raises(UploadRejected, match="\\.\\."):
         normalize_rel_path("src/../../../etc/passwd")
 
 def test_normalize_rejects_null_byte():
