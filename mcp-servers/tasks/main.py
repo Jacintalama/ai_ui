@@ -221,6 +221,21 @@ async def serve_published_app_by_host(
     if not parsed:
         raise HTTPException(status_code=404, detail="invalid host")
     slug, parent = parsed
+
+    if not _SLUG_ROUTE_RE.match(slug):
+        raise HTTPException(status_code=404, detail="invalid slug")
+
+    # Path 1: AIUI managed parent (e.g. "<slug>.ai-ui.coolestdomain.win").
+    # Allow if the slug's app dir exists on disk — same model as
+    # caddy_on_demand_ask. The published_apps row is no longer required
+    # at the access layer; it's now a "draft / published" flag only.
+    aiui_parent = _aiui_parent_host()
+    if aiui_parent and parent == aiui_parent:
+        if _os.path.isdir(_os.path.join(_APP_ROOT_FS, slug)):
+            return await serve_published_app(slug=slug, file_path=file_path, request=request)
+        raise HTTPException(status_code=404, detail="no app at this domain")
+
+    # Path 2: User-provided custom domain. Must be verified in published_apps.
     async with _db_session() as s:
         row = (
             await s.execute(
