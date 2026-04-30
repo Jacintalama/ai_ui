@@ -28,7 +28,8 @@ async def test_upload_rejects_empty(transport, upload_root, db_session):
         transport=transport, base_url="http://test", headers=_ADMIN_HEADERS
     ) as c:
         r = await c.post("/api/projects/upload", data={"name": "myapp"})
-    assert r.status_code in (400, 422)
+    assert r.status_code == 400
+    assert "no files" in r.json()["detail"].lower()
 
 
 async def test_upload_writes_files_and_creates_task(transport, upload_root, db_session):
@@ -58,6 +59,7 @@ async def test_upload_creates_subdirectories(transport, upload_root, db_session)
     ) as c:
         r = await c.post("/api/projects/upload", data={"name": "nested"}, files=files)
     assert r.status_code == 201
+    assert r.json()["files_written"] == 2
     assert os.path.isfile(os.path.join(upload_root, "nested", "src", "main.js"))
     assert os.path.isfile(
         os.path.join(upload_root, "nested", "src", "components", "Card.js")
@@ -88,6 +90,7 @@ async def test_upload_rejects_path_traversal(transport, upload_root, db_session)
     ) as c:
         r = await c.post("/api/projects/upload", data={"name": "evil"}, files=files)
     assert r.status_code == 400
+    assert "rejected" in r.json()["detail"].lower() or ".." in r.json()["detail"]
 
 
 async def test_upload_rejects_disallowed_extension(transport, upload_root, db_session):
