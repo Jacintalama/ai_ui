@@ -132,6 +132,19 @@ _MIME_BY_EXT = {
 }
 
 
+# AIUI parent host derived from AIUI_PUBLIC_BASE_URL (e.g. "ai-ui.coolestdomain.win").
+# Subdomains under this host (e.g. "<slug>.ai-ui.coolestdomain.win") are auto-allowed
+# for on-demand TLS provided the slug's app directory exists on disk.
+def _aiui_parent_host() -> str:
+    base = _os.environ.get("AIUI_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    # strip scheme
+    for prefix in ("https://", "http://"):
+        if base.lower().startswith(prefix):
+            base = base[len(prefix):]
+            break
+    return base.lower()
+
+
 def _parse_custom_host(host: str) -> tuple[str, str] | None:
     """Split a custom-domain host '<slug>.<parent>' into (slug, parent).
     Requires at least 3 labels (e.g. app.example.com). Lowercased + de-dotted."""
@@ -143,14 +156,38 @@ def _parse_custom_host(host: str) -> tuple[str, str] | None:
 
 @app.get("/__caddy/check_ask", include_in_schema=False)
 async def caddy_on_demand_ask(domain: str = ""):
-    """Caddy on-demand TLS gatekeeper. Returns 200 only when domain matches
-    <slug>.<parent> for a verified, published app. Blocks Let's Encrypt
-    rate-limit abuse via random hostnames."""
+    """Caddy on-demand TLS gatekeeper. Returns 200 in two cases:
+
+    1. <slug>.<AIUI_PUBLIC_HOST> where the slug has an app directory on
+       disk under apps/. This makes the AIUI managed parent permissive
+       (any app a user has built is reachable at its subdomain) while
+       still blocking arbitrary domain-name attacks.
+
+    2. <slug>.<custom_domain> where (slug, custom_domain) matches a
+       verified row in published_apps. This is the user-provided custom
+       domain path (e.g. myapp.example.com) and stays gated.
+
+    Anything else returns 404 to deny TLS cert issuance.
+    """
     domain = (domain or "").strip().lower().rstrip(".")
     parsed = _parse_custom_host(domain)
     if not parsed:
-        raise HTTPException(status_code=404, detail="not a published app subdomain")
+        raise HTTPException(status_code=404, detail="not a recognized subdomain")
     slug, parent = parsed
+
+    if not _SLUG_ROUTE_RE.match(slug):
+        raise HTTPException(status_code=404, detail="invalid slug")
+
+    # Path 1: AIUI parent host (e.g. "ai-ui.coolestdomain.win"). Allow if
+    # the slug has a real app directory on disk.
+    aiui_parent = _aiui_parent_host()
+    if aiui_parent and parent == aiui_parent:
+        app_dir = _os.path.join(_APP_ROOT_FS, slug)
+        if _os.path.isdir(app_dir):
+            return {"ok": True, "reason": "aiui-subdomain"}
+        raise HTTPException(status_code=404, detail="app not found on disk")
+
+    # Path 2: User-provided custom domain. Must be verified in published_apps.
     async with _db_session() as s:
         row = (
             await s.execute(
@@ -163,7 +200,7 @@ async def caddy_on_demand_ask(domain: str = ""):
         ).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="domain not allowed")
-    return {"ok": True}
+    return {"ok": True, "reason": "verified-custom-domain"}
 
 
 @app.get("/__public_by_host", include_in_schema=False)
@@ -304,12 +341,12 @@ async def serve_published_app(
         return Response(content=js_body, media_type="text/javascript",
                         headers={"Cache-Control": "no-store"})
 
-    async with _db_session() as s:
-        row = (
-            await s.execute(_select(_PublishedApp).where(_PublishedApp.slug == slug))
-        ).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="App not published")
+    # Access gate dropped 2026-04-30: any app on disk is reachable at
+    # <slug>.<domain> for preview. The published_apps row is now a flag for
+    # the "officially published" state (gallery / SEO / metadata) — not an
+    # access gate. If the app dir doesn't exist, fall through to the realpath
+    # check below which will 404 on a missing index.html.
+    pass
 
     base = _os.path.realpath(_os.path.join(_APP_ROOT_FS, slug))
     target = _os.path.realpath(_os.path.join(base, rel))
@@ -347,4 +384,83 @@ async def serve_published_app(
         target,
         media_type=media,
         headers={"Cache-Control": "public, max-age=120"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-slug preview hosting. Caddy proxies /tasks/preview-app/* into this
+# service. We support two flavors of preview:
+#
+#   1. Static apps (the common case — vanilla HTML/CSS/JS + Alpine + Tailwind)
+#      have NO spawned server. We just serve files from
+#      /workspace/ai_ui/apps/<slug>/<path> directly. Two users on different
+#      apps means two independent file-server responses — zero conflict.
+#
+#   2. Dynamic apps (Node/Python servers) are registered in app_runner with
+#      a per-slug port from a 9100-9119 pool. We reverse-proxy GET requests
+#      to localhost:<port> from inside this same container.
+#
+# This replaces the old single-slot model where one running preview would
+# kill any other user's preview.
+# ---------------------------------------------------------------------------
+import app_runner as _app_runner
+
+
+@app.get("/tasks/preview-app/{slug}", include_in_schema=False)
+@app.get("/tasks/preview-app/{slug}/", include_in_schema=False)
+@app.get("/tasks/preview-app/{slug}/{file_path:path}", include_in_schema=False)
+async def serve_preview_app(
+    slug: str,
+    file_path: str = "",
+    request: Request = None,
+):
+    if not _SLUG_ROUTE_RE.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid slug")
+
+    rel = unquote(file_path or "").lstrip("/")
+    if not rel:
+        rel = "index.html"
+    if ".." in rel.split("/") or rel.startswith("/") or "\x00" in rel:
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Dynamic preview: reverse-proxy to the slug's spawned port.
+    info = _app_runner._running.get(slug)
+    if info is not None and info.get("port") and info.get("kind") != "static":
+        import httpx as _httpx
+        port = info["port"]
+        upstream = f"http://localhost:{port}/{rel}"
+        try:
+            async with _httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(
+                    upstream,
+                    params=request.query_params if request else None,
+                )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Preview server unreachable: {exc}")
+        # Strip hop-by-hop headers
+        skip = {"transfer-encoding", "content-encoding", "connection", "content-length"}
+        out_headers = {k: v for k, v in resp.headers.items() if k.lower() not in skip}
+        return Response(content=resp.content, status_code=resp.status_code,
+                        headers=out_headers, media_type=resp.headers.get("content-type"))
+
+    # Static preview: serve the file from disk (mirrors serve_published_app).
+    base = _os.path.realpath(_os.path.join(_APP_ROOT_FS, slug))
+    target = _os.path.realpath(_os.path.join(base, rel))
+    if not target.startswith(base + _os.sep) and target != base:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    if not _os.path.isfile(target):
+        # SPA-style fallback: dirless paths fall back to index.html.
+        if "." not in _os.path.basename(rel):
+            target = _os.path.join(base, "index.html")
+            if not _os.path.isfile(target):
+                raise HTTPException(status_code=404, detail="Not found")
+        else:
+            raise HTTPException(status_code=404, detail="Not found")
+
+    ext = _os.path.splitext(target)[1].lower()
+    media = _MIME_BY_EXT.get(ext, "application/octet-stream")
+    return FileResponse(
+        target,
+        media_type=media,
+        headers={"Cache-Control": "no-store"},
     )
