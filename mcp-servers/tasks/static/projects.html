@@ -83,15 +83,12 @@
     .topbar .brand-logo {
       width: 34px;
       height: 34px;
-      border-radius: 9px;
-      background: linear-gradient(135deg, #7c8cff 0%, #a78bfa 100%);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 12px rgba(124, 140, 255, 0.35);
       flex-shrink: 0;
     }
-    .topbar .brand-logo svg { width: 28px; height: 28px; }
+    .topbar .brand-logo img { width: 34px; height: 34px; display: block; }
     .topbar .brand-text {
       display: flex;
       flex-direction: column;
@@ -912,13 +909,7 @@
   <div class="topbar">
     <div class="brand">
       <div class="brand-logo" aria-hidden="true">
-        <!-- "OI" wordmark — matches the AIUI / Open WebUI brand. -->
-        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-          <text x="16" y="22" text-anchor="middle"
-                font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-                font-size="17" font-weight="700" fill="white"
-                letter-spacing="-0.5">OI</text>
-        </svg>
+        <img src="/static/favicon.svg" alt="" crossorigin="use-credentials">
       </div>
       <div class="brand-text">
         <div class="brand-title">AIUI App Builder</div>
