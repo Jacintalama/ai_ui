@@ -6293,6 +6293,12 @@
   }
 
   async function submitChat(text) {
+    // Plan mode doesn't accept attachments. Drop any chips that were added
+    // before the user switched modes — keeping them would silently leak into
+    // the next Build send (and leave their ObjectURLs alive).
+    if (pendingAttachments.length > 0) {
+      clearPendingAttachments();
+    }
     renderChatBubble("user", text);
     // Persist user message (fire-and-forget — chat must never feel slow).
     if (slug) {
@@ -6359,6 +6365,11 @@
 
     // ── Reply path: answering the AI's clarifying question ──
     if (awaitingReplyTo) {
+      // Replies POST JSON to /{taskId}/answer — they don't accept attachments.
+      // Clear chips so they don't silently leak into the next Build send.
+      if (pendingAttachments.length > 0) {
+        clearPendingAttachments();
+      }
       const replyToTask = awaitingReplyTo;
       // Find the existing bubble for this task — we'll append the user's
       // reply right next to it and flip it back to a running state.
