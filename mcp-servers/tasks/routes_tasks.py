@@ -1,6 +1,8 @@
 """Task CRUD + state transitions (manual mode)."""
 import logging
+import re as _re
 from datetime import datetime
+from pathlib import PurePath as _PurePath
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +16,54 @@ from db import session
 from models import ChatMessage, ProjectSupabase, TaskItem
 from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, EnhanceRequest, TaskOut
 from templates import _has_template_app, build_rules_for, is_valid_key, requires_supabase
+
+_FILENAME_SAFE_RE = _re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_filename(name: str) -> str:
+    """Strip path components and dangerous characters from an uploaded filename.
+
+    Returns 'unnamed' (or 'unnamed.<ext>') when nothing usable remains.
+    Never raises.
+    """
+    if not name:
+        return "unnamed"
+    base = _PurePath(name.replace("\\", "/")).name
+    if not base or set(base) <= {"."}:
+        return "unnamed"
+    # Collapse runs of unsafe chars to a single underscore
+    cleaned = _FILENAME_SAFE_RE.sub("_", base).strip("._")
+    if not cleaned:
+        # Salvage extension if any
+        if "." in base:
+            ext = base.rsplit(".", 1)[-1]
+            ext = _FILENAME_SAFE_RE.sub("", ext)
+            return ("unnamed." + ext) if ext else "unnamed"
+        return "unnamed"
+    return cleaned
+
+
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff",      "image/jpeg"),
+    (b"GIF87a",            "image/gif"),
+    (b"GIF89a",            "image/gif"),
+)
+
+
+def _sniff_image_mime(head: bytes) -> str | None:
+    """Return canonical MIME for the first 12 bytes of an image, or None.
+
+    Recognises PNG, JPEG, GIF, WebP. Used as a server-side defence against
+    a client that lies about Content-Type.
+    """
+    for sig, mime in _IMAGE_SIGNATURES:
+        if head.startswith(sig):
+            return mime
+    # WebP: RIFF....WEBP
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 SUPABASE_CONNECT_PROMPT = (
     "[ACTION:supabase_connect]\n"
