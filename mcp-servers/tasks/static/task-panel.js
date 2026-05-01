@@ -163,6 +163,22 @@
   `;
   document.body.appendChild(panel);
 
+  // ===== Build FAB launcher =====
+  const fab = document.createElement("button");
+  fab.type = "button";
+  fab.className = "aiui-tp-fab hidden";
+  fab.setAttribute("aria-label", "Open tasks panel");
+  fab.title = "Tasks";
+  fab.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 4h6a2 2 0 0 1 2 2v0H7v0a2 2 0 0 1 2-2z"/>
+      <rect x="5" y="6" width="14" height="14" rx="2"/>
+      <path d="M9 11l2 2 4-4"/>
+    </svg>
+    <span class="aiui-tp-fab-badge zero" data-role="fab-badge">0</span>
+  `;
+  document.body.appendChild(fab);
+
   // ===== Helpers =====
   function $(sel, root = panel) { return root.querySelector(sel); }
   function $$(sel, root = panel) { return Array.from(root.querySelectorAll(sel)); }
