@@ -13,8 +13,6 @@
 
   // ===== Config =====
   const API_BASE = "/api/tasks";
-  const DISMISS_KEY = "aiui-tasks-dismissed-at";
-  const DISMISS_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
   const TYPE_LABELS = {
     BUILD: "🔨 BUILD",
@@ -34,15 +32,12 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       color: #fff; animation: aiui-tp-in 0.25s ease-out; }
     @keyframes aiui-tp-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-    .aiui-tp.minimized { width: auto; max-height: none; }
-    .aiui-tp.minimized .aiui-tp-tabs, .aiui-tp.minimized .aiui-tp-body, .aiui-tp.minimized .aiui-tp-foot { display: none; }
     .aiui-tp.hidden { display: none; }
     .aiui-tp-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #2a2a2a; background: #111; user-select: none; }
     .aiui-tp-head .title { display: flex; align-items: center; gap: 8px; }
     .aiui-tp-head .dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
     .aiui-tp-head strong { font-size: 13px; }
     .aiui-tp-head .badge { background: #ef4444; color: #fff; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 10px; margin-left: 6px; display: none; }
-    .aiui-tp.minimized .aiui-tp-head .badge { display: inline-block; }
     .aiui-tp-head .ctrls { display: flex; gap: 4px; }
     .aiui-tp-head .ctrls button { background: transparent; border: 0; color: #888; padding: 2px 8px; cursor: pointer; font-size: 14px; border-radius: 4px; }
     .aiui-tp-head .ctrls button:hover { background: #2a2a2a; color: #fff; }
@@ -167,7 +162,6 @@
       <div class="ctrls">
         <button data-act="new-task" title="Create a new task">+</button>
         <button data-act="refresh" title="Refresh">⟳</button>
-        <button data-act="min" title="Minimize">─</button>
         <button data-act="close" title="Close">✕</button>
       </div>
     </div>
@@ -982,15 +976,11 @@
     const tab = e.target.dataset && e.target.dataset.tab;
     if (act === "new-task") showCreateTaskModal();
     else if (act === "refresh") refreshAll();
-    else if (act === "min") panel.classList.toggle("minimized");
     else if (act === "close") {
       setOpen(false);
     }
     else if (act === "history") showHistoryModal();
     else if (tab) switchTab(tab);
-    else if (panel.classList.contains("minimized") && !e.target.closest("button")) {
-      panel.classList.remove("minimized");
-    }
   });
 
   // ===== Auth gate =====
@@ -1230,31 +1220,7 @@
             }, 80);
           });
 
-          // Right side: inline auto-show toggle
-          const toggle = document.createElement("button");
-          toggle.type = "button";
-          toggle.setAttribute("role", "switch");
-          toggle.title = "Auto-popup the panel on login";
-          toggle.style.cssText = "position:relative;width:32px;height:18px;border:0;border-radius:10px;cursor:pointer;transition:background 0.2s;padding:0;flex-shrink:0;";
-          const knob = document.createElement("span");
-          knob.style.cssText = "position:absolute;top:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left 0.2s;";
-          toggle.appendChild(knob);
-          function paint() {
-            const on = isAutoShowEnabled();
-            toggle.setAttribute("aria-checked", on ? "true" : "false");
-            toggle.style.background = on ? "#10b981" : "#4b5563";
-            knob.style.left = on ? "16px" : "2px";
-          }
-          paint();
-          toggle.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            setAutoShow(!isAutoShowEnabled());
-            paint();
-          });
-
           entry.appendChild(leftSide);
-          entry.appendChild(toggle);
           menu.insertBefore(entry, row);
           console.log("[AIUI tasks] + menu entry injected (with toggle)");
           return;
