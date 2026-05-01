@@ -5410,6 +5410,64 @@
     return { body, suggestions, sha };
   }
 
+  // Replace plain "Edited file <path>" / "Created file <path>" lines (with
+  // optional trailing "+N -N" diff stats) inside an assistant body's
+  // .markdown subtree with styled badges. Idempotent — safe to call after
+  // every re-render. Operates on text nodes only so existing <code>/<a>
+  // children stay intact.
+  const FILE_EDIT_RX =
+    /\b(Edited|Created) file\s+(\S+?)(?:\s+([+-]\d+)\s+([+-]\d+))?(?=[\s.,;:!?)\]]|$)/g;
+
+  function applyFileEditBadges(rootEl) {
+    if (!rootEl) return;
+    const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, null);
+    const targets = [];
+    let n;
+    while ((n = walker.nextNode())) {
+      // Skip text already inside a badge (idempotency) or inside <code>/<pre>.
+      const p = n.parentNode;
+      if (!p) continue;
+      if (p.closest && (p.closest(".file-edit-badge") || p.closest("code") || p.closest("pre"))) continue;
+      if (FILE_EDIT_RX.test(n.nodeValue)) targets.push(n);
+      FILE_EDIT_RX.lastIndex = 0;
+    }
+    for (const node of targets) {
+      const frag = document.createDocumentFragment();
+      const text = node.nodeValue;
+      let lastIdx = 0;
+      let m;
+      FILE_EDIT_RX.lastIndex = 0;
+      while ((m = FILE_EDIT_RX.exec(text)) !== null) {
+        if (m.index > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
+        const badge = document.createElement("span");
+        badge.className = "file-edit-badge";
+        const verb = document.createElement("span");
+        verb.className = "fe-verb";
+        verb.textContent = m[1];
+        const path = document.createElement("span");
+        path.className = "fe-path";
+        path.textContent = m[2];
+        badge.appendChild(verb);
+        badge.appendChild(path);
+        // Optional diff stats: m[3] / m[4] arrive as "+32" or "-32".
+        if (m[3] && m[4]) {
+          const a = document.createElement("span");
+          const b = document.createElement("span");
+          a.textContent = m[3];
+          b.textContent = m[4];
+          a.className = m[3].startsWith("+") ? "fe-add" : "fe-del";
+          b.className = m[4].startsWith("+") ? "fe-add" : "fe-del";
+          badge.appendChild(a);
+          badge.appendChild(b);
+        }
+        frag.appendChild(badge);
+        lastIdx = FILE_EDIT_RX.lastIndex;
+      }
+      if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+      node.parentNode.replaceChild(frag, node);
+    }
+  }
+
   function renderBubble(kind, content, opts) {
     opts = opts || {};
     const empty = document.getElementById("enhance-empty");
