@@ -152,7 +152,7 @@
   document.head.appendChild(style);
 
   // ===== State =====
-  const state = { activeTab: "pending", tasks: { pending: [], progress: [], done: [] }, sse: {} };
+  const state = { activeTab: "pending", tasks: { pending: [], progress: [], done: [] }, sse: {}, lastPendingCount: 0 };
 
   // ===== Build DOM =====
   const panel = document.createElement("div");
@@ -242,6 +242,13 @@
       fabBadge.textContent = total;
       fabBadge.classList.toggle("zero", total === 0);
     }
+    if (total > state.lastPendingCount && fab.classList.contains("hidden") === false) {
+      fab.classList.remove("pulse");
+      // Force reflow so the animation restarts when re-added
+      void fab.offsetWidth;
+      fab.classList.add("pulse");
+    }
+    state.lastPendingCount = total;
 
     const body = $('[data-role="body"]');
     const list = t[state.activeTab];
