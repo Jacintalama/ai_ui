@@ -1414,5 +1414,7 @@ Static-only changes (preview.html alone) usually don't need a rebuild — just `
 
 ---
 
-**Approach decision (Task 0):** _to be filled in after Task 0 grep_
+**Approach decision (Task 0):** A — no non-browser callers found. Only doc references and the test suite (which Task 7 already updates).
+
+**Task 1 status:** already done in commit `12fc2b354` (`<title>` is now `Preview` — no em-dash). Skip during execution.
 
