@@ -95,6 +95,7 @@
     .aiui-tp-check { color: #22c55e; font-weight: 700; }
     /* ===== FAB launcher ===== */
     .aiui-tp-fab {
+      /* position must establish a containing block for the absolute badge below. */
       position: fixed; bottom: 24px; right: 24px; z-index: 9998;
       width: 44px; height: 44px; border-radius: 50%;
       background: #1a1a1a; border: 1px solid #2a2a2a;
@@ -106,6 +107,7 @@
     }
     .aiui-tp-fab:hover { background: #232323; transform: translateY(-1px); }
     .aiui-tp-fab:active { transform: translateY(0); }
+    .aiui-tp-fab:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
     .aiui-tp-fab.hidden { display: none; }
     .aiui-tp-fab svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; }
     .aiui-tp-fab .aiui-tp-fab-badge {
