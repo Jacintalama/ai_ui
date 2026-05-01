@@ -1640,6 +1640,42 @@
       color: var(--text); cursor: pointer; font-size: 13px; text-align: left;
     }
     .plus-menu button[role="menuitem"]:hover { background: var(--surface-2); }
+    .attachment-strip {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 6px 0;
+      border-bottom: 1px dashed var(--border);
+      margin-bottom: 6px;
+    }
+    .attachment-chip {
+      position: relative;
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 28px 4px 4px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 8px;
+      max-width: 200px;
+    }
+    .attachment-chip .thumb {
+      width: 40px; height: 40px;
+      object-fit: cover; border-radius: 4px; flex: 0 0 auto;
+    }
+    .attachment-chip .meta {
+      display: flex; flex-direction: column; gap: 0; min-width: 0;
+    }
+    .attachment-chip .name {
+      font-size: 12px; font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 120px;
+    }
+    .attachment-chip .size { font-size: 10px; color: var(--muted); }
+    .attachment-chip .remove {
+      position: absolute; top: 2px; right: 2px;
+      width: 18px; height: 18px; border: 0; border-radius: 50%;
+      background: var(--surface); color: var(--muted);
+      cursor: pointer; font-size: 12px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .attachment-chip .remove:hover { color: var(--text); background: var(--surface-3, var(--surface-2)); }
+    #enhance-prompt.drag-over { outline: 2px dashed var(--accent); outline-offset: -4px; }
     .enhance-input .warn { color: var(--warning); font-size: 10.5px; }
 
     /* ──────────────────────────────────────────────────────────────────
@@ -5607,6 +5643,138 @@
   document.getElementById("plus-attach").addEventListener("click", () => {
     closePlusMenu();
     document.getElementById("attach-input").click();
+  });
+
+  // ── Attachment chips: file-input + paste + drag-drop, with validation ──
+  const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  const MAX_FILE_BYTES = 5 * 1024 * 1024;
+  const MAX_FILES = 5;
+
+  let pendingAttachments = []; // { id, file, previewUrl }
+
+  const $strip = document.getElementById("attachment-strip");
+  const $attachInput = document.getElementById("attach-input");
+  const $promptTa = document.getElementById("enhance-prompt");
+
+  function _humanKB(n) { return (n / 1024).toFixed(0) + " KB"; }
+
+  function _renderChips() {
+    if (pendingAttachments.length === 0) {
+      $strip.hidden = true; $strip.innerHTML = ""; return;
+    }
+    $strip.hidden = false;
+    $strip.innerHTML = "";
+    for (const a of pendingAttachments) {
+      const chip = document.createElement("div");
+      chip.className = "attachment-chip";
+
+      const img = document.createElement("img");
+      img.className = "thumb";
+      img.src = a.previewUrl;
+      img.alt = "";
+      chip.appendChild(img);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "name";
+      nameSpan.title = a.file.name;
+      nameSpan.textContent = a.file.name;
+      const sizeSpan = document.createElement("span");
+      sizeSpan.className = "size";
+      sizeSpan.textContent = _humanKB(a.file.size);
+      meta.appendChild(nameSpan);
+      meta.appendChild(sizeSpan);
+      chip.appendChild(meta);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "remove";
+      removeBtn.type = "button";
+      removeBtn.title = "Remove";
+      removeBtn.dataset.id = a.id;
+      removeBtn.textContent = "×";
+      chip.appendChild(removeBtn);
+
+      $strip.appendChild(chip);
+    }
+  }
+
+  $strip.addEventListener("click", (e) => {
+    const btn = e.target.closest(".remove");
+    if (!btn) return;
+    const id = btn.dataset.id;
+    const idx = pendingAttachments.findIndex(a => a.id === id);
+    if (idx >= 0) {
+      URL.revokeObjectURL(pendingAttachments[idx].previewUrl);
+      pendingAttachments.splice(idx, 1);
+      _renderChips();
+    }
+  });
+
+  function addFiles(fileList) {
+    for (const f of fileList) {
+      if (!ALLOWED_MIME.has(f.type)) {
+        toast("Only PNG / JPEG / WebP / GIF images are supported.", "error", 4000);
+        continue;
+      }
+      if (f.size > MAX_FILE_BYTES) {
+        toast(f.name + " is too large (max 5 MB).", "error", 4000);
+        continue;
+      }
+      if (pendingAttachments.length >= MAX_FILES) {
+        toast("Up to " + MAX_FILES + " attachments per message.", "error", 4000);
+        break;
+      }
+      pendingAttachments.push({
+        id: "att_" + Math.random().toString(36).slice(2, 10),
+        file: f,
+        previewUrl: URL.createObjectURL(f),
+      });
+    }
+    _renderChips();
+  }
+
+  function clearPendingAttachments() {
+    for (const a of pendingAttachments) URL.revokeObjectURL(a.previewUrl);
+    pendingAttachments = [];
+    _renderChips();
+  }
+
+  // File-picker change
+  $attachInput.addEventListener("change", () => {
+    if ($attachInput.files && $attachInput.files.length) addFiles($attachInput.files);
+    $attachInput.value = ""; // allow same-file reselect
+  });
+
+  // Paste image into textarea
+  $promptTa.addEventListener("paste", (e) => {
+    if (!e.clipboardData) return;
+    const files = [];
+    for (const item of e.clipboardData.items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length) {
+      e.preventDefault(); // don't paste the binary as text
+      addFiles(files);
+    }
+  });
+
+  // Drag-drop image onto textarea
+  $promptTa.addEventListener("dragover", (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.items).some(i => i.kind === "file")) {
+      e.preventDefault();
+      $promptTa.classList.add("drag-over");
+    }
+  });
+  $promptTa.addEventListener("dragleave", () => $promptTa.classList.remove("drag-over"));
+  $promptTa.addEventListener("drop", (e) => {
+    $promptTa.classList.remove("drag-over");
+    if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    addFiles(e.dataTransfer.files);
   });
 
   function setReplyMode(taskId) {
