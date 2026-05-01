@@ -128,6 +128,24 @@
     @media (max-width: 640px) {
       .aiui-tp-fab { width: 48px; height: 48px; bottom: 16px; right: 16px; }
     }
+    @media (max-width: 640px) {
+      .aiui-tp {
+        left: 0; right: 0; bottom: 0; top: auto;
+        width: 100%; max-height: 85vh;
+        border-radius: 16px 16px 0 0;
+        border-left: 0; border-right: 0; border-bottom: 0;
+      }
+      .aiui-tp::before {
+        content: "";
+        display: block;
+        width: 36px; height: 4px;
+        background: #2a2a2a;
+        border-radius: 2px;
+        margin: 8px auto 0;
+      }
+      .aiui-tp-head { padding: 10px 16px 12px; }
+      .aiui-tp-body { padding: 12px; }
+    }
   `;
   const style = document.createElement("style");
   style.textContent = css;
