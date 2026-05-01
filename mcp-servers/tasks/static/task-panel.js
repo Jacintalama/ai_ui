@@ -191,6 +191,10 @@
   `;
   document.body.appendChild(fab);
 
+  // Purge any stale drag-position from pre-FAB builds (the panel now
+  // anchors to the FAB; saved inline top/left would override that).
+  try { localStorage.removeItem("aiui-tasks-panel-pos"); } catch (_) {}
+
   fab.addEventListener("click", () => {
     setOpen(true);
   });
@@ -908,57 +912,6 @@
     $$(".aiui-tp-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tab));
     render();
   }
-
-  // ===== Drag to move =====
-  const POS_KEY = "aiui-tasks-panel-pos";
-  (function restorePos() {
-    try {
-      const pos = JSON.parse(localStorage.getItem(POS_KEY) || "null");
-      if (pos && typeof pos.left === "number" && typeof pos.top === "number") {
-        panel.style.left = Math.max(0, Math.min(window.innerWidth - 100, pos.left)) + "px";
-        panel.style.top = Math.max(0, Math.min(window.innerHeight - 60, pos.top)) + "px";
-        panel.style.right = "auto";
-      }
-    } catch (_) {}
-  })();
-
-  (function enableDrag() {
-    const header = panel.querySelector(".aiui-tp-head");
-    if (!header) return;
-    header.style.cursor = "move";
-    let dragging = false, offX = 0, offY = 0;
-
-    header.addEventListener("mousedown", e => {
-      // Don't start drag when clicking a button in the header
-      if (e.target.closest("button")) return;
-      dragging = true;
-      const rect = panel.getBoundingClientRect();
-      offX = e.clientX - rect.left;
-      offY = e.clientY - rect.top;
-      panel.style.transition = "none";
-      e.preventDefault();
-    });
-
-    document.addEventListener("mousemove", e => {
-      if (!dragging) return;
-      let left = e.clientX - offX;
-      let top = e.clientY - offY;
-      // Clamp to viewport
-      left = Math.max(0, Math.min(window.innerWidth - 100, left));
-      top = Math.max(0, Math.min(window.innerHeight - 60, top));
-      panel.style.left = left + "px";
-      panel.style.top = top + "px";
-      panel.style.right = "auto";
-    });
-
-    document.addEventListener("mouseup", () => {
-      if (!dragging) return;
-      dragging = false;
-      panel.style.transition = "";
-      const rect = panel.getBoundingClientRect();
-      localStorage.setItem(POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
-    });
-  })();
 
   function setOpen(open) {
     if (open) {
