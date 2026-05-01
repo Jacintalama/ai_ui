@@ -84,9 +84,36 @@ def test_build_enhance_prompt_with_attachments_includes_stanza():
         supabase_url=None,
         has_db_uri=False,
         user_email="r@x.com",
-        attachments=[".attachments/abc-123/shot.png", ".attachments/abc-123/mockup.jpg"],
+        attachments=[
+            "apps/meeting-notes/.attachments/abc-123/shot.png",
+            "apps/meeting-notes/.attachments/abc-123/mockup.jpg",
+        ],
     )
     assert "Attached images" in out
     assert "Read them with your Read tool" in out
-    assert ".attachments/abc-123/shot.png" in out
-    assert ".attachments/abc-123/mockup.jpg" in out
+    assert "apps/meeting-notes/.attachments/abc-123/shot.png" in out
+    assert "apps/meeting-notes/.attachments/abc-123/mockup.jpg" in out
+
+
+def test_attachments_stanza_uses_slugged_paths_not_bare_attachments():
+    """Prompt's attachment paths must resolve from agent CWD (CLAUDE_WORKSPACE).
+
+    Agent runs with CWD = CLAUDE_SANDBOX_DIR or CLAUDE_WORKSPACE. Files land
+    under apps/<slug>/.attachments/<task_id>/<name>. A bare `.attachments/...`
+    path would resolve to CLAUDE_WORKSPACE/.attachments/... which doesn't exist
+    and would silently break vision input.
+    """
+    from claude_executor import build_enhance_prompt
+    out = build_enhance_prompt(
+        slug="meeting-notes",
+        user_request="x",
+        attempt_count=0,
+        max_attempts=3,
+        supabase_url=None,
+        has_db_uri=False,
+        user_email="r@x.com",
+        attachments=["apps/meeting-notes/.attachments/abc/shot.png"],
+    )
+    assert "apps/meeting-notes/.attachments/abc/shot.png" in out
+    # And the bare form must NOT appear (would resolve wrong from agent CWD)
+    assert "\n- .attachments/" not in out

@@ -839,7 +839,9 @@ async def enhance(
                 i += 1
             (att_dir / name).write_bytes(body)
             used_names.add(name)
-            attachment_rel_paths.append(f".attachments/{new_task.id}/{name}")
+            attachment_rel_paths.append(
+                f"apps/{source.built_app_slug}/.attachments/{new_task.id}/{name}"
+            )
 
     # 4. Fire background execution with ENHANCE prompt.
     prompt_text = build_enhance_prompt(
