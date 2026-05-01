@@ -3426,8 +3426,8 @@
   // PREVIEW IFRAME
   // ────────────────────────────────────────────────────────────────────
   function refreshPreviewFrame() {
-    if (previewRunning && previewPort) {
-      const src = "/tasks/preview-app/?t=" + Date.now();
+    if (previewRunning && slug) {
+      const src = "/tasks/preview-app/" + slug + "/?t=" + Date.now();
       $previewEmpty.hidden = true;
       $previewLoading.classList.add("show");
       let iframe = $previewBody.querySelector("iframe");
@@ -5198,7 +5198,7 @@
         $elapsed.textContent = formatElapsed(status.elapsed_seconds || 0);
         $btnRun.disabled = true;
         $btnStop.disabled = false;
-        const url = "/tasks/preview-app/";
+        const url = "/tasks/preview-app/" + slug + "/";
         $previewUrlPill.hidden = false;
         $previewUrlValue.textContent = url;
         $badgePreview.hidden = false;
@@ -5678,7 +5678,7 @@
       url.searchParams.set("t", Date.now());
       iframe.src = url.toString();
     } catch (e) {
-      iframe.src = "/tasks/preview-app/?t=" + Date.now();
+      iframe.src = "/tasks/preview-app/" + slug + "/?t=" + Date.now();
     }
   }
 
