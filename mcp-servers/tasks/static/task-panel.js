@@ -1052,118 +1052,6 @@
   // ===== Inject single "Tasks" entry into the OpenWebUI user dropdown =====
   // Dropdown is created on demand. Use MutationObserver but dedupe per
   // menu instance via a unique flag on the parent menu element.
-  const AUTOSHOW_KEY = "aiui-tasks-autoshow";
-  function isAutoShowEnabled() {
-    return localStorage.getItem(AUTOSHOW_KEY) !== "false"; // default ON
-  }
-  function setAutoShow(enabled) {
-    localStorage.setItem(AUTOSHOW_KEY, enabled ? "true" : "false");
-  }
-
-  // Settings toggle removed — toggle now lives inline in the + menu row.
-  const SETTINGS_ANCHORS = [];
-  // eslint-disable-next-line no-unused-vars
-  function injectSettingsToggle_DISABLED() {
-    let pending = false;
-    const observer = new MutationObserver(() => {
-      if (pending) return;
-      pending = true;
-      requestAnimationFrame(async () => {
-        pending = false;
-        if (!(await isAdmin())) return;
-        if (document.querySelector("[data-aiui-tasks-toggle]")) return;
-
-        // Find any element whose trimmed text is EXACTLY one of our anchors.
-        // Then walk up to find the row (a container <= 300 chars text,
-        // with at least one sibling row).
-        let targetRow = null;
-        let matchedAnchor = null;
-        const all = document.querySelectorAll("*");
-        for (const el of all) {
-          const txt = (el.textContent || "").trim();
-          if (!SETTINGS_ANCHORS.includes(txt)) continue;
-          // Skip elements that contain many children (too big to be a label)
-          if ((el.children && el.children.length > 2)) continue;
-
-          let cur = el.parentElement;
-          for (let i = 0; i < 4 && cur; i++) {
-            const siblings = cur.parentElement ? cur.parentElement.children.length : 1;
-            const bodyLen = (cur.textContent || "").length;
-            // STRICT: row must be short (< 80 chars ~ label + "Default"/"On")
-            // and have siblings (meaning it's a list item, not a section)
-            if (siblings > 1 && bodyLen < 80) {
-              targetRow = cur;
-              matchedAnchor = txt;
-              break;
-            }
-            cur = cur.parentElement;
-          }
-          if (targetRow) break;
-        }
-        if (!targetRow || !targetRow.parentElement) {
-          console.log("[AIUI tasks] settings toggle: no anchor match");
-          return;
-        }
-        console.log("[AIUI tasks] settings injecting after:", matchedAnchor);
-
-        // Clone the native row so we inherit Tailwind/Svelte classes exactly.
-        // This matches alignment, colors, spacing, toggle shape pixel-perfectly.
-        const myRow = targetRow.cloneNode(true);
-        myRow.dataset.aiuiTasksToggle = "1";
-
-        // Rewrite the left-hand label text. Find the first text node that has
-        // the anchor text and replace it with "Tasks (admin)".
-        (function rewriteLabel(node) {
-          for (const child of Array.from(node.childNodes)) {
-            if (child.nodeType === 3) {
-              const t = child.nodeValue.trim();
-              if (t && t !== "Default" && t !== "On" && t !== "Off") {
-                child.nodeValue = child.nodeValue.replace(t, "Tasks (admin)");
-                return true;
-              }
-            } else if (child.nodeType === 1) {
-              if (rewriteLabel(child)) return true;
-            }
-          }
-          return false;
-        })(myRow);
-
-        // Clone the toggle button/input and rewire its handler. We disable
-        // the original click by cloning the node (clones drop listeners).
-        const toggle = myRow.querySelector("button, input[type='checkbox']");
-        if (toggle) {
-          const fresh = toggle.cloneNode(true);
-          toggle.replaceWith(fresh);
-          function paint() {
-            const on = isAutoShowEnabled();
-            if (fresh.tagName === "INPUT") fresh.checked = on;
-            fresh.setAttribute("aria-checked", on ? "true" : "false");
-            // If the native toggle uses a class to indicate "on", try common ones
-            if (on) fresh.classList.add("!bg-emerald-500", "!bg-green-500");
-            else fresh.classList.remove("!bg-emerald-500", "!bg-green-500");
-          }
-          paint();
-          fresh.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            setAutoShow(!isAutoShowEnabled());
-            paint();
-            if (isAutoShowEnabled() && window.aiuiTaskPanel) {
-              window.aiuiTaskPanel.open();
-              window.aiuiTaskPanel.refresh();
-            }
-          });
-        }
-
-        targetRow.parentElement.insertBefore(myRow, targetRow.nextSibling);
-        console.log("[AIUI tasks] settings toggle injected (cloned row)");
-      });
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
-
-  // injectSettingsToggle(); // disabled — toggle is now inline in the + menu
-
   // Inject a "Tasks" manual-open button into the + integrations menu
   // (the menu with Upload Files / Capture / Attach Webpage / Integrations).
   function injectIntegrationsMenuEntry() {
@@ -1222,7 +1110,7 @@
 
           entry.appendChild(leftSide);
           menu.insertBefore(entry, row);
-          console.log("[AIUI tasks] + menu entry injected (with toggle)");
+          console.log("[AIUI tasks] + menu entry injected");
           return;
         }
       });
