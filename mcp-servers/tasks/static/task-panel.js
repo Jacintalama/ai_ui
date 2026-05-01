@@ -1140,29 +1140,6 @@
         });
         // Add an explicit clean tooltip in its place.
         entry.setAttribute("title", "App Builder — create and manage AI-built apps");
-        // Replace the cloned Workspace SVG with the AIUI "OI" wordmark.
-        const cloneIcon = entry.querySelector("svg");
-        if (cloneIcon) {
-          const ns = "http://www.w3.org/2000/svg";
-          const newIcon = document.createElementNS(ns, "svg");
-          newIcon.setAttribute("width",  cloneIcon.getAttribute("width")  || "20");
-          newIcon.setAttribute("height", cloneIcon.getAttribute("height") || "20");
-          newIcon.setAttribute("viewBox", "0 0 32 32");
-          if (cloneIcon.getAttribute("class")) newIcon.setAttribute("class", cloneIcon.getAttribute("class"));
-          // "OI" wordmark — matches the AIUI brand on the App Builder page.
-          const txt = document.createElementNS(ns, "text");
-          txt.setAttribute("x", "16");
-          txt.setAttribute("y", "22");
-          txt.setAttribute("text-anchor", "middle");
-          txt.setAttribute("font-family", "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif");
-          txt.setAttribute("font-size", "17");
-          txt.setAttribute("font-weight", "700");
-          txt.setAttribute("fill", "currentColor");
-          txt.setAttribute("letter-spacing", "-0.5");
-          txt.textContent = "OI";
-          newIcon.appendChild(txt);
-          cloneIcon.replaceWith(newIcon);
-        }
         // Replace the "Workspace" text label with "Build Website" wherever
         // it appears inside the cloned subtree.
         (function rewriteLabel(node) {
