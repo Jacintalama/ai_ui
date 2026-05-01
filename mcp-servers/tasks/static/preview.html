@@ -1079,6 +1079,27 @@
     .panel-body { flex: 1; overflow: auto; }
     .panel-body::-webkit-scrollbar-thumb { background: var(--border-2); }
 
+    /* ──── Files panel layout ──── */
+    #panel-files .panel-body {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding: 0;
+    }
+    #panel-files .files-search-row {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    #panel-files .file-tree {
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+    }
+    #panel-files .file-count {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
     /* ──── Code panel with line numbers ──── */
     .code-view {
       display: grid;
@@ -2196,15 +2217,15 @@
         <div class="panel-head">
           <span class="filepath">Files</span>
           <div class="panel-actions">
-            <span class="count" id="file-count" style="font-size:11px;color:var(--muted);"></span>
+            <span class="count file-count" id="file-count"></span>
           </div>
         </div>
-        <div class="panel-body" style="display:flex;flex-direction:column;gap:0;padding:0;">
-          <div style="padding:10px 14px;border-bottom:1px solid var(--border);">
+        <div class="panel-body">
+          <div class="files-search-row">
             <input class="search-input" id="file-search" type="search"
                    placeholder="Search files…" autocomplete="off">
           </div>
-          <div class="file-tree" id="file-tree" style="flex:1;overflow:auto;padding:10px;">
+          <div class="file-tree" id="file-tree">
             <div class="skeleton skeleton-row" style="width:80%"></div>
             <div class="skeleton skeleton-row" style="width:60%"></div>
             <div class="skeleton skeleton-row" style="width:70%"></div>
@@ -3350,7 +3371,6 @@
       el.addEventListener("click", function () {
         const p = el.dataset.path;
         loadFile(p);
-        switchTab("code");
         $fileTree.querySelectorAll(".tree-file").forEach(function (f) {
           f.classList.toggle("active", f.dataset.path === p);
         });
