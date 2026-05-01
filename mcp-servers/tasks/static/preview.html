@@ -1624,34 +1624,45 @@
     .enhance-input .warn { color: var(--warning); font-size: 10.5px; }
 
     /* ──────────────────────────────────────────────────────────────────
-       CHAT / BUILD MODE TOGGLE
+       BUILD / PLAN MODE DROPDOWN
        ────────────────────────────────────────────────────────────────── */
-    .mode-toggle {
-      display: inline-flex;
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 2px;
-      gap: 2px;
-    }
-    .mode-toggle button {
-      background: transparent;
-      border: 0;
-      color: var(--muted);
-      padding: 3px 10px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 600;
+    .mode-dropdown { position: relative; }
+    .mode-button {
+      display: inline-flex; align-items: center; gap: 6px;
+      height: 28px; padding: 0 10px;
+      background: var(--surface-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      font: inherit; font-size: 12px; font-weight: 600;
       cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      transition: background 0.15s, color 0.15s;
     }
-    .mode-toggle button:hover { color: var(--text); }
-    .mode-toggle button.active {
-      background: var(--accent);
-      color: #fff;
+    .mode-button:hover { background: var(--surface-3, var(--surface-2)); }
+    .mode-button .caret { opacity: 0.7; }
+    .mode-menu {
+      position: absolute; top: calc(100% + 4px); right: 0;
+      min-width: 220px; padding: 6px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      z-index: 30;
+    }
+    .mode-menu button[role="menuitem"] {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+      width: 100%; padding: 8px 10px;
+      background: transparent; border: 0; border-radius: 6px;
+      color: var(--text); cursor: pointer; text-align: left;
+    }
+    .mode-menu button[role="menuitem"]:hover { background: var(--surface-2); }
+    .mode-menu button[role="menuitem"].active { background: var(--surface-2); }
+    .mode-menu .title { font-size: 13px; font-weight: 600; }
+    .mode-menu .sub { font-size: 11px; color: var(--muted); }
+    .mode-menu .menu-foot {
+      padding: 8px 10px 4px; margin-top: 4px;
+      border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--muted);
+    }
+    .mode-menu .menu-foot kbd {
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 3px; padding: 0 4px; font-size: 10px;
+      margin: 0 2px;
     }
 
     /* Preview viewport toggle (Desktop / Phone). */
@@ -2669,9 +2680,26 @@
     <div class="enhance-full">
       <div class="enhance-header">
         <span class="title">Enhance</span>
-        <div class="mode-toggle" id="mode-toggle" role="tablist">
-          <button data-mode="chat" class="active" type="button" title="Talk — no code changes">💬 Chat</button>
-          <button data-mode="build" type="button" title="Commit an enhancement — runs the build pipeline">Build</button>
+        <div class="mode-dropdown" id="mode-dropdown">
+          <button class="mode-button" id="mode-button" type="button"
+                  aria-haspopup="menu" aria-expanded="false">
+            <span class="mode-label" id="mode-label">Build</span>
+            <svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </button>
+          <div class="mode-menu" id="mode-menu" role="menu" hidden>
+            <button role="menuitem" data-mode="build" class="active" type="button">
+              <span class="title">Build</span>
+              <span class="sub">Make changes directly</span>
+            </button>
+            <button role="menuitem" data-mode="chat" type="button">
+              <span class="title">Plan</span>
+              <span class="sub">Discuss before building</span>
+            </button>
+            <div class="menu-foot">Toggle with <kbd>Alt</kbd><kbd>P</kbd></div>
+          </div>
         </div>
         <button id="enhance-collapse" title="Minimize" type="button">−</button>
       </div>
@@ -5436,28 +5464,73 @@
   const $replyBanner = document.getElementById("reply-banner");
   const $replyClear = document.getElementById("reply-clear");
 
-  // Chat mode: lightweight agent chat with no build pipeline. Default to
-  // Chat so greetings/questions don't trigger expensive build runs that fail.
+  // Chat mode: lightweight agent chat with no build pipeline. Default is
+  // Build (data-mode "build") so the Send button triggers the build pipeline;
+  // users can switch to Plan (internal "chat") via the Build ▾ dropdown when
+  // they want to brainstorm without committing changes.
   // In-memory history only (per session) — persists on page reload via task.
-  let chatMode = "chat";  // "chat" | "build"
+  let chatMode = "build";  // "chat" (Plan) | "build"
   const chatHistory = [];  // { role: "user" | "assistant", content: "..." }
-  const $modeToggle = document.getElementById("mode-toggle");
+  const $modeBtn = document.getElementById("mode-button");
+  const $modeMenu = document.getElementById("mode-menu");
+  const $modeLabel = document.getElementById("mode-label");
+  let _modeMenuOpen = false;
+
+  function isInputFocused() {
+    const t = document.activeElement;
+    return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+  }
 
   function setMode(m) {
     chatMode = m;
-    $modeToggle.querySelectorAll("button").forEach((b) => {
+    $modeMenu.querySelectorAll("button[role='menuitem']").forEach((b) => {
       b.classList.toggle("active", b.dataset.mode === m);
     });
+    $modeLabel.textContent = m === "build" ? "Build" : "Plan";
     $prompt.placeholder = m === "chat"
       ? "Ask about the app, brainstorm, or just chat…"
       : "Type the change you want built…";
     $send.textContent = m === "chat" ? "Ask" : "Send";
   }
-  $modeToggle.addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-mode]");
-    if (b) setMode(b.dataset.mode);
+
+  function openModeMenu() {
+    $modeMenu.hidden = false;
+    $modeBtn.setAttribute("aria-expanded", "true");
+    _modeMenuOpen = true;
+    setTimeout(() => document.addEventListener("click", _modeOutsideClick), 0);
+    document.addEventListener("keydown", _modeEscClose);
+  }
+  function closeModeMenu() {
+    $modeMenu.hidden = true;
+    $modeBtn.setAttribute("aria-expanded", "false");
+    _modeMenuOpen = false;
+    document.removeEventListener("click", _modeOutsideClick);
+    document.removeEventListener("keydown", _modeEscClose);
+  }
+  function _modeOutsideClick(e) {
+    if (!document.getElementById("mode-dropdown").contains(e.target)) closeModeMenu();
+  }
+  function _modeEscClose(e) { if (e.key === "Escape") closeModeMenu(); }
+
+  $modeBtn.addEventListener("click", () => {
+    _modeMenuOpen ? closeModeMenu() : openModeMenu();
   });
-  setMode("chat");
+  $modeMenu.addEventListener("click", (e) => {
+    const item = e.target.closest("button[role='menuitem']");
+    if (!item) return;
+    setMode(item.dataset.mode);
+    closeModeMenu();
+  });
+
+  // Alt+P toggles modes
+  document.addEventListener("keydown", (e) => {
+    if (!e.altKey || e.key.toLowerCase() !== "p") return;
+    if (isInputFocused()) return;
+    e.preventDefault();
+    setMode(chatMode === "build" ? "chat" : "build");
+  });
+
+  setMode("build");
 
   function setReplyMode(taskId) {
     awaitingReplyTo = taskId;
