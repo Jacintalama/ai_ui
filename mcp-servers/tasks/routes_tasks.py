@@ -808,12 +808,19 @@ async def enhance(
         await s.refresh(execution)
         supabase_url, has_db_uri = await _lookup_supabase_config(s, source.built_app_slug)
 
-    # Persist attachments to disk now that we have new_task.id
+    # Persist attachments to disk now that we have new_task.id.
+    # If the disk write fails (ENOSPC, permission, full inode, etc.), the
+    # task + execution rows committed above would otherwise sit forever in
+    # `running` — _run_execution was never spawned, and the slug's advisory-
+    # lock check at the top of subsequent /enhance calls would 409 every
+    # retry. Mark them `failed` on error so the slug lock clears.
     attachment_rel_paths: list[str] = []
     if validated:
         from pathlib import Path
         import os
+        from sqlalchemy import update as _sa_update
         from claude_executor import _ensure_gitignore_attachments
+        from models import TaskExecution as _TaskExecution
         # APPS_DIR is a test override; in production we follow the same convention as
         # the other writers in this module (CLAUDE_WORKSPACE/apps/<slug>).
         apps_dir = Path(
@@ -821,26 +828,56 @@ async def enhance(
             or os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps")
         )
         app_dir = apps_dir / source.built_app_slug
-        # Ensure existing apps (created before this change) gain a gitignore
-        # entry for .attachments/ before we drop blobs into it.
-        _ensure_gitignore_attachments(app_dir)
-        att_dir = app_dir / ".attachments" / str(new_task.id)
-        att_dir.mkdir(parents=True, exist_ok=True)
-        used_names: set[str] = set()
-        for original_safe, body in validated:
-            name = original_safe
-            i = 1
-            while name in used_names or (att_dir / name).exists():
-                stem, _, ext = original_safe.rpartition(".")
-                stem = stem or original_safe
-                name = (
-                    f"{stem}_{i}.{ext}" if ext and ext != original_safe else f"{original_safe}_{i}"
+        try:
+            # Ensure existing apps (created before this change) gain a gitignore
+            # entry for .attachments/ before we drop blobs into it.
+            _ensure_gitignore_attachments(app_dir)
+            att_dir = app_dir / ".attachments" / str(new_task.id)
+            att_dir.mkdir(parents=True, exist_ok=True)
+            used_names: set[str] = set()
+            for original_safe, body in validated:
+                name = original_safe
+                i = 1
+                while name in used_names or (att_dir / name).exists():
+                    stem, _, ext = original_safe.rpartition(".")
+                    stem = stem or original_safe
+                    name = (
+                        f"{stem}_{i}.{ext}" if ext and ext != original_safe else f"{original_safe}_{i}"
+                    )
+                    i += 1
+                (att_dir / name).write_bytes(body)
+                used_names.add(name)
+                attachment_rel_paths.append(
+                    f"apps/{source.built_app_slug}/.attachments/{new_task.id}/{name}"
                 )
-                i += 1
-            (att_dir / name).write_bytes(body)
-            used_names.add(name)
-            attachment_rel_paths.append(
-                f"apps/{source.built_app_slug}/.attachments/{new_task.id}/{name}"
+        except OSError as e:
+            # Disk failed — mark task + execution failed so the slug lock
+            # clears, then surface to client as 500.
+            async with session() as s2:
+                await s2.execute(
+                    _sa_update(TaskItem)
+                    .where(TaskItem.id == new_task.id)
+                    .values(
+                        status="failed",
+                        result=f"Attachment write failed: {type(e).__name__}",
+                    )
+                )
+                await s2.execute(
+                    _sa_update(_TaskExecution)
+                    .where(_TaskExecution.id == execution.id)
+                    .values(
+                        status="failed",
+                        log=f"[attachment write failed: {e}]",
+                    )
+                )
+                await s2.commit()
+            logger.error(
+                "enhance: attachment write failed task=%s err=%s",
+                new_task.id, e,
+            )
+            raise HTTPException(
+                500,
+                f"Could not save attachment to disk: {type(e).__name__}",
             )
 
     # 4. Fire background execution with ENHANCE prompt.

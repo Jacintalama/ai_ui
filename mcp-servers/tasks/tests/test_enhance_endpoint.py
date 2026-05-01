@@ -217,6 +217,68 @@ async def test_enhance_rejects_oversized_file(db_session):
     assert "5" in r.json()["detail"] or "large" in r.json()["detail"].lower()
 
 
+async def test_enhance_disk_write_failure_marks_task_failed(
+    db_session, tmp_path, monkeypatch
+):
+    """If the attachment write raises OSError, the new task + execution are
+    marked failed so subsequent /enhance calls on the same slug aren't
+    blocked forever by the in-flight advisory-lock 409 path.
+    """
+    import pathlib
+    from sqlalchemy import select
+    from models import TaskItem, TaskExecution
+
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+
+    # Pre-create the app dir so the gitignore helper succeeds; the failure
+    # must happen at write_bytes (not earlier).
+    app_dir = tmp_path / "meeting-notes"
+    app_dir.mkdir()
+
+    # Force write_bytes to raise — simulates ENOSPC / permission / inode-full.
+    def boom(self, _data):
+        raise OSError("Simulated ENOSPC")
+    monkeypatch.setattr(pathlib.Path, "write_bytes", boom)
+
+    source = _make_task()
+    db_session.add(source)
+    await db_session.commit()
+    await db_session.refresh(source)
+
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/api/tasks/enhance",
+            headers=ADMIN_HEADERS,
+            data={"source_task_id": str(source.id), "prompt": "x"},
+            files=[("files", ("a.png", png, "image/png"))],
+        )
+
+    assert r.status_code == 500, r.text
+    assert "attachment" in r.json()["detail"].lower() or \
+           "disk" in r.json()["detail"].lower()
+
+    # The new (non-source) task must now be `failed` so the slug lock clears.
+    rows = (await db_session.execute(
+        select(TaskItem)
+        .where(TaskItem.built_app_slug == "meeting-notes")
+        .where(TaskItem.id != source.id)
+    )).scalars().all()
+    assert len(rows) == 1, f"expected 1 new task, got {len(rows)}"
+    new_task = rows[0]
+    assert new_task.status == "failed", \
+        f"new task should be 'failed' (slug lock would otherwise block retries); got {new_task.status!r}"
+    assert new_task.result and "attachment" in new_task.result.lower()
+
+    # Execution row should also be `failed` with a useful log line.
+    execs = (await db_session.execute(
+        select(TaskExecution).where(TaskExecution.task_id == new_task.id)
+    )).scalars().all()
+    assert len(execs) == 1
+    assert execs[0].status == "failed"
+    assert "attachment" in (execs[0].log or "").lower()
+
+
 async def test_enhance_rejects_lying_content_type(db_session):
     """Magic-byte sniff catches a pdf masquerading as image/png."""
     source = _make_task()
