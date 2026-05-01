@@ -3454,6 +3454,23 @@
   }
   $previewRefresh.addEventListener("click", refreshPreviewFrame);
 
+  // Viewport toggle — flips a phone-mode class on $previewBody. Pure CSS
+  // does the rest; no JS resize, no persisted preference (resets on reload).
+  const $viewportToggle = document.getElementById("preview-viewport-toggle");
+  const $previewBodyEl = document.getElementById("preview-body");
+  if ($viewportToggle && $previewBodyEl) {
+    $viewportToggle.addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-viewport]");
+      if (!b) return;
+      $viewportToggle.querySelectorAll("button").forEach((x) => {
+        const isActive = x === b;
+        x.classList.toggle("active", isActive);
+        x.setAttribute("aria-pressed", isActive ? "true" : "false");
+      });
+      $previewBodyEl.classList.toggle("phone-mode", b.dataset.viewport === "phone");
+    });
+  }
+
   // ────────────────────────────────────────────────────────────────────
   // PROJECT GRAPH (Tests tab — repurposed)
   // ────────────────────────────────────────────────────────────────────
