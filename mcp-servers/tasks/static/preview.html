@@ -1484,6 +1484,52 @@
     .enhance-bubble.ai .cancel-action:hover {
       background: var(--danger-soft);
     }
+    /* Thought card — wraps every assistant reply (build + chat panes). */
+    .enhance-bubble.ai .body,
+    .chat-bubble.ai .body {
+      position: relative;
+    }
+    .enhance-bubble.ai .body::before,
+    .chat-bubble.ai .body::before {
+      content: "Thought";
+      display: block;
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    /* Suppress the label while we're still streaming / waiting. */
+    .enhance-bubble.ai:not(.done):not(.failed) .body::before,
+    .chat-bubble.thinking .body::before { content: none; }
+
+    /* Inline file-edit badge produced by applyFileEditBadges() below. */
+    .file-edit-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      margin: 2px 4px 2px 0;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-2);
+      line-height: 1.4;
+    }
+    .file-edit-badge .verb {
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .file-edit-badge .path { color: var(--text); }
+    .file-edit-badge .diff-add { color: #22c55e; }
+    .file-edit-badge .diff-del { color: #ef4444; }
+
     .enhance-bubble.ai.done .cancel-action,
     .enhance-bubble.ai.failed .cancel-action { display: none; }
 
