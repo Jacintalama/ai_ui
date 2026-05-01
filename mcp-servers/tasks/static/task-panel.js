@@ -27,13 +27,13 @@
 
   // ===== Styles =====
   const css = `
-    .aiui-tp { position: fixed; top: 24px; right: 24px; width: 520px; max-height: 78vh;
+    .aiui-tp { position: fixed; bottom: 80px; right: 24px; width: 520px; max-height: 78vh;
       background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px;
       overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
       display: flex; flex-direction: column; z-index: 9999;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       color: #fff; animation: aiui-tp-in 0.25s ease-out; }
-    @keyframes aiui-tp-in { from { opacity: 0; transform: translateY(-10px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes aiui-tp-in { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
     .aiui-tp.minimized { width: auto; max-height: none; }
     .aiui-tp.minimized .aiui-tp-tabs, .aiui-tp.minimized .aiui-tp-body, .aiui-tp.minimized .aiui-tp-foot { display: none; }
     .aiui-tp.hidden { display: none; }
