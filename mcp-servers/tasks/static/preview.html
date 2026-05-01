@@ -5416,7 +5416,7 @@
   // every re-render. Operates on text nodes only so existing <code>/<a>
   // children stay intact.
   const FILE_EDIT_RX =
-    /\b(Edited|Created) file\s+(\S+?)(?:\s+([+-]\d+)\s+([+-]\d+))?(?=[\s.,;:!?)\]]|$)/g;
+    /\b(Edited|Created) file\s+(\S*[^\s.,;:!?)\]])(?:\s+([+-]\d+)\s+([+-]\d+))?/g;
 
   function applyFileEditBadges(rootEl) {
     if (!rootEl) return;
