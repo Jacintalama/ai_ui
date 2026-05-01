@@ -5706,6 +5706,18 @@
     if (iconEl) iconEl.textContent = phase.icon;
     if (textEl) textEl.textContent = phase.text;
 
+    // Live build activity — shown only while running. Cleared on terminal.
+    const activityEl = bubbleEl.querySelector(".build-activity");
+    if (activityEl) {
+      if (task.status === "running") {
+        const events = parseToolCallsFromLog((latestExec && latestExec.log) || "");
+        renderBuildActivity(activityEl, events);
+      } else {
+        activityEl.innerHTML = "";
+        activityEl.hidden = true;
+      }
+    }
+
     if (task.status === "completed") {
       bubbleEl.classList.add("done");
       const parts = splitCompletion(task.result);
