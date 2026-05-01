@@ -700,6 +700,7 @@ async def enhance(
 
     # Reject too many files BEFORE touching the DB
     if len(files) > MAX_FILES:
+        logger.info("enhance: too many attachments user=%s count=%d", user.email, len(files))
         raise HTTPException(400, f"Too many attachments (max {MAX_FILES})")
 
     # Read+validate each file fully into memory (≤ 5 MB × 5 = 25 MB worst case)
@@ -707,13 +708,25 @@ async def enhance(
     for f in files:
         body = await f.read(MAX_FILE_BYTES + 1)
         if len(body) > MAX_FILE_BYTES:
+            logger.info(
+                "enhance: attachment too large user=%s filename=%s size=%d",
+                user.email, f.filename, len(body),
+            )
             raise HTTPException(400, f"{f.filename}: file too large (max 5 MB)")
         if f.content_type not in ALLOWED_MIME:
+            logger.info(
+                "enhance: unsupported mime user=%s filename=%s mime=%s",
+                user.email, f.filename, f.content_type,
+            )
             raise HTTPException(
                 400,
                 f"Unsupported file type: {f.content_type}. Images only (PNG, JPEG, WebP, GIF).",
             )
         if _sniff_image_mime(body[:12]) is None:
+            logger.info(
+                "enhance: mime sniff failed user=%s filename=%s declared_mime=%s",
+                user.email, f.filename, f.content_type,
+            )
             raise HTTPException(
                 400,
                 f"{f.filename}: file contents do not match a supported image format.",
@@ -792,7 +805,12 @@ async def enhance(
     if validated:
         from pathlib import Path
         import os
-        apps_dir = Path(os.environ.get("APPS_DIR", "apps"))
+        # APPS_DIR is a test override; in production we follow the same convention as
+        # the other writers in this module (CLAUDE_WORKSPACE/apps/<slug>).
+        apps_dir = Path(
+            os.environ.get("APPS_DIR")
+            or os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps")
+        )
         att_dir = apps_dir / source.built_app_slug / ".attachments" / str(new_task.id)
         att_dir.mkdir(parents=True, exist_ok=True)
         used_names: set[str] = set()
@@ -823,6 +841,7 @@ async def enhance(
         has_db_uri=has_db_uri,
         user_email=user.email,
     )
+    # TODO(task-8): drop this inspect gate once build_enhance_prompt accepts attachments=.
     if "attachments" in inspect.signature(build_enhance_prompt).parameters:
         _enhance_kwargs["attachments"] = attachment_rel_paths or None
     prompt_text = build_enhance_prompt(**_enhance_kwargs)
