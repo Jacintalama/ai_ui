@@ -1079,12 +1079,35 @@
     .panel-body { flex: 1; overflow: auto; }
     .panel-body::-webkit-scrollbar-thumb { background: var(--border-2); }
 
-    /* ──── Files panel layout ──── */
-    #panel-files .panel-body {
+    /* ──── Files panel: split layout (tree left, code right) ──── */
+    #panel-files .panel-body.files-split {
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       gap: 0;
       padding: 0;
+      overflow: hidden;
+    }
+    #panel-files .files-tree-pane {
+      flex: 0 0 280px;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+    }
+    #panel-files .files-tree-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    #panel-files .files-tree-head .count {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--muted);
     }
     #panel-files .files-search-row {
       padding: 10px 14px;
@@ -1095,9 +1118,19 @@
       overflow: auto;
       padding: 10px;
     }
-    #panel-files .file-count {
-      font-size: 11px;
-      color: var(--muted);
+    #panel-files .files-code-pane {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #panel-files .files-code-pane > .panel-head {
+      flex: 0 0 auto;
+    }
+    #panel-files .files-code-pane > .panel-body {
+      flex: 1;
+      overflow: auto;
     }
 
     /* ──── Code panel with line numbers ──── */
@@ -2200,13 +2233,7 @@
 <main class="workspace">
   <section class="content">
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="code">
-        <span class="tab-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        </span>
-        <span class="tab-label">Code</span>
-      </button>
-      <button class="tab" data-tab="files">
+      <button class="tab active" data-tab="files">
         <span class="tab-icon">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -2254,48 +2281,49 @@
     </nav>
 
     <div class="panels">
-      <!-- Code panel -->
-      <div class="panel active" id="panel-code">
-        <div class="panel-head" id="code-head" hidden>
-          <span class="filepath" id="code-filepath"></span>
-          <div class="panel-actions">
-            <button class="btn btn-ghost" id="copy-code-path" title="Copy file path">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              Path
-            </button>
-            <button class="btn btn-ghost" id="copy-code" title="Copy code">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-              Copy
-            </button>
-          </div>
-        </div>
-        <div class="panel-body" id="code-body">
-          <div class="empty">
-            <div class="empty-icon">📄</div>
-            <div class="empty-title">Select a file</div>
-            <div class="empty-sub">Pick a file from the Files tab to view its contents.</div>
-          </div>
-        </div>
-      </div>
+      <!-- Files panel — split: tree on left, code on right -->
+      <div class="panel active" id="panel-files">
+        <div class="panel-body files-split">
+          <!-- LEFT: tree + search -->
+          <aside class="files-tree-pane">
+            <div class="files-tree-head">
+              <span>Files</span>
+              <span class="count" id="file-count"></span>
+            </div>
+            <div class="files-search-row">
+              <input class="search-input" id="file-search" type="search"
+                     placeholder="Search files…" autocomplete="off">
+            </div>
+            <div class="file-tree" id="file-tree">
+              <div class="skeleton skeleton-row" style="width:80%"></div>
+              <div class="skeleton skeleton-row" style="width:60%"></div>
+              <div class="skeleton skeleton-row" style="width:70%"></div>
+              <div class="skeleton skeleton-row" style="width:50%"></div>
+            </div>
+          </aside>
 
-      <!-- Files panel — file tree + search, full width -->
-      <div class="panel" id="panel-files">
-        <div class="panel-head">
-          <span class="filepath">Files</span>
-          <div class="panel-actions">
-            <span class="count file-count" id="file-count"></span>
-          </div>
-        </div>
-        <div class="panel-body">
-          <div class="files-search-row">
-            <input class="search-input" id="file-search" type="search"
-                   placeholder="Search files…" autocomplete="off">
-          </div>
-          <div class="file-tree" id="file-tree">
-            <div class="skeleton skeleton-row" style="width:80%"></div>
-            <div class="skeleton skeleton-row" style="width:60%"></div>
-            <div class="skeleton skeleton-row" style="width:70%"></div>
-            <div class="skeleton skeleton-row" style="width:50%"></div>
+          <!-- RIGHT: code viewer (was the standalone Code panel) -->
+          <div class="files-code-pane">
+            <div class="panel-head" id="code-head" hidden>
+              <span class="filepath" id="code-filepath"></span>
+              <div class="panel-actions">
+                <button class="btn btn-ghost" id="copy-code-path" title="Copy file path">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  Path
+                </button>
+                <button class="btn btn-ghost" id="copy-code" title="Copy code">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div class="panel-body" id="code-body">
+              <div class="empty">
+                <div class="empty-icon">📄</div>
+                <div class="empty-title">Select a file</div>
+                <div class="empty-sub">Pick a file from the tree on the left to view its contents.</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3126,7 +3154,7 @@
   let slug = "";
   let files = [];
   let activeFile = null;
-  let activeTab = "code";
+  let activeTab = "files";
   let previewRunning = false;
   let previewPort = null;
   let pollTimer = null;
@@ -3546,7 +3574,7 @@
     $codeFilepath.innerHTML = (dir ? '<span class="dim">' + escapeHtml(dir) + '/</span>' : '') + escapeHtml(name);
     $codeBody.innerHTML = '<div class="skeleton skeleton-row" style="width:95%;margin:16px"></div><div class="skeleton skeleton-row" style="width:85%;margin:8px 16px"></div><div class="skeleton skeleton-row" style="width:92%;margin:8px 16px"></div>';
 
-    if (activeTab !== "code") switchTab("code");
+    if (activeTab !== "files") switchTab("files");
 
     try {
       const data = await apiFetch("GET", "/" + taskId + "/files/" + encodeURIComponent(p));
@@ -5498,7 +5526,7 @@
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    const tabs = { "1": "code", "2": "preview", "3": "tests", "4": "logs" };
+    const tabs = { "1": "files", "2": "preview", "3": "tests", "4": "logs" };
     if (tabs[e.key]) { switchTab(tabs[e.key]); e.preventDefault(); return; }
     if (e.key === "r" || e.key === "R") { if (!$btnRun.disabled) $btnRun.click(); return; }
     if (e.key === "s" || e.key === "S") { if (!$btnStop.disabled) $btnStop.click(); return; }
