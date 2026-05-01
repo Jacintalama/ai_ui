@@ -1533,6 +1533,37 @@
     .enhance-bubble.ai.done .cancel-action,
     .enhance-bubble.ai.failed .cancel-action { display: none; }
 
+    /* Live build activity stream — shown only while a build task is running.
+       Renders a scrollable list of the agent's tool calls (Edit/Read/Bash/…)
+       parsed from the executor's stream-json log. Hidden when the bubble
+       reaches a terminal status. */
+    .enhance-bubble.ai .build-activity {
+      max-height: 240px;
+      overflow-y: auto;
+      margin: 8px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .enhance-bubble.ai .build-activity:empty { display: none; }
+    .enhance-bubble.ai .build-activity .activity-line {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .enhance-bubble.ai .build-activity .activity-line .verb {
+      font-weight: 600;
+      margin-right: 6px;
+    }
+    .enhance-bubble.ai .build-activity .activity-read   { color: var(--text-2); }
+    .enhance-bubble.ai .build-activity .activity-bash   { color: #c084fc; }
+    .enhance-bubble.ai .build-activity .activity-grep,
+    .enhance-bubble.ai .build-activity .activity-glob   { color: #86efac; }
+    .enhance-bubble.ai .build-activity .activity-web    { color: #60a5fa; }
+    .enhance-bubble.ai .build-activity .activity-other  { color: var(--muted); }
+    /* Edit/Write events reuse the existing .file-edit-badge styling from
+       the THOUGHT-card feature — no new rule needed. */
+
     .enhance-empty {
       display: flex;
       flex-direction: column;
