@@ -5712,17 +5712,23 @@
   });
 
   function addFiles(fileList) {
+    let rejectedMime = 0;
+    let rejectedSize = 0;
+    let rejectedCount = false;
+    let rejectedSizeSampleName = null; // first oversized file's name for the toast
+
     for (const f of fileList) {
       if (!ALLOWED_MIME.has(f.type)) {
-        toast("Only PNG / JPEG / WebP / GIF images are supported.", "error", 4000);
+        rejectedMime++;
         continue;
       }
       if (f.size > MAX_FILE_BYTES) {
-        toast(f.name + " is too large (max 5 MB).", "error", 4000);
+        rejectedSize++;
+        if (!rejectedSizeSampleName) rejectedSizeSampleName = f.name;
         continue;
       }
       if (pendingAttachments.length >= MAX_FILES) {
-        toast("Up to " + MAX_FILES + " attachments per message.", "error", 4000);
+        rejectedCount = true;
         break;
       }
       pendingAttachments.push({
@@ -5731,6 +5737,29 @@
         previewUrl: URL.createObjectURL(f),
       });
     }
+
+    if (rejectedMime > 0) {
+      toast(
+        rejectedMime === 1
+          ? "Only PNG / JPEG / WebP / GIF images are supported."
+          : rejectedMime + " files skipped (only PNG / JPEG / WebP / GIF images are supported).",
+        "error",
+        4000
+      );
+    }
+    if (rejectedSize > 0) {
+      toast(
+        rejectedSize === 1
+          ? rejectedSizeSampleName + " is too large (max 5 MB)."
+          : rejectedSize + " files too large (max 5 MB).",
+        "error",
+        4000
+      );
+    }
+    if (rejectedCount) {
+      toast("Up to " + MAX_FILES + " attachments per message.", "error", 4000);
+    }
+
     _renderChips();
   }
 
