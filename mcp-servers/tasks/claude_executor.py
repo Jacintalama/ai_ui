@@ -501,6 +501,7 @@ def build_enhance_prompt(
     supabase_url: str | None = None,
     has_db_uri: bool = False,
     user_email: str = "",
+    attachments: list[str] | None = None,
 ) -> str:
     if error_context:
         err_block = (
@@ -510,7 +511,7 @@ def build_enhance_prompt(
         )
     else:
         err_block = ""
-    return ENHANCE_PROMPT_TEMPLATE.format(
+    body = ENHANCE_PROMPT_TEMPLATE.format(
         slug=slug,
         user_request=user_request,
         error_context_block=err_block,
@@ -518,6 +519,16 @@ def build_enhance_prompt(
             supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
         ),
     )
+    if attachments:
+        body += (
+            "\n\n## Attached images\n"
+            "The user attached these images. Read them with your Read tool "
+            "before responding — the user is referencing them in the request. "
+            "If a file can't be read, tell the user which one:\n"
+        )
+        for rel in attachments:
+            body += f"- {rel}\n"
+    return body
 
 
 # ---------------------------------------------------------------------------

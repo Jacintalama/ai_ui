@@ -693,7 +693,6 @@ async def enhance(
     via the prompt (Task 8 wires the prompt-side reference list).
     """
     import asyncio
-    import inspect
     from claude_executor import build_enhance_prompt
     from models import TaskExecution
     from routes_execution import _run_execution, _RUNNING, _lookup_supabase_config
@@ -829,10 +828,7 @@ async def enhance(
             attachment_rel_paths.append(f".attachments/{new_task.id}/{name}")
 
     # 4. Fire background execution with ENHANCE prompt.
-    # Task 8 adds an `attachments` kwarg to build_enhance_prompt; until then we
-    # pass it only when the function actually accepts it. This `inspect` check
-    # is removable once Task 8 lands.
-    _enhance_kwargs = dict(
+    prompt_text = build_enhance_prompt(
         slug=source.built_app_slug,
         user_request=prompt.strip(),
         attempt_count=0,
@@ -840,11 +836,8 @@ async def enhance(
         supabase_url=supabase_url,
         has_db_uri=has_db_uri,
         user_email=user.email,
+        attachments=attachment_rel_paths or None,
     )
-    # TODO(task-8): drop this inspect gate once build_enhance_prompt accepts attachments=.
-    if "attachments" in inspect.signature(build_enhance_prompt).parameters:
-        _enhance_kwargs["attachments"] = attachment_rel_paths or None
-    prompt_text = build_enhance_prompt(**_enhance_kwargs)
     _RUNNING[new_task.id] = {"task": None, "proc": None}
     bg = asyncio.create_task(_run_execution(new_task.id, execution.id, prompt_text))
     _RUNNING[new_task.id]["task"] = bg

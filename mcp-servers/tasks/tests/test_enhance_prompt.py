@@ -58,3 +58,35 @@ def test_build_enhance_prompt_retry_context_appears_on_retry():
     )
     assert "Previous test failed: missing import" in out
     assert "1/3" in out or "attempt 1" in out.lower()
+
+
+def test_build_enhance_prompt_no_attachments_omits_stanza():
+    from claude_executor import build_enhance_prompt
+    out = build_enhance_prompt(
+        slug="meeting-notes",
+        user_request="add a header",
+        attempt_count=0,
+        max_attempts=3,
+        supabase_url=None,
+        has_db_uri=False,
+        user_email="r@x.com",
+    )
+    assert "Attached images" not in out
+
+
+def test_build_enhance_prompt_with_attachments_includes_stanza():
+    from claude_executor import build_enhance_prompt
+    out = build_enhance_prompt(
+        slug="meeting-notes",
+        user_request="match this layout",
+        attempt_count=0,
+        max_attempts=3,
+        supabase_url=None,
+        has_db_uri=False,
+        user_email="r@x.com",
+        attachments=[".attachments/abc-123/shot.png", ".attachments/abc-123/mockup.jpg"],
+    )
+    assert "Attached images" in out
+    assert "Read them with your Read tool" in out
+    assert ".attachments/abc-123/shot.png" in out
+    assert ".attachments/abc-123/mockup.jpg" in out
