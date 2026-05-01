@@ -1616,11 +1616,30 @@
       transition: border-color 0.15s;
     }
     .enhance-input textarea:focus { border-color: var(--accent); }
-    .enhance-input .row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+    .enhance-input .row { display: flex; align-items: center; gap: 8px; }
+    .enhance-input .row-left { display: flex; align-items: center; gap: 6px; flex: 1; }
+    .plus-dropdown { position: relative; }
+    .plus-btn {
+      width: 28px; height: 28px; border-radius: 6px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--surface-2); color: var(--text);
+      border: 1px solid var(--border); cursor: pointer;
     }
+    .plus-btn:hover { background: var(--surface-3, var(--surface-2)); }
+    .plus-menu {
+      position: absolute; bottom: calc(100% + 4px); left: 0;
+      min-width: 160px; padding: 6px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      z-index: 30;
+    }
+    .plus-menu button[role="menuitem"] {
+      display: flex; align-items: center; gap: 8px;
+      width: 100%; padding: 8px 10px;
+      background: transparent; border: 0; border-radius: 6px;
+      color: var(--text); cursor: pointer; font-size: 13px; text-align: left;
+    }
+    .plus-menu button[role="menuitem"]:hover { background: var(--surface-2); }
     .enhance-input .warn { color: var(--warning); font-size: 10.5px; }
 
     /* ──────────────────────────────────────────────────────────────────
@@ -2720,11 +2739,37 @@
           <span class="label"><strong>Replying</strong> to the AI's question</span>
           <button class="clear" id="reply-clear" title="Cancel reply (send as new enhancement)" type="button">×</button>
         </div>
+
+        <div class="attachment-strip" id="attachment-strip" hidden></div>
+
         <textarea id="enhance-prompt"
                   placeholder="Type what you want to change…"
                   maxlength="2000"
                   rows="3"></textarea>
         <div class="row">
+          <div class="row-left">
+            <div class="plus-dropdown" id="plus-dropdown">
+              <button class="icon-btn plus-btn" id="plus-btn" type="button"
+                      aria-haspopup="menu" aria-expanded="false" title="Add">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/>
+                  <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              </button>
+              <div class="plus-menu" id="plus-menu" role="menu" hidden>
+                <button role="menuitem" id="plus-attach" type="button">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                  </svg>
+                  <span>Attach</span>
+                </button>
+              </div>
+              <input type="file" id="attach-input" multiple
+                     accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+            </div>
+          </div>
           <span class="warn" id="enhance-warn"></span>
           <button class="btn btn-primary" id="enhance-send">Send</button>
         </div>
@@ -5531,6 +5576,38 @@
   });
 
   setMode("build");
+
+  // ── Composer "+" dropdown (Attach popover) ──
+  const $plusBtn = document.getElementById("plus-btn");
+  const $plusMenu = document.getElementById("plus-menu");
+  let _plusMenuOpen = false;
+
+  function openPlusMenu() {
+    $plusMenu.hidden = false;
+    $plusBtn.setAttribute("aria-expanded", "true");
+    _plusMenuOpen = true;
+    setTimeout(() => document.addEventListener("click", _plusOutsideClick), 0);
+    document.addEventListener("keydown", _plusEscClose);
+  }
+  function closePlusMenu() {
+    $plusMenu.hidden = true;
+    $plusBtn.setAttribute("aria-expanded", "false");
+    _plusMenuOpen = false;
+    document.removeEventListener("click", _plusOutsideClick);
+    document.removeEventListener("keydown", _plusEscClose);
+  }
+  function _plusOutsideClick(e) {
+    if (!document.getElementById("plus-dropdown").contains(e.target)) closePlusMenu();
+  }
+  function _plusEscClose(e) { if (e.key === "Escape") closePlusMenu(); }
+
+  $plusBtn.addEventListener("click", () => {
+    _plusMenuOpen ? closePlusMenu() : openPlusMenu();
+  });
+  document.getElementById("plus-attach").addEventListener("click", () => {
+    closePlusMenu();
+    document.getElementById("attach-input").click();
+  });
 
   function setReplyMode(taskId) {
     awaitingReplyTo = taskId;
