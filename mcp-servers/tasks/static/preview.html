@@ -3323,6 +3323,24 @@
     }
     return r.json();
   }
+  async function apiFetchMultipart(method, path, formData) {
+    // Strip Content-Type so the browser can set multipart boundary itself.
+    const headers = authHeaders();
+    delete headers["Content-Type"];
+    const r = await fetch(API_BASE + path, {
+      method,
+      credentials: "include",
+      headers,
+      body: formData,
+    });
+    if (!r.ok) {
+      const text = await r.text().catch(() => r.statusText);
+      const err = new Error(r.status + " " + text);
+      err.status = r.status;
+      throw err;
+    }
+    return r.json();
+  }
 
   // ────────────────────────────────────────────────────────────────────
   // THEME
@@ -6376,10 +6394,13 @@
     const aiBubble = renderBubble("ai", "", { taskId: "pending" });
 
     try {
-      const resp = await apiFetch("POST", "/enhance", {
-        source_task_id: taskId,
-        prompt: text,
-      });
+      const fd = new FormData();
+      fd.append("source_task_id", taskId);
+      fd.append("prompt", text);
+      for (const a of pendingAttachments) {
+        fd.append("files", a.file, a.file.name);
+      }
+      const resp = await apiFetchMultipart("POST", "/enhance", fd);
       aiBubble.dataset.taskId = resp.id;
       markMyBuildStart(resp.id);
       startEnhancePolling(resp.id, aiBubble);
@@ -6402,6 +6423,8 @@
       if (contentEl) contentEl.innerHTML = renderMarkdown(friendly);
       setSendDisabled(false);
       toast(e.status === 409 ? "Another enhancement is already running" : "Enhance failed: " + e.message, "error", 5000);
+    } finally {
+      clearPendingAttachments();
     }
   }
   async function handleSend() {
