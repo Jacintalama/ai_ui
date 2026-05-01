@@ -61,7 +61,7 @@ async def test_enhance_preserves_slug_when_claude_output_omits_apps_path(db_sess
         r = await c.post(
             "/api/tasks/enhance",
             headers=HDR,
-            json={"source_task_id": str(source.id), "prompt": "tweak footer"},
+            data={"source_task_id": str(source.id), "prompt": "tweak footer"},
         )
     assert r.status_code == 202, r.text
     new_id = uuid.UUID(r.json()["id"])

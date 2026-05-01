@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import PurePath as _PurePath
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import or_, select, text
 
 import uuid
@@ -14,7 +14,7 @@ from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import AdminUser, current_admin
 from db import session
 from models import ChatMessage, ProjectSupabase, TaskItem
-from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, EnhanceRequest, TaskOut
+from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, TaskOut
 from templates import _has_template_app, build_rules_for, is_valid_key, requires_supabase
 
 _FILENAME_SAFE_RE = _re.compile(r"[^A-Za-z0-9._-]+")
@@ -64,6 +64,11 @@ def _sniff_image_mime(head: bytes) -> str | None:
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "image/webp"
     return None
+
+ALLOWED_MIME: set[str] = {"image/png", "image/jpeg", "image/webp", "image/gif"}
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_FILES = 5
+
 
 SUPABASE_CONNECT_PROMPT = (
     "[ACTION:supabase_connect]\n"
@@ -672,24 +677,55 @@ async def answer(
 
 @router.post("/enhance", response_model=TaskOut, status_code=202)
 async def enhance(
-    body: EnhanceRequest,
+    source_task_id: UUID = Form(...),
+    prompt: str = Form(..., min_length=1, max_length=2000),
+    files: list[UploadFile] = File(default_factory=list),
     user: AdminUser = Depends(current_admin),
 ):
-    """Create a new BUILD task that modifies an existing app.
+    """Create a new BUILD task that modifies an existing app, optionally with image attachments.
 
     Skips CLARIFY/PLAN (plan_status='approved' set up front) and goes straight
     to TDD EXECUTE with ENHANCE_PROMPT_TEMPLATE so the user gets a fast
     iteration loop — type change -> AI edits existing files -> preview reloads.
+
+    Image attachments (PNG/JPEG/WebP/GIF, ≤5MB each, ≤5 files) are saved to
+    apps/<slug>/.attachments/<task_id>/<safe_name> and surfaced to the agent
+    via the prompt (Task 8 wires the prompt-side reference list).
     """
     import asyncio
+    import inspect
     from claude_executor import build_enhance_prompt
     from models import TaskExecution
     from routes_execution import _run_execution, _RUNNING, _lookup_supabase_config
 
+    # Reject too many files BEFORE touching the DB
+    if len(files) > MAX_FILES:
+        raise HTTPException(400, f"Too many attachments (max {MAX_FILES})")
+
+    # Read+validate each file fully into memory (≤ 5 MB × 5 = 25 MB worst case)
+    validated: list[tuple[str, bytes]] = []  # [(safe_name, body)]
+    for f in files:
+        body = await f.read(MAX_FILE_BYTES + 1)
+        if len(body) > MAX_FILE_BYTES:
+            raise HTTPException(400, f"{f.filename}: file too large (max 5 MB)")
+        if f.content_type not in ALLOWED_MIME:
+            raise HTTPException(
+                400,
+                f"Unsupported file type: {f.content_type}. Images only (PNG, JPEG, WebP, GIF).",
+            )
+        if _sniff_image_mime(body[:12]) is None:
+            raise HTTPException(
+                400,
+                f"{f.filename}: file contents do not match a supported image format.",
+            )
+        # Length-cap the safe filename (helper does NOT cap length — caller's responsibility).
+        safe = _safe_filename(f.filename or "image")[:200]
+        validated.append((safe, body))
+
     async with session() as s:
         # 1. Validate source
         source = (await s.execute(
-            select(TaskItem).where(TaskItem.id == body.source_task_id)
+            select(TaskItem).where(TaskItem.id == source_task_id)
         )).scalar_one_or_none()
         if source is None:
             raise HTTPException(status_code=404, detail="Source task not found")
@@ -733,7 +769,7 @@ async def enhance(
             action_type="BUILD",
             assignee_name=user.email.split("@")[0],
             assignee_email=user.email,
-            description=f"Enhance apps/{source.built_app_slug}/: {body.prompt.strip()[:400]}",
+            description=f"Enhance apps/{source.built_app_slug}/: {prompt.strip()[:400]}",
             priority="NICE_TO_HAVE",
             status="running",
             mode="ai",
@@ -751,18 +787,47 @@ async def enhance(
         await s.refresh(execution)
         supabase_url, has_db_uri = await _lookup_supabase_config(s, source.built_app_slug)
 
-    # 4. Fire background execution with ENHANCE prompt
-    prompt = build_enhance_prompt(
+    # Persist attachments to disk now that we have new_task.id
+    attachment_rel_paths: list[str] = []
+    if validated:
+        from pathlib import Path
+        import os
+        apps_dir = Path(os.environ.get("APPS_DIR", "apps"))
+        att_dir = apps_dir / source.built_app_slug / ".attachments" / str(new_task.id)
+        att_dir.mkdir(parents=True, exist_ok=True)
+        used_names: set[str] = set()
+        for original_safe, body in validated:
+            name = original_safe
+            i = 1
+            while name in used_names or (att_dir / name).exists():
+                stem, _, ext = original_safe.rpartition(".")
+                stem = stem or original_safe
+                name = (
+                    f"{stem}_{i}.{ext}" if ext and ext != original_safe else f"{original_safe}_{i}"
+                )
+                i += 1
+            (att_dir / name).write_bytes(body)
+            used_names.add(name)
+            attachment_rel_paths.append(f".attachments/{new_task.id}/{name}")
+
+    # 4. Fire background execution with ENHANCE prompt.
+    # Task 8 adds an `attachments` kwarg to build_enhance_prompt; until then we
+    # pass it only when the function actually accepts it. This `inspect` check
+    # is removable once Task 8 lands.
+    _enhance_kwargs = dict(
         slug=source.built_app_slug,
-        user_request=body.prompt.strip(),
+        user_request=prompt.strip(),
         attempt_count=0,
         max_attempts=new_task.max_attempts,
         supabase_url=supabase_url,
         has_db_uri=has_db_uri,
         user_email=user.email,
     )
+    if "attachments" in inspect.signature(build_enhance_prompt).parameters:
+        _enhance_kwargs["attachments"] = attachment_rel_paths or None
+    prompt_text = build_enhance_prompt(**_enhance_kwargs)
     _RUNNING[new_task.id] = {"task": None, "proc": None}
-    bg = asyncio.create_task(_run_execution(new_task.id, execution.id, prompt))
+    bg = asyncio.create_task(_run_execution(new_task.id, execution.id, prompt_text))
     _RUNNING[new_task.id]["task"] = bg
 
     return new_task
