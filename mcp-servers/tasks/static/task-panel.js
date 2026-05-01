@@ -219,6 +219,11 @@
     const total = t.pending.length;
     $(".aiui-tp-title").textContent = total ? `${total} Pending Task${total === 1 ? "" : "s"}` : "No Pending Tasks";
     $('[data-role="badge"]').textContent = total;
+    const fabBadge = fab.querySelector('[data-role="fab-badge"]');
+    if (fabBadge) {
+      fabBadge.textContent = total;
+      fabBadge.classList.toggle("zero", total === 0);
+    }
 
     const body = $('[data-role="body"]');
     const list = t[state.activeTab];
