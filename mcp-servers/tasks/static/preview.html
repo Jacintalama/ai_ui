@@ -5191,7 +5191,10 @@
       previewPort = status.port || null;
 
       if (runningThisApp) {
-        setStatus("running", previewPort ? "Running · port " + previewPort : "Running");
+        const kindLabel = previewPort
+          ? "port " + previewPort
+          : (status.kind === "static" ? "static" : (status.kind || ""));
+        setStatus("running", kindLabel ? "Running · " + kindLabel : "Running");
         $elapsed.textContent = formatElapsed(status.elapsed_seconds || 0);
         $btnRun.disabled = true;
         $btnStop.disabled = false;
@@ -5245,7 +5248,10 @@
       const res = await apiFetch("POST", "/" + taskId + "/preview/start");
       previewRunning = true;
       previewPort = res.port || null;
-      toast(res.port ? "Preview started on port " + res.port : "Preview started", "success");
+      const startMsg = res.port
+        ? "Preview started on port " + res.port
+        : (res.kind === "static" ? "Preview started (static)" : "Preview started");
+      toast(startMsg, "success");
       await pollPreviewStatus();
       if (activeTab === "preview") refreshPreviewFrame();
     } catch (err) {
