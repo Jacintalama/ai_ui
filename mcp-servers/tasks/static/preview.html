@@ -869,35 +869,6 @@
       overflow: hidden;
     }
 
-    .sidebar-files {
-      width: 260px;
-      min-width: 180px;
-      max-width: 420px;
-      background: var(--surface);
-      border-right: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      flex-shrink: 0;
-      overflow: hidden;
-    }
-    .sidebar-files .sb-head {
-      padding: 10px var(--s-3) 8px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      border-bottom: 1px solid var(--border);
-    }
-    .sidebar-files .sb-title {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 10.5px;
-      font-weight: 700;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-    }
-    .sidebar-files .sb-title .count { color: var(--subtle); font-weight: 500; }
     .search-input {
       width: 100%;
       background: var(--surface-2);
@@ -1942,11 +1913,7 @@
     @media (max-width: 1100px) {
       .sidebar-enhance:not(.collapsed) { width: 300px; min-width: 260px; }
     }
-    @media (max-width: 900px) {
-      .sidebar-files { width: 200px; min-width: 160px; }
-    }
     @media (max-width: 760px) {
-      .sidebar-files { display: none; }
       .slug-pill .slug-name { max-width: 140px; }
     }
   </style>
@@ -2144,24 +2111,6 @@
 </header>
 
 <main class="workspace">
-  <aside class="sidebar-files" id="sb-files">
-    <div class="sb-head">
-      <div class="sb-title">
-        <span>Files</span>
-        <span class="count" id="file-count"></span>
-      </div>
-      <input class="search-input" id="file-search" type="search" placeholder="Search files…" autocomplete="off">
-    </div>
-    <div class="file-tree" id="file-tree">
-      <div class="skeleton skeleton-row" style="width:80%"></div>
-      <div class="skeleton skeleton-row" style="width:60%"></div>
-      <div class="skeleton skeleton-row" style="width:70%"></div>
-      <div class="skeleton skeleton-row" style="width:50%"></div>
-    </div>
-  </aside>
-
-  <div class="resizer" data-resize="files"></div>
-
   <section class="content">
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="code">
@@ -2169,6 +2118,16 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         </span>
         <span class="tab-label">Code</span>
+      </button>
+      <button class="tab" data-tab="files">
+        <span class="tab-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+        </span>
+        <span class="tab-label">Files</span>
+        <span class="tab-badge" id="badge-files" hidden></span>
       </button>
       <button class="tab" data-tab="database" title="Connect Supabase to enable database, auth, storage.">
         <span class="tab-icon">
@@ -2227,7 +2186,29 @@
           <div class="empty">
             <div class="empty-icon">📄</div>
             <div class="empty-title">Select a file</div>
-            <div class="empty-sub">Pick a file from the tree on the left to view its contents.</div>
+            <div class="empty-sub">Pick a file from the Files tab to view its contents.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Files panel — file tree + search, full width -->
+      <div class="panel" id="panel-files">
+        <div class="panel-head">
+          <span class="filepath">Files</span>
+          <div class="panel-actions">
+            <span class="count" id="file-count" style="font-size:11px;color:var(--muted);"></span>
+          </div>
+        </div>
+        <div class="panel-body" style="display:flex;flex-direction:column;gap:0;padding:0;">
+          <div style="padding:10px 14px;border-bottom:1px solid var(--border);">
+            <input class="search-input" id="file-search" type="search"
+                   placeholder="Search files…" autocomplete="off">
+          </div>
+          <div class="file-tree" id="file-tree" style="flex:1;overflow:auto;padding:10px;">
+            <div class="skeleton skeleton-row" style="width:80%"></div>
+            <div class="skeleton skeleton-row" style="width:60%"></div>
+            <div class="skeleton skeleton-row" style="width:70%"></div>
+            <div class="skeleton skeleton-row" style="width:50%"></div>
           </div>
         </div>
       </div>
@@ -3023,7 +3004,6 @@
   let logFilter = "all";
   const FOLDER_STATE_KEY = "aiui-folder-state-v1";
   const THEME_KEY = "aiui-theme";
-  const LS_FILES_WIDTH = "aiui-sb-files-w";
   const LS_ENHANCE_WIDTH = "aiui-sb-enhance-w";
 
   // ── DOM refs ──
@@ -3370,6 +3350,7 @@
       el.addEventListener("click", function () {
         const p = el.dataset.path;
         loadFile(p);
+        switchTab("code");
         $fileTree.querySelectorAll(".tree-file").forEach(function (f) {
           f.classList.toggle("active", f.dataset.path === p);
         });
@@ -5321,25 +5302,21 @@
   // ────────────────────────────────────────────────────────────────────
   (function initResizers() {
     try {
-      const fw = localStorage.getItem(LS_FILES_WIDTH);
-      if (fw) document.getElementById("sb-files").style.width = fw + "px";
       const ew = localStorage.getItem(LS_ENHANCE_WIDTH);
       if (ew) document.getElementById("enhance-sidebar").style.width = ew + "px";
     } catch (_) {}
     document.querySelectorAll(".resizer").forEach((r) => {
       r.addEventListener("mousedown", function (e) {
         e.preventDefault();
-        const which = r.dataset.resize;
-        const target = which === "files"
-          ? document.getElementById("sb-files")
-          : document.getElementById("enhance-sidebar");
+        const target = document.getElementById("enhance-sidebar");
+        if (!target) return;
         if (target.classList && target.classList.contains("collapsed")) return;
         r.classList.add("dragging");
         const startX = e.clientX;
         const startW = target.getBoundingClientRect().width;
         function onMove(ev) {
           const dx = ev.clientX - startX;
-          let newW = which === "files" ? startW + dx : startW - dx;
+          let newW = startW - dx;
           newW = Math.max(160, Math.min(newW, 520));
           target.style.width = newW + "px";
         }
@@ -5349,7 +5326,7 @@
           document.removeEventListener("mouseup", onUp);
           try {
             localStorage.setItem(
-              which === "files" ? LS_FILES_WIDTH : LS_ENHANCE_WIDTH,
+              LS_ENHANCE_WIDTH,
               Math.round(target.getBoundingClientRect().width)
             );
           } catch (_) {}
@@ -5378,7 +5355,15 @@
     if (tabs[e.key]) { switchTab(tabs[e.key]); e.preventDefault(); return; }
     if (e.key === "r" || e.key === "R") { if (!$btnRun.disabled) $btnRun.click(); return; }
     if (e.key === "s" || e.key === "S") { if (!$btnStop.disabled) $btnStop.click(); return; }
-    if (e.key === "/") { $fileSearch.focus(); e.preventDefault(); return; }
+    if (e.key === "/") {
+      e.preventDefault();
+      switchTab("files");
+      setTimeout(function () {
+        const fs = document.getElementById("file-search");
+        if (fs) fs.focus();
+      }, 0);
+      return;
+    }
     if (e.key === "e" || e.key === "E") {
       const sb = document.getElementById("enhance-sidebar");
       sb.classList.toggle("collapsed");
