@@ -179,6 +179,10 @@
   `;
   document.body.appendChild(fab);
 
+  fab.addEventListener("click", () => {
+    setOpen(true);
+  });
+
   // ===== Helpers =====
   function $(sel, root = panel) { return root.querySelector(sel); }
   function $$(sel, root = panel) { return Array.from(root.querySelectorAll(sel)); }
@@ -932,6 +936,16 @@
     });
   })();
 
+  function setOpen(open) {
+    if (open) {
+      panel.classList.remove("hidden");
+      fab.classList.add("hidden");
+    } else {
+      panel.classList.add("hidden");
+      fab.classList.remove("hidden");
+    }
+  }
+
   // ===== Header controls =====
   panel.addEventListener("click", e => {
     const act = e.target.dataset && e.target.dataset.act;
@@ -940,8 +954,7 @@
     else if (act === "refresh") refreshAll();
     else if (act === "min") panel.classList.toggle("minimized");
     else if (act === "close") {
-      panel.classList.add("hidden");
-      try { localStorage.setItem(DISMISS_KEY, String(Date.now())); } catch (_) {}
+      setOpen(false);
     }
     else if (act === "history") showHistoryModal();
     else if (tab) switchTab(tab);
@@ -1386,7 +1399,8 @@
   watchSpaNavigation();
 
   window.aiuiTaskPanel = {
-    open: () => panel.classList.remove("hidden"),
+    open: () => setOpen(true),
+    close: () => setOpen(false),
     refresh: refreshAll,
     state,
   };
