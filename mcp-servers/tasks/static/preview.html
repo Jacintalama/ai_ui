@@ -1362,58 +1362,12 @@
       overflow: hidden;
       transition: width 0.2s;
     }
-    .sidebar-enhance.collapsed { width: 38px; min-width: 38px; }
-    .sidebar-enhance.collapsed .enhance-full { display: none; }
-    .sidebar-enhance .enhance-rail { display: none; }
-    .sidebar-enhance.collapsed .enhance-rail {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 14px;
-      width: 100%;
-      height: 100%;
-      background: transparent;
-      border: 0;
-      padding: 16px 0;
-      cursor: pointer;
-      color: var(--muted);
-      transition: background 0.15s, color 0.15s;
-    }
-    .sidebar-enhance.collapsed .enhance-rail:hover { background: var(--surface-2); color: var(--text); }
-    .sidebar-enhance.collapsed .enhance-rail .rail-icon { font-size: 17px; color: var(--amber); }
-    .sidebar-enhance.collapsed .enhance-rail .rail-label {
-      writing-mode: vertical-rl;
-      text-orientation: mixed;
-      transform: rotate(180deg);
-      font-size: 10.5px;
-      font-weight: 700;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-    }
     .enhance-full {
       display: flex;
       flex-direction: column;
       height: 100%;
       overflow: hidden;
     }
-    .enhance-header {
-      padding: 10px 14px;
-      font-size: 10.5px;
-      font-weight: 700;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: var(--surface);
-      flex-shrink: 0;
-    }
-    .enhance-header .title { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); }
-    .enhance-header .title .spark { color: var(--amber); font-size: 12px; }
-    .enhance-header button { font-size: 17px; line-height: 1; padding: 0 8px; }
 
     .enhance-log {
       flex: 1;
@@ -1723,7 +1677,7 @@
     .mode-button:hover { background: var(--surface-3, var(--surface-2)); }
     .mode-button .caret { opacity: 0.7; }
     .mode-menu {
-      position: absolute; top: calc(100% + 4px); right: 0;
+      position: absolute; bottom: calc(100% + 4px); right: 0;
       min-width: 220px; padding: 6px;
       background: var(--surface); border: 1px solid var(--border);
       border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.18);
@@ -2028,7 +1982,7 @@
        RESPONSIVE
        ────────────────────────────────────────────────────────────────── */
     @media (max-width: 1100px) {
-      .sidebar-enhance:not(.collapsed) { width: 300px; min-width: 260px; }
+      .sidebar-enhance { width: 300px; min-width: 260px; }
     }
     @media (max-width: 760px) {
       .slug-pill .slug-name { max-width: 140px; }
@@ -2748,36 +2702,7 @@
 
   <!-- Enhance sidebar (right) -->
   <aside id="enhance-sidebar" class="sidebar-enhance">
-    <button id="enhance-rail" class="enhance-rail" title="Open Enhance panel" type="button">
-      <span class="rail-icon"></span>
-      <span class="rail-label">Enhance</span>
-    </button>
     <div class="enhance-full">
-      <div class="enhance-header">
-        <span class="title">Enhance</span>
-        <div class="mode-dropdown" id="mode-dropdown">
-          <button class="mode-button" id="mode-button" type="button"
-                  aria-haspopup="menu" aria-expanded="false">
-            <span class="mode-label" id="mode-label">Build</span>
-            <svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
-          </button>
-          <div class="mode-menu" id="mode-menu" role="menu" hidden>
-            <button role="menuitem" data-mode="build" class="active" type="button">
-              <span class="title">Build</span>
-              <span class="sub">Make changes directly</span>
-            </button>
-            <button role="menuitem" data-mode="chat" type="button">
-              <span class="title">Plan</span>
-              <span class="sub">Discuss before building</span>
-            </button>
-            <div class="menu-foot">Toggle with <kbd>Alt</kbd><kbd>P</kbd></div>
-          </div>
-        </div>
-        <button id="enhance-collapse" title="Minimize" type="button">−</button>
-      </div>
       <div class="enhance-log" id="enhance-log">
         <div class="enhance-empty" id="enhance-empty">
           <div class="spark"></div>
@@ -2827,6 +2752,27 @@
             </div>
           </div>
           <span class="warn" id="enhance-warn"></span>
+          <div class="mode-dropdown" id="mode-dropdown">
+            <button class="mode-button" id="mode-button" type="button"
+                    aria-haspopup="menu" aria-expanded="false">
+              <span class="mode-label" id="mode-label">Build</span>
+              <svg class="caret" width="12" height="12" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </button>
+            <div class="mode-menu" id="mode-menu" role="menu" hidden>
+              <button role="menuitem" data-mode="build" class="active" type="button">
+                <span class="title">Build</span>
+                <span class="sub">Make changes directly</span>
+              </button>
+              <button role="menuitem" data-mode="chat" type="button">
+                <span class="title">Plan</span>
+                <span class="sub">Discuss before building</span>
+              </button>
+              <div class="menu-foot">Toggle with <kbd>Alt</kbd><kbd>P</kbd></div>
+            </div>
+          </div>
           <button class="btn btn-primary" id="enhance-send">Send</button>
         </div>
       </div>
@@ -2860,7 +2806,6 @@
     <div class="row"><span>Run app</span><kbd>R</kbd></div>
     <div class="row"><span>Stop app</span><kbd>S</kbd></div>
     <div class="row"><span>Focus file search</span><kbd>/</kbd></div>
-    <div class="row"><span>Toggle enhance panel</span><kbd>E</kbd></div>
     <div class="row"><span>Show this help</span><kbd>?</kbd></div>
     <div class="row"><span>Close dialog</span><kbd>Esc</kbd></div>
     <div style="margin-top:10px;font-size:11px;color:var(--muted);text-align:center;">Shortcuts are ignored when typing in an input.</div>
@@ -5531,12 +5476,6 @@
       }, 0);
       return;
     }
-    if (e.key === "e" || e.key === "E") {
-      const sb = document.getElementById("enhance-sidebar");
-      sb.classList.toggle("collapsed");
-      try { localStorage.setItem("aiui-enhance-collapsed", sb.classList.contains("collapsed") ? "true" : "false"); } catch (_) {}
-      return;
-    }
     if (e.key === "?") { $kbdHint.hidden = !$kbdHint.hidden; e.preventDefault(); return; }
     if (e.key === "Escape") { $kbdHint.hidden = true; return; }
   });
@@ -5570,11 +5509,8 @@
   const $prompt = document.getElementById("enhance-prompt");
   const $send = document.getElementById("enhance-send");
   const $warn = document.getElementById("enhance-warn");
-  const $collapseBtn = document.getElementById("enhance-collapse");
-  const $rail = document.getElementById("enhance-rail");
   const $sidebar = document.getElementById("enhance-sidebar");
 
-  const ENHANCE_STATE_KEY = "aiui-enhance-collapsed";
   const activeBubbles = new Map();
   // When non-null, the Send button submits an `answer` to this task instead
   // of creating a new /enhance — enables conversational back-and-forth when
@@ -5856,15 +5792,6 @@
   }
   $replyClear.addEventListener("click", () => setReplyMode(null));
 
-  if (localStorage.getItem(ENHANCE_STATE_KEY) === "true") {
-    $sidebar.classList.add("collapsed");
-  }
-  function setCollapsed(collapsed) {
-    $sidebar.classList.toggle("collapsed", collapsed);
-    try { localStorage.setItem(ENHANCE_STATE_KEY, collapsed ? "true" : "false"); } catch (_) {}
-  }
-  $collapseBtn.addEventListener("click", function () { setCollapsed(true); });
-  $rail.addEventListener("click", function () { setCollapsed(false); });
 
   function inlineMd(s) {
     let h = escapeHtml(s);
