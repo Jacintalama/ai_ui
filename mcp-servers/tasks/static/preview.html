@@ -5534,9 +5534,13 @@
     if (task.status === "completed") {
       bubbleEl.classList.add("done");
       const parts = splitCompletion(task.result);
-      if (contentEl) contentEl.innerHTML = renderMarkdown(parts.body || "Change applied.");
+      if (contentEl) {
+        contentEl.innerHTML = renderMarkdown(parts.body || "Change applied.");
+        applyFileEditBadges(contentEl);
+      }
       if (parts.suggestions && suggEl && suggBodyEl) {
         suggBodyEl.innerHTML = renderMarkdown(parts.suggestions);
+        applyFileEditBadges(suggBodyEl);
         suggEl.style.display = "block";
       }
       if (parts.sha && commitEl) {
@@ -5546,7 +5550,10 @@
       refreshPreviewIframeIfVisible();
     } else if (task.status === "failed") {
       bubbleEl.classList.add("failed");
-      if (contentEl) contentEl.innerHTML = renderMarkdown(task.result || "Enhancement failed");
+      if (contentEl) {
+        contentEl.innerHTML = renderMarkdown(task.result || "Enhancement failed");
+        applyFileEditBadges(contentEl);
+      }
     } else {
       // Non-terminal: show Cancel button + placeholder body for awaiting_input
       if (cancelBtn && task.id && !cancelBtn.dataset.wired) {
@@ -5673,7 +5680,11 @@
       el.querySelector(".body").textContent = content || "";
     } else {
       el.innerHTML = '<div class="body"><div class="markdown"></div></div>';
-      if (content) el.querySelector(".markdown").innerHTML = renderMarkdown(content);
+      if (content) {
+        const md = el.querySelector(".markdown");
+        md.innerHTML = renderMarkdown(content);
+        applyFileEditBadges(md);
+      }
       else el.classList.add("thinking");
     }
     $log.appendChild(el);
@@ -5750,7 +5761,9 @@
       const hasConnectAction = replyText.includes(SUPABASE_CONNECT_MARKER);
       const persistText = replyText;  // keep the marker so reload re-attaches the button
       if (hasConnectAction) replyText = replyText.replace(SUPABASE_CONNECT_MARKER, "").trim();
-      aiBubble.querySelector(".markdown").innerHTML = renderMarkdown(replyText);
+      const _md = aiBubble.querySelector(".markdown");
+      _md.innerHTML = renderMarkdown(replyText);
+      applyFileEditBadges(_md);
       if (hasConnectAction) _attachSupabaseConnectActions(aiBubble);
       // Persist assistant reply (with the sentinel preserved so a reload
       // re-renders the button rather than losing it).
