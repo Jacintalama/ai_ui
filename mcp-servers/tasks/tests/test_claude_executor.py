@@ -1,4 +1,4 @@
-from claude_executor import build_prompt, parse_outcome
+from claude_executor import _ensure_gitignore_attachments, build_prompt, parse_outcome
 
 
 def test_build_prompt_includes_task_fields():
@@ -33,3 +33,80 @@ def test_parse_needs_steps():
 def test_parse_no_sentinel_treated_as_failed():
     o = parse_outcome("I tried but I'm confused.")
     assert o.kind == "failed"
+
+
+# ---------------------------------------------------------------------------
+# _ensure_gitignore_attachments
+# ---------------------------------------------------------------------------
+# The agent commits app changes after each successful build/enhance. Without a
+# per-app .gitignore line for `.attachments/`, image blobs uploaded via
+# /api/tasks/enhance end up in the build's commit history.
+
+def test_ensure_gitignore_attachments_creates_file_when_missing(tmp_path):
+    """Fresh app with no .gitignore — helper creates one with `.attachments/`."""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    _ensure_gitignore_attachments(app_dir)
+
+    gitignore = app_dir / ".gitignore"
+    assert gitignore.exists()
+    assert ".attachments/" in gitignore.read_text(encoding="utf-8").splitlines()
+
+
+def test_ensure_gitignore_attachments_appends_to_existing(tmp_path):
+    """Existing .gitignore without `.attachments/` — helper appends the line
+    and adds a leading newline if the existing file doesn't end with one.
+    """
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    gitignore = app_dir / ".gitignore"
+    # No trailing newline on purpose — helper must add one before appending.
+    gitignore.write_text("node_modules/\n*.log", encoding="utf-8")
+
+    _ensure_gitignore_attachments(app_dir)
+
+    text = gitignore.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    assert "node_modules/" in lines
+    assert "*.log" in lines
+    assert ".attachments/" in lines
+    # Leading newline was injected since original didn't end with \n.
+    assert "*.log\n.attachments/" in text
+
+
+def test_ensure_gitignore_attachments_idempotent(tmp_path):
+    """Running the helper twice does not duplicate the `.attachments/` line."""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+
+    _ensure_gitignore_attachments(app_dir)
+    _ensure_gitignore_attachments(app_dir)
+
+    text = (app_dir / ".gitignore").read_text(encoding="utf-8")
+    assert text.count(".attachments/") == 1
+
+
+def test_ensure_gitignore_attachments_already_present_is_noop(tmp_path):
+    """If the line is already there (with surrounding entries), the file is
+    left untouched."""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    gitignore = app_dir / ".gitignore"
+    original = "node_modules/\n.attachments/\n*.log\n"
+    gitignore.write_text(original, encoding="utf-8")
+
+    _ensure_gitignore_attachments(app_dir)
+
+    assert gitignore.read_text(encoding="utf-8") == original
+
+
+def test_ensure_gitignore_attachments_skips_when_app_dir_missing(tmp_path):
+    """If the app dir doesn't exist (defensive), helper is a no-op — does
+    NOT create either the dir or a stray .gitignore at the parent."""
+    missing = tmp_path / "ghost-app"
+
+    _ensure_gitignore_attachments(missing)
+
+    assert not missing.exists()
+    assert not (tmp_path / ".gitignore").exists()

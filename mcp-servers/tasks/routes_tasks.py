@@ -424,6 +424,8 @@ def _is_generic_description(desc: str) -> bool:
 def _ensure_app_skeleton(slug: str, storage: str | None) -> None:
     """Create the empty folder layout matching the BUILD prompt's spec."""
     import os
+    from pathlib import Path
+    from claude_executor import _ensure_gitignore_attachments
     workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
     base = os.path.join(workspace, "apps", slug)
     subdirs = ["styles", "src", "src/components", "src/lib", "public"]
@@ -436,6 +438,8 @@ def _ensure_app_skeleton(slug: str, storage: str | None) -> None:
         storage_label = "Supabase backend" if storage == "supabase" else "frontend-only (no backend)"
         with open(readme, "w", encoding="utf-8") as f:
             f.write(f"# {slug}\n\nApp scaffolded by AIUI App Builder. Storage: {storage_label}.\n")
+    # Ensure .attachments/ is excluded from this app's git commits.
+    _ensure_gitignore_attachments(Path(base))
 
 
 def _humanize_slug(slug: str) -> str:
@@ -470,6 +474,8 @@ def _copy_template_app(key: str, slug: str, app_name: str) -> None:
     """
     import os
     import shutil
+    from pathlib import Path
+    from claude_executor import _ensure_gitignore_attachments
 
     here = os.path.dirname(os.path.abspath(__file__))
     src_root = os.path.join(here, "template_apps", key)
@@ -501,6 +507,9 @@ def _copy_template_app(key: str, slug: str, app_name: str) -> None:
                     f.write(text_content)
             else:
                 shutil.copy2(src_file, dst_file)
+
+    # Ensure .attachments/ is excluded from this app's git commits.
+    _ensure_gitignore_attachments(Path(dst_root))
 
 
 @router.delete("/{task_id}", status_code=204)
@@ -804,13 +813,18 @@ async def enhance(
     if validated:
         from pathlib import Path
         import os
+        from claude_executor import _ensure_gitignore_attachments
         # APPS_DIR is a test override; in production we follow the same convention as
         # the other writers in this module (CLAUDE_WORKSPACE/apps/<slug>).
         apps_dir = Path(
             os.environ.get("APPS_DIR")
             or os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps")
         )
-        att_dir = apps_dir / source.built_app_slug / ".attachments" / str(new_task.id)
+        app_dir = apps_dir / source.built_app_slug
+        # Ensure existing apps (created before this change) gain a gitignore
+        # entry for .attachments/ before we drop blobs into it.
+        _ensure_gitignore_attachments(app_dir)
+        att_dir = app_dir / ".attachments" / str(new_task.id)
         att_dir.mkdir(parents=True, exist_ok=True)
         used_names: set[str] = set()
         for original_safe, body in validated:

@@ -138,11 +138,21 @@ async def test_enhance_concurrent_one_succeeds(db_session):
 
 
 async def test_enhance_accepts_multipart_with_image(db_session, tmp_path, monkeypatch):
-    """Image attached → file written to apps/<slug>/.attachments/<task_id>/<safe_name>."""
+    """Image attached → file written to apps/<slug>/.attachments/<task_id>/<safe_name>.
+
+    Also verifies the per-app .gitignore now excludes .attachments/ so the
+    agent's post-build commit doesn't drag attachment blobs into history.
+    """
     import os
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
     source = _make_task()
     db_session.add(source); await db_session.commit(); await db_session.refresh(source)
+
+    # Pre-create the app dir to simulate an existing app (the gitignore helper
+    # is a no-op on missing dirs by design — production callers create the
+    # dir first via _ensure_app_skeleton or _copy_template_app).
+    app_dir = tmp_path / "meeting-notes"
+    app_dir.mkdir()
 
     png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -157,6 +167,9 @@ async def test_enhance_accepts_multipart_with_image(db_session, tmp_path, monkey
     expected = tmp_path / "meeting-notes" / ".attachments" / new_id / "shot.png"
     assert expected.exists()
     assert expected.read_bytes() == png_bytes
+    # Existing app gained .attachments/ in its gitignore on this enhance call.
+    gi = (tmp_path / "meeting-notes" / ".gitignore").read_text(encoding="utf-8")
+    assert ".attachments/" in gi.splitlines()
 
 
 async def test_enhance_rejects_non_image_mime(db_session):

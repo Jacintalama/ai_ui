@@ -3,6 +3,7 @@ import asyncio
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import AsyncIterator, Literal
 
 CLAUDE_WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
@@ -16,6 +17,39 @@ MAX_LOG_BYTES = 1_000_000  # 1 MB cap on stdout we'll buffer per execution
 # the live mount. Set CLAUDE_SANDBOX_DIR=/sandbox to enable; the route layer
 # is responsible for snapshotting the repo into that path before each run.
 CLAUDE_SANDBOX_DIR = os.environ.get("CLAUDE_SANDBOX_DIR", "")
+
+
+# ---------------------------------------------------------------------------
+# Per-app .gitignore management
+# ---------------------------------------------------------------------------
+# The agent commits app changes after each successful build/enhance. Without
+# a per-app .gitignore, attachment blobs uploaded via /api/tasks/enhance land
+# in apps/<slug>/.attachments/ and end up in the build's commit history.
+# This helper makes sure `.attachments/` is excluded — idempotently, so it's
+# safe to call on every fresh-app creation AND on existing apps before each
+# build.
+_GITIGNORE_ATTACHMENTS_LINE = ".attachments/"
+
+
+def _ensure_gitignore_attachments(app_dir: Path) -> None:
+    """Make sure `apps/<slug>/.gitignore` excludes `.attachments/`.
+
+    Idempotent: running twice does not duplicate the line. Adds a trailing
+    newline if the existing file is missing one.
+    """
+    app_dir = Path(app_dir)
+    if not app_dir.exists():
+        return
+    gitignore_path = app_dir / ".gitignore"
+    existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    # Match the bare line, ignoring surrounding whitespace.
+    lines = [ln.strip() for ln in existing.splitlines()]
+    if _GITIGNORE_ATTACHMENTS_LINE in lines:
+        return
+    with gitignore_path.open("a", encoding="utf-8") as fh:
+        if existing and not existing.endswith("\n"):
+            fh.write("\n")
+        fh.write(_GITIGNORE_ATTACHMENTS_LINE + "\n")
 
 PROMPT_TEMPLATE = """You are executing a task from the AIUI meeting decision engine.
 

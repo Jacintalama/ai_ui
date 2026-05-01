@@ -113,6 +113,8 @@ def test_copy_template_app_substitutes_placeholders(tmp_path, monkeypatch):
     assert (dst / "logo.png").read_bytes() == b"\x89PNG\r\n\x1a\n<%= APP_NAME %>"
     # Ignored file skipped.
     assert not (dst / ".DS_Store").exists()
+    # New apps must ignore .attachments/ in their git history.
+    assert ".attachments/" in (dst / ".gitignore").read_text(encoding="utf-8").splitlines()
 
 
 def test_copy_template_app_falls_back_to_humanized_slug_when_name_blank(
@@ -268,5 +270,7 @@ async def test_create_task_falls_back_to_skeleton_when_no_template_app(
     assert (base / "README.md").exists()
     assert (base / "src" / "components").is_dir()
     assert not (base / "index.html").exists()
+    # And a .gitignore that excludes attachment blobs from build commits.
+    assert ".attachments/" in (base / ".gitignore").read_text(encoding="utf-8").splitlines()
 
     templates_mod._TEMPLATE_APP_CACHE.clear()
