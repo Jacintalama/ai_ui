@@ -1010,7 +1010,6 @@
   // ===== Bootstrap =====
   let _initRunning = false;
   let _initDone = false;
-  let _firstLoad = true; // only auto-show on the very first page load
 
   async function init() {
     if (_initRunning || _initDone) return;
@@ -1027,24 +1026,9 @@
       await refreshAll();
       _initDone = true;
 
-      // Only auto-popup on the very first page load. SPA navigations (clicking
-      // around inside OpenWebUI) MUST NOT re-open the panel; the user can use
-      // the integrations menu button or Settings toggle to re-open manually.
-      if (!_firstLoad) {
-        console.log("[AIUI tasks] SPA init — data refreshed, not auto-showing");
-        return;
-      }
-      _firstLoad = false;
-
-      if (!isAutoShowEnabled()) {
-        console.log("[AIUI tasks] auto-show disabled by admin");
-        return;
-      }
-      if (state.tasks.pending.length > 0 || state.tasks.done.length > 0) {
-        panel.classList.remove("hidden");
-      } else {
-        console.log("[AIUI tasks] panel hidden — no tasks at all");
-      }
+      // Show the FAB launcher; the panel itself stays collapsed until the
+      // user clicks the FAB (or the + menu entry).
+      fab.classList.remove("hidden");
     } finally {
       _initRunning = false;
     }
@@ -1388,6 +1372,7 @@
       // Reset init when entering or leaving /auth
       if (onAuthRoute()) {
         panel.classList.add("hidden");
+        fab.classList.add("hidden");
       } else {
         _initDone = false;
         init();
