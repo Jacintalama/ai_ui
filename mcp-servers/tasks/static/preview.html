@@ -5570,6 +5570,78 @@
     }
   }
 
+  // Walk the executor's stream-json log (one JSON object per line) and yield
+  // one event per assistant tool_use. Drops tool_result, prose, system, and
+  // session-result lines. Used by renderBuildActivity below to render the
+  // live activity stream while a build task is running.
+  function parseToolCallsFromLog(logText) {
+    const events = [];
+    if (!logText) return events;
+    const lines = String(logText).split("\n");
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line || line[0] !== "{") continue;
+      let obj;
+      try { obj = JSON.parse(line); } catch (_) { continue; }
+      if (obj.type !== "assistant" || !obj.message || !Array.isArray(obj.message.content)) continue;
+      for (const c of obj.message.content) {
+        if (c.type !== "tool_use") continue;
+        const name = c.name || "tool";
+        const inp = c.input || {};
+        if (name === "Edit" || name === "Write") {
+          if (inp.file_path) events.push({ kind: "edit", verb: "Editing", path: String(inp.file_path) });
+        } else if (name === "Read") {
+          if (inp.file_path) events.push({ kind: "read", verb: "Reading", target: String(inp.file_path) });
+        } else if (name === "Bash") {
+          if (inp.command) events.push({ kind: "bash", verb: "Run", target: String(inp.command).slice(0, 90) });
+        } else if (name === "Grep") {
+          if (inp.pattern) events.push({ kind: "grep", verb: "Grep", target: String(inp.pattern).slice(0, 60) });
+        } else if (name === "Glob") {
+          if (inp.pattern) events.push({ kind: "glob", verb: "Glob", target: String(inp.pattern).slice(0, 60) });
+        } else if (name === "WebSearch" || name === "WebFetch") {
+          events.push({ kind: "web", verb: "Web", target: String(inp.url || inp.query || "").slice(0, 90) });
+        } else {
+          events.push({ kind: "other", verb: name, target: "" });
+        }
+      }
+    }
+    return events;
+  }
+
+  // Render a list of tool-call events into a container. Idempotent — safe to
+  // call on every poll. Edit/Write events use the existing file-edit-badge
+  // styling (matches the THOUGHT-card visual); everything else uses a plain
+  // .activity-line with a kind-tinted color. Auto-scrolls to the bottom.
+  function renderBuildActivity(containerEl, events) {
+    if (!containerEl) return;
+    if (!events || events.length === 0) {
+      containerEl.innerHTML = "";
+      containerEl.hidden = true;
+      return;
+    }
+    const out = [];
+    for (const e of events) {
+      if (e.kind === "edit") {
+        out.push(
+          '<span class="file-edit-badge">' +
+            '<span class="fe-verb">' + escapeHtml(e.verb) + '</span>' +
+            '<span class="fe-path">' + escapeHtml(e.path) + '</span>' +
+          '</span>'
+        );
+      } else {
+        out.push(
+          '<div class="activity-line activity-' + escapeHtml(e.kind) + '">' +
+            '<span class="verb">' + escapeHtml(e.verb) + '</span>' +
+            '<span class="target">' + escapeHtml(e.target || "") + '</span>' +
+          '</div>'
+        );
+      }
+    }
+    containerEl.innerHTML = out.join("");
+    containerEl.hidden = false;
+    containerEl.scrollTop = containerEl.scrollHeight;
+  }
+
   function renderBubble(kind, content, opts) {
     opts = opts || {};
     const empty = document.getElementById("enhance-empty");
