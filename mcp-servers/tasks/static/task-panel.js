@@ -93,6 +93,39 @@
     .aiui-tp-done-mode.ai { background: #1e3a8a; color: #dbeafe; }
     .aiui-tp-done-mode.manual { background: #374151; color: #d1d5db; }
     .aiui-tp-check { color: #22c55e; font-weight: 700; }
+    /* ===== FAB launcher ===== */
+    .aiui-tp-fab {
+      position: fixed; bottom: 24px; right: 24px; z-index: 9998;
+      width: 44px; height: 44px; border-radius: 50%;
+      background: #1a1a1a; border: 1px solid #2a2a2a;
+      color: #fff; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04);
+      transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .aiui-tp-fab:hover { background: #232323; transform: translateY(-1px); }
+    .aiui-tp-fab:active { transform: translateY(0); }
+    .aiui-tp-fab.hidden { display: none; }
+    .aiui-tp-fab svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .aiui-tp-fab .aiui-tp-fab-badge {
+      position: absolute; top: -4px; right: -4px;
+      min-width: 18px; height: 18px; padding: 0 5px;
+      border-radius: 9px; background: #ef4444; color: #fff;
+      font-size: 11px; font-weight: 700; line-height: 18px;
+      text-align: center; border: 2px solid #0b0b0b;
+      box-sizing: content-box;
+    }
+    .aiui-tp-fab .aiui-tp-fab-badge.zero { display: none; }
+    .aiui-tp-fab.pulse { animation: aiui-tp-fab-pulse 1.6s ease-out 2; }
+    @keyframes aiui-tp-fab-pulse {
+      0%   { box-shadow: 0 6px 20px rgba(0,0,0,0.55), 0 0 0 0 rgba(239,68,68,0.55); }
+      70%  { box-shadow: 0 6px 20px rgba(0,0,0,0.55), 0 0 0 14px rgba(239,68,68,0); }
+      100% { box-shadow: 0 6px 20px rgba(0,0,0,0.55), 0 0 0 0 rgba(239,68,68,0); }
+    }
+    @media (max-width: 640px) {
+      .aiui-tp-fab { width: 48px; height: 48px; bottom: 16px; right: 16px; }
+    }
   `;
   const style = document.createElement("style");
   style.textContent = css;
