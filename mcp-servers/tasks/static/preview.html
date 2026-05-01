@@ -149,17 +149,14 @@
     .brand-link .brand-mark {
       width: 28px;
       height: 28px;
-      border-radius: 7px;
-      background: linear-gradient(135deg, #7c8cff 0%, #a78bfa 100%);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 2px 8px rgba(124,140,255,0.35);
       flex-shrink: 0;
       transition: transform 0.12s;
     }
     .brand-link:hover .brand-mark { transform: translateY(-1px); }
-    .brand-link .brand-mark svg { width: 24px; height: 24px; }
+    .brand-link .brand-mark img { width: 28px; height: 28px; display: block; }
     .brand-link .brand-text {
       font-size: 13px;
       font-weight: 600;
@@ -2177,14 +2174,9 @@
 
 <header class="topbar">
   <div class="topbar-left">
-    <a class="brand-link" href="/tasks/app-builder" title="App Builder — back to my projects" aria-label="AIUI App Builder">
+    <a class="brand-link" href="/tasks/app-builder" title="App Builder" aria-label="App Builder">
       <span class="brand-mark">
-        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-          <text x="16" y="22" text-anchor="middle"
-                font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-                font-size="17" font-weight="700" fill="white"
-                letter-spacing="-0.5">OI</text>
-        </svg>
+        <img src="/static/favicon.svg" alt="" crossorigin="use-credentials">
       </span>
       <span class="brand-text">App Builder</span>
     </a>
