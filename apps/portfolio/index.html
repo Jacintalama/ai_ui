@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jacint A. Alama — Software Engineer</title>
+  <meta name="description" content="Portfolio of Jacint A. Alama, software engineer specializing in building robust and scalable systems.">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css">
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+</head>
+<body class="bg-white text-slate-800 antialiased">
+
+  <header x-data="navBar" class="fixed top-0 inset-x-0 z-50 bg-white/90 backdrop-blur border-b border-slate-200 shadow-sm">
+    <div class="max-w-5xl mx-auto px-4 flex items-center justify-between h-14">
+      <a href="#hero" class="font-bold text-indigo-600 tracking-tight text-lg transition-opacity hover:opacity-80">JAA</a>
+      <nav class="hidden md:flex gap-7 text-sm text-slate-500">
+        <a href="#about"    class="nav-link hover:text-slate-900 transition-colors">About</a>
+        <a href="#skills"   class="nav-link hover:text-slate-900 transition-colors">Skills</a>
+        <a href="#projects" class="nav-link hover:text-slate-900 transition-colors">Projects</a>
+        <a href="#contact"  class="nav-link hover:text-slate-900 transition-colors">Contact</a>
+      </nav>
+      <button @click="open = !open" class="md:hidden p-2 text-slate-500 hover:text-slate-900 rounded transition-colors" aria-label="Toggle menu" aria-expanded="open">
+        <i data-lucide="menu" x-show="!open" class="w-5 h-5"></i>
+        <i data-lucide="x"    x-show="open"  class="w-5 h-5" x-cloak></i>
+      </button>
+    </div>
+    <div x-show="open" x-cloak class="md:hidden border-t border-slate-200 bg-white">
+      <nav class="flex flex-col px-4 py-3 gap-3 text-sm text-slate-500">
+        <a href="#about"    @click="open=false" class="hover:text-slate-900 transition-colors py-1">About</a>
+        <a href="#skills"   @click="open=false" class="hover:text-slate-900 transition-colors py-1">Skills</a>
+        <a href="#projects" @click="open=false" class="hover:text-slate-900 transition-colors py-1">Projects</a>
+        <a href="#contact"  @click="open=false" class="hover:text-slate-900 transition-colors py-1">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Hero -->
+    <section id="hero" class="min-h-screen flex items-center pt-14 bg-gradient-to-br from-white via-indigo-50/40 to-white">
+      <div class="max-w-5xl mx-auto px-4 py-24">
+        <p class="text-indigo-500 text-sm font-semibold tracking-widest uppercase mb-4">Software Engineer</p>
+        <h1 class="text-4xl sm:text-6xl font-bold text-slate-900 leading-tight mb-6">
+          Hi, I'm<br><span class="text-indigo-600">Jacint A. Alama</span>
+        </h1>
+        <p class="text-slate-500 text-lg sm:text-xl max-w-2xl mb-10 leading-relaxed">
+          I design and build reliable, scalable software — from backend systems and APIs to polished user interfaces. I care deeply about clean code, thoughtful architecture, and shipping things that actually work.
+        </p>
+        <div class="flex flex-wrap gap-4">
+          <a href="#projects" class="btn-primary inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-6 py-3 rounded-lg">
+            View Projects <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+          <a href="#contact" class="btn-secondary inline-flex items-center gap-2 border border-slate-300 hover:border-indigo-400 text-slate-600 hover:text-indigo-600 font-medium px-6 py-3 rounded-lg">
+            Get in Touch
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section id="about" class="py-24 border-t border-slate-100 bg-slate-50">
+      <div class="max-w-5xl mx-auto px-4">
+        <h2 class="section-heading">About</h2>
+        <div class="grid md:grid-cols-2 gap-12 items-center">
+          <div>
+            <p class="text-slate-600 leading-relaxed mb-4">
+              I'm a software engineer with a passion for solving complex problems through elegant, maintainable code. I have experience across the full stack — backend services, cloud infrastructure, and front-end applications.
+            </p>
+            <p class="text-slate-600 leading-relaxed mb-4">
+              I thrive in collaborative environments where engineering quality and developer experience are taken seriously. Whether I'm designing a microservice architecture, optimizing a slow query, or refining a UI component, I bring the same attention to detail.
+            </p>
+            <p class="text-slate-600 leading-relaxed">
+              When I'm not coding I enjoy exploring open-source projects, writing about software craft, and mentoring junior developers.
+            </p>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="stat-card animate-in delay-1"><span class="stat-number">5+</span><span class="stat-label">Years Experience</span></div>
+            <div class="stat-card animate-in delay-2"><span class="stat-number">30+</span><span class="stat-label">Projects Shipped</span></div>
+            <div class="stat-card animate-in delay-3"><span class="stat-number">12+</span><span class="stat-label">Technologies</span></div>
+            <div class="stat-card animate-in delay-4"><span class="stat-number">100%</span><span class="stat-label">Committed</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Skills -->
+    <section id="skills" class="py-24 border-t border-slate-100 bg-white">
+      <div class="max-w-5xl mx-auto px-4" x-data="skillsSection">
+        <h2 class="section-heading">Skills</h2>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <template x-for="(group, idx) in skillGroups" :key="group.title">
+            <div class="animate-in bg-white border border-slate-200 rounded-xl p-6 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all duration-200"
+                 :class="'delay-' + (idx + 1)">
+              <div class="flex items-center gap-3 mb-4">
+                <span class="text-indigo-500" x-html="group.icon"></span>
+                <h3 class="font-semibold text-slate-800" x-text="group.title"></h3>
+              </div>
+              <ul class="flex flex-wrap gap-2" role="list" :aria-label="group.title + ' skills'">
+                <template x-for="skill in group.items" :key="skill">
+                  <li class="skill-pill bg-slate-100 text-slate-600 text-xs font-medium px-3 py-1 rounded-full" x-text="skill"></li>
+                </template>
+              </ul>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Projects -->
+    <section id="projects" class="py-24 border-t border-slate-100 bg-slate-50">
+      <div class="max-w-5xl mx-auto px-4" x-data="projectsSection">
+        <h2 class="section-heading">Projects</h2>
+        <div class="grid md:grid-cols-2 gap-6">
+          <template x-for="(project, idx) in projects" :key="project.title">
+            <article class="project-card animate-in bg-white border border-slate-200 rounded-xl p-6 flex flex-col hover:border-indigo-300"
+                     :class="'delay-' + (idx + 1)">
+              <div class="flex items-start justify-between mb-3">
+                <h3 class="font-semibold text-slate-800 text-lg leading-snug" x-text="project.title"></h3>
+                <span class="text-xs bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full ml-3 shrink-0" x-text="project.type"></span>
+              </div>
+              <p class="text-slate-500 text-sm leading-relaxed mb-4 flex-1" x-text="project.description"></p>
+              <ul class="flex flex-wrap gap-2 mb-4" role="list" aria-label="Technologies used">
+                <template x-for="tag in project.tags" :key="tag">
+                  <li class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded" x-text="tag"></li>
+                </template>
+              </ul>
+              <div class="flex gap-5 text-sm">
+                <a x-show="project.github" :href="project.github" target="_blank" rel="noopener noreferrer"
+                   class="inline-flex items-center gap-1.5 text-slate-400 hover:text-slate-700 transition-colors hover:gap-2">
+                  <i data-lucide="github" class="w-4 h-4"></i> Code
+                </a>
+                <a x-show="project.demo" :href="project.demo" target="_blank" rel="noopener noreferrer"
+                   class="inline-flex items-center gap-1.5 text-indigo-500 hover:text-indigo-700 transition-colors hover:gap-2">
+                  <i data-lucide="external-link" class="w-4 h-4"></i> Live Demo
+                </a>
+              </div>
+            </article>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Contact -->
+    <section id="contact" class="py-24 border-t border-slate-100 bg-white">
+      <div class="max-w-2xl mx-auto px-4" x-data="contactForm">
+        <h2 class="section-heading">Contact</h2>
+        <p class="text-slate-500 mb-8 -mt-4">Have a project in mind or want to collaborate? I'd love to hear from you.</p>
+        <form @submit.prevent="submit" novalidate class="flex flex-col gap-5">
+          <div class="animate-in delay-1">
+            <label for="name" class="block text-sm font-medium text-slate-700 mb-1">Name</label>
+            <input id="name" type="text" x-model="name" autocomplete="name" placeholder="Your name"
+              class="form-input w-full bg-white border border-slate-300 text-slate-800 placeholder-slate-400 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent">
+            <p x-show="errors.name" x-text="errors.name" class="text-red-500 text-xs mt-1" role="alert"></p>
+          </div>
+          <div class="animate-in delay-2">
+            <label for="email" class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+            <input id="email" type="email" x-model="email" autocomplete="email" placeholder="you@example.com"
+              class="form-input w-full bg-white border border-slate-300 text-slate-800 placeholder-slate-400 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent">
+            <p x-show="errors.email" x-text="errors.email" class="text-red-500 text-xs mt-1" role="alert"></p>
+          </div>
+          <div class="animate-in delay-3">
+            <label for="message" class="block text-sm font-medium text-slate-700 mb-1">Message</label>
+            <textarea id="message" x-model="message" rows="5" placeholder="Tell me about your project…"
+              class="form-input w-full bg-white border border-slate-300 text-slate-800 placeholder-slate-400 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent resize-none"></textarea>
+            <p x-show="errors.message" x-text="errors.message" class="text-red-500 text-xs mt-1" role="alert"></p>
+          </div>
+          <div class="flex items-center gap-4 animate-in delay-4">
+            <button type="submit" :disabled="sent"
+              class="btn-primary bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white font-medium px-8 py-3 rounded-lg">
+              <span x-show="!sent">Send Message</span>
+              <span x-show="sent" x-cloak>Sent ✓</span>
+            </button>
+            <p x-show="sent" x-cloak class="text-green-600 text-sm" role="status">Thanks! I'll get back to you soon.</p>
+          </div>
+        </form>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="border-t border-slate-100 py-8 bg-slate-50">
+    <div class="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-400">
+      <p>&copy; <span x-data x-text="new Date().getFullYear()"></span> Jacint A. Alama</p>
+      <div class="flex gap-5">
+        <a href="https://github.com" target="_blank" rel="noopener noreferrer" aria-label="GitHub profile">
+          <i data-lucide="github" class="footer-icon w-5 h-5"></i>
+        </a>
+        <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn profile">
+          <i data-lucide="linkedin" class="footer-icon w-5 h-5"></i>
+        </a>
+        <a href="mailto:jacint.alama@example.com" aria-label="Send email">
+          <i data-lucide="mail" class="footer-icon w-5 h-5"></i>
+        </a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
