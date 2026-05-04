@@ -651,6 +651,22 @@ TEMPLATES: list[Template] = [
         rules=_RULES_SOCIAL_FEED,
         storage="supabase",
     ),
+    Template(
+        key="custom",
+        label="Custom",
+        emoji="✨",
+        description="Build from your description — no template",
+        placeholder="Describe your app: what it does, who it's for, the look and feel, any specific sections or features.",
+        rules="",  # No template-specific guidance — baseline (BASE_RULES + GENERATION_LAYOUT) is enough.
+        storage="none",
+        role_tag="From scratch",
+        feature_bullets=(
+            "Skip the template gallery — describe what you want",
+            "Static HTML + Tailwind + Alpine baseline still applied",
+            "Agent builds the file layout for you",
+        ),
+        svg_mockup="",  # Frontend renders a dashed-border + glyph card instead of an SVG mockup.
+    ),
 ]
 
 

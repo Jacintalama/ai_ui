@@ -16,14 +16,19 @@ EXPECTED_KEYS = {
     "landing", "dashboard", "crud", "crm", "portfolio", "docs",
     "ecommerce", "booking", "chat", "auth", "blog", "blank",
     "invoice", "project-tracker", "ai-chatbot", "expense-tracker",
-    "form-builder", "social-feed",
+    "form-builder", "social-feed", "custom",
 }
+
+# The synthetic 'custom' key is the escape hatch — it intentionally has no
+# template-specific rules block (the agent runs on _BASE_RULES +
+# _GENERATION_LAYOUT alone). Skip it for rules/section checks.
+_RULES_EXEMPT = {"custom"}
 
 REQUIRED_SECTIONS = ("PURPOSE", "TECH", "MUST INCLUDE", "LAYOUT")
 
 
-def test_18_templates_present():
-    assert len(TEMPLATES) == 18
+def test_19_templates_present():
+    assert len(TEMPLATES) == 19
     assert {t.key for t in TEMPLATES} == EXPECTED_KEYS
 
 
@@ -34,6 +39,8 @@ def test_keys_unique():
 
 def test_each_template_has_rules():
     for t in TEMPLATES:
+        if t.key in _RULES_EXEMPT:
+            continue
         body = t.rules.strip()
         assert body, f"{t.key} has empty rules"
         assert len(body) > 200, f"{t.key} rules suspiciously short ({len(body)} chars)"
@@ -41,6 +48,8 @@ def test_each_template_has_rules():
 
 def test_each_template_has_required_sections():
     for t in TEMPLATES:
+        if t.key in _RULES_EXEMPT:
+            continue
         for section in REQUIRED_SECTIONS:
             assert section in t.rules, f"{t.key} missing section {section!r}"
 
@@ -89,7 +98,7 @@ async def test_get_endpoint_excludes_rules_field():
         r = await c.get("/api/templates", headers=ADMIN_HEADERS)
     assert r.status_code == 200
     items = r.json()
-    assert len(items) == 18
+    assert len(items) == 19
     expected_fields = {"key", "label", "emoji", "description", "placeholder"}
     for item in items:
         assert set(item.keys()) == expected_fields, (
