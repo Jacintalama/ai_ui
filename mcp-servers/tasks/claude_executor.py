@@ -113,17 +113,17 @@ INDEX.HTML CDN BLOCK (in <head>, in this exact order):
 
 ALPINE.JS USAGE (your reactivity layer — use this instead of addEventListener spaghetti):
   • Components live in src/components/<Name>.js as ES modules exporting an Alpine factory:
-        export function loginForm() { return { email: '', password: '', async submit() { /* ... */ } }; }
+        export function loginForm() {{ return {{ email: '', password: '', async submit() {{ /* ... */ }} }}; }}
   • Register in src/main.js:
-        import { loginForm } from './components/LoginForm.js';
-        document.addEventListener('alpine:init', () => { Alpine.data('loginForm', loginForm); });
+        import {{ loginForm }} from './components/LoginForm.js';
+        document.addEventListener('alpine:init', () => {{ Alpine.data('loginForm', loginForm); }});
   • In HTML: <form x-data="loginForm" @submit.prevent="submit"> … </form>
   • Prefer x-data, x-show, x-if, x-on, x-bind, x-model for reactivity.
 
   • index.html MUST be a thin entry — markup skeleton only. NO inline <style>
     blocks beyond a tiny one for an initial loading screen if needed. NO
     inline app logic. The single-file index.html pattern is FORBIDDEN.
-  • src/main.js uses native ES modules: `import { Foo } from './components/Foo.js';`
+  • src/main.js uses native ES modules: `import {{ Foo }} from './components/Foo.js';`
     The browser resolves these directly — no bundler, no build step, no npm install.
   • Every component file in src/components/ must be a valid ES module
     (top-level `export` statements).
@@ -410,7 +410,7 @@ FILE LAYOUT (MANDATORY — create these folders BEFORE writing any files):
     The single-file index.html pattern is REPLACED by this layout — do
     not fall back to dumping everything into index.html.
   • src/main.js uses native ES module imports
-    (`import { Foo } from './components/Foo.js';`). No bundler.
+    (`import {{ Foo }} from './components/Foo.js';`). No bundler.
   • Static-only templates omit src/lib/supabase.js, src/lib/api.js, and
     schema.sql; everything else stays.
 
