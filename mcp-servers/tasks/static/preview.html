@@ -3101,7 +3101,12 @@
   let slug = "";
   let files = [];
   let activeFile = null;
-  let activeTab = "files";
+  // Initial tab — caller can request a specific landing tab via ?tab=<name>
+  // (e.g. uploads / Open-preview button land on Preview; default stays Files
+  // so a fresh build still drops the user on the file tree by default).
+  const _ALLOWED_TABS = new Set(["files", "preview", "tests", "logs", "history", "database"]);
+  const _urlTab = new URLSearchParams(window.location.search).get("tab");
+  let activeTab = (_urlTab && _ALLOWED_TABS.has(_urlTab)) ? _urlTab : "files";
   let previewRunning = false;
   let previewPort = null;
   let pollTimer = null;
@@ -5537,6 +5542,9 @@
     loadLogs();
     try { loadDatabase(); } catch (_) {}
     try { loadGraph(); } catch (_) {}
+    // Apply the URL-requested initial tab AFTER data has loaded so the
+    // panel-specific load hooks (preview iframe, logs, etc.) fire.
+    if (activeTab !== "files") switchTab(activeTab);
   }
   init();
 

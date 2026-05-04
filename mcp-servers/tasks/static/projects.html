@@ -1296,7 +1296,7 @@
 
         let actionBtn = "";
         if (info.action === "preview") {
-          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open preview</a>`;
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}&tab=preview">Open preview</a>`;
         } else if (info.action === "watch") {
           actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Watch progress</a>`;
         } else if (info.action === "approve") {
@@ -1804,7 +1804,7 @@
             throw new Error("Upload failed (" + resp.status + "): " + txt);
           }
           const data = await resp.json();
-          window.location.href = "/tasks/static/preview.html?task=" + encodeURIComponent(data.task_id);
+          window.location.href = "/tasks/static/preview.html?task=" + encodeURIComponent(data.task_id) + "&tab=preview";
         } catch (err) {
           showToast("Upload failed: " + err.message, true);
           npSubmit.disabled = false;

@@ -470,9 +470,23 @@ async def serve_preview_app(
         # SPA-style fallback: dirless paths fall back to index.html.
         if "." not in _os.path.basename(rel):
             target = _os.path.join(base, "index.html")
-            if not _os.path.isfile(target):
-                raise HTTPException(status_code=404, detail="Not found")
-        else:
+        # Single-HTML uploads: a project may ship one .html that isn't named
+        # index.html (e.g. user dropped 'aiui-design.html'). When the request
+        # resolves to a missing index.html, fall back to the first top-level
+        # .html file so the preview iframe just works without us writing a
+        # duplicate alias file to disk.
+        if _os.path.basename(target) == "index.html" and not _os.path.isfile(target):
+            try:
+                top_html = sorted(
+                    f for f in _os.listdir(base)
+                    if f.lower().endswith(".html")
+                    and _os.path.isfile(_os.path.join(base, f))
+                )
+            except OSError:
+                top_html = []
+            if top_html:
+                target = _os.path.join(base, top_html[0])
+        if not _os.path.isfile(target):
             raise HTTPException(status_code=404, detail="Not found")
 
     ext = _os.path.splitext(target)[1].lower()
