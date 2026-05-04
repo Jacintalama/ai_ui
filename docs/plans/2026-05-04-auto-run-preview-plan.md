@@ -69,7 +69,7 @@ In the same file, find the manual Run handler (currently at line 5379, `$btnRun.
       refreshPreviewIframeIfVisible();
     } catch (err) {
       toast("Preview couldn't auto-start: " + (err.message || err), "error", 6000);
-      setStatus("idle", "Idle");
+      setStatus("idle", "Not running");
       $btnRun.disabled = false;
     } finally {
       _autoStartInFlight = false;
