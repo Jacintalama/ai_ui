@@ -842,6 +842,14 @@
     .btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
     .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 
+    /* Run/Stop buttons retired in favor of automatic on/off (page-load
+       auto-start + backend idle-sweep). DOM nodes stay so existing JS
+       (pollPreviewStatus, maybeAutoStartPreview) keeps flipping their
+       disabled state without null-guards. */
+    #btn-run, #btn-stop {
+      display: none !important;
+    }
+
     .icon-btn {
       display: inline-flex;
       align-items: center;
@@ -5545,6 +5553,10 @@
     // Apply the URL-requested initial tab AFTER data has loaded so the
     // panel-specific load hooks (preview iframe, logs, etc.) fire.
     if (activeTab !== "files") switchTab(activeTab);
+    // Auto-start the preview on page load. The presence heartbeat keeps
+    // it running; the backend's idle-sweep stops it ~2.5 min after the
+    // last user leaves. No manual Run click needed.
+    maybeAutoStartPreview();
   }
   init();
 
