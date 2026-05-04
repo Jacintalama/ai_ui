@@ -33,11 +33,30 @@ body {
   50%       { transform: translateY(-6px); }
 }
 
+@keyframes blobFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33%       { transform: translate(20px, -30px) scale(1.05); }
+  66%       { transform: translate(-15px, 20px) scale(0.97); }
+}
+
+@keyframes scrollBounce {
+  0%, 100% { transform: translateY(0); opacity: 1; }
+  50%       { transform: translateY(6px); opacity: 0.5; }
+}
+
+@keyframes badgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+}
+
 /* Hero entrance */
 #hero p:first-child  { animation: fadeIn     0.6s ease both; }
 #hero h1             { animation: fadeInUp   0.7s ease 0.1s both; }
-#hero p.text-gray-500 { animation: fadeInUp  0.7s ease 0.2s both; }
+#hero p.text-slate-500 { animation: fadeInUp 0.7s ease 0.2s both; }
 #hero .flex.flex-wrap { animation: fadeInUp  0.7s ease 0.35s both; }
+.hero-badge          { animation: fadeIn     0.5s ease 0.05s both; }
+.hero-code-card      { animation: fadeInUp   0.8s ease 0.4s both; }
+.scroll-indicator    { animation: fadeIn     1s ease 0.9s both; }
 
 /* Section headings slide in */
 .section-heading {
@@ -76,10 +95,135 @@ button:focus-visible {
   letter-spacing: -0.025em;
 }
 
+/* ─── Hero ────────────────────────────────────────────────── */
+
+.hero-section {
+  background: linear-gradient(135deg, #ffffff 0%, #f0f4ff 50%, #fafffe 100%);
+  position: relative;
+}
+
+.hero-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+.hero-blob-1 {
+  width: 480px;
+  height: 480px;
+  background: rgba(99, 102, 241, 0.10);
+  top: -120px;
+  right: -80px;
+  animation: blobFloat 12s ease-in-out infinite;
+}
+
+.hero-blob-2 {
+  width: 320px;
+  height: 320px;
+  background: rgba(16, 185, 129, 0.07);
+  bottom: 80px;
+  left: -60px;
+  animation: blobFloat 16s ease-in-out infinite reverse;
+}
+
+.hero-blob-3 {
+  width: 200px;
+  height: 200px;
+  background: rgba(245, 158, 11, 0.06);
+  top: 40%;
+  left: 55%;
+  animation: blobFloat 10s ease-in-out 3s infinite;
+}
+
+.hero-name {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-badge {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 9999px;
+  padding: 0.35rem 0.85rem;
+}
+
+.badge-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border-radius: 50%;
+  animation: badgePulse 2s ease-in-out infinite;
+}
+
+/* Code card */
+.hero-code-card {
+  background: #1e1e2e;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 0.875rem;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.18), 0 2px 8px rgba(99,102,241,0.2);
+  animation: float 6s ease-in-out infinite;
+}
+
+.code-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0.6rem 0.875rem;
+  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.dot-red    { background: #ff5f57; }
+.dot-yellow { background: #febc2e; }
+.dot-green  { background: #28c840; }
+
+.code-card-title {
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.35);
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+}
+
+.code-card-body {
+  padding: 1rem;
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.7;
+  font-family: ui-monospace, "Fira Code", "Cascadia Code", monospace;
+  overflow: hidden;
+}
+
+.code-card-body code { background: none; }
+
+.c-kw     { color: #c792ea; }
+.c-mod    { color: #82aaff; }
+.c-fn     { color: #c792ea; }
+.c-cls    { color: #ffcb6b; }
+.c-str    { color: #c3e88d; }
+.c-method { color: #82aaff; }
+
+/* Scroll indicator */
+.scroll-indicator {
+  opacity: 0.6;
+}
+.scroll-arrow {
+  animation: scrollBounce 1.8s ease-in-out infinite;
+}
+
 /* ─── Stat cards ──────────────────────────────────────────── */
 
 .stat-card {
-  background: #f1f5f9;
+  background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 0.75rem;
   padding: 1.25rem;
@@ -107,15 +251,81 @@ button:focus-visible {
   color: #64748b;
 }
 
-/* ─── Skill pill hover ────────────────────────────────────── */
+/* ─── Skill group cards ───────────────────────────────────── */
+
+.skill-group-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.875rem;
+  padding: 1.25rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.skill-group-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+}
+
+.skill-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.875rem;
+}
+
+.skill-group-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* Color accent per group */
+.accent-indigo .skill-group-icon { background: #eef2ff; color: #6366f1; }
+.accent-violet .skill-group-icon { background: #f5f3ff; color: #7c3aed; }
+.accent-sky    .skill-group-icon { background: #f0f9ff; color: #0284c7; }
+.accent-teal   .skill-group-icon { background: #f0fdfa; color: #0d9488; }
+.accent-amber  .skill-group-icon { background: #fffbeb; color: #d97706; }
+.accent-rose   .skill-group-icon { background: #fff1f2; color: #e11d48; }
+
+.accent-indigo .skill-pill { background: #eef2ff; color: #4f46e5; }
+.accent-violet .skill-pill { background: #f5f3ff; color: #6d28d9; }
+.accent-sky    .skill-pill { background: #e0f2fe; color: #0369a1; }
+.accent-teal   .skill-pill { background: #ccfbf1; color: #0f766e; }
+.accent-amber  .skill-pill { background: #fef3c7; color: #b45309; }
+.accent-rose   .skill-pill { background: #ffe4e6; color: #be123c; }
+
+.accent-indigo:hover { border-color: #c7d2fe; }
+.accent-violet:hover { border-color: #ddd6fe; }
+.accent-sky:hover    { border-color: #bae6fd; }
+.accent-teal:hover   { border-color: #99f6e4; }
+.accent-amber:hover  { border-color: #fde68a; }
+.accent-rose:hover   { border-color: #fecdd3; }
+
+/* ─── Skill pill ──────────────────────────────────────────── */
 
 .skill-pill {
-  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  transition: filter 0.18s ease, transform 0.18s ease;
+  border-radius: 9999px;
 }
 .skill-pill:hover {
-  background: #e0e7ff;
-  color: #4f46e5;
+  filter: brightness(0.93);
   transform: scale(1.08);
+}
+
+/* ─── Featured project ────────────────────────────────────── */
+
+.featured-project {
+  background: linear-gradient(135deg, #ffffff 0%, #fafbff 100%);
+}
+
+.featured-project-visual {
+  background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+  border: 1px solid #c7d2fe;
 }
 
 /* ─── Project card hover ──────────────────────────────────── */
