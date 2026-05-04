@@ -3505,8 +3505,11 @@
       });
     });
 
-    // Auto-select first file if nothing selected yet
-    if (!activeFile && filtered.length > 0 && !filter) {
+    // Auto-select first file if nothing selected yet — but only on the
+    // Files tab. When the user deep-links to ?tab=preview (or any other
+    // tab), this auto-click would call loadFile() which flips back to
+    // Files via switchTab("files"), defeating the URL-requested tab.
+    if (!activeFile && filtered.length > 0 && !filter && activeTab === "files") {
       const first = $fileTree.querySelector(".tree-file");
       if (first) first.click();
     } else if (activeFile) {
