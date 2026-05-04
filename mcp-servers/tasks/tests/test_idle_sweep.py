@@ -1,11 +1,10 @@
 """Tests for the idle-sweep loop that powers auto-stop of presence-empty
 previews. Exercises a single sweep iteration's logic directly so we don't
 have to wait the real 30s interval."""
-import asyncio
 import time
-from unittest.mock import patch
 
 import app_runner
+import routes_projects
 
 
 async def _run_one_sweep_iteration(is_slug_empty):
@@ -86,10 +85,6 @@ async def test_sweep_constants_are_sensible():
     sweep interval = 30s). Catches accidental changes."""
     assert app_runner.PRESENCE_GRACE_SECONDS == 120
     assert app_runner.SWEEP_INTERVAL_SECONDS == 30
-
-
-# Test: is_slug_presence_empty helper from routes_projects
-import routes_projects
 
 
 def test_is_slug_presence_empty_true_for_empty_bucket():

@@ -236,6 +236,11 @@ async def _idle_sweep_loop(is_slug_empty) -> None:
                         _empty_since.pop(slug, None)
                 else:
                     _empty_since.pop(slug, None)
+            # Evict orphaned timestamps for slugs that exited _running by
+            # other paths (manual /preview/stop, subprocess crash). Keeps
+            # _empty_since bounded over the process lifetime.
+            for stale in [s for s in _empty_since if s not in _running]:
+                _empty_since.pop(stale, None)
         except Exception:
             logger.exception("idle sweep iteration failed")
 
