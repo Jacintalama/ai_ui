@@ -547,8 +547,14 @@ async def rollback_project(
     if rc != 0:
         raise HTTPException(status_code=404, detail="Commit not found")
 
-    # Guard against dirty tree in apps/<slug>/.
-    rc, dirty = await _run_git("status", "--porcelain", "--", f"apps/{slug}/")
+    # Guard against dirty tree in apps/<slug>/. Ignore untracked files —
+    # `git checkout <sha> -- apps/<slug>/` only touches TRACKED files, so
+    # untracked artifacts (template-skeleton bits, ad-hoc README.md, etc.)
+    # don't conflict with the rollback. Modified or staged tracked files
+    # still block (correctly — they'd lose work).
+    rc, dirty = await _run_git(
+        "status", "--porcelain", "--untracked-files=no", "--", f"apps/{slug}/"
+    )
     if rc == 0 and dirty.strip():
         raise HTTPException(
             status_code=409,
