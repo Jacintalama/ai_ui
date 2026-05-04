@@ -27,6 +27,19 @@ _RULES_EXEMPT = {"custom"}
 REQUIRED_SECTIONS = ("PURPOSE", "TECH", "MUST INCLUDE", "LAYOUT")
 
 
+def test_rules_exempt_set_is_minimal():
+    """The _RULES_EXEMPT set lets templates skip per-template content checks
+    (PURPOSE/TECH/MUST INCLUDE/LAYOUT). It exists ONLY for synthetic keys
+    whose `rules=""` is intentional. If you're adding a key here, document
+    the WHY in the module-level comment above _RULES_EXEMPT — and update
+    this assertion."""
+    from tests.test_templates import _RULES_EXEMPT
+    assert _RULES_EXEMPT == {"custom"}, (
+        "Adding a key to _RULES_EXEMPT requires explicit review. See the "
+        "comment above the constant for guidance."
+    )
+
+
 def test_19_templates_present():
     assert len(TEMPLATES) == 19
     assert {t.key for t in TEMPLATES} == EXPECTED_KEYS

@@ -722,4 +722,6 @@ def build_rules_for(key: str, storage: str | None = None) -> str:
         parts = [_BASE_RULES.strip(), _GENERATION_LAYOUT.strip(), t.rules.strip()]
     if storage and storage in STORAGE_INSTRUCTIONS:
         parts.append(STORAGE_INSTRUCTIONS[storage].strip())
-    return "\n\n".join(parts)
+    # Drop empty parts so a Template with rules="" (e.g. the synthetic "custom"
+    # entry) doesn't leave a trailing blank section in the agent's prompt.
+    return "\n\n".join(p for p in parts if p)
