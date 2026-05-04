@@ -5421,12 +5421,13 @@
     if (_autoStartInFlight) return;
     if (!taskId) return;
     _autoStartInFlight = true;
+    $btnRun.disabled = true;
     setStatus("starting", "Starting…");
     try {
       const res = await apiFetch("POST", "/" + taskId + "/preview/start");
       previewRunning = true;
       previewPort = res.port || null;
-      pollPreviewStatus();
+      await pollPreviewStatus();
       refreshPreviewIframeIfVisible();
     } catch (err) {
       toast("Preview couldn't auto-start: " + (err.message || err), "error", 6000);
