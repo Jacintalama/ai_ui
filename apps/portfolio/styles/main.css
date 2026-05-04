@@ -4,6 +4,7 @@ html { scroll-behavior: smooth; }
 
 body {
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: #faf7f2;
 }
 
 /* ─── Animations ─────────────────────────────────────────── */
@@ -52,10 +53,10 @@ body {
 /* Hero entrance */
 #hero p:first-child  { animation: fadeIn     0.6s ease both; }
 #hero h1             { animation: fadeInUp   0.7s ease 0.1s both; }
-#hero p.text-slate-500 { animation: fadeInUp 0.7s ease 0.2s both; }
+#hero p.hero-tagline { animation: fadeInUp   0.7s ease 0.2s both; }
 #hero .flex.flex-wrap { animation: fadeInUp  0.7s ease 0.35s both; }
 .hero-badge          { animation: fadeIn     0.5s ease 0.05s both; }
-.hero-code-card      { animation: fadeInUp   0.8s ease 0.4s both; }
+.hero-avatar         { animation: fadeInUp   0.8s ease 0.4s both; }
 .scroll-indicator    { animation: fadeIn     1s ease 0.9s both; }
 
 /* Section headings slide in */
@@ -63,7 +64,7 @@ body {
   animation: slideInLeft 0.6s ease both;
 }
 
-/* Cards fade up on scroll — use intersection class .animate-in */
+/* Cards fade up on scroll */
 .animate-in {
   animation: fadeInUp 0.55s ease both;
 }
@@ -80,7 +81,7 @@ body {
 
 a:focus-visible,
 button:focus-visible {
-  outline: 2px solid #6366f1;
+  outline: 2px solid #b45309;
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -90,7 +91,7 @@ button:focus-visible {
 .section-heading {
   font-size: 1.875rem;
   font-weight: 700;
-  color: #1e293b;
+  color: #1c1208;
   margin-bottom: 2.5rem;
   letter-spacing: -0.025em;
 }
@@ -98,7 +99,7 @@ button:focus-visible {
 /* ─── Hero ────────────────────────────────────────────────── */
 
 .hero-section {
-  background: linear-gradient(135deg, #ffffff 0%, #f0f4ff 50%, #fafffe 100%);
+  background: linear-gradient(135deg, #faf7f2 0%, #f5ede0 55%, #fef9f4 100%);
   position: relative;
 }
 
@@ -112,7 +113,7 @@ button:focus-visible {
 .hero-blob-1 {
   width: 480px;
   height: 480px;
-  background: rgba(99, 102, 241, 0.10);
+  background: rgba(180, 83, 9, 0.08);
   top: -120px;
   right: -80px;
   animation: blobFloat 12s ease-in-out infinite;
@@ -121,7 +122,7 @@ button:focus-visible {
 .hero-blob-2 {
   width: 320px;
   height: 320px;
-  background: rgba(16, 185, 129, 0.07);
+  background: rgba(217, 119, 6, 0.07);
   bottom: 80px;
   left: -60px;
   animation: blobFloat 16s ease-in-out infinite reverse;
@@ -130,14 +131,14 @@ button:focus-visible {
 .hero-blob-3 {
   width: 200px;
   height: 200px;
-  background: rgba(245, 158, 11, 0.06);
+  background: rgba(234, 179, 8, 0.06);
   top: 40%;
   left: 55%;
   animation: blobFloat 10s ease-in-out 3s infinite;
 }
 
 .hero-name {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%);
+  background: linear-gradient(135deg, #b45309 0%, #d97706 50%, #ea580c 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -159,58 +160,29 @@ button:focus-visible {
   animation: badgePulse 2s ease-in-out infinite;
 }
 
-/* Code card */
-.hero-code-card {
-  background: #1e1e2e;
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 0.875rem;
-  overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.18), 0 2px 8px rgba(99,102,241,0.2);
-  animation: float 6s ease-in-out infinite;
-}
-
-.code-card-header {
+/* Profile avatar */
+.hero-avatar {
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fde8c8 0%, #fcd5a0 100%);
+  border: 4px solid #f5d9b0;
+  box-shadow: 0 20px 60px rgba(180,83,9,0.15), 0 4px 12px rgba(180,83,9,0.1);
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0.6rem 0.875rem;
-  background: rgba(255,255,255,0.04);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-.dot-red    { background: #ff5f57; }
-.dot-yellow { background: #febc2e; }
-.dot-green  { background: #28c840; }
-
-.code-card-title {
-  font-size: 0.7rem;
-  color: rgba(255,255,255,0.35);
-  margin-left: auto;
-  font-family: ui-monospace, monospace;
-}
-
-.code-card-body {
-  padding: 1rem;
-  margin: 0;
-  font-size: 0.72rem;
-  line-height: 1.7;
-  font-family: ui-monospace, "Fira Code", "Cascadia Code", monospace;
+  justify-content: center;
+  flex-shrink: 0;
   overflow: hidden;
+  position: relative;
 }
 
-.code-card-body code { background: none; }
-
-.c-kw     { color: #c792ea; }
-.c-mod    { color: #82aaff; }
-.c-fn     { color: #c792ea; }
-.c-cls    { color: #ffcb6b; }
-.c-str    { color: #c3e88d; }
-.c-method { color: #82aaff; }
+.hero-avatar-initials {
+  font-size: 4rem;
+  font-weight: 700;
+  color: #b45309;
+  letter-spacing: -0.05em;
+  user-select: none;
+}
 
 /* Scroll indicator */
 .scroll-indicator {
@@ -223,8 +195,8 @@ button:focus-visible {
 /* ─── Stat cards ──────────────────────────────────────────── */
 
 .stat-card {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: #fffcf8;
+  border: 1px solid #e8ddd0;
   border-radius: 0.75rem;
   padding: 1.25rem;
   display: flex;
@@ -235,27 +207,27 @@ button:focus-visible {
 
 .stat-card:hover {
   transform: translateY(-4px) scale(1.03);
-  box-shadow: 0 8px 24px rgba(99,102,241,0.15);
-  background: #eef2ff;
+  box-shadow: 0 8px 24px rgba(180,83,9,0.12);
+  background: #fef3e2;
 }
 
 .stat-number {
   font-size: 1.875rem;
   font-weight: 700;
-  color: #6366f1;
+  color: #b45309;
   line-height: 1;
 }
 
 .stat-label {
   font-size: 0.75rem;
-  color: #64748b;
+  color: #78614a;
 }
 
 /* ─── Skill group cards ───────────────────────────────────── */
 
 .skill-group-card {
-  background: #fff;
-  border: 1px solid #e2e8f0;
+  background: #fffcf8;
+  border: 1px solid #e8ddd0;
   border-radius: 0.875rem;
   padding: 1.25rem;
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
@@ -284,27 +256,27 @@ button:focus-visible {
   flex-shrink: 0;
 }
 
-/* Color accent per group */
-.accent-indigo .skill-group-icon { background: #eef2ff; color: #6366f1; }
-.accent-violet .skill-group-icon { background: #f5f3ff; color: #7c3aed; }
-.accent-sky    .skill-group-icon { background: #f0f9ff; color: #0284c7; }
+/* Warm accent variants */
+.accent-amber  .skill-group-icon { background: #fef3c7; color: #b45309; }
+.accent-orange .skill-group-icon { background: #ffedd5; color: #c2410c; }
+.accent-rose   .skill-group-icon { background: #fff1f2; color: #be185d; }
 .accent-teal   .skill-group-icon { background: #f0fdfa; color: #0d9488; }
-.accent-amber  .skill-group-icon { background: #fffbeb; color: #d97706; }
-.accent-rose   .skill-group-icon { background: #fff1f2; color: #e11d48; }
+.accent-sky    .skill-group-icon { background: #f0f9ff; color: #0284c7; }
+.accent-indigo .skill-group-icon { background: #eef2ff; color: #4338ca; }
 
-.accent-indigo .skill-pill { background: #eef2ff; color: #4f46e5; }
-.accent-violet .skill-pill { background: #f5f3ff; color: #6d28d9; }
-.accent-sky    .skill-pill { background: #e0f2fe; color: #0369a1; }
+.accent-amber  .skill-pill { background: #fef3c7; color: #92400e; }
+.accent-orange .skill-pill { background: #ffedd5; color: #9a3412; }
+.accent-rose   .skill-pill { background: #fff1f2; color: #9f1239; }
 .accent-teal   .skill-pill { background: #ccfbf1; color: #0f766e; }
-.accent-amber  .skill-pill { background: #fef3c7; color: #b45309; }
-.accent-rose   .skill-pill { background: #ffe4e6; color: #be123c; }
+.accent-sky    .skill-pill { background: #e0f2fe; color: #0369a1; }
+.accent-indigo .skill-pill { background: #eef2ff; color: #3730a3; }
 
-.accent-indigo:hover { border-color: #c7d2fe; }
-.accent-violet:hover { border-color: #ddd6fe; }
-.accent-sky:hover    { border-color: #bae6fd; }
-.accent-teal:hover   { border-color: #99f6e4; }
 .accent-amber:hover  { border-color: #fde68a; }
+.accent-orange:hover { border-color: #fed7aa; }
 .accent-rose:hover   { border-color: #fecdd3; }
+.accent-teal:hover   { border-color: #99f6e4; }
+.accent-sky:hover    { border-color: #bae6fd; }
+.accent-indigo:hover { border-color: #c7d2fe; }
 
 /* ─── Skill pill ──────────────────────────────────────────── */
 
@@ -317,25 +289,40 @@ button:focus-visible {
   transform: scale(1.08);
 }
 
-/* ─── Featured project ────────────────────────────────────── */
-
-.featured-project {
-  background: linear-gradient(135deg, #ffffff 0%, #fafbff 100%);
-}
-
-.featured-project-visual {
-  background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
-  border: 1px solid #c7d2fe;
-}
-
-/* ─── Project card hover ──────────────────────────────────── */
+/* ─── Project cards (3-up grid) ───────────────────────────── */
 
 .project-card {
+  background: #fffcf8;
+  border: 1px solid #e8ddd0;
+  border-radius: 1rem;
+  overflow: hidden;
   transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
 }
+
 .project-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 12px 32px rgba(99,102,241,0.14);
+  box-shadow: 0 12px 32px rgba(180,83,9,0.13);
+  border-color: #f5c98a;
+}
+
+.project-image {
+  width: 100%;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-image-1 { background: linear-gradient(135deg, #fde8c8 0%, #fcd5a0 100%); }
+.project-image-2 { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); }
+.project-image-3 { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); }
+
+.project-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex: 1;
 }
 
 /* ─── Button hover lift ───────────────────────────────────── */
@@ -345,7 +332,7 @@ button:focus-visible {
 }
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(99,102,241,0.35);
+  box-shadow: 0 6px 20px rgba(180,83,9,0.30);
 }
 .btn-primary:active:not(:disabled) {
   transform: translateY(0);
@@ -370,7 +357,7 @@ button:focus-visible {
   left: 0;
   width: 0;
   height: 2px;
-  background: #6366f1;
+  background: #b45309;
   transition: width 0.22s ease;
   border-radius: 1px;
 }
@@ -384,7 +371,7 @@ button:focus-visible {
   transition: color 0.18s ease, transform 0.18s ease;
 }
 .footer-icon:hover {
-  color: #6366f1;
+  color: #b45309;
   transform: translateY(-3px) scale(1.15);
 }
 
@@ -394,5 +381,5 @@ button:focus-visible {
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 .form-input:focus {
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
+  box-shadow: 0 0 0 3px rgba(180,83,9,0.15);
 }

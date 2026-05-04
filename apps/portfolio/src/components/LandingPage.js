@@ -6,40 +6,22 @@ export function skillsSection() {
   return {
     skillGroups: [
       {
-        title: 'Languages',
-        icon: '<i data-lucide="code-2" class="w-4 h-4"></i>',
-        accent: 'indigo',
-        items: ['Python', 'TypeScript', 'JavaScript', 'Go', 'SQL', 'Bash']
-      },
-      {
-        title: 'Backend & APIs',
-        icon: '<i data-lucide="server" class="w-4 h-4"></i>',
-        accent: 'violet',
-        items: ['FastAPI', 'Node.js', 'REST', 'GraphQL', 'gRPC', 'PostgreSQL', 'Redis']
-      },
-      {
         title: 'Frontend',
         icon: '<i data-lucide="monitor" class="w-4 h-4"></i>',
-        accent: 'sky',
-        items: ['React', 'Next.js', 'Alpine.js', 'Tailwind CSS', 'HTML5', 'CSS3']
-      },
-      {
-        title: 'Cloud & Infrastructure',
-        icon: '<i data-lucide="cloud" class="w-4 h-4"></i>',
-        accent: 'teal',
-        items: ['Docker', 'Kubernetes', 'AWS', 'GCP', 'Terraform', 'CI/CD']
-      },
-      {
-        title: 'Tools & Practices',
-        icon: '<i data-lucide="git-branch" class="w-4 h-4"></i>',
         accent: 'amber',
-        items: ['Git', 'GitHub Actions', 'Linux', 'Agile/Scrum', 'TDD', 'Code Review']
+        items: ['React', 'Next.js', 'Alpine.js', 'Tailwind CSS', 'TypeScript', 'HTML5', 'CSS3']
       },
       {
-        title: 'Data & ML',
-        icon: '<i data-lucide="bar-chart-2" class="w-4 h-4"></i>',
+        title: 'Backend',
+        icon: '<i data-lucide="server" class="w-4 h-4"></i>',
+        accent: 'orange',
+        items: ['Python', 'FastAPI', 'Node.js', 'Go', 'PostgreSQL', 'Redis', 'Docker', 'REST', 'GraphQL']
+      },
+      {
+        title: 'Design',
+        icon: '<i data-lucide="pen-tool" class="w-4 h-4"></i>',
         accent: 'rose',
-        items: ['Pandas', 'NumPy', 'Scikit-learn', 'Grafana', 'Prometheus', 'Loki']
+        items: ['Figma', 'UI/UX', 'Design Systems', 'Accessibility', 'Responsive Design', 'Animation']
       }
     ],
     init() {
@@ -56,15 +38,9 @@ export function projectsSection() {
         type: 'Open Source',
         description: 'A lightweight, fault-tolerant task queue built in Go with pluggable backends (Redis, PostgreSQL). Supports priority queues, dead-letter handling, and a real-time web dashboard.',
         tags: ['Go', 'Redis', 'PostgreSQL', 'Docker'],
+        imageClass: 'project-image-1',
+        imageIcon: 'layers',
         github: 'https://github.com',
-        demo: null
-      },
-      {
-        title: 'API Gateway — IO Platform',
-        type: 'Professional',
-        description: 'Designed and built a reverse-proxy API gateway routing traffic from Cloudflare through Caddy to backend microservices, with JWT auth, rate limiting, and structured logging.',
-        tags: ['Python', 'FastAPI', 'Caddy', 'Docker Compose'],
-        github: null,
         demo: null
       },
       {
@@ -72,6 +48,8 @@ export function projectsSection() {
         type: 'Side Project',
         description: 'A self-hosted engineering metrics platform that pulls data from GitHub and Jira, computes DORA metrics, and surfaces them in a Grafana-powered dashboard.',
         tags: ['Python', 'Grafana', 'Prometheus', 'PostgreSQL'],
+        imageClass: 'project-image-2',
+        imageIcon: 'bar-chart-2',
         github: 'https://github.com',
         demo: 'https://example.com'
       },
@@ -80,22 +58,8 @@ export function projectsSection() {
         type: 'Open Source',
         description: 'A Python framework for building Model Context Protocol servers, with built-in tool discovery, schema validation, and typed handler registration.',
         tags: ['Python', 'Pydantic', 'asyncio', 'MCP'],
-        github: 'https://github.com',
-        demo: null
-      },
-      {
-        title: 'Real-time Collaboration API',
-        type: 'Professional',
-        description: 'Event-driven WebSocket backend powering live document co-editing for a SaaS product with 10k+ daily active users. Handles presence, conflict resolution, and message replay.',
-        tags: ['Node.js', 'WebSocket', 'Redis Pub/Sub', 'AWS'],
-        github: null,
-        demo: null
-      },
-      {
-        title: 'Portfolio Site',
-        type: 'Personal',
-        description: 'This site! A fully static personal portfolio built with semantic HTML5, Tailwind CSS, and Alpine.js. No build step, no bundler — just clean, fast, accessible HTML.',
-        tags: ['HTML5', 'Tailwind CSS', 'Alpine.js', 'Vanilla JS'],
+        imageClass: 'project-image-3',
+        imageIcon: 'cpu',
         github: 'https://github.com',
         demo: null
       }
@@ -123,7 +87,6 @@ export function contactForm() {
     },
     submit() {
       if (!this.validate()) return;
-      // Static site: simulate submission
       this.sent = true;
       this.name = '';
       this.email = '';
