@@ -5441,7 +5441,11 @@
       previewRunning = true;
       previewPort = res.port || null;
       await pollPreviewStatus();
-      refreshPreviewIframeIfVisible();
+      // Match $btnRun's success path: rebuild the iframe (not just refresh
+      // it) when the user is on the Preview tab. Without this, deep-links
+      // to ?tab=preview show the empty-state for up to 5s while the next
+      // poll tick catches the running state.
+      if (activeTab === "preview") refreshPreviewFrame();
     } catch (err) {
       toast("Preview couldn't auto-start: " + (err.message || err), "error", 6000);
       setStatus("idle", "Not running");
