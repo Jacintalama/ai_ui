@@ -15,6 +15,16 @@ router = APIRouter(prefix="/api/tasks")
 
 WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
 
+# Directories that exist inside apps/<slug>/ but should never appear in the
+# Files tab — `.attachments` holds chat image uploads forwarded to the agent
+# as vision input; `node_modules` is a build artifact.
+_SKIP_DIRS = frozenset({"node_modules", ".attachments"})
+
+
+def _should_include_path(parts: tuple[str, ...]) -> bool:
+    """True iff none of the path components is an internal skip-dir."""
+    return not any(p in _SKIP_DIRS for p in parts)
+
 
 async def _get_build_task(task_id: UUID) -> TaskItem:
     async with session() as s:
@@ -34,7 +44,8 @@ async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin)):
         raise HTTPException(status_code=404, detail=f"App directory not found: apps/{item.built_app_slug}")
     files = []
     for p in sorted(app_dir.rglob("*")):
-        if p.is_file() and "node_modules" not in p.parts:
+        rel_parts = p.relative_to(app_dir).parts
+        if p.is_file() and _should_include_path(rel_parts):
             files.append({
                 "path": str(p.relative_to(app_dir)),
                 "size": p.stat().st_size,
@@ -46,9 +57,16 @@ async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin)):
 async def read_file(task_id: UUID, file_path: str, user: AdminUser = Depends(current_admin)):
     item = await _get_build_task(task_id)
     app_dir = Path(WORKSPACE) / "apps" / item.built_app_slug
+    app_dir_resolved = app_dir.resolve()
     target = (app_dir / file_path).resolve()
-    if not str(target).startswith(str(app_dir.resolve())):
+    if not str(target).startswith(str(app_dir_resolved)):
         raise HTTPException(status_code=403, detail="Path traversal blocked")
+    try:
+        rel_parts = target.relative_to(app_dir_resolved).parts
+    except ValueError:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not _should_include_path(rel_parts):
+        raise HTTPException(status_code=404, detail="File not found")
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     if target.stat().st_size > 500_000:
