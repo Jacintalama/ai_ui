@@ -5410,6 +5410,33 @@
     }
   });
 
+  // ── Auto-start preview after a successful enhance ──
+  // Fires from updateAiBubble's task.status === "completed" branch. Idempotent
+  // by design: if previewRunning is already true, we do nothing — the iframe
+  // refresh in updateAiBubble already covers the live-update case. On failure,
+  // we toast and leave the Run button enabled so the user can retry manually.
+  let _autoStartInFlight = false;
+  async function maybeAutoStartPreview() {
+    if (previewRunning) return;
+    if (_autoStartInFlight) return;
+    if (!taskId) return;
+    _autoStartInFlight = true;
+    setStatus("starting", "Starting…");
+    try {
+      const res = await apiFetch("POST", "/" + taskId + "/preview/start");
+      previewRunning = true;
+      previewPort = res.port || null;
+      pollPreviewStatus();
+      refreshPreviewIframeIfVisible();
+    } catch (err) {
+      toast("Preview couldn't auto-start: " + (err.message || err), "error", 6000);
+      setStatus("idle", "Not running");
+      $btnRun.disabled = false;
+    } finally {
+      _autoStartInFlight = false;
+    }
+  }
+
   // ── Slug copy + preview URL copy ──
   $copySlug.addEventListener("click", function (e) {
     e.stopPropagation();
@@ -6063,6 +6090,7 @@
         commitEl.style.display = "block";
       }
       refreshPreviewIframeIfVisible();
+      maybeAutoStartPreview();
     } else if (task.status === "failed") {
       bubbleEl.classList.add("failed");
       if (contentEl) {
