@@ -1,4 +1,5 @@
 """Tasks service — admin task approval and AI execution."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -71,6 +72,17 @@ app.include_router(supabase_oauth_router)
 app.include_router(db_router)
 app.include_router(chat_history_router)
 app.include_router(templates_router)
+
+
+@app.on_event("startup")
+async def _start_idle_sweep():
+    """Spawn the per-slug auto-stop sweep so previews don't hold ports
+    after the last user leaves. See app_runner._idle_sweep_loop."""
+    import app_runner as _ar
+    from routes_projects import is_slug_presence_empty
+    asyncio.create_task(_ar._idle_sweep_loop(is_slug_presence_empty))
+
+
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
 # Read-only public mount of the bundled template reference apps. The
 # /tasks/template-apps path is intercepted by Open WebUI's service worker

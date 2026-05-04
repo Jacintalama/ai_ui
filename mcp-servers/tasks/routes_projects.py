@@ -58,6 +58,13 @@ def _prune(slug: str) -> None:
         bucket.pop(e, None)
 
 
+def is_slug_presence_empty(slug: str) -> bool:
+    """True iff no live presence entries exist for slug (after pruning).
+    Used by app_runner._idle_sweep_loop to decide when to auto-stop."""
+    _prune(slug)
+    return not _PRESENCE.get(slug, {})
+
+
 async def _user_can_see_project(s, slug: str, email: str) -> bool:
     """Return True if the user is a member, the assignee, or it's in the
     team bucket. Used as the read-access gate for project endpoints."""
