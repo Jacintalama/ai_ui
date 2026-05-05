@@ -1,231 +1,155 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jacint A. Alama — Software Engineer</title>
-  <meta name="description" content="Portfolio of Jacint A. Alama, software engineer specializing in building robust and scalable systems.">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jacint Alama — Software Engineer</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="styles/main.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <script type="module" src="src/main.js"></script>
   <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
-<body class="text-slate-200 antialiased">
+<body class="bg-cream text-stone-800 font-sans antialiased">
 
-  <header x-data="navBar" class="fixed top-0 inset-x-0 z-50 bg-[#0a192f]/95 backdrop-blur border-b border-[#1e3a5f] shadow-sm">
-    <div class="max-w-5xl mx-auto px-4 flex items-center justify-between h-14">
-      <a href="#hero" class="font-bold text-teal-400 tracking-tight text-lg transition-opacity hover:opacity-80">JAA</a>
-      <nav class="hidden md:flex gap-7 text-sm text-slate-400">
-        <a href="#about"    class="nav-link hover:text-slate-100 transition-colors">About</a>
-        <a href="#skills"   class="nav-link hover:text-slate-100 transition-colors">Skills</a>
-        <a href="#projects" class="nav-link hover:text-slate-100 transition-colors">Projects</a>
-        <a href="#contact"  class="nav-link hover:text-slate-100 transition-colors">Contact</a>
-      </nav>
-      <button @click="open = !open" class="md:hidden p-2 text-slate-400 hover:text-slate-100 rounded transition-colors" aria-label="Toggle menu" aria-expanded="open">
-        <i data-lucide="menu" x-show="!open" class="w-5 h-5"></i>
-        <i data-lucide="x"    x-show="open"  class="w-5 h-5" x-cloak></i>
+  <!-- NAV -->
+  <header x-data="nav()" class="fixed top-0 left-0 right-0 z-50 border-b border-stone-200 bg-cream/90 backdrop-blur-sm">
+    <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+      <span class="font-mono text-sm font-semibold tracking-widest text-amber-800">JA</span>
+      <button @click="open = !open" class="md:hidden p-2 rounded focus:outline-none focus:ring-2 focus:ring-amber-700" aria-label="Toggle menu">
+        <i data-lucide="menu" class="w-5 h-5"></i>
       </button>
-    </div>
-    <div x-show="open" x-cloak class="md:hidden border-t border-[#1e3a5f] bg-[#0a192f]">
-      <nav class="flex flex-col px-4 py-3 gap-3 text-sm text-slate-400">
-        <a href="#about"    @click="open=false" class="hover:text-slate-100 transition-colors py-1">About</a>
-        <a href="#skills"   @click="open=false" class="hover:text-slate-100 transition-colors py-1">Skills</a>
-        <a href="#projects" @click="open=false" class="hover:text-slate-100 transition-colors py-1">Projects</a>
-        <a href="#contact"  @click="open=false" class="hover:text-slate-100 transition-colors py-1">Contact</a>
+      <nav class="hidden md:flex gap-8 font-mono text-xs tracking-widest uppercase text-stone-600">
+        <a href="#about" class="nav-link">About</a>
+        <a href="#skills" class="nav-link">Skills</a>
+        <a href="#projects" class="nav-link">Projects</a>
+        <a href="#contact" class="nav-link">Contact</a>
       </nav>
+    </div>
+    <div x-show="open" x-transition class="md:hidden bg-cream border-t border-stone-200 px-6 pb-4 flex flex-col gap-4 font-mono text-xs tracking-widest uppercase text-stone-600">
+      <a href="#about" @click="open=false" class="nav-link pt-3">About</a>
+      <a href="#skills" @click="open=false" class="nav-link">Skills</a>
+      <a href="#projects" @click="open=false" class="nav-link">Projects</a>
+      <a href="#contact" @click="open=false" class="nav-link">Contact</a>
     </div>
   </header>
 
   <main>
 
-    <!-- Hero -->
-    <section id="hero" class="hero-section min-h-screen flex items-center pt-14 overflow-hidden">
-      <div class="hero-blob hero-blob-1" aria-hidden="true"></div>
-      <div class="hero-blob hero-blob-2" aria-hidden="true"></div>
-      <div class="hero-blob hero-blob-3" aria-hidden="true"></div>
-
-      <div class="max-w-5xl mx-auto px-4 py-24 relative z-10 w-full">
-        <div class="flex flex-col lg:flex-row items-start lg:items-center gap-16">
-          <div class="flex-1">
-            <div class="hero-badge inline-flex items-center gap-2 mb-6">
-              <span class="badge-dot"></span>
-              <span class="text-xs font-semibold text-emerald-400 tracking-wide uppercase">Available for hire</span>
-            </div>
-
-            <p class="text-teal-400 text-sm font-semibold tracking-widest uppercase mb-4">Software Engineer</p>
-            <h1 class="text-4xl sm:text-6xl font-bold text-slate-100 leading-tight mb-6">
-              Hi, I'm<br><span class="hero-name">Jacint A. Alama</span>
-            </h1>
-            <p class="hero-tagline text-slate-400 text-lg sm:text-xl max-w-2xl mb-10 leading-relaxed">
-              I design and build reliable, scalable software — from backend systems and APIs to polished user interfaces. I care deeply about clean code, thoughtful architecture, and shipping things that actually work.
-            </p>
-            <div class="flex flex-wrap gap-4">
-              <a href="#projects" class="btn-primary inline-flex items-center gap-2 bg-teal-600 hover:bg-teal-500 text-white font-medium px-6 py-3 rounded-lg">
-                View Projects <i data-lucide="arrow-right" class="w-4 h-4"></i>
-              </a>
-              <a href="#contact" class="btn-secondary inline-flex items-center gap-2 border border-[#1e3a5f] hover:border-teal-500 text-slate-400 hover:text-teal-400 font-medium px-6 py-3 rounded-lg">
-                Get in Touch
-              </a>
-            </div>
-          </div>
-
-          <!-- Profile avatar -->
-          <div class="hero-avatar hidden lg:flex" aria-label="Profile photo">
-            <img src="public/profile.png" alt="Jacint A. Alama" class="w-full h-full object-cover">
-          </div>
-        </div>
-
-        <div class="scroll-indicator mt-16 hidden sm:flex flex-col items-center gap-2">
-          <span class="text-xs text-slate-500 tracking-widest uppercase">Scroll</span>
-          <div class="scroll-arrow"><i data-lucide="chevron-down" class="w-4 h-4 text-slate-500"></i></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- About -->
-    <section id="about" class="py-24 border-t border-[#1e3a5f] bg-[#112240]">
-      <div class="max-w-5xl mx-auto px-4">
-        <h2 class="section-heading">About</h2>
-        <div class="grid md:grid-cols-2 gap-12 items-center">
+    <!-- HERO -->
+    <section id="hero" x-data="hero()" class="min-h-screen flex flex-col justify-center pt-20 px-6">
+      <div class="max-w-5xl mx-auto w-full grid-bg py-24">
+        <div class="flex flex-col md:flex-row items-center md:items-start gap-10">
+          <img src="public/profile.png" alt="Jacint Alama" class="w-36 h-36 rounded-full object-cover object-top shadow-md border-4 border-amber-100 fade-up flex-shrink-0" style="animation-delay:0.1s">
           <div>
-            <p class="text-slate-400 leading-relaxed mb-4">
-              I'm a software engineer with a passion for solving complex problems through elegant, maintainable code. I have experience across the full stack — backend services, cloud infrastructure, and front-end applications.
+            <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-4 fade-up" style="animation-delay:0.1s">Hello, I'm</p>
+            <h1 class="font-mono text-5xl sm:text-7xl font-bold text-stone-900 leading-tight mb-4 fade-up" style="animation-delay:0.2s">Jacint<br>Alama</h1>
+            <p class="font-mono text-lg sm:text-2xl text-amber-800 mb-6 fade-up" style="animation-delay:0.3s">Software Engineer</p>
+            <p class="text-stone-600 max-w-xl text-base sm:text-lg leading-relaxed mb-10 fade-up" style="animation-delay:0.4s">
+              I craft reliable backend systems and clean, thoughtful interfaces — tools that get out of the way and let people do their best work.
             </p>
-            <p class="text-slate-400 leading-relaxed mb-4">
-              I thrive in collaborative environments where engineering quality and developer experience are taken seriously. Whether I'm designing a microservice architecture, optimizing a slow query, or refining a UI component, I bring the same attention to detail.
-            </p>
-            <p class="text-slate-400 leading-relaxed">
-              When I'm not coding I enjoy exploring open-source projects, writing about software craft, and mentoring junior developers.
-            </p>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div class="stat-card animate-in delay-1"><span class="stat-number">5+</span><span class="stat-label">Years Experience</span></div>
-            <div class="stat-card animate-in delay-2"><span class="stat-number">30+</span><span class="stat-label">Projects Shipped</span></div>
-            <div class="stat-card animate-in delay-3"><span class="stat-number">12+</span><span class="stat-label">Technologies</span></div>
-            <div class="stat-card animate-in delay-4"><span class="stat-number">100%</span><span class="stat-label">Committed</span></div>
+            <a href="#projects" class="btn-primary fade-up inline-block" style="animation-delay:0.5s">View my work</a>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Skills -->
-    <section id="skills" class="py-24 border-t border-[#1e3a5f] bg-[#0a192f]">
-      <div class="max-w-5xl mx-auto px-4" x-data="skillsSection">
-        <h2 class="section-heading">Skills</h2>
-        <div class="grid sm:grid-cols-3 gap-6">
-          <template x-for="(group, idx) in skillGroups" :key="group.title">
-            <div class="skill-group-card animate-in"
-                 :class="['delay-' + (idx + 1), 'accent-' + group.accent]">
-              <div class="skill-group-header">
-                <span class="skill-group-icon" x-html="group.icon"></span>
-                <h3 class="font-semibold text-slate-200 text-sm" x-text="group.title"></h3>
-              </div>
-              <ul class="flex flex-wrap gap-2" role="list" :aria-label="group.title + ' skills'">
+    <!-- ABOUT -->
+    <section id="about" class="px-6 py-24 border-t border-stone-200">
+      <div class="max-w-5xl mx-auto">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">01. About</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-10">Who I am</h2>
+        <div class="grid md:grid-cols-2 gap-12 text-stone-600 leading-relaxed text-base">
+          <div class="space-y-5">
+            <p>
+              I'm a software engineer with a passion for building clean, useful tools that solve real problems. Whether it's a carefully designed API, a data pipeline that just works, or a UI that feels effortless to use, I care deeply about getting the details right.
+            </p>
+            <p>
+              Over the years I've worked across the full stack — from crafting PostgreSQL schemas and FastAPI services on the backend, to building responsive React frontends and automating workflows with tools like n8n and Docker. I enjoy the full arc of a product, from a blank editor to something live and reliable in production.
+            </p>
+          </div>
+          <div class="space-y-5">
+            <p>
+              Outside of work I contribute to open-source projects, explore new languages (Go has been keeping me busy lately), and write about engineering trade-offs on my blog. I believe good software is mostly about clear thinking — and that the best code is the code that doesn't need explaining.
+            </p>
+            <p>
+              I'm currently open to interesting full-time or contract opportunities, especially in developer tooling, infrastructure, or product engineering.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SKILLS -->
+    <section id="skills" x-data="skills()" class="px-6 py-24 border-t border-stone-200 bg-stone-50/60">
+      <div class="max-w-5xl mx-auto">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">02. Skills</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-12">What I work with</h2>
+        <div class="space-y-10">
+          <template x-for="group in groups" :key="group.label">
+            <div>
+              <h3 class="font-mono text-xs tracking-widest uppercase text-stone-500 mb-4" x-text="group.label"></h3>
+              <div class="flex flex-wrap gap-3">
                 <template x-for="skill in group.items" :key="skill">
-                  <li class="skill-pill text-xs font-medium px-3 py-1 rounded-full" x-text="skill"></li>
+                  <span class="skill-badge" x-text="skill"></span>
                 </template>
-              </ul>
+              </div>
             </div>
           </template>
         </div>
       </div>
     </section>
 
-    <!-- Projects -->
-    <section id="projects" class="py-24 border-t border-[#1e3a5f] bg-[#112240]">
-      <div class="max-w-5xl mx-auto px-4" x-data="projectsSection">
-        <h2 class="section-heading">Projects</h2>
-        <div class="grid md:grid-cols-3 gap-6">
-          <template x-for="(project, idx) in projects" :key="project.title">
-            <article class="project-card animate-in flex flex-col"
-                     :class="'delay-' + (idx + 1)">
-              <!-- Project image -->
-              <div class="project-image" :class="project.imageClass" aria-hidden="true">
-                <i :data-lucide="project.imageIcon" class="w-12 h-12 opacity-40 text-teal-500"></i>
+    <!-- PROJECTS -->
+    <section id="projects" x-data="projects()" class="px-6 py-24 border-t border-stone-200">
+      <div class="max-w-5xl mx-auto">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">03. Projects</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-12">Things I've built</h2>
+        <div class="grid sm:grid-cols-2 gap-8">
+          <template x-for="project in list" :key="project.name">
+            <div class="project-card group">
+              <div class="flex items-start justify-between mb-3">
+                <h3 class="font-mono font-bold text-stone-900 text-lg group-hover:text-amber-800 transition-colors" x-text="project.name"></h3>
+                <a :href="project.link" class="project-link-btn" aria-label="View project">
+                  <i data-lucide="arrow-up-right" class="w-4 h-4"></i>
+                </a>
               </div>
-              <!-- Project body -->
-              <div class="project-body">
-                <div class="flex items-start justify-between gap-2">
-                  <h3 class="font-semibold text-slate-100 text-base leading-snug" x-text="project.title"></h3>
-                  <span class="text-xs bg-teal-900/50 text-teal-300 px-2 py-0.5 rounded-full shrink-0" x-text="project.type"></span>
-                </div>
-                <p class="text-slate-400 text-sm leading-relaxed flex-1" x-text="project.description"></p>
-                <ul class="flex flex-wrap gap-1.5" role="list" aria-label="Technologies used">
-                  <template x-for="tag in project.tags" :key="tag">
-                    <li class="text-xs bg-[#0a192f] text-slate-400 border border-[#1e3a5f] px-2 py-0.5 rounded" x-text="tag"></li>
-                  </template>
-                </ul>
-                <div class="flex gap-4 text-sm pt-1">
-                  <a x-show="project.github" :href="project.github" target="_blank" rel="noopener noreferrer"
-                     class="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-200 transition-colors">
-                    <i data-lucide="github" class="w-4 h-4"></i> Code
-                  </a>
-                  <a x-show="project.demo" :href="project.demo" target="_blank" rel="noopener noreferrer"
-                     class="inline-flex items-center gap-1.5 text-teal-400 hover:text-teal-300 transition-colors">
-                    <i data-lucide="external-link" class="w-4 h-4"></i> Live Demo
-                  </a>
-                </div>
+              <p class="text-stone-600 text-sm leading-relaxed mb-5" x-text="project.description"></p>
+              <div class="flex flex-wrap gap-2">
+                <template x-for="tag in project.tags" :key="tag">
+                  <span class="tech-tag" x-text="tag"></span>
+                </template>
               </div>
-            </article>
+            </div>
           </template>
         </div>
       </div>
     </section>
 
-    <!-- Contact -->
-    <section id="contact" class="py-24 border-t border-[#1e3a5f] bg-[#0a192f]">
-      <div class="max-w-2xl mx-auto px-4" x-data="contactForm">
-        <h2 class="section-heading">Contact</h2>
-        <p class="text-slate-400 mb-8 -mt-4">Have a project in mind or want to collaborate? I'd love to hear from you.</p>
-        <form @submit.prevent="submit" novalidate class="flex flex-col gap-5">
-          <div class="animate-in delay-1">
-            <label for="name" class="block text-sm font-medium text-slate-300 mb-1">Name</label>
-            <input id="name" type="text" x-model="name" autocomplete="name" placeholder="Your name"
-              class="form-input w-full bg-[#112240] border border-[#1e3a5f] text-slate-200 placeholder-slate-500 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-            <p x-show="errors.name" x-text="errors.name" class="text-red-400 text-xs mt-1" role="alert"></p>
-          </div>
-          <div class="animate-in delay-2">
-            <label for="email" class="block text-sm font-medium text-slate-300 mb-1">Email</label>
-            <input id="email" type="email" x-model="email" autocomplete="email" placeholder="you@example.com"
-              class="form-input w-full bg-[#112240] border border-[#1e3a5f] text-slate-200 placeholder-slate-500 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent">
-            <p x-show="errors.email" x-text="errors.email" class="text-red-400 text-xs mt-1" role="alert"></p>
-          </div>
-          <div class="animate-in delay-3">
-            <label for="message" class="block text-sm font-medium text-slate-300 mb-1">Message</label>
-            <textarea id="message" x-model="message" rows="5" placeholder="Tell me about your project…"
-              class="form-input w-full bg-[#112240] border border-[#1e3a5f] text-slate-200 placeholder-slate-500 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-none"></textarea>
-            <p x-show="errors.message" x-text="errors.message" class="text-red-400 text-xs mt-1" role="alert"></p>
-          </div>
-          <div class="flex items-center gap-4 animate-in delay-4">
-            <button type="submit" :disabled="sent"
-              class="btn-primary bg-teal-600 hover:bg-teal-500 disabled:opacity-60 text-white font-medium px-8 py-3 rounded-lg">
-              <span x-show="!sent">Send Message</span>
-              <span x-show="sent" x-cloak>Sent ✓</span>
-            </button>
-            <p x-show="sent" x-cloak class="text-teal-400 text-sm" role="status">Thanks! I'll get back to you soon.</p>
-          </div>
-        </form>
+    <!-- CONTACT -->
+    <section id="contact" class="px-6 py-24 border-t border-stone-200 bg-stone-50/60">
+      <div class="max-w-5xl mx-auto text-center">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">04. Contact</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-5">Get in touch</h2>
+        <p class="text-stone-600 max-w-md mx-auto mb-10 leading-relaxed">
+          Have a project in mind, a question about my work, or just want to say hello? My inbox is open.
+        </p>
+        <a href="mailto:jacint@example.com" class="btn-primary mb-10 inline-block">jacint@example.com</a>
+        <div class="flex justify-center gap-8 font-mono text-sm text-stone-500">
+          <a href="#" class="social-link flex items-center gap-2">
+            <i data-lucide="github" class="w-4 h-4"></i> GitHub
+          </a>
+          <a href="#" class="social-link flex items-center gap-2">
+            <i data-lucide="linkedin" class="w-4 h-4"></i> LinkedIn
+          </a>
+        </div>
       </div>
     </section>
 
   </main>
 
-  <footer class="border-t border-[#1e3a5f] py-8 bg-[#0a192f]">
-    <div class="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
-      <p>&copy; <span x-data x-text="new Date().getFullYear()"></span> Jacint A. Alama</p>
-      <div class="flex gap-5">
-        <a href="https://github.com" target="_blank" rel="noopener noreferrer" aria-label="GitHub profile">
-          <i data-lucide="github" class="footer-icon w-5 h-5"></i>
-        </a>
-        <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn profile">
-          <i data-lucide="linkedin" class="footer-icon w-5 h-5"></i>
-        </a>
-        <a href="mailto:jacint.alama@example.com" aria-label="Send email">
-          <i data-lucide="mail" class="footer-icon w-5 h-5"></i>
-        </a>
-      </div>
-    </div>
+  <footer class="border-t border-stone-200 px-6 py-6 text-center">
+    <p class="font-mono text-xs text-stone-400">© 2026 Jacint Alama</p>
   </footer>
 
 </body>
