@@ -972,6 +972,28 @@ class SelectionPayload(BaseModel):
 SELECTION_RAW_MAX = 8 * 1024  # 8 KB raw cap before parsing
 
 
+def _format_selection_block(sel: SelectionPayload) -> str:
+    style_pairs = "; ".join(f"{k}: {v}" for k, v in sel.styles.items())
+    attrs_str = " ".join(f'{k}="{v}"' for k, v in sel.attrs.items() if v)
+    open_tag = f"<{sel.tag.lower()}{(' ' + attrs_str) if attrs_str else ''}>"
+    return (
+        "SELECTED ELEMENT\n"
+        "The user pointed at this element in their preview. Scope your answer or\n"
+        "edit to this element specifically. Don't change other parts of the page\n"
+        "unless asked.\n"
+        "\n"
+        f"  selector:  {sel.selector}\n"
+        f"  tag:       {open_tag}\n"
+        + (f"  url:       {sel.url}\n" if sel.url else "")
+        + "\n"
+        "  current outerHTML (truncated):\n"
+        f"    {sel.outerHtml}\n"
+        "\n"
+        "  current computed styles (subset):\n"
+        f"    {style_pairs}\n"
+    )
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     source_task_id: str = Form(...),
@@ -1140,7 +1162,13 @@ async def chat(
             f"Only emit this sentinel when the request actually needs a backend.\n\n"
         )
 
+    selection_block = (
+        _format_selection_block(parsed_selection) + "\n"
+        if parsed_selection else ""
+    )
+
     system_prompt = (
+        f"{selection_block}"
         f"You are the AIUI Agent — the BUILDER of the web app at apps/{slug}/. "
         f"You design and ship features. The human is the product owner: they tell you "
         f"what they want, you figure out how to build it and offer to do it. They are "

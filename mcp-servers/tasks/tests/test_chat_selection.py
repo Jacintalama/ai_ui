@@ -138,7 +138,6 @@ def _good_selection():
     }
 
 
-@pytest.mark.xfail(reason="SELECTED ELEMENT block wired in Task 7")
 async def test_chat_with_valid_selection_includes_block_in_prompt(authed_chat):
     resp, captured = await authed_chat(
         message="make this blue", selection=json.dumps(_good_selection())
@@ -188,6 +187,7 @@ async def test_chat_with_selection_and_files(authed_chat):
         files=[("files", ("a.png", _TINY_PNG, "image/png"))],
     )
     assert resp.status_code == 200, resp.text
+    assert "SELECTED ELEMENT" in captured["system"]
     # Image survives — last user message has at least one image content block.
     last = captured["messages"][-1]["content"]
     assert any(part.get("type") == "image" for part in last)
