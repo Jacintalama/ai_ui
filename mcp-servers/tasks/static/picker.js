@@ -17,7 +17,13 @@
   if (!TARGET || TARGET === window) return;  // not in an iframe — no-op
 
   function post(msg) {
-    try { TARGET.postMessage(msg, "*"); } catch (_) {}
+    try {
+      TARGET.postMessage(msg, "*");
+    } catch (e) {
+      // Non-cloneable payloads or detached parents will land here. Log so
+      // future Tasks 3-5 payload regressions are observable in DevTools.
+      try { console.warn("[io.picker] postMessage failed:", e, msg); } catch (_) {}
+    }
   }
 
   // Announce readiness so the parent knows it can send activate.

@@ -29,8 +29,15 @@ class _Handler(SimpleHTTPRequestHandler):
             return os.path.join(STATIC, "picker.js")
         if path == "/" or path.endswith("/picker_harness.html"):
             return os.path.join(FIXTURES, "picker_harness.html")
-        # Fallback to fixtures dir for any other path
-        return os.path.join(FIXTURES, path.lstrip("/"))
+        # Fallback to fixtures dir for any other path — but reject any path
+        # that would escape FIXTURES via ../ traversal. The test harness only
+        # listens on 127.0.0.1 with an ephemeral port, but defense-in-depth
+        # avoids future copies of this handler accepting untrusted input.
+        candidate = os.path.realpath(os.path.join(FIXTURES, path.lstrip("/")))
+        fixtures_real = os.path.realpath(FIXTURES)
+        if os.path.commonpath([candidate, fixtures_real]) != fixtures_real:
+            return os.path.join(FIXTURES, "__forbidden__")  # 404
+        return candidate
 
 
 @contextmanager
