@@ -1871,6 +1871,16 @@
       display: block;
     }
     .chat-bubble.user .chat-attachments + .chat-text:empty { display: none; }
+    .chat-bubble.user .chat-selection {
+      font: 11px ui-monospace, Menlo, monospace;
+      color: #cfe0ff;
+      background: rgba(79,141,240,0.10);
+      border: 1px solid rgba(79,141,240,0.4);
+      border-radius: 4px;
+      padding: 2px 6px;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
     .chat-bubble .markdown p { margin: 0 0 6px 0; }
     .chat-bubble .markdown p:last-child { margin-bottom: 0; }
     .chat-bubble .markdown strong { color: var(--text); font-weight: 600; }
@@ -6573,6 +6583,16 @@
         }
         body.appendChild(row);
       }
+      if (opts && opts.selection) {
+        const sel = opts.selection;
+        const selRow = document.createElement("div");
+        selRow.className = "chat-selection";
+        const label = sel.selector.length > 40
+          ? sel.selector.slice(0, 18) + "…" + sel.selector.slice(-18)
+          : sel.selector;
+        selRow.textContent = "selected: " + label;
+        body.appendChild(selRow);
+      }
       const txt = document.createElement("div");
       txt.className = "chat-text";
       txt.textContent = content || "";
@@ -6638,7 +6658,11 @@
     // user's bubble AND send them to the chat endpoint. Cleared in the
     // finally block once the request resolves.
     const attachmentsForThisTurn = pendingAttachments.slice();
-    renderChatBubble("user", text, { attachments: attachmentsForThisTurn });
+    const selectionForThisTurn = pendingSelection;  // single-slot, just hold the ref
+    renderChatBubble("user", text, {
+      attachments: attachmentsForThisTurn,
+      selection: selectionForThisTurn,
+    });
     // Persist user message (fire-and-forget — chat must never feel slow).
     // Attachments are NOT persisted — they live only for this single turn.
     if (slug) {
@@ -6662,6 +6686,9 @@
       fd.append("history", JSON.stringify(chatHistory.slice(-20)));
       for (const a of attachmentsForThisTurn) {
         fd.append("files", a.file, a.file.name);
+      }
+      if (selectionForThisTurn) {
+        fd.append("selection", JSON.stringify(selectionForThisTurn));
       }
       const resp = await apiFetchMultipart("POST", "/chat", fd);
       aiBubble.classList.remove("thinking");
@@ -6700,6 +6727,8 @@
       // finally so a network failure still clears chips (otherwise the next
       // send would silently re-attach the same images).
       clearPendingAttachments();
+      pendingSelection = null;
+      renderSelectionChip();
     }
     setSendDisabled(false);
     $log.scrollTop = $log.scrollHeight;
