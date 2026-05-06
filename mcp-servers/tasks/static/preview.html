@@ -895,6 +895,13 @@
     .btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
     .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 
+    .chat-toolbar-btn { padding: 4px 10px; font-size: 12px; }
+    .chat-toolbar-btn.active {
+      background: rgba(79, 141, 240, 0.15);
+      border-color: #4f8df0;
+      color: #cfe0ff;
+    }
+
     /* Run/Stop buttons retired in favor of automatic on/off (page-load
        auto-start + backend idle-sweep). DOM nodes stay so existing JS
        (pollPreviewStatus, maybeAutoStartPreview) keeps flipping their
@@ -2848,6 +2855,10 @@
               <input type="file" id="attach-input" multiple
                      accept="image/png,image/jpeg,image/webp,image/gif" hidden>
             </div>
+            <button type="button" class="btn btn-ghost chat-toolbar-btn" id="picker-toggle"
+                    aria-pressed="false" title="Click an element in the preview to scope your prompt">
+              Select
+            </button>
           </div>
           <span class="warn" id="enhance-warn"></span>
           <div class="mode-dropdown" id="mode-dropdown">
@@ -3763,7 +3774,8 @@
   // ────────────────────────────────────────────────────────────────────
   function refreshPreviewFrame() {
     if (previewRunning && slug) {
-      const src = "/tasks/preview-app/" + slug + "/?t=" + Date.now();
+      const src = "/tasks/preview-app/" + slug + "/?t=" + Date.now() +
+                  (iframePickerOn ? "&picker=1" : "");
       $previewEmpty.hidden = true;
       $previewLoading.classList.add("show");
       let iframe = $previewBody.querySelector("iframe");
@@ -3789,6 +3801,21 @@
     }
   }
   $previewRefresh.addEventListener("click", refreshPreviewFrame);
+
+  // Element picker toggle — flips a flag and reloads the iframe so picker.js
+  // injection turns on/off via the ?picker=1 query parameter. Task 9 will
+  // replace this minimal handler with a fuller state machine.
+  let iframePickerOn = false;
+
+  const $pickerToggle = document.getElementById("picker-toggle");
+  $pickerToggle.addEventListener("click", () => {
+    iframePickerOn = !iframePickerOn;
+    $pickerToggle.classList.toggle("active", iframePickerOn);
+    $pickerToggle.setAttribute("aria-pressed", String(iframePickerOn));
+    $pickerToggle.textContent = iframePickerOn ? "Selecting…" : "Select";
+    // Reload iframe with the new ?picker= state so injection takes effect.
+    refreshPreviewFrame();
+  });
 
   // Viewport toggle — flips a phone-mode class on $previewBody. Pure CSS
   // does the rest; no JS resize, no persisted preference (resets on reload).
