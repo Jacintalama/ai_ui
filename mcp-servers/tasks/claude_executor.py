@@ -585,6 +585,7 @@ def build_enhance_prompt(
     has_db_uri: bool = False,
     user_email: str = "",
     attachments: list[str] | None = None,
+    selection_block: str = "",
 ) -> str:
     if error_context:
         err_block = (
@@ -602,6 +603,10 @@ def build_enhance_prompt(
             supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
         ),
     )
+    if selection_block:
+        # Element-picker context lands at the very top so the agent's first
+        # tool call (a Read or grep) is scoped to the selected element.
+        body = selection_block + "\n" + body
     if attachments:
         body += (
             "\n\n## Attached images\n"

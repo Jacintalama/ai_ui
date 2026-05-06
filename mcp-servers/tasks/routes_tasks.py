@@ -690,6 +690,7 @@ async def enhance(
     source_task_id: UUID = Form(...),
     prompt: str = Form(..., min_length=1, max_length=2000),
     files: list[UploadFile] = File(default_factory=list),
+    selection: str | None = Form(default=None),
     user: AdminUser = Depends(current_admin),
 ):
     """Create a new BUILD task that modifies an existing app, optionally with image attachments.
@@ -703,6 +704,7 @@ async def enhance(
     via the prompt (Task 8 wires the prompt-side reference list).
     """
     import asyncio
+    import json as _json
     from claude_executor import build_enhance_prompt
     from models import TaskExecution
     from routes_execution import _run_execution, _RUNNING, _lookup_supabase_config
@@ -711,6 +713,30 @@ async def enhance(
     if len(files) > MAX_FILES:
         logger.info("enhance: too many attachments user=%s count=%d", user.email, len(files))
         raise HTTPException(400, f"Too many attachments (max {MAX_FILES})")
+
+    # Parse and validate the optional selection field — same contract as /chat.
+    # When present, the picker's payload becomes a SELECTED ELEMENT block at
+    # the top of the build prompt so the agent edits THAT element specifically.
+    parsed_selection: SelectionPayload | None = None
+    if selection is not None:
+        if len(selection) > SELECTION_RAW_MAX:
+            raise HTTPException(
+                400, f"selection field too large (max {SELECTION_RAW_MAX} bytes)"
+            )
+        try:
+            sel_raw = _json.loads(selection)
+        except _json.JSONDecodeError as e:
+            raise HTTPException(400, f"Invalid selection JSON: {e}")
+        try:
+            parsed_selection = SelectionPayload.model_validate(sel_raw)
+        except ValidationError as e:
+            raise HTTPException(400, f"Invalid selection payload: {e.errors()}")
+        logger.info(
+            "enhance: selection present (selector=%s tag=%s source=%s)",
+            parsed_selection.selector,
+            parsed_selection.tag,
+            source_task_id,
+        )
 
     # Read+validate each file fully into memory (≤ 5 MB × 5 = 25 MB worst case)
     validated: list[tuple[str, bytes]] = []  # [(safe_name, body)]
@@ -882,6 +908,10 @@ async def enhance(
             )
 
     # 4. Fire background execution with ENHANCE prompt.
+    selection_block = (
+        _format_selection_block(parsed_selection) + "\n"
+        if parsed_selection else ""
+    )
     prompt_text = build_enhance_prompt(
         slug=source.built_app_slug,
         user_request=prompt.strip(),
@@ -891,6 +921,7 @@ async def enhance(
         has_db_uri=has_db_uri,
         user_email=user.email,
         attachments=attachment_rel_paths or None,
+        selection_block=selection_block,
     )
     _RUNNING[new_task.id] = {"task": None, "proc": None}
     bg = asyncio.create_task(_run_execution(new_task.id, execution.id, prompt_text))

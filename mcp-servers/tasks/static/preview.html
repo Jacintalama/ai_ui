@@ -1472,6 +1472,25 @@
       border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
       color: var(--danger);
     }
+    /* "Editing heading: …" indicator inside the bubble — same look in user
+       and AI bubbles so the whole thread reads like one element-scoped
+       conversation. The technical selector lands on the title attribute. */
+    .enhance-bubble .bubble-selection {
+      font-size: 11.5px;
+      color: #cfe0ff;
+      background: rgba(79,141,240,0.10);
+      border: 1px solid rgba(79,141,240,0.4);
+      border-radius: 4px;
+      padding: 2px 8px;
+      display: inline-block;
+      margin-bottom: 6px;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .enhance-bubble.user .bubble-selection { align-self: flex-end; }
+    .enhance-bubble.user .user-text { white-space: pre-wrap; }
     .enhance-bubble.ai .phase-inline {
       display: inline-flex;
       align-items: center;
@@ -6393,12 +6412,23 @@
     el.className = "enhance-bubble " + kind;
     if (opts.taskId) el.dataset.taskId = opts.taskId;
 
+    // If a selection chip was attached, render a small "Editing: …" indicator
+    // INSIDE the bubble. On the user bubble it shows what they pointed at;
+    // on the ai bubble it tells them which element the agent is currently
+    // editing while the build is in flight.
+    const selChip = opts.selection
+      ? '<div class="bubble-selection" title="' +
+          escapeHtmlAttr(opts.selection.selector || "") + '">Editing ' +
+          escapeHtml(selectionDisplayLabel(opts.selection)) + '</div>'
+      : '';
+
     if (kind === "user") {
-      el.innerHTML = '<div class="body"></div>';
-      el.querySelector(".body").textContent = content || "";
+      el.innerHTML = '<div class="body">' + selChip + '<div class="user-text"></div></div>';
+      el.querySelector(".user-text").textContent = content || "";
     } else {
       el.innerHTML =
         '<div class="body">' +
+          selChip +
           '<span class="phase-inline"><span class="phase-icon">⏳</span><span class="phase-text">Queued</span></span>' +
           '<div class="build-activity" hidden></div>' +
           '<div class="markdown content"></div>' +
@@ -6413,6 +6443,14 @@
     $log.appendChild(el);
     $log.scrollTop = $log.scrollHeight;
     return el;
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function escapeHtmlAttr(s) {
+    return escapeHtml(s).replace(/"/g, "&quot;");
   }
 
   function derivePhase(task, latestExec) {
@@ -6820,8 +6858,14 @@
     }
 
     // ── New-enhancement path ──
-    renderBubble("user", text);
-    const aiBubble = renderBubble("ai", "", { taskId: "pending" });
+    // Snapshot selection up front so a chip change mid-flight (or the
+    // finally{} clear) doesn't lose the indicator on either bubble.
+    const selectionForThisBuild = pendingSelection;
+    renderBubble("user", text, { selection: selectionForThisBuild });
+    const aiBubble = renderBubble("ai", "", {
+      taskId: "pending",
+      selection: selectionForThisBuild,
+    });
 
     try {
       const fd = new FormData();
@@ -6829,6 +6873,9 @@
       fd.append("prompt", text);
       for (const a of pendingAttachments) {
         fd.append("files", a.file, a.file.name);
+      }
+      if (selectionForThisBuild) {
+        fd.append("selection", JSON.stringify(selectionForThisBuild));
       }
       const resp = await apiFetchMultipart("POST", "/enhance", fd);
       aiBubble.dataset.taskId = resp.id;
@@ -6855,6 +6902,8 @@
       toast(e.status === 409 ? "Another enhancement is already running" : "Enhance failed: " + e.message, "error", 5000);
     } finally {
       clearPendingAttachments();
+      pendingSelection = null;
+      renderSelectionChip();
     }
   }
   async function handleSend() {
