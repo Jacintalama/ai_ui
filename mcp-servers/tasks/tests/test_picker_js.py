@@ -342,3 +342,52 @@ def test_picker_alt_hover_picks_parent(browser, harness_url):
         "() => window.__msgs.find(m => m && m.type === 'io.picker.selected')"
     )
     assert msg["tag"] == "ARTICLE"
+
+
+def test_picker_restores_previously_focused_element_on_deactivate(browser, harness_url):
+    """When picker activates, body steals focus so ESC works. On deactivate
+    the picker should put focus back where it was — otherwise an in-iframe
+    input loses its caret."""
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
+
+    iframe_locator = page.frame_locator("#iframe")
+    # Add a focusable input inside the iframe and give it focus.
+    iframe_locator.locator("body").evaluate("""
+      (b) => {
+        const inp = document.createElement('input');
+        inp.id = 'focus-target';
+        inp.type = 'text';
+        b.appendChild(inp);
+        inp.focus();
+      }
+    """)
+    # Sanity check: the input has focus before activate.
+    pre_id = iframe_locator.locator("body").evaluate(
+        "(_b) => document.activeElement && document.activeElement.id"
+    )
+    assert pre_id == "focus-target"
+
+    # Activate then deactivate (no element picked).
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.deactivate"}, "*"
+      )
+    """)
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="detached", timeout=2000)
+
+    # The input should be focused again.
+    post_id = iframe_locator.locator("body").evaluate(
+        "(_b) => document.activeElement && document.activeElement.id"
+    )
+    assert post_id == "focus-target", f"focus not restored, activeElement is {post_id!r}"

@@ -24,8 +24,11 @@
   let $overlay = null;
   let $label = null;
   let lastTarget = null;
-  let altDown = false;
+  let altDown = false;         // updated by onKey (keydown/keyup) and by mouse
+                                // events' native altKey field. Mouse-driven
+                                // updates self-heal if a keyup is missed.
   let prevBodyTabIndex = null;  // restored on deactivate
+  let prevActive = null;       // restored on deactivate
 
   // Hardened post() from Task 2 — DO NOT regress this.
   function post(msg) {
@@ -235,6 +238,7 @@
       ? document.body.getAttribute("tabindex")
       : null;
     document.body.setAttribute("tabindex", "-1");
+    try { prevActive = document.activeElement; } catch (_) { prevActive = null; }
     try { document.body.focus({ preventScroll: true }); } catch (_) {}
   }
 
@@ -256,6 +260,15 @@
       document.body.setAttribute("tabindex", prevBodyTabIndex);
     }
     prevBodyTabIndex = null;
+    // Restore the previously focused element (e.g., the input the user was
+    // typing in before activating the picker). Guard against the element
+    // having been removed from the DOM during the picking session.
+    try {
+      if (prevActive && typeof prevActive.focus === "function" && document.contains(prevActive)) {
+        prevActive.focus({ preventScroll: true });
+      }
+    } catch (_) {}
+    prevActive = null;
     teardownOverlay();
   }
 
