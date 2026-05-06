@@ -126,7 +126,7 @@ _SLUG_ROUTE_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
 
 # Bumped when picker.js itself changes — busts the iframe browser cache for
 # preview HTML served with ?picker=1. Module-level so tests and routes share it.
-PICKER_JS_VERSION = "2"
+PICKER_JS_VERSION = "3"
 
 _MIME_BY_EXT = {
     ".html": "text/html; charset=utf-8",
@@ -508,15 +508,16 @@ async def serve_preview_app(
     ext = _os.path.splitext(target)[1].lower()
     media = _MIME_BY_EXT.get(ext, "application/octet-stream")
 
-    # Picker injection: if the request asks for picker mode AND we're serving
-    # HTML, splice <script src="/tasks/static/picker.js?v=N"></script> before </head>.
+    # Picker injection: when serving HTML from the preview, splice
+    # <script src="/tasks/static/picker.js?v=N"></script> before </head>.
+    # The script is inert by default — it only listens for activate/deactivate
+    # messages from the parent — so the cost is one tiny extra fetch per
+    # preview load. Always-on injection means clicking the parent's "Select"
+    # toggle does NOT need to reload the iframe, which preserves any in-app
+    # state the user is testing (form values, route, scroll position, etc.).
     # Any failure (binary file, missing </head>, decode error) falls through
     # to the standard FileResponse path — the picker is never load-bearing.
-    want_picker = bool(request and request.query_params.get("picker") == "1")
-    # Note: the outer `request and request.query_params.get(...)` guard above
-    # protects us if FastAPI ever invokes this without a Request injection.
-    # Don't refactor `want_picker` away — the kwarg is `Optional[Request] = None`.
-    if want_picker and ext in (".html", ".htm"):
+    if ext in (".html", ".htm"):
         try:
             with open(target, "rb") as f:
                 raw = f.read()

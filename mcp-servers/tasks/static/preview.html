@@ -3789,8 +3789,10 @@
   // ────────────────────────────────────────────────────────────────────
   function refreshPreviewFrame() {
     if (previewRunning && slug) {
-      const src = "/tasks/preview-app/" + slug + "/?t=" + Date.now() +
-                  (iframePickerOn ? "&picker=1" : "");
+      // picker.js is always injected by the server, so no ?picker= flag is
+      // needed in the URL. The Select toggle just posts activate/deactivate
+      // to the existing iframe — no reload required.
+      const src = "/tasks/preview-app/" + slug + "/?t=" + Date.now();
       $previewEmpty.hidden = true;
       $previewLoading.classList.add("show");
       let iframe = $previewBody.querySelector("iframe");
@@ -3815,45 +3817,44 @@
       $previewUrlText.textContent = "Preview";
     }
   }
+  // Refresh button: just reload the iframe; keep any selection chip the
+  // user may have collected (the model has the snapshot anyway).
   $previewRefresh.addEventListener("click", () => {
-    pendingSelection = null;
-    renderSelectionChip();
-    setPickerOff();          // also strips ?picker=1 and reloads iframe
+    setPickerOff();          // drop overlay + reset toggle
+    refreshPreviewFrame();
   });
 
-  // Element picker — state machine + postMessage wiring (Task 9).
-  // States: "off" → "arming" (waiting for picker.js to report ready) →
-  // "selecting" (picker active, awaiting selection or cancel).
-  let iframePickerOn = false;
-  let pickerState = "off";   // off | arming | selecting
+  // Element picker — state machine + postMessage wiring.
+  // States: "off" → "selecting" (picker active inside the iframe, awaiting
+  // a selection or cancel). picker.js is ALWAYS injected by the server,
+  // so toggling Select never reloads the iframe — we just post activate /
+  // deactivate to the existing window. Preserves the user's in-app state
+  // (form values, scroll, route).
+  let pickerState = "off";   // off | selecting
   let pendingSelection = null;
-  let armingTimer = null;
 
   const $pickerToggle = document.getElementById("picker-toggle");
   $pickerToggle.addEventListener("click", () => {
     if (pickerState === "off") {
-      iframePickerOn = true;
-      pickerState = "arming";
+      const iframe = $previewBody.querySelector("iframe");
+      if (!iframe || !iframe.contentWindow) {
+        console.warn("[picker] no preview iframe — start the preview first.");
+        return;
+      }
+      pickerState = "selecting";
       $pickerToggle.classList.add("active");
       $pickerToggle.setAttribute("aria-pressed", "true");
       $pickerToggle.textContent = "Selecting…";
-      refreshPreviewFrame();
-      // 3s arming timeout — picker.js failed to load or report ready.
-      armingTimer = setTimeout(() => {
-        if (pickerState === "arming") {
-          console.warn("[picker] failed to load — refresh the preview and try again.");
-          setPickerOff();
-        }
-      }, 3000);
+      try {
+        iframe.contentWindow.postMessage({ type: "io.picker.activate" }, "*");
+      } catch (_) {}
     } else {
       setPickerOff();
     }
   });
 
   function setPickerOff() {
-    iframePickerOn = false;
     pickerState = "off";
-    if (armingTimer) { clearTimeout(armingTimer); armingTimer = null; }
     $pickerToggle.classList.remove("active");
     $pickerToggle.setAttribute("aria-pressed", "false");
     $pickerToggle.textContent = "Select";
@@ -3862,7 +3863,6 @@
     if (iframe && iframe.contentWindow) {
       try { iframe.contentWindow.postMessage({ type: "io.picker.deactivate" }, "*"); } catch (_) {}
     }
-    refreshPreviewFrame();  // strips ?picker=1
   }
 
   // postMessage listener — only trust messages from the preview iframe.
@@ -3871,14 +3871,19 @@
     if (!iframe || e.source !== iframe.contentWindow) return;
     const m = e.data || {};
     if (m.type === "io.picker.ready") {
-      if (pickerState === "arming") {
-        iframe.contentWindow.postMessage({ type: "io.picker.activate" }, "*");
-        pickerState = "selecting";
-        if (armingTimer) { clearTimeout(armingTimer); armingTimer = null; }
+      // Picker.js (re)loaded inside the iframe. If the user is mid-select
+      // (e.g. they navigated within the preview, fresh picker.js fired
+      // ready), re-send activate so the new picker.js picks up where the
+      // old one left off without the user having to click Select again.
+      if (pickerState === "selecting") {
+        try {
+          iframe.contentWindow.postMessage({ type: "io.picker.activate" }, "*");
+        } catch (_) {}
       }
     } else if (m.type === "io.picker.selected") {
       pendingSelection = {
-        selector: m.selector, tag: m.tag, attrs: m.attrs,
+        selector: m.selector, friendlyLabel: m.friendlyLabel,
+        tag: m.tag, attrs: m.attrs,
         outerHtml: m.outerHtml, styles: m.styles, rect: m.rect,
         url: m.url, pickedAt: m.pickedAt,
       };

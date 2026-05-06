@@ -39,7 +39,7 @@ async def test_picker_param_injects_script_before_head_close(fake_apps_root):
     with open(os.path.join(app_dir, "index.html"), "w", encoding="utf-8") as f:
         f.write(body)
 
-    resp = await _get(f"/tasks/preview-app/{slug}/?picker=1")
+    resp = await _get(f"/tasks/preview-app/{slug}/")
     assert resp.status_code == 200
     text = resp.text
     # Pin the static-mount path AND the version query so a regression
@@ -52,7 +52,9 @@ async def test_picker_param_injects_script_before_head_close(fake_apps_root):
     assert 0 < pos_script < pos_head_close
 
 
-async def test_no_picker_param_serves_unmodified(fake_apps_root):
+async def test_html_injects_unconditionally(fake_apps_root):
+    """Picker.js is injected on every preview HTML response — no `?picker=1`
+    gate, so the parent's Select toggle doesn't need to reload the iframe."""
     slug = "beta"
     app_dir = os.path.join(fake_apps_root, slug)
     os.makedirs(app_dir)
@@ -62,7 +64,7 @@ async def test_no_picker_param_serves_unmodified(fake_apps_root):
 
     resp = await _get(f"/tasks/preview-app/{slug}/")
     assert resp.status_code == 200
-    assert "/tasks/static/picker.js" not in resp.text
+    assert "/tasks/static/picker.js" in resp.text
 
 
 async def test_html_without_head_close_serves_unmodified(fake_apps_root, caplog):
@@ -75,13 +77,14 @@ async def test_html_without_head_close_serves_unmodified(fake_apps_root, caplog)
         f.write(body)
 
     with caplog.at_level("WARNING"):
-        resp = await _get(f"/tasks/preview-app/{slug}/?picker=1")
+        resp = await _get(f"/tasks/preview-app/{slug}/")
     assert resp.status_code == 200
     assert "/tasks/static/picker.js" not in resp.text
     assert any("picker injection skipped" in r.message for r in caplog.records)
 
 
-async def test_picker_param_on_non_html_serves_unmodified(fake_apps_root):
+async def test_non_html_serves_unmodified(fake_apps_root):
+    """Only HTML responses get rewritten — CSS/JS/binary files pass through."""
     slug = "delta"
     app_dir = os.path.join(fake_apps_root, slug)
     os.makedirs(app_dir)
@@ -91,7 +94,7 @@ async def test_picker_param_on_non_html_serves_unmodified(fake_apps_root):
     with open(os.path.join(app_dir, "style.css"), "w", encoding="utf-8") as f:
         f.write(css_body)
 
-    resp = await _get(f"/tasks/preview-app/{slug}/style.css?picker=1")
+    resp = await _get(f"/tasks/preview-app/{slug}/style.css")
     assert resp.status_code == 200
     assert "/tasks/static/picker.js" not in resp.text
     assert resp.text == css_body
