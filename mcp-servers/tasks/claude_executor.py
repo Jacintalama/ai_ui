@@ -86,6 +86,29 @@ SCOPE RULES — READ CAREFULLY BEFORE BUILDING:
   4. Place apps under `apps/<slug>/` (e.g. `apps/todo-list/`). Do NOT put
      them under `mcp-servers/` unless they are actually MCP servers.
 
+CONTENT FILL — NON-NEGOTIABLE (overrides "TERSE / SIMPLEST" for any
+content the *visitor* of the built app will see):
+  • Every visible section MUST contain substantive body content. A heading
+    alone is NOT a section. Empty <section> bodies, or sections with only an
+    <h2> and no paragraph/list/grid/cards beneath it, are treated as a BUILD
+    FAILURE even if the file structure and styling are correct.
+  • Forbidden in shipped output: 'Lorem ipsum', 'TODO', 'Coming soon',
+    'Add content here', 'Your bio goes here', or any other placeholder
+    text. Comments like <!-- TODO --> are also forbidden in shipped HTML.
+  • If the user described the section topic but did NOT hand you the exact
+    text (bios, project descriptions, skill lists, taglines, hero copy,
+    About paragraphs), you MUST GENERATE realistic, polished, finished
+    copy yourself in a voice appropriate to the role. Don't ask — generate.
+  • Concrete fill targets per section type: About = 2-3 real paragraphs.
+    Skills = a populated grid of at least 8-12 items grouped sensibly.
+    Projects = at least 3-4 fully-described cards (title + 1-2 sentence
+    description + tech tags + link). Hero = name + tagline + CTA. Contact
+    = realistic-looking email + relevant social links.
+  • Self-check before COMPLETED: mentally scroll the rendered page top to
+    bottom — would a first-time visitor see real text, lists, or cards in
+    EVERY section? If any section would render as empty whitespace below
+    its heading, you are NOT done — go fill it before emitting COMPLETED.
+
 FILE LAYOUT (MANDATORY — create the project folder first, then subfolders, then files):
 
   apps/<slug>/                    ← project root, always created first
@@ -102,14 +125,26 @@ FILE LAYOUT (MANDATORY — create the project folder first, then subfolders, the
     schema.sql                    # Supabase tables + RLS — only for storage="supabase"
     public/                       # static assets (favicon, images); keep tiny — empty is fine
 
-INDEX.HTML CDN BLOCK (in <head>, in this exact order):
+INDEX.HTML CDN BLOCK (in <head>, in this EXACT order — order matters,
+do not rearrange):
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="styles/main.css">
-    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>  <!-- icons; optional -->
     <script type="module" src="src/main.js"></script>
-  For Supabase apps also load before main.js:
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  For Supabase apps also load BEFORE main.js (so the Supabase global is
+  ready when main.js imports run):
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  WHY main.js MUST come BEFORE alpinejs: Alpine fires its `alpine:init`
+  event during its own boot. main.js's job is to register Alpine.data()
+  components — if main.js runs AFTER alpinejs, Alpine has already
+  initialized and its event has already fired, so x-data="myComponent"
+  bindings never resolve and every <template x-for> renders nothing
+  (sections look empty in the browser even though the HTML and the
+  Alpine factory data are both correct). Putting main.js first registers
+  the listener; the deferred alpinejs script then runs and fires the
+  event into the live listener.
 
 ALPINE.JS USAGE (your reactivity layer — use this instead of addEventListener spaghetti):
   • Components live in src/components/<Name>.js as ES modules exporting an Alpine factory:
@@ -150,8 +185,16 @@ Complete the task autonomously. If you cannot proceed because of:
   - Unclear requirement -> respond ending with: NEEDS_INPUT: <clarifying question>
   - Hard blocker -> respond ending with: NEEDS_STEPS: <numbered manual steps>
 
-When done successfully, respond ending with: COMPLETED: <summary of what you did>
-(include the short commit hash if you made one: "COMPLETED: ... (commit abc1234)")
+Tool usage rule: BEFORE calling Edit or Write on any path that already
+exists, FIRST call Read on that path. Skipping the Read step makes the
+Edit/Write call fail with a "File has not been read yet" tool error and
+forces a retry. New files (paths that do not exist yet) can be Written
+without a prior Read.
+
+When done successfully, respond ending with the literal sentinel on its own
+line: `COMPLETED: <summary of what you did>` (include the short commit hash
+if you made one: `COMPLETED: ... (commit abc1234)`). Use exactly this form —
+the colon is required. Do NOT prefix it with `---` or other markdown.
 
 {supabase_block}"""
 
@@ -478,6 +521,12 @@ RULES (in priority order):
      Do not delete data files (apps/{slug}/data/*.db). If schema changes,
      write an ALTER migration; never drop and recreate.
   6. COMMIT: Stage only the files you changed. One commit, clear message.
+  7. CONTENT FILL: If the request adds a new visible section (e.g. "add
+     a testimonials section", "add a pricing section"), the new section
+     MUST contain substantive body content — at least 3 realistic items
+     for a list/grid, 2-3 paragraphs for narrative copy. No empty bodies,
+     no placeholder strings, no <!-- TODO -->. Generate the content
+     yourself in a voice that matches the rest of the app.
 
 WORKFLOW:
   1. If the request replaces a placeholder value (name, brand, copy):
@@ -662,12 +711,18 @@ class Outcome:
 
 
 _SENTINEL_RE = re.compile(
+    # Match a sentinel keyword at start-of-line, optionally preceded by a
+    # markdown `---` separator. Accept either `:` or whitespace after the
+    # keyword — Claude sometimes writes `--- COMPLETED Built apps/foo/`
+    # instead of the strict `COMPLETED: <summary>` form, and parsing the
+    # whole build as "failed" because of that punctuation difference left
+    # users stuck on a "QUEUED" overlay even though the work succeeded.
+    # `\b` prevents matching inside words (e.g., "PRECOMPLETED").
     # `rest` captures everything up to the NEXT sentinel (or end-of-string).
     # Non-greedy + lookahead so a multiline COMPLETED block — including a
-    # "Next ideas:" suggestions section — is preserved intact. Single-line
-    # payloads still work (the lookahead falls through to \Z).
-    r"(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS):\s*"
-    r"(?P<rest>.*?)(?=\n\s*(?:COMPLETED|NEEDS_INPUT|NEEDS_STEPS):|\Z)",
+    # "Next ideas:" suggestions section — is preserved intact.
+    r"(?:^|\n)\s*(?:-{3,}\s*)?\b(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s]\s*"
+    r"(?P<rest>.*?)(?=\n\s*(?:-{3,}\s*)?\b(?:COMPLETED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s]|\Z)",
     re.DOTALL,
 )
 

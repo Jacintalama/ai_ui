@@ -729,6 +729,59 @@
     }
     .build-overlay .actions { display: flex; gap: 8px; margin-top: 6px; }
     .build-overlay .actions .btn { padding: 8px 16px; }
+    .build-overlay .bov-answer {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: #050507;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .build-overlay .bov-answer[hidden] { display: none; }
+    .build-overlay .bov-question {
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .build-overlay .bov-question::before {
+      content: "AIUI Agent is asking:";
+      display: block;
+      color: var(--accent);
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .build-overlay .bov-answer textarea {
+      width: 100%;
+      min-height: 72px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+      resize: vertical;
+    }
+    .build-overlay .bov-answer textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    .build-overlay .bov-answer-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .build-overlay .bov-answer-actions .btn { padding: 8px 14px; }
 
     .back-link {
       display: inline-flex;
@@ -1791,6 +1844,21 @@
       color: var(--muted);
       font-style: italic;
     }
+    .chat-bubble.user .chat-attachments {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .chat-bubble.user .chat-attachments img {
+      max-width: 220px;
+      max-height: 180px;
+      border-radius: 8px;
+      border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+      object-fit: cover;
+      display: block;
+    }
+    .chat-bubble.user .chat-attachments + .chat-text:empty { display: none; }
     .chat-bubble .markdown p { margin: 0 0 6px 0; }
     .chat-bubble .markdown p:last-child { margin-bottom: 0; }
     .chat-bubble .markdown strong { color: var(--text); font-weight: 600; }
@@ -2128,8 +2196,20 @@
   <h2 id="build-title">AIUI Agent is building your app…</h2>
   <div class="sub" id="build-sub">Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.</div>
   <div class="phase-chip" id="build-phase">Starting up</div>
-  <div class="progress-bar"></div>
+  <div class="progress-bar" id="build-progress"></div>
   <div class="live-log" id="build-log"><span class="cursor"></span></div>
+  <div class="bov-answer" id="build-answer" hidden>
+    <div class="bov-question" id="build-question"></div>
+    <textarea
+      id="build-answer-text"
+      rows="3"
+      placeholder="Type your answer to the AI… (Cmd/Ctrl-Enter to send)"
+    ></textarea>
+    <div class="bov-answer-actions">
+      <button class="btn btn-primary" id="build-send" type="button">Send answer</button>
+      <button class="btn btn-danger"  id="build-cancel" type="button">Cancel build</button>
+    </div>
+  </div>
   <div class="actions">
     <button class="btn btn-primary" id="build-start" type="button" hidden>▶ Start build now</button>
     <button class="btn btn-primary" id="build-retry" type="button" hidden>Try again</button>
@@ -2851,10 +2931,21 @@
   const $bovTitle    = document.getElementById("build-title");
   const $bovSub      = document.getElementById("build-sub");
   const $bovPhase    = document.getElementById("build-phase");
+  const $bovProgress = document.getElementById("build-progress");
   const $bovLog      = document.getElementById("build-log");
   const $bovRetry    = document.getElementById("build-retry");
   const $bovStart    = document.getElementById("build-start");
+  // NEEDS_INPUT panel — shown when the BUILD task hits awaiting_input
+  // so users can answer the agent's question without leaving the overlay.
+  // Without this, awaiting_input bricks the user (build keeps running but
+  // there's no input box on this screen to send the answer to /answer).
+  const $bovAnswer     = document.getElementById("build-answer");
+  const $bovQuestion   = document.getElementById("build-question");
+  const $bovAnswerText = document.getElementById("build-answer-text");
+  const $bovSend       = document.getElementById("build-send");
+  const $bovCancel     = document.getElementById("build-cancel");
   let _bovAutoKicked = false;  // only fire auto-execute once per page load
+  let _bovSendInFlight = false;
   const BUILDING_STATES = new Set([
     "pending", "planning", "running", "awaiting_input", "awaiting_plan_review", "claimed_manual",
   ]);
@@ -2991,6 +3082,18 @@
         try { loadEnhanceHistory(); } catch (_) {}
         try { loadGraph(); } catch (_) {}
         try { refreshPreviewIframeIfVisible(); } catch (_) {}
+        // Auto-land on the Preview tab so the user sees their finished app
+        // immediately, not the file tree. Skip if the URL explicitly
+        // requested another tab via ?tab=<name>.
+        try {
+          const requestedTab = new URLSearchParams(window.location.search).get("tab");
+          if (!requestedTab) switchTab("preview");
+        } catch (_) {}
+        // Kick the preview server. init()'s auto-start is short-circuited
+        // when the task is mid-build (overlay owns the page), so on the
+        // build-completion path we have to fire it ourselves — otherwise
+        // the user lands on the Preview tab with a "Not running" pill.
+        try { maybeAutoStartPreview(); } catch (_) {}
         if (typeof toast === "function") toast("Your app is ready", "success", 4000);
         return true;
       }
@@ -3006,6 +3109,29 @@
       // Still working
       $bov.hidden = false;
       $bovPhase.textContent = PHASE_LABELS[task.status] || task.status;
+
+      // awaiting_input: agent emitted NEEDS_INPUT. Swap the live-log /
+      // progress-bar for an answer panel so the user can reply (POST
+      // /answer) or bail out (POST /cancel). Otherwise the overlay just
+      // sits showing a "NEEDS YOUR INPUT" pill with no way to respond.
+      const isAwaitingInput = task.status === "awaiting_input";
+      $bovAnswer.hidden = !isAwaitingInput;
+      $bovLog.style.display = isAwaitingInput ? "none" : "";
+      if ($bovProgress) $bovProgress.style.display = isAwaitingInput ? "none" : "";
+      if (isAwaitingInput) {
+        $bovTitle.textContent = "AIUI Agent has a question";
+        $bovSub.textContent = "Answer below so it can keep going. Cancel to bail out and start over.";
+        const q = (task.result || "").trim();
+        $bovQuestion.textContent = q || "The agent needs more info to continue.";
+      } else if (!$bov.classList.contains("failed")) {
+        // Restore the default "Building…" copy when the task resumes
+        // (e.g. user just submitted an answer and status flipped back to
+        // running). Don't clobber the failed-state copy set elsewhere.
+        if ($bovTitle.textContent === "AIUI Agent has a question") {
+          $bovTitle.textContent = "AIUI Agent is building your app…";
+          $bovSub.textContent = "Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.";
+        }
+      }
 
       // Auto-kick: a pending BUILD/INTEGRATE/RESEARCH with zero executions
       // means the initial /execute call never reached the backend. Fire it
@@ -3099,6 +3225,65 @@
       }
       if (_bovPollTimer) clearInterval(_bovPollTimer);
       _bovStart();
+    });
+  }
+
+  if ($bovSend) {
+    $bovSend.addEventListener("click", async () => {
+      if (_bovSendInFlight) return;
+      const answer = ($bovAnswerText.value || "").trim();
+      if (!answer) { $bovAnswerText.focus(); return; }
+      _bovSendInFlight = true;
+      $bovSend.disabled = true;
+      $bovSend.textContent = "Sending…";
+      try {
+        await apiFetch("POST", "/" + taskId + "/answer", { answer });
+        $bovAnswerText.value = "";
+        // Optimistic flip back to the build UI; the next poll tick will
+        // confirm the status change from awaiting_input → running.
+        $bovAnswer.hidden = true;
+        $bovLog.style.display = "";
+        if ($bovProgress) $bovProgress.style.display = "";
+        $bovTitle.textContent = "AIUI Agent is building your app…";
+        $bovSub.textContent = "Got your answer — picking back up where it left off.";
+      } catch (err) {
+        if (typeof toast === "function") {
+          toast("Couldn't send answer: " + err.message, "error", 5000);
+        } else {
+          alert("Couldn't send answer: " + err.message);
+        }
+      } finally {
+        _bovSendInFlight = false;
+        $bovSend.disabled = false;
+        $bovSend.textContent = "Send answer";
+      }
+    });
+  }
+  if ($bovAnswerText) {
+    $bovAnswerText.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        if ($bovSend) $bovSend.click();
+      }
+    });
+  }
+  if ($bovCancel) {
+    $bovCancel.addEventListener("click", async () => {
+      if (!confirm("Cancel this build? You'll be sent back to your projects.")) return;
+      $bovCancel.disabled = true;
+      $bovCancel.textContent = "Cancelling…";
+      try {
+        await apiFetch("POST", "/" + taskId + "/cancel");
+        window.location.href = "/tasks/static/projects.html";
+      } catch (err) {
+        if (typeof toast === "function") {
+          toast("Cancel failed: " + err.message, "error", 5000);
+        } else {
+          alert("Cancel failed: " + err.message);
+        }
+        $bovCancel.disabled = false;
+        $bovCancel.textContent = "Cancel build";
+      }
     });
   }
 
@@ -6239,7 +6424,7 @@
   }
 
   // ── Chat mode bubbles ──
-  function renderChatBubble(kind, content) {
+  function renderChatBubble(kind, content, opts) {
     // Remove the empty-state placeholder on first message
     const empty = document.getElementById("enhance-empty");
     if (empty) empty.remove();
@@ -6248,7 +6433,26 @@
     el.className = "chat-bubble " + kind;
     if (kind === "user") {
       el.innerHTML = '<div class="body"></div>';
-      el.querySelector(".body").textContent = content || "";
+      const body = el.querySelector(".body");
+      // Inline-render any image attachments above the user's text so the
+      // bubble shows what was actually sent (otherwise it looks like the
+      // image vanished into the void).
+      const atts = (opts && opts.attachments) || [];
+      if (atts.length) {
+        const row = document.createElement("div");
+        row.className = "chat-attachments";
+        for (const a of atts) {
+          const img = document.createElement("img");
+          img.src = a.previewUrl;
+          img.alt = (a.file && a.file.name) || "attachment";
+          row.appendChild(img);
+        }
+        body.appendChild(row);
+      }
+      const txt = document.createElement("div");
+      txt.className = "chat-text";
+      txt.textContent = content || "";
+      body.appendChild(txt);
     } else {
       el.innerHTML = '<div class="body"><div class="markdown"></div></div>';
       if (content) {
@@ -6306,14 +6510,13 @@
   }
 
   async function submitChat(text) {
-    // Plan mode doesn't accept attachments. Drop any chips that were added
-    // before the user switched modes — keeping them would silently leak into
-    // the next Build send (and leave their ObjectURLs alive).
-    if (pendingAttachments.length > 0) {
-      clearPendingAttachments();
-    }
-    renderChatBubble("user", text);
+    // Snapshot attachments at submit time so we can render them in the
+    // user's bubble AND send them to the chat endpoint. Cleared in the
+    // finally block once the request resolves.
+    const attachmentsForThisTurn = pendingAttachments.slice();
+    renderChatBubble("user", text, { attachments: attachmentsForThisTurn });
     // Persist user message (fire-and-forget — chat must never feel slow).
+    // Attachments are NOT persisted — they live only for this single turn.
     if (slug) {
       fetch(`/api/projects/${encodeURIComponent(slug)}/chat`, {
         method: "POST",
@@ -6325,11 +6528,18 @@
     const aiBubble = renderChatBubble("ai", null);  // "thinking…"
     setSendDisabled(true);
     try {
-      const resp = await apiFetch("POST", "/chat", {
-        source_task_id: taskId,
-        message: text,
-        history: chatHistory.slice(-20),  // cap history sent to API
-      });
+      // Always go through multipart now — `/chat` accepts form-data with
+      // optional `files`. With no attachments, the field list is just
+      // source_task_id / message / history; with attachments, image bytes
+      // ride along and Claude sees them as `image` content blocks.
+      const fd = new FormData();
+      fd.append("source_task_id", taskId);
+      fd.append("message", text);
+      fd.append("history", JSON.stringify(chatHistory.slice(-20)));
+      for (const a of attachmentsForThisTurn) {
+        fd.append("files", a.file, a.file.name);
+      }
+      const resp = await apiFetchMultipart("POST", "/chat", fd);
       aiBubble.classList.remove("thinking");
       const parts = splitChatReply(resp.reply || "");
       let replyText = parts.body || resp.reply || "";
@@ -6361,6 +6571,11 @@
       aiBubble.classList.remove("thinking");
       aiBubble.classList.add("failed");
       aiBubble.querySelector(".markdown").innerHTML = renderMarkdown("Chat failed: " + (e.message || String(e)));
+    } finally {
+      // Free the snapshot's ObjectURLs and reset the staging tray. Done in
+      // finally so a network failure still clears chips (otherwise the next
+      // send would silently re-attach the same images).
+      clearPendingAttachments();
     }
     setSendDisabled(false);
     $log.scrollTop = $log.scrollHeight;

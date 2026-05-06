@@ -34,6 +34,15 @@
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     [hidden] { display: none !important; }
+    /* Defensive layout clamp for the templates modal. Browser extensions
+       (password managers, ad blockers, "save for later" pickers) sometimes
+       inject phantom UI inside modals that visually collide with template
+       cards — and a stray cached element below the grid would also slip
+       through here. Restrict the grid + modal body to known-good children
+       only so anything else gets `display: none` instead of overlapping
+       the layout. */
+    #templates-modal #tg-grid > :not(.tcard):not(.members-empty) { display: none !important; }
+    #templates-modal .modal-body > :not(.form-hint):not(.filter-row):not(#tg-grid) { display: none !important; }
     html, body { height: 100%; }
     body {
       background: var(--bg);

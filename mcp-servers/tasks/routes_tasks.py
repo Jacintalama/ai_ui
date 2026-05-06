@@ -14,7 +14,7 @@ from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import AdminUser, current_admin
 from db import session
 from models import ChatMessage, ProjectSupabase, TaskItem
-from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, TaskOut
+from schemas import AnswerRequest, ChatMessage as ChatMessageSchema, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, TaskOut
 from templates import _has_template_app, build_rules_for, is_valid_key, requires_supabase
 
 _FILENAME_SAFE_RE = _re.compile(r"[^A-Za-z0-9._-]+")
@@ -957,27 +957,74 @@ async def cancel_task(
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
-    body: ChatRequest,
+    source_task_id: str = Form(...),
+    message: str = Form(..., min_length=1, max_length=2000),
+    history: str = Form(default="[]"),
+    files: list[UploadFile] = File(default_factory=list),
     user: AdminUser = Depends(current_admin),
 ):
-    """Lightweight chat about an existing app.
+    """Lightweight chat about an existing app, with optional image attachments.
 
     Calls the Anthropic Messages API directly — no build pipeline, no git
     commits, no file edits. The Enhance panel's Chat mode uses this so admins
     can ask questions, brainstorm changes, or just discuss the app without
     triggering an expensive build run that might fail on a greeting like "hi".
 
+    Image attachments (PNG/JPEG/WebP/GIF, ≤5 MB each, ≤5 files) are passed
+    to Claude as `image` content blocks on the latest user message — so users
+    can paste a screenshot and ask "build something like this" or "what's
+    wrong with the layout here?". Images are NOT persisted to disk or chat
+    history; they live only for the duration of this single API call.
+
     Uses Haiku for latency + cost. Retrieves the existing app's file list so
     Claude can give grounded answers about what's in the app.
     """
+    import base64
+    import json
     import os
     import httpx
     from uuid import UUID as _UUID
 
     try:
-        source_id = _UUID(body.source_task_id)
+        source_id = _UUID(source_task_id)
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid source_task_id")
+
+    try:
+        history_raw = json.loads(history or "[]")
+        if not isinstance(history_raw, list):
+            raise ValueError("history must be a list")
+        parsed_history = [ChatMessageSchema(**m) for m in history_raw[-40:]]
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid history: {e}")
+
+    if len(files) > MAX_FILES:
+        raise HTTPException(400, f"Too many attachments (max {MAX_FILES})")
+
+    image_blocks: list[dict] = []
+    for f in files:
+        body_bytes = await f.read(MAX_FILE_BYTES + 1)
+        if len(body_bytes) > MAX_FILE_BYTES:
+            raise HTTPException(400, f"{f.filename}: file too large (max 5 MB)")
+        if f.content_type not in ALLOWED_MIME:
+            raise HTTPException(
+                400,
+                f"Unsupported file type: {f.content_type}. Images only (PNG, JPEG, WebP, GIF).",
+            )
+        sniffed = _sniff_image_mime(body_bytes[:12])
+        if sniffed is None:
+            raise HTTPException(
+                400,
+                f"{f.filename}: file contents do not match a supported image format.",
+            )
+        image_blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": sniffed,
+                "data": base64.b64encode(body_bytes).decode("ascii"),
+            },
+        })
 
     async with session() as s:
         source = await _get_owned_task(s, source_id, user.email)
@@ -1110,8 +1157,18 @@ async def chat(
         f"APP FILES:\n{file_listing}"
     )
 
-    messages = [m.model_dump() for m in body.history] + [
-        {"role": "user", "content": body.message}
+    # Build the latest user turn. With image attachments, content becomes a
+    # list of blocks (images + the text prompt); without, a plain string —
+    # both forms are accepted by the Anthropic Messages API.
+    if image_blocks:
+        latest_user_content: list[dict] | str = image_blocks + [
+            {"type": "text", "text": message}
+        ]
+    else:
+        latest_user_content = message
+
+    messages = [m.model_dump() for m in parsed_history] + [
+        {"role": "user", "content": latest_user_content}
     ]
 
     try:
