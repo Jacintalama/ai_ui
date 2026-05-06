@@ -1474,7 +1474,9 @@
     }
     /* "Editing heading: …" indicator inside the bubble — same look in user
        and AI bubbles so the whole thread reads like one element-scoped
-       conversation. The technical selector lands on the title attribute. */
+       conversation. The technical selector lands on the title attribute.
+       block + fit-content so the chip sits on its own line (forcing the
+       phase indicator below) without stretching to the full bubble width. */
     .enhance-bubble .bubble-selection {
       font-size: 11.5px;
       color: #cfe0ff;
@@ -1482,14 +1484,15 @@
       border: 1px solid rgba(79,141,240,0.4);
       border-radius: 4px;
       padding: 2px 8px;
-      display: inline-block;
-      margin-bottom: 6px;
+      display: block;
+      width: fit-content;
       max-width: 100%;
+      margin-bottom: 8px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      box-sizing: border-box;
     }
-    .enhance-bubble.user .bubble-selection { align-self: flex-end; }
     .enhance-bubble.user .user-text { white-space: pre-wrap; }
     .enhance-bubble.ai .phase-inline {
       display: inline-flex;
