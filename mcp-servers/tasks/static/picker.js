@@ -87,8 +87,12 @@
     while (cur && cur !== document.body && parts.length < 4) {
       const tag = cur.tagName.toLowerCase();
       const id = cur.id ? "#" + cur.id : "";
-      const cls = (cur.className && typeof cur.className === "string")
-        ? "." + cur.className.trim().split(/\s+/).slice(0, 2).join(".")
+      const classStr = typeof cur.className === "string"
+        ? cur.className
+        : (cur.className && cur.className.baseVal) || "";
+      const trimmed = classStr.trim();
+      const cls = trimmed
+        ? "." + trimmed.split(/\s+/).slice(0, 2).join(".")
         : "";
       let nth = "";
       if (!id && cur.parentElement) {

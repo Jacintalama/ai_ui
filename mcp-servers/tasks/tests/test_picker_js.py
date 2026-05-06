@@ -58,6 +58,16 @@ def harness_url():
         yield f"http://127.0.0.1:{port}/picker_harness.html"
 
 
+@pytest.fixture
+def browser():
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        try:
+            yield b
+        finally:
+            b.close()
+
+
 def _outer_html(harness_url: str) -> str:
     """Build the outer test page that embeds the harness in an iframe."""
     return f"""
@@ -75,84 +85,73 @@ def _outer_html(harness_url: str) -> str:
 """
 
 
-def test_picker_posts_ready_on_load(harness_url):
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_context().new_page()
-        page.set_content(_outer_html(harness_url))
-        page.wait_for_function(
-            "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
-            timeout=3000,
-        )
-        msgs = page.evaluate("window.__msgs")
-        assert any(m.get("type") == "io.picker.ready" for m in msgs)
-        browser.close()
+def test_picker_posts_ready_on_load(browser, harness_url):
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
+    msgs = page.evaluate("window.__msgs")
+    assert any(m.get("type") == "io.picker.ready" for m in msgs)
 
 
-def test_picker_activate_mounts_overlay(harness_url):
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_context().new_page()
-        page.set_content(_outer_html(harness_url))
-        page.wait_for_function(
-            "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
-            timeout=3000,
-        )
+def test_picker_activate_mounts_overlay(browser, harness_url):
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
 
-        # Send activate INTO the iframe (not to the top frame).
-        page.evaluate("""
-          () => document.getElementById("iframe").contentWindow.postMessage(
-            {type: "io.picker.activate"}, "*"
-          )
-        """)
+    # Send activate INTO the iframe (not to the top frame).
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
 
-        # The overlay element lives inside the iframe.
-        iframe_locator = page.frame_locator("#iframe")
-        iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+    # The overlay element lives inside the iframe.
+    iframe_locator = page.frame_locator("#iframe")
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
 
-        # Hover over the card border (top-left, just inside) so the topmost
-        # element is the article itself, not a text child like h3.
-        iframe_locator.locator("#card-1").hover(position={"x": 2, "y": 2})
+    # Hover over the card border (top-left, just inside) so the topmost
+    # element is the article itself, not a text child like h3.
+    iframe_locator.locator("#card-1").hover(position={"x": 2, "y": 2})
 
-        # The outer page (about:blank from set_content) is cross-origin to the
-        # http-served iframe, so we can't read contentDocument directly. Use
-        # Playwright's bounding_box() on the iframe locator instead — it works
-        # cross-origin via the devtools protocol.
-        overlay_box = iframe_locator.locator("#__io_picker_overlay").bounding_box()
-        card_box = iframe_locator.locator("#card-1").bounding_box()
-        assert overlay_box is not None
-        assert card_box is not None
-        # Overlay should be sized to the hovered card.
-        assert overlay_box["width"] > 50 and overlay_box["height"] > 20
-        assert abs(overlay_box["width"] - card_box["width"]) < 2
-        assert abs(overlay_box["height"] - card_box["height"]) < 2
-
-        browser.close()
+    # The outer page (about:blank from set_content) is cross-origin to the
+    # http-served iframe, so we can't read contentDocument directly. Use
+    # Playwright's bounding_box() on the iframe locator instead — it works
+    # cross-origin via the devtools protocol.
+    overlay_box = iframe_locator.locator("#__io_picker_overlay").bounding_box()
+    card_box = iframe_locator.locator("#card-1").bounding_box()
+    assert overlay_box is not None
+    assert card_box is not None
+    # Overlay should be sized to the hovered card.
+    assert overlay_box["width"] > 50 and overlay_box["height"] > 20
+    assert abs(overlay_box["width"] - card_box["width"]) < 2
+    assert abs(overlay_box["height"] - card_box["height"]) < 2
 
 
-def test_picker_deactivate_removes_overlay(harness_url):
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_context().new_page()
-        page.set_content(_outer_html(harness_url))
-        page.wait_for_function(
-            "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
-            timeout=3000,
-        )
+def test_picker_deactivate_removes_overlay(browser, harness_url):
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
 
-        page.evaluate("""
-          () => document.getElementById("iframe").contentWindow.postMessage(
-            {type: "io.picker.activate"}, "*"
-          )
-        """)
-        iframe_locator = page.frame_locator("#iframe")
-        iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
+    iframe_locator = page.frame_locator("#iframe")
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
 
-        page.evaluate("""
-          () => document.getElementById("iframe").contentWindow.postMessage(
-            {type: "io.picker.deactivate"}, "*"
-          )
-        """)
-        iframe_locator.locator("#__io_picker_overlay").wait_for(state="detached", timeout=2000)
-
-        browser.close()
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.deactivate"}, "*"
+      )
+    """)
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="detached", timeout=2000)
