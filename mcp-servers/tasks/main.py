@@ -124,6 +124,10 @@ from models import PublishedApp as _PublishedApp
 _APP_ROOT_FS = "/workspace/ai_ui/apps"
 _SLUG_ROUTE_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
 
+# Bumped when picker.js itself changes — busts the iframe browser cache for
+# preview HTML served with ?picker=1. Module-level so tests and routes share it.
+PICKER_JS_VERSION = "1"
+
 _MIME_BY_EXT = {
     ".html": "text/html; charset=utf-8",
     ".htm":  "text/html; charset=utf-8",
@@ -503,6 +507,42 @@ async def serve_preview_app(
 
     ext = _os.path.splitext(target)[1].lower()
     media = _MIME_BY_EXT.get(ext, "application/octet-stream")
+
+    # Picker injection: if the request asks for picker mode AND we're serving
+    # HTML, splice <script src="/tasks/static/picker.js?v=N"></script> before </head>.
+    # Any failure (binary file, missing </head>, decode error) falls through
+    # to the standard FileResponse path — the picker is never load-bearing.
+    want_picker = bool(request and request.query_params.get("picker") == "1")
+    # Note: the outer `request and request.query_params.get(...)` guard above
+    # protects us if FastAPI ever invokes this without a Request injection.
+    # Don't refactor `want_picker` away — the kwarg is `Optional[Request] = None`.
+    if want_picker and ext in (".html", ".htm"):
+        try:
+            with open(target, "rb") as f:
+                raw = f.read()
+            text = raw.decode("utf-8")
+            head_close_idx = text.lower().find("</head>")
+            if head_close_idx >= 0:
+                tag = (
+                    f'<script src="/tasks/static/picker.js?v={PICKER_JS_VERSION}"></script>'
+                )
+                rewritten = text[:head_close_idx] + tag + text[head_close_idx:]
+                return Response(
+                    content=rewritten,
+                    media_type=media,
+                    headers={"Cache-Control": "no-store"},
+                )
+            else:
+                logger.warning(
+                    "picker injection skipped: no </head> in %s/%s",
+                    slug,
+                    rel,
+                )
+        except Exception as exc:
+            logger.warning(
+                "picker injection failed for %s/%s: %s", slug, rel, exc
+            )
+
     return FileResponse(
         target,
         media_type=media,
