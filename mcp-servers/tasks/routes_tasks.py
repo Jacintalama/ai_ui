@@ -6,6 +6,7 @@ from pathlib import PurePath as _PurePath
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import or_, select, text
 
 import uuid
@@ -955,12 +956,29 @@ async def cancel_task(
     return item
 
 
+class SelectionPayload(BaseModel):
+    selector: str = Field(..., max_length=400)
+    tag: str = Field(..., max_length=40)
+    attrs: dict[str, str] = Field(default_factory=dict)
+    outerHtml: str = Field(..., max_length=2200)
+    styles: dict[str, str] = Field(default_factory=dict)
+    rect: dict[str, float] | None = None
+    url: str | None = Field(default=None, max_length=2000)
+    pickedAt: int | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+SELECTION_RAW_MAX = 8 * 1024  # 8 KB raw cap before parsing
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     source_task_id: str = Form(...),
     message: str = Form(..., min_length=1, max_length=2000),
     history: str = Form(default="[]"),
     files: list[UploadFile] = File(default_factory=list),
+    selection: str | None = Form(default=None),
     user: AdminUser = Depends(current_admin),
 ):
     """Lightweight chat about an existing app, with optional image attachments.
@@ -997,6 +1015,27 @@ async def chat(
         parsed_history = [ChatMessageSchema(**m) for m in history_raw[-40:]]
     except (json.JSONDecodeError, ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid history: {e}")
+
+    parsed_selection: SelectionPayload | None = None
+    if selection is not None:
+        if len(selection) > SELECTION_RAW_MAX:
+            raise HTTPException(
+                400, f"selection field too large (max {SELECTION_RAW_MAX} bytes)"
+            )
+        try:
+            sel_raw = json.loads(selection)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f"Invalid selection JSON: {e}")
+        try:
+            parsed_selection = SelectionPayload.model_validate(sel_raw)
+        except ValidationError as e:
+            raise HTTPException(400, f"Invalid selection payload: {e.errors()}")
+        logger.info(
+            "chat: selection present (selector=%s tag=%s task=%s)",
+            parsed_selection.selector,
+            parsed_selection.tag,
+            source_id,
+        )
 
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"Too many attachments (max {MAX_FILES})")
