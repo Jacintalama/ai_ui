@@ -24,6 +24,8 @@
   let $overlay = null;
   let $label = null;
   let lastTarget = null;
+  let altDown = false;
+  let prevBodyTabIndex = null;  // restored on deactivate
 
   // Hardened post() from Task 2 — DO NOT regress this.
   function post(msg) {
@@ -73,7 +75,11 @@
   }
 
   function pickableTarget(el) {
-    if (!el || el === document.documentElement || el === document.body) return null;
+    if (!el) return null;
+    if (altDown && el.parentElement && el.parentElement !== document.documentElement && el.parentElement !== document.body) {
+      el = el.parentElement;
+    }
+    if (el === document.documentElement || el === document.body) return null;
     if (el.id === OVERLAY_ID || el.id === LABEL_ID) return null;
     return el;
   }
@@ -109,6 +115,10 @@
 
   function onMouseMove(e) {
     if (state !== "listening") return;
+    // Mouse events expose altKey natively, which is more reliable than tracking
+    // keydown/keyup state (esp. when Playwright's click(modifiers=["Alt"]) only
+    // synthesizes the modifier on the mouse event without a real keydown).
+    if (typeof e.altKey === "boolean") altDown = e.altKey;
     const el = pickableTarget(document.elementFromPoint(e.clientX, e.clientY));
     if (!el) {
       $overlay.style.display = "none";
@@ -178,10 +188,33 @@
     if (state !== "listening") return;
     e.preventDefault();
     e.stopImmediatePropagation();
+    // Honor Alt held at click time (synthesized modifier on the click event
+    // works even when no separate keydown fires).
+    if (typeof e.altKey === "boolean") altDown = e.altKey;
     const el = pickableTarget(document.elementFromPoint(e.clientX, e.clientY));
     if (!el) return;
     post(buildPayload(el));
     deactivate();
+  }
+
+  function onKey(e) {
+    if (state !== "listening") return;
+    if (e.type === "keydown" && e.key === "Escape") {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      post({ type: "io.picker.cancelled" });
+      deactivate();
+      return;
+    }
+    if (e.key === "Alt") {
+      altDown = e.type === "keydown";
+      // Repaint hover so outline jumps to parent immediately.
+      if (lastTarget) {
+        const r = lastTarget.getBoundingClientRect();
+        const synth = { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+        onMouseMove(synth);
+      }
+    }
   }
 
   function activate() {
@@ -193,18 +226,36 @@
     document.addEventListener("mousedown", suppress, true);
     document.addEventListener("mouseup", suppress, true);
     document.addEventListener("submit", suppress, true);
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("keyup", onKey, true);
     document.body.style.cursor = "crosshair";
+    // Make body focusable so it can receive keyboard events even when no
+    // input/button has focus. Restored on deactivate.
+    prevBodyTabIndex = document.body.hasAttribute("tabindex")
+      ? document.body.getAttribute("tabindex")
+      : null;
+    document.body.setAttribute("tabindex", "-1");
+    try { document.body.focus({ preventScroll: true }); } catch (_) {}
   }
 
   function deactivate() {
     if (state === "inert") return;
     state = "inert";
+    altDown = false;  // reset so a stuck Alt doesn't carry across activations
     document.removeEventListener("mousemove", onMouseMove, true);
     document.removeEventListener("click", onClick, true);
     document.removeEventListener("mousedown", suppress, true);
     document.removeEventListener("mouseup", suppress, true);
     document.removeEventListener("submit", suppress, true);
+    document.removeEventListener("keydown", onKey, true);
+    document.removeEventListener("keyup", onKey, true);
     document.body.style.cursor = "";
+    if (prevBodyTabIndex === null) {
+      document.body.removeAttribute("tabindex");
+    } else {
+      document.body.setAttribute("tabindex", prevBodyTabIndex);
+    }
+    prevBodyTabIndex = null;
     teardownOverlay();
   }
 
