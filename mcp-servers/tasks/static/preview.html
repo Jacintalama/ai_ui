@@ -3895,6 +3895,42 @@
     if (pickerState !== "off") setPickerOff();
   });
 
+  // Friendly type names for fallback when a stale picker.js sent us
+  // a payload without `friendlyLabel`. Mirrors picker.js's FRIENDLY_TAG so
+  // the user never sees a raw CSS selector in the chip.
+  const FRIENDLY_TAG_PARENT = {
+    BUTTON: "button", A: "link", IMG: "image",
+    H1: "heading", H2: "heading", H3: "heading",
+    H4: "heading", H5: "heading", H6: "heading",
+    INPUT: "input", TEXTAREA: "text area", SELECT: "dropdown",
+    UL: "list", OL: "list", LI: "list item",
+    NAV: "nav", HEADER: "header", FOOTER: "footer",
+    ASIDE: "sidebar", ARTICLE: "card", SECTION: "section",
+    MAIN: "main", FORM: "form", LABEL: "label", P: "paragraph",
+    TABLE: "table", TR: "row", TD: "cell", TH: "cell",
+    BLOCKQUOTE: "quote", CODE: "code", PRE: "code block",
+    HR: "divider", SVG: "icon", DIV: "container", SPAN: "text",
+  };
+
+  function selectionDisplayLabel(sel) {
+    // Live picker.js (>= v=2) sends friendlyLabel directly — use it.
+    if (sel && sel.friendlyLabel) {
+      const f = sel.friendlyLabel;
+      return f.length > 48 ? f.slice(0, 46) + "…" : f;
+    }
+    // Stale picker.js fallback — build a readable label from tag + outerHtml
+    // so the chip never shows a raw CSS selector to non-tech users.
+    const type = (sel && FRIENDLY_TAG_PARENT[String(sel.tag).toUpperCase()]) || "element";
+    let text = "";
+    if (sel && sel.outerHtml) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = sel.outerHtml;
+      text = (tmp.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    if (text.length > 32) text = text.slice(0, 30) + "…";
+    return text ? type + ': "' + text + '"' : type;
+  }
+
   function renderSelectionChip() {
     // Single-slot: clear any existing selection chip, then render the new one.
     const strip = document.getElementById("attachment-strip");
@@ -3909,21 +3945,10 @@
 
     const chip = document.createElement("span");
     chip.className = "chip chip-selection";
-    // Prefer the picker's friendly label (e.g. 'button: "Hire me"'). Fall back
-    // to a truncated selector if a stale payload from an older picker.js is
-    // still in flight (cache).
-    const friendly = pendingSelection.friendlyLabel || "";
-    let label;
-    if (friendly) {
-      label = friendly.length > 48 ? friendly.slice(0, 46) + "…" : friendly;
-    } else {
-      const sel = pendingSelection.selector;
-      label = sel.length > 40 ? sel.slice(0, 18) + "…" + sel.slice(-18) : sel;
-    }
     chip.innerHTML =
       '<span class="chip-text"></span>' +
       '<button class="chip-remove" type="button" aria-label="Remove selection">×</button>';
-    chip.querySelector(".chip-text").textContent = "Editing " + label;
+    chip.querySelector(".chip-text").textContent = "Editing " + selectionDisplayLabel(pendingSelection);
     // Hover the chip to see the technical selector (for curious / advanced users).
     chip.title = pendingSelection.selector || "";
     chip.querySelector(".chip-remove").addEventListener("click", () => {
@@ -6597,16 +6622,7 @@
         const sel = opts.selection;
         const selRow = document.createElement("div");
         selRow.className = "chat-selection";
-        const friendly = sel.friendlyLabel || "";
-        let label;
-        if (friendly) {
-          label = friendly.length > 48 ? friendly.slice(0, 46) + "…" : friendly;
-        } else {
-          label = sel.selector.length > 40
-            ? sel.selector.slice(0, 18) + "…" + sel.selector.slice(-18)
-            : sel.selector;
-        }
-        selRow.textContent = "Editing " + label;
+        selRow.textContent = "Editing " + selectionDisplayLabel(sel);
         selRow.title = sel.selector || "";
         body.appendChild(selRow);
       }
