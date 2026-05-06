@@ -59,14 +59,26 @@ pip install pytest-playwright
 python -m playwright install chromium
 ```
 
-- [ ] **Step 0.3: Confirm test runner sees existing tests**
+- [ ] **Step 0.3: Set DATABASE_URL stub and confirm test collection**
 
-```bash
-cd mcp-servers/tasks
-python -m pytest tests/test_preview_app_html_fallback.py -q
+`tests/conftest.py` reads `os.environ["DATABASE_URL"]` at module import time, so any pytest invocation needs that env var even for tests that don't touch the DB. On Windows / PowerShell:
+
+```powershell
+$env:DATABASE_URL = 'postgresql://stub:stub@localhost:5432/stub'
+python -m pytest tests/test_chat_history.py -q --collect-only
 ```
 
-Expected: green. (This is the closest analogue to what we're about to write.)
+Or via the Bash tool:
+
+```bash
+DATABASE_URL='postgresql://stub:stub@localhost:5432/stub' python -m pytest tests/test_chat_history.py -q --collect-only
+```
+
+Expected: `5 tests collected` (no errors). The stub URL is enough to satisfy the module-level env-var read; tests that actually use the `db_session` fixture would fail at runtime, which is fine — we don't need them to pass here. **All pytest invocations in subsequent tasks must set `DATABASE_URL` to this stub value.**
+
+- [ ] **Step 0.4: Local DB-test limitation — Task 6 implementer note**
+
+Task 6's `test_chat_selection.py` needs an admin user and a source task in the DB. On the Windows dev machine there is no local Postgres, so the canonical pattern from `test_chat_history.py` (which uses the real `db_session` fixture) cannot run end-to-end here. The Task 6 implementer should write tests that mock the dependency layer instead: override `current_admin` via `app.dependency_overrides[current_admin]`, monkeypatch `_get_owned_task` to return a stub task with `built_app_slug="alpha"`, and mock `httpx.AsyncClient.post` for the Anthropic call. This keeps the tests runnable locally without losing coverage of the validation + prompt-assembly logic. Real-DB integration coverage falls to Task 11's manual checklist on Hetzner.
 
 ---
 
