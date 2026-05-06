@@ -88,7 +88,8 @@ Three actors. One new message channel.
 
 **Suppression rules** (capture-phase, while listening)
 
-- `click`, `mousedown`, `mouseup`, `submit`, `keydown` listeners with `preventDefault()`. Without these, picking a `<button>` triggers Alpine handlers in addition to the picker, and picking a submit button in a form would fire the form.
+- `click`, `mousedown`, `mouseup`, `submit` listeners with `preventDefault()` + `stopImmediatePropagation()`. Without these, picking a `<button>` triggers Alpine handlers in addition to the picker, and picking a submit button in a form would fire the form.
+- `keydown` is **not blanket-suppressed** — only the `Escape` key is intercepted (to deactivate the picker). All other keys fall through normally. This matters because users may have global shortcuts in the preview app (e.g. `/` to focus search) and we don't want picker mode to silently break them.
 - Picker ignores `<html>` and `<body>` as targets — outline disappears, no chip if user clicks them.
 
 **Alt-hover parent affordance** (v1 substitute for "Pick from layers")
@@ -146,11 +147,11 @@ When the route serves `index.html` (or any HTML response) AND the request URL ha
 
 1. Decode the response body as UTF-8.
 2. Find `</head>` (case-insensitive).
-3. If found: insert `<script src="/static/picker.js?v={STATIC_VERSION}"></script>` immediately before it.
+3. If found: insert `<script src="/static/picker.js?v={PICKER_JS_VERSION}"></script>` immediately before it.
 4. If not found: log a WARNING (`picker injection skipped: no </head> in <slug>/index.html`) and serve the original body untouched.
 5. Wrap the whole rewrite in `try/except` — any failure → log + serve original.
 
-`STATIC_VERSION` is a module-level constant (e.g. `PICKER_JS_VERSION = "1"`), bumped manually when picker.js changes. Cache-busts cleanly across deploys.
+`PICKER_JS_VERSION` is a module-level constant (e.g. `PICKER_JS_VERSION = "1"`), bumped manually when picker.js changes. Cache-busts cleanly across deploys.
 
 ### 3. Parent-side wiring (preview.html)
 
@@ -211,7 +212,9 @@ pendingSelection = {
 
 **Single-slot, not array.** v1 holds at most one selection chip. Picking a second element replaces the first — no prompt.
 
-The chip pill renders as `[⌖ button.cta · X]` — one ASCII-printable target glyph plus the selector and a remove control. (If pure-text is preferred, it renders as `[selected: button.cta · X]` — flag at design review.)
+The chip pill renders as `[selected: button.cta · X]` — pure text, no decorative glyphs (project preference: plain text labels only).
+
+**State location:** `pendingSelection` is a **separate single-slot variable**, not an entry in the `pendingAttachments` array. Reuse is at the **render-path level only** — the same chip-strip element holds both attachment chips and the selection chip, but they are tracked in distinct state slots. Rationale: attachments and selection have different submit-time semantics (attachments → `files` field, selection → `selection` field), different validation, and different lifecycle.
 
 **Inside `submitChat()`**
 
@@ -228,7 +231,8 @@ The rendered user bubble shows the selection chip inline above the message text,
 **Cross-mode behavior**
 
 - Switching from Chat to Build mode while a chip is held: keep the chip. (v1 does not wire it into the build prompt — out of scope — but the chip is preserved so we don't surprise the user when v2 lands.)
-- Iframe refresh: clear the chip and force picker mode off. The selector may not match the new DOM.
+- **User-initiated refresh** (clicking the preview's refresh button) → clear the chip + force picker mode off. The user has explicitly asked for a fresh page; the selector likely no longer matches.
+- **Programmatic / app-driven reload** (cache-bust on first build, hot reload, internal navigation that re-fires the iframe `load` event) → keep the chip. URL is in the payload; the model can reason about staleness from that.
 - Tab switch (Files / Code / Logs): auto-deactivate picker. Chip is preserved.
 
 ### 4. /chat endpoint extension
@@ -321,7 +325,7 @@ Log `selector`, `tag`, parent task ID at INFO when `selection` is present. Skip 
 | User leaves Preview tab | Auto-deactivate. Re-enable requires another click. |
 | Pathological outerHTML / hand-crafted requests | Source truncates to 2KB; server caps raw `selection` at 8KB; Pydantic per-field max-length. |
 | `<html>` / `<body>` as click target | Silently rejected. Outline disappears. |
-| picker.js cache-staleness across deploys | `STATIC_VERSION` query param injected; bumped on every change. |
+| picker.js cache-staleness across deploys | `PICKER_JS_VERSION` query param injected; bumped on every change. |
 | Cross-origin posture | v1: `parent.postMessage(payload, "*")`; parent validates `event.source === iframe.contentWindow`. v2 (cross-origin): tighten to origin allowlist — no API change. |
 
 ## Testing strategy
@@ -381,6 +385,12 @@ Log `selector`, `tag`, parent task ID at INFO when `selection` is present. Skip 
 
 ## Open questions for review
 
-1. **Chip glyph:** is the `⌖` target glyph acceptable, or strip to pure text `[selected: button.cta · X]`? (Project preference is no decorative glyphs but `⌖` is informational — flag at review.)
-2. **Alt-hover discoverability:** the parent affordance is invisible until the user discovers Alt. Add a one-line tooltip on the chip ("Hold Alt while hovering to pick parent") or leave undocumented for v1?
-3. **STATIC_VERSION management:** module-level constant with manual bump is the simplest thing. Could be auto-derived from file mtime — overkill for v1?
+1. **Alt-hover discoverability:** the parent affordance is invisible until the user discovers Alt. Add a one-line tooltip on the chip ("Hold Alt while hovering to pick parent") or leave undocumented for v1?
+
+## Resolved during spec review (2026-05-06)
+
+- **Chip glyph:** Pure text `[selected: button.cta · X]`. No decorative glyphs (matches project preference).
+- **PICKER_JS_VERSION management:** Manual module-level constant for v1. Auto-derivation from mtime is overkill at this scale.
+- **`pendingSelection` vs `pendingAttachments`:** Separate single-slot state variable; shared chip-strip render path only.
+- **Iframe-refresh chip semantics:** Cleared on user-initiated refresh; preserved on programmatic / app-driven reload.
+- **`keydown` suppression scope:** Only `Escape` is intercepted; other keys fall through.
