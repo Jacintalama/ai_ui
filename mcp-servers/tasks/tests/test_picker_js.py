@@ -155,3 +155,104 @@ def test_picker_deactivate_removes_overlay(browser, harness_url):
       )
     """)
     iframe_locator.locator("#__io_picker_overlay").wait_for(state="detached", timeout=2000)
+
+
+def test_picker_click_posts_selected_payload(browser, harness_url):
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
+
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
+    iframe_locator = page.frame_locator("#iframe")
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+
+    iframe_locator.locator("button.cta").click()
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.selected')",
+        timeout=2000,
+    )
+
+    msg = page.evaluate("""
+      () => window.__msgs.find(m => m && m.type === 'io.picker.selected')
+    """)
+    assert msg["tag"] == "BUTTON"
+    assert "cta" in msg["selector"]
+    assert msg["outerHtml"].startswith("<button")
+    assert "color" in msg["styles"]
+    assert msg["rect"]["w"] > 0
+    assert msg["url"].endswith("/picker_harness.html")
+
+
+def test_picker_click_outerhtml_truncated(browser, harness_url):
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
+
+    iframe_locator = page.frame_locator("#iframe")
+    # Stuff the card with a long string so outerHTML goes way past 2KB.
+    # Run inside the iframe document.
+    iframe_locator.locator("#card-1").evaluate("""
+      (c) => c.appendChild(document.createTextNode('x'.repeat(10000)))
+    """)
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+    iframe_locator.locator("#card-1").click(position={"x": 2, "y": 2})
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.selected')",
+        timeout=2000,
+    )
+    msg = page.evaluate("""
+      () => window.__msgs.find(m => m && m.type === 'io.picker.selected')
+    """)
+    assert len(msg["outerHtml"]) <= 2200
+
+
+def test_picker_click_suppresses_form_submit(browser, harness_url):
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
+
+    iframe_locator = page.frame_locator("#iframe")
+    # Wire a submit detector INSIDE the iframe AND wrap the cta button in a form.
+    # The picker's capture-phase suppression runs inside the iframe document.
+    iframe_locator.locator("body").evaluate("""
+      (body) => {
+        const btn = body.querySelector('button.cta');
+        const form = document.createElement('form');
+        form.action = 'javascript:void(0)';
+        btn.parentNode.insertBefore(form, btn);
+        form.appendChild(btn);
+        btn.type = 'submit';
+        window.__submitted = false;
+        window.addEventListener('submit', () => { window.__submitted = true; }, true);
+      }
+    """)
+
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+    iframe_locator.locator("button.cta").click()
+
+    # Read the iframe's window flag (NOT the outer page's).
+    submitted = iframe_locator.locator("body").evaluate("(_b) => window.__submitted")
+    assert submitted is False, "form submit should be suppressed by picker capture"

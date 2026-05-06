@@ -132,11 +132,67 @@
     $label.style.top = Math.max(0, r.top - 18) + "px";
   }
 
+  const STYLE_KEYS = [
+    "color", "backgroundColor", "padding", "margin",
+    "fontSize", "fontFamily", "display", "borderRadius",
+    "width", "height",
+  ];
+
+  function pickStyles(el) {
+    const cs = window.getComputedStyle(el);
+    const out = {};
+    for (const k of STYLE_KEYS) out[k] = cs[k];
+    return out;
+  }
+
+  function truncate(s, n) {
+    return s.length <= n ? s : s.slice(0, n);
+  }
+
+  function buildPayload(el) {
+    const r = el.getBoundingClientRect();
+    const attrs = {};
+    if (el.id) attrs.id = el.id;
+    if (el.className && typeof el.className === "string") attrs.class = el.className;
+    const selector = buildSelector(el);
+    return {
+      type: "io.picker.selected",
+      selector: truncate(selector || "", 400),
+      tag: el.tagName,
+      attrs,
+      outerHtml: truncate(el.outerHTML || "", 2048),
+      styles: pickStyles(el),
+      rect: { x: r.x, y: r.y, w: r.width, h: r.height },
+      url: location.href,
+      pickedAt: Date.now(),
+    };
+  }
+
+  function suppress(e) {
+    if (state !== "listening") return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+
+  function onClick(e) {
+    if (state !== "listening") return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const el = pickableTarget(document.elementFromPoint(e.clientX, e.clientY));
+    if (!el) return;
+    post(buildPayload(el));
+    deactivate();
+  }
+
   function activate() {
     if (state === "listening") return;
     state = "listening";
     ensureOverlay();
     document.addEventListener("mousemove", onMouseMove, true);
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("mousedown", suppress, true);
+    document.addEventListener("mouseup", suppress, true);
+    document.addEventListener("submit", suppress, true);
     document.body.style.cursor = "crosshair";
   }
 
@@ -144,6 +200,10 @@
     if (state === "inert") return;
     state = "inert";
     document.removeEventListener("mousemove", onMouseMove, true);
+    document.removeEventListener("click", onClick, true);
+    document.removeEventListener("mousedown", suppress, true);
+    document.removeEventListener("mouseup", suppress, true);
+    document.removeEventListener("submit", suppress, true);
     document.body.style.cursor = "";
     teardownOverlay();
   }
