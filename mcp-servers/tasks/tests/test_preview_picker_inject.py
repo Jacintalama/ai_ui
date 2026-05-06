@@ -43,8 +43,10 @@ async def test_picker_param_injects_script_before_head_close(fake_apps_root):
     assert resp.status_code == 200
     text = resp.text
     # Pin the static-mount path AND the version query so a regression
-    # in either (e.g. dropping ?v=) trips this test.
-    assert '/tasks/static/picker.js?v=1' in text
+    # in either (e.g. dropping ?v=) trips this test. Version bumps with
+    # picker.js source — keep this in sync with main.PICKER_JS_VERSION.
+    import main
+    assert f'/tasks/static/picker.js?v={main.PICKER_JS_VERSION}' in text
     pos_script = text.find("/tasks/static/picker.js")
     pos_head_close = text.lower().find("</head>")
     assert 0 < pos_script < pos_head_close

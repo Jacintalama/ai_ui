@@ -958,6 +958,7 @@ async def cancel_task(
 
 class SelectionPayload(BaseModel):
     selector: str = Field(..., max_length=400)
+    friendlyLabel: str | None = Field(default=None, max_length=200)
     tag: str = Field(..., max_length=40)
     attrs: dict[str, str] = Field(default_factory=dict)
     outerHtml: str = Field(..., max_length=2200)
@@ -976,15 +977,19 @@ def _format_selection_block(sel: SelectionPayload) -> str:
     style_pairs = "; ".join(f"{k}: {v}" for k, v in sel.styles.items())
     attrs_str = " ".join(f'{k}="{v}"' for k, v in sel.attrs.items() if v)
     open_tag = f"<{sel.tag.lower()}{(' ' + attrs_str) if attrs_str else ''}>"
+    friendly_line = (
+        f"  user sees:  {sel.friendlyLabel}\n" if sel.friendlyLabel else ""
+    )
     return (
         "SELECTED ELEMENT\n"
         "The user pointed at this element in their preview. Scope your answer or\n"
         "edit to this element specifically. Don't change other parts of the page\n"
         "unless asked.\n"
         "\n"
-        f"  selector:  {sel.selector}\n"
-        f"  tag:       {open_tag}\n"
-        + (f"  url:       {sel.url}\n" if sel.url else "")
+        + friendly_line
+        + f"  selector:   {sel.selector}\n"
+        f"  tag:        {open_tag}\n"
+        + (f"  url:        {sel.url}\n" if sel.url else "")
         + "\n"
         "  current outerHTML (truncated):\n"
         f"    {sel.outerHtml}\n"

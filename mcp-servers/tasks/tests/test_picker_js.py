@@ -391,3 +391,68 @@ def test_picker_restores_previously_focused_element_on_deactivate(browser, harne
         "(_b) => document.activeElement && document.activeElement.id"
     )
     assert post_id == "focus-target", f"focus not restored, activeElement is {post_id!r}"
+
+
+def test_picker_payload_has_friendly_label_for_button(browser, harness_url):
+    """Friendly labels are what non-tech users see in the chip and hover tag.
+    A <button class='cta'>Hire me</button> should produce 'button: "Hire me"',
+    NOT 'button.cta:nth-of-type(1)' or any selector-shaped string."""
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
+
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
+    iframe_locator = page.frame_locator("#iframe")
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+    iframe_locator.locator("button.cta").click()
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.selected')",
+        timeout=2000,
+    )
+
+    msg = page.evaluate(
+        "() => window.__msgs.find(m => m && m.type === 'io.picker.selected')"
+    )
+    assert msg["friendlyLabel"] == 'button: "Hire me"', \
+        f"expected friendly label, got {msg['friendlyLabel']!r}"
+    # Selector still travels alongside (for the AI prompt).
+    assert "cta" in msg["selector"]
+
+
+def test_picker_payload_has_friendly_label_for_card(browser, harness_url):
+    """An <article class='card'> with a heading inside should describe itself
+    as 'card: <heading text>' — readable to a non-tech user."""
+    page = browser.new_context().new_page()
+    page.set_content(_outer_html(harness_url))
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.ready')",
+        timeout=3000,
+    )
+
+    page.evaluate("""
+      () => document.getElementById("iframe").contentWindow.postMessage(
+        {type: "io.picker.activate"}, "*"
+      )
+    """)
+    iframe_locator = page.frame_locator("#iframe")
+    iframe_locator.locator("#__io_picker_overlay").wait_for(state="attached", timeout=2000)
+    # Click the card border (not its inner text) so picker resolves to ARTICLE.
+    iframe_locator.locator("#card-1").click(position={"x": 2, "y": 2})
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.selected')",
+        timeout=2000,
+    )
+
+    msg = page.evaluate(
+        "() => window.__msgs.find(m => m && m.type === 'io.picker.selected')"
+    )
+    label = msg["friendlyLabel"]
+    assert label.startswith("card"), f"expected 'card' prefix, got {label!r}"
+    assert "Frontend" in label, f"expected card heading text in label, got {label!r}"

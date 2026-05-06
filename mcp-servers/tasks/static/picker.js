@@ -61,11 +61,18 @@
       position: "fixed",
       pointerEvents: "none",
       zIndex: String(Z_TOP),
-      background: "#4f8df0",
+      background: "#1f2937",
       color: "#fff",
-      font: "11px ui-monospace, Menlo, monospace",
-      padding: "2px 6px",
-      borderRadius: "4px",
+      // Use the system UI font (not monospace) so plain-language labels like
+      // 'button: "Hire me"' read naturally instead of looking like code.
+      font: "500 12px system-ui, -apple-system, Segoe UI, sans-serif",
+      padding: "3px 8px",
+      borderRadius: "5px",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+      maxWidth: "280px",
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
       display: "none",
     });
     document.body.appendChild($label);
@@ -139,10 +146,10 @@
       width: r.width + "px",
       height: r.height + "px",
     });
-    $label.textContent = buildSelector(el);
+    $label.textContent = friendlyLabel(el);
     $label.style.display = "block";
     $label.style.left = r.left + "px";
-    $label.style.top = Math.max(0, r.top - 18) + "px";
+    $label.style.top = Math.max(0, r.top - 26) + "px";
   }
 
   const STYLE_KEYS = [
@@ -162,6 +169,56 @@
     return s.length <= n ? s : s.slice(0, n);
   }
 
+  // Human-readable label for the chip and the hover tag. The technical
+  // selector still travels to the AI for precise targeting; this is purely
+  // for display so non-technical users see "link: About" instead of
+  // "a.hover:text-amber-300.transition-colors:nth-of-type(2)".
+  const FRIENDLY_TAG = {
+    BUTTON: "button", A: "link", IMG: "image",
+    H1: "heading", H2: "heading", H3: "heading",
+    H4: "heading", H5: "heading", H6: "heading",
+    INPUT: "input", TEXTAREA: "text area", SELECT: "dropdown",
+    UL: "list", OL: "list", LI: "list item",
+    NAV: "nav", HEADER: "header", FOOTER: "footer",
+    ASIDE: "sidebar", ARTICLE: "card", SECTION: "section",
+    MAIN: "main", FORM: "form", LABEL: "label", P: "paragraph",
+    TABLE: "table", TR: "row", TD: "cell", TH: "cell",
+    BLOCKQUOTE: "quote", CODE: "code", PRE: "code block",
+    HR: "divider", SVG: "icon",
+  };
+
+  function friendlyType(el) {
+    const fixed = FRIENDLY_TAG[el.tagName];
+    if (fixed) return fixed;
+    const cls = (typeof el.className === "string") ? el.className : "";
+    if (/\bcard\b/i.test(cls)) return "card";
+    if (/\bbtn\b|\bbutton\b/i.test(cls)) return "button";
+    if (/\bnav\b/i.test(cls)) return "nav";
+    if (/\bgrid\b/i.test(cls)) return "grid";
+    if (/\brow\b|\bflex\b/i.test(cls)) return "row";
+    if (/\bcontainer\b|\bwrapper\b/i.test(cls)) return "container";
+    if (/\bicon\b/i.test(cls)) return "icon";
+    return el.tagName === "SPAN" ? "text" : "container";
+  }
+
+  function friendlyText(el) {
+    if (el.tagName === "IMG") return (el.getAttribute("alt") || "").trim();
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      return (el.value || el.getAttribute("placeholder") || "").trim();
+    }
+    const aria = el.getAttribute && el.getAttribute("aria-label");
+    if (aria) return aria.trim();
+    const t = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+    return t;
+  }
+
+  function friendlyLabel(el) {
+    const type = friendlyType(el);
+    let text = friendlyText(el);
+    if (text.length > 32) text = text.slice(0, 30) + "…";
+    return text ? type + ': "' + text + '"' : type;
+  }
+
   function buildPayload(el) {
     const r = el.getBoundingClientRect();
     const attrs = {};
@@ -171,6 +228,7 @@
     return {
       type: "io.picker.selected",
       selector: truncate(selector || "", 400),
+      friendlyLabel: friendlyLabel(el),
       tag: el.tagName,
       attrs,
       outerHtml: truncate(el.outerHTML || "", 2048),

@@ -126,7 +126,7 @@ _SLUG_ROUTE_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
 
 # Bumped when picker.js itself changes — busts the iframe browser cache for
 # preview HTML served with ?picker=1. Module-level so tests and routes share it.
-PICKER_JS_VERSION = "1"
+PICKER_JS_VERSION = "2"
 
 _MIME_BY_EXT = {
     ".html": "text/html; charset=utf-8",
