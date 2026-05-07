@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Icecreamery — Handcrafted Scoops & Sweet Moments</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-cream font-sans text-slate-800 antialiased">
+
+  <header x-data="nav" class="fixed top-0 inset-x-0 z-50 bg-white/95 backdrop-blur shadow-sm">
+    <div class="max-w-6xl mx-auto px-4 flex items-center justify-between h-16">
+      <a href="#home" class="flex items-center gap-2 text-xl font-bold text-rose-500">
+        🍦 The Icecreamery
+      </a>
+      <button @click="open = !open" class="md:hidden p-2 rounded focus:outline-none focus:ring-2 focus:ring-rose-400" aria-label="Toggle menu">
+        <i data-lucide="menu" class="w-6 h-6"></i>
+      </button>
+      <nav class="hidden md:flex gap-6 text-sm font-medium" aria-label="Main navigation">
+        <a href="#offers" class="text-rose-500 hover:text-rose-700 transition-colors focus:outline-none focus:underline">Our Flavors</a>
+        <a href="#specials" class="text-rose-500 hover:text-rose-700 transition-colors focus:outline-none focus:underline">Specials</a>
+        <a href="#about" class="text-rose-500 hover:text-rose-700 transition-colors focus:outline-none focus:underline">About</a>
+        <a href="#reservation" class="text-rose-500 hover:text-rose-700 transition-colors focus:outline-none focus:underline">Reserve a Table</a>
+        <a href="#contact" class="text-rose-500 hover:text-rose-700 transition-colors focus:outline-none focus:underline">Contact</a>
+      </nav>
+    </div>
+    <div x-show="open" x-transition class="md:hidden bg-white border-t px-4 pb-4">
+      <nav class="flex flex-col gap-3 pt-3 text-sm font-medium" aria-label="Mobile navigation">
+        <a href="#offers" @click="open=false" class="hover:text-rose-500 focus:outline-none focus:underline">Our Flavors</a>
+        <a href="#specials" @click="open=false" class="hover:text-rose-500 focus:outline-none focus:underline">Specials</a>
+        <a href="#about" @click="open=false" class="hover:text-rose-500 focus:outline-none focus:underline">About</a>
+        <a href="#reservation" @click="open=false" class="hover:text-rose-500 focus:outline-none focus:underline">Reserve a Table</a>
+        <a href="#contact" @click="open=false" class="hover:text-rose-500 focus:outline-none focus:underline">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Hero -->
+    <section id="home" class="min-h-screen flex flex-col items-center justify-center text-center px-4 pt-20 bg-gradient-to-b from-rose-50 to-amber-50">
+      <div class="max-w-2xl mx-auto">
+        <p class="text-rose-400 font-semibold tracking-widest uppercase text-sm mb-4">Handcrafted since 1998</p>
+        <h1 class="text-4xl sm:text-5xl md:text-6xl font-extrabold text-slate-800 leading-tight mb-6">
+          Life is sweeter<br class="hidden sm:block"/> with every scoop
+        </h1>
+        <p class="text-lg sm:text-xl text-slate-600 mb-8 max-w-xl mx-auto">
+          Artisan ice cream made fresh daily with locally sourced cream and the finest seasonal ingredients.
+          Eat-in, take-out, or reserve your table for a proper ice cream experience.
+        </p>
+        <div class="flex flex-col sm:flex-row gap-4 justify-center">
+          <a href="#offers" class="bg-rose-500 hover:bg-rose-600 text-white font-semibold px-8 py-3 rounded-full transition-colors focus:outline-none focus:ring-4 focus:ring-rose-300">
+            Explore Flavors
+          </a>
+          <a href="#reservation" class="border-2 border-rose-500 text-rose-500 hover:bg-rose-50 font-semibold px-8 py-3 rounded-full transition-colors focus:outline-none focus:ring-4 focus:ring-rose-300">
+            Book a Table
+          </a>
+        </div>
+      </div>
+      <div class="mt-16 text-6xl select-none" aria-hidden="true">🍨🍦🍧</div>
+    </section>
+
+    <!-- Flavors / Offers -->
+    <section id="offers" class="py-20 px-4 bg-white">
+      <div class="max-w-6xl mx-auto">
+        <h2 class="text-3xl font-bold text-center mb-3">Our Signature Flavors</h2>
+        <p class="text-center text-slate-500 mb-12 max-w-xl mx-auto">
+          Every flavor is crafted in small batches each morning. We rotate seasonally, but these beloved classics are always on the menu.
+        </p>
+        <div x-data="flavors" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+          <template x-for="flavor in list" :key="flavor.name">
+            <article class="rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-shadow border border-slate-100">
+              <div class="h-40 flex items-center justify-center text-7xl" :style="`background:${flavor.bg}`" aria-hidden="true">
+                <span x-text="flavor.emoji"></span>
+              </div>
+              <div class="p-5">
+                <h3 class="text-lg font-bold mb-1" x-text="flavor.name"></h3>
+                <p class="text-sm text-slate-500 mb-3" x-text="flavor.desc"></p>
+                <span class="inline-block bg-rose-100 text-rose-600 text-xs font-semibold px-3 py-1 rounded-full" x-text="flavor.price"></span>
+              </div>
+            </article>
+          </template>
+        </div>
+        <p class="text-center text-slate-400 mt-10 text-sm">
+          We also offer dairy-free sorbets and oat-milk bases. Ask staff for today's allergen sheet.
+        </p>
+      </div>
+    </section>
+
+    <!-- Specials -->
+    <section id="specials" class="py-20 px-4 bg-amber-50">
+      <div class="max-w-6xl mx-auto">
+        <h2 class="text-3xl font-bold text-center mb-3">Seasonal Specials & Deals</h2>
+        <p class="text-center text-slate-500 mb-12 max-w-xl mx-auto">
+          From family sundae towers to loyalty punch cards, there's always a reason to come back for more.
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+          <div class="bg-white rounded-2xl p-6 shadow flex gap-4 items-start">
+            <div class="text-4xl" aria-hidden="true">🎉</div>
+            <div>
+              <h3 class="font-bold text-lg mb-1">Happy Hour — 3 pm to 5 pm</h3>
+              <p class="text-slate-500 text-sm">Every weekday afternoon, single and double scoops are 20% off. Perfect for an after-school treat or a mid-afternoon pick-me-up. No coupon needed — discount applied automatically at the counter.</p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl p-6 shadow flex gap-4 items-start">
+            <div class="text-4xl" aria-hidden="true">👨‍👩‍👧‍👦</div>
+            <div>
+              <h3 class="font-bold text-lg mb-1">Family Sundae Tower</h3>
+              <p class="text-slate-500 text-sm">Choose any 5 scoops, 3 toppings, and a drizzle for €14.90. Served in our iconic glass tower — great for sharing (or not). Available for dine-in only, all day Saturday and Sunday.</p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl p-6 shadow flex gap-4 items-start">
+            <div class="text-4xl" aria-hidden="true">🎂</div>
+            <div>
+              <h3 class="font-bold text-lg mb-1">Birthday Scoop on Us</h3>
+              <p class="text-slate-500 text-sm">Show us your ID on your birthday and receive a free double scoop of any flavor — no purchase required. It's our way of making your special day even sweeter. Valid only on the birthday date.</p>
+            </div>
+          </div>
+
+          <div class="bg-white rounded-2xl p-6 shadow flex gap-4 items-start">
+            <div class="text-4xl" aria-hidden="true">🃏</div>
+            <div>
+              <h3 class="font-bold text-lg mb-1">Loyalty Punch Card</h3>
+              <p class="text-slate-500 text-sm">Collect 10 punches and your 11th scoop is free. Cards are available at the counter — no app, no sign-up. Simple and old-school, just like our recipes.</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section id="about" class="py-20 px-4 bg-white">
+      <div class="max-w-4xl mx-auto">
+        <h2 class="text-3xl font-bold text-center mb-10">Our Story</h2>
+        <div class="flex flex-col md:flex-row gap-10 items-center">
+          <div class="flex-shrink-0 text-8xl text-center" aria-hidden="true">🏡</div>
+          <div class="space-y-4 text-slate-600 leading-relaxed">
+            <p>
+              The Icecreamery was born in the summer of 1998 when Maria and Luca Fontaine converted their grandmother's kitchen in the south of France into a tiny creamery. What started as a weekend hobby — perfecting custard bases and experimenting with lavender and salted caramel — quickly became the talk of the village. By the following summer, the queue stretched around the block.
+            </p>
+            <p>
+              Today, three generations later, we still churn every batch by hand using full-fat Jersey cream from Dubois Farm just 12 kilometres away. Our sugar comes unrefined from a small cooperative in Réunion, and we source every fruit at the peak of its season from local growers we've known for decades. We believe the best ingredients need no hiding — that's why our recipes have fewer than six components.
+            </p>
+            <p>
+              We now seat 40 guests in our sunlit parlour and welcome hundreds more through our take-away window each day. Whether you're stopping in for a quick cone or settling in for a leisurely sundae, our team is here to make the experience worth returning for. We are proud to be carbon-neutral certified since 2022 and donate 1% of each sale to local school nutrition programmes.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Reservation -->
+    <section id="reservation" class="py-20 px-4 bg-rose-50">
+      <div class="max-w-2xl mx-auto">
+        <h2 class="text-3xl font-bold text-center mb-3">Reserve a Table</h2>
+        <p class="text-center text-slate-500 mb-10">
+          We accommodate groups of up to 12. Reservations are free and held for 15 minutes. Walk-ins are always welcome, subject to availability.
+        </p>
+        <div x-data="reservation" class="bg-white rounded-2xl shadow-lg p-8">
+          <form @submit.prevent="submit" novalidate class="space-y-5">
+
+            <div>
+              <label for="res-name" class="block text-sm font-semibold mb-1">Full Name <span class="text-rose-500" aria-hidden="true">*</span></label>
+              <input id="res-name" type="text" x-model="form.name" required autocomplete="name"
+                class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                placeholder="Maria Fontaine" />
+              <p x-show="errors.name" x-text="errors.name" class="text-rose-500 text-xs mt-1"></p>
+            </div>
+
+            <div>
+              <label for="res-email" class="block text-sm font-semibold mb-1">Email Address <span class="text-rose-500" aria-hidden="true">*</span></label>
+              <input id="res-email" type="email" x-model="form.email" required autocomplete="email"
+                class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                placeholder="maria@example.com" />
+              <p x-show="errors.email" x-text="errors.email" class="text-rose-500 text-xs mt-1"></p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label for="res-date" class="block text-sm font-semibold mb-1">Date <span class="text-rose-500" aria-hidden="true">*</span></label>
+                <input id="res-date" type="date" x-model="form.date" required
+                  class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400" />
+                <p x-show="errors.date" x-text="errors.date" class="text-rose-500 text-xs mt-1"></p>
+              </div>
+              <div>
+                <label for="res-time" class="block text-sm font-semibold mb-1">Time <span class="text-rose-500" aria-hidden="true">*</span></label>
+                <select id="res-time" x-model="form.time" required
+                  class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400">
+                  <option value="">Select a time</option>
+                  <option>11:00</option><option>11:30</option>
+                  <option>12:00</option><option>12:30</option>
+                  <option>13:00</option><option>13:30</option>
+                  <option>14:00</option><option>14:30</option>
+                  <option>15:00</option><option>15:30</option>
+                  <option>16:00</option><option>16:30</option>
+                  <option>17:00</option><option>17:30</option>
+                  <option>18:00</option><option>18:30</option>
+                  <option>19:00</option>
+                </select>
+                <p x-show="errors.time" x-text="errors.time" class="text-rose-500 text-xs mt-1"></p>
+              </div>
+            </div>
+
+            <div>
+              <label for="res-guests" class="block text-sm font-semibold mb-1">Number of Guests <span class="text-rose-500" aria-hidden="true">*</span></label>
+              <input id="res-guests" type="number" x-model="form.guests" min="1" max="12" required
+                class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                placeholder="2" />
+              <p x-show="errors.guests" x-text="errors.guests" class="text-rose-500 text-xs mt-1"></p>
+            </div>
+
+            <div>
+              <label for="res-notes" class="block text-sm font-semibold mb-1">Special Requests</label>
+              <textarea id="res-notes" x-model="form.notes" rows="3"
+                class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                placeholder="Allergies, accessibility needs, a birthday surprise…"></textarea>
+            </div>
+
+            <button type="submit"
+              class="w-full bg-rose-500 hover:bg-rose-600 text-white font-semibold py-3 rounded-lg transition-colors focus:outline-none focus:ring-4 focus:ring-rose-300"
+              :disabled="submitted">
+              <span x-show="!submitted">Request Reservation</span>
+              <span x-show="submitted">Reservation Sent ✓</span>
+            </button>
+
+          </form>
+          <div x-show="submitted" x-transition class="mt-6 bg-green-50 border border-green-200 text-green-700 rounded-lg p-4 text-sm text-center">
+            Thank you! We'll confirm your reservation at <strong x-text="form.email"></strong> within 2 hours. See you soon!
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Contact -->
+    <section id="contact" class="py-20 px-4 bg-white">
+      <div class="max-w-5xl mx-auto">
+        <h2 class="text-3xl font-bold text-center mb-3">Get in Touch</h2>
+        <p class="text-center text-slate-500 mb-12 max-w-xl mx-auto">
+          Have a question, a catering enquiry, or just want to say hi? We'd love to hear from you.
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-12">
+
+          <!-- Contact info -->
+          <div class="space-y-6">
+            <div class="flex gap-4 items-start">
+              <div class="text-2xl" aria-hidden="true">📍</div>
+              <div>
+                <h3 class="font-semibold mb-1">Visit Us</h3>
+                <address class="not-italic text-slate-500 text-sm leading-relaxed">
+                  14 Rue du Palais des Glaces<br/>
+                  06600 Antibes, France
+                </address>
+              </div>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="text-2xl" aria-hidden="true">🕐</div>
+              <div>
+                <h3 class="font-semibold mb-1">Opening Hours</h3>
+                <ul class="text-slate-500 text-sm space-y-1">
+                  <li>Monday – Friday: 11:00 – 20:00</li>
+                  <li>Saturday – Sunday: 10:00 – 21:30</li>
+                  <li>Public Holidays: 12:00 – 19:00</li>
+                </ul>
+              </div>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="text-2xl" aria-hidden="true">📞</div>
+              <div>
+                <h3 class="font-semibold mb-1">Phone</h3>
+                <a href="tel:+33493340022" class="text-rose-500 hover:underline text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 rounded">+33 4 93 34 00 22</a>
+              </div>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="text-2xl" aria-hidden="true">✉️</div>
+              <div>
+                <h3 class="font-semibold mb-1">Email</h3>
+                <a href="mailto:hello@icecreamery.fr" class="text-rose-500 hover:underline text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 rounded">hello@icecreamery.fr</a>
+              </div>
+            </div>
+            <div class="flex gap-4 items-start">
+              <div class="text-2xl" aria-hidden="true">📱</div>
+              <div>
+                <h3 class="font-semibold mb-1">Follow Us</h3>
+                <div class="flex gap-3 mt-1">
+                  <a href="#" aria-label="The Icecreamery on Instagram" class="text-rose-400 hover:text-rose-600 underline text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 rounded">Instagram</a>
+                  <a href="#" aria-label="The Icecreamery on Facebook" class="text-rose-400 hover:text-rose-600 underline text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 rounded">Facebook</a>
+                  <a href="#" aria-label="The Icecreamery on TikTok" class="text-rose-400 hover:text-rose-600 underline text-sm focus:outline-none focus:ring-2 focus:ring-rose-300 rounded">TikTok</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Contact form -->
+          <div x-data="contactForm">
+            <form @submit.prevent="submit" novalidate class="space-y-4">
+              <div>
+                <label for="ct-name" class="block text-sm font-semibold mb-1">Your Name <span class="text-rose-500" aria-hidden="true">*</span></label>
+                <input id="ct-name" type="text" x-model="form.name" required autocomplete="name"
+                  class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                  placeholder="Jean Dupont" />
+                <p x-show="errors.name" x-text="errors.name" class="text-rose-500 text-xs mt-1"></p>
+              </div>
+              <div>
+                <label for="ct-email" class="block text-sm font-semibold mb-1">Email Address <span class="text-rose-500" aria-hidden="true">*</span></label>
+                <input id="ct-email" type="email" x-model="form.email" required autocomplete="email"
+                  class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                  placeholder="jean@example.com" />
+                <p x-show="errors.email" x-text="errors.email" class="text-rose-500 text-xs mt-1"></p>
+              </div>
+              <div>
+                <label for="ct-subject" class="block text-sm font-semibold mb-1">Subject</label>
+                <input id="ct-subject" type="text" x-model="form.subject"
+                  class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                  placeholder="Catering enquiry, bulk order, partnership…" />
+              </div>
+              <div>
+                <label for="ct-msg" class="block text-sm font-semibold mb-1">Message <span class="text-rose-500" aria-hidden="true">*</span></label>
+                <textarea id="ct-msg" x-model="form.message" rows="4" required
+                  class="w-full border border-slate-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-400"
+                  placeholder="How can we help?"></textarea>
+                <p x-show="errors.message" x-text="errors.message" class="text-rose-500 text-xs mt-1"></p>
+              </div>
+              <button type="submit"
+                class="w-full bg-rose-500 hover:bg-rose-600 text-white font-semibold py-3 rounded-lg transition-colors focus:outline-none focus:ring-4 focus:ring-rose-300"
+                :disabled="submitted">
+                <span x-show="!submitted">Send Message</span>
+                <span x-show="submitted">Message Sent ✓</span>
+              </button>
+            </form>
+            <div x-show="submitted" x-transition class="mt-4 bg-green-50 border border-green-200 text-green-700 rounded-lg p-4 text-sm text-center">
+              We've received your message and will reply within one business day. Thanks for reaching out!
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="bg-slate-800 text-slate-400 text-sm py-8 px-4 text-center">
+    <p class="font-semibold text-white text-base mb-1">🍦 The Icecreamery</p>
+    <p class="mb-2">14 Rue du Palais des Glaces, 06600 Antibes, France</p>
+    <p>&copy; <span id="yr"></span> The Icecreamery. Made with love and cream.</p>
+    <script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+  </footer>
+
+</body>
+</html>
