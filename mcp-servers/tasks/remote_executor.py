@@ -102,10 +102,28 @@ class RemoteExecutor:
     def _is_terminal(line: str) -> bool:
         return any(t in line for t in ("COMPLETED:", "FAILED:", "NEEDS_INPUT:", "NEEDS_STEPS:"))
 
+    # Standard SSH options used by every invocation in this class.
+    # BatchMode=yes: never prompt (we're non-interactive).
+    # StrictHostKeyChecking=accept-new: trust the host fingerprint on first
+    #   connection and remember it. Critical because every container rebuild
+    #   wipes /root/.ssh/known_hosts, and BatchMode=yes refuses unknown hosts
+    #   without this. UserKnownHostsFile keeps the cache in /tmp so we don't
+    #   need /root/.ssh to exist.
+    _SSH_OPTS = (
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "UserKnownHostsFile=/tmp/agent_known_hosts",
+    )
+    _RSYNC_SSH = (
+        "ssh -o BatchMode=yes "
+        "-o StrictHostKeyChecking=accept-new "
+        "-o UserKnownHostsFile=/tmp/agent_known_hosts"
+    )
+
     async def _ssh_ok(self, host: str, user: str, key: str) -> bool:
         proc = await asyncio.create_subprocess_exec(
             "ssh", "-i", key, "-o", "ConnectTimeout=10",
-            "-o", "BatchMode=yes",
+            *self._SSH_OPTS,
             f"{user}@{host}", "true",
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
@@ -116,7 +134,7 @@ class RemoteExecutor:
     async def _push_state(self, host: str, user: str, key: str, slug: str) -> None:
         # Ensure remote workspace dir exists
         mk = await asyncio.create_subprocess_exec(
-            "ssh", "-i", key, "-o", "BatchMode=yes",
+            "ssh", "-i", key, *self._SSH_OPTS,
             f"{user}@{host}",
             f"mkdir -p /agent/work/{shlex.quote(slug)}/apps/{shlex.quote(slug)}",
         )
@@ -127,7 +145,7 @@ class RemoteExecutor:
         dst = f"{user}@{host}:/agent/work/{slug}/apps/{slug}/"
         rs = await asyncio.create_subprocess_exec(
             "rsync", "-az", "--delete",
-            "-e", f"ssh -i {key} -o BatchMode=yes",
+            "-e", f"{self._RSYNC_SSH} -i {key}",
             src, dst,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
@@ -160,7 +178,7 @@ class RemoteExecutor:
 
     async def _stream(self, host: str, user: str, key: str, remote_cmd: str) -> AsyncIterator[str]:
         self._proc = await asyncio.create_subprocess_exec(
-            "ssh", "-i", key, "-o", "BatchMode=yes",
+            "ssh", "-i", key, *self._SSH_OPTS,
             "-o", "SendEnv=AIUI_AGENT_EFFORT",
             f"{user}@{host}", remote_cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -199,7 +217,7 @@ class RemoteExecutor:
         for attempt in range(2):
             rs = await asyncio.create_subprocess_exec(
                 "rsync", "-az", "--delete", "--chmod=D755,F644",
-                "-e", f"ssh -i {key} -o BatchMode=yes",
+                "-e", f"{self._RSYNC_SSH} -i {key}",
                 src, dst,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
@@ -216,7 +234,7 @@ class RemoteExecutor:
 
     async def _cleanup_remote(self, host: str, user: str, key: str, slug: str) -> None:
         proc = await asyncio.create_subprocess_exec(
-            "ssh", "-i", key, "-o", "BatchMode=yes",
+            "ssh", "-i", key, *self._SSH_OPTS,
             f"{user}@{host}",
             f"rm -rf /agent/work/{shlex.quote(slug)}",
             stdout=asyncio.subprocess.DEVNULL,
@@ -226,7 +244,7 @@ class RemoteExecutor:
 
     async def _kill_remote(self, host: str, user: str, key: str) -> None:
         proc = await asyncio.create_subprocess_exec(
-            "ssh", "-i", key, "-o", "BatchMode=yes",
+            "ssh", "-i", key, *self._SSH_OPTS,
             f"{user}@{host}",
             'pkill -u claude-agent -f "claude --print" || true',
             stdout=asyncio.subprocess.DEVNULL,
