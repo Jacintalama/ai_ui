@@ -26,24 +26,26 @@ class DuffelError(Exception):
     retry_after: int | None = None
 
 
-_ISO_DURATION = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
+_ISO_DURATION = re.compile(r"^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
 
 
 def parse_iso8601_duration(s: str) -> int:
-    """Convert an ISO 8601 duration like 'PT8H45M' or 'PT1H30M00S' to total minutes.
+    """Convert an ISO 8601 duration to total minutes.
 
-    Seconds are floored into minutes (60 → 1, 30 → 0). The degenerate 'PT'
-    form (no components) is treated as bad input.
+    Handles: 'PT8H45M', 'PT1H30M00S', 'P1DT11H25M' (days component for
+    flights that cross the dateline), 'PT45S', etc. Seconds are floored
+    into minutes. The degenerate 'PT' form (no components) is bad input.
     """
     m = _ISO_DURATION.match(s)
     if not m:
         raise DuffelError(kind="bad_response", detail=f"bad duration: {s!r}")
-    hours = int(m.group(1) or 0)
-    minutes = int(m.group(2) or 0)
-    seconds = int(m.group(3) or 0)
-    if not (hours or minutes or seconds):
+    days = int(m.group(1) or 0)
+    hours = int(m.group(2) or 0)
+    minutes = int(m.group(3) or 0)
+    seconds = int(m.group(4) or 0)
+    if not (days or hours or minutes or seconds):
         raise DuffelError(kind="bad_response", detail=f"empty duration: {s!r}")
-    return hours * 60 + minutes + seconds // 60
+    return days * 24 * 60 + hours * 60 + minutes + seconds // 60
 
 
 def _format_cabin(s: str) -> str:
