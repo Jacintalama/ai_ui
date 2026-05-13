@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
+from sqlalchemy.exc import ProgrammingError
 from sse_starlette.sse import EventSourceResponse
 
 from agent_executor import get_executor
@@ -98,13 +99,14 @@ async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
                     .values(agent_host=agent_host_value)
                 )
                 await s.commit()
-        except Exception as exc:  # noqa: BLE001  pragma: no cover
-            # Swallow column-missing errors so RemoteExecutor still streams
-            # successfully before the Task 9 migration lands (which adds the
-            # `agent_host` column). Any other DB error gets logged but does
-            # not break the run. Remove this guard once the migration is in.
+        except ProgrammingError as exc:
+            # Column-missing error before Task 9's migration lands.
+            # Narrow except so real DB errors (connection drop, transaction
+            # rollback, value-type mismatch) still propagate. Remove this
+            # whole try/except once the migration is in.
             logger.warning(
-                "agent_host writeback skipped (likely missing column): %s", exc
+                "agent_host writeback skipped (column missing — Task 9 not yet deployed): %s",
+                exc,
             )
 
     try:
