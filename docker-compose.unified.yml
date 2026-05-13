@@ -247,6 +247,12 @@ services:
       - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
       - AIUI_SUPABASE_CLIENT_SECRET=${AIUI_SUPABASE_CLIENT_SECRET:-}
       - AIUI_PUBLIC_BASE_URL=https://ai-ui.coolestdomain.win
+      - AGENT_BACKEND=${AGENT_BACKEND:-local}
+      - AGENT_HOST=${AGENT_HOST:-}
+      - AGENT_USER=${AGENT_USER:-claude-agent}
+      - AGENT_SSH_KEY_PATH=/run/secrets/agent_ssh_key
+    secrets:
+      - agent_ssh_key
     volumes:
       - ./:/workspace/ai_ui
     networks:
@@ -849,3 +855,17 @@ volumes:
   promtail-positions:
   analyzer-workspace:
   grafana-data:
+
+# =============================================================================
+# SECRETS
+# =============================================================================
+# agent_ssh_key — private SSH key the tasks container uses to ssh into the
+# claude-agent VM (see scripts/provision_agent_vm.sh). Generated on the
+# orchestrator host with:
+#   sudo ssh-keygen -t ed25519 -f /etc/proxy-server/agent_ssh_key -N ""
+# Docker Compose v2 refuses to start the stack if this file is missing,
+# even when AGENT_BACKEND=local (the default). Create the keypair BEFORE
+# `docker compose up`, or temporarily comment out the entry below.
+secrets:
+  agent_ssh_key:
+    file: /etc/proxy-server/agent_ssh_key
