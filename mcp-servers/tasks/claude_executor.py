@@ -726,8 +726,8 @@ _SENTINEL_RE = re.compile(
     # `rest` captures everything up to the NEXT sentinel (or end-of-string).
     # Non-greedy + lookahead so a multiline COMPLETED block — including a
     # "Next ideas:" suggestions section — is preserved intact.
-    r"(?:^|\n)\s*(?:-{3,}\s*)?\b(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s]\s*"
-    r"(?P<rest>.*?)(?=\n\s*(?:-{3,}\s*)?\b(?:COMPLETED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s]|\Z)",
+    r"(?:^|\n)\s*(?:-{3,}\s*)?\b(?P<kind>COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s]\s*"
+    r"(?P<rest>.*?)(?=\n\s*(?:-{3,}\s*)?\b(?:COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s]|\Z)",
     re.DOTALL,
 )
 
@@ -772,6 +772,7 @@ def parse_outcome(claude_response: str) -> Outcome:
     last = matches[-1]
     kind_map = {
         "COMPLETED": "completed",
+        "FAILED": "failed",
         "NEEDS_INPUT": "needs_input",
         "NEEDS_STEPS": "needs_steps",
     }
@@ -818,77 +819,26 @@ def extract_app_slug(claude_response: str) -> str | None:
     return match.group(1) if match else None
 
 
-async def run_claude_subprocess(prompt: str, proc_holder: dict | None = None) -> AsyncIterator[str]:
-    """Spawn the claude CLI and stream its stdout.
+async def run_claude_subprocess(
+    prompt: str,
+    proc_holder: dict | None = None,
+) -> AsyncIterator[str]:
+    """LEGACY shim — preserved so existing callers in routes_execution.py
+    keep working until Task 3 migrates them to the executor interface.
 
-    proc_holder (optional): dict where this function stores the spawned
-    subprocess under key "proc" so the cancel endpoint can .kill() it
-    from outside.
-
-    Safety:
-      - Prompt is capped at MAX_PROMPT_CHARS to limit injection of huge payloads.
-      - Hard timeout of EXECUTION_TIMEOUT_SECONDS; process is killed on timeout.
-      - Stdout is capped at MAX_LOG_BYTES; subsequent output is dropped.
-      - cwd is CLAUDE_SANDBOX_DIR if set (snapshot copy), else CLAUDE_WORKSPACE.
+    proc_holder: if provided, this dict gets a "proc" key pointing at the
+    spawned subprocess so the caller can .kill() it externally. New code
+    should use agent_executor.get_executor() + executor.stop() instead.
     """
-    if len(prompt) > MAX_PROMPT_CHARS:
-        prompt = prompt[:MAX_PROMPT_CHARS] + "\n[truncated by tasks service]"
-
-    cwd = CLAUDE_SANDBOX_DIR or CLAUDE_WORKSPACE
-
-    # IS_SANDBOX=1 lets claude accept --dangerously-skip-permissions under root
-    # (the container runs as root and there's no rootless option for us here).
-    env = {**os.environ, "IS_SANDBOX": "1"}
-    # Use stream-json + verbose so each tool call / partial text chunk is
-    # emitted immediately on its own line. The panel parses those lines to
-    # render "Reading foo.py", "Running: docker restart …", etc.
-    # Bound how hard the agent thinks. `--effort low` is plenty for the
-    # typical "edit two lines, commit" case — high effort burns extra LLM
-    # tokens on planning that just isn't needed for surgical edits.
-    # Override per-environment with AIUI_AGENT_EFFORT=medium|high if you
-    # want richer reasoning at the cost of latency.
-    effort = os.environ.get("AIUI_AGENT_EFFORT", "low")
-    extra_flags: list[str] = ["--effort", effort]
-    proc = await asyncio.create_subprocess_exec(
-        "claude",
-        "--print",
-        "--dangerously-skip-permissions",
-        "--output-format", "stream-json",
-        "--verbose",
-        *extra_flags,
-        prompt,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        env=env,
-    )
-    if proc_holder is not None:
-        proc_holder["proc"] = proc
-    assert proc.stdout is not None
-    bytes_yielded = 0
+    from local_executor import LocalExecutor  # local import avoids cycle
+    ex = LocalExecutor()
     try:
-        async with asyncio.timeout(EXECUTION_TIMEOUT_SECONDS):
-            while True:
-                chunk = await proc.stdout.read(4096)
-                if not chunk:
-                    break
-                if bytes_yielded >= MAX_LOG_BYTES:
-                    proc.kill()
-                    yield "\n[OUTPUT CAP exceeded — process killed]\n"
-                    break
-                bytes_yielded += len(chunk)
-                yield chunk.decode("utf-8", errors="replace")
-            await proc.wait()
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        yield f"\n[TIMEOUT after {EXECUTION_TIMEOUT_SECONDS}s — process killed]\n"
-    except asyncio.CancelledError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        raise
+        async for chunk in ex.run(prompt, slug=None, execution_id="legacy"):
+            # Surface self._proc to the legacy proc_holder convention so the
+            # existing routes_execution.py cancel path keeps working.
+            if proc_holder is not None and ex._proc is not None and proc_holder.get("proc") is None:
+                proc_holder["proc"] = ex._proc
+            yield chunk
     finally:
         if proc_holder is not None:
             proc_holder["proc"] = None
