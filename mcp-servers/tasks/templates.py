@@ -714,6 +714,28 @@ def requires_supabase(key: str, user_storage_choice: str | None) -> bool:
     return storage_for(key) == "supabase" and (user_storage_choice or "") == "supabase"
 
 
+# When the agent has access to the `search_flights` MCP tool (only true on
+# the dedicated agent VM where flights-mcp is registered — not on the
+# orchestrator with AGENT_BACKEND=local), instruct it to fetch real Duffel
+# offers for the user's route and rewrite the seed flight catalog. Harmless
+# on AGENT_BACKEND=local because the tool simply isn't available — Claude
+# will fall back to the seed data and emit a one-line comment noting it.
+_FLIGHT_BOOKING_MCP_HINT = """## Real flight data
+
+If you have access to a `search_flights` MCP tool, call it for the user's
+requested route and dates and rewrite `src/data.js` so the `flights` named
+export contains the returned offers. Preserve the existing schema fields
+(`id, origin, destination, airline, price, stops, duration, departureHour,
+departureBucket, departureLabel, arrivalLabel, cabin, baggage`) so
+`src/main.js` continues to work. Re-derive `cities` and `airlines` from
+the offers. The tool's `departure_hour` (snake_case) maps to
+`departureHour` (camelCase); recompute `departureBucket` using:
+  bucketize = (h) => h<6?"early":h<12?"morning":h<18?"afternoon":"evening"
+If the tool isn't registered, or returns an error, or returns no offers,
+leave the seed data in place and add a one-line comment noting the fallback.
+"""
+
+
 def build_rules_for(key: str, storage: str | None = None) -> str:
     """Return the rules block for an agent BUILD prompt.
 
@@ -737,6 +759,8 @@ def build_rules_for(key: str, storage: str | None = None) -> str:
         parts = [_BASE_RULES.strip(), _GENERATION_LAYOUT.strip(), t.rules.strip()]
     if storage and storage in STORAGE_INSTRUCTIONS:
         parts.append(STORAGE_INSTRUCTIONS[storage].strip())
+    if key == "flight-booking":
+        parts.append(_FLIGHT_BOOKING_MCP_HINT.strip())
     # Drop empty parts so a Template with rules="" (e.g. the synthetic "custom"
     # entry) doesn't leave a trailing blank section in the agent's prompt.
     return "\n\n".join(p for p in parts if p)
