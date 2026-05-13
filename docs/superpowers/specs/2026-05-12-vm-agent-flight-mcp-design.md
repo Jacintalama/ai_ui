@@ -1,7 +1,7 @@
 # Spec — VM-hosted Agent + Flight MCP for the IO App Builder
 
 **Date:** 2026-05-12
-**Status:** Draft — revision 2 (incorporates spec-review pass 1)
+**Status:** Draft — revision 3 (incorporates spec-review passes 1 and 2)
 **Branch:** `feat/vm-agent-flight-mcp` (off `feat/functional-templates`)
 **Hard prerequisite:** `feat/functional-templates` must be merged to `main` before §4.6 / §8 step 8 can run. That branch contributes the `flight-booking` template (currently unmerged at the time of writing).
 **Author:** brainstormed with Lukas via the superpowers/brainstorming flow
@@ -176,8 +176,19 @@ ssh-keygen -t ed25519 -f ./agent_ssh_key -N "" -C "orchestrator→claude-agent"
 producing `agent_ssh_key` (private) and `agent_ssh_key.pub` (public).
 
 **Distribution.**
-- Private half: written to orchestrator's `/etc/proxy-server/agent_ssh_key` (mode 0400, owned `root:root`). Mounted into the `tasks` container as a docker-compose secret at `/run/secrets/agent_ssh_key`. The existing `docker-compose.unified.yml` is extended with a `secrets:` block (compose-format secrets, file-backed; no Swarm).
+- Private half: written to orchestrator host at `/etc/proxy-server/agent_ssh_key` (mode 0400, owned `root:root`). Mounted into the `tasks` container as a docker-compose secret at `/run/secrets/agent_ssh_key` via this addition to `docker-compose.unified.yml`:
+  ```yaml
+  secrets:
+    agent_ssh_key:
+      file: /etc/proxy-server/agent_ssh_key
+  services:
+    tasks:
+      secrets:
+        - agent_ssh_key
+  ```
+  Compose-format file-backed secret (works in non-Swarm `docker compose`; verified against the project's existing single-host setup).
 - Public half: provision script copies it to the agent VM during initial setup and appends to `/home/claude-agent/.ssh/authorized_keys` (mode 0600, owned `claude-agent`). Any subsequent re-provision overwrites `authorized_keys` with the current public-key file (single-key model, no rotation overlap).
+- **Direction:** orchestrator→agent only. Agent VM holds no SSH credentials back to the orchestrator (see §4.4 — file transport is push-on-start, pull-on-completion, both initiated from the orchestrator).
 
 **Rotation.** To rotate:
 1. Wait for in-flight tasks to finish (orchestrator serializes; verify via `/api/tasks` query).
@@ -223,28 +234,31 @@ Matches the pattern used elsewhere in the codebase for inbound slugs (cf. `route
 
 1. **Validate slug** (above). Raise `ValueError` on bad input — caller's bug, not a runtime path.
 2. **Pre-flight health check:** `ssh -o ConnectTimeout=10 -i $AGENT_SSH_KEY_PATH $AGENT_USER@$AGENT_HOST true`. On non-zero exit → yield `"FAILED: agent_unreachable"` and close. Do NOT fall back to `LocalExecutor` (fail closed; see §9).
-3. **Build remote command.** Pass through `AIUI_AGENT_EFFORT` so remote runs match local effort tier:
+3. **Push current state to agent VM** (orchestrator → agent, using the orchestrator's existing SSH key into the agent — no reverse-direction key needed):
    ```bash
-   set -e
-   TASK_DIR="/agent/work/<slug>"
-   mkdir -p "$TASK_DIR/apps/<slug>" && cd "$TASK_DIR"
-   # Pull current app state (if any) so agent has context for resume
+   ssh -i "$AGENT_SSH_KEY_PATH" "$AGENT_USER@$AGENT_HOST" \
+     "mkdir -p /agent/work/<slug>/apps/<slug>"
    rsync -az --delete \
-     --rsh="ssh -o StrictHostKeyChecking=no" \
-     orchestrator:/workspace/ai_ui/apps/<slug>/ ./apps/<slug>/ \
-     2>/dev/null || true
+     -e "ssh -i $AGENT_SSH_KEY_PATH" \
+     /workspace/ai_ui/apps/<slug>/ \
+     "$AGENT_USER@$AGENT_HOST:/agent/work/<slug>/apps/<slug>/"
+   ```
+   This step is idempotent (a `NEEDS_INPUT` resume re-syncs whatever was on the orchestrator at the time of resume, picking up any operator-side edits).
+4. **Build remote command.** Pass through `AIUI_AGENT_EFFORT` so remote runs match local effort tier:
+   ```bash
+   cd /agent/work/<slug>
    IS_SANDBOX=1 claude \
      --print --dangerously-skip-permissions \
      --output-format stream-json --verbose \
      --effort "$AIUI_AGENT_EFFORT" \
      -- "<prompt>"
    ```
-   `<prompt>` and `<slug>` are shell-quoted with `shlex.quote`. `AIUI_AGENT_EFFORT` is forwarded via `ssh -o "SendEnv=AIUI_AGENT_EFFORT"` + matching `AcceptEnv` on the agent VM's `sshd_config` (provisioning step).
-4. **Spawn ssh:** `proc = await asyncio.create_subprocess_exec("ssh", "-i", AGENT_SSH_KEY_PATH, "-o", "BatchMode=yes", "-o", "SendEnv=AIUI_AGENT_EFFORT", f"{AGENT_USER}@{AGENT_HOST}", remote_cmd)`. Stash on `self._proc`. Stream stdout line-by-line; yield each line. Same `MAX_LOG_BYTES` cap as `LocalExecutor`.
-5. **On `COMPLETED:` line** (matched by updated `_SENTINEL_RE`): trigger `_rsync_back(slug)` synchronously, then yield the `COMPLETED:` line, then close. (Order matters — orchestrator's later "list files" call must see the synced files.)
-6. **On `NEEDS_INPUT:` / `NEEDS_STEPS:` / `FAILED:`:** yield and close. Do NOT rsync back (workspace stays on agent VM for resume / forensics).
-7. **On wall-clock timeout (600s):** issue `ssh ... 'pkill -u claude-agent -f "claude --print"'` (more specific than blanket `pkill claude` — only kills our build process, not any future concurrent ones), then yield `"FAILED: timeout"` and close.
-8. **On `self._proc` killed externally by `stop()`:** propagate `CancelledError` to caller.
+   `<prompt>` and `<slug>` are shell-quoted with `shlex.quote`. `AIUI_AGENT_EFFORT` is forwarded via `ssh -o "SendEnv=AIUI_AGENT_EFFORT"` + matching `AcceptEnv` on the agent VM's `sshd_config` (provisioning step). **The agent VM never holds SSH credentials back to the orchestrator** — file flow is push (orchestrator→agent) on start, pull (orchestrator initiates rsync from agent) on `COMPLETED`. Both directions use the same single SSH key, oriented orchestrator→agent.
+5. **Spawn ssh:** `proc = await asyncio.create_subprocess_exec("ssh", "-i", AGENT_SSH_KEY_PATH, "-o", "BatchMode=yes", "-o", "SendEnv=AIUI_AGENT_EFFORT", f"{AGENT_USER}@{AGENT_HOST}", remote_cmd)`. Stash on `self._proc`. Stream stdout line-by-line; yield each line. Same `MAX_LOG_BYTES` cap as `LocalExecutor`.
+6. **On `COMPLETED:` line** (matched by updated `_SENTINEL_RE`): trigger `_rsync_back(slug)` synchronously **before** yielding the `COMPLETED:` line, then yield it, then close. (Order matters — orchestrator's parser triggers `/api/tasks/{id}/files` listing as soon as it sees `COMPLETED:`; the rsync MUST be done before that lookup.)
+7. **On `NEEDS_INPUT:` / `NEEDS_STEPS:` / `FAILED:`:** yield and close. Do NOT rsync back (workspace stays on agent VM for resume / forensics).
+8. **On wall-clock timeout (600s):** issue `ssh ... 'pkill -u claude-agent -f "claude --print"'` (more specific than blanket `pkill claude` — only kills our build process, not any future concurrent ones), then yield `"FAILED: timeout"` and close.
+9. **On `self._proc` killed externally by `stop()`:** propagate `CancelledError` to caller.
 
 **`_rsync_back(slug)`:**
 
@@ -397,11 +411,11 @@ User → POST /api/tasks/{id}/execute
               get_executor() → RemoteExecutor (AGENT_BACKEND=remote)
               executor stored on _RUNNING[task_id] for stop()
   ↓
-[orchestrator → agent VM via ssh]
-  mkdir -p /agent/work/flight-booker/apps/flight-booker
-  cd /agent/work/flight-booker
-  rsync orchestrator:apps/flight-booker → ./apps/flight-booker
-  AIUI_AGENT_EFFORT=low claude --print ... --effort low -- "<prompt>"
+[orchestrator → agent VM]
+  push: rsync /workspace/ai_ui/apps/flight-booker/
+              → agent-vm:/agent/work/flight-booker/apps/flight-booker/
+  ssh:  cd /agent/work/flight-booker &&
+        AIUI_AGENT_EFFORT=low claude --print ... --effort low -- "<prompt>"
   ↓
 [agent VM] Claude Code reads template files
             decides to call search_flights("LAX","NRT","2026-06-01",
@@ -412,14 +426,16 @@ User → POST /api/tasks/{id}/execute
             agent emits "COMPLETED: Personalized with real LAX→NRT
                          flights for 2"
   ↓
-[orchestrator] receives COMPLETED line (now recognized by updated
-              _SENTINEL_RE)
-              triggers _rsync_back:
-                rsync agent-vm:/agent/work/flight-booker/apps/flight-booker/
-                      → /workspace/ai_ui/apps/flight-booker/
-              sanity-check: apps/flight-booker/index.html exists ✓
-              ssh agent-vm: rm -rf /agent/work/flight-booker
-              task → completed
+[RemoteExecutor] sees COMPLETED in stream
+                 BEFORE yielding it onward:
+                   rsync -az --delete \
+                     agent-vm:/agent/work/flight-booker/apps/flight-booker/
+                     → /workspace/ai_ui/apps/flight-booker/
+                   sanity: apps/flight-booker/index.html exists ✓
+                   ssh agent-vm: rm -rf /agent/work/flight-booker
+                 THEN yields "COMPLETED: ..." to orchestrator
+[orchestrator] parses sentinel (now recognized by updated _SENTINEL_RE)
+              task → completed (files are already on disk)
   ↓
 User refreshes preview → real ANA, JAL, United flights in results
 URL: https://ai-ui.coolestdomain.win/__public/flight-booker/  (unchanged)
@@ -536,21 +552,30 @@ Identical to today's stateless re-run pattern:
 - Agent VM never receives Supabase, Fernet, Discord, or other orchestrator secrets.
 - Rotation: re-run `scripts/provision_agent_vm.sh` with new env values; in-flight tasks complete on old key (no overlap window — orchestrator serializes).
 
-### 7.3 Egress allowlist
+### 7.3 Egress allowlist (FQDN-based via local proxy)
 
-iptables OUTPUT chain on agent VM defaults to `DROP`. Allow:
-- `ESTABLISHED,RELATED` (return traffic)
-- DNS to Hetzner resolver (`185.12.64.1`, `185.12.64.2`) port 53 UDP/TCP
-- HTTPS to a small list of FQDNs, resolved at provision time and pinned to IP allowlist that the daily cron refreshes:
-  - `api.anthropic.com`
-  - `api.duffel.com`
-  - `registry.npmjs.org`
-  - `deb.nodesource.com`
-  - `pypi.org`
-  - `files.pythonhosted.org`
-  - `archive.ubuntu.com`, `security.ubuntu.com` (apt)
+Direct outbound HTTPS from `claude-agent` user is **denied by default** (iptables OUTPUT chain DROPs `tcp dport 443` for the `claude-agent` uid). All HTTPS egress is forced through a local Squid proxy listening on `127.0.0.1:3128`, configured with a domain-name allowlist:
 
-Rationale: even if a Duffel response or scraped page convinces the agent to `curl evil.com`, the kernel drops the packet. The allowlist is narrow enough to be tractable but wide enough to install dependencies if the agent decides to. Pinning to IPs is fragile (CDNs rotate); the daily refresh cron is the maintenance cost.
+```
+# /etc/squid/squid.conf — minimal config installed by provision script
+acl allowed_hosts dstdomain
+  .anthropic.com
+  .duffel.com
+  .npmjs.org
+  .nodesource.com
+  .pypi.org
+  .pythonhosted.org
+  .ubuntu.com
+http_access allow allowed_hosts
+http_access deny all
+http_port 3128
+```
+
+The `claude-agent` user has `HTTPS_PROXY=http://127.0.0.1:3128` and `HTTP_PROXY=http://127.0.0.1:3128` in its environment (`/home/claude-agent/.profile`). Squid resolves DNS per-request, so CDN rotations don't cause stale-allowlist failures. Also allowed at the kernel level (no proxy): DNS to Hetzner resolver (`185.12.64.1`, `185.12.64.2`) port 53 UDP/TCP — needed for Squid itself.
+
+Rationale: even if a Duffel response or scraped page convinces the agent to `curl evil.com`, Squid 403s the request. FQDN-based is the right grain (no stale-IP failure mode); the proxy is a small additional component but uses ~30 MB RAM and has been boring for 25 years.
+
+`apt-get install` on the agent VM uses `http://archive.ubuntu.com/` (port 80, not HTTPS) — apt's existing proxy config respects `Acquire::http::Proxy "http://127.0.0.1:3128"` set in `/etc/apt/apt.conf.d/95proxy`.
 
 ### 7.4 Blast radius limits + residual risks
 
@@ -580,7 +605,8 @@ Rationale: even if a Duffel response or scraped page convinces the agent to `cur
   30 3 * * * claude-agent find /agent/work -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \;
   ```
   7-day window protects `awaiting_input` tasks that might resume after several days. Orchestrator's per-task cleanup (immediate on terminal status) handles the common case; cron is the belt-and-braces fallback for orphans (network failures mid-cleanup, etc.).
-- **Egress IP refresh cron:** runs daily at 03:00 UTC, re-resolves the §7.3 allowlist FQDNs and updates iptables rules.
+- **Squid log rotation:** `logrotate` rotates `/var/log/squid/access.log` daily, 14 days retained. Lets us audit "what did the agent try to reach?" after an incident.
+- **No IP-refresh cron needed** — §7.3's FQDN-based proxy resolves DNS per-request.
 
 ---
 
