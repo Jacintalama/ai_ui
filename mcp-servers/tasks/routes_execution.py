@@ -1,6 +1,7 @@
 """AI execution: spawns the claude CLI subprocess, streams progress via SSE."""
 import asyncio
 import logging
+import os
 from datetime import datetime
 from uuid import UUID
 
@@ -9,12 +10,13 @@ from pydantic import BaseModel
 from sqlalchemy import select, text, update
 from sse_starlette.sse import EventSourceResponse
 
+from agent_executor import get_executor
 from auth import AdminUser, current_admin
 from claude_executor import (
     build_prompt, build_clarify_prompt, build_plan_prompt,
     build_tdd_execute_prompt, build_verify_prompt,
     extract_app_slug, parse_outcome, parse_clarify_done,
-    parse_plan, parse_test_outcome, run_claude_subprocess,
+    parse_plan, parse_test_outcome,
 )
 from db import session
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
@@ -50,26 +52,80 @@ logger = logging.getLogger("tasks")
 router = APIRouter(prefix="/api/tasks")
 
 # In-process registry of running execution tasks for cancellation.
-# Each entry holds the asyncio task + a mutable dict where the subprocess
-# stores its reference so we can .kill() the actual child process on cancel.
+# Each entry holds the asyncio task + the executor instance that owns the
+# in-flight agent run. Cancel awaits executor.stop() to kill the underlying
+# process (local subprocess or remote SSH session).
 _RUNNING: dict[UUID, dict] = {}
 
 TEAM_EMAIL = "team@aiui.local"
 
 
 async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
-    """Run a Claude subprocess, stream output to execution log, return full output."""
+    """Run a claude run via the configured executor; stream output to the
+    execution log; return the full log as a string.
+
+    AGENT_BACKEND env (read inside get_executor) decides whether this hits
+    a local subprocess or a remote VM. The orchestrator behavior is
+    identical either way — same sentinel stream, same log shape.
+    """
     full_log: list[str] = []
-    proc_holder = _RUNNING.get(task_id, {})
-    async for chunk in run_claude_subprocess(prompt, proc_holder=proc_holder):
-        full_log.append(chunk)
-        async with session() as s:
-            await s.execute(
-                update(TaskExecution)
-                .where(TaskExecution.id == execution_id)
-                .values(log=TaskExecution.log + chunk)
+    executor = get_executor()
+    # Preserve any prior bookkeeping (e.g. the asyncio Task handle stashed
+    # by /execute before the background coro started) and add the executor.
+    entry = _RUNNING.setdefault(task_id, {})
+    entry["executor"] = executor
+
+    # Look up the slug for this task (RemoteExecutor needs it for workspace
+    # keying; LocalExecutor ignores it).
+    async with session() as s:
+        task = (
+            await s.execute(select(TaskItem).where(TaskItem.id == task_id))
+        ).scalar_one_or_none()
+        slug = (task.built_app_slug if task else None) or None
+
+    # If we're on the remote backend, record which agent host is handling
+    # this execution. Guarded with try/except because the `agent_host`
+    # column is not added until Task 9's migration — until then the UPDATE
+    # raises ProgrammingError ("column ... does not exist"). The guard is
+    # forward-compat only and should be removed once the migration lands.
+    if executor.__class__.__name__ == "RemoteExecutor":
+        agent_host_value = os.environ.get("AGENT_HOST")
+        try:
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution)
+                    .where(TaskExecution.id == execution_id)
+                    .values(agent_host=agent_host_value)
+                )
+                await s.commit()
+        except Exception as exc:  # noqa: BLE001  pragma: no cover
+            # Swallow column-missing errors so RemoteExecutor still streams
+            # successfully before the Task 9 migration lands (which adds the
+            # `agent_host` column). Any other DB error gets logged but does
+            # not break the run. Remove this guard once the migration is in.
+            logger.warning(
+                "agent_host writeback skipped (likely missing column): %s", exc
             )
-            await s.commit()
+
+    try:
+        async for chunk in executor.run(
+            prompt, slug=slug, execution_id=str(execution_id)
+        ):
+            full_log.append(chunk)
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution)
+                    .where(TaskExecution.id == execution_id)
+                    .values(log=TaskExecution.log + chunk)
+                )
+                await s.commit()
+    finally:
+        # Clear the executor handle but keep the rest of the entry — the
+        # outer _run_execution finally block pops the whole entry.
+        cur = _RUNNING.get(task_id)
+        if cur is not None and cur.get("executor") is executor:
+            cur.pop("executor", None)
+
     return "".join(full_log)
 
 
@@ -355,9 +411,9 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
     prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
-    # Create a holder dict so the subprocess can register its own reference
-    # for hard-kill on cancel.
-    _RUNNING[item.id] = {"task": None, "proc": None}
+    # Create a holder dict that _stream_claude will fill with the executor
+    # instance so cancel can call executor.stop().
+    _RUNNING[item.id] = {"task": None}
     bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
     _RUNNING[item.id]["task"] = bg
     return item
@@ -447,7 +503,7 @@ async def resume(
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
     prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
-    _RUNNING[item.id] = {"task": None, "proc": None}
+    _RUNNING[item.id] = {"task": None}
     bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
     _RUNNING[item.id]["task"] = bg
     return item
@@ -518,7 +574,7 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
         priority=item.priority,
         conversation_history=item.conversation_history or [],
     )
-    _RUNNING[item.id] = {"task": None, "proc": None}
+    _RUNNING[item.id] = {"task": None}
 
     async def _clarify_bg(tid, eid, p):
         try:
@@ -630,7 +686,7 @@ async def start_plan(task_id: UUID, user: AdminUser = Depends(current_admin)):
         priority=item.priority,
         requirements=requirements,
     )
-    _RUNNING[item.id] = {"task": None, "proc": None}
+    _RUNNING[item.id] = {"task": None}
     bg = asyncio.create_task(_plan_bg(item.id, execution.id, prompt))
     _RUNNING[item.id]["task"] = bg
     return item
@@ -703,12 +759,12 @@ async def stream(
 async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin)):
     entry = _RUNNING.pop(task_id, None)
     if entry:
-        proc = entry.get("proc")
-        if proc is not None:
+        executor = entry.get("executor")
+        if executor is not None:
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+                await executor.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("executor.stop() raised on cancel: %s", exc)
         task = entry.get("task")
         if task is not None:
             task.cancel()

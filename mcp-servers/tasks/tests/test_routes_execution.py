@@ -9,21 +9,42 @@ from models import TaskItem
 ADMIN = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 
 
-async def _fake_completed(prompt):
-    yield "Read Caddyfile\n"
-    yield "COMPLETED: Updated and reloaded.\n"
+class _FakeExecutor:
+    """Stand-in for BaseExecutor that yields a scripted output stream.
+
+    Mirrors the LocalExecutor / RemoteExecutor signature exactly so the
+    routes_execution._stream_claude orchestrator can drive it without
+    knowing it's a stub.
+    """
+
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    async def run(self, prompt, slug=None, execution_id=""):
+        for c in self._chunks:
+            yield c
+
+    async def stop(self):
+        return None
 
 
-async def _fake_needs_input(prompt):
-    yield "NEEDS_INPUT: What is the API key?\n"
+def _fake_completed_executor():
+    return _FakeExecutor([
+        "Read Caddyfile\n",
+        "COMPLETED: Updated and reloaded.\n",
+    ])
+
+
+def _fake_needs_input_executor():
+    return _FakeExecutor([
+        "NEEDS_INPUT: What is the API key?\n",
+    ])
 
 
 async def test_execute_completed_path(db_session, monkeypatch):
-    import claude_executor
     import routes_execution
 
-    monkeypatch.setattr(claude_executor, "run_claude_subprocess", _fake_completed)
-    monkeypatch.setattr(routes_execution, "run_claude_subprocess", _fake_completed)
+    monkeypatch.setattr(routes_execution, "get_executor", _fake_completed_executor)
     item = TaskItem(
         meeting_id=uuid.uuid4(),
         action_type="BUILD",
@@ -48,11 +69,9 @@ async def test_execute_completed_path(db_session, monkeypatch):
 
 
 async def test_execute_needs_input_path(db_session, monkeypatch):
-    import claude_executor
     import routes_execution
 
-    monkeypatch.setattr(claude_executor, "run_claude_subprocess", _fake_needs_input)
-    monkeypatch.setattr(routes_execution, "run_claude_subprocess", _fake_needs_input)
+    monkeypatch.setattr(routes_execution, "get_executor", _fake_needs_input_executor)
     item = TaskItem(
         meeting_id=uuid.uuid4(),
         action_type="INTEGRATE",
