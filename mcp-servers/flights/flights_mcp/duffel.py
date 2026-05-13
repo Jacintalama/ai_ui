@@ -26,26 +26,39 @@ class DuffelError(Exception):
     retry_after: int | None = None
 
 
-_ISO_DURATION = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?$")
+_ISO_DURATION = re.compile(r"^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$")
 
 
 def parse_iso8601_duration(s: str) -> int:
-    """Convert an ISO 8601 duration like 'PT8H45M' to total minutes."""
+    """Convert an ISO 8601 duration like 'PT8H45M' or 'PT1H30M00S' to total minutes.
+
+    Seconds are floored into minutes (60 → 1, 30 → 0). The degenerate 'PT'
+    form (no components) is treated as bad input.
+    """
     m = _ISO_DURATION.match(s)
     if not m:
         raise DuffelError(kind="bad_response", detail=f"bad duration: {s!r}")
     hours = int(m.group(1) or 0)
     minutes = int(m.group(2) or 0)
-    return hours * 60 + minutes
+    seconds = int(m.group(3) or 0)
+    if not (hours or minutes or seconds):
+        raise DuffelError(kind="bad_response", detail=f"empty duration: {s!r}")
+    return hours * 60 + minutes + seconds // 60
 
 
 def _format_cabin(s: str) -> str:
+    """Map Duffel cabin_class to the Literal values FlightOffer accepts.
+
+    Unknown values (e.g. 'economy_plus') fall back to 'Economy' rather
+    than title-casing — Literal validation would reject anything else
+    and we want a DuffelError, not an uncaught ValidationError.
+    """
     return {
         "economy": "Economy",
         "premium_economy": "Premium Economy",
         "business": "Business",
         "first": "First",
-    }.get(s, s.title())
+    }.get(s, "Economy")
 
 
 def _format_baggage(baggages: list[dict[str, Any]]) -> str:
@@ -90,7 +103,9 @@ def _to_offer(d: dict[str, Any]) -> FlightOffer:
             cabin=_format_cabin(pax["cabin_class"]),
             baggage=_format_baggage(pax.get("baggages", [])),
         )
-    except (KeyError, IndexError) as exc:
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        # TypeError covers float(None) when total_amount is missing-typed;
+        # ValueError covers float("abc") on malformed numerics.
         raise DuffelError(kind="bad_response", detail=str(exc)) from exc
 
 
@@ -140,7 +155,12 @@ class DuffelClient:
         if r.status_code == 422:
             raise DuffelError(kind="bad_request", detail=_first_error(r))
         if r.status_code == 429:
-            retry = int(r.headers.get("Retry-After", "60"))
+            # Retry-After can be either delta-seconds or HTTP-date. We only
+            # honor the seconds form; anything else falls back to 60.
+            try:
+                retry = int(r.headers.get("Retry-After", "60"))
+            except ValueError:
+                retry = 60
             raise DuffelError(kind="rate_limit", retry_after=retry)
         if r.status_code >= 500:
             raise DuffelError(kind="upstream", detail=f"HTTP {r.status_code}")
