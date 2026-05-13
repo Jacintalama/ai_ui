@@ -25,6 +25,7 @@ from claude_executor import (
     MAX_LOG_BYTES,
     MAX_PROMPT_CHARS,
     CLAUDE_WORKSPACE,
+    _COMPLETED_LINE_RE,
 )
 
 
@@ -72,8 +73,11 @@ class RemoteExecutor:
         remote_cmd = self._build_remote_cmd(prompt, slug, effort)
         try:
             async for line in self._stream(host, user, key, remote_cmd):
-                # 5. On COMPLETED: rsync back BEFORE yielding the line
-                if "COMPLETED:" in line and slug:
+                # 5. On COMPLETED line: rsync back BEFORE yielding the line.
+                # Uses the same regex as parse_outcome (accepts COMPLETED:,
+                # COMPLETED<space>, COMPLETED.) so the trigger stays in sync
+                # with the parser.
+                if _COMPLETED_LINE_RE.search(line) and slug:
                     try:
                         await self._rsync_back(host, user, key, slug)
                         await self._cleanup_remote(host, user, key, slug)
