@@ -144,10 +144,14 @@ class RemoteExecutor:
         # belt-and-braces (in case SendEnv was filtered en route).
         qprompt = shlex.quote(prompt)
         cwd = "/agent/work" if slug is None else f"/agent/work/{shlex.quote(slug)}"
+        # `set -a` auto-exports every variable defined while sourcing ~/.env,
+        # so ANTHROPIC_API_KEY actually reaches the claude subprocess. Without
+        # this, plain `source` only sets shell locals and the subprocess sees
+        # apiKeySource=none → "Not logged in · Please run /login".
         return (
             "set -e; "
             f"cd {cwd}; "
-            "source ~/.env; "
+            "set -a; source ~/.env; set +a; "
             "IS_SANDBOX=1 claude --print --dangerously-skip-permissions "
             "--output-format stream-json --verbose "
             f"--effort {shlex.quote(effort)} "
