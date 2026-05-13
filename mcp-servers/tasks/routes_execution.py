@@ -85,29 +85,16 @@ async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
         slug = (task.built_app_slug if task else None) or None
 
     # If we're on the remote backend, record which agent host is handling
-    # this execution. Guarded with try/except because the `agent_host`
-    # column is not added until Task 9's migration — until then the UPDATE
-    # raises ProgrammingError ("column ... does not exist"). The guard is
-    # forward-compat only and should be removed once the migration lands.
+    # this execution. Used for audit + forensics ("which VM ran this build?").
     if executor.__class__.__name__ == "RemoteExecutor":
         agent_host_value = os.environ.get("AGENT_HOST")
-        try:
-            async with session() as s:
-                await s.execute(
-                    update(TaskExecution)
-                    .where(TaskExecution.id == execution_id)
-                    .values(agent_host=agent_host_value)
-                )
-                await s.commit()
-        except ProgrammingError as exc:
-            # Column-missing error before Task 9's migration lands.
-            # Narrow except so real DB errors (connection drop, transaction
-            # rollback, value-type mismatch) still propagate. Remove this
-            # whole try/except once the migration is in.
-            logger.warning(
-                "agent_host writeback skipped (column missing — Task 9 not yet deployed): %s",
-                exc,
+        async with session() as s:
+            await s.execute(
+                update(TaskExecution)
+                .where(TaskExecution.id == execution_id)
+                .values(agent_host=agent_host_value)
             )
+            await s.commit()
 
     try:
         async for chunk in executor.run(

@@ -52,6 +52,7 @@ class TaskExecution(Base):
     status = Column(Text, nullable=False, default="running")
     log = Column(Text, nullable=False, default="")
     error = Column(Text, nullable=True)
+    agent_host = Column(Text, nullable=True)
 
     task = relationship("TaskItem", back_populates="executions")
 
