@@ -35,7 +35,8 @@ mcp-servers/tasks/tests/test_agent_executor_factory.py
 mcp-servers/tasks/tests/test_local_executor.py
 mcp-servers/tasks/tests/test_remote_executor.py
 mcp-servers/tasks/tests/test_sentinel_parsing.py
-mcp-servers/tasks/migrations/versions/<rev>_add_agent_host_to_executions.py
+mcp-servers/tasks/migrations/012_add_agent_host.sql
+mcp-servers/tasks/migrations/012_add_agent_host.down.sql
 
 mcp-servers/flights/                      # NEW package
   flights_mcp/
@@ -533,7 +534,7 @@ import asyncio
 import os
 from typing import AsyncIterator
 
-from .claude_executor import (
+from claude_executor import (
     CLAUDE_SANDBOX_DIR,
     CLAUDE_WORKSPACE,
     EXECUTION_TIMEOUT_SECONDS,
@@ -628,7 +629,7 @@ async def run_claude_subprocess(
     spawned subprocess so the caller can .kill() it externally. New code
     should use agent_executor.get_executor() + executor.stop() instead.
     """
-    from .local_executor import LocalExecutor  # local import avoids cycle
+    from local_executor import LocalExecutor  # local import avoids cycle
     ex = LocalExecutor()
     try:
         async for chunk in ex.run(prompt, slug=None, execution_id="legacy"):
@@ -709,7 +710,7 @@ async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
     a local subprocess or a remote VM. The orchestrator behavior is
     identical either way — same sentinel stream, same log shape.
     """
-    from .agent_executor import get_executor
+    from agent_executor import get_executor
 
     full_log: list[str] = []
     executor = get_executor()
@@ -2177,7 +2178,7 @@ import re
 import shlex
 from typing import AsyncIterator
 
-from .claude_executor import (
+from claude_executor import (
     EXECUTION_TIMEOUT_SECONDS,
     MAX_LOG_BYTES,
     MAX_PROMPT_CHARS,
