@@ -16,21 +16,10 @@
 
 ## Before You Start
 
-**Hard prerequisite — merge `feat/functional-templates` to `main` first.** The `flight-booking` template (introduced by commit `faa84f95e`) is on the unmerged `feat/functional-templates` branch. Task 10 of this plan (prompt augmentation + E2E demo) cannot run without it. If `feat/functional-templates` has not been merged yet:
-
-```bash
-git checkout main
-git merge feat/functional-templates
-git push
-git checkout feat/vm-agent-flight-mcp
-git rebase main
-```
-
-Verify after merging:
-```bash
-ls mcp-servers/tasks/template_apps/flight-booking/src/data.js   # should exist
-git log --oneline main | grep -E '(faa84f95e|flight-booking)'   # should print a match
-```
+**Test environment notes:**
+- Tests in `mcp-servers/tasks/tests/` use bare imports (e.g. `from claude_executor import ...`). The `conftest.py` does `sys.path.insert(0, ...)` to put `mcp-servers/tasks/` on the path. Write all new test imports this way — do NOT use `from mcp_servers.tasks.X` (which would not resolve).
+- `mcp-servers/tasks/` migrations are plain SQL files (`migrations/NNN_*.sql`), not Alembic. Follow the existing convention in Task 9.
+- The new `mcp-servers/flights/` package has its own `pyproject.toml` with `respx` in `[test]` extras. Install it once locally (Task 4 Step 3) and add an entry to whatever CI runs tasks tests to also `pip install -e mcp-servers/flights[test]` before running `pytest mcp-servers/flights/tests/`. If CI lives at `.github/workflows/*.yml` or similar, add that step there.
 
 ---
 
@@ -83,6 +72,51 @@ docs/agent-vm/README.md                   # operator documentation
 
 ---
 
+## Task 0: Merge `feat/functional-templates` to `main`
+
+**Hard prerequisite.** The `flight-booking` template (commit `faa84f95e` on the unmerged `feat/functional-templates` branch) is required by Task 10's E2E demo. Without this merge, the demo path is impossible.
+
+- [ ] **Step 1: Confirm the branch is in good state**
+
+```bash
+git fetch
+git log --oneline main..feat/functional-templates | head -5
+git diff main feat/functional-templates -- mcp-servers/tasks/templates.py | head
+```
+
+Expected: commits visible, templates.py shows the 5 new entries.
+
+- [ ] **Step 2: Open the PR (if not already)**
+
+```bash
+gh pr create --base main --head feat/functional-templates \
+  --title "feat: 5 functional templates (flight-booking, food-delivery, job-board, movie-tickets, recipe-site)"
+```
+
+- [ ] **Step 3: Wait for review + CI green, then merge**
+
+```bash
+gh pr merge --merge --delete-branch=false
+```
+
+- [ ] **Step 4: Verify locally**
+
+```bash
+git checkout main && git pull
+ls mcp-servers/tasks/template_apps/flight-booking/src/data.js   # should exist
+```
+
+- [ ] **Step 5: Rebase our working branch onto fresh main**
+
+```bash
+git checkout feat/vm-agent-flight-mcp
+git rebase main
+```
+
+There is nothing to commit in Task 0 — the work is the merge of an already-committed branch.
+
+---
+
 ## Task 1: BaseExecutor Protocol + factory
 
 **Files:**
@@ -101,7 +135,7 @@ import os
 import pytest
 from unittest.mock import patch
 
-from mcp_servers.tasks.agent_executor import get_executor, BaseExecutor
+from agent_executor import get_executor, BaseExecutor
 
 
 def test_default_is_local():
@@ -297,7 +331,7 @@ Create `mcp-servers/tasks/tests/test_sentinel_parsing.py`:
 
 ```python
 """_SENTINEL_RE recognizes FAILED as a first-class terminal sentinel."""
-from mcp_servers.tasks.claude_executor import parse_outcome
+from claude_executor import parse_outcome
 
 
 def test_failed_sentinel_is_first_class():
@@ -405,7 +439,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from mcp_servers.tasks.local_executor import LocalExecutor
+from local_executor import LocalExecutor
 
 
 @pytest.fixture
@@ -736,15 +770,55 @@ async with session() as s:
 
 (This relies on the column added in Task 9. For Task 3, the migration isn't run yet — guard with try/except or skip this snippet for now and add it back in Task 9 after the migration lands.)
 
-- [ ] **Step 5: Run the tasks suite**
+- [ ] **Step 5: Add a regression test for the cancel path**
+
+Create or extend `mcp-servers/tasks/tests/test_cancel_endpoint.py`:
+
+```python
+"""Cancel endpoint calls executor.stop() instead of poking proc_holder."""
+import uuid
+from unittest.mock import AsyncMock
+
+import pytest
+
+from routes_execution import _RUNNING
+
+
+@pytest.mark.asyncio
+async def test_cancel_calls_executor_stop():
+    """_RUNNING entry now holds {'executor': X}; cancel awaits executor.stop()."""
+    task_id = uuid.uuid4()
+    fake_executor = AsyncMock()
+    fake_executor.stop = AsyncMock()
+    _RUNNING[task_id] = {"executor": fake_executor}
+
+    # Simulate what the cancel endpoint body does:
+    entry = _RUNNING.get(task_id)
+    if entry and "executor" in entry:
+        await entry["executor"].stop()
+
+    fake_executor.stop.assert_awaited_once()
+    _RUNNING.pop(task_id, None)
+
+
+@pytest.mark.asyncio
+async def test_cancel_no_op_when_task_not_running():
+    """Cancel on an unknown task_id is a no-op, not an error."""
+    task_id = uuid.uuid4()
+    entry = _RUNNING.get(task_id)
+    # body of the cancel endpoint with no entry → falls through safely
+    assert entry is None
+```
+
+- [ ] **Step 6: Run the tasks suite**
 
 ```bash
 python -m pytest -v 2>&1 | tail -30
 ```
 
-Expected: all existing tests still PASS. Cancel-related tests may need updating if they assert on the `proc_holder["proc"]` shape — fix them to look up `_RUNNING[task_id]["executor"]` instead.
+Expected: all existing tests + the new cancel tests PASS. If any prior test asserted on the `proc_holder["proc"]` shape directly, update it to look up `_RUNNING[task_id]["executor"]`.
 
-- [ ] **Step 6: Manual smoke (optional but recommended)**
+- [ ] **Step 7: Manual smoke (optional but recommended)**
 
 If you have a dev orchestrator running:
 ```bash
@@ -755,10 +829,11 @@ curl -X POST http://localhost:8210/api/tasks \
 # → LocalExecutor path. Behavior should be byte-identical to before.
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add mcp-servers/tasks/routes_execution.py
+git add mcp-servers/tasks/routes_execution.py \
+        mcp-servers/tasks/tests/test_cancel_endpoint.py
 git commit -m "refactor(tasks): _stream_claude uses get_executor() + executor.stop()
 
 Cancel path now calls executor.stop() instead of poking the subprocess
@@ -1574,7 +1649,26 @@ install -o claude-agent -g claude-agent -m 600 /tmp/agent_pub.key /home/claude-a
 rm -f /tmp/agent_pub.key
 EOF
 
-echo "==> [3/8] sshd config — PasswordAuth no, PermitRootLogin no, AcceptEnv"
+echo "==> [3/8] ufw — ingress 22/tcp from orchestrator only"
+# IMPORTANT ORDERING NOTE:
+# We configure ufw BEFORE locking down sshd. If the operator's bootstrap
+# SSH is from a non-orchestrator IP (operator workstation), they could
+# get locked out the moment ufw enables. Provision script supports an
+# optional OPERATOR_BOOTSTRAP_IP env var to add a second temporary allow
+# rule; remove it manually after the smoke checks pass.
+${SSH} bash -se <<EOF
+set -euo pipefail
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow from ${ORCHESTRATOR_PRIVATE_IP} to any port 22 proto tcp
+if [[ -n "${OPERATOR_BOOTSTRAP_IP:-}" ]]; then
+  ufw allow from ${OPERATOR_BOOTSTRAP_IP} to any port 22 proto tcp comment "TEMP: operator bootstrap"
+fi
+ufw --force enable
+EOF
+
+echo "==> [4/8] sshd config — PasswordAuth no, PermitRootLogin no, AcceptEnv"
 ${SSH} bash -se <<'EOF'
 set -euo pipefail
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
@@ -1582,16 +1676,6 @@ sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
 grep -q "^AcceptEnv AIUI_AGENT_EFFORT" /etc/ssh/sshd_config || \
   echo "AcceptEnv AIUI_AGENT_EFFORT" >> /etc/ssh/sshd_config
 systemctl reload ssh
-EOF
-
-echo "==> [4/8] ufw — ingress 22/tcp from orchestrator only"
-${SSH} bash -se <<EOF
-set -euo pipefail
-ufw --force reset
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow from ${ORCHESTRATOR_PRIVATE_IP} to any port 22 proto tcp
-ufw --force enable
 EOF
 
 echo "==> [5/8] Squid FQDN-allowlist proxy on 127.0.0.1:3128"
@@ -1904,7 +1988,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from mcp_servers.tasks.remote_executor import RemoteExecutor, _VALID_SLUG
+from remote_executor import RemoteExecutor, _VALID_SLUG
 
 
 def test_slug_validator_accepts_normal_slugs():
@@ -1951,6 +2035,22 @@ async def test_invalid_slug_raises():
             pass
 
 
+def _classify_ssh(args: tuple) -> str:
+    """Disambiguate which RemoteExecutor ssh call this is by exact suffix."""
+    last = args[-1]
+    if last == "true":
+        return "healthcheck"
+    if last.startswith("mkdir -p /agent/work/"):
+        return "mkdir"
+    if last.startswith("rm -rf /agent/work/"):
+        return "cleanup"
+    if "pkill" in last:
+        return "kill"
+    if "claude --print" in last:
+        return "build"
+    return "other"
+
+
 @pytest.mark.asyncio
 async def test_happy_path_streams_and_rsyncs(monkeypatch):
     """COMPLETED triggers rsync-back before yielding the line onward."""
@@ -1960,14 +2060,10 @@ async def test_happy_path_streams_and_rsyncs(monkeypatch):
         calls.append(args)
         cmd = args[0]
         if cmd == "ssh":
-            # Health check ssh ... true
-            if len(args) <= 6 and "true" in args[-1]:
-                return _fake_proc([], returncode=0)
-            # Push-state ssh "mkdir -p ..."
-            if "mkdir" in args[-1]:
-                return _fake_proc([], returncode=0)
-            # The big build ssh
-            return _fake_proc([b"hello\n", b"COMPLETED: ok\n"], returncode=0)
+            kind = _classify_ssh(args)
+            if kind == "build":
+                return _fake_proc([b"hello\n", b"COMPLETED: ok\n"], returncode=0)
+            return _fake_proc([], returncode=0)
         if cmd == "rsync":
             return _fake_proc([], returncode=0)
         return _fake_proc([], returncode=0)
@@ -1979,9 +2075,9 @@ async def test_happy_path_streams_and_rsyncs(monkeypatch):
             out.append(chunk)
     full = "".join(out)
     assert "COMPLETED: ok" in full
-    # rsync was invoked (at least once for push, once for pull-back)
+    # Exactly two rsyncs: push (before build) and pull-back (after COMPLETED)
     rsync_calls = [c for c in calls if c[0] == "rsync"]
-    assert len(rsync_calls) >= 2
+    assert len(rsync_calls) == 2
 
 
 @pytest.mark.asyncio
@@ -2003,15 +2099,12 @@ async def test_needs_input_does_not_rsync():
         calls.append(args)
         cmd = args[0]
         if cmd == "rsync":
-            # rsync is called for the PUSH (before build) but should NOT be
-            # called a second time for the pull-back when NEEDS_INPUT fires.
             return _fake_proc([], returncode=0)
         if cmd == "ssh":
-            if len(args) <= 6 and "true" in args[-1]:
-                return _fake_proc([], returncode=0)
-            if "mkdir" in args[-1]:
-                return _fake_proc([], returncode=0)
-            return _fake_proc([b"NEEDS_INPUT: which date?\n"], returncode=0)
+            kind = _classify_ssh(args)
+            if kind == "build":
+                return _fake_proc([b"NEEDS_INPUT: which date?\n"], returncode=0)
+            return _fake_proc([], returncode=0)
         return _fake_proc([], returncode=0)
 
     with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=fake_spawn)):
@@ -2202,17 +2295,17 @@ class RemoteExecutor:
             raise RuntimeError(f"push rsync exit {rc}: {err[:200]}")
 
     def _build_remote_cmd(self, prompt: str, slug: str | None, effort: str) -> str:
+        # AIUI_AGENT_EFFORT is forwarded from the orchestrator via SSH
+        # SendEnv (see _stream below) — the sshd_config on the agent VM
+        # AcceptEnv-lists it. We pass --effort explicitly anyway for
+        # belt-and-braces (in case SendEnv was filtered en route).
         qprompt = shlex.quote(prompt)
-        if slug is None:
-            cwd = "/agent/work"
-        else:
-            cwd = f"/agent/work/{shlex.quote(slug)}"
+        cwd = "/agent/work" if slug is None else f"/agent/work/{shlex.quote(slug)}"
         return (
             "set -e; "
             f"cd {cwd}; "
             "source ~/.env; "
-            f'IS_SANDBOX=1 AIUI_AGENT_EFFORT={shlex.quote(effort)} '
-            "claude --print --dangerously-skip-permissions "
+            "IS_SANDBOX=1 claude --print --dangerously-skip-permissions "
             "--output-format stream-json --verbose "
             f"--effort {shlex.quote(effort)} "
             f"-- {qprompt}"
@@ -2330,36 +2423,39 @@ flips the env var."
 ## Task 9: Wire up + DB migration + production deploy
 
 **Files:**
-- Create: `mcp-servers/tasks/migrations/versions/<rev>_add_agent_host_to_executions.py`
+- Create: `mcp-servers/tasks/migrations/012_add_agent_host.sql`
+- Create: `mcp-servers/tasks/migrations/012_add_agent_host.down.sql`
 - Modify: `mcp-servers/tasks/models.py` (TaskExecution table)
 - Modify: `mcp-servers/tasks/routes_execution.py` (uncomment the `agent_host=` write from Task 3 Step 4)
 
 The factory + RemoteExecutor are already wired together via Task 1's `get_executor()`. This task adds the audit column and ships.
 
+**Note on migrations:** the project uses **raw SQL migrations** (`migrations/001_init.sql` … `migrations/011_*.sql`), not Alembic. Follow that convention — do NOT introduce `alembic` here.
+
 - [ ] **Step 1: Add the column to the model**
 
-In `mcp-servers/tasks/models.py`, find the `TaskExecution` class. Add:
+In `mcp-servers/tasks/models.py`, find the `TaskExecution` class (the one with `__tablename__ = "executions"`). Add to match the existing `Column(...)` style:
 
 ```python
-agent_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+agent_host = Column(String(255), nullable=True)
 ```
 
-- [ ] **Step 2: Generate the Alembic migration**
+Make sure `String` is imported at the top of the file (it usually already is — check the existing imports).
 
-```bash
-cd mcp-servers/tasks
-alembic revision --autogenerate -m "add agent_host to task_executions"
+- [ ] **Step 2: Write the SQL migration**
+
+`mcp-servers/tasks/migrations/012_add_agent_host.sql`:
+
+```sql
+ALTER TABLE tasks.executions
+  ADD COLUMN IF NOT EXISTS agent_host TEXT NULL;
 ```
 
-Verify the generated file at `migrations/versions/<rev>_add_agent_host_to_task_executions.py` contains:
+`mcp-servers/tasks/migrations/012_add_agent_host.down.sql`:
 
-```python
-def upgrade() -> None:
-    op.add_column('task_executions',
-                  sa.Column('agent_host', sa.String(length=255), nullable=True))
-
-def downgrade() -> None:
-    op.drop_column('task_executions', 'agent_host')
+```sql
+ALTER TABLE tasks.executions
+  DROP COLUMN IF EXISTS agent_host;
 ```
 
 - [ ] **Step 3: Re-enable the `agent_host` write in `_stream_claude`**
@@ -2379,15 +2475,17 @@ if agent_host_value:
         await s.commit()
 ```
 
-- [ ] **Step 4: Test the migration locally**
+- [ ] **Step 4: Test the migration locally against a dev Postgres**
 
 ```bash
-alembic upgrade head
-alembic downgrade -1
-alembic upgrade head
+psql "$DATABASE_URL" -f mcp-servers/tasks/migrations/012_add_agent_host.sql
+psql "$DATABASE_URL" -c "\d+ tasks.executions" | grep agent_host
+# Verify rollback works too
+psql "$DATABASE_URL" -f mcp-servers/tasks/migrations/012_add_agent_host.down.sql
+psql "$DATABASE_URL" -f mcp-servers/tasks/migrations/012_add_agent_host.sql
 ```
 
-Expected: clean up and down.
+Expected: column appears after up, disappears after down, reappears after up again.
 
 - [ ] **Step 5: Run the full tasks suite**
 
@@ -2401,9 +2499,10 @@ Expected: all PASS.
 
 ```bash
 git add mcp-servers/tasks/models.py \
-        mcp-servers/tasks/migrations/versions/ \
+        mcp-servers/tasks/migrations/012_add_agent_host.sql \
+        mcp-servers/tasks/migrations/012_add_agent_host.down.sql \
         mcp-servers/tasks/routes_execution.py
-git commit -m "feat(tasks): add task_executions.agent_host column for audit
+git commit -m "feat(tasks): add tasks.executions.agent_host column for audit
 
 Populated by RemoteExecutor with the AGENT_HOST env. Null for
 LocalExecutor. Lets us answer 'which VM ran this build?' for incident
@@ -2422,8 +2521,9 @@ scp mcp-servers/tasks/remote_executor.py    root@$ORCHESTRATOR:/root/proxy-serve
 scp mcp-servers/tasks/claude_executor.py    root@$ORCHESTRATOR:/root/proxy-server/mcp-servers/tasks/
 scp mcp-servers/tasks/routes_execution.py   root@$ORCHESTRATOR:/root/proxy-server/mcp-servers/tasks/
 scp mcp-servers/tasks/models.py             root@$ORCHESTRATOR:/root/proxy-server/mcp-servers/tasks/
-scp -r mcp-servers/tasks/migrations         root@$ORCHESTRATOR:/root/proxy-server/mcp-servers/tasks/
-scp docker-compose.unified.yml              root@$ORCHESTRATOR:/root/proxy-server/
+scp mcp-servers/tasks/migrations/012_add_agent_host.sql       root@$ORCHESTRATOR:/root/proxy-server/mcp-servers/tasks/migrations/
+scp mcp-servers/tasks/migrations/012_add_agent_host.down.sql  root@$ORCHESTRATOR:/root/proxy-server/mcp-servers/tasks/migrations/
+scp docker-compose.unified.yml                                root@$ORCHESTRATOR:/root/proxy-server/
 
 # Update .env with the AGENT_* vars — START WITH AGENT_BACKEND=local
 ssh root@$ORCHESTRATOR '
@@ -2434,15 +2534,18 @@ AGENT_USER=claude-agent
 EOF
 '
 
+# Apply the migration via psql BEFORE restarting (so the column exists
+# when the new code starts writing to it).
+ssh root@$ORCHESTRATOR '
+  set -a; source /root/proxy-server/.env; set +a
+  docker exec tasks psql "$DATABASE_URL" \
+    -f /workspace/ai_ui/mcp-servers/tasks/migrations/012_add_agent_host.sql
+'
+
 # Rebuild + restart tasks service
 ssh root@$ORCHESTRATOR '
   cd /root/proxy-server
   docker compose -f docker-compose.unified.yml up -d --build tasks
-'
-
-# Run the Alembic migration inside the container
-ssh root@$ORCHESTRATOR '
-  docker exec tasks alembic upgrade head
 '
 ```
 
@@ -2678,16 +2781,23 @@ Or from the App Builder UI: cancel the task (TaskStop endpoint hits
 - Duffel sandbox: free tier.
 ```
 
-- [ ] **Step 8: Commit + final merge**
+- [ ] **Step 8: Commit + open PR for final merge**
 
 ```bash
 git add docs/agent-vm/README.md
 git commit -m "docs(agent-vm): operator runbook — provisioning, rotation, rollback"
+git push -u origin feat/vm-agent-flight-mcp
+gh pr create --base main --head feat/vm-agent-flight-mcp \
+  --title "feat: VM-hosted agent + flight MCP" \
+  --body "Implements docs/superpowers/specs/2026-05-12-vm-agent-flight-mcp-design.md"
+```
 
-# Merge to main
-git checkout main
-git merge --no-ff feat/vm-agent-flight-mcp -m "feat: VM-hosted agent + flight MCP"
-git push
+Wait for CI green + reviewer approval before merging. **Do NOT merge directly to `main`** — the project memory notes this is a single-server deployment where bad code in `main` reaches prod fast.
+
+After approval:
+
+```bash
+gh pr merge --merge
 ```
 
 - [ ] **Step 9: Demo to Lukas**
