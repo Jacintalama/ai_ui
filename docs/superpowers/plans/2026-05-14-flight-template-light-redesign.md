@@ -52,9 +52,11 @@ Expected: `README.md`, `index.html`, `preview.png`, `public/.gitkeep`, `src/data
 
 - [ ] **Step 3: Baseline — run the static template test**
 
-Run (locally): `cd mcp-servers/tasks && DATABASE_URL="postgresql+asyncpg://x:x@localhost/x" python -m pytest tests/test_functional_templates_static.py -q`
-If the test file is not present locally or needs the container, run instead: `ssh root@46.224.193.25 'docker exec tasks bash -lc "cd /app && python -m pytest tests/test_functional_templates_static.py -q"'`
-Expected: PASS (this is the baseline — the same test must still pass at the end).
+First decide where to run it: `ls mcp-servers/tasks/tests/test_functional_templates_static.py`.
+- If it exists locally: `cd mcp-servers/tasks && DATABASE_URL="postgresql+asyncpg://x:x@localhost/x" python -m pytest tests/test_functional_templates_static.py -q`
+- If it does not exist locally: `ssh root@46.224.193.25 'docker exec tasks bash -lc "cd /app && python -m pytest tests/test_functional_templates_static.py -q"'`
+
+Expected: PASS (this is the baseline — the same test must still pass at the end). Use the same command for every later "run the static template test" step.
 
 - [ ] **Step 4: Baseline — open the template in a browser**
 
@@ -151,7 +153,7 @@ In `index.html`, immediately after the closing `</section>` of the REVIEW view a
   </section>
 ```
 
-Note the `@click.stop` on the Remove button — it prevents the card's `openDetail` click from also firing.
+Note the `@click.stop` on the Remove button — it prevents the card's `openDetail` click from also firing. The fields (`f.airline`, `f.cabin`, `f.origin`, `f.destination`, `f.departureLabel`, `f.arrivalLabel`, `f.duration`, `f.stops`, `f.price`) and the `formatDuration()` / `openDetail()` methods all mirror the existing **results-view** card — after Task 1's fetch, cross-check this snippet against the results `<section>` in `index.html` to confirm the shapes match before relying on them.
 
 - [ ] **Step 5: Verify in a browser**
 
@@ -236,16 +238,21 @@ For the **skeleton loaders** (`h-20 bg-white/10 animate-pulse`) change `bg-white
 
 For the **seat-map SVG**: change the `<rect width="400" height="100" fill="rgba(255,255,255,0.05)">` to `fill="var(--bg)"` and the seat `<g fill="rgba(255,255,255,0.4)">` to `fill="var(--text-muted)"`.
 
-- [ ] **Step 5: Verify every view in a browser**
+- [ ] **Step 5: Prove no dark utility was missed**
+
+Run: `grep -nE "white|rgba\(255" mcp-servers/tasks/template_apps/flight-booking/index.html`
+Expected: zero functional matches. Any hit is a dark utility that slipped through Step 4 — fix it before continuing. (The only acceptable matches would be inside unrelated text content, of which there are none in this file.)
+
+- [ ] **Step 6: Verify every view in a browser**
 
 Open `index.html`. Confirm: soft cool-gray page background (not white); white cards that lift with a subtle shadow; blue accent on prices and primary buttons; Plus Jakarta Sans throughout; **no** white-on-white or low-contrast text anywhere. Click through all 5 views (search, results + filters, detail, review, saved). Resize to <768px and confirm the header and layout still hold. Re-check the Task 2 flow (save / view / remove / reload) still works in the new theme.
 
-- [ ] **Step 6: Run the static template test**
+- [ ] **Step 7: Run the static template test**
 
 Run the same command as Task 1 Step 3.
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add mcp-servers/tasks/template_apps/flight-booking/styles/main.css mcp-servers/tasks/template_apps/flight-booking/index.html
@@ -289,7 +296,31 @@ Expected: PASS.
 
 - [ ] **Step 5: Generate one fresh flight-booking app end-to-end**
 
-Through the app-builder panel (or the tasks API as used previously), create + execute a BUILD task with `template_key: "flight-booking"` and a fresh slug, with a specific description. Confirm: the task reaches `completed`, the agent customised the **light** base (not the old dark one), and the Saved view is present in the generated app. This proves the agent's CUSTOMIZE MODE still works against the new base.
+Either use the app-builder panel, or call the tasks API directly. The API
+lives inside the `tasks` container (`http://<tasks-container-ip>:8210`) and
+requires admin headers. Concretely:
+
+```bash
+ssh root@46.224.193.25 'TIP=$(docker inspect -f "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" tasks)
+API="http://$TIP:8210"
+H1="X-User-Email: alamajacintg04@gmail.com"; H2="X-User-Admin: true"
+CREATE=$(curl -sS -X POST "$API/api/tasks" -H "$H1" -H "$H2" -H "Content-Type: application/json" -d "{
+  \"description\": \"Flight booking site for the airline Aurora Air. Route SEA to NRT. Use live Duffel data via search_flights for SEA to NRT departing 2026-09-20. Forest green brand color.\",
+  \"action_type\": \"BUILD\", \"priority\": \"IMPORTANT\",
+  \"template_key\": \"flight-booking\", \"storage\": \"none\",
+  \"slug\": \"aurora-air\", \"max_attempts\": 1 }")
+TASK_ID=$(echo "$CREATE" | python3 -c "import json,sys; print(json.load(sys.stdin)[\"id\"])")
+curl -sS -X POST "$API/api/tasks/$TASK_ID/execute" -H "$H1" -H "$H2"
+echo "TASK_ID=$TASK_ID"'
+```
+
+Poll `GET $API/api/tasks/$TASK_ID` until `status` is `completed`. Then confirm:
+the build reached `completed` (not `failed`); the execution log ends with a
+single `COMPLETED.` and **no** `FAILED: transport_error`; the generated
+`/root/proxy-server/apps/aurora-air/index.html` uses the **light** theme
+(grep for `Plus+Jakarta` and confirm no `#0a1f3d`); and the Saved view
+`<section x-show="view === 'saved'">` is present in the generated app. This
+proves the agent's CUSTOMIZE MODE still works against the new base.
 
 - [ ] **Step 6: Final commit (if any working-tree changes remain)**
 
