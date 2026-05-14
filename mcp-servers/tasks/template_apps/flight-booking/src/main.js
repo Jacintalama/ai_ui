@@ -5,7 +5,7 @@ import { simulateNetwork }   from "./lib/skeleton.js";
 import { flights, cities, airlines } from "./data.js";
 
 function _buildAppState() { return {
-  ...createRouter({ initial: "search", views: ["search", "results", "detail", "review"] }),
+  ...createRouter({ initial: "search", views: ["search", "results", "detail", "review", "saved"] }),
   ...createPersistence({ namespace: "flight-booking", keys: ["savedTrips"] }),
 
   // Reference data
@@ -72,6 +72,14 @@ function _buildAppState() { return {
     } else {
       this.toast("Already saved");
     }
+  },
+
+  removeTrip(flightId) {
+    const i = this.savedTrips.findIndex((t) => t.id === flightId);
+    if (i < 0) return;
+    this.savedTrips.splice(i, 1);
+    this._save("savedTrips");
+    this.toast("Trip removed");
   },
 
   goReview() {
