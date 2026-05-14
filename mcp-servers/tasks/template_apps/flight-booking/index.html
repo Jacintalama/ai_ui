@@ -26,8 +26,8 @@
       <span>Skylane</span>
     </a>
     <nav class="ml-auto flex items-center gap-4 text-sm text-[var(--text-muted)]">
-      <button @click="setView('search')" class="hidden sm:inline-block hover:bg-[var(--border)]">Search</button>
-      <button @click="setView('saved')" class="hidden sm:inline-block hover:bg-[var(--border)]">
+      <button @click="setView('search')" class="hidden sm:inline-block hover:text-[var(--text)]">Search</button>
+      <button @click="setView('saved')" class="hidden sm:inline-block hover:text-[var(--text)]">
         Saved <span x-text="savedTrips.length ? `(${savedTrips.length})` : ''"></span>
       </button>
       <div class="w-8 h-8 rounded-full bg-[var(--border)] flex items-center justify-center text-xs font-medium">U</div>
@@ -88,7 +88,7 @@
   <!-- ===================== RESULTS VIEW ===================== -->
   <section x-show="view === 'results'" x-transition.duration.200ms class="max-w-6xl mx-auto px-4 sm:px-6 py-8" x-cloak>
     <div class="flex items-center mb-6">
-      <button @click="back()" class="text-[var(--text-muted)] hover:bg-[var(--border)]">← Modify search</button>
+      <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)]">← Modify search</button>
       <h2 class="text-xl font-semibold text-[var(--text)] ml-6" x-text="`${searchForm.origin} → ${searchForm.destination}`"></h2>
     </div>
 
@@ -185,7 +185,7 @@
 
   <!-- ===================== DETAIL VIEW ===================== -->
   <section x-show="view === 'detail'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
-    <button @click="back()" class="text-[var(--text-muted)] hover:bg-[var(--border)] mb-6">← Back to results</button>
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)] mb-6">← Back to results</button>
 
     <template x-if="selectedFlight">
       <div>
@@ -238,7 +238,7 @@
 
   <!-- ===================== REVIEW VIEW ===================== -->
   <section x-show="view === 'review'" x-transition.duration.200ms class="max-w-3xl mx-auto px-4 sm:px-6 py-8" x-cloak>
-    <button @click="back()" class="text-[var(--text-muted)] hover:bg-[var(--border)] mb-6">← Back to detail</button>
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)] mb-6">← Back to detail</button>
     <h2 class="text-2xl font-bold text-[var(--text)] mb-6">Review and confirm</h2>
 
     <template x-if="selectedFlight">
@@ -264,7 +264,7 @@
 
   <!-- ===================== SAVED VIEW ===================== -->
   <section x-show="view === 'saved'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
-    <button @click="setView('search')" class="text-[var(--text-muted)] hover:bg-[var(--border)] mb-6">← Back to search</button>
+    <button @click="setView('search')" class="text-[var(--text-muted)] hover:text-[var(--text)] mb-6">← Back to search</button>
     <h2 class="text-2xl font-bold text-[var(--text)] mb-6">Saved trips</h2>
 
     <template x-if="savedTrips.length === 0">
