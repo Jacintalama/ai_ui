@@ -66,15 +66,19 @@ Files: `src/main.js`, `index.html`.
 
 Files: `styles/main.css`, `index.html`.
 
-`styles/main.css` — replace the palette CSS variables:
+`styles/main.css` — replace the palette CSS variables. The current file
+defines `--bg`, `--bg-card`, `--text`, `--accent`, `--muted`. The new
+palette **renames** `--muted` → `--text-muted` and **adds** `--border`;
+update both the variable definitions and (since nothing currently consumes
+`--muted`) there are no existing `var(--muted)` references to migrate:
 
 | Variable      | New value  | Role                       |
 |---------------|------------|----------------------------|
 | `--bg`        | `#f4f5f7`  | soft cool-gray page background (not white) |
 | `--bg-card`   | `#ffffff`  | white cards that lift off the background |
-| `--border`    | `#e5e7eb`  | card / input borders        |
+| `--border`    | `#e5e7eb`  | card / input borders (new variable) |
 | `--text`      | `#1f2937`  | primary text                |
-| `--text-muted`| `#6b7280`  | secondary text              |
+| `--text-muted`| `#6b7280`  | secondary text (renamed from `--muted`) |
 | `--accent`    | `#2563eb`  | primary action / price blue |
 
 Keep the `prefers-reduced-motion` guard, the `[x-cloak]` rule, and the
@@ -104,7 +108,8 @@ Keep the `prefers-reduced-motion` guard, the `[x-cloak]` rule, and the
   is a variables-only change. This is a light touch toward token-driven
   theming, **not** a full architecture refactor.
 
-The `<title>` stays "Skylane" (the template's placeholder brand).
+The `<title>` stays "Skylane — Flight Booking" (the template's placeholder
+brand).
 
 ## Out of scope
 
@@ -121,7 +126,7 @@ The `<title>` stays "Skylane" (the template's placeholder brand).
 
 ## Testing & verification
 
-Template apps have no unit tests (consistent with the other 14 templates in
+Template apps have no unit tests (consistent with the other template apps in
 `template_apps/`). Verification is manual + the existing static-structure
 test:
 
