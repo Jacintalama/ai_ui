@@ -431,6 +431,30 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/servers") or full_path.startswith("/meta") or full_path.startswith("/openapi"):
         backend_url = MCP_PROXY_URL
         backend_path = full_path
+    elif full_path.startswith("/web-search/"):
+        backend_url = os.getenv("WEB_SEARCH_URL", "http://mcp-web-search:8000")
+        backend_path = full_path[len("/web-search"):]
+    elif full_path.startswith("/gmail/"):
+        backend_url = os.getenv("GMAIL_URL", "http://mcp-gmail:8000")
+        backend_path = full_path[len("/gmail"):]
+    elif full_path.startswith("/gdrive/"):
+        backend_url = os.getenv("GDRIVE_URL", "http://mcp-gdrive:8000")
+        backend_path = full_path[len("/gdrive"):]
+    elif full_path.startswith("/calendar/"):
+        backend_url = os.getenv("CALENDAR_URL", "http://mcp-calendar:8000")
+        backend_path = full_path[len("/calendar"):]
+    elif full_path.startswith("/meetings/"):
+        backend_url = os.getenv("MEETINGS_URL", "http://mcp-meetings:8000")
+        backend_path = full_path[len("/meetings"):]
+    elif full_path.startswith("/meeting-kb/"):
+        backend_url = os.getenv("MEETING_KB_URL", "http://meeting-kb:8200")
+        backend_path = full_path[len("/meeting-kb"):]
+    elif full_path.startswith("/dashboard/"):
+        backend_url = os.getenv("DASHBOARD_URL", "http://mcp-dashboard:8000")
+        backend_path = full_path[len("/dashboard"):]
+    elif full_path.startswith("/excel-creator/"):
+        backend_url = os.getenv("EXCEL_CREATOR_URL", "http://mcp-excel-creator:8000")
+        backend_path = full_path[len("/excel-creator"):]
     else:
         # Everything else goes to Open WebUI (including /admin/* for WebUI admin panel)
         backend_url = OPEN_WEBUI_URL
