@@ -171,6 +171,37 @@ sudo -u claude-agent bash -c '
 '
 EOF
 
+echo "==> [7b/8] io-mcp-wrappers install + register each wrapper"
+scp -r "${REPO_ROOT}/mcp-servers/io-mcp-wrappers" root@${AGENT_HOST}:/tmp/io-mcp-wrappers
+${SSH} bash -se <<'EOF'
+set -euo pipefail
+rm -rf /opt/io-mcp
+mv /tmp/io-mcp-wrappers /opt/io-mcp
+python3 -m venv /opt/io-mcp/venv
+/opt/io-mcp/venv/bin/pip install -e /opt/io-mcp >/dev/null
+
+# Append IO_GATEWAY_URL to claude-agent's .profile (idempotent)
+grep -q 'IO_GATEWAY_URL' /home/claude-agent/.profile || \
+  echo 'export IO_GATEWAY_URL=http://172.22.0.1:8080' >> /home/claude-agent/.profile
+chown claude-agent:claude-agent /home/claude-agent/.profile
+
+# Allow ssh to pass IO_USER_JWT to the agent shell (idempotent)
+grep -q '^AcceptEnv .*IO_USER_JWT' /etc/ssh/sshd_config || \
+  sed -i 's/^AcceptEnv AIUI_AGENT_EFFORT$/AcceptEnv AIUI_AGENT_EFFORT IO_USER_JWT/' /etc/ssh/sshd_config
+systemctl reload ssh
+
+# Register each wrapper for claude-agent (user scope, idempotent —
+# claude mcp add is idempotent on identical config)
+sudo -u claude-agent bash -c '
+  source ~/.env
+  for svc in web_search gdrive gmail calendar meetings meeting_kb dashboard excel_creator; do
+    name="io-${svc//_/-}"
+    claude mcp add --scope user "$name" \
+      /opt/io-mcp/venv/bin/python -m "io_mcp_$svc" || true
+  done
+'
+EOF
+
 echo "==> [8/8] workspace GC cron"
 ${SSH} bash -se <<'EOF'
 set -euo pipefail
