@@ -295,12 +295,19 @@ async def test_user_jwt_forwarded_via_sendenv(monkeypatch):
 
     build_ssh = next(a for a in seen_args
                      if a[0] == "ssh" and "claude --print" in a[-1])
-    # The SendEnv flag pair should now include IO_USER_JWT
+    # The SendEnv flag pair must be SPACE-separated (NOT comma-separated).
+    # OpenSSH's SendEnv treats commas literally — comma-joined names become
+    # one bogus variable name and nothing gets sent. Regression guard:
+    # asserts the exact form, not just substring containment.
     sendenv_indices = [i for i, v in enumerate(build_ssh)
                        if v == "-o" and i + 1 < len(build_ssh)
                        and "SendEnv=" in build_ssh[i + 1]]
     assert sendenv_indices, "no -o SendEnv= flag found on the build ssh"
     sendenv_value = build_ssh[sendenv_indices[0] + 1]
-    assert "IO_USER_JWT" in sendenv_value
+    assert sendenv_value == "SendEnv=AIUI_AGENT_EFFORT IO_USER_JWT", (
+        f"SendEnv must be SPACE-separated, got: {sendenv_value!r}. "
+        "Comma syntax silently sends zero variables — SSH treats the whole "
+        "comma-joined string as one (non-existent) variable name."
+    )
     # The subprocess env passed to ssh contains the JWT
     assert seen_env.get("IO_USER_JWT") == "abc.def.ghi"

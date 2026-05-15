@@ -187,10 +187,16 @@ class RemoteExecutor:
 
     async def _stream(self, host: str, user: str, key: str, remote_cmd: str,
                       user_jwt: str | None = None) -> AsyncIterator[str]:
+        # SSH SendEnv is SPACE-separated, not comma-separated. With a comma
+        # OpenSSH treats the whole string as a single (non-existent) variable
+        # name and silently sends nothing. Same applies to sshd_config's
+        # AcceptEnv on the receiving side. (Diagnosed 2026-05-15 after a smoke
+        # showed IO_USER_JWT never reached the agent VM despite this code
+        # appearing correct.)
         sendenv = "AIUI_AGENT_EFFORT"
         env_pass = None
         if user_jwt:
-            sendenv = "AIUI_AGENT_EFFORT,IO_USER_JWT"
+            sendenv = "AIUI_AGENT_EFFORT IO_USER_JWT"
             env_pass = {**os.environ, "IO_USER_JWT": user_jwt}
         self._proc = await asyncio.create_subprocess_exec(
             "ssh", "-i", key, *self._SSH_OPTS,
