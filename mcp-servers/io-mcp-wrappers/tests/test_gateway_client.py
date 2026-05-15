@@ -152,3 +152,22 @@ async def test_401_does_NOT_retry(client):
     with pytest.raises(GatewayError):
         await client.get("/x")
     assert route.call_count == 1  # NO retry on auth
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_jwt_never_in_stderr(monkeypatch, capsys):
+    monkeypatch.setenv("IO_GATEWAY_URL", "http://172.22.0.1:8080")
+    monkeypatch.setenv("IO_USER_JWT", "secret-jwt-do-not-leak")
+    c = GatewayClient()
+    respx.get("http://172.22.0.1:8080/x").mock(return_value=httpx.Response(200, json={}))
+    await c.get("/x")
+    # And an error path
+    respx.get("http://172.22.0.1:8080/y").mock(return_value=httpx.Response(401))
+    try:
+        await c.get("/y")
+    except GatewayError:
+        pass
+    captured = capsys.readouterr()
+    assert "secret-jwt-do-not-leak" not in captured.err
+    assert "secret-jwt-do-not-leak" not in captured.out

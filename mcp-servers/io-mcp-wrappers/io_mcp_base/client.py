@@ -59,6 +59,10 @@ class GatewayClient:
                     resp = await c.request(method, self.base_url + path,
                                             params=params, json=json,
                                             headers=self._headers())
+                    # Access log — METHOD URL STATUS, NEVER headers or body
+                    import sys
+                    print(f"[io-mcp] {method} {path} -> {resp.status_code}",
+                          file=sys.stderr, flush=True)
                     try:
                         return self._handle(resp)
                     except GatewayError as e:
