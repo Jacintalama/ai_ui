@@ -49,6 +49,26 @@ async def test_dashboard_create_calls_gateway(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dashboard_create_strips_download_html(monkeypatch):
+    """download_html is omitted to avoid base64-heavy context blowout."""
+    client = AsyncMock()
+    client.post = AsyncMock(return_value={
+        "success": True,
+        "filename": "dashboard_20260515.html",
+        "download_html": "data:text/html;base64,PGRpdj5MYXJnZSBIVE1MIGZPIE..." * 100,
+        "message": "Created dashboard",
+        "kpi_count": 1,
+        "chart_count": 0,
+    })
+    handler = make_dashboard_create_handler(client)
+    result = await handler({"title": "Q1"})
+    body = json.loads(result[0].text)
+    assert body["ok"] is True
+    assert "download_html" not in body["data"]
+    assert body["data"]["filename"] == "dashboard_20260515.html"
+
+
+@pytest.mark.asyncio
 async def test_dashboard_create_title_only(monkeypatch):
     client = AsyncMock()
     client.post = AsyncMock(return_value={"success": True, "filename": "d.html", "kpi_count": 0, "chart_count": 0})

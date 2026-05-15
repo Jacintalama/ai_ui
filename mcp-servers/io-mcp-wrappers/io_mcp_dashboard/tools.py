@@ -6,6 +6,9 @@ from mcp.types import Tool, TextContent
 from io_mcp_base.client import GatewayClient
 from io_mcp_base.server import ok_response
 
+# Fields that contain binary/HTML blobs that would blow out agent context
+_BINARY_FIELDS = frozenset({"download_html", "file_bytes"})
+
 
 def dashboard_create_tool_spec() -> Tool:
     return Tool(
@@ -53,6 +56,11 @@ def make_dashboard_create_handler(client: GatewayClient):
         for key in ("kpis", "chart_type", "chart_title", "chart_labels", "chart_data", "theme"):
             if key in args and args[key] is not None:
                 payload[key] = args[key]
-        data = await client.post("/dashboard/create_simple_dashboard", json=payload)
+        raw = await client.post("/dashboard/create_simple_dashboard", json=payload)
+        # Strip binary fields to prevent context blowout
+        if isinstance(raw, dict):
+            data = {k: v for k, v in raw.items() if k not in _BINARY_FIELDS}
+        else:
+            data = raw
         return ok_response(data)
     return handler
