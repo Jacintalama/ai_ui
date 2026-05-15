@@ -24,7 +24,7 @@ task_response=$(curl -sS \
   -H "Authorization: Bearer $IO_USER_JWT" \
   -H "Content-Type: application/json" \
   -X POST "http://${ORCH_HOST}/api/tasks" \
-  -d "$(printf '{"description":"%s","action_type":"BUILD","priority":"IMPORTANT","assignee":"self"}' "Smoke test prompt for MCP wrappers")")
+  -d "$(jq -nc --arg desc "$POSITIVE_PROMPT" '{description:$desc,action_type:"BUILD",priority:"IMPORTANT",assignee:"self"}')")
 
 echo "Task creation response:"
 echo "$task_response" | head -20
