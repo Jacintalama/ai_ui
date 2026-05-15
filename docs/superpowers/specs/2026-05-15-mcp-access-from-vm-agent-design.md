@@ -24,7 +24,7 @@ Locked decisions from brainstorming (2026-05-15):
 
 1. **All 11 services in scope** (user picked "All services in `mcp-servers/`").
 2. **Pass-through user JWT** — the agent acts on behalf of the user who clicked Build, not a service account (user picked "Pass through the user's JWT").
-3. **Same-host topology** — `claude-agent` runs as a separate uid on the orchestrator's Hetzner host (per project memory). Traffic from the agent reaches the API Gateway over the Docker bridge `172.22.0.1:8080`.
+3. **Same-host topology** — `claude-agent` runs as a separate uid on the orchestrator's Hetzner host (per project memory). Traffic from the agent reaches the API Gateway over the Docker bridge `172.22.0.1:8085` (the host-side port mapping; the gateway's container-internal port is 8080).
 4. **One stdio MCP wrapper per service** (approach A) — not a single mega-wrapper, not OpenAPI auto-discovery.
 5. **Purposeful tool curation** — each wrapper exposes a small, hand-picked set of high-value tools, not every backend route.
 6. **Manual app-builder flow only** — heartbeat/cron-driven runs have no live user JWT and are explicitly deferred to a separate spec.
@@ -48,7 +48,7 @@ Locked decisions from brainstorming (2026-05-15):
   - `api-gateway/main.py:proxy_handler` — add eight `elif` branches that strip the gateway-side prefix and forward to the corresponding backend service (`mcp-web-search:8000`, `mcp-gmail:8000`, `mcp-gdrive:8000`, `mcp-calendar:8000`, `mcp-meetings:8000`, `meeting-kb:8200`, `mcp-dashboard:8000`, `mcp-excel-creator:8000`), with `X-User-Email` injected from validated JWT/cookie as it already does for `/api/tasks/*`. The `io-tasks` wrapper continues to use the existing `/api/tasks/*` path (already gateway-routed).
 - Agent VM changes via `scripts/provision_agent_vm.sh`:
   - Install `io-mcp-wrappers` as one Python package at `/opt/io-mcp/`
-  - Append `IO_GATEWAY_URL=http://172.22.0.1:8080` to `/home/claude-agent/.profile`
+  - Append `IO_GATEWAY_URL=http://172.22.0.1:8085` to `/home/claude-agent/.profile`
   - Append `IO_USER_JWT` to `/etc/ssh/sshd_config`'s `AcceptEnv` list
   - Register each wrapper via `claude mcp add --scope user io-<svc> /opt/io-mcp/venv/bin/python -m io_mcp_<svc>`
 - One end-to-end smoke script: `scripts/smoke_mcp_access.sh`
@@ -85,7 +85,7 @@ ORCHESTRATOR (tasks container)                  │
   │  (per-build, in ssh session env)             │            │              │
   │                                              │ httpx + Authorization: Bearer $IO_USER_JWT
   │                                              ↓            ↓              ↓
-  └───────────────────────────────────────►  API GATEWAY @ http://172.22.0.1:8080
+  └───────────────────────────────────────►  API GATEWAY @ http://172.22.0.1:8085
                                                   │ validates JWT, injects X-User-Email
                                                   ↓
                                               gmail svc, gdrive svc, web-search svc, ...
@@ -95,7 +95,7 @@ ORCHESTRATOR (tasks container)                  │
 
 - **JWT lives only in process env, never on disk.** From the orchestrator's local variable → ssh subprocess env (via `SendEnv`) → agent shell env → claude env → MCP wrapper subprocess env → `Authorization` header.
 - **No new auth path.** The agent's HTTP traffic enters the gateway exactly like a browser request. Backends do not change.
-- **Same-host network path.** Traffic goes 172.22.0.1:8080 (Docker bridge), not public DNS. Squid is not in the path.
+- **Same-host network path.** Traffic goes 172.22.0.1:8085 (Docker bridge), not public DNS. Squid is not in the path.
 - **One wrapper process per service per build.** Claude spawns a wrapper subprocess on first tool use; the subprocess dies with the build's claude process. Wrappers do not share state across builds.
 
 ### Components added

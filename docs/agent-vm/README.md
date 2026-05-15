@@ -12,7 +12,7 @@ Spec: [docs/superpowers/specs/2026-05-15-mcp-access-from-vm-agent-design.md](../
 
 ### Env vars
 
-- `IO_GATEWAY_URL` — Set in `/home/claude-agent/.profile` (default `http://172.22.0.1:8080`). Where the wrappers send their HTTPS calls.
+- `IO_GATEWAY_URL` — Set in `/home/claude-agent/.env` and baked into each io-* server's `env` block in `~/.claude.json` (value: `http://172.22.0.1:8085`). The agent VM runs on the orchestrator's Docker host; the api-gateway container exposes port 8080 internally and is published on the host bridge at port **8085**, so claude-agent (host user, not in a container) reaches the gateway at `172.22.0.1:8085`.
 - `IO_USER_JWT` — Forwarded per-build by the orchestrator via SSH `SendEnv`. Lives only in process env during one build; never persisted to disk.
 
 ### Registered wrappers

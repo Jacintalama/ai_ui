@@ -149,7 +149,7 @@ install -o claude-agent -g claude-agent -m 600 /dev/null /home/claude-agent/.env
 cat >>/home/claude-agent/.env <<INNER
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 DUFFEL_API_KEY=${DUFFEL_API_KEY}
-IO_GATEWAY_URL=http://172.22.0.1:8080
+IO_GATEWAY_URL=http://172.22.0.1:8085
 INNER
 EOF
 
@@ -192,7 +192,7 @@ python3 -m venv /opt/io-mcp/venv
 
 # Append IO_GATEWAY_URL to claude-agent's .profile (idempotent)
 grep -q 'IO_GATEWAY_URL' /home/claude-agent/.profile || \
-  echo 'export IO_GATEWAY_URL=http://172.22.0.1:8080' >> /home/claude-agent/.profile
+  echo 'export IO_GATEWAY_URL=http://172.22.0.1:8085' >> /home/claude-agent/.profile
 chown claude-agent:claude-agent /home/claude-agent/.profile
 
 # Allow ssh to pass IO_USER_JWT to the agent shell (idempotent)
@@ -211,7 +211,7 @@ sudo -u claude-agent bash -c '
   for svc in web_search gdrive gmail calendar meetings meeting_kb dashboard excel_creator; do
     name="io-${svc//_/-}"
     claude mcp add --scope user "$name" \
-      -e IO_GATEWAY_URL=http://172.22.0.1:8080 -- \
+      -e IO_GATEWAY_URL=http://172.22.0.1:8085 -- \
       /opt/io-mcp/venv/bin/python -m "io_mcp_$svc" || true
   done
 '
