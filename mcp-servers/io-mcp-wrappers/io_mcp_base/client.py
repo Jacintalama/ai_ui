@@ -7,6 +7,7 @@ Authorization header. See test_gateway_client.py for the contract.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import httpx
 from typing import Any
@@ -51,16 +52,35 @@ class GatewayClient:
 
     async def _do(self, method: str, path: str, *, params=None, json=None,
                   timeout: float = 30.0) -> Any:
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as c:
-                resp = await c.request(method, self.base_url + path,
-                                        params=params, json=json,
-                                        headers=self._headers())
-                return self._handle(resp)
-        except httpx.TimeoutException as e:
-            raise GatewayError(kind="network", detail="timeout", cause=e) from e
-        except httpx.NetworkError as e:
-            raise GatewayError(kind="network", detail=str(e)[:120], cause=e) from e
+        last_err: GatewayError | None = None
+        for attempt in (1, 2):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as c:
+                    resp = await c.request(method, self.base_url + path,
+                                            params=params, json=json,
+                                            headers=self._headers())
+                    try:
+                        return self._handle(resp)
+                    except GatewayError as e:
+                        if e.kind == "server" and attempt == 1:
+                            last_err = e
+                            await asyncio.sleep(1.0)
+                            continue
+                        raise
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                err = GatewayError(
+                    kind="network",
+                    detail="timeout" if isinstance(e, httpx.TimeoutException)
+                                     else str(e)[:120],
+                    cause=e,
+                )
+                if attempt == 1:
+                    last_err = err
+                    await asyncio.sleep(1.0)
+                    continue
+                raise err from e
+        assert last_err is not None
+        raise last_err
 
     async def get(self, path: str, *, params=None, timeout: float = 30.0) -> Any:
         return await self._do("GET", path, params=params, timeout=timeout)

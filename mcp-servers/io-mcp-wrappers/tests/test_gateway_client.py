@@ -119,3 +119,36 @@ async def test_network_error_returns_network(client):
     with pytest.raises(GatewayError) as ei:
         await client.get("/x")
     assert ei.value.kind == "network"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_500_retries_once_then_raises(client):
+    route = respx.get("http://172.22.0.1:8080/x").mock(
+        return_value=httpx.Response(500),
+    )
+    with pytest.raises(GatewayError):
+        await client.get("/x")
+    assert route.call_count == 2  # one retry
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_500_then_200_succeeds(client):
+    route = respx.get("http://172.22.0.1:8080/x").mock(
+        side_effect=[httpx.Response(500), httpx.Response(200, json={"ok": 1})],
+    )
+    data = await client.get("/x")
+    assert data == {"ok": 1}
+    assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_401_does_NOT_retry(client):
+    route = respx.get("http://172.22.0.1:8080/x").mock(
+        return_value=httpx.Response(401),
+    )
+    with pytest.raises(GatewayError):
+        await client.get("/x")
+    assert route.call_count == 1  # NO retry on auth
