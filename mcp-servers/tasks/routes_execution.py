@@ -61,13 +61,22 @@ _RUNNING: dict[UUID, dict] = {}
 TEAM_EMAIL = "team@aiui.local"
 
 
-async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
+async def _stream_claude(
+    prompt: str,
+    execution_id: UUID,
+    task_id: UUID,
+    user_jwt: str | None = None,
+) -> str:
     """Run a claude run via the configured executor; stream output to the
     execution log; return the full log as a string.
 
     AGENT_BACKEND env (read inside get_executor) decides whether this hits
     a local subprocess or a remote VM. The orchestrator behavior is
     identical either way — same sentinel stream, same log shape.
+
+    ``user_jwt`` is passed through to the executor so the remote backend can
+    forward it to MCP wrappers running on the agent VM via SSH SendEnv.
+    LocalExecutor ignores it.
     """
     full_log: list[str] = []
     executor = get_executor()
@@ -98,7 +107,7 @@ async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
 
     try:
         async for chunk in executor.run(
-            prompt, slug=slug, execution_id=str(execution_id)
+            prompt, slug=slug, execution_id=str(execution_id), user_jwt=user_jwt
         ):
             full_log.append(chunk)
             async with session() as s:
@@ -118,7 +127,12 @@ async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
     return "".join(full_log)
 
 
-async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
+async def _run_execution(
+    task_id: UUID,
+    execution_id: UUID,
+    prompt: str,
+    user_jwt: str | None = None,
+):
     """Background coroutine: stream Claude output, parse outcome, persist.
     In loop mode (max_attempts > 1), handles auto-retry on failure
     and runs the VERIFY step after COMPLETED."""
@@ -130,7 +144,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             )
             await s.commit()
 
-        full_output = await _stream_claude(prompt, execution_id, task_id)
+        full_output = await _stream_claude(prompt, execution_id, task_id, user_jwt=user_jwt)
         outcome = parse_outcome(full_output)
 
         async with session() as s:
@@ -179,7 +193,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                 slug=built_slug,
                 user_email=assignee_email,
             )
-            await _run_execution(task_id, new_exec.id, retry_prompt)
+            await _run_execution(task_id, new_exec.id, retry_prompt, user_jwt=user_jwt)
             return
 
         # --- LOOP MODE: VERIFY step after COMPLETED ---
@@ -194,6 +208,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             verify_output = await _stream_claude(
                 build_verify_prompt(slug=slug, description=task.description),
                 execution_id, task_id,
+                user_jwt=user_jwt,
             )
             test_result = parse_test_outcome(verify_output)
 
@@ -230,7 +245,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                     slug=built_slug,
                     user_email=assignee_email,
                 )
-                await _run_execution(task_id, new_exec.id, retry_prompt)
+                await _run_execution(task_id, new_exec.id, retry_prompt, user_jwt=user_jwt)
                 return
 
         # --- Standard outcome handling ---
@@ -348,7 +363,7 @@ def _build_execute_prompt(
 
 
 @router.post("/{task_id}/execute", response_model=TaskOut)
-async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
     async with session() as s:
         item = (
             await s.execute(select(TaskItem).where(TaskItem.id == task_id))
@@ -400,10 +415,12 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
     prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
     # Create a holder dict that _stream_claude will fill with the executor
     # instance so cancel can call executor.stop().
     _RUNNING[item.id] = {"task": None}
-    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
+    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt, user_jwt=user_jwt))
     _RUNNING[item.id]["task"] = bg
     return item
 
@@ -416,6 +433,7 @@ class ResumeRequest(BaseModel):
 async def resume(
     task_id: UUID,
     body: ResumeRequest,
+    request: Request,
     user: AdminUser = Depends(current_admin),
 ):
     """Resume a build that's been gated waiting for Supabase.
@@ -492,16 +510,18 @@ async def resume(
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
     prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
     _RUNNING[item.id] = {"task": None}
-    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
+    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt, user_jwt=user_jwt))
     _RUNNING[item.id]["task"] = bg
     return item
 
 
-async def _plan_bg(tid: UUID, eid: UUID, prompt: str):
+async def _plan_bg(tid: UUID, eid: UUID, prompt: str, user_jwt: str | None = None):
     """Background: run plan subprocess, parse PLAN sentinel, await review."""
     try:
-        full_output = await _stream_claude(prompt, eid, tid)
+        full_output = await _stream_claude(prompt, eid, tid, user_jwt=user_jwt)
         plan_text = parse_plan(full_output)
         async with session() as s:
             await s.execute(
@@ -532,7 +552,7 @@ async def _plan_bg(tid: UUID, eid: UUID, prompt: str):
 
 
 @router.post("/{task_id}/clarify", response_model=TaskOut)
-async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
     """Start the CLARIFY phase — Claude asks structured questions before planning."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -563,11 +583,13 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
         priority=item.priority,
         conversation_history=item.conversation_history or [],
     )
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
     _RUNNING[item.id] = {"task": None}
 
-    async def _clarify_bg(tid, eid, p):
+    async def _clarify_bg(tid, eid, p, jwt=user_jwt):
         try:
-            full_output = await _stream_claude(p, eid, tid)
+            full_output = await _stream_claude(p, eid, tid, user_jwt=jwt)
             done_text = parse_clarify_done(full_output)
             outcome = parse_outcome(full_output)
 
@@ -598,7 +620,7 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
                         priority=task.priority,
                         requirements=done_text,
                     )
-                    await _plan_bg(tid, plan_exec.id, plan_prompt)
+                    await _plan_bg(tid, plan_exec.id, plan_prompt, user_jwt=jwt)
                 elif outcome.kind == "needs_input":
                     history.append({"role": "ai", "content": outcome.payload, "attempt": 0})
                     await s.execute(
@@ -643,7 +665,7 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
 
 
 @router.post("/{task_id}/plan", response_model=TaskOut)
-async def start_plan(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
     """Manually trigger the PLAN phase (can skip CLARIFY if task is clear)."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -675,8 +697,10 @@ async def start_plan(task_id: UUID, user: AdminUser = Depends(current_admin)):
         priority=item.priority,
         requirements=requirements,
     )
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
     _RUNNING[item.id] = {"task": None}
-    bg = asyncio.create_task(_plan_bg(item.id, execution.id, prompt))
+    bg = asyncio.create_task(_plan_bg(item.id, execution.id, prompt, user_jwt=user_jwt))
     _RUNNING[item.id]["task"] = bg
     return item
 

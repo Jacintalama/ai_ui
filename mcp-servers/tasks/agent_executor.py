@@ -37,6 +37,7 @@ class BaseExecutor(Protocol):
         prompt: str,
         slug: str | None,
         execution_id: str,
+        user_jwt: str | None = None,
     ) -> AsyncIterator[str]: ...
 
     async def stop(self) -> None: ...

@@ -33,6 +33,7 @@ class LocalExecutor:
         prompt: str,
         slug: str | None,         # unused for local; preserved for interface parity
         execution_id: str,        # unused for local; preserved for interface parity
+        user_jwt: str | None = None,  # unused for local; forwarded to remote only
     ) -> AsyncIterator[str]:
         if len(prompt) > MAX_PROMPT_CHARS:
             prompt = prompt[:MAX_PROMPT_CHARS] + "\n[truncated by tasks service]"
