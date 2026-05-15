@@ -205,7 +205,7 @@ sudo -u claude-agent bash -c '
   source ~/.env
   for svc in web_search gdrive gmail calendar meetings meeting_kb dashboard excel_creator; do
     name="io-${svc//_/-}"
-    claude mcp add --scope user "$name" \
+    claude mcp add --scope user "$name" -- \
       /opt/io-mcp/venv/bin/python -m "io_mcp_$svc" || true
   done
 '
