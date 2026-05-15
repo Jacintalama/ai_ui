@@ -149,6 +149,7 @@ install -o claude-agent -g claude-agent -m 600 /dev/null /home/claude-agent/.env
 cat >>/home/claude-agent/.env <<INNER
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 DUFFEL_API_KEY=${DUFFEL_API_KEY}
+IO_GATEWAY_URL=http://172.22.0.1:8080
 INNER
 EOF
 
@@ -200,12 +201,17 @@ grep -q '^AcceptEnv .*IO_USER_JWT' /etc/ssh/sshd_config || \
 systemctl reload ssh
 
 # Register each wrapper for claude-agent (user scope, idempotent —
-# claude mcp add is idempotent on identical config)
+# claude mcp add is idempotent on identical config).
+# IO_GATEWAY_URL is static so we bake it into the env block here;
+# IO_USER_JWT is dynamic (per-build) and is injected by the orchestrator
+# via SSH SendEnv — Claude Code inherits it into MCP subprocesses
+# automatically (Claude Code spreads process.env into each MCP spawn).
 sudo -u claude-agent bash -c '
   source ~/.env
   for svc in web_search gdrive gmail calendar meetings meeting_kb dashboard excel_creator; do
     name="io-${svc//_/-}"
-    claude mcp add --scope user "$name" -- \
+    claude mcp add --scope user "$name" \
+      -e IO_GATEWAY_URL=http://172.22.0.1:8080 -- \
       /opt/io-mcp/venv/bin/python -m "io_mcp_$svc" || true
   done
 '
