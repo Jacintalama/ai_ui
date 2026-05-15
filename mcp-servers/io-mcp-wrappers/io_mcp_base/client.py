@@ -28,22 +28,42 @@ class GatewayClient:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._jwt}"}
 
-    async def get(self, path: str, *, params: dict[str, Any] | None = None,
-                  timeout: float = 30.0) -> Any:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(self.base_url + path,
-                                     params=params, headers=self._headers())
-            return self._handle(resp)
-
-    async def post(self, path: str, *, json: dict[str, Any] | None = None,
-                   timeout: float = 30.0) -> Any:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(self.base_url + path,
-                                      json=json, headers=self._headers())
-            return self._handle(resp)
-
     def _handle(self, resp: httpx.Response) -> Any:
-        if 200 <= resp.status_code < 300:
+        sc = resp.status_code
+        if 200 <= sc < 300:
             return resp.json() if resp.content else None
-        raise GatewayError(kind="server", detail=str(resp.status_code),
-                          request=resp.request)
+        if sc == 401 or sc == 403:
+            raise GatewayError(kind="auth", detail="gateway rejected token",
+                              request=resp.request)
+        if sc == 404:
+            raise GatewayError(kind="not_found", request=resp.request)
+        if sc == 429:
+            try:
+                retry_after = int(resp.headers.get("Retry-After", "0"))
+            except ValueError:
+                retry_after = 0
+            raise GatewayError(kind="rate_limit", retry_after=retry_after,
+                              request=resp.request)
+        if 500 <= sc < 600:
+            raise GatewayError(kind="server", detail=str(sc),
+                              request=resp.request)
+        raise GatewayError(kind="server", detail=str(sc), request=resp.request)
+
+    async def _do(self, method: str, path: str, *, params=None, json=None,
+                  timeout: float = 30.0) -> Any:
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                resp = await c.request(method, self.base_url + path,
+                                        params=params, json=json,
+                                        headers=self._headers())
+                return self._handle(resp)
+        except httpx.TimeoutException as e:
+            raise GatewayError(kind="network", detail="timeout", cause=e) from e
+        except httpx.NetworkError as e:
+            raise GatewayError(kind="network", detail=str(e)[:120], cause=e) from e
+
+    async def get(self, path: str, *, params=None, timeout: float = 30.0) -> Any:
+        return await self._do("GET", path, params=params, timeout=timeout)
+
+    async def post(self, path: str, *, json=None, timeout: float = 30.0) -> Any:
+        return await self._do("POST", path, json=json, timeout=timeout)

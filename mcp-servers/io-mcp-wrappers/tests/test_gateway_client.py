@@ -66,3 +66,56 @@ async def test_post_sends_bearer_and_body(client):
     assert data == {"id": "m1"}
     sent = route.calls.last.request
     assert sent.headers["Authorization"] == "Bearer abc.def.ghi"
+
+
+from io_mcp_base.errors import GatewayError
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_401_returns_auth_error(client):
+    respx.get("http://172.22.0.1:8080/x").mock(return_value=httpx.Response(401))
+    with pytest.raises(GatewayError) as ei:
+        await client.get("/x")
+    assert ei.value.kind == "auth"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_404_returns_not_found(client):
+    respx.get("http://172.22.0.1:8080/x").mock(return_value=httpx.Response(404))
+    with pytest.raises(GatewayError) as ei:
+        await client.get("/x")
+    assert ei.value.kind == "not_found"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_429_returns_rate_limit_with_retry_after(client):
+    respx.get("http://172.22.0.1:8080/x").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "30"}),
+    )
+    with pytest.raises(GatewayError) as ei:
+        await client.get("/x")
+    assert ei.value.kind == "rate_limit"
+    assert ei.value.retry_after == 30
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_5xx_returns_server(client):
+    respx.get("http://172.22.0.1:8080/x").mock(return_value=httpx.Response(500))
+    with pytest.raises(GatewayError) as ei:
+        await client.get("/x")
+    assert ei.value.kind == "server"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_network_error_returns_network(client):
+    respx.get("http://172.22.0.1:8080/x").mock(
+        side_effect=httpx.ConnectError("conn refused"),
+    )
+    with pytest.raises(GatewayError) as ei:
+        await client.get("/x")
+    assert ei.value.kind == "network"
