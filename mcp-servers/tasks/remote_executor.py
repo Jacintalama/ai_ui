@@ -25,7 +25,7 @@ from claude_executor import (
     MAX_LOG_BYTES,
     MAX_PROMPT_CHARS,
     CLAUDE_WORKSPACE,
-    _COMPLETED_LINE_RE,
+    line_outcome,
 )
 
 
@@ -43,6 +43,7 @@ class RemoteExecutor:
         prompt: str,
         slug: str | None,
         execution_id: str,
+        user_jwt: str | None = None,
     ) -> AsyncIterator[str]:
         # 1. Validate slug
         if slug is not None and not _VALID_SLUG.fullmatch(slug):
@@ -72,21 +73,29 @@ class RemoteExecutor:
         # 4. Build + spawn the remote command
         remote_cmd = self._build_remote_cmd(prompt, slug, effort)
         try:
-            async for line in self._stream(host, user, key, remote_cmd):
-                # 5. On COMPLETED line: rsync back BEFORE yielding the line.
-                # Uses the same regex as parse_outcome (accepts COMPLETED:,
-                # COMPLETED<space>, COMPLETED.) so the trigger stays in sync
-                # with the parser.
-                if _COMPLETED_LINE_RE.search(line) and slug:
-                    try:
-                        await self._rsync_back(host, user, key, slug)
-                        await self._cleanup_remote(host, user, key, slug)
-                    except RuntimeError as e:
-                        yield f"FAILED: transport_error {e}\n"
-                        return
-                yield line
-                if self._is_terminal(line):
+            async for line in self._stream(host, user, key, remote_cmd,
+                                           user_jwt=user_jwt):
+                # 5. claude --print --verbose emits exactly one terminal
+                # `result` event, last. line_outcome() decodes it — raw-line
+                # regex matching is unreliable because an escaped \n before,
+                # or the JSON-closing " after, a sentinel keyword breaks
+                # regex word boundaries. On `completed`, rsync the agent
+                # workspace back BEFORE yielding the line so the
+                # orchestrator's /files lookup succeeds after parsing.
+                outcome = line_outcome(line)
+                if outcome is not None:
+                    if outcome.kind == "completed" and slug:
+                        try:
+                            await self._rsync_back(host, user, key, slug)
+                            await self._cleanup_remote(host, user, key, slug)
+                        except RuntimeError as e:
+                            yield f"FAILED: transport_error {e}\n"
+                            return
+                    # The result event is terminal regardless of outcome —
+                    # NEEDS_INPUT / NEEDS_STEPS / FAILED get no rsync-back.
+                    yield line
                     return
+                yield line
         except asyncio.TimeoutError:
             await self._kill_remote(host, user, key)
             yield f"FAILED: timeout after {EXECUTION_TIMEOUT_SECONDS}s\n"
@@ -101,10 +110,6 @@ class RemoteExecutor:
             pass
 
     # ------- helpers ------------------------------------------------
-
-    @staticmethod
-    def _is_terminal(line: str) -> bool:
-        return any(t in line for t in ("COMPLETED:", "FAILED:", "NEEDS_INPUT:", "NEEDS_STEPS:"))
 
     # Standard SSH options used by every invocation in this class.
     # BatchMode=yes: never prompt (we're non-interactive).
@@ -180,13 +185,20 @@ class RemoteExecutor:
             f"-- {qprompt}"
         )
 
-    async def _stream(self, host: str, user: str, key: str, remote_cmd: str) -> AsyncIterator[str]:
+    async def _stream(self, host: str, user: str, key: str, remote_cmd: str,
+                      user_jwt: str | None = None) -> AsyncIterator[str]:
+        sendenv = "AIUI_AGENT_EFFORT"
+        env_pass = None
+        if user_jwt:
+            sendenv = "AIUI_AGENT_EFFORT,IO_USER_JWT"
+            env_pass = {**os.environ, "IO_USER_JWT": user_jwt}
         self._proc = await asyncio.create_subprocess_exec(
             "ssh", "-i", key, *self._SSH_OPTS,
-            "-o", "SendEnv=AIUI_AGENT_EFFORT",
+            "-o", f"SendEnv={sendenv}",
             f"{user}@{host}", remote_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=env_pass,
         )
         assert self._proc.stdout is not None
         bytes_yielded = 0

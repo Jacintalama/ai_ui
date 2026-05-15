@@ -74,7 +74,8 @@ def _classify_ssh(args: tuple) -> str:
 
 @pytest.mark.asyncio
 async def test_happy_path_streams_and_rsyncs(monkeypatch):
-    """COMPLETED triggers rsync-back before yielding the line onward."""
+    """A `result` event with a COMPLETED outcome triggers rsync-back before
+    yielding the line onward."""
     calls = []
 
     # Stub the index.html sanity check so the rsync-back path succeeds without
@@ -87,7 +88,12 @@ async def test_happy_path_streams_and_rsyncs(monkeypatch):
         if cmd == "ssh":
             kind = _classify_ssh(args)
             if kind == "build":
-                return _fake_proc([b"hello\n", b"COMPLETED: ok\n"], returncode=0)
+                return _fake_proc([
+                    b'{"type":"assistant","message":{"content":[{"type":"text",'
+                    b'"text":"Built the app.\\n\\nCOMPLETED: ok"}]}}\n',
+                    b'{"type":"result","subtype":"success","is_error":false,'
+                    b'"result":"Built the app.\\n\\nCOMPLETED: ok"}\n',
+                ], returncode=0)
             return _fake_proc([], returncode=0)
         if cmd == "rsync":
             return _fake_proc([], returncode=0)
@@ -106,6 +112,89 @@ async def test_happy_path_streams_and_rsyncs(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_completed_period_form_rsyncs_once(monkeypatch):
+    """claude --print stream-json emits the final text TWICE — once as an
+    `assistant` event, then again as a `result` event — both containing
+    'COMPLETED.' (period form). rsync-back + cleanup must fire exactly once.
+
+    line_outcome() only acts on the terminal `result` event and ignores the
+    `assistant` event, so the duplicated final text cannot trigger a second
+    rsync-back against an already-cleaned workspace.
+    """
+    calls = []
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+
+    async def fake_spawn(*args, **kwargs):
+        calls.append(args)
+        cmd = args[0]
+        if cmd == "ssh" and _classify_ssh(args) == "build":
+            return _fake_proc([
+                b'{"type":"assistant","message":{"content":'
+                b'[{"type":"text","text":"COMPLETED. done"}]}}\n',
+                b'{"type":"result","subtype":"success",'
+                b'"result":"COMPLETED. done"}\n',
+            ], returncode=0)
+        return _fake_proc([], returncode=0)
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=fake_spawn)):
+        ex = RemoteExecutor()
+        out = "".join([c async for c in ex.run("p", slug="myapp", execution_id="e")])
+
+    rsync_calls = [c for c in calls if c[0] == "rsync"]
+    cleanup_calls = [c for c in calls
+                     if c[0] == "ssh" and _classify_ssh(c) == "cleanup"]
+    assert len(rsync_calls) == 2, f"expected push + 1 back, got {len(rsync_calls)}"
+    assert len(cleanup_calls) == 1, f"cleanup must fire once, got {len(cleanup_calls)}"
+    assert "FAILED" not in out
+    assert "COMPLETED. done" in out
+
+
+@pytest.mark.asyncio
+async def test_result_event_bare_completed_triggers_rsync_back(monkeypatch):
+    """claude --print stream-json ends with a `result` event whose `result`
+    field is the agent's final text. When that text ends with a BARE
+    `COMPLETED` — no trailing colon/period/space, preceded by an escaped
+    newline — rsync-back must still fire.
+
+    Regression (polar-express / aurora-air e2e): the trigger regex-matched
+    the RAW JSON line and required `\\bCOMPLETED[:\\s.]`. In the raw line a
+    bare `COMPLETED` is followed by the JSON-closing `"` and preceded by the
+    `n` of an escaped `\\n` — so BOTH the leading and trailing word
+    boundaries failed, rsync-back never fired, and the agent's customized
+    build was stranded on the VM while the orchestrator served the
+    uncustomized base copy.
+    """
+    calls = []
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+
+    async def fake_spawn(*args, **kwargs):
+        calls.append(args)
+        cmd = args[0]
+        if cmd == "ssh" and _classify_ssh(args) == "build":
+            # Mirrors the real polar-express stream: an assistant event then
+            # the terminal result event, both ending in a bare `COMPLETED`
+            # that is preceded by an escaped \n.
+            return _fake_proc([
+                b'{"type":"assistant","message":{"content":[{"type":"text",'
+                b'"text":"Rebranded the app and wired Duffel data.\\n\\nCOMPLETED"}]}}\n',
+                b'{"type":"result","subtype":"success","is_error":false,'
+                b'"result":"Rebranded the app and wired Duffel data.\\n\\nCOMPLETED"}\n',
+            ], returncode=0)
+        return _fake_proc([], returncode=0)
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=fake_spawn)):
+        ex = RemoteExecutor()
+        out = "".join([c async for c in ex.run("p", slug="myapp", execution_id="e")])
+
+    rsync_calls = [c for c in calls if c[0] == "rsync"]
+    cleanup_calls = [c for c in calls
+                     if c[0] == "ssh" and _classify_ssh(c) == "cleanup"]
+    assert len(rsync_calls) == 2, f"expected push + 1 rsync-back, got {len(rsync_calls)}"
+    assert len(cleanup_calls) == 1, f"cleanup must fire once, got {len(cleanup_calls)}"
+    assert "FAILED" not in out
+
+
+@pytest.mark.asyncio
 async def test_unreachable_yields_failed_sentinel():
     """ssh health check returns non-zero → FAILED: agent_unreachable."""
     async def fake_spawn(*args, **kwargs):
@@ -118,7 +207,8 @@ async def test_unreachable_yields_failed_sentinel():
 
 @pytest.mark.asyncio
 async def test_needs_input_does_not_rsync():
-    """NEEDS_INPUT yields and closes without triggering rsync-back."""
+    """A `result` event with a NEEDS_INPUT outcome is terminal but gets no
+    rsync-back."""
     calls = []
     async def fake_spawn(*args, **kwargs):
         calls.append(args)
@@ -128,7 +218,10 @@ async def test_needs_input_does_not_rsync():
         if cmd == "ssh":
             kind = _classify_ssh(args)
             if kind == "build":
-                return _fake_proc([b"NEEDS_INPUT: which date?\n"], returncode=0)
+                return _fake_proc([
+                    b'{"type":"result","subtype":"success","is_error":false,'
+                    b'"result":"NEEDS_INPUT: which travel dates?"}\n',
+                ], returncode=0)
             return _fake_proc([], returncode=0)
         return _fake_proc([], returncode=0)
 
@@ -151,7 +244,10 @@ async def test_shell_quote_handles_metacharacters(monkeypatch):
         cmd = args[0]
         if cmd == "ssh" and len(args) > 6:
             # the build ssh — last arg is the full remote command
-            return _fake_proc([b"COMPLETED: ok\n"], returncode=0)
+            return _fake_proc([
+                b'{"type":"result","subtype":"success",'
+                b'"result":"COMPLETED: ok"}\n',
+            ], returncode=0)
         return _fake_proc([], returncode=0)
     with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=fake_spawn)):
         ex = RemoteExecutor()
@@ -166,3 +262,45 @@ async def test_shell_quote_handles_metacharacters(monkeypatch):
     assert "rm -rf" in raw_cmd        # text passes through
     # but the dangerous expansions are quoted away
     assert "$(rm -rf" not in raw_cmd or "'" in raw_cmd  # quoted form acceptable
+
+
+@pytest.mark.asyncio
+async def test_user_jwt_forwarded_via_sendenv(monkeypatch):
+    """When run() is given user_jwt, the build-ssh call must use
+    SendEnv=AIUI_AGENT_EFFORT,IO_USER_JWT and have IO_USER_JWT in the
+    subprocess env.
+    """
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+    seen_env = {}
+    seen_args = []
+
+    async def fake_spawn(*args, **kwargs):
+        seen_args.append(args)
+        if kwargs.get("env"):
+            seen_env.update(kwargs["env"])
+        cmd = args[0]
+        if cmd == "ssh" and "claude --print" in args[-1]:
+            return _fake_proc([
+                b'{"type":"result","subtype":"success","is_error":false,'
+                b'"result":"COMPLETED: ok"}\n',
+            ], returncode=0)
+        return _fake_proc([], returncode=0)
+
+    with patch("asyncio.create_subprocess_exec",
+               AsyncMock(side_effect=fake_spawn)):
+        ex = RemoteExecutor()
+        async for _ in ex.run("build it", slug="myapp", execution_id="e",
+                              user_jwt="abc.def.ghi"):
+            pass
+
+    build_ssh = next(a for a in seen_args
+                     if a[0] == "ssh" and "claude --print" in a[-1])
+    # The SendEnv flag pair should now include IO_USER_JWT
+    sendenv_indices = [i for i, v in enumerate(build_ssh)
+                       if v == "-o" and i + 1 < len(build_ssh)
+                       and "SendEnv=" in build_ssh[i + 1]]
+    assert sendenv_indices, "no -o SendEnv= flag found on the build ssh"
+    sendenv_value = build_ssh[sendenv_indices[0] + 1]
+    assert "IO_USER_JWT" in sendenv_value
+    # The subprocess env passed to ssh contains the JWT
+    assert seen_env.get("IO_USER_JWT") == "abc.def.ghi"
