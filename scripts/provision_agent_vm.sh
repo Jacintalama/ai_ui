@@ -172,7 +172,16 @@ sudo -u claude-agent bash -c '
 EOF
 
 echo "==> [7b/8] io-mcp-wrappers install + register each wrapper"
-scp -r "${REPO_ROOT}/mcp-servers/io-mcp-wrappers" root@${AGENT_HOST}:/tmp/io-mcp-wrappers
+# Use rsync with excludes to avoid copying the operator's local .venv,
+# pip egg-info, and __pycache__ to the agent — those would either break
+# `pip install -e` (wrong venv path picked up) or just bloat the transfer.
+rsync -az --delete \
+  --exclude='.venv' \
+  --exclude='*.egg-info' \
+  --exclude='__pycache__' \
+  --exclude='.pytest_cache' \
+  "${REPO_ROOT}/mcp-servers/io-mcp-wrappers/" \
+  root@${AGENT_HOST}:/tmp/io-mcp-wrappers/
 ${SSH} bash -se <<'EOF'
 set -euo pipefail
 rm -rf /opt/io-mcp
