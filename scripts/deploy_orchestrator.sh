@@ -71,7 +71,7 @@ fi
 if [[ -z "${CHANGED}" ]]; then
   echo "  no orchestrator-relevant files changed"
   # Record SHA bump anyway so next run is fast — but mention nothing rebuilt
-  ${SSH} "echo '{\"sha\":\"${CURRENT_SHA}\",\"deployed_at\":\"$(date -Iseconds)\",\"deployed_by\":\"${USER}@$(hostname)\",\"nothing_rebuilt\":true}' > ${ORCH_PATH}/.deploy-state"
+  ${SSH} "echo '{\"sha\":\"${CURRENT_SHA}\",\"deployed_at\":\"$(date -Iseconds)\",\"deployed_by\":\"${USER:-${USERNAME:-unknown}}@$(hostname)\",\"nothing_rebuilt\":true}' > ${ORCH_PATH}/.deploy-state"
   echo "OK — SHA recorded, nothing rebuilt"
   exit 0
 fi
@@ -185,7 +185,7 @@ if [[ "${SMOKE_FAIL}" -eq 1 ]]; then
 fi
 
 echo "==> recording .deploy-state"
-${SSH} "echo '{\"sha\":\"${CURRENT_SHA}\",\"deployed_at\":\"$(date -Iseconds)\",\"deployed_by\":\"${USER}@$(hostname)\"}' > ${ORCH_PATH}/.deploy-state"
+${SSH} "echo '{\"sha\":\"${CURRENT_SHA}\",\"deployed_at\":\"$(date -Iseconds)\",\"deployed_by\":\"${USER:-${USERNAME:-unknown}}@$(hostname)\"}' > ${ORCH_PATH}/.deploy-state"
 
 echo ""
 echo "OK — deployed ${CURRENT_SHA}"
