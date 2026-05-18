@@ -155,13 +155,17 @@
 	# Liveness probe — used by scripts/deploy_orchestrator.sh post-deploy smoke.
 	# Without this handler, /tasks/healthz would fall through to the Open WebUI
 	# SPA catch-all (returns 200 + HTML), giving a false positive in deploys.
+	# The tasks service has /healthz at root (not /tasks/healthz), so strip prefix.
 	handle /tasks/healthz {
+		uri strip_prefix /tasks
 		reverse_proxy tasks:8210
 	}
 
 	# Schedules API (heartbeat scheduler) — protected by X-Cron-Secret header
 	# inside the tasks service itself, so no gateway/JWT step needed here.
+	# Tasks service exposes /schedules at root, so strip /tasks prefix.
 	handle /tasks/schedules* {
+		uri strip_prefix /tasks
 		reverse_proxy tasks:8210
 	}
 
