@@ -95,7 +95,12 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         f"{sched.persona}\n\n"
         "---\n\n"
         f"Task: {sched.prompt}\n\n"
-        "(MEMORY.md is at the top of your working dir — read it first.)"
+        "Memory protocol (IMPORTANT):\n"
+        "- There is a file named `MEMORY.md` in your current working directory.\n"
+        "- Before doing the task, use the Read tool on `./MEMORY.md` (no path prefix).\n"
+        "- If the task is already done according to that file, output `SKIPPED: <reason>` and stop.\n"
+        "- Otherwise, do the task, then use the Write tool to append a `## <ISO timestamp UTC>` section to `./MEMORY.md` summarising what you did (no secrets).\n"
+        "- Do NOT use `/home/*/.claude/*` paths. Do NOT use Bash for file IO. Only `./MEMORY.md` via the Write/Edit/Read tools."
     )
     # Use a synthetic slug derived from schedule_id so the remote executor
     # has a per-schedule workdir to drop MEMORY.md into. UUIDs match the

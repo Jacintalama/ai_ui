@@ -130,9 +130,10 @@ class RemoteExecutor:
                 if outcome is not None:
                     if outcome.kind == "completed" and slug:
                         try:
-                            await self._rsync_back(host, user, key, slug)
-                            # Push MEMORY.md back BEFORE cleanup — the
-                            # _cleanup_remote step rm -rf's the workdir.
+                            # Scheduler-driven runs don't build apps — there's
+                            # no apps/<slug>/index.html to rsync back. Skip
+                            # _rsync_back entirely for them; only memory
+                            # persistence matters.
                             if schedule_id:
                                 try:
                                     await self._push_memory(
@@ -142,6 +143,8 @@ class RemoteExecutor:
                                     # Soft: don't fail the run because memory
                                     # push failed. Surface in the stream.
                                     yield f"[memory push failed: {e}]\n"
+                            else:
+                                await self._rsync_back(host, user, key, slug)
                             await self._cleanup_remote(host, user, key, slug)
                         except RuntimeError as e:
                             yield f"FAILED: transport_error {e}\n"
