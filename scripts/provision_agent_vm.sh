@@ -39,7 +39,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SSH="ssh -o StrictHostKeyChecking=accept-new root@${AGENT_HOST}"
 
-echo "==> [1/8] base packages + claude-agent user"
+echo "==> [1/9] base packages + claude-agent user"
 ${SSH} bash -se <<EOF
 set -euo pipefail
 apt-get update -y
@@ -64,7 +64,7 @@ chown -R claude-agent:claude-agent /agent
 chmod 750 /agent /agent/work
 EOF
 
-echo "==> [2/8] SSH authorized_keys"
+echo "==> [2/9] SSH authorized_keys"
 scp -o StrictHostKeyChecking=accept-new "${AGENT_SSH_KEY_PUB}" root@${AGENT_HOST}:/tmp/agent_pub.key
 ${SSH} bash -se <<'EOF'
 set -euo pipefail
@@ -73,7 +73,7 @@ install -o claude-agent -g claude-agent -m 600 /tmp/agent_pub.key /home/claude-a
 rm -f /tmp/agent_pub.key
 EOF
 
-echo "==> [3/8] ufw — ingress 22/tcp from orchestrator only"
+echo "==> [3/9] ufw — ingress 22/tcp from orchestrator only"
 # IMPORTANT ORDERING NOTE:
 # We configure ufw BEFORE locking down sshd. If the operator's bootstrap
 # SSH is from a non-orchestrator IP (operator workstation), they could
@@ -92,7 +92,7 @@ fi
 ufw --force enable
 EOF
 
-echo "==> [4/8] sshd config — PasswordAuth no, PermitRootLogin no, AcceptEnv"
+echo "==> [4/9] sshd config — PasswordAuth no, PermitRootLogin no, AcceptEnv"
 ${SSH} bash -se <<'EOF'
 set -euo pipefail
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
@@ -102,7 +102,7 @@ grep -q "^AcceptEnv AIUI_AGENT_EFFORT" /etc/ssh/sshd_config || \
 systemctl reload ssh
 EOF
 
-echo "==> [5/8] Squid FQDN-allowlist proxy on 127.0.0.1:3128"
+echo "==> [5/9] Squid FQDN-allowlist proxy on 127.0.0.1:3128"
 ${SSH} bash -se <<'EOF'
 set -euo pipefail
 cat >/etc/squid/squid.conf <<'CONF'
@@ -141,7 +141,7 @@ fi
 iptables-save > /etc/iptables/rules.v4
 EOF
 
-echo "==> [6/8] secrets — /home/claude-agent/.env"
+echo "==> [6/9] secrets — /home/claude-agent/.env"
 ${SSH} bash -se <<EOF
 set -euo pipefail
 install -o claude-agent -g claude-agent -m 600 /dev/null /home/claude-agent/.env
@@ -155,7 +155,7 @@ NO_PROXY=127.0.0.1,localhost,172.22.0.1
 INNER
 EOF
 
-echo "==> [7/8] flights-mcp install + Claude Code MCP registration"
+echo "==> [7/9] flights-mcp install + Claude Code MCP registration"
 # SCP the package over (operator workstation has the repo)
 scp -r "${REPO_ROOT}/mcp-servers/flights" root@${AGENT_HOST}:/tmp/flights-mcp
 ${SSH} bash -se <<'EOF'
@@ -174,7 +174,7 @@ sudo -u claude-agent bash -c '
 '
 EOF
 
-echo "==> [7b/8] io-mcp-wrappers install + register each wrapper"
+echo "==> [7b/9] io-mcp-wrappers install + register each wrapper"
 # Use rsync with excludes to avoid copying the operator's local .venv,
 # pip egg-info, and __pycache__ to the agent — those would either break
 # `pip install -e` (wrong venv path picked up) or just bloat the transfer.
@@ -219,7 +219,7 @@ sudo -u claude-agent bash -c '
 '
 EOF
 
-echo "==> [8/8] workspace GC cron"
+echo "==> [8/9] workspace GC cron"
 ${SSH} bash -se <<'EOF'
 set -euo pipefail
 cat >/etc/cron.d/agent-work-gc <<'CONF'
@@ -228,6 +228,32 @@ PATH=/usr/local/bin:/usr/bin:/bin
 30 3 * * * claude-agent find /agent/work -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \;
 CONF
 chmod 644 /etc/cron.d/agent-work-gc
+EOF
+
+echo "==> [9/9] smoke: confirm Squid enforcement"
+${SSH} sudo -u claude-agent bash -se <<'EOF'
+set -euo pipefail
+set -a; source ~/.env; set +a
+
+# Allowed host must succeed (via Squid allowlist)
+if ! curl -fsS -o /dev/null -m 10 https://api.anthropic.com/; then
+  echo "FAIL: api.anthropic.com unreachable through Squid"
+  exit 1
+fi
+echo "  ok: api.anthropic.com reachable"
+
+# Disallowed host must fail (Squid denies; iptables drops direct)
+if curl -fsS -o /dev/null -m 10 https://example.com/ 2>/dev/null; then
+  echo "FAIL: example.com reachable — egress NOT enforced"
+  exit 1
+fi
+echo "  ok: example.com blocked"
+
+# Gateway must remain reachable via NO_PROXY direct route
+if ! curl -fsS -o /dev/null -m 10 "http://${IO_GATEWAY_URL#http://}/healthz" 2>/dev/null; then
+  echo "WARN: gateway healthz unreachable — may be expected if /healthz not added yet"
+fi
+echo "  squid enforcement smoke: PASS"
 EOF
 
 echo "OK — provisioning complete. Run scripts/smoke_agent_vm.sh next."
