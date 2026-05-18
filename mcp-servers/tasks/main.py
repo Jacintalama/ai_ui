@@ -89,6 +89,21 @@ async def _start_idle_sweep():
     asyncio.create_task(_ar._idle_sweep_loop(is_slug_presence_empty))
 
 
+@app.on_event("startup")
+async def _start_schedule_ticker():
+    """Heartbeat scheduler — wakes once per minute, fires due schedules.
+
+    Sibling to the idle sweep above. Inline import keeps scheduler optional
+    if its deps (croniter) aren't installed; uvicorn won't fail to boot.
+    """
+    try:
+        from scheduler import schedule_tick_loop
+    except Exception as exc:
+        logger.warning("schedule ticker not started: %s", exc)
+        return
+    asyncio.create_task(schedule_tick_loop())
+
+
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
 # Read-only public mount of the bundled template reference apps. The
 # /tasks/template-apps path is intercepted by Open WebUI's service worker

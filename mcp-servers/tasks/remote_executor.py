@@ -44,6 +44,7 @@ class RemoteExecutor:
         slug: str | None,
         execution_id: str,
         user_jwt: str | None = None,
+        schedule_id: str | None = None,
     ) -> AsyncIterator[str]:
         # 1. Validate slug
         if slug is not None and not _VALID_SLUG.fullmatch(slug):

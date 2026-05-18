@@ -66,6 +66,7 @@ async def _stream_claude(
     execution_id: UUID,
     task_id: UUID,
     user_jwt: str | None = None,
+    schedule_id: str | None = None,
 ) -> str:
     """Run a claude run via the configured executor; stream output to the
     execution log; return the full log as a string.
@@ -107,7 +108,8 @@ async def _stream_claude(
 
     try:
         async for chunk in executor.run(
-            prompt, slug=slug, execution_id=str(execution_id), user_jwt=user_jwt
+            prompt, slug=slug, execution_id=str(execution_id),
+            user_jwt=user_jwt, schedule_id=schedule_id,
         ):
             full_log.append(chunk)
             async with session() as s:
@@ -132,10 +134,16 @@ async def _run_execution(
     execution_id: UUID,
     prompt: str,
     user_jwt: str | None = None,
+    schedule_id: str | None = None,
 ):
     """Background coroutine: stream Claude output, parse outcome, persist.
     In loop mode (max_attempts > 1), handles auto-retry on failure
-    and runs the VERIFY step after COMPLETED."""
+    and runs the VERIFY step after COMPLETED.
+
+    ``schedule_id`` (when set) tells the remote executor to SCP
+    /agent/memory/<schedule_id>.md into the workdir as MEMORY.md before the
+    run, then push it back (scrubbed) after a successful completion.
+    """
     try:
         async with session() as s:
             await s.execute(
@@ -144,7 +152,10 @@ async def _run_execution(
             )
             await s.commit()
 
-        full_output = await _stream_claude(prompt, execution_id, task_id, user_jwt=user_jwt)
+        full_output = await _stream_claude(
+            prompt, execution_id, task_id,
+            user_jwt=user_jwt, schedule_id=schedule_id,
+        )
         outcome = parse_outcome(full_output)
 
         async with session() as s:
@@ -193,7 +204,8 @@ async def _run_execution(
                 slug=built_slug,
                 user_email=assignee_email,
             )
-            await _run_execution(task_id, new_exec.id, retry_prompt, user_jwt=user_jwt)
+            await _run_execution(task_id, new_exec.id, retry_prompt,
+                                 user_jwt=user_jwt, schedule_id=schedule_id)
             return
 
         # --- LOOP MODE: VERIFY step after COMPLETED ---
@@ -208,7 +220,7 @@ async def _run_execution(
             verify_output = await _stream_claude(
                 build_verify_prompt(slug=slug, description=task.description),
                 execution_id, task_id,
-                user_jwt=user_jwt,
+                user_jwt=user_jwt, schedule_id=schedule_id,
             )
             test_result = parse_test_outcome(verify_output)
 
