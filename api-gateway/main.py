@@ -236,6 +236,16 @@ async def health():
     return JSONResponse(content={"status": "ok"})
 
 
+@app.get("/healthz")
+def healthz():
+    """Liveness probe — no upstream call. Used by deploy_orchestrator.sh.
+
+    Registered before the catch-all proxy_handler so it wins routing
+    precedence and is never forwarded to a backend.
+    """
+    return JSONResponse(content={"status": "ok"})
+
+
 # =============================================================================
 # Proxy Helper
 # =============================================================================
