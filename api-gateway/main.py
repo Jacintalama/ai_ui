@@ -256,10 +256,23 @@ async def forward_request(request: Request, backend_url: str, backend_path: str,
     if request.query_params:
         url = f"{url}?{request.query_params}"
 
+    # Headers we strip from the client request — either hop-by-hop, or
+    # gateway-owned. The gateway-owned ones MUST be stripped (not just
+    # overridden) because Python dicts are case-sensitive and HTTP isn't:
+    # a client sending lowercase 'x-user-email' and the gateway adding
+    # 'X-User-Email' would BOTH end up in the dict and the backend would
+    # see the client's forged value. Strip-then-add is the safe pattern.
+    _STRIPPED = {
+        "host", "connection", "keep-alive", "transfer-encoding",
+        # Gateway-owned trust headers — never trust client claims for these.
+        "x-user-email", "x-user-groups", "x-user-admin", "x-user-name",
+        "x-gateway-validated",
+    }
     headers = {}
     for key, value in request.headers.items():
-        if key.lower() not in ["host", "connection", "keep-alive", "transfer-encoding"]:
+        if key.lower() not in _STRIPPED:
             headers[key] = value
+    # Now safely set gateway-owned headers — no key collision possible.
     headers.update(extra_headers)
 
     body = None
