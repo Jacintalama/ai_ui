@@ -15,6 +15,7 @@ from routes_execution import router as execution_router
 from routes_graph import router as graph_router
 from routes_preview import router as preview_router
 from routes_projects import router as projects_router
+from routes_schedules import router as schedules_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
@@ -65,6 +66,7 @@ app.include_router(execution_router)
 app.include_router(cron_router)
 app.include_router(preview_router)
 app.include_router(projects_router)
+app.include_router(schedules_router)
 app.include_router(upload_router)
 app.include_router(graph_router)
 app.include_router(supabase_router)
