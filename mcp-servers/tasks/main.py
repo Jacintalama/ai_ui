@@ -74,6 +74,12 @@ app.include_router(chat_history_router)
 app.include_router(templates_router)
 
 
+@app.get("/healthz")
+def healthz():
+    """Liveness probe — no DB roundtrip. Used by deploy_orchestrator.sh."""
+    return {"status": "ok"}
+
+
 @app.on_event("startup")
 async def _start_idle_sweep():
     """Spawn the per-slug auto-stop sweep so previews don't hold ports
@@ -351,6 +357,19 @@ async def serve_published_app(
     if ".." in rel.split("/") or rel.startswith("/") or "\x00" in rel:
         raise HTTPException(status_code=400, detail="Invalid path")
 
+    # Access gate: <slug>.ai-ui.<domain>/ is the *published* URL. Drafts
+    # remain reachable only via /tasks/preview-app/<slug>/. A short-lived
+    # 2026-04-30 change relaxed this so any app on disk was reachable, but
+    # that broke the Publish/Unpublish UI — toggling no longer affected
+    # public access. Restore the gate: no published_apps row → 404 (and
+    # no Supabase config leak via aiui-config.js below).
+    async with _db_session() as s:
+        published_row = (await s.execute(
+            _select(_PublishedApp).where(_PublishedApp.slug == slug).limit(1)
+        )).scalar_one_or_none()
+    if published_row is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
     # Synthesize aiui-config.js for the published path so the same agent code
     # works both in preview and published contexts.
     if rel == "aiui-config.js":
@@ -374,13 +393,6 @@ async def serve_published_app(
         )
         return Response(content=js_body, media_type="text/javascript",
                         headers={"Cache-Control": "no-store"})
-
-    # Access gate dropped 2026-04-30: any app on disk is reachable at
-    # <slug>.<domain> for preview. The published_apps row is now a flag for
-    # the "officially published" state (gallery / SEO / metadata) — not an
-    # access gate. If the app dir doesn't exist, fall through to the realpath
-    # check below which will 404 on a missing index.html.
-    pass
 
     base = _os.path.realpath(_os.path.join(_APP_ROOT_FS, slug))
     target = _os.path.realpath(_os.path.join(base, rel))
