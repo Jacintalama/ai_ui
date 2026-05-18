@@ -74,15 +74,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Tasks Service", version="0.1.0", lifespan=lifespan)
 app.include_router(webhook_router)
+# Schedules MUST be registered before tasks_router (which has a catch-all
+# /api/tasks/{task_id} that would otherwise match /api/tasks/schedules first
+# and route it through admin auth — wrong gate for end-user schedule CRUD).
+app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Secret)
+# Also mount at /api/tasks/schedules so end-users can reach it via the gateway
+# (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
+app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(tasks_router)
 app.include_router(execution_router)
 app.include_router(cron_router)
 app.include_router(preview_router)
 app.include_router(projects_router)
-app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Secret)
-# Also mount at /api/tasks/schedules so end-users can reach it via the gateway
-# (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
-app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(upload_router)
 app.include_router(graph_router)
 app.include_router(supabase_router)
