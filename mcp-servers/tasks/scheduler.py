@@ -145,9 +145,13 @@ async def _run_scheduled_task(sched: Schedule) -> str:
             await s.refresh(execution)
         execution_id = execution.id
         from routes_execution import _run_execution
+        # Pass the FULL composed description (persona + task + memory protocol)
+        # as the prompt, not just sched.prompt — the memory-protocol section
+        # needs to reach the agent. item.description was built by
+        # _create_task_from_schedule and already includes everything.
         try:
             await _run_execution(
-                item.id, execution_id, sched.prompt, user_jwt=None,
+                item.id, execution_id, item.description, user_jwt=None,
                 schedule_id=str(sched.id),
             )
         except Exception as exc:
