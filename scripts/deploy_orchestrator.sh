@@ -107,3 +107,84 @@ else
   REBUILD_LIST="${!SERVICES[*]}"
   echo "  will rebuild: ${REBUILD_LIST:-(none)}"
 fi
+
+echo "==> [4/6] rsync changed files"
+
+# Build rsync src list. Use --relative so dir structure is preserved server-side.
+RSYNC_PATHS=()
+while IFS= read -r path; do
+  [[ -n "${path}" ]] && RSYNC_PATHS+=("${path}")
+done <<< "${CHANGED}"
+
+rsync -avz --relative \
+  --exclude='__pycache__' \
+  --exclude='.pytest_cache' \
+  --exclude='*.pyc' \
+  --exclude='.venv' \
+  --exclude='*.egg-info' \
+  "${RSYNC_PATHS[@]}" \
+  "${ORCH_USER}@${ORCH_HOST}:${ORCH_PATH}/"
+
+echo "==> [5/6] rebuild + restart services"
+
+if [[ "${REBUILD_LIST}" == "ALL" ]]; then
+  ${SSH} "cd ${ORCH_PATH} && docker compose -f docker-compose.unified.yml up -d --build"
+else
+  for svc in ${REBUILD_LIST}; do
+    if [[ "${svc}" == "caddy" ]]; then
+      # Caddy: restart rather than reload — reload may miss new upstream blocks
+      ${SSH} "cd ${ORCH_PATH} && docker compose -f docker-compose.unified.yml restart caddy"
+    else
+      ${SSH} "cd ${ORCH_PATH} && docker compose -f docker-compose.unified.yml up -d --build ${svc}"
+    fi
+  done
+fi
+
+echo "==> [6/6] post-deploy smoke"
+
+SMOKE_FAIL=0
+
+# Map services → smoke URL
+declare -A SMOKE_URLS=(
+  [tasks]="http://${ORCH_HOST}/tasks/healthz"
+  [api-gateway]="http://${ORCH_HOST}/healthz"
+  [caddy]="http://${ORCH_HOST}/healthz"
+)
+
+if [[ "${REBUILD_LIST}" == "ALL" ]]; then
+  CHECK_LIST="tasks api-gateway caddy"
+else
+  CHECK_LIST="${REBUILD_LIST}"
+fi
+
+for svc in ${CHECK_LIST}; do
+  url="${SMOKE_URLS[${svc}]:-}"
+  if [[ -z "${url}" ]]; then
+    # Service has no /healthz — check container is `Up` instead
+    if ${SSH} "docker compose -f ${ORCH_PATH}/docker-compose.unified.yml ps ${svc} | grep -q 'Up'"; then
+      echo "  ok: ${svc} (container Up)"
+    else
+      echo "  FAIL: ${svc} container is not Up"
+      SMOKE_FAIL=1
+    fi
+    continue
+  fi
+  if curl -fsS -o /dev/null -m 10 "${url}"; then
+    echo "  ok: ${svc} → ${url}"
+  else
+    echo "  FAIL: ${svc} → ${url} returned non-200"
+    SMOKE_FAIL=1
+  fi
+done
+
+if [[ "${SMOKE_FAIL}" -eq 1 ]]; then
+  echo "DEPLOY SMOKE FAILED — .deploy-state NOT updated. Server may be in inconsistent state."
+  echo "Investigate logs: ssh ${ORCH_USER}@${ORCH_HOST} 'docker compose -f ${ORCH_PATH}/docker-compose.unified.yml logs --tail=100'"
+  exit 2
+fi
+
+echo "==> recording .deploy-state"
+${SSH} "echo '{\"sha\":\"${CURRENT_SHA}\",\"deployed_at\":\"$(date -Iseconds)\",\"deployed_by\":\"${USER}@$(hostname)\"}' > ${ORCH_PATH}/.deploy-state"
+
+echo ""
+echo "OK — deployed ${CURRENT_SHA}"
