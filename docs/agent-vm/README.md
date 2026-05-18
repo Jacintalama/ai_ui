@@ -68,3 +68,25 @@ The MCP-access pipeline assumes a live user JWT. Cron / scheduled / no-live-user
 ### Pre-existing fix landed alongside this
 
 Before 2026-05-15, Caddy direct-routed `/gmail/*`, `/gdrive/*`, `/calendar/*`, `/meetings/*` to the MCP backends bypassing the API Gateway. The backends fell back to `default@local` when `X-User-Email` was absent, which meant all browser users implicitly shared one set of OAuth tokens per service. Task 10b in this PR fixes that — those 4 prefixes (plus 4 new ones for the wrappers) now go through the gateway with proper per-user `X-User-Email` injection.
+
+## Deploying orchestrator changes (added 2026-05-18)
+
+Use `scripts/deploy_orchestrator.sh` instead of manual `scp`. It:
+- Refuses dirty working trees (override with `--allow-dirty`)
+- Tracks deployed-SHA in `/root/proxy-server/.deploy-state` on the server
+- Rsyncs only files changed since last deploy
+- Rebuilds only the docker compose services whose code touched
+- Smokes via `/healthz` and exits non-zero on failure (and DOES NOT update `.deploy-state` on failure)
+
+Usage:
+```bash
+ORCH_HOST=46.224.193.25 ./scripts/deploy_orchestrator.sh
+# First time:
+ORCH_HOST=46.224.193.25 ./scripts/deploy_orchestrator.sh --first-deploy
+```
+
+If `.deploy-state` gets corrupted or you need to force a full re-deploy:
+```bash
+ssh root@46.224.193.25 rm /root/proxy-server/.deploy-state
+./scripts/deploy_orchestrator.sh --first-deploy
+```
