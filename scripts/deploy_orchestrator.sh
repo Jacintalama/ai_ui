@@ -42,7 +42,8 @@ echo "  current commit: ${CURRENT_SHA}"
 
 PREVIOUS_SHA=""
 if ${SSH} "test -f ${ORCH_PATH}/.deploy-state"; then
-  PREVIOUS_SHA="$(${SSH} "cat ${ORCH_PATH}/.deploy-state" | jq -r .sha)"
+  # Parse via python (universally available; avoids requiring jq on operator workstation)
+  PREVIOUS_SHA="$(${SSH} "cat ${ORCH_PATH}/.deploy-state" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["sha"])' 2>/dev/null || python -c 'import json,sys;print(json.loads(sys.stdin.read())["sha"])')"
   echo "  last deployed: ${PREVIOUS_SHA}"
 elif [[ "${FIRST_DEPLOY}" -ne 1 ]]; then
   echo "ERROR: no .deploy-state on server. Re-run with --first-deploy if this is intentional."
