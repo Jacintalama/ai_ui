@@ -152,6 +152,19 @@
 		reverse_proxy tasks:8210
 	}
 
+	# Liveness probe — used by scripts/deploy_orchestrator.sh post-deploy smoke.
+	# Without this handler, /tasks/healthz would fall through to the Open WebUI
+	# SPA catch-all (returns 200 + HTML), giving a false positive in deploys.
+	handle /tasks/healthz {
+		reverse_proxy tasks:8210
+	}
+
+	# Schedules API (heartbeat scheduler) — protected by X-Cron-Secret header
+	# inside the tasks service itself, so no gateway/JWT step needed here.
+	handle /tasks/schedules* {
+		reverse_proxy tasks:8210
+	}
+
 	# App Builder page — pretty URL that serves the projects SPA
 	handle /tasks/app-builder {
 		header Cache-Control "no-cache, no-store, must-revalidate"
