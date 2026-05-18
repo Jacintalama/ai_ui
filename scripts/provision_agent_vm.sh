@@ -123,14 +123,6 @@ CONF
 systemctl enable --now squid
 systemctl reload squid
 
-# Force claude-agent's outbound HTTPS through Squid
-cat >/home/claude-agent/.profile <<'CONF'
-export HTTPS_PROXY=http://127.0.0.1:3128
-export HTTP_PROXY=http://127.0.0.1:3128
-export NO_PROXY=127.0.0.1,localhost
-CONF
-chown claude-agent:claude-agent /home/claude-agent/.profile
-
 # Apt also through Squid
 cat >/etc/apt/apt.conf.d/95proxy <<'CONF'
 Acquire::http::Proxy "http://127.0.0.1:3128";
@@ -150,6 +142,9 @@ cat >>/home/claude-agent/.env <<INNER
 ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 DUFFEL_API_KEY=${DUFFEL_API_KEY}
 IO_GATEWAY_URL=http://172.22.0.1:8085
+HTTPS_PROXY=http://127.0.0.1:3128
+HTTP_PROXY=http://127.0.0.1:3128
+NO_PROXY=127.0.0.1,localhost,172.22.0.1
 INNER
 EOF
 
