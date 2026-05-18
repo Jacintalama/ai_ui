@@ -27,6 +27,7 @@ from claude_executor import (
     CLAUDE_WORKSPACE,
     line_outcome,
 )
+from secret_scrub import scrub as _scrub_stream
 
 
 _VALID_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
@@ -269,7 +270,8 @@ class RemoteExecutor:
                     chunk = await self._proc.stdout.read(4096)
                     if not chunk:
                         if buf:
-                            yield buf.decode("utf-8", errors="replace")
+                            # Final partial line — scrub before yielding.
+                            yield _scrub_stream(buf.decode("utf-8", errors="replace"))
                         break
                     if bytes_yielded >= MAX_LOG_BYTES:
                         self._proc.kill()
@@ -279,7 +281,13 @@ class RemoteExecutor:
                     buf += chunk
                     while b"\n" in buf:
                         line, _, buf = buf.partition(b"\n")
-                        yield line.decode("utf-8", errors="replace") + "\n"
+                        # Scrub every line we yield. line_outcome() then
+                        # parses scrubbed text — safe because COMPLETED:/
+                        # FAILED:/NEEDS_INPUT: sentinels can't overlap any
+                        # credential pattern in secret_scrub.
+                        yield _scrub_stream(
+                            line.decode("utf-8", errors="replace")
+                        ) + "\n"
                 await self._proc.wait()
         finally:
             self._proc = None

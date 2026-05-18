@@ -320,6 +320,42 @@ async def test_user_jwt_forwarded_via_sendenv(monkeypatch):
 # kept so the agent retains identity / persona context.
 # ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
+async def test_stream_scrubs_credentials_in_output(monkeypatch):
+    """A credential leaked into the agent's stdout must be redacted before
+    it reaches the orchestrator-side log (and from there, the DB).
+
+    Setup mirrors test_happy_path_streams_and_rsyncs: the build-ssh proc
+    emits an assistant chunk containing a fake sk-ant- key plus a terminal
+    result event with COMPLETED, so rsync-back fires but the body of the
+    stream gets scrubbed.
+    """
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+
+    async def fake_spawn(*args, **kwargs):
+        cmd = args[0]
+        if cmd == "ssh" and _classify_ssh(args) == "build":
+            return _fake_proc([
+                b'{"type":"assistant","message":{"content":[{"type":"text",'
+                b'"text":"DEBUG api_key=sk-ant-realkey12345abcdef_xyz_longer"}]}}\n',
+                b'{"type":"result","subtype":"success","is_error":false,'
+                b'"result":"COMPLETED: build done"}\n',
+            ], returncode=0)
+        return _fake_proc([], returncode=0)
+
+    with patch("asyncio.create_subprocess_exec",
+               AsyncMock(side_effect=fake_spawn)):
+        ex = RemoteExecutor()
+        out = "".join([c async for c in ex.run("p", slug="myapp", execution_id="e")])
+
+    # The raw key must NOT appear in the orchestrator-visible stream.
+    assert "sk-ant-realkey" not in out
+    # The redaction placeholder must appear.
+    assert "<REDACTED_ANTHROPIC>" in out
+    # The terminal sentinel (and surrounding non-sensitive text) survives.
+    assert "COMPLETED: build done" in out
+
+
 def test_truncate_keeps_newest_memory_sections():
     head = "# Memory\n"
     section = "## 2026-05-{day:02d} entry\nbody{day}\n"
