@@ -91,3 +91,6 @@ class GatewayClient:
 
     async def post(self, path: str, *, json=None, timeout: float = 30.0) -> Any:
         return await self._do("POST", path, json=json, timeout=timeout)
+
+    async def delete(self, path: str, *, timeout: float = 30.0) -> Any:
+        return await self._do("DELETE", path, timeout=timeout)

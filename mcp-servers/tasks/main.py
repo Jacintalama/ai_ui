@@ -79,7 +79,10 @@ app.include_router(execution_router)
 app.include_router(cron_router)
 app.include_router(preview_router)
 app.include_router(projects_router)
-app.include_router(schedules_router)
+app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Secret)
+# Also mount at /api/tasks/schedules so end-users can reach it via the gateway
+# (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
+app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(upload_router)
 app.include_router(graph_router)
 app.include_router(supabase_router)

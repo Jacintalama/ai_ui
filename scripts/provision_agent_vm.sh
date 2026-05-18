@@ -210,7 +210,7 @@ systemctl reload ssh
 # automatically (Claude Code spreads process.env into each MCP spawn).
 sudo -u claude-agent bash -c '
   source ~/.env
-  for svc in web_search gdrive gmail calendar meetings meeting_kb dashboard excel_creator; do
+  for svc in web_search gdrive gmail calendar meetings meeting_kb dashboard excel_creator scheduler; do
     name="io-${svc//_/-}"
     claude mcp add --scope user "$name" \
       -e IO_GATEWAY_URL=http://172.22.0.1:8085 -- \

@@ -32,11 +32,103 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 
 def test_list_requires_secret():
-    """Without X-Cron-Secret, GET /schedules returns 403."""
+    """Without X-Cron-Secret OR X-User-Email, GET /schedules returns 403."""
     from main import app
     client = TestClient(app, raise_server_exceptions=False)
     r = client.get("/schedules")
     assert r.status_code == 403
+
+
+def test_create_with_user_email_scopes_owner(monkeypatch):
+    """End-user path: X-User-Email forces user_email even if body says otherwise.
+
+    This is how Open WebUI users will create schedules — the gateway
+    injects X-User-Email from the validated JWT.
+    """
+    from main import app
+    from models import Schedule
+
+    rows: list[Schedule] = []
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj):
+            if isinstance(obj, Schedule):
+                rows.append(obj)
+        async def commit(self): return None
+        async def execute(self, _stmt):
+            class _R:
+                def scalars(self):
+                    class _S:
+                        def all(self_): return list(rows)
+                    return _S()
+            return _R()
+
+    monkeypatch.setattr("routes_schedules.session", lambda: _FakeSession())
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-User-Email": "alice@example.com"},
+        json={
+            "user_email": "attacker@evil.com",  # MUST be ignored
+            "name": "alice-stocks",
+            "cron_expr": "0 20 * * *",
+            "persona": "stockbroker",
+            "prompt": "watch AAPL",
+        },
+    )
+    assert r.status_code == 201, r.text
+    # Schedule should be owned by the JWT-authenticated user, NOT the body claim
+    assert len(rows) == 1
+    assert rows[0].user_email == "alice@example.com"
+
+
+def test_user_cannot_see_other_users_schedules(monkeypatch):
+    """End-user GET /schedules only returns rows owned by X-User-Email."""
+    from main import app
+    from models import Schedule
+    import uuid
+
+    pre_rows = [
+        Schedule(id=uuid.uuid4(), user_email="alice@example.com", name="a",
+                 cron_expr="0 8 * * *", prompt="x"),
+        Schedule(id=uuid.uuid4(), user_email="bob@example.com", name="b",
+                 cron_expr="0 9 * * *", prompt="y"),
+    ]
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj): pass
+        async def commit(self): return None
+        async def execute(self, stmt):
+            # Inspect the WHERE clause to honor user_email filtering.
+            try:
+                compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            except Exception:
+                compiled = ""
+            class _R:
+                def __init__(self, rs): self._rs = rs
+                def scalars(self):
+                    class _S:
+                        def all(self_inner): return self._rs
+                    return _S()
+            if "alice@example.com" in compiled:
+                return _R([pre_rows[0]])
+            if "bob@example.com" in compiled:
+                return _R([pre_rows[1]])
+            return _R(pre_rows)
+
+    monkeypatch.setattr("routes_schedules.session", lambda: _FakeSession())
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules", headers={"X-User-Email": "alice@example.com"})
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 1
+    assert data[0]["user_email"] == "alice@example.com"
 
 
 def test_create_then_list(monkeypatch):
