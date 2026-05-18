@@ -55,3 +55,55 @@ if [[ "${PREVIOUS_SHA}" == "${CURRENT_SHA}" ]]; then
   echo "Nothing to deploy — already at ${CURRENT_SHA}"
   exit 0
 fi
+
+echo "==> [2/6] compute changed paths"
+
+ORCH_PATH_PATTERN='^(mcp-servers/|api-gateway/|Caddyfile$|docker-compose\.unified\.yml$|scripts/)'
+
+if [[ -z "${PREVIOUS_SHA}" ]]; then
+  # First deploy — everything is "changed"
+  CHANGED=$(git ls-files | grep -E "${ORCH_PATH_PATTERN}" || true)
+else
+  CHANGED=$(git diff --name-only "${PREVIOUS_SHA}..${CURRENT_SHA}" | grep -E "${ORCH_PATH_PATTERN}" || true)
+fi
+
+if [[ -z "${CHANGED}" ]]; then
+  echo "  no orchestrator-relevant files changed"
+  # Record SHA bump anyway so next run is fast — but mention nothing rebuilt
+  ${SSH} "echo '{\"sha\":\"${CURRENT_SHA}\",\"deployed_at\":\"$(date -Iseconds)\",\"deployed_by\":\"${USER}@$(hostname)\",\"nothing_rebuilt\":true}' > ${ORCH_PATH}/.deploy-state"
+  echo "OK — SHA recorded, nothing rebuilt"
+  exit 0
+fi
+
+echo "  changed paths:"
+echo "${CHANGED}" | sed 's/^/    /'
+
+echo "==> [3/6] map paths to services"
+
+declare -A SERVICES=()
+while IFS= read -r path; do
+  case "${path}" in
+    mcp-servers/tasks/*)         SERVICES[tasks]=1 ;;
+    mcp-servers/web-search/*)    SERVICES[mcp-web-search]=1 ;;
+    mcp-servers/gmail/*)         SERVICES[mcp-gmail]=1 ;;
+    mcp-servers/gdrive/*)        SERVICES[mcp-gdrive]=1 ;;
+    mcp-servers/calendar/*)      SERVICES[mcp-calendar]=1 ;;
+    mcp-servers/meetings/*)      SERVICES[mcp-meetings]=1 ;;
+    mcp-servers/meeting-kb/*)    SERVICES[mcp-meeting-kb]=1 ;;
+    mcp-servers/dashboard/*)     SERVICES[mcp-dashboard]=1 ;;
+    mcp-servers/excel-creator/*) SERVICES[mcp-excel-creator]=1 ;;
+    mcp-servers/io-mcp-wrappers/*) ;;  # agent-side only, not a compose service
+    api-gateway/*)               SERVICES[api-gateway]=1 ;;
+    Caddyfile)                   SERVICES[caddy]=1 ;;
+    docker-compose.unified.yml)  SERVICES[ALL]=1 ;;
+    scripts/*)                   ;; # script changes don't trigger service rebuild
+  esac
+done <<< "${CHANGED}"
+
+if [[ -n "${SERVICES[ALL]:-}" ]]; then
+  echo "  docker-compose.unified.yml changed — will rebuild ALL services"
+  REBUILD_LIST="ALL"
+else
+  REBUILD_LIST="${!SERVICES[*]}"
+  echo "  will rebuild: ${REBUILD_LIST:-(none)}"
+fi
