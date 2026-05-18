@@ -46,7 +46,7 @@ apt-get update -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
   ufw fail2ban unattended-upgrades curl jq rsync git build-essential \
   python3 python3-pip python3-venv \
-  squid
+  squid iptables-persistent
 
 # Node 20 from NodeSource
 if ! command -v node >/dev/null 2>&1; then
@@ -130,8 +130,15 @@ Acquire::https::Proxy "http://127.0.0.1:3128";
 CONF
 
 # iptables: drop direct outbound 443 for claude-agent uid
-iptables -A OUTPUT -m owner --uid-owner claude-agent \
-  -p tcp --dport 443 ! -d 127.0.0.1 -j DROP
+# Idempotent — only add if rule doesn't already exist
+if ! iptables -C OUTPUT -m owner --uid-owner claude-agent \
+    -p tcp --dport 443 ! -d 127.0.0.1 -j DROP 2>/dev/null; then
+  iptables -A OUTPUT -m owner --uid-owner claude-agent \
+    -p tcp --dport 443 ! -d 127.0.0.1 -j DROP
+fi
+
+# Persist the OUTPUT rule across reboots — iptables-persistent reads this file
+iptables-save > /etc/iptables/rules.v4
 EOF
 
 echo "==> [6/8] secrets — /home/claude-agent/.env"
