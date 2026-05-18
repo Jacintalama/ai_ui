@@ -128,22 +128,20 @@ class RemoteExecutor:
                 # orchestrator's /files lookup succeeds after parsing.
                 outcome = line_outcome(line)
                 if outcome is not None:
+                    # Scheduler runs: push MEMORY.md back on ANY terminal
+                    # outcome (the agent may have written useful state even
+                    # if it didn't produce the COMPLETED sentinel). App-build
+                    # runs: only rsync back on completed (the existing flow).
+                    if schedule_id and slug:
+                        try:
+                            await self._push_memory(
+                                host, user, key, schedule_id, slug,
+                            )
+                        except RuntimeError as e:
+                            yield f"[memory push failed: {e}]\n"
                     if outcome.kind == "completed" and slug:
                         try:
-                            # Scheduler-driven runs don't build apps — there's
-                            # no apps/<slug>/index.html to rsync back. Skip
-                            # _rsync_back entirely for them; only memory
-                            # persistence matters.
-                            if schedule_id:
-                                try:
-                                    await self._push_memory(
-                                        host, user, key, schedule_id, slug,
-                                    )
-                                except RuntimeError as e:
-                                    # Soft: don't fail the run because memory
-                                    # push failed. Surface in the stream.
-                                    yield f"[memory push failed: {e}]\n"
-                            else:
+                            if not schedule_id:
                                 await self._rsync_back(host, user, key, slug)
                             await self._cleanup_remote(host, user, key, slug)
                         except RuntimeError as e:

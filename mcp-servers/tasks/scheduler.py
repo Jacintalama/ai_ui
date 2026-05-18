@@ -95,12 +95,13 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         f"{sched.persona}\n\n"
         "---\n\n"
         f"Task: {sched.prompt}\n\n"
-        "Memory protocol (IMPORTANT):\n"
+        "Memory protocol (IMPORTANT — follow exactly):\n"
         "- There is a file named `MEMORY.md` in your current working directory.\n"
-        "- Before doing the task, use the Read tool on `./MEMORY.md` (no path prefix).\n"
-        "- If the task is already done according to that file, output `SKIPPED: <reason>` and stop.\n"
-        "- Otherwise, do the task, then use the Write tool to append a `## <ISO timestamp UTC>` section to `./MEMORY.md` summarising what you did (no secrets).\n"
-        "- Do NOT use `/home/*/.claude/*` paths. Do NOT use Bash for file IO. Only `./MEMORY.md` via the Write/Edit/Read tools."
+        "- Step 1: Use the Read tool on `./MEMORY.md` (no path prefix) to see what previous runs did.\n"
+        "- Step 2: If the task is already done according to that file, output `SKIPPED: <reason>` on its own line and stop.\n"
+        "- Step 3: Otherwise, do the task, then use the Write tool to append a new `## <current ISO timestamp UTC>` section to `./MEMORY.md` summarising what you did (no secrets).\n"
+        "- Step 4: End your final response with the single word `COMPLETED` on its own line. The orchestrator needs that exact sentinel.\n"
+        "- Constraints: Do NOT use `/home/*/.claude/*` paths. Do NOT use Bash for file IO. Only `./MEMORY.md` via the Write/Edit/Read tools."
     )
     # Use a synthetic slug derived from schedule_id so the remote executor
     # has a per-schedule workdir to drop MEMORY.md into. UUIDs match the
