@@ -164,8 +164,17 @@
 	# Schedules API (heartbeat scheduler) — protected by X-Cron-Secret header
 	# inside the tasks service itself, so no gateway/JWT step needed here.
 	# Tasks service exposes /schedules at root, so strip /tasks prefix.
+	#
+	# SECURITY: strip X-User-Email from any client request here. Only the
+	# api-gateway is allowed to set that header (after JWT validation);
+	# end users reach the schedules API via /api/tasks/schedules which goes
+	# through the gateway. Without this strip, an attacker could send
+	# `X-User-Email: someone-else@x.com` directly to /tasks/schedules and
+	# impersonate that user. Belt-and-braces — the tasks service should
+	# also defense-in-depth verify, but the perimeter strip is critical.
 	handle /tasks/schedules* {
 		uri strip_prefix /tasks
+		request_header -X-User-Email
 		reverse_proxy tasks:8210
 	}
 
