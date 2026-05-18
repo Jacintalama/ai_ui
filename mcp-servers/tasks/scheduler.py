@@ -97,6 +97,11 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         f"Task: {sched.prompt}\n\n"
         "(MEMORY.md is at the top of your working dir — read it first.)"
     )
+    # Use a synthetic slug derived from schedule_id so the remote executor
+    # has a per-schedule workdir to drop MEMORY.md into. UUIDs match the
+    # _VALID_SLUG regex (lowercase hex + dashes), and prefixing with `sched-`
+    # makes them obvious vs. user-built app slugs.
+    sched_slug = f"sched-{str(sched.id)[:8]}"
     item = TaskItem(
         id=_uuid.uuid4(),
         meeting_id=_NULL_MEETING_UUID,
@@ -107,6 +112,7 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         priority="NICE_TO_HAVE",
         status="pending",
         mode="ai",
+        built_app_slug=sched_slug,
     )
     async with session() as s:
         s.add(item)
@@ -137,6 +143,7 @@ async def _run_scheduled_task(sched: Schedule) -> str:
         try:
             await _run_execution(
                 item.id, execution_id, sched.prompt, user_jwt=None,
+                schedule_id=str(sched.id),
             )
         except Exception as exc:
             logger.exception("schedule %s run failed: %s", sched.id, scrub(str(exc)))

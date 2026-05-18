@@ -56,6 +56,19 @@ async def lifespan(app: FastAPI):
             logger.warning("Reaped %d orphan running task(s) at startup", len(reaped))
     except Exception as exc:
         logger.error("Orphan reap failed at startup: %s", exc)
+
+    # Heartbeat scheduler — wakes once per minute, fires due schedules.
+    # Inside lifespan so it definitely runs (FastAPI's @app.on_event hooks
+    # are deprecated and may not execute reliably when `lifespan=` is set).
+    # Inline import keeps scheduler optional if croniter isn't installed —
+    # uvicorn won't fail to boot.
+    try:
+        from scheduler import schedule_tick_loop
+        asyncio.create_task(schedule_tick_loop())
+        logger.info("schedule_tick_loop scheduled")
+    except Exception as exc:
+        logger.warning("schedule_tick_loop NOT started: %s", exc)
+
     yield
 
 
@@ -89,21 +102,6 @@ async def _start_idle_sweep():
     import app_runner as _ar
     from routes_projects import is_slug_presence_empty
     asyncio.create_task(_ar._idle_sweep_loop(is_slug_presence_empty))
-
-
-@app.on_event("startup")
-async def _start_schedule_ticker():
-    """Heartbeat scheduler — wakes once per minute, fires due schedules.
-
-    Sibling to the idle sweep above. Inline import keeps scheduler optional
-    if its deps (croniter) aren't installed; uvicorn won't fail to boot.
-    """
-    try:
-        from scheduler import schedule_tick_loop
-    except Exception as exc:
-        logger.warning("schedule ticker not started: %s", exc)
-        return
-    asyncio.create_task(schedule_tick_loop())
 
 
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
