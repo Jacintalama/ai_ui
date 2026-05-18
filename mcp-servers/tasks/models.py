@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -108,3 +108,28 @@ class ChatMessage(Base):
     role = Column(Text, nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class Schedule(Base):
+    """Heartbeat scheduler: cron-triggered agent runs with per-schedule memory.
+
+    The tasks service polls this table once per minute. Rows whose cron_expr
+    matches the current minute (in their tz) get dispatched through the
+    remote_executor pipeline; MEMORY.md persists between runs at
+    /agent/memory/<id>.md on the agent VM.
+    """
+    __tablename__ = "schedules"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_email = Column(Text, nullable=False)
+    name = Column(Text, nullable=False)
+    cron_expr = Column(Text, nullable=False)
+    tz = Column(Text, nullable=False, default="Asia/Manila")
+    persona = Column(Text, nullable=False, default="")
+    prompt = Column(Text, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    last_run_status = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
