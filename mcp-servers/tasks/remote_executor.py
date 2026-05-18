@@ -32,6 +32,37 @@ from claude_executor import (
 _VALID_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 
+def _truncate_memory(text: str, max_bytes: int) -> str:
+    """Soft-cap MEMORY.md by dropping the OLDEST `## ` sections first.
+
+    Anything before the first `## ` (title + preamble — the agent's persona
+    context) is always preserved. Sections are split on a leading `\\n## `,
+    so a section starts at the literal characters `## ` on a new line.
+    Best-effort: the cap is honored only if there is at least one section
+    we can drop; otherwise we return the head intact (even if it exceeds
+    max_bytes — we will not mangle the agent's identity to hit a number).
+    """
+    parts = text.split("\n## ", 1)
+    if len(parts) == 1:
+        # No sections — just the title/preamble. Return as-is even if oversized.
+        return text
+    head = parts[0]
+    # Re-split the section body so each entry starts with "## " literally.
+    # Splitting "2026-05-01 entry\n...\n## 2026-05-02 entry\n..." on "\n## "
+    # yields ["2026-05-01 entry\n...", "2026-05-02 entry\n...", ...]; we re-
+    # prefix each with "## " so concatenation reproduces the original.
+    raw_sections = parts[1].split("\n## ")
+    sections = ["## " + s for s in raw_sections]
+    # Drop oldest sections until we fit (head + remaining sections).
+    while sections and (
+        len(head.encode()) + sum(len(("\n" + s).encode()) for s in sections) > max_bytes
+    ):
+        sections.pop(0)
+    if not sections:
+        return head
+    return head + "\n" + "\n".join(sections)
+
+
 class RemoteExecutor:
     def __init__(self) -> None:
         self._proc: asyncio.subprocess.Process | None = None
@@ -71,6 +102,17 @@ class RemoteExecutor:
                 yield f"FAILED: transport_error {e}\n"
                 return
 
+        # 3a. If this is a scheduled run, fetch MEMORY.md into the workdir.
+        # The agent reads it at the top of the run; we'll push back the
+        # mutated version after a successful completion. Failure to fetch
+        # is soft — we surface a sentinel but continue so a one-off
+        # transient SSH glitch doesn't break the whole heartbeat.
+        if schedule_id and slug:
+            try:
+                await self._fetch_memory(host, user, key, schedule_id, slug)
+            except RuntimeError as e:
+                yield f"[memory fetch failed: {e}]\n"
+
         # 4. Build + spawn the remote command
         remote_cmd = self._build_remote_cmd(prompt, slug, effort)
         try:
@@ -88,6 +130,17 @@ class RemoteExecutor:
                     if outcome.kind == "completed" and slug:
                         try:
                             await self._rsync_back(host, user, key, slug)
+                            # Push MEMORY.md back BEFORE cleanup — the
+                            # _cleanup_remote step rm -rf's the workdir.
+                            if schedule_id:
+                                try:
+                                    await self._push_memory(
+                                        host, user, key, schedule_id, slug,
+                                    )
+                                except RuntimeError as e:
+                                    # Soft: don't fail the run because memory
+                                    # push failed. Surface in the stream.
+                                    yield f"[memory push failed: {e}]\n"
                             await self._cleanup_remote(host, user, key, slug)
                         except RuntimeError as e:
                             yield f"FAILED: transport_error {e}\n"
@@ -264,6 +317,77 @@ class RemoteExecutor:
             stderr=asyncio.subprocess.DEVNULL,
         )
         await proc.wait()  # best-effort
+
+    # ------- per-schedule MEMORY.md roundtrip -------------------------
+
+    async def _fetch_memory(
+        self, host: str, user: str, key: str, schedule_id: str, slug: str,
+    ) -> None:
+        """Copy /agent/memory/<schedule_id>.md → /agent/work/<slug>/MEMORY.md.
+
+        If the source file doesn't exist yet (first run for this schedule),
+        we initialize an empty file remotely so the cp succeeds and the
+        agent always sees a MEMORY.md at the workdir root.
+        """
+        qsid = shlex.quote(schedule_id)
+        qslug = shlex.quote(slug)
+        cmd = (
+            "mkdir -p /agent/memory && "
+            f"touch /agent/memory/{qsid}.md && "
+            f"cp /agent/memory/{qsid}.md /agent/work/{qslug}/MEMORY.md"
+        )
+        proc = await asyncio.create_subprocess_exec(
+            "ssh", "-i", key, *self._SSH_OPTS,
+            f"{user}@{host}", cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        rc = await proc.wait()
+        if rc != 0:
+            err = (await proc.stderr.read()).decode() if proc.stderr else ""
+            raise RuntimeError(f"memory fetch exit {rc}: {err[:200]}")
+
+    async def _push_memory(
+        self, host: str, user: str, key: str, schedule_id: str, slug: str,
+    ) -> None:
+        """Read MEMORY.md off the agent, scrub it, truncate to 50KB, write
+        it back atomically (.tmp → mv) into /agent/memory/<id>.md.
+
+        Reading via `cat` (rather than rsync-pull) lets us hold the entire
+        contents in process memory for scrubbing without ever staging the
+        un-scrubbed bytes on local disk. The atomic mv ensures concurrent
+        readers always see a complete file.
+        """
+        from secret_scrub import scrub as _scrub
+        qsid = shlex.quote(schedule_id)
+        qslug = shlex.quote(slug)
+        cat_proc = await asyncio.create_subprocess_exec(
+            "ssh", "-i", key, *self._SSH_OPTS,
+            f"{user}@{host}",
+            f"cat /agent/work/{qslug}/MEMORY.md",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        raw, _ = await cat_proc.communicate()
+        if cat_proc.returncode != 0:
+            # No memory written this run — fine, nothing to persist.
+            return
+        scrubbed = _scrub(raw.decode("utf-8", errors="replace"))
+        if len(scrubbed.encode()) > 50_000:
+            scrubbed = _truncate_memory(scrubbed, 50_000)
+        push_proc = await asyncio.create_subprocess_exec(
+            "ssh", "-i", key, *self._SSH_OPTS,
+            f"{user}@{host}",
+            f"cat > /agent/memory/{qsid}.md.tmp && "
+            f"mv /agent/memory/{qsid}.md.tmp /agent/memory/{qsid}.md",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err_bytes = await push_proc.communicate(scrubbed.encode())
+        if push_proc.returncode != 0:
+            err = err_bytes.decode() if err_bytes else ""
+            raise RuntimeError(f"memory push exit {push_proc.returncode}: {err[:200]}")
 
     async def _kill_remote(self, host: str, user: str, key: str) -> None:
         proc = await asyncio.create_subprocess_exec(

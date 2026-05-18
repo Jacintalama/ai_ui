@@ -7,7 +7,7 @@ import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from remote_executor import RemoteExecutor, _VALID_SLUG
+from remote_executor import RemoteExecutor, _VALID_SLUG, _truncate_memory
 
 
 def test_slug_validator_accepts_normal_slugs():
@@ -311,3 +311,23 @@ async def test_user_jwt_forwarded_via_sendenv(monkeypatch):
     )
     # The subprocess env passed to ssh contains the JWT
     assert seen_env.get("IO_USER_JWT") == "abc.def.ghi"
+
+
+# ---------------------------------------------------------------------------
+# Memory truncation: when MEMORY.md exceeds the soft cap, the oldest "## "
+# sections get dropped first so the newest entries survive. The title and
+# any pre-section preamble (everything before the first "## ") are always
+# kept so the agent retains identity / persona context.
+# ---------------------------------------------------------------------------
+
+def test_truncate_keeps_newest_memory_sections():
+    head = "# Memory\n"
+    section = "## 2026-05-{day:02d} entry\nbody{day}\n"
+    big = head + "\n".join(section.format(day=d) for d in range(1, 30))
+    out = _truncate_memory(big, 500)
+    # Title preserved
+    assert "# Memory" in out
+    # Newest section survives
+    assert "2026-05-29" in out or "body29" in out
+    # Some slack for the head; the soft cap is best-effort
+    assert len(out.encode()) <= 600
