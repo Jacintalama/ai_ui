@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, CurrentUser, current_user
 from db import session
 from models import ChatMessage, ProjectMember, ProjectSupabase, PublishedApp, TaskItem
 from schemas import InviteRequest, MemberOut, RoleUpdate
@@ -41,6 +41,21 @@ _DOMAIN_RE = re.compile(
 )
 
 router = APIRouter(prefix="/api/projects")
+
+
+class ProjectSummary(BaseModel):
+    slug: str
+    name: str
+    role: str
+    published: bool
+    public_url: str | None = None
+
+
+class ProjectStatus(ProjectSummary):
+    last_commit_at: str | None = None
+    last_commit_message: str | None = None
+    custom_domain: str | None = None
+
 
 TEAM_EMAIL = "team@aiui.local"
 
@@ -150,6 +165,101 @@ async def _require_role(s, slug: str, email: str, min_role: str,
             detail=f"This action needs role '{min_role}' — you have '{role}'.",
         )
     return role
+
+
+async def _list_projects_for_email(email: str) -> list[dict]:
+    """All projects where this user is a member, with publish state.
+
+    Single query against ProjectMember + follow-up PublishedApp lookup.
+    Does NOT scan the apps/ directory — project membership lives in the DB,
+    the directory is just storage.
+    """
+    async with session() as s:
+        # 1. All memberships for this email.
+        member_rows = (await s.execute(
+            select(ProjectMember.slug, ProjectMember.role)
+            .where(ProjectMember.user_email == email)
+        )).all()
+        if not member_rows:
+            return []
+        slugs = [r.slug for r in member_rows]
+        role_by_slug = {r.slug: r.role for r in member_rows}
+
+        # 2. Publish state for those slugs in one query.
+        pub_rows = (await s.execute(
+            select(PublishedApp).where(PublishedApp.slug.in_(slugs))
+        )).scalars().all()
+        pub_by_slug = {p.slug: p for p in pub_rows}
+
+    out: list[dict] = []
+    for slug in slugs:
+        pub = pub_by_slug.get(slug)
+        published = pub is not None
+        out.append({
+            "slug": slug,
+            "name": slug.replace("-", " ").title(),
+            "role": role_by_slug[slug],
+            "published": published,
+            "public_url": _public_url_for(slug) if published else None,
+        })
+    return out
+
+
+async def _last_commit_for(slug: str) -> tuple[str | None, str | None]:
+    """Read last commit (ISO timestamp + subject) from the project's git repo.
+
+    Reuses _run_git for consistency with existing version-list code.
+    Returns (None, None) if the repo doesn't exist or git fails.
+    """
+    apps_dir = os.path.join(REPO_ROOT, "apps", slug)
+    if not os.path.isdir(os.path.join(apps_dir, ".git")):
+        return None, None
+    rc, out = await _run_git("log", "-1", "--format=%cI%n%s", cwd=apps_dir)
+    if rc != 0:
+        return None, None
+    parts = out.strip().split("\n", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return (parts[0] if parts else None), None
+
+
+@router.get("", response_model=list[ProjectSummary])
+async def list_my_projects(user: CurrentUser = Depends(current_user)) -> list[ProjectSummary]:
+    """List projects where the caller is a member."""
+    raw = await _list_projects_for_email(user.email)
+    return [ProjectSummary(**r) for r in raw]
+
+
+@router.get("/{slug}/status", response_model=ProjectStatus)
+async def get_my_project_status(
+    slug: str, user: CurrentUser = Depends(current_user),
+) -> ProjectStatus:
+    """Membership + publish status for one project, scoped to caller."""
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            # 404 (not 403) so cross-user existence isn't leaked.
+            raise HTTPException(status_code=404, detail="not found")
+        # Inline the role + publish queries — both small.
+        member = (await s.execute(
+            select(ProjectMember)
+            .where(ProjectMember.slug == slug, ProjectMember.user_email == user.email)
+        )).scalar_one_or_none()
+        role = member.role if member else "viewer"
+        pub = (await s.execute(
+            select(PublishedApp).where(PublishedApp.slug == slug)
+        )).scalar_one_or_none()
+    last_commit_at, last_commit_msg = await _last_commit_for(slug)
+    published = pub is not None
+    return ProjectStatus(
+        slug=slug,
+        name=slug.replace("-", " ").title(),
+        role=role,
+        published=published,
+        public_url=_public_url_for(slug) if published else None,
+        last_commit_at=last_commit_at,
+        last_commit_message=last_commit_msg,
+        custom_domain=getattr(pub, "custom_domain", None) if pub else None,
+    )
 
 
 @router.get("/{slug}/members", response_model=list[MemberOut])

@@ -40,6 +40,14 @@ async def init_db() -> None:
 
 
 def session() -> AsyncSession:
+    global _engine, _session_maker
     if _session_maker is None:
-        raise RuntimeError("DB not initialized")
+        # Lazy-init without migrations — used by unit tests that set DATABASE_URL
+        # but skip init_db().  In production init_db() is always called first so
+        # this branch never executes in real traffic.
+        url = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+        _engine = create_async_engine(url, pool_size=5, max_overflow=5)
+        _session_maker = async_sessionmaker(
+            _engine, class_=AsyncSession, expire_on_commit=False
+        )
     return _session_maker()
