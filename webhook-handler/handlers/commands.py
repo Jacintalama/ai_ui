@@ -1,11 +1,14 @@
 """Shared command router for slash commands (Slack & Discord)."""
 import asyncio
 import json
+import shlex
 import httpx
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional, Any
 import logging
+
+from clients.tasks import TasksClient, TasksAPIError
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -73,6 +76,8 @@ class CommandRouter:
         github_client: Optional[GitHubClient] = None,
         mcp_client: Optional[MCPProxyClient] = None,
         loki_client=None,
+        discord_user_email_map: Optional[dict] = None,
+        tasks_client: Optional[TasksClient] = None,
     ):
         self.openwebui = openwebui_client
         self.n8n = n8n_client
@@ -81,6 +86,19 @@ class CommandRouter:
         self._github_client = github_client
         self._mcp_client = mcp_client
         self._loki_client = loki_client
+
+        # New collaborators — read from settings only when not injected.
+        if discord_user_email_map is None or tasks_client is None:
+            from config import settings
+            self._discord_user_email_map = (
+                dict(discord_user_email_map)
+                if discord_user_email_map is not None
+                else dict(settings.discord_user_email_map)
+            )
+            self._tasks_client = tasks_client or TasksClient(base_url=settings.tasks_url)
+        else:
+            self._discord_user_email_map = dict(discord_user_email_map)
+            self._tasks_client = tasks_client
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -1223,6 +1241,104 @@ class CommandRouter:
             await ctx.respond(f"*MCP Result:* `{server_id}/{tool_name}`\n```\n{result_str}\n```")
         else:
             await ctx.respond(f"MCP tool `{server_id}/{tool_name}` failed. Check the server/tool name.")
+
+    async def _handle_cronjob(self, ctx: CommandContext) -> None:
+        """Discord → user-scoped cron schedule CRUD via tasks service."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+
+        try:
+            tokens = shlex.split(ctx.arguments) if ctx.arguments else []
+        except ValueError:
+            await ctx.respond(
+                'Couldn\'t parse args. Wrap cron and prompt in double quotes: '
+                '`/aiui cronjob create "0 8 * * *" "summarize emails"`'
+            )
+            return
+
+        action = tokens[0] if tokens else ""
+        rest = tokens[1:]
+
+        try:
+            if action == "list":
+                schedules = await self._tasks_client.list_schedules(email)
+                if not schedules:
+                    await ctx.respond(
+                        "**Your schedules**\n"
+                        "no schedules yet. Create one with "
+                        '`/aiui cronjob create "<cron>" "<prompt>"`.'
+                    )
+                    return
+                lines = ["**Your schedules**"]
+                for s in schedules:
+                    state = "on" if s.get("enabled") else "off"
+                    lines.append(
+                        f"`{s['id']}` `{s['cron_expr']}` — {s['name']} [{state}]"
+                    )
+                reply = "\n".join(lines)
+                if len(reply) > 1990:
+                    reply = reply[:1980] + "\n... +more"
+                await ctx.respond(reply)
+
+            elif action == "create":
+                if len(rest) < 2:
+                    await ctx.respond(
+                        'Need 2 args: `create "<cron>" "<prompt>"`. '
+                        'Example: `/aiui cronjob create "0 8 * * *" "summarize unread emails"`'
+                    )
+                    return
+                cron_expr = rest[0]
+                prompt = " ".join(rest[1:])
+                name = f"discord-{ctx.user_name}-{cron_expr[:20]}"
+                result = await self._tasks_client.create_schedule(
+                    email, name=name, cron=cron_expr, prompt=prompt,
+                )
+                await ctx.respond(
+                    f"Schedule created: `{result['id']}`\n"
+                    f"`{cron_expr}` — {prompt[:200]}"
+                )
+
+            elif action == "delete":
+                if not rest:
+                    await ctx.respond("Need a schedule id: `delete <id>`")
+                    return
+                schedule_id = rest[0]
+                await self._tasks_client.delete_schedule(email, schedule_id)
+                await ctx.respond(f"Deleted `{schedule_id}`.")
+
+            else:
+                await ctx.respond(
+                    "Usage: `/aiui cronjob <list|create|delete>`"
+                )
+
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    def _format_tasks_error(self, e: TasksAPIError) -> str:
+        """Map a TasksAPIError to a Discord-friendly reply.
+
+        Never echoes the request body, secrets, or other users' identifiers.
+        """
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 404:
+            return "No such schedule: not found"
+        if e.status == 400:
+            msg = e.message
+            if "cron_expr" in msg:
+                return f"Invalid cron: {msg}"
+            if "interval" in msg.lower():
+                return "Min interval is 5 min."
+            if "max" in msg.lower() or "quota" in msg.lower():
+                return "You hit the max schedules limit."
+            return f"Bad request: {msg[:200]}"
+        if e.status == 401 or e.status == 403:
+            return "Permission denied by tasks service."
+        return f"Tasks API error ({e.status})."
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""
