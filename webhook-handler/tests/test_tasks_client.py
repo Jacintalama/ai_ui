@@ -41,11 +41,19 @@ async def test_list_schedules_returns_payload(client):
 @pytest.mark.asyncio
 async def test_create_schedule_201(client):
     with respx.mock(base_url=BASE) as mock:
-        mock.post("/schedules").mock(return_value=Response(201, json={"id": "new-id"}))
+        route = mock.post("/schedules").mock(return_value=Response(201, json={"id": "new-id"}))
         result = await client.create_schedule(
             "alice@x.com", "test", "0 8 * * *", "summarize emails"
         )
         assert result["id"] == "new-id"
+        import json
+        sent = json.loads(route.calls.last.request.content)
+        assert sent == {
+            "name": "test",
+            "cron_expr": "0 8 * * *",
+            "prompt": "summarize emails",
+            "tz": "Asia/Manila",
+        }
 
 
 @pytest.mark.asyncio
@@ -87,3 +95,24 @@ async def test_list_projects_endpoint(client):
         result = await client.list_projects("alice@x.com")
         assert len(result) == 1
         assert result[0]["slug"] == "shopping-list"
+
+
+@pytest.mark.asyncio
+async def test_get_project_status_endpoint(client):
+    """Confirms the slug path is built correctly and the user-email header is sent."""
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.get("/api/projects/shopping/status").mock(
+            return_value=Response(200, json={
+                "slug": "shopping", "name": "Shopping", "role": "owner",
+                "published": True,
+                "public_url": "https://shopping.ai-ui.coolestdomain.win",
+                "last_commit_at": None, "last_commit_message": None,
+                "custom_domain": None,
+            })
+        )
+        result = await client.get_project_status("alice@x.com", "shopping")
+        assert result["slug"] == "shopping"
+        assert result["published"] is True
+        req = route.calls.last.request
+        assert req.headers.get("x-user-email") == "alice@x.com"
+        assert "x-cron-secret" not in {k.lower() for k in req.headers}
