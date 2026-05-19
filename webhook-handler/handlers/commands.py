@@ -1335,7 +1335,7 @@ class CommandRouter:
                 return "Min interval is 5 min."
             if "max" in msg.lower() or "quota" in msg.lower():
                 return "You hit the max schedules limit."
-            return f"Bad request: {msg[:200]}"
+            return "Bad request — check your input."
         if e.status == 401 or e.status == 403:
             return "Permission denied by tasks service."
         return f"Tasks API error ({e.status})."

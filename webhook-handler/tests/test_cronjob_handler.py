@@ -92,8 +92,8 @@ async def test_create_success():
     tc.create_schedule.assert_called_once()
     args = tc.create_schedule.call_args
     assert args.args[0] == "alice@x.com"  # user_email
-    # name, cron, prompt all forwarded
-    assert "summarize" in str(args)
+    assert args.kwargs["cron"] == "0 8 * * *"
+    assert args.kwargs["prompt"] == "summarize emails"
 
 
 @pytest.mark.asyncio
