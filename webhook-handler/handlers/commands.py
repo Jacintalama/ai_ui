@@ -150,6 +150,10 @@ class CommandRouter:
                 await self._handle_pr_review(ctx)
             elif ctx.subcommand == "mcp":
                 await self._handle_mcp(ctx)
+            elif ctx.subcommand == "cronjob":
+                await self._handle_cronjob(ctx)
+            elif ctx.subcommand == "aiuibuilder":
+                await self._handle_aiuibuilder(ctx)
             elif ctx.subcommand == "diagnose":
                 await self._handle_diagnose(ctx)
             elif ctx.subcommand == "analyze":
@@ -374,6 +378,8 @@ class CommandRouter:
             "`/aiui security [owner/repo]` \u2014 Deep security audit (OWASP Top 10)\n"
             "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
             "`/aiui license [owner/repo]` \u2014 License compliance check\n"
+            "`/aiui cronjob <list|create|delete>` — Manage scheduled prompts\n"
+            "`/aiui aiuibuilder <list|status|open>` — Manage your App Builder projects\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
