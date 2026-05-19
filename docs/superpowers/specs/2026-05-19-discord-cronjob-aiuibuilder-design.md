@@ -47,8 +47,10 @@ Discord user      Discord                webhook-handler                tasks
    |                |                         |  via env-var dict        |
    |                |                         |                          |
    |                |                         | POST tasks:8210/schedules|
-   |                |                         | X-Cron-Secret: <env>     |
    |                |                         | X-User-Email: <mapped>   |
+   |                |                         | (no cron secret — stays  |
+   |                |                         |  on end-user path so     |
+   |                |                         |  ownership is enforced)  |
    |                |                         |-------------------------> |
    |                |                         |       201 + body         |
    |                |                         | <-------------------------|
