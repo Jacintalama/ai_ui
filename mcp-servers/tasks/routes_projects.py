@@ -206,16 +206,17 @@ async def _list_projects_for_email(email: str) -> list[dict]:
 
 
 async def _last_commit_for(slug: str) -> tuple[str | None, str | None]:
-    """Read last commit (ISO timestamp + subject) from the project's git repo.
+    """Read last commit (ISO timestamp + subject) for `apps/<slug>/` in the
+    monorepo. Returns (None, None) if git fails or there are no commits.
 
-    Reuses _run_git for consistency with existing version-list code.
-    Returns (None, None) if the repo doesn't exist or git fails.
+    Per-project directories are subdirs of the monorepo, not independent
+    git repos. Match the pattern used by list_versions: query the monorepo
+    git log filtered by path. cwd defaults to REPO_ROOT.
     """
-    apps_dir = os.path.join(REPO_ROOT, "apps", slug)
-    if not os.path.isdir(os.path.join(apps_dir, ".git")):
-        return None, None
-    rc, out = await _run_git("log", "-1", "--format=%cI%n%s", cwd=apps_dir)
-    if rc != 0:
+    rc, out = await _run_git(
+        "log", "-1", "--format=%cI%n%s", "--", f"apps/{slug}/",
+    )
+    if rc != 0 or not out.strip():
         return None, None
     parts = out.strip().split("\n", 1)
     if len(parts) == 2:
