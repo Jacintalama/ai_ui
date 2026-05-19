@@ -1318,6 +1318,80 @@ class CommandRouter:
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
 
+    async def _handle_aiuibuilder(self, ctx: CommandContext) -> None:
+        """Discord → App Builder project list / status / open URL."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+
+        try:
+            tokens = shlex.split(ctx.arguments) if ctx.arguments else []
+        except ValueError:
+            await ctx.respond("Couldn't parse args. Try `aiuibuilder list`.")
+            return
+
+        action = tokens[0] if tokens else ""
+        rest = tokens[1:]
+
+        try:
+            if action == "list":
+                projects = await self._tasks_client.list_projects(email)
+                if not projects:
+                    await ctx.respond("**Your apps**\nno projects yet.")
+                    return
+                lines = ["**Your apps**"]
+                for p in projects:
+                    pub = p.get("public_url") or "(not published)"
+                    lines.append(f"`{p['slug']}` — {p['name']} [{p['role']}] {pub}")
+                reply = "\n".join(lines)
+                if len(reply) > 1990:
+                    reply = reply[:1980] + "\n... +more"
+                await ctx.respond(reply)
+
+            elif action == "status":
+                if not rest:
+                    await ctx.respond("Usage: `aiuibuilder status <slug>`")
+                    return
+                slug = rest[0]
+                status = await self._tasks_client.get_project_status(email, slug)
+                lines = [
+                    f"**{status['name']}** (`{status['slug']}`)",
+                    f"Role: {status['role']}",
+                    f"Published: {'yes' if status.get('published') else 'no'}",
+                ]
+                if status.get("public_url"):
+                    lines.append(f"URL: {status['public_url']}")
+                if status.get("last_commit_at"):
+                    lines.append(f"Last commit: {status['last_commit_at']}")
+                await ctx.respond("\n".join(lines))
+
+            elif action == "open":
+                if not rest:
+                    await ctx.respond("Usage: `aiuibuilder open <slug>`")
+                    return
+                slug = rest[0]
+                status = await self._tasks_client.get_project_status(email, slug)
+                if not status.get("published"):
+                    await ctx.respond(
+                        f"`{slug}` is not published yet. Publish it from the App Builder UI first."
+                    )
+                    return
+                await ctx.respond(f"`{slug}` → {status['public_url']}")
+
+            else:
+                await ctx.respond("Usage: `/aiui aiuibuilder <list|status|open> [slug]`")
+
+        except TasksAPIError as e:
+            if e.status == 404:
+                await ctx.respond("Project not found or not yours.")
+            elif e.status == 0:
+                await ctx.respond("Tasks service unreachable, try again.")
+            else:
+                await ctx.respond(f"Tasks API error ({e.status}).")
+
     def _format_tasks_error(self, e: TasksAPIError) -> str:
         """Map a TasksAPIError to a Discord-friendly reply.
 
