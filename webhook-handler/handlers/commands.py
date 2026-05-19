@@ -107,6 +107,7 @@ class CommandRouter:
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
             "email", "sheets", "rebuild", "web-search",
             "health", "security", "deps", "license",
+            "cronjob", "aiuibuilder",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
