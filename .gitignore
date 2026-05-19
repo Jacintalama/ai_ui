@@ -22,3 +22,7 @@ mcp-servers/gdrive/docker-compose.test.yml
 # Local agent / session state
 .claude/
 .superpowers/
+
+# local backups + python build artifacts (added 2026-05-19)
+*.bak
+*.egg-info/

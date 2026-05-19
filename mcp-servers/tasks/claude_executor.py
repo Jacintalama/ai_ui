@@ -717,27 +717,24 @@ class Outcome:
 
 _SENTINEL_RE = re.compile(
     # Match a sentinel keyword at start-of-line, optionally preceded by a
-    # markdown `---` separator. Accept colon, whitespace, OR period after the
-    # keyword — Claude has been seen writing:
+    # markdown `---` separator. The keyword may be followed by a colon,
+    # whitespace, period — OR nothing at all (end of text). Claude has been
+    # seen writing all of these:
     #   COMPLETED: <summary>       (strict form)
     #   --- COMPLETED Built apps/  (markdown header form)
     #   COMPLETED. Customized…     (period form, mid-sentence)
-    # Treating any of those as the sentinel keeps tasks from sitting at
-    # "QUEUED" forever just because of punctuation drift.
-    # `\b` prevents matching inside words (e.g., "PRECOMPLETED").
+    #   …done.\n\nCOMPLETED        (bare keyword, last token — no terminator)
+    # The terminator `[:\s.]` is therefore OPTIONAL — `\b` already pins the
+    # keyword as a whole word (so "PRECOMPLETED" won't match). Treating any
+    # of these as the sentinel keeps tasks from sitting at "QUEUED" forever
+    # just because of punctuation drift.
     # `rest` captures everything up to the NEXT sentinel (or end-of-string).
     # Non-greedy + lookahead so a multiline COMPLETED block — including a
     # "Next ideas:" suggestions section — is preserved intact.
-    r"(?:^|\n)\s*(?:-{3,}\s*)?\b(?P<kind>COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s.]\s*"
-    r"(?P<rest>.*?)(?=\n\s*(?:-{3,}\s*)?\b(?:COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s.]|\Z)",
+    r"(?:^|\n)\s*(?:-{3,}\s*)?\b(?P<kind>COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s.]?\s*"
+    r"(?P<rest>.*?)(?=\n\s*(?:-{3,}\s*)?\b(?:COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s.]?|\Z)",
     re.DOTALL,
 )
-
-# Used by RemoteExecutor to decide when to fire _rsync_back. Keep in sync
-# with _SENTINEL_RE — a line is a "completion line" if it contains the
-# COMPLETED keyword followed by colon, whitespace, or period (the same
-# set the parser accepts as a sentinel terminator).
-_COMPLETED_LINE_RE = re.compile(r"\bCOMPLETED[:\s.]")
 
 # New sentinels for the Superpowers-style loop phases
 _CLARIFY_DONE_RE = re.compile(r"CLARIFY_DONE:\s*(?P<rest>.+)", re.DOTALL)
@@ -785,6 +782,36 @@ def parse_outcome(claude_response: str) -> Outcome:
         "NEEDS_STEPS": "needs_steps",
     }
     return Outcome(kind=kind_map[last.group("kind")], payload=last.group("rest").strip())
+
+
+def line_outcome(claude_response_line: str) -> Outcome | None:
+    """Interpret a single stream-json line from `claude --print --verbose`.
+
+    Returns the parsed Outcome iff the line is claude's terminal `result`
+    event; otherwise None. RemoteExecutor uses this to detect when a run is
+    over and (on `completed`) when to rsync the agent workspace back.
+
+    Why decode the JSON instead of regex-matching the raw line: an escaped
+    `\\n` immediately before a sentinel keyword, or the JSON-closing `"`
+    right after it, breaks regex word boundaries on the raw line. The
+    `result` event is emitted exactly once, last, and its `result` field is
+    the agent's final text — decoding it is reliable where raw matching is
+    not.
+    """
+    import json as _json
+    line = claude_response_line.strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        obj = _json.loads(line)
+    except Exception:
+        return None
+    if obj.get("type") != "result":
+        return None
+    result_text = obj.get("result")
+    if not isinstance(result_text, str):
+        return None
+    return parse_outcome(result_text)
 
 
 # ---------------------------------------------------------------------------

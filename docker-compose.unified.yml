@@ -22,12 +22,19 @@
 #
 # =============================================================================
 
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   # ===========================================================================
   # CADDY - Reverse Proxy
   # ===========================================================================
   # Entry point for all traffic. Routes to API Gateway.
   caddy:
+    logging: *logging
     image: caddy:2-alpine
     container_name: caddy
     restart: unless-stopped
@@ -55,6 +62,7 @@ services:
   # ===========================================================================
   # Validates JWTs, looks up user groups, applies rate limits, forwards headers.
   api-gateway:
+    logging: *logging
     build: ./api-gateway
     container_name: api-gateway
     ports:
@@ -94,6 +102,7 @@ services:
   # Webhook Handler - External event processing
   # ==========================================================================
   webhook-handler:
+    logging: *logging
     build: ./webhook-handler
     container_name: webhook-handler
     restart: unless-stopped
@@ -144,6 +153,7 @@ services:
   # MCP GOOGLE DRIVE - Browse & Read Google Drive Files
   # ===========================================================================
   mcp-gdrive:
+    logging: *logging
     build: ./mcp-servers/gdrive
     container_name: mcp-gdrive
     restart: unless-stopped
@@ -166,6 +176,7 @@ services:
   # MCP GMAIL - Email Integration
   # ===========================================================================
   mcp-gmail:
+    logging: *logging
     build: ./mcp-servers/gmail
     container_name: mcp-gmail
     restart: unless-stopped
@@ -188,6 +199,7 @@ services:
   # MCP GOOGLE CALENDAR - Event Management & Invites
   # ===========================================================================
   mcp-calendar:
+    logging: *logging
     build: ./mcp-servers/calendar
     container_name: mcp-calendar
     restart: unless-stopped
@@ -210,6 +222,7 @@ services:
   # MCP MEETINGS - Meeting Transcript Storage & KB Integration
   # ===========================================================================
   mcp-meetings:
+    logging: *logging
     build: ./mcp-servers/meetings
     container_name: mcp-meetings
     restart: unless-stopped
@@ -233,6 +246,7 @@ services:
   # TASKS - Admin Task Approval Panel API + AI execution
   # ===========================================================================
   tasks:
+    logging: *logging
     build: ./mcp-servers/tasks
     container_name: tasks
     restart: unless-stopped
@@ -252,6 +266,8 @@ services:
       - AGENT_HOST=${AGENT_HOST:-}
       - AGENT_USER=${AGENT_USER:-claude-agent}
       - AGENT_SSH_KEY_PATH=/run/secrets/agent_ssh_key
+      - CRON_SHARED_SECRET=${CRON_SHARED_SECRET:-}
+      - IO_GATEWAY_URL=${IO_GATEWAY_URL:-http://api-gateway:8080}
     secrets:
       - agent_ssh_key
     volumes:
@@ -272,6 +288,7 @@ services:
   # MCP WEB SEARCH - Search, Scrape, Save to Knowledge Base
   # ===========================================================================
   mcp-web-search:
+    logging: *logging
     build: ./mcp-servers/web-search
     container_name: mcp-web-search
     restart: unless-stopped
@@ -292,6 +309,7 @@ services:
   # CLAUDE ANALYZER - Claude Code Analysis (PR Review, BRE, Security, etc.)
   # ===========================================================================
   claude-analyzer:
+    logging: *logging
     build: ./claude-analyzer
     container_name: claude-analyzer
     restart: unless-stopped
@@ -322,6 +340,7 @@ services:
   # n8n - Workflow Automation
   # ==========================================================================
   n8n:
+    logging: *logging
     image: n8nio/n8n:latest
     container_name: n8n
     restart: unless-stopped
@@ -356,6 +375,7 @@ services:
   # Tool orchestration with multi-tenant filtering.
   # API_GATEWAY_MODE=true: Trusts headers from API Gateway.
   mcp-proxy:
+    logging: *logging
     build: ./mcp-proxy
     container_name: mcp-proxy
     restart: unless-stopped
@@ -410,6 +430,7 @@ services:
   # MCP AUTH - API Key Authentication for External MCP Access
   # ===========================================================================
   mcp-auth:
+    logging: *logging
     build: ./mcp-auth
     container_name: mcp-auth
     restart: unless-stopped
@@ -432,6 +453,7 @@ services:
   # OPEN WEBUI - AI Chat Interface
   # ===========================================================================
   open-webui:
+    logging: *logging
     image: ghcr.io/open-webui/open-webui:v0.8.10
     container_name: open-webui
     restart: unless-stopped
@@ -506,6 +528,7 @@ services:
   # ADMIN PORTAL - User/Group Management
   # ===========================================================================
   admin-portal:
+    logging: *logging
     build: ./admin-portal
     container_name: admin-portal
     restart: unless-stopped
@@ -524,6 +547,7 @@ services:
   # POSTGRESQL - Database
   # ===========================================================================
   postgres:
+    logging: *logging
     image: pgvector/pgvector:pg16
     container_name: postgres
     restart: unless-stopped
@@ -547,6 +571,7 @@ services:
   # REDIS - Sessions & Cache
   # ===========================================================================
   redis:
+    logging: *logging
     image: redis:7-alpine
     container_name: redis
     restart: unless-stopped
@@ -568,6 +593,7 @@ services:
 
   # Filesystem - File access tools (14 tools)
   mcp-filesystem:
+    logging: *logging
     image: node:20-slim
     container_name: mcp-filesystem
     restart: unless-stopped
@@ -585,6 +611,7 @@ services:
 
   # GitHub - Repository tools (26 tools)
   mcp-github:
+    logging: *logging
     build: ./mcp-servers/github
     container_name: mcp-github
     restart: unless-stopped
@@ -597,6 +624,7 @@ services:
 
   # ClickUp - Task management (177+ tools)
   mcp-clickup:
+    logging: *logging
     image: node:20-slim
     container_name: mcp-clickup
     restart: unless-stopped
@@ -613,6 +641,7 @@ services:
 
   # Trello - Kanban boards
   mcp-trello:
+    logging: *logging
     image: node:20-slim
     container_name: mcp-trello
     restart: unless-stopped
@@ -630,6 +659,7 @@ services:
 
   # SonarQube - Code quality analysis
   mcp-sonarqube:
+    logging: *logging
     image: node:20-slim
     container_name: mcp-sonarqube
     restart: unless-stopped
@@ -648,6 +678,7 @@ services:
 
   # Excel Creator - Spreadsheet generation
   mcp-excel:
+    logging: *logging
     build: ./mcp-servers/excel-creator
     container_name: mcp-excel
     restart: unless-stopped
@@ -657,6 +688,7 @@ services:
 
   # Dashboard - Executive dashboard generation
   mcp-dashboard:
+    logging: *logging
     build: ./mcp-servers/dashboard
     container_name: mcp-dashboard
     restart: unless-stopped
@@ -666,6 +698,7 @@ services:
 
   # Notion - Workspace and documentation
   mcp-notion:
+    logging: *logging
     build: ./mcp-servers/notion
     container_name: mcp-notion
     restart: unless-stopped
@@ -679,6 +712,7 @@ services:
   # n8n MCP - AI-driven workflow creation and management (20 tools)
   # Official image: ghcr.io/czlonkowski/n8n-mcp (13.7k stars)
   mcp-n8n:
+    logging: *logging
     build: ./mcp-servers/n8n
     container_name: mcp-n8n
     restart: unless-stopped
@@ -712,6 +746,7 @@ services:
 
   # Scheduler MCP - Cron job management from chat (4 tools)
   mcp-scheduler:
+    logging: *logging
     build: ./mcp-servers/scheduler
     container_name: mcp-scheduler
     restart: unless-stopped
@@ -734,6 +769,7 @@ services:
   # DATABASE INIT - Seed data from mcp-servers.json
   # ===========================================================================
   db-init:
+    logging: *logging
     build: ./mcp-proxy
     container_name: db-init
     command: ["python", "/app/scripts/seed_mcp_servers.py", "--clear"]
@@ -752,6 +788,7 @@ services:
   # Runs Pipe Functions and Filters outside the Open WebUI process.
   # Exposes OpenAI-compatible API on port 9099.
   pipelines:
+    logging: *logging
     image: ghcr.io/open-webui/pipelines:main
     container_name: pipelines
     restart: unless-stopped
@@ -770,6 +807,7 @@ services:
   # ===========================================================================
   # Stores and indexes logs received from Promtail.
   loki:
+    logging: *logging
     image: grafana/loki:3.4
     container_name: loki
     restart: unless-stopped
@@ -791,6 +829,7 @@ services:
   # Reads Docker container logs from /var/lib/docker/containers and ships to Loki.
   # Auto-discovers all containers and labels logs by container name.
   promtail:
+    logging: *logging
     image: grafana/promtail:3.4
     container_name: promtail
     restart: unless-stopped
@@ -811,6 +850,7 @@ services:
   # Web UI for searching logs, viewing dashboards, and configuring alerts.
   # Access via /grafana/ route in Caddy.
   grafana:
+    logging: *logging
     image: grafana/grafana:11.5.2
     container_name: grafana
     restart: unless-stopped
