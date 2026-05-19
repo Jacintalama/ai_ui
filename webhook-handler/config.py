@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     n8n_webhook_url: str = "http://n8n:5678"
     n8n_api_key: str = ""
 
+    # Tasks service (user-scoped schedules + App Builder)
+    tasks_url: str = "http://tasks:8210"
+
     # Claude Analyzer (PR Review, BRE, Security, etc.)
     claude_analyzer_url: str = "http://claude-analyzer:3000"
 
