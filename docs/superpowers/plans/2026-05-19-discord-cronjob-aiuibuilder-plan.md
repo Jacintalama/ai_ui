@@ -30,10 +30,10 @@
 **Modify:**
 - `webhook-handler/config.py` — add `discord_user_email_map` parsed setting
 - `webhook-handler/requirements.txt` — add `pytest`, `pytest-asyncio`, `respx`
-- `webhook-handler/handlers/commands.py` — add `_handle_cronjob`, `_handle_aiuibuilder`, update `parse_command`, update `_handle_help`
-- `webhook-handler/handlers/discord_commands.py` — verify `_parse_options` returns nested args correctly (no change expected; verify with test)
+- `webhook-handler/handlers/commands.py` — add `_handle_cronjob`, `_handle_aiuibuilder`, update `parse_command`, update `_handle_help`, accept optional injectables in `__init__`
 - `mcp-servers/tasks/auth.py` — add `CurrentUser` + `current_user`
 - `mcp-servers/tasks/routes_projects.py` — add `list_my_projects`, `get_my_project_status`, response models
+- `docker-compose.unified.yml` — add `DISCORD_USER_EMAIL_MAP` to webhook-handler `environment:` block (line ~131)
 
 ---
 
@@ -213,10 +213,16 @@ def parse_discord_user_email_map(raw: str) -> dict[str, str]:
     return out
 ```
 
+Pydantic v2 (which `pydantic-settings>=2.1.0` is) does NOT honour `class Config.fields`. Use a `Field(alias=...)` on the field instead. Add this import at the top of `config.py` if it's not already there:
+
+```python
+from pydantic import Field
+```
+
 In the `Settings` class, after `discord_alert_channel_id: str = ""`, add:
 
 ```python
-    discord_user_email_map_raw: str = ""
+    discord_user_email_map_raw: str = Field(default="", alias="DISCORD_USER_EMAIL_MAP")
 
     @property
     def discord_user_email_map(self) -> dict[str, str]:
@@ -225,14 +231,9 @@ In the `Settings` class, after `discord_alert_channel_id: str = ""`, add:
                 self.discord_user_email_map_raw
             )
         return self._discord_map_cache
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
-        fields = {"discord_user_email_map_raw": {"env": "DISCORD_USER_EMAIL_MAP"}}
 ```
 
-Note: pydantic v2 uses `model_config` not `class Config` for some settings. If the existing file uses `class Config` (it does, line 71), match that style. If pydantic warns about `fields`, use `Field(alias="DISCORD_USER_EMAIL_MAP")` on the field instead.
+Leave the existing `class Config: env_file = ".env"; case_sensitive = False` block untouched.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -607,14 +608,13 @@ def _ctx(user_id, args, captured):
 
 
 def _router(mapping, tasks_client):
-    """Build a CommandRouter with mocked deps."""
-    r = CommandRouter(
+    """Build a CommandRouter with mocked deps via the new ctor kwargs."""
+    return CommandRouter(
         openwebui_client=MagicMock(),
         n8n_client=MagicMock(api_key=""),
+        discord_user_email_map=mapping,
+        tasks_client=tasks_client,
     )
-    r._discord_user_email_map = mapping
-    r._tasks_client = tasks_client
-    return r
 
 
 @pytest.mark.asyncio
@@ -730,15 +730,37 @@ import shlex
 from clients.tasks import TasksClient, TasksAPIError
 ```
 
-In `CommandRouter.__init__`, after the existing assignments, add:
+Update the `CommandRouter.__init__` signature to accept the two new collaborators as injectable kwargs with sensible production defaults. This avoids the construct-then-overwrite pattern in tests:
 
 ```python
-        from config import settings
-        self._discord_user_email_map = dict(settings.discord_user_email_map)
-        self._tasks_client = TasksClient(base_url=settings.tasks_url)
+    def __init__(
+        self,
+        openwebui_client: OpenWebUIClient,
+        n8n_client: N8NClient,
+        ai_model: str = "gpt-4-turbo",
+        slack_client=None,
+        github_client: Optional[GitHubClient] = None,
+        mcp_client: Optional[MCPProxyClient] = None,
+        loki_client=None,
+        discord_user_email_map: Optional[dict[str, str]] = None,
+        tasks_client: Optional[TasksClient] = None,
+    ):
+        # ... existing assignments ...
+        # New collaborators — read from settings only when not injected.
+        if discord_user_email_map is None or tasks_client is None:
+            from config import settings
+            self._discord_user_email_map = (
+                dict(discord_user_email_map)
+                if discord_user_email_map is not None
+                else dict(settings.discord_user_email_map)
+            )
+            self._tasks_client = tasks_client or TasksClient(base_url=settings.tasks_url)
+        else:
+            self._discord_user_email_map = dict(discord_user_email_map)
+            self._tasks_client = tasks_client
 ```
 
-(If tests already inject `_discord_user_email_map` and `_tasks_client` directly, the constructor reads them as defaults — keep the constructor change.)
+Tests then pass `discord_user_email_map={"100": "alice@x.com"}` and `tasks_client=MagicMock(...)` directly — no fragile attribute-override.
 
 Add the dispatcher method on `CommandRouter`:
 
@@ -885,10 +907,12 @@ def _ctx(user_id, args, captured):
 
 
 def _router(mapping, tasks_client):
-    r = CommandRouter(openwebui_client=MagicMock(), n8n_client=MagicMock(api_key=""))
-    r._discord_user_email_map = mapping
-    r._tasks_client = tasks_client
-    return r
+    return CommandRouter(
+        openwebui_client=MagicMock(),
+        n8n_client=MagicMock(api_key=""),
+        discord_user_email_map=mapping,
+        tasks_client=tasks_client,
+    )
 
 
 @pytest.mark.asyncio
@@ -974,7 +998,7 @@ Expected: AttributeError — `_handle_aiuibuilder` not defined.
 
 - [ ] **Step 3: Implement `_handle_aiuibuilder`**
 
-In `webhook-handler/handlers/commands.py`, add method on `CommandRouter`:
+`shlex` and `TasksAPIError` are already imported at module top from Task 5 — do not re-import. Add the method on `CommandRouter`:
 
 ```python
     async def _handle_aiuibuilder(self, ctx: CommandContext) -> None:
@@ -1084,14 +1108,21 @@ from unittest.mock import AsyncMock, MagicMock
 from handlers.commands import CommandRouter, CommandContext
 
 
+def _bare_router():
+    return CommandRouter(
+        openwebui_client=MagicMock(),
+        n8n_client=MagicMock(api_key=""),
+        discord_user_email_map={},
+        tasks_client=MagicMock(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_routes_cronjob():
     """CommandRouter.execute must call _handle_cronjob, not fall to ask."""
-    captured = []
-    async def respond(msg): captured.append(msg)
-    r = CommandRouter(openwebui_client=MagicMock(), n8n_client=MagicMock(api_key=""))
-    r._discord_user_email_map = {}
+    r = _bare_router()
     r._handle_cronjob = AsyncMock()
+    async def respond(_): pass
     ctx = CommandContext(
         user_id="100", user_name="t", channel_id="c", raw_text="cronjob list",
         subcommand="cronjob", arguments="list", platform="discord",
@@ -1103,8 +1134,7 @@ async def test_execute_routes_cronjob():
 
 @pytest.mark.asyncio
 async def test_execute_routes_aiuibuilder():
-    r = CommandRouter(openwebui_client=MagicMock(), n8n_client=MagicMock(api_key=""))
-    r._discord_user_email_map = {}
+    r = _bare_router()
     r._handle_aiuibuilder = AsyncMock()
     async def respond(_): pass
     ctx = CommandContext(
@@ -1116,10 +1146,14 @@ async def test_execute_routes_aiuibuilder():
     r._handle_aiuibuilder.assert_called_once_with(ctx)
 
 
-def test_help_lists_new_commands():
-    r = CommandRouter(openwebui_client=MagicMock(), n8n_client=MagicMock(api_key=""))
-    # _handle_help builds a string then calls respond — call it via a sync path
-    import asyncio
+@pytest.mark.asyncio
+async def test_help_lists_new_commands():
+    """Help text must advertise the two new subcommands.
+
+    NOTE: must be `async def` + pytest.mark.asyncio. `asyncio.get_event_loop()`
+    raises a hard RuntimeError on Python 3.12 and is deprecated on 3.11.
+    """
+    r = _bare_router()
     captured = []
     async def respond(m): captured.append(m)
     ctx = CommandContext(
@@ -1127,7 +1161,7 @@ def test_help_lists_new_commands():
         subcommand="help", arguments="", platform="discord",
         respond=respond, metadata={},
     )
-    asyncio.get_event_loop().run_until_complete(r._handle_help(ctx))
+    await r._handle_help(ctx)
     text = captured[0]
     assert "cronjob" in text
     assert "aiuibuilder" in text
@@ -1304,9 +1338,15 @@ git commit -m "feat(tasks): add current_user dep for non-admin list-my-* endpoin
 - Modify: `mcp-servers/tasks/routes_projects.py`
 - Create: `mcp-servers/tasks/tests/test_routes_projects_list.py`
 
-- [ ] **Step 1: Explore `routes_projects.py` for the helpers we'll reuse**
+- [ ] **Step 1: Confirm reusable primitives exist**
 
-Read `_user_can_see_project`, `_public_host_for`, `_public_url_for`. Confirm they return what `ProjectSummary` needs.
+Open `mcp-servers/tasks/routes_projects.py` and confirm these symbols exist and their signatures:
+
+- `_user_can_see_project(s, slug, email) -> bool` — used in the per-slug status endpoint
+- `_public_url_for(slug) -> str` — formats the slug into a public URL
+- `_run_git(*args, cwd) -> tuple[int, str]` — used in version listing; reuse for `last_commit`
+
+Also confirm `mcp-servers/tasks/models.py` exports `ProjectMember` (with columns `slug`, `user_email`, `role`) and `PublishedApp` (with `published`, `custom_domain`, `slug`). The list endpoint uses these directly via SQLAlchemy — DO NOT filesystem-scan `apps/` (that's an N+1 trap when a user owns 3 projects out of hundreds).
 
 - [ ] **Step 2: Write failing tests**
 
@@ -1401,41 +1441,67 @@ Update the imports at the top:
 from auth import AdminUser, current_admin, CurrentUser, current_user
 ```
 
-Add a helper for the list query (keep it testable — pure async fn taking email):
+Add the helper using a single SQL query (no filesystem scan):
 
 ```python
 async def _list_projects_for_email(email: str) -> list[dict]:
-    """Return ProjectSummary-shaped dicts for projects this user can see.
+    """All projects where this user is a member, with publish state.
 
-    Scans the apps directory, calls _user_can_see_project for each slug,
-    enriches with publish status + public URL when published.
+    Single query against ProjectMember + LEFT JOIN PublishedApp. Returns
+    dicts in ProjectSummary shape. Does NOT scan the apps/ directory —
+    project membership lives in the DB, the directory is just storage.
+    """
+    async with session() as s:
+        # 1. All memberships for this email.
+        member_rows = (await s.execute(
+            select(ProjectMember.slug, ProjectMember.role)
+            .where(ProjectMember.user_email == email)
+        )).all()
+        if not member_rows:
+            return []
+        slugs = [r.slug for r in member_rows]
+        role_by_slug = {r.slug: r.role for r in member_rows}
+
+        # 2. Publish state for those slugs in one query.
+        pub_rows = (await s.execute(
+            select(PublishedApp).where(PublishedApp.slug.in_(slugs))
+        )).scalars().all()
+        pub_by_slug = {p.slug: p for p in pub_rows}
+
+    out: list[dict] = []
+    for slug in slugs:
+        pub = pub_by_slug.get(slug)
+        published = bool(pub and pub.published)
+        out.append({
+            "slug": slug,
+            "name": slug.replace("-", " ").title(),
+            "role": role_by_slug[slug],
+            "published": published,
+            "public_url": _public_url_for(slug) if published else None,
+        })
+    return out
+
+
+async def _last_commit_for(slug: str) -> tuple[str | None, str | None]:
+    """Read last commit (ISO timestamp + subject) from the project's git repo.
+
+    Reuses _run_git for consistency with existing version-list code.
+    Returns (None, None) if the repo doesn't exist or git fails.
     """
     import os
-    apps_dir = os.environ.get("APPS_DIR", "/data/apps")
-    if not os.path.isdir(apps_dir):
-        return []
-    out: list[dict] = []
-    async with session() as s:
-        for slug in os.listdir(apps_dir):
-            if not os.path.isdir(os.path.join(apps_dir, slug)):
-                continue
-            if not await _user_can_see_project(s, slug, email):
-                continue
-            role = await _user_role_for(s, slug, email)
-            pub = await _publish_state_for(s, slug)
-            out.append({
-                "slug": slug,
-                "name": slug.replace("-", " ").title(),
-                "role": role,
-                "published": pub is not None and pub.published,
-                "public_url": _public_url_for(slug) if (pub and pub.published) else None,
-            })
-    return out
+    apps_dir = os.path.join(REPO_ROOT, slug)
+    if not os.path.isdir(os.path.join(apps_dir, ".git")):
+        return None, None
+    rc, out = await _run_git("log", "-1", "--format=%cI%n%s", cwd=apps_dir)
+    if rc != 0:
+        return None, None
+    parts = out.strip().split("\n", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return parts[0] if parts else None, None
 ```
 
-If `_user_role_for` / `_publish_state_for` don't exist as helpers yet, inline the queries — but match the patterns in the existing per-slug routes. Where the existing code uses inline ORM queries (e.g. `select(ProjectMember).where(...)`), reuse the same style.
-
-Add the endpoints (before the `/{slug}/members` route so FastAPI matches them first):
+Add the endpoints. CRITICAL: FastAPI matches routes in declaration order, and the existing per-slug routes like `@router.get("/{slug}/members")` will swallow `/` and `/{slug}/status` if declared first. Insert the new routes **immediately after the `router = APIRouter(...)` line** and **before any `/{slug}/...` route**:
 
 ```python
 @router.get("", response_model=list[ProjectSummary])
@@ -1452,23 +1518,30 @@ async def get_my_project_status(
     """Membership + publish status for one project, scoped to caller."""
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
+            # 404 (not 403) so cross-user existence isn't leaked.
             raise HTTPException(status_code=404, detail="not found")
-        role = await _user_role_for(s, slug, user.email)
-        pub = await _publish_state_for(s, slug)
-        last_commit_at, last_commit_msg = await _last_commit(slug)
+        # Inline the role + publish queries — both small.
+        member = (await s.execute(
+            select(ProjectMember)
+            .where(ProjectMember.slug == slug, ProjectMember.user_email == user.email)
+        )).scalar_one_or_none()
+        role = member.role if member else "viewer"
+        pub = (await s.execute(
+            select(PublishedApp).where(PublishedApp.slug == slug)
+        )).scalar_one_or_none()
+    last_commit_at, last_commit_msg = await _last_commit_for(slug)
+    published = bool(pub and pub.published)
     return ProjectStatus(
         slug=slug,
         name=slug.replace("-", " ").title(),
         role=role,
-        published=pub is not None and pub.published,
-        public_url=_public_url_for(slug) if (pub and pub.published) else None,
+        published=published,
+        public_url=_public_url_for(slug) if published else None,
         last_commit_at=last_commit_at,
         last_commit_message=last_commit_msg,
-        custom_domain=getattr(pub, "custom_domain", None),
+        custom_domain=getattr(pub, "custom_domain", None) if pub else None,
     )
 ```
-
-`_last_commit(slug)` calls `_run_git("log", "-1", "--format=%cI%n%s", cwd=apps_dir/slug)` and parses two lines. If `_run_git` already exists, reuse it; otherwise add a thin async wrapper.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -1632,35 +1705,49 @@ git commit -m "feat(scripts): register_discord_commands — idempotent /aiui PUT
 """Layer-2 integration: synthetic signed Discord interaction → webhook-handler
 → TasksClient call. Test keypair, not Discord's live public key.
 
-Verifies the full path from Ed25519 verify through DEFERRED ACK to the
-downstream tasks call, with respx as the tasks-side mock.
+CRITICAL: discord_commands.py:92 dispatches via asyncio.create_task(...) and
+returns DEFERRED immediately. To assert the background task ran AND ran
+against respx mocks, the test MUST:
+  1. Use httpx.AsyncClient + ASGITransport (one event loop owned by the test),
+     not fastapi.testclient.TestClient (which spins a sync thread + its own
+     loop that exits when the response returns).
+  2. Hold the respx.mock context open AND await a short sleep INSIDE that
+     context, so the create_task fires before the mocks are torn down.
+  3. Stub the Edd25519 public key + DISCORD_USER_EMAIL_MAP_RAW BEFORE the
+     webhook-handler app is imported (env-stub-before-import pattern,
+     same as mcp-servers/tasks/tests).
 """
+import asyncio
 import json
 import os
+import sys
+
 import pytest
 import respx
-from httpx import Response
+from httpx import ASGITransport, AsyncClient, Response
 from nacl.signing import SigningKey
 
 
-@pytest.mark.asyncio
-async def test_signed_cronjob_list_reaches_tasks(monkeypatch):
-    # 1. Generate a test keypair.
-    sk = SigningKey.generate()
-    public_hex = sk.verify_key.encode().hex()
-    monkeypatch.setenv("DISCORD_PUBLIC_KEY", public_hex)
+# Stub env BEFORE app import.
+_SK = SigningKey.generate()
+os.environ["DISCORD_PUBLIC_KEY"] = _SK.verify_key.encode().hex()
+os.environ["DISCORD_USER_EMAIL_MAP"] = "100:e2e-test@local"
+os.environ.setdefault("TASKS_URL", "http://tasks-test:8210")
 
-    # 2. Force settings to re-read env.
-    from importlib import reload
-    import config
-    reload(config)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+@pytest.mark.asyncio
+async def test_signed_cronjob_list_reaches_tasks():
     from config import settings
-    settings.discord_user_email_map_raw = "100:e2e-test@local"
-    # Bust the cache.
+    # Bust the settings-side dict cache so it picks up the env we just set.
     if hasattr(settings, "_discord_map_cache"):
         del settings._discord_map_cache
+    assert settings.discord_user_email_map.get("100") == "e2e-test@local"
 
-    # 3. Build the signed interaction payload.
+    from main import app
+
+    # Build the signed interaction payload.
     payload = {
         "type": 2,  # APPLICATION_COMMAND
         "id": "intx-1",
@@ -1679,38 +1766,39 @@ async def test_signed_cronjob_list_reaches_tasks(monkeypatch):
     }
     body = json.dumps(payload).encode()
     timestamp = "1234567890"
-    sig = sk.sign(timestamp.encode() + body).signature.hex()
+    sig = _SK.sign(timestamp.encode() + body).signature.hex()
 
-    # 4. Mock tasks side.
-    with respx.mock(base_url=settings.tasks_url) as mock:
-        list_route = mock.get("/schedules").mock(return_value=Response(200, json=[]))
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with respx.mock(base_url=settings.tasks_url, assert_all_called=False) as mock:
+            list_route = mock.get("/schedules").mock(return_value=Response(200, json=[]))
 
-        # 5. POST to webhook-handler.
-        from fastapi.testclient import TestClient
-        from main import app
-        client = TestClient(app)
-        r = client.post(
-            "/webhook/discord",
-            content=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-Signature-Ed25519": sig,
-                "X-Signature-Timestamp": timestamp,
-            },
-        )
+            r = await client.post(
+                "/webhook/discord",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Signature-Ed25519": sig,
+                    "X-Signature-Timestamp": timestamp,
+                },
+            )
 
-    # 6. Assertions: DEFERRED ack returned + tasks was called.
-    assert r.status_code == 200, r.text
-    assert r.json()["type"] == 5  # DEFERRED_CHANNEL_MESSAGE
+            # DEFERRED ack returns immediately.
+            assert r.status_code == 200, r.text
+            assert r.json()["type"] == 5
 
-    # Background task runs after response; give the event loop a tick.
-    import asyncio
-    await asyncio.sleep(0.05)
+            # The dispatcher runs via asyncio.create_task. Yield repeatedly
+            # so the background task runs on this same event loop before
+            # respx is torn down.
+            for _ in range(20):
+                await asyncio.sleep(0.01)
+                if list_route.called:
+                    break
 
-    assert list_route.called, "TasksClient.list_schedules must have been called"
-    req = list_route.calls.last.request
-    assert req.headers.get("x-user-email") == "e2e-test@local"
-    assert "x-cron-secret" not in {k.lower() for k in req.headers}
+            assert list_route.called, "TasksClient.list_schedules must have been called"
+            req = list_route.calls.last.request
+            assert req.headers.get("x-user-email") == "e2e-test@local"
+            assert "x-cron-secret" not in {k.lower() for k in req.headers}
 ```
 
 - [ ] **Step 2: Run the test**
@@ -1752,12 +1840,29 @@ git commit -m "test(webhook-handler): Layer-2 signed-interaction integration"
 
 ---
 
-### Task 12: Deploy + manual Layer-3 smoke
+### Task 12: Wire env var through docker-compose + deploy + Layer-3 smoke
 
 **Files:**
-- No new files. Deploy + verify.
+- Modify: `docker-compose.unified.yml` (webhook-handler `environment:` block)
 
-- [ ] **Step 1: Confirm Layer 1 + 2 green locally**
+- [ ] **Step 1: Add `DISCORD_USER_EMAIL_MAP` to webhook-handler env in `docker-compose.unified.yml`**
+
+The webhook-handler service block already has DISCORD_APPLICATION_ID / DISCORD_PUBLIC_KEY / DISCORD_BOT_TOKEN entries around line 128-130. Insert immediately after `DISCORD_ALERT_CHANNEL_ID`:
+
+```yaml
+      - DISCORD_USER_EMAIL_MAP=${DISCORD_USER_EMAIL_MAP:-}
+```
+
+Without this, even if `.env` has the variable, the container's process never sees it — docker-compose only forwards env vars listed in the service's `environment:` block.
+
+- [ ] **Step 2: Commit the compose change**
+
+```bash
+git add docker-compose.unified.yml
+git commit -m "ops(compose): wire DISCORD_USER_EMAIL_MAP into webhook-handler"
+```
+
+- [ ] **Step 3: Confirm Layer 1 + 2 green locally**
 
 ```bash
 ./scripts/discord_e2e_local.sh
@@ -1765,7 +1870,7 @@ git commit -m "test(webhook-handler): Layer-2 signed-interaction integration"
 
 Expected: all green.
 
-- [ ] **Step 2: SCP changed files to Hetzner**
+- [ ] **Step 4: SCP changed files to Hetzner**
 
 ```bash
 scp webhook-handler/config.py root@46.224.193.25:/root/proxy-server/webhook-handler/config.py
@@ -1775,26 +1880,30 @@ scp webhook-handler/requirements.txt root@46.224.193.25:/root/proxy-server/webho
 scp mcp-servers/tasks/auth.py root@46.224.193.25:/root/proxy-server/mcp-servers/tasks/auth.py
 scp mcp-servers/tasks/routes_projects.py root@46.224.193.25:/root/proxy-server/mcp-servers/tasks/routes_projects.py
 scp scripts/register_discord_commands.py root@46.224.193.25:/root/proxy-server/scripts/register_discord_commands.py
+scp docker-compose.unified.yml root@46.224.193.25:/root/proxy-server/docker-compose.unified.yml
 ```
 
-- [ ] **Step 3: Set `DISCORD_USER_EMAIL_MAP` on server**
+`webhook-handler/clients/__init__.py` already exists on the server — no need to SCP.
 
-SSH and edit `.env`:
+- [ ] **Step 5: Set `DISCORD_USER_EMAIL_MAP` on server (idempotent upsert)**
+
+Don't blindly `>>` — that appends a duplicate line. Use a remove-then-add:
+
 ```bash
-ssh root@46.224.193.25 'cat >> /root/proxy-server/.env <<EOF
-DISCORD_USER_EMAIL_MAP=<LUKAS_DISCORD_ID>:lukas@email,<RALPH_DISCORD_ID>:ralphbenitez32@gmail.com,<JACINTA_DISCORD_ID>:alamajacintg04@gmail.com
-EOF'
+ssh root@46.224.193.25 'cd /root/proxy-server && \
+  grep -v ^DISCORD_USER_EMAIL_MAP= .env > .env.tmp && mv .env.tmp .env && \
+  echo "DISCORD_USER_EMAIL_MAP=<LUKAS_ID>:lukas@email,<RALPH_ID>:ralphbenitez32@gmail.com,<JACINTA_ID>:alamajacintg04@gmail.com" >> .env'
 ```
 
-Replace the placeholders with real Discord snowflake IDs (right-click profile → Copy User ID in developer mode).
+Replace `<LUKAS_ID>`, `<RALPH_ID>`, `<JACINTA_ID>` with real Discord snowflake IDs (right-click profile → Copy User ID with developer mode on). Lukas's email goes in unquoted; Bash special chars in the value will break `>>` if any appear — none expected for these inputs.
 
-- [ ] **Step 4: Rebuild services**
+- [ ] **Step 6: Rebuild services**
 
 ```bash
 ssh root@46.224.193.25 'cd /root/proxy-server && docker compose -f docker-compose.unified.yml up -d --build webhook-handler tasks'
 ```
 
-- [ ] **Step 5: Wait for healthy, then check logs**
+- [ ] **Step 7: Wait for healthy, then check logs**
 
 ```bash
 ssh root@46.224.193.25 'cd /root/proxy-server && docker compose -f docker-compose.unified.yml logs --tail=30 webhook-handler | grep -i discord'
@@ -1802,18 +1911,29 @@ ssh root@46.224.193.25 'cd /root/proxy-server && docker compose -f docker-compos
 
 Expected: `DISCORD_USER_EMAIL_MAP: loaded N entries`.
 
-- [ ] **Step 6: Register the slash commands**
+- [ ] **Step 8: Verify tasks reachability from webhook-handler**
+
+```bash
+ssh root@46.224.193.25 'docker exec proxy-server-webhook-handler-1 \
+  curl -sf http://tasks:8210/healthz'
+```
+
+Expected: `OK` (or whatever `/healthz` returns). Confirms container-to-container DNS + port works before invoking via Discord.
+
+- [ ] **Step 9: Register the slash commands**
+
+Token may contain `=` in base64 padding. Use `sed` to strip everything up to the first `=` instead of `cut -d= -f2`:
 
 ```bash
 ssh root@46.224.193.25 'cd /root/proxy-server && \
-  DISCORD_APPLICATION_ID="$(grep ^DISCORD_APPLICATION_ID .env | cut -d= -f2)" \
-  DISCORD_BOT_TOKEN="$(grep ^DISCORD_BOT_TOKEN .env | cut -d= -f2)" \
+  DISCORD_APPLICATION_ID="$(grep ^DISCORD_APPLICATION_ID= .env | sed "s/^[^=]*=//")" \
+  DISCORD_BOT_TOKEN="$(grep ^DISCORD_BOT_TOKEN= .env | sed "s/^[^=]*=//")" \
   python3 scripts/register_discord_commands.py'
 ```
 
 Expected: `OK — 200` or `201`.
 
-- [ ] **Step 7: Manual Layer 3 from Discord**
+- [ ] **Step 10: Manual Layer 3 from Discord**
 
 Open Discord, in the configured guild:
 
@@ -1823,13 +1943,13 @@ Open Discord, in the configured guild:
 4. Type `/aiui cronjob delete <that-uuid>` — confirm "Deleted ...".
 5. Type `/aiui aiuibuilder list` — confirm reply (either "no projects" or a list).
 
-- [ ] **Step 8: Cleanup**
+- [ ] **Step 11: Cleanup**
 
-If step 7.3 created any schedules that aren't useful, delete them via step 7.4.
+If Step 10 sub-step 3 created any test schedules that aren't useful, delete them via the `delete` subcommand.
 
-- [ ] **Step 9: Commit any final touches and report**
+- [ ] **Step 12: Report**
 
-If nothing changed in step 8, no commit. Report success to Lukas: "Discord /aiui cronjob + aiuibuilder live."
+No code changes needed at this stage. Report success: "Discord /aiui cronjob + aiuibuilder live."
 
 ---
 
