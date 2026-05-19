@@ -12,7 +12,7 @@ os.environ.setdefault("DISCORD_APPLICATION_ID", "1")
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test-token")
 os.environ.setdefault("TASKS_URL", "http://tasks-test:8210")
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
