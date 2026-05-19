@@ -22,6 +22,8 @@ These let a Discord user manage their own schedules and apps without leaving Dis
 - Account-linking flow with OAuth. v1 uses a static env-var map (`DISCORD_USER_EMAIL_MAP`) and rejects unmapped users with a "ask Lukas to add you" message.
 - Pagination of cron lists. v1 truncates the Discord reply at 2000 chars and appends `... +N more` when needed.
 - Migrating away from the older webhook-handler `/scheduler` engine. The new schedules live in the tasks service (`/api/tasks/schedules`); the legacy one stays where it is, untouched by this work.
+- **Per-argument typed Discord options for cronjob/aiuibuilder.** Discord supports `type=1` subcommands with multiple typed sub-options (one for `cron`, one for `prompt`, each with autocomplete + length validation). The spec uses a single free-text `args` option per subcommand and parses it with `shlex` server-side. This is a deliberate UX regression for v1 — it shortens implementation by ~half a day and lets us iterate on the parser without re-registering the command tree. Worth revisiting once we know which subcommands users invoke most.
+- Rate limiting webhook-handler → tasks calls. A Discord client spamming `cronjob list` would hammer tasks; in practice Discord enforces a 3 req/sec per-application limit so spam-from-Discord caps itself. If we ever expose webhook-handler outside Discord this needs revisiting.
 
 ## Architecture
 
@@ -59,9 +61,10 @@ Discord user      Discord                webhook-handler                tasks
 ```
 
 **Key boundaries**
-- webhook-handler authenticates the Discord request via Ed25519. It then calls tasks **directly** (`tasks:8210`) over the Docker network using the dual-auth pattern: `X-Cron-Secret` (operator-level, env-injected) **and** `X-User-Email` (the mapped end-user). The Caddy `request_header -X-User-Email` strip only applies to public `/tasks/schedules*` traffic — internal container-to-container traffic is trusted.
+- webhook-handler authenticates the Discord request via Ed25519. It then calls tasks **directly** (`tasks:8210`) over the Docker network sending ONLY `X-User-Email: <mapped-email>` — no `X-Cron-Secret`. This is critical: in `routes_schedules._resolve_caller`, presenting the cron secret flips `is_operator=True` and the list/read path then skips the `user_email` filter, returning ALL schedules across users. By withholding the cron secret, webhook-handler hits the end-user path and `_scoped_schedule` enforces the 404-on-other-user check. The mapping table is the perimeter trust: if it's wrong, a user sees the wrong account's data, but a Discord user can never escalate to see ALL data.
+- The Caddy `request_header -X-User-Email` strip only applies to public `/tasks/schedules*` traffic — internal container-to-container traffic on the Docker network is trusted because Caddy is the only path from the public Internet to internal services, and Caddy strips that header on the public path.
 - No api-gateway hop. The api-gateway exists to translate JWTs to `X-User-Email`; webhook-handler already knows the email from its mapping, so the gateway adds nothing.
-- The tasks service applies its own ownership-scoped 404 on cross-user access. Even if the mapping table is wrong, a user can never see another user's schedules.
+- The tasks service applies its own ownership-scoped 404 on cross-user access via `_scoped_schedule`. Even if the mapping table is wrong, a user can only ever see one wrong account — never all accounts.
 
 ## Component changes
 
@@ -76,17 +79,17 @@ Empty / unset → empty dict → all `cronjob` / `aiuibuilder` calls return the 
 
 ### 2. `webhook-handler/clients/tasks.py` — new HTTP client
 
-Thin wrapper around httpx.AsyncClient with two methods used in v1:
+Thin wrapper around httpx.AsyncClient:
 
 ```python
 async def list_schedules(user_email: str) -> list[dict]
-async def create_schedule(user_email: str, cron: str, prompt: str) -> dict
+async def create_schedule(user_email: str, name: str, cron: str, prompt: str, tz: str = "Asia/Manila") -> dict
 async def delete_schedule(user_email: str, schedule_id: str) -> bool
-async def list_projects(user_email: str) -> list[dict]
-async def get_project_status(user_email: str, slug: str) -> dict
+async def list_projects(user_email: str) -> list[ProjectSummary]
+async def get_project_status(user_email: str, slug: str) -> ProjectStatus
 ```
 
-Each method sends `X-Cron-Secret` + `X-User-Email`. Failure modes: returns `None`/raises a typed `TasksAPIError` with `(status, message)` the dispatcher maps to friendly Discord text.
+Each method sends ONLY `X-User-Email: <user_email>` — no `X-Cron-Secret` — so the tasks service walks the end-user code path with ownership scoping. Failure modes: raises a typed `TasksAPIError(status, message)` the dispatcher maps to friendly Discord text.
 
 ### 3. `webhook-handler/handlers/commands.py` — two new dispatchers
 
@@ -104,23 +107,60 @@ Each:
 
 `CommandRouter.parse_command()` adds `cronjob`, `aiuibuilder` to `known_commands`. `_handle_help()` text updated.
 
-### 4. `mcp-servers/tasks/routes_projects.py` — new `GET /api/projects` endpoint
+### 4. `mcp-servers/tasks/auth.py` — new `current_user` dep
 
-Currently the router only has per-slug routes. Add:
+`current_admin` (lines 13-24) raises **403** unless BOTH `X-User-Email` AND `X-User-Admin: true` are present. We need a non-admin sibling for endpoints that list-the-caller's-own-things:
+
+```python
+@dataclass(frozen=True)
+class CurrentUser:
+    email: str
+
+def current_user(request: Request) -> CurrentUser:
+    """Same as current_admin but no admin gate. Used by list-my-* endpoints."""
+    email = request.headers.get("x-user-email", "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="Missing X-User-Email")
+    return CurrentUser(email=email)
+```
+
+### 5. `mcp-servers/tasks/routes_projects.py` — new endpoints
+
+Currently the router only has per-slug routes, all admin-gated. Add two non-admin endpoints:
 
 ```python
 @router.get("", response_model=list[ProjectSummary])
-async def list_my_projects(user: AdminUser = Depends(current_admin)) -> list[ProjectSummary]:
+async def list_my_projects(user: CurrentUser = Depends(current_user)) -> list[ProjectSummary]:
     """List projects where the caller is a member."""
+
+@router.get("/{slug}/status", response_model=ProjectStatus)
+async def get_my_project_status(slug: str, user: CurrentUser = Depends(current_user)) -> ProjectStatus:
+    """Membership + publish status for one project, scoped to caller."""
 ```
 
-Scans the apps directory, filters via the existing `_user_can_see_project(s, slug, email)`. Returns slug, name, member role, publish status, public URL if published.
+Both call the existing `_user_can_see_project(s, slug, email)` helper; cross-user access returns 404, never 403, so existence isn't leaked.
 
-### 5. `scripts/register_discord_commands.py` — idempotent registration
+**Response schemas:**
 
-Adds `cronjob` and `aiuibuilder` to the `/aiui` subcommand list, PUTs to Discord API. Re-runnable. Reads `DISCORD_APPLICATION_ID` and `DISCORD_BOT_TOKEN` from env.
+```python
+class ProjectSummary(BaseModel):
+    slug: str
+    name: str
+    role: str            # "owner" | "editor" | "viewer"
+    published: bool
+    public_url: str | None  # only set when published
 
-### 6. `webhook-handler/handlers/discord_commands.py` — quoted args
+class ProjectStatus(ProjectSummary):
+    last_commit_at: str | None      # ISO 8601
+    last_commit_message: str | None
+    custom_domain: str | None
+```
+
+### 6. `scripts/register_discord_commands.py` — idempotent registration
+
+Discord's `PUT /applications/{app_id}/commands` REPLACES the full command list — partial updates are not supported. The script must therefore re-PUT the **complete** `/aiui` subcommand tree (all 19 subcommands: the 17 existing + `cronjob` + `aiuibuilder`), not just the 2 new ones. Re-runnable. Reads `DISCORD_APPLICATION_ID` and `DISCORD_BOT_TOKEN` from env.
+
+### 7. `webhook-handler/handlers/discord_commands.py` — quoted args
 
 The current `_parse_options` returns `(subcommand, single_value_string)`. That works because Discord delivers each option as a separate field. For `cronjob create "0 8 * * *" "summarize my emails"` we want both values preserved with their quotes. Simplest path: change the Discord application command to accept a single `args` string option per subcommand and parse it with `shlex` in the dispatcher. This avoids redesigning the option parser.
 
@@ -129,10 +169,25 @@ The current `_parse_options` returns `(subcommand, single_value_string)`. That w
 | Step | Who is authenticated | How |
 |------|----------------------|-----|
 | Discord → webhook-handler | Discord platform | Ed25519 (already implemented) |
-| webhook-handler → tasks | webhook-handler operator | `X-Cron-Secret` (env, dual-auth path) |
+| webhook-handler → tasks | end user (via mapping) | `X-User-Email` only — no cron secret |
 | identity inside tasks | end user | `X-User-Email` (mapped from Discord ID) |
 
+Why no cron secret on the webhook-handler → tasks hop: presenting `X-Cron-Secret` flips `is_operator=True` in `routes_schedules._resolve_caller`, after which `list_schedules` skips the per-user filter and returns everyone's data. By withholding the secret we stay on the end-user code path, and `_scoped_schedule` enforces 404-on-other-user on every mutation.
+
+The trust boundary that makes "X-User-Email only" safe: Caddy is the only public ingress and it strips `X-User-Email` on `/tasks/schedules*`. The api-gateway also strips client-provided `X-User-Email` before injecting its own. The Docker network itself is trusted — only services explicitly bound to host ports are reachable from outside, and `tasks:8210` is not.
+
 The mapping table is the only place trust is established between Discord identity and tasks user identity. It's an env var, owned by ops. There is no self-service link flow in v1.
+
+### Mapping-table validation (startup)
+
+`config.py` parses `DISCORD_USER_EMAIL_MAP` once at startup and:
+
+1. Skips entries where the Discord ID isn't all-numeric (Discord snowflake format).
+2. Lowercases the email side.
+3. Warns (logger.warning) if two Discord IDs map to the same email — that's almost always a typo and amounts to silent cross-user impersonation.
+4. Logs only the count of valid entries, NEVER the contents.
+
+Failed parses don't crash the service — they log and the entry is dropped, so a typo in one row doesn't take down the webhook handler.
 
 ## Error UX
 
@@ -158,12 +213,16 @@ No reply ever contains: the cron secret, `X-Cron-Secret` header, the full email 
 - `mcp-servers/tasks/tests/test_routes_projects_list.py` — `GET /api/projects` returns only projects where caller is member.
 
 **Layer 2 — integration (must be green before announcing):**
-- `scripts/discord_e2e.sh`:
-  1. POST tasks `/schedules` directly with X-Cron-Secret + a test email → expect 201.
-  2. Build a synthetic Discord interaction payload, sign it with the deployed Ed25519 public key (signing is asymmetric; we use the matching private key only available on dev side, so this step is local-only).
-  3. POST synthetic payload to `webhook-handler:8086/webhook/discord` → expect 200 with type 5.
-  4. Poll a temporary debug endpoint or assert via logs that the followup PATCH was issued.
-  5. Delete the test schedule.
+
+Scope explicit: Layer 2 validates webhook-handler in isolation using a **test Ed25519 keypair**, not the live Discord public key. The script generates a keypair, configures the test container with the public half, signs the synthetic interaction with the private half. The live deployment's public key (from Discord's developer portal) is never exercised outside Layer 3 — only Discord itself can sign for that key.
+
+- `scripts/discord_e2e_local.sh`:
+  1. POST tasks `/schedules` with `X-User-Email: e2e-test@local` (no cron secret) → expect 201.
+  2. Generate ephemeral Ed25519 keypair. Start webhook-handler with `DISCORD_PUBLIC_KEY` overridden to the test public key.
+  3. Build a synthetic `APPLICATION_COMMAND` payload for `/aiui cronjob list`, sign it with the test private key.
+  4. POST signed payload to `webhook-handler:8086/webhook/discord` → expect 200 with `{"type": 5}`.
+  5. **Assert the tasks call happened**: pytest test wraps it with respx, asserting the dispatcher called `clients.tasks.list_schedules("e2e-test@local")` with exactly the mapped email. Not log-grepping — a respx mock that records the call.
+  6. Delete the test schedule from step 1.
 
 **Layer 3 — real Discord (manual, takes 60 seconds):**
 1. `/aiui help` — shows `cronjob` and `aiuibuilder` in the help text.
