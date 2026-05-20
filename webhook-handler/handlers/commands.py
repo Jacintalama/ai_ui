@@ -18,6 +18,10 @@ from config import settings, get_service_endpoints
 
 logger = logging.getLogger(__name__)
 
+BUILD_POLL_SECONDS = 12
+BUILD_MAX_POLLS = 150  # ~30 min at 12s
+BUILD_MAX_CONSECUTIVE_ERRORS = 5
+
 
 @dataclass
 class CommandContext:
@@ -31,6 +35,7 @@ class CommandContext:
     platform: str  # "slack" or "discord"
     respond: Callable[[str], Awaitable[None]]
     metadata: dict = field(default_factory=dict)
+    notify_channel: Optional[Callable[[str], Awaitable[None]]] = None
 
 
 class VoiceResponseCollector:
@@ -379,7 +384,7 @@ class CommandRouter:
             "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
             "`/aiui license [owner/repo]` \u2014 License compliance check\n"
             "`/aiui cronjob <list|create|delete>` — Manage scheduled prompts\n"
-            "`/aiui aiuibuilder <list|status|open>` — Manage your App Builder projects\n"
+            "`/aiui aiuibuilder <build|list|status|open>` — Build & manage your apps\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -1333,14 +1338,40 @@ class CommandRouter:
             )
             return
 
+        # Action is the first word; the remainder is parsed per-action so a
+        # build description can contain spaces/quotes without shlex choking.
+        parts = (ctx.arguments or "").strip().split(None, 1)
+        action = parts[0].lower() if parts else ""
+        remainder = parts[1] if len(parts) > 1 else ""
+
+        if action == "build":
+            description = remainder.strip().strip('"').strip()
+            if not description:
+                await ctx.respond(
+                    'Usage: `aiuibuilder build <description>` — '
+                    'e.g. `aiuibuilder build a todo list with dark mode`'
+                )
+                return
+            try:
+                result = await self._tasks_client.start_build(email, description)
+            except TasksAPIError as e:
+                await ctx.respond(self._format_build_error(e))
+                return
+            slug = result["slug"]
+            task_id = result["task_id"]
+            await ctx.respond(
+                f"Building `{slug}` … I'll post the link here when it's ready "
+                "(usually a few minutes)."
+            )
+            if ctx.notify_channel is not None:
+                asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            return
+
         try:
-            tokens = shlex.split(ctx.arguments) if ctx.arguments else []
+            rest = shlex.split(remainder) if remainder else []
         except ValueError:
             await ctx.respond("Couldn't parse args. Try `aiuibuilder list`.")
             return
-
-        action = tokens[0] if tokens else ""
-        rest = tokens[1:]
 
         try:
             if action == "list":
@@ -1388,7 +1419,7 @@ class CommandRouter:
                 await ctx.respond(f"`{slug}` → {status['public_url']}")
 
             else:
-                await ctx.respond("Usage: `/aiui aiuibuilder <list|status|open> [slug]`")
+                await ctx.respond("Usage: `/aiui aiuibuilder <build|list|status|open> [args]`")
 
         except TasksAPIError as e:
             if e.status == 404:
@@ -1419,6 +1450,58 @@ class CommandRouter:
         if e.status == 401 or e.status == 403:
             return "Permission denied by tasks service."
         return f"Tasks API error ({e.status})."
+
+    def _format_build_error(self, e: TasksAPIError) -> str:
+        """Build-flavored error text (NOT the schedule-flavored _format_tasks_error)."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 429:
+            return "A build is already running — try again in a few minutes."
+        if e.status in (401, 403):
+            return "Your Discord account isn't linked. Ask Lukas to add you."
+        if e.status in (400, 422):
+            return "Couldn't start the build — check your description and try again."
+        return f"Couldn't start the build (error {e.status})."
+
+    async def _watch_build(
+        self, ctx: CommandContext, email: str, task_id: str, slug: str,
+        *, poll_seconds: int | None = None, max_polls: int | None = None,
+    ) -> None:
+        """Poll the build until it terminates, then post the result to the
+        channel via ctx.notify_channel (bot-token message — outlives the
+        interaction window). Defensive: transient errors don't kill the loop."""
+        if ctx.notify_channel is None:
+            return
+        poll_seconds = BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
+        max_polls = BUILD_MAX_POLLS if max_polls is None else max_polls
+        errors = 0
+        for _ in range(max_polls):
+            await asyncio.sleep(poll_seconds)
+            try:
+                st = await self._tasks_client.get_build_status(email, task_id)
+                errors = 0
+            except TasksAPIError as e:
+                errors += 1
+                logger.warning("watch_build status error (%s) task=%s", e.status, task_id)
+                if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
+                    await ctx.notify_channel(
+                        f"Lost track of `{slug}` — check `/aiui aiuibuilder status {slug}`."
+                    )
+                    return
+                continue
+            status = st.get("status")
+            if status == "completed":
+                url = st.get("preview_url") or ""
+                await ctx.notify_channel(f"`{slug}` is ready: {url}".rstrip())
+                return
+            if status == "failed":
+                await ctx.notify_channel(
+                    f"Build failed for `{slug}`. Open the App Builder to retry."
+                )
+                return
+        await ctx.notify_channel(
+            f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
+        )
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""
