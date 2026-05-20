@@ -225,3 +225,50 @@ def test_build_status_pending_maps_failed(monkeypatch):
     body = r.json()
     assert body["status"] == "failed"
     assert body["preview_url"] is None
+
+
+def test_compose_build_description_template_less_matches_bind():
+    out = rb._compose_build_description("todo-a1b2", None, "a todo list")
+    assert out == rb._bind_slug_description("todo-a1b2", "a todo list")
+    assert 'PROJECT NAME: "todo-a1b2"' in out
+    assert "USER REQUEST:" in out
+    assert "a todo list" in out
+
+
+def test_compose_build_description_with_template_injects_rules():
+    out = rb._compose_build_description("port-a1b2", "portfolio", "a UX designer named Maya")
+    assert 'PROJECT NAME: "port-a1b2"' in out
+    assert "USER REQUEST:" in out
+    assert "a UX designer named Maya" in out
+    assert "PURPOSE:" in out
+    assert out.index('PROJECT NAME') < out.index("PURPOSE:") < out.index("USER REQUEST:")
+
+
+def test_compose_build_description_caps_length():
+    out = rb._compose_build_description("s-a1b2", "portfolio", "x" * 30000)
+    assert len(out) == 20_000
+
+
+def test_templates_catalog_requires_email():
+    r = _client().get("/api/aiuibuilder/templates")
+    assert r.status_code == 401
+
+
+def test_templates_catalog_shape_and_excludes_blank_custom():
+    r = _client().get("/api/aiuibuilder/templates", headers={"X-User-Email": "a@x.com"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    keys = {t["key"] for t in body}
+    assert "portfolio" in keys
+    assert "blank" not in keys and "custom" not in keys
+    assert all("rules" not in t for t in body)
+    for t in body:
+        assert set(t) >= {"key", "label", "emoji", "description", "has_app", "note"}
+
+
+def test_templates_catalog_notes():
+    r = _client().get("/api/aiuibuilder/templates", headers={"X-User-Email": "a@x.com"})
+    by_key = {t["key"]: t for t in r.json()}
+    assert "Supabase" in by_key["auth"]["note"]
+    assert by_key["crud"]["note"] == "saves in your browser"
+    assert by_key["portfolio"]["note"] == ""

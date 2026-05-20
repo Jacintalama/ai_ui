@@ -57,6 +57,32 @@ class BuildStatusResponse(BaseModel):
     error: str | None = None
 
 
+# Catalog keys equivalent to a template-less Discord build (`custom` has no
+# rules; `blank` asks clarifying questions that can't be answered over Discord).
+# Excluded so the bot treats `build blank …`/`build custom …` as template-less.
+_CATALOG_EXCLUDED_KEYS = frozenset({"blank", "custom"})
+
+
+class TemplateBrief(BaseModel):
+    key: str
+    label: str
+    emoji: str
+    description: str
+    has_app: bool
+    note: str
+
+
+def _template_note(key: str, storage: str) -> str:
+    """Discord-facing storage hint. `auth` is the only template with no
+    localStorage fallback (flagged web-only); other db-backed templates degrade
+    to browser storage; frontend-only templates need no note."""
+    if key == "auth":
+        return "needs Supabase — use the web App Builder"
+    if storage == "supabase":
+        return "saves in your browser"
+    return ""
+
+
 def _slugify(seed: str) -> str:
     """Lowercase + hyphenate the first ~5 words; cap length. Pure (no DB)."""
     s = re.sub(r"[^a-z0-9]+", "-", (seed or "").strip().lower())
@@ -110,6 +136,26 @@ def _bind_slug_description(slug: str, description: str) -> str:
         f'USER REQUEST:\n'
     )
     return (directive + (description or "").strip())[:20_000]
+
+
+def _compose_build_description(slug: str, template_key: str | None, description: str) -> str:
+    """Compose the agent build description.
+
+    Template-less keeps the shipped slug-bound form byte-for-byte. With a
+    template, inject that template's curated rules (storage forced 'none' —
+    no Supabase gate from Discord) between the slug directive and the user
+    request, mirroring routes_tasks.create_task. Capped at 20k like the web."""
+    if not template_key:
+        return _bind_slug_description(slug, description)
+    from templates import build_rules_for
+    directive = (
+        f'PROJECT NAME: "{slug}". Create the app at apps/{slug}/ and use this '
+        f'exact slug throughout — do NOT invent a different folder name.'
+    )
+    rules = build_rules_for(template_key, "none").strip()
+    user_req = "USER REQUEST:\n" + (description or "").strip()
+    parts = [directive] + ([rules] if rules else []) + [user_req]
+    return "\n\n".join(parts)[:20_000]
 
 
 async def _slug_taken(s, slug: str) -> bool:
@@ -220,6 +266,25 @@ async def _create_and_spawn_build(email: str, seed: str, description: str) -> tu
     bg = asyncio.create_task(_run_execution(task_id, exec_id, prompt))
     _RUNNING[task_id]["task"] = bg
     return str(task_id), slug
+
+
+@router.get("/templates", response_model=list[TemplateBrief])
+async def list_build_templates(user: CurrentUser = Depends(current_user)):
+    """User-scoped template catalog for the Discord bot. No `rules` (same
+    prompt-injection guard as the admin /api/templates). Excludes blank/custom."""
+    from templates import TEMPLATES, _has_template_app
+    return [
+        TemplateBrief(
+            key=t.key,
+            label=t.label,
+            emoji=t.emoji,
+            description=t.description,
+            has_app=_has_template_app(t.key),
+            note=_template_note(t.key, t.storage),
+        )
+        for t in TEMPLATES
+        if t.key not in _CATALOG_EXCLUDED_KEYS
+    ]
 
 
 @router.post("/build", response_model=BuildResponse, status_code=201)
