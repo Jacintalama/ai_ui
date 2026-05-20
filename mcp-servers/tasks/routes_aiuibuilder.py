@@ -93,6 +93,25 @@ def _preview_url(slug: str) -> str:
     return f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/"
 
 
+def _bind_slug_description(slug: str, description: str) -> str:
+    """Prefix the user's request with an explicit slug directive so the agent
+    builds at apps/<slug>/ (the uniqueness-checked slug we allocated) instead
+    of inventing its own folder name from the prompt text.
+
+    Without this the agent picks its own slug, which (a) orphans the scaffolded
+    dir, (b) makes the 'Building <slug>' ack disagree with the final app, and
+    (c) — the real hazard — defeats `_unique_slug`'s collision check, so a build
+    whose content happens to map to an existing project's name would overwrite
+    that project's files. Mirrors the slug directive the web template-build path
+    injects in routes_tasks.create_task. Capped at 20k like the web path."""
+    directive = (
+        f'PROJECT NAME: "{slug}". Create the app at apps/{slug}/ and use this '
+        f'exact slug throughout — do NOT invent a different folder name.\n\n'
+        f'USER REQUEST:\n'
+    )
+    return (directive + (description or "").strip())[:20_000]
+
+
 async def _slug_taken(s, slug: str) -> bool:
     """True if `slug` collides in items / published_apps / project_members.
     Mirrors the rename collision check in routes_projects.py."""
@@ -154,12 +173,14 @@ async def _create_and_spawn_build(email: str, seed: str, description: str) -> tu
             raise HTTPException(status_code=429, detail="A build is already running")
 
         slug = await _unique_slug(s, seed)
+        # Bind the agent to our allocated slug (see _bind_slug_description).
+        bound_description = _bind_slug_description(slug, description)
         item = TaskItem(
             meeting_id=meeting_id,
             action_type="BUILD",
             assignee_name=email.split("@")[0],
             assignee_email=email,
-            description=(description or "").strip()[:20_000],
+            description=bound_description,
             priority="NICE_TO_HAVE",
             status="running",
             mode="ai",
@@ -185,7 +206,7 @@ async def _create_and_spawn_build(email: str, seed: str, description: str) -> tu
         pass
 
     prompt = build_prompt(
-        description=(description or "").strip()[:20_000],
+        description=bound_description,
         action_type="BUILD",
         priority="NICE_TO_HAVE",
         meeting_title=str(meeting_id),

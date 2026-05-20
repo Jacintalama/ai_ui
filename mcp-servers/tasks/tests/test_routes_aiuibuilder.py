@@ -58,6 +58,21 @@ def test_preview_url_shape():
     )
 
 
+def test_bind_slug_description_pins_the_slug():
+    out = rb._bind_slug_description("todo-a1b2", "a todo list with dark mode")
+    # The directive must name the exact slug + path so the agent can't pick its own.
+    assert 'PROJECT NAME: "todo-a1b2"' in out
+    assert "apps/todo-a1b2/" in out
+    # The user's request is preserved after the directive.
+    assert "a todo list with dark mode" in out
+    assert out.index('PROJECT NAME') < out.index("a todo list")
+
+
+def test_bind_slug_description_caps_length():
+    out = rb._bind_slug_description("s-a1b2", "x" * 30000)
+    assert len(out) == 20_000
+
+
 from unittest.mock import AsyncMock
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
