@@ -98,3 +98,70 @@ def test_build_validation_empty_description(monkeypatch):
         json={"description": ""},
     )
     assert r.status_code == 422
+
+
+import types
+
+
+def _fake_item(status, slug, result=None, assignee="alice@x.com"):
+    return types.SimpleNamespace(
+        status=status, built_app_slug=slug, result=result, assignee_email=assignee,
+    )
+
+
+def test_build_status_requires_email():
+    r = _client().get("/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111")
+    assert r.status_code == 401
+
+
+def test_build_status_unknown_or_other_user_404(monkeypatch):
+    async def load_none(email, task_id):
+        return None
+    monkeypatch.setattr(rb, "_load_owned_build", load_none)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    assert r.status_code == 404
+
+
+def test_build_status_completed_has_preview(monkeypatch):
+    async def load(email, task_id):
+        return _fake_item("completed", "todo-a1b2")
+    monkeypatch.setattr(rb, "_load_owned_build", load)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "completed"
+    assert body["preview_url"] == "https://ai-ui.coolestdomain.win/tasks/preview-app/todo-a1b2/"
+    assert body["error"] is None
+
+
+def test_build_status_failed_has_error_no_preview(monkeypatch):
+    async def load(email, task_id):
+        return _fake_item("failed", "todo-a1b2", result="agent crashed: boom")
+    monkeypatch.setattr(rb, "_load_owned_build", load)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    body = r.json()
+    assert body["status"] == "failed"
+    assert body["preview_url"] is None
+    assert "boom" in body["error"]
+
+
+def test_build_status_running_no_preview(monkeypatch):
+    async def load(email, task_id):
+        return _fake_item("running", "todo-a1b2")
+    monkeypatch.setattr(rb, "_load_owned_build", load)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    body = r.json()
+    assert body["status"] == "running"
+    assert body["preview_url"] is None
