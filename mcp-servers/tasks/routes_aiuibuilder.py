@@ -1,0 +1,208 @@
+"""User-scoped one-shot App Builder build entry point (for Discord).
+
+`current_user` (X-User-Email) auth — NOT admin. Mirrors what the web
+create+execute flow does, but ownership-scoped to the caller, reusing the
+existing _run_execution agent pipeline. No new tables.
+"""
+import asyncio
+import logging
+import os
+import re
+import secrets
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import select, text
+
+from auth import CurrentUser, current_user
+from db import session
+from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
+
+logger = logging.getLogger("tasks.aiuibuilder")
+
+router = APIRouter(prefix="/api/aiuibuilder")
+
+# Route-slug regex (hyphen-only). Defined locally to avoid a circular import
+# from main.py (which imports this router); mirrors main._SLUG_ROUTE_RE.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
+
+# Internal TaskItem.status values that mean "a build is occupying the agent".
+_LIVE_BUILD_STATES = ("running", "planning", "awaiting_input")
+
+# Same default as routes_projects.PUBLIC_DOMAIN.
+PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
+
+
+class BuildRequest(BaseModel):
+    description: str = Field(min_length=1, max_length=4000)
+    name: str | None = Field(default=None, max_length=80)
+
+
+class BuildResponse(BaseModel):
+    task_id: str
+    slug: str
+    status: str
+
+
+class BuildStatusResponse(BaseModel):
+    status: str
+    slug: str
+    preview_url: str | None = None
+    error: str | None = None
+
+
+def _slugify(seed: str) -> str:
+    """Lowercase + hyphenate the first ~6 words; cap length. Pure (no DB)."""
+    s = re.sub(r"[^a-z0-9]+", "-", (seed or "").strip().lower())
+    words = [w for w in s.split("-") if w][:5]
+    base = "-".join(words)[:40].strip("-")
+    return base or "app"
+
+
+def _make_slug(seed: str) -> str:
+    """Slugify + a 4-hex suffix for uniqueness (collision-checked elsewhere)."""
+    return f"{_slugify(seed)}-{secrets.token_hex(2)}"
+
+
+def _public_build_status(task_status: str) -> str:
+    """Map an internal TaskItem.status to the small public build status."""
+    if task_status == "completed":
+        return "completed"
+    if task_status == "failed":
+        return "failed"
+    return "running"
+
+
+def _preview_url(slug: str) -> str:
+    return f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/"
+
+
+async def _slug_taken(s, slug: str) -> bool:
+    """True if `slug` collides in items / published_apps / project_members.
+    Mirrors the rename collision check in routes_projects.py."""
+    if (await s.execute(
+        select(TaskItem.id).where(TaskItem.built_app_slug == slug).limit(1)
+    )).scalar_one_or_none():
+        return True
+    if (await s.execute(
+        select(PublishedApp.slug).where(PublishedApp.slug == slug).limit(1)
+    )).scalar_one_or_none():
+        return True
+    return bool((await s.execute(
+        select(ProjectMember.slug).where(ProjectMember.slug == slug).limit(1)
+    )).scalar_one_or_none())
+
+
+async def _unique_slug(s, seed: str) -> str:
+    """A route-valid slug not already used. Regenerates the suffix on clash."""
+    for _ in range(8):
+        slug = _make_slug(seed)
+        if _SLUG_RE.match(slug) and not await _slug_taken(s, slug):
+            return slug
+    return f"app-{secrets.token_hex(4)}"
+
+
+async def _create_and_spawn_build(email: str, seed: str, description: str) -> tuple[str, str]:
+    """Create a BUILD task owned by `email` and spawn the agent run.
+
+    One build platform-wide at a time: raises HTTPException(429) if any BUILD
+    task is already in a live state. Returns (task_id, slug).
+    """
+    # Deferred imports avoid a circular import at module load time.
+    from claude_executor import build_prompt
+    from routes_execution import _RUNNING, _run_execution
+    from routes_tasks import _ensure_app_skeleton
+
+    meeting_id = uuid.uuid4()
+    async with session() as s:
+        # Serialize the guard so two near-simultaneous builds can't both pass.
+        await s.execute(text("SELECT pg_advisory_xact_lock(hashtext('aiuibuilder:build'))"))
+        in_flight = (await s.execute(
+            select(TaskItem.id).where(
+                TaskItem.action_type == "BUILD",
+                TaskItem.status.in_(_LIVE_BUILD_STATES),
+            ).limit(1)
+        )).scalar_one_or_none()
+        if in_flight:
+            raise HTTPException(status_code=429, detail="A build is already running")
+
+        slug = await _unique_slug(s, seed)
+        item = TaskItem(
+            meeting_id=meeting_id,
+            action_type="BUILD",
+            assignee_name=email.split("@")[0],
+            assignee_email=email,
+            description=(description or "").strip()[:20_000],
+            priority="NICE_TO_HAVE",
+            status="running",
+            mode="ai",
+            max_attempts=3,
+            built_app_slug=slug,
+        )
+        s.add(item)
+        await s.commit()
+        await s.refresh(item)
+
+        execution = TaskExecution(task_id=item.id, status="running", log="")
+        s.add(execution)
+        await s.commit()
+        await s.refresh(execution)
+        task_id, exec_id = item.id, execution.id
+
+    # Scaffold the empty app dir (best-effort — agent recreates if it fails).
+    try:
+        _ensure_app_skeleton(slug, None)
+    except Exception:
+        pass
+
+    prompt = build_prompt(
+        description=(description or "").strip()[:20_000],
+        action_type="BUILD",
+        priority="NICE_TO_HAVE",
+        meeting_title=str(meeting_id),
+        meeting_date="",
+        supabase_url=None,
+        has_db_uri=False,
+        slug=slug,
+        user_email=email,
+    )
+    _RUNNING[task_id] = {"task": None}
+    bg = asyncio.create_task(_run_execution(task_id, exec_id, prompt))
+    _RUNNING[task_id]["task"] = bg
+    return str(task_id), slug
+
+
+@router.post("/build", response_model=BuildResponse, status_code=201)
+async def start_build(body: BuildRequest, user: CurrentUser = Depends(current_user)):
+    """Fire a one-shot, template-less, frontend-only build for the caller."""
+    seed = body.name or body.description
+    task_id, slug = await _create_and_spawn_build(user.email, seed, body.description)
+    return BuildResponse(task_id=task_id, slug=slug, status="running")
+
+
+async def _load_owned_build(email: str, task_id: uuid.UUID) -> TaskItem | None:
+    """Return the task iff it exists AND is owned by `email`, else None.
+    None -> the route answers 404 (not 403) so existence isn't leaked."""
+    async with session() as s:
+        item = (await s.execute(
+            select(TaskItem).where(TaskItem.id == task_id)
+        )).scalar_one_or_none()
+    if item is None or item.assignee_email != email:
+        return None
+    return item
+
+
+@router.get("/build/{task_id}", response_model=BuildStatusResponse)
+async def get_build_status(task_id: uuid.UUID, user: CurrentUser = Depends(current_user)):
+    item = await _load_owned_build(user.email, task_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="not found")
+    status = _public_build_status(item.status)
+    slug = item.built_app_slug or ""
+    return BuildStatusResponse(
+        status=status,
+        slug=slug,
+        preview_url=_preview_url(slug) if status == "completed" and slug else None,
+        error=(item.result or "")[:500] if status == "failed" else None,
+    )
