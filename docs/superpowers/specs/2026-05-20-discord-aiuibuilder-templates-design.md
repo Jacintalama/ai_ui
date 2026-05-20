@@ -114,12 +114,20 @@ TemplateBrief { key: str, label: str, emoji: str, description: str,
   - else `t.storage == "supabase"` → `"saves in your browser"`
   - else → `""` (frontend-only)
 - `rules` is intentionally NOT returned (same prompt-injection guard as `/api/templates`).
-- Excludes the synthetic `blank` duplicate? No — return the full registry order as-is; the
-  bot lists them verbatim. (`custom`/`blank` are valid template-less-equivalent keys; harmless.)
+- **Excludes `blank` and `custom`.** Both are equivalent to the default template-less Discord
+  build (`build <description>` with no key): `custom` has empty rules, and `blank`'s rules tell
+  the agent to ask 3-5 clarifying questions — which can't be answered over Discord (it would
+  surface as `needs_input`). Filtering them keeps the listing focused on the real
+  base-app/curated templates AND means the bot (which derives valid keys from this catalog)
+  treats `build blank …` / `build custom …` as ordinary template-less builds. Returns the rest
+  of the registry in its existing order.
 
 ### 2. tasks service — `POST /api/aiuibuilder/build` gains `template_key`
 
-`BuildRequest` gains `template_key: str | None = Field(default=None, max_length=64)`.
+`BuildRequest` gains `template_key: str | None = Field(default=None, max_length=64)`. Leave
+the inbound `description` field's `max_length` (4000) as-is — the 20 000-char cap below applies
+to the *server-composed* description (slug directive + rules + user text), not the user's
+inbound free text, so the rules text (a few KB) never crowds out the user's request.
 
 `_create_and_spawn_build(email, seed, description, template_key=None)`:
 - If `template_key` is not None: `if not is_valid_key(template_key): raise HTTPException(422,
@@ -158,7 +166,12 @@ TemplateBrief { key: str, label: str, emoji: str, description: str,
   reply with one line per template: `` `key` — label — note `` (truncate at the 2000-char
   Discord limit with `… +N more`). On `TasksAPIError`, reply with the build-flavored error.
 - **`build`** action gains template resolution:
-  - `first, rest = <split args once>`.
+  - Resolve the template **from the raw remainder before the existing quote-strip**: split the
+    remainder once on whitespace into `first, rest`. (The current branch does
+    `description = remainder.strip().strip('"').strip()`; the split for template detection must
+    run on the un-quote-stripped remainder so `build portfolio "a UX designer"` yields
+    `first="portfolio"`, not a leading quote. Quote-strip is then applied to the chosen
+    description text.)
   - Fetch valid keys: `try: keys = {t["key"] for t in await self._tasks_client.list_templates(email)} except TasksAPIError: keys = set()` (resilient — a catalog failure degrades to template-less, never blocks a build).
   - If `first.lower() in keys`: `template_key = first.lower()`, `description = rest`.
     Else: `template_key = None`, `description = <full args>`.
@@ -216,7 +229,8 @@ allocated slug, and the preview serves; clean up.
 
 ## Deployment
 
-Workflow A: `scp` the two changed source files (`mcp-servers/tasks/routes_aiuibuilder.py`,
-`webhook-handler/handlers/commands.py`, `webhook-handler/clients/tasks.py`) to
+Workflow A: `scp` the three changed source files — `mcp-servers/tasks/routes_aiuibuilder.py`,
+`webhook-handler/clients/tasks.py`, `webhook-handler/handlers/commands.py` — to
 `/root/proxy-server/`, then `docker compose -f docker-compose.unified.yml up -d --build tasks
-webhook-handler`, then `/healthz` + live smoke. No new env vars, no command re-registration.
+webhook-handler`, then `/healthz` + live smoke. No new tasks-service file (the catalog route
+lives in the existing `routes_aiuibuilder.py`). No new env vars, no command re-registration.
