@@ -1512,6 +1512,15 @@ class CommandRouter:
                 url = st.get("preview_url") or ""
                 await _notify(f"`{slug}` is ready: {url}".rstrip())
                 return
+            if status == "needs_input":
+                detail = (st.get("error") or "").strip()
+                ask = f" It needs to know: {detail}" if detail else ""
+                await _notify(
+                    f"`{slug}` needs more detail to finish.{ask} "
+                    "Continue it in the App Builder, or run `build` again with a "
+                    "more specific description."
+                )
+                return
             if status == "failed":
                 await _notify(
                     f"Build failed for `{slug}`. Open the App Builder to retry."

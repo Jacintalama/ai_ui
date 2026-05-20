@@ -35,8 +35,21 @@ def test_make_slug_has_suffix_and_matches_route_regex():
 def test_public_build_status_mapping():
     assert rb._public_build_status("completed") == "completed"
     assert rb._public_build_status("failed") == "failed"
-    for s in ("running", "planning", "awaiting_input", "pending"):
+    # awaiting_input is terminal for Discord (agent exited, no answer path).
+    assert rb._public_build_status("awaiting_input") == "needs_input"
+    # Only actively-running states map to "running".
+    for s in ("running", "planning"):
         assert rb._public_build_status(s) == "running"
+    # Dead-end states a Discord build can't progress from → failed.
+    for s in ("pending", "claimed_manual", "weird-unknown"):
+        assert rb._public_build_status(s) == "failed"
+
+
+def test_live_build_states_excludes_awaiting_input():
+    # awaiting_input must NOT count toward the concurrency guard, or one
+    # ambiguous build would 429-lock the platform forever.
+    assert "awaiting_input" not in rb._LIVE_BUILD_STATES
+    assert "running" in rb._LIVE_BUILD_STATES
 
 
 def test_preview_url_shape():
@@ -164,4 +177,36 @@ def test_build_status_running_no_preview(monkeypatch):
     )
     body = r.json()
     assert body["status"] == "running"
+    assert body["preview_url"] is None
+
+
+def test_build_status_awaiting_input_maps_needs_input(monkeypatch):
+    # An ambiguous build the agent paused on: terminal for Discord, surfaces
+    # the clarifying question, no preview, and (crucially) is not "running".
+    async def load(email, task_id):
+        return _fake_item("awaiting_input", "todo-a1b2",
+                          result="Which color theme — light or dark?")
+    monkeypatch.setattr(rb, "_load_owned_build", load)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    body = r.json()
+    assert body["status"] == "needs_input"
+    assert body["preview_url"] is None
+    assert "color theme" in body["error"]
+
+
+def test_build_status_pending_maps_failed(monkeypatch):
+    # The agent-pipeline exception path leaves a build in `pending`; for Discord
+    # that's a dead build → failed (so the watcher stops, not "still building").
+    async def load(email, task_id):
+        return _fake_item("pending", "todo-a1b2", result="Previous AI run failed: boom")
+    monkeypatch.setattr(rb, "_load_owned_build", load)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    body = r.json()
+    assert body["status"] == "failed"
     assert body["preview_url"] is None

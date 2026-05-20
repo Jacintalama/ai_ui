@@ -115,6 +115,23 @@ async def test_watch_build_notifies_on_completed():
 
 
 @pytest.mark.asyncio
+async def test_watch_build_notifies_on_needs_input():
+    notified = []
+    async def notify(msg):
+        notified.append(msg)
+    ctx = _ctx("100", "build x", [], notify=notify)
+    tc = MagicMock()
+    tc.get_build_status = AsyncMock(return_value={
+        "status": "needs_input", "slug": "s",
+        "error": "Which color theme — light or dark?"})
+    r = _router({"100": "a@x.com"}, tc)
+    await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
+    assert len(notified) == 1
+    assert "more detail" in notified[0].lower()
+    assert "color theme" in notified[0]
+
+
+@pytest.mark.asyncio
 async def test_watch_build_notifies_on_failed():
     notified = []
     async def notify(msg):

@@ -27,8 +27,13 @@ router = APIRouter(prefix="/api/aiuibuilder")
 # from main.py (which imports this router); mirrors main._SLUG_ROUTE_RE.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
 
-# Internal TaskItem.status values that mean "a build is occupying the agent".
-_LIVE_BUILD_STATES = ("running", "planning", "awaiting_input")
+# Internal TaskItem.status values where the agent subprocess is ACTIVELY
+# running (and thus occupying the single agent / RAM). NOT awaiting_input:
+# when a build is awaiting_input the agent has already exited (it asked a
+# question and _run_execution returned), so it isn't using the agent and must
+# NOT block new builds — otherwise one ambiguous Discord build would 429-lock
+# the whole platform until someone resolves it in the web UI.
+_LIVE_BUILD_STATES = ("running", "planning")
 
 # Same default as routes_projects.PUBLIC_DOMAIN.
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
@@ -66,12 +71,22 @@ def _make_slug(seed: str) -> str:
 
 
 def _public_build_status(task_status: str) -> str:
-    """Map an internal TaskItem.status to the small public build status."""
+    """Map an internal TaskItem.status to the small public build status.
+
+    Only `running`/`planning` mean the agent is still working. `awaiting_input`
+    is terminal for a Discord-origin build — the agent exited asking a question
+    and there is no Discord answer path — so it surfaces as `needs_input`.
+    Anything else a build could land in (`pending` after an exception,
+    `claimed_manual`) is a dead end for Discord and surfaces as `failed`. This
+    keeps the watcher from polling forever on a build that already settled.
+    """
     if task_status == "completed":
         return "completed"
-    if task_status == "failed":
-        return "failed"
-    return "running"
+    if task_status == "awaiting_input":
+        return "needs_input"
+    if task_status in ("running", "planning"):
+        return "running"
+    return "failed"
 
 
 def _preview_url(slug: str) -> str:
@@ -213,9 +228,11 @@ async def get_build_status(task_id: uuid.UUID, user: CurrentUser = Depends(curre
         raise HTTPException(status_code=404, detail="not found")
     status = _public_build_status(item.status)
     slug = item.built_app_slug or ""
+    # For `failed`, error carries the failure reason; for `needs_input` it
+    # carries the agent's clarifying question (both live in TaskItem.result).
     return BuildStatusResponse(
         status=status,
         slug=slug,
         preview_url=_preview_url(slug) if status == "completed" and slug else None,
-        error=(item.result or "")[:500] if status == "failed" else None,
+        error=(item.result or "")[:500] if status in ("failed", "needs_input") else None,
     )
