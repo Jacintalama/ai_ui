@@ -280,3 +280,13 @@ async def test_build_key_only_synthesizes_description():
         _ctx("100", "build portfolio", captured, notify=None))
     assert tc.start_build.call_args.kwargs["template_key"] == "portfolio"
     assert tc.start_build.call_args.args[1] == "a Portfolio"
+
+
+@pytest.mark.asyncio
+async def test_templates_action_error_replies_gracefully():
+    captured = []
+    tc = MagicMock()
+    tc.list_templates = AsyncMock(side_effect=TasksAPIError(0, "down"))
+    await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(_ctx("100", "templates", captured))
+    # _format_build_error maps status 0 → "Tasks service unreachable, try again."
+    assert any("unreachable" in m.lower() for m in captured)
