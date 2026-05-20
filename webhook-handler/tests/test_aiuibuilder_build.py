@@ -92,3 +92,66 @@ async def test_existing_list_still_works():
     tc = MagicMock(); tc.list_projects = AsyncMock(return_value=[])
     await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(_ctx("100", "list", captured))
     assert any("no projects" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_watch_build_notifies_on_completed():
+    notified = []
+    async def notify(msg):
+        notified.append(msg)
+    ctx = _ctx("100", "build x", [], notify=notify)
+    tc = MagicMock()
+    tc.get_build_status = AsyncMock(side_effect=[
+        {"status": "running", "slug": "s"},
+        {"status": "completed", "slug": "s",
+         "preview_url": "https://ai-ui.coolestdomain.win/tasks/preview-app/s/"},
+    ])
+    r = _router({"100": "a@x.com"}, tc)
+    await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
+    assert len(notified) == 1
+    assert "https://ai-ui.coolestdomain.win/tasks/preview-app/s/" in notified[0]
+
+
+@pytest.mark.asyncio
+async def test_watch_build_notifies_on_failed():
+    notified = []
+    async def notify(msg):
+        notified.append(msg)
+    ctx = _ctx("100", "build x", [], notify=notify)
+    tc = MagicMock()
+    tc.get_build_status = AsyncMock(return_value={"status": "failed", "slug": "s"})
+    r = _router({"100": "a@x.com"}, tc)
+    await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
+    assert len(notified) == 1
+    assert "failed" in notified[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_watch_build_timeout_message():
+    notified = []
+    async def notify(msg):
+        notified.append(msg)
+    ctx = _ctx("100", "build x", [], notify=notify)
+    tc = MagicMock()
+    tc.get_build_status = AsyncMock(return_value={"status": "running", "slug": "s"})
+    r = _router({"100": "a@x.com"}, tc)
+    await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=3)
+    assert len(notified) == 1
+    assert "still building" in notified[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_watch_build_survives_transient_errors():
+    notified = []
+    async def notify(msg):
+        notified.append(msg)
+    ctx = _ctx("100", "build x", [], notify=notify)
+    tc = MagicMock()
+    tc.get_build_status = AsyncMock(side_effect=[
+        TasksAPIError(0, "boom"),
+        {"status": "completed", "slug": "s",
+         "preview_url": "https://ai-ui.coolestdomain.win/tasks/preview-app/s/"},
+    ])
+    r = _router({"100": "a@x.com"}, tc)
+    await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
+    assert any("preview-app/s/" in m for m in notified)
