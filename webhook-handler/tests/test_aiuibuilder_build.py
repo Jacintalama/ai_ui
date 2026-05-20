@@ -223,6 +223,9 @@ async def test_templates_action_lists():
     reply = captured[-1]
     assert "portfolio" in reply and "crud" in reply
     assert "saves in your browser" in reply
+    # No-emoji preference: the catalog carries emoji glyphs but the listing
+    # must not render them.
+    assert "🎨" not in reply and "📝" not in reply
 
 
 @pytest.mark.asyncio

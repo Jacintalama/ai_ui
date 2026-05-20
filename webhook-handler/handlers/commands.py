@@ -1360,11 +1360,14 @@ class CommandRouter:
                 return
             lines = ["**App Builder templates** — `aiui aiuibuilder build <template> <description>`"]
             for t in catalog:
+                key = t.get("key")
+                if not key:
+                    continue  # tolerate a malformed row rather than KeyError
                 note = f" — {t['note']}" if t.get("note") else ""
-                lines.append(f"`{t['key']}` — {t['label']}: {t['description']}{note}")
+                lines.append(f"`{key}` — {t.get('label', key)}: {t.get('description', '')}{note}")
             reply = "\n".join(lines)
             if len(reply) > 1990:
-                reply = reply[:1980] + "\n… +more"
+                reply = reply[:1980] + "\n... +more"
             await ctx.respond(reply)
             return
 
@@ -1380,8 +1383,11 @@ class CommandRouter:
             # just means a template-less build (the user still gets an app).
             label_by_key: dict[str, str] = {}
             try:
-                label_by_key = {t["key"]: t["label"]
-                                for t in await self._tasks_client.list_templates(email)}
+                label_by_key = {
+                    t["key"]: t.get("label", t["key"])
+                    for t in await self._tasks_client.list_templates(email)
+                    if t.get("key")
+                }
             except TasksAPIError:
                 label_by_key = {}
 
