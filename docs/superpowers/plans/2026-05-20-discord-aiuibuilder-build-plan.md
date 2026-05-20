@@ -897,9 +897,13 @@ Replace the parsing preamble of `_handle_aiuibuilder` (the `try: tokens = shlex.
             return
 ```
 
-Then update the existing `list/status/open` branches to use `action` and `rest`
-(they already reference `action`/`rest` — only the derivation changed; `rest[0]`
-is still the slug for `status`/`open`).
+**Keep the existing `try: … except TasksAPIError as e:` block that wraps the
+`list`/`status`/`open` branches intact** — only the derivation above it changes
+(old: `tokens = shlex.split(ctx.arguments)` → `action = tokens[0]`; new:
+`action` from a plain split + per-action `rest = shlex.split(remainder)`). The new
+`build` branch sits BEFORE that try/except and has its own `try/except TasksAPIError`
+(it returns early, so it never enters the list/status/open error handler). `rest[0]`
+is still the slug for `status`/`open`.
 
 - [ ] **Step 5: Add `_format_build_error` (next to `_format_tasks_error`)**
 
@@ -1298,6 +1302,10 @@ async def test_signed_aiuibuilder_build_reaches_start_build():
     finally:
         main_mod.discord_command_handler = original_handler
         settings.discord_public_key = original_public_key
+        # Cancel any still-pending _watch_build task so pytest doesn't warn
+        # "task was destroyed but it is pending" (its first poll sleeps 12s).
+        for t in [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]:
+            t.cancel()
 ```
 
 - [ ] **Step 2: Run to verify it passes (feature already built in Tasks 4–8)**
