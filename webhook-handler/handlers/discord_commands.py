@@ -72,6 +72,9 @@ class DiscordCommandHandler:
                 content=msg,
             )
 
+        async def notify_channel(msg: str) -> None:
+            await self.discord.post_channel_message(channel_id, msg)
+
         ctx = CommandContext(
             user_id=user_id,
             user_name=user_name,
@@ -86,6 +89,7 @@ class DiscordCommandHandler:
                 "interaction_token": interaction_token,
                 "guild_id": payload.get("guild_id", ""),
             },
+            notify_channel=notify_channel if channel_id else None,
         )
 
         # Fire-and-forget: process in background, edit deferred response
