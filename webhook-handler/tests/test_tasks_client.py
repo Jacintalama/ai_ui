@@ -116,3 +116,44 @@ async def test_get_project_status_endpoint(client):
         req = route.calls.last.request
         assert req.headers.get("x-user-email") == "alice@x.com"
         assert "x-cron-secret" not in {k.lower() for k in req.headers}
+
+
+@pytest.mark.asyncio
+async def test_start_build_sends_only_user_email(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/api/aiuibuilder/build").mock(
+            return_value=Response(201, json={
+                "task_id": "t1", "slug": "todo-a1b2", "status": "running"})
+        )
+        result = await client.start_build("alice@x.com", "a todo app")
+        assert result["slug"] == "todo-a1b2"
+        req = route.calls.last.request
+        assert req.headers.get("x-user-email") == "alice@x.com"
+        assert "x-cron-secret" not in {k.lower() for k in req.headers}
+        import json
+        assert json.loads(req.content) == {"description": "a todo app", "name": None}
+
+
+@pytest.mark.asyncio
+async def test_start_build_429_raises(client):
+    with respx.mock(base_url=BASE) as mock:
+        mock.post("/api/aiuibuilder/build").mock(
+            return_value=Response(429, json={"detail": "A build is already running"}))
+        with pytest.raises(TasksAPIError) as exc:
+            await client.start_build("alice@x.com", "another app")
+        assert exc.value.status == 429
+
+
+@pytest.mark.asyncio
+async def test_get_build_status_endpoint(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.get("/api/aiuibuilder/build/t1").mock(
+            return_value=Response(200, json={
+                "status": "completed", "slug": "todo-a1b2",
+                "preview_url": "https://ai-ui.coolestdomain.win/tasks/preview-app/todo-a1b2/",
+                "error": None}))
+        result = await client.get_build_status("alice@x.com", "t1")
+        assert result["status"] == "completed"
+        req = route.calls.last.request
+        assert req.headers.get("x-user-email") == "alice@x.com"
+        assert "x-cron-secret" not in {k.lower() for k in req.headers}

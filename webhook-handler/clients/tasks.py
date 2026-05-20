@@ -80,3 +80,20 @@ class TasksClient:
     ) -> dict[str, Any]:
         resp = await self._request("GET", f"/api/projects/{slug}/status", user_email)
         return resp.json()
+
+    async def start_build(
+        self, user_email: str, description: str, name: str | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._request(
+            "POST", "/api/aiuibuilder/build", user_email,
+            json={"description": description, "name": name},
+        )
+        return resp.json()
+
+    async def get_build_status(
+        self, user_email: str, task_id: str,
+    ) -> dict[str, Any]:
+        resp = await self._request(
+            "GET", f"/api/aiuibuilder/build/{task_id}", user_email,
+        )
+        return resp.json()
