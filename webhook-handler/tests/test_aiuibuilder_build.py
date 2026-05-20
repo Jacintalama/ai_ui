@@ -9,6 +9,10 @@ from handlers.commands import (
 from clients.tasks import TasksAPIError
 
 
+async def _noop():
+    return None
+
+
 def _ctx(user_id, args, captured, notify=None):
     async def respond(msg):
         captured.append(msg)
@@ -38,7 +42,7 @@ async def test_build_unmapped_user_rejected():
 @pytest.mark.asyncio
 async def test_build_missing_description_shows_usage():
     captured = []
-    tc = MagicMock(); tc.start_build = AsyncMock()
+    tc = MagicMock(); tc.start_build = AsyncMock(); tc.list_templates = AsyncMock(return_value=[])
     await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(_ctx("100", "build", captured))
     assert any("Usage" in m for m in captured)
     tc.start_build.assert_not_awaited()
@@ -48,6 +52,7 @@ async def test_build_missing_description_shows_usage():
 async def test_build_happy_path_starts_and_acks(monkeypatch):
     captured = []
     tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[])
     tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "todo-a1b2", "status": "running"})
     watched = {}
     async def fake_watch(self, ctx, email, task_id, slug):
@@ -70,6 +75,7 @@ async def test_build_happy_path_starts_and_acks(monkeypatch):
 async def test_build_unquoted_description_works():
     captured = []
     tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[])
     tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "s", "status": "running"})
     await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(
         _ctx("100", "build a todo list", captured, notify=None)
@@ -81,6 +87,7 @@ async def test_build_unquoted_description_works():
 async def test_build_429_says_already_running():
     captured = []
     tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[])
     tc.start_build = AsyncMock(side_effect=TasksAPIError(429, "A build is already running"))
     await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(
         _ctx("100", 'build "x"', captured, notify=None)
@@ -200,3 +207,76 @@ async def test_watch_build_noop_when_notify_channel_none():
     # Returns immediately without polling when there's no channel to notify.
     await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
     tc.get_build_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_templates_action_lists():
+    captured = []
+    tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[
+        {"key": "portfolio", "label": "Portfolio", "emoji": "🎨",
+         "description": "personal showcase", "has_app": True, "note": ""},
+        {"key": "crud", "label": "CRUD app", "emoji": "📝",
+         "description": "manage records", "has_app": True, "note": "saves in your browser"},
+    ])
+    await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(_ctx("100", "templates", captured))
+    reply = captured[-1]
+    assert "portfolio" in reply and "crud" in reply
+    assert "saves in your browser" in reply
+
+
+@pytest.mark.asyncio
+async def test_build_with_known_template_key(monkeypatch):
+    captured = []
+    tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[
+        {"key": "portfolio", "label": "Portfolio", "emoji": "🎨",
+         "description": "x", "has_app": True, "note": ""}])
+    tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "portfolio-a1b2", "status": "running"})
+    monkeypatch.setattr(CommandRouter, "_watch_build",
+                        lambda self, ctx, email, task_id, slug: _noop())
+    await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(
+        _ctx("100", "build portfolio a UX designer named Maya", captured, notify=None))
+    assert tc.start_build.call_args.kwargs["template_key"] == "portfolio"
+    assert tc.start_build.call_args.args[1] == "a UX designer named Maya"
+    assert any("Building" in m for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_build_unknown_first_word_is_template_less():
+    captured = []
+    tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[
+        {"key": "portfolio", "label": "Portfolio", "emoji": "🎨",
+         "description": "x", "has_app": True, "note": ""}])
+    tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "s", "status": "running"})
+    await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(
+        _ctx("100", "build a kanban board for my team", captured, notify=None))
+    assert tc.start_build.call_args.kwargs["template_key"] is None
+    assert tc.start_build.call_args.args[1] == "a kanban board for my team"
+
+
+@pytest.mark.asyncio
+async def test_build_catalog_failure_falls_back_template_less():
+    captured = []
+    tc = MagicMock()
+    tc.list_templates = AsyncMock(side_effect=TasksAPIError(0, "down"))
+    tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "s", "status": "running"})
+    await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(
+        _ctx("100", "build portfolio something", captured, notify=None))
+    assert tc.start_build.call_args.kwargs["template_key"] is None
+    assert tc.start_build.call_args.args[1] == "portfolio something"
+
+
+@pytest.mark.asyncio
+async def test_build_key_only_synthesizes_description():
+    captured = []
+    tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[
+        {"key": "portfolio", "label": "Portfolio", "emoji": "🎨",
+         "description": "x", "has_app": True, "note": ""}])
+    tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "s", "status": "running"})
+    await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(
+        _ctx("100", "build portfolio", captured, notify=None))
+    assert tc.start_build.call_args.kwargs["template_key"] == "portfolio"
+    assert tc.start_build.call_args.args[1] == "a Portfolio"

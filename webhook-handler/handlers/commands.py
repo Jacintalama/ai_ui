@@ -389,7 +389,7 @@ class CommandRouter:
             "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
             "`/aiui license [owner/repo]` \u2014 License compliance check\n"
             "`/aiui cronjob <list|create|delete>` — Manage scheduled prompts\n"
-            "`/aiui aiuibuilder <build|list|status|open>` — Build & manage your apps\n"
+            "`/aiui aiuibuilder <build|templates|list|status|open>` — Build (optionally from a template) & manage your apps\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -1349,29 +1349,73 @@ class CommandRouter:
         action = parts[0].lower() if parts else ""
         remainder = parts[1] if len(parts) > 1 else ""
 
+        if action == "templates":
+            try:
+                catalog = await self._tasks_client.list_templates(email)
+            except TasksAPIError as e:
+                await ctx.respond(self._format_build_error(e))
+                return
+            if not catalog:
+                await ctx.respond("No templates available right now.")
+                return
+            lines = ["**App Builder templates** — `aiui aiuibuilder build <template> <description>`"]
+            for t in catalog:
+                note = f" — {t['note']}" if t.get("note") else ""
+                lines.append(f"`{t['key']}` — {t['label']}: {t['description']}{note}")
+            reply = "\n".join(lines)
+            if len(reply) > 1990:
+                reply = reply[:1980] + "\n… +more"
+            await ctx.respond(reply)
+            return
+
         if action == "build":
-            description = remainder.strip().strip('"').strip()
+            # Resolve an optional leading template key from the RAW remainder,
+            # before quote-stripping, so `build portfolio "a designer"` works.
+            rem = (remainder or "").strip()
+            sub = rem.split(None, 1)
+            first = (sub[0] if sub else "").lower()
+            after = sub[1] if len(sub) > 1 else ""
+
+            # Catalog lets us recognize template keys; resilient — a failure
+            # just means a template-less build (the user still gets an app).
+            label_by_key: dict[str, str] = {}
+            try:
+                label_by_key = {t["key"]: t["label"]
+                                for t in await self._tasks_client.list_templates(email)}
+            except TasksAPIError:
+                label_by_key = {}
+
+            if first in label_by_key:
+                template_key = first
+                description = after.strip().strip('"').strip()
+                if not description:
+                    description = f"a {label_by_key[first]}"
+            else:
+                template_key = None
+                description = rem.strip('"').strip()
+
             if not description:
                 await ctx.respond(
-                    'Usage: `aiuibuilder build <description>` — '
-                    'e.g. `aiuibuilder build a todo list with dark mode`'
+                    'Usage: `aiuibuilder build [template] <description>` — e.g. '
+                    '`aiuibuilder build portfolio a UX designer named Maya`. '
+                    'See `aiuibuilder templates`.'
                 )
                 return
             try:
-                result = await self._tasks_client.start_build(email, description)
+                result = await self._tasks_client.start_build(
+                    email, description, template_key=template_key)
             except TasksAPIError as e:
                 await ctx.respond(self._format_build_error(e))
                 return
             slug = result["slug"]
             task_id = result["task_id"]
+            tnote = f" (from the {label_by_key[template_key]} template)" if template_key else ""
             await ctx.respond(
-                f"Building `{slug}` … I'll post the link here when it's ready "
+                f"Building `{slug}`{tnote} … I'll post the link here when it's ready "
                 "(usually a few minutes)."
             )
             if ctx.notify_channel is not None:
-                watcher = asyncio.create_task(
-                    self._watch_build(ctx, email, task_id, slug)
-                )
+                watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
                 self._background_tasks.add(watcher)
                 watcher.add_done_callback(self._background_tasks.discard)
             return
@@ -1428,7 +1472,7 @@ class CommandRouter:
                 await ctx.respond(f"`{slug}` → {status['public_url']}")
 
             else:
-                await ctx.respond("Usage: `/aiui aiuibuilder <build|list|status|open> [args]`")
+                await ctx.respond("Usage: `/aiui aiuibuilder <build|templates|list|status|open> [args]`")
 
         except TasksAPIError as e:
             if e.status == 404:

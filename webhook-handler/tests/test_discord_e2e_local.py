@@ -247,6 +247,8 @@ async def test_signed_aiuibuilder_build_reaches_start_build():
         transport = ASGITransport(app=main_mod.app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             with respx.mock(assert_all_called=False) as mock:
+                mock.get(f"{settings.tasks_url}/api/aiuibuilder/templates").mock(
+                    return_value=Response(200, json=[]))
                 build_route = mock.post(
                     f"{settings.tasks_url}/api/aiuibuilder/build"
                 ).mock(return_value=Response(201, json={
