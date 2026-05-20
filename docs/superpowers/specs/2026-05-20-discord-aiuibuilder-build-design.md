@@ -213,8 +213,12 @@ Add `post_channel_message(channel_id, content) -> bool`:
     retry.")`.
   - On timeout: `notify_channel("`<slug>` is still building — check `/aiui aiuibuilder
     status <slug>`.")`.
-- Map `start_build` errors via the existing `_format_tasks_error`, adding a `429`
-  case → "A build is already running — try again in a few minutes."
+- Map `start_build` errors with build-specific text — **do not reuse
+  `_format_tasks_error`**, whose 404/400 strings are schedule-flavored ("No such
+  schedule"). The `build` branch gets its own small mapping consistent with the
+  existing `_handle_aiuibuilder` inline error block, plus: `429` → "A build is
+  already running — try again in a few minutes."; `0` → "Tasks service unreachable,
+  try again."
 - Add `build` to the `aiuibuilder` usage string and to `_handle_help`.
 
 ### 6. webhook-handler — `handlers/discord_commands.py`
@@ -222,9 +226,10 @@ When constructing `ctx`, also set:
 ```python
 async def notify_channel(msg: str) -> None:
     await self.discord.post_channel_message(channel_id, msg)
-ctx.notify_channel = notify_channel
+if channel_id:           # truthiness — channel_id defaults to "" not None here
+    ctx.notify_channel = notify_channel
 ```
-(only when `channel_id` is present). Existing `respond` (edit deferred) is unchanged.
+Existing `respond` (edit deferred) is unchanged.
 
 ## Memory & Concurrency
 
@@ -262,10 +267,18 @@ ctx.notify_channel = notify_channel
 2. Replace non-`[a-z0-9]` runs with `-`; strip leading/trailing `-`; collapse repeats;
    cap base length (~40 chars). Fallback base `"app"` if empty.
 3. Append `"-" + secrets.token_hex(2)` (4 hex chars) for uniqueness.
-4. Verify the final slug matches `_SLUG_ROUTE_RE` and is unused across
-   `tasks.items.built_app_slug`, `tasks.published_apps.slug`,
-   `tasks.project_members.slug` (mirrors the rename collision check); regenerate the
-   suffix on the rare clash (bounded retries).
+4. Verify the final slug matches the route-slug regex `^[a-z0-9][a-z0-9-]{1,80}$` and
+   is unused across `tasks.items.built_app_slug`, `tasks.published_apps.slug`,
+   `tasks.project_members.slug` (mirrors the rename collision check in
+   `routes_projects.py`); regenerate the suffix on the rare clash (bounded retries).
+
+> **Regex note for the implementer:** the matching route regex is `_SLUG_ROUTE_RE` and
+> it lives in **`main.py`** (used by the serve/preview routes), *not* in
+> `routes_projects.py` (whose `_SLUG_RE` additionally allows `.` and `_`). To avoid a
+> circular import (`main` will import the new router), **define a local copy of the
+> `^[a-z0-9][a-z0-9-]{1,80}$` pattern in `routes_aiuibuilder.py`** rather than importing
+> it. `token_hex` output is always `[a-z0-9]`, so either regex would accept the result;
+> we pin the stricter hyphen-only one because the slug becomes a publishable subdomain.
 
 ## Error handling
 
@@ -287,6 +300,10 @@ ctx.notify_channel = notify_channel
 - `POST /build`: happy path creates a `BUILD` task owned by the caller, scaffolds,
   and spawns execution — with `_run_execution` / executor **mocked** so no real agent
   runs. Asserts response shape + that the task row is `running` with the slug set.
+  (Note: the real `_run_execution` owner-insert keys on the slug **extracted from
+  agent output** via `extract_app_slug`, not the pre-set `built_app_slug`; any test
+  that asserts the owner row is created must feed mocked agent output containing
+  `apps/<slug>/` so the extraction path is exercised.)
 - `POST /build` concurrency: a pre-existing `running` BUILD task → `429`.
 - `GET /build/{id}`: owner sees mapped status + `preview_url` on completed; non-owner
   → `404`; unknown id → `404`; missing X-User-Email → `401`.
