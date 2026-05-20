@@ -299,6 +299,21 @@ def test_build_invalid_template_key_422():
     assert r.status_code == 422
 
 
+def test_normalize_template_key():
+    import pytest
+    from fastapi import HTTPException
+    # None and catalog-excluded keys → template-less (None).
+    assert rb._normalize_template_key(None) is None
+    assert rb._normalize_template_key("blank") is None
+    assert rb._normalize_template_key("custom") is None
+    # A real template key passes through.
+    assert rb._normalize_template_key("portfolio") == "portfolio"
+    # An unknown key is a 422.
+    with pytest.raises(HTTPException) as e:
+        rb._normalize_template_key("definitely-not-a-template")
+    assert e.value.status_code == 422
+
+
 def test_build_template_key_optional(monkeypatch):
     seen = {}
     async def fake_create(email, seed, description, template_key=None):

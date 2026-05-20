@@ -85,6 +85,21 @@ def _template_note(key: str, storage: str) -> str:
     return ""
 
 
+def _normalize_template_key(template_key: str | None) -> str | None:
+    """Normalize an inbound build template key.
+
+    Catalog-excluded keys (`blank`/`custom`) map to None — they're equivalent to
+    a template-less build, and `blank`'s clarify-first rules would dead-end a
+    Discord build in `awaiting_input`. The bot never sends them (they're absent
+    from the catalog it reads); this is defense-in-depth for any direct caller.
+    An otherwise-unknown key is a 422."""
+    if template_key is None or template_key in _CATALOG_EXCLUDED_KEYS:
+        return None
+    if not is_valid_key(template_key):
+        raise HTTPException(status_code=422, detail="Unknown template")
+    return template_key
+
+
 def _slugify(seed: str) -> str:
     """Lowercase + hyphenate the first ~5 words; cap length. Pure (no DB)."""
     s = re.sub(r"[^a-z0-9]+", "-", (seed or "").strip().lower())
@@ -211,8 +226,7 @@ async def _create_and_spawn_build(
     from routes_tasks import _copy_template_app, _ensure_app_skeleton, _humanize_slug
     from templates import _has_template_app
 
-    if template_key is not None and not is_valid_key(template_key):
-        raise HTTPException(status_code=422, detail="Unknown template")
+    template_key = _normalize_template_key(template_key)
 
     meeting_id = uuid.uuid4()
     async with session() as s:
