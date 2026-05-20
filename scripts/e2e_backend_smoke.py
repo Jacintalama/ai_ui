@@ -59,5 +59,16 @@ async def main():
         r = await c.get(f"{BASE}/api/aiuibuilder/build/{rid}")
         print(f"  status={r.status_code} (expect 401)")
 
+        print("\n=== 9) GET /api/aiuibuilder/templates (catalog, user-scoped) ===")
+        r = await c.get(f"{BASE}/api/aiuibuilder/templates", headers={"X-User-Email": EMAIL})
+        body = r.json() if r.status_code == 200 else []
+        keys = [t.get("key") for t in body] if isinstance(body, list) else []
+        print(f"  status={r.status_code} count={len(keys)} has_portfolio={'portfolio' in keys} "
+              f"excludes_blank={'blank' not in keys}")
+
+        print("\n=== 10) same WITHOUT X-User-Email should 401 ===")
+        r = await c.get(f"{BASE}/api/aiuibuilder/templates")
+        print(f"  status={r.status_code} (expect 401)")
+
 
 asyncio.run(main())
