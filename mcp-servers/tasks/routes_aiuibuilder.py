@@ -18,6 +18,7 @@ from sqlalchemy import select, text
 from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
+from templates import is_valid_key
 
 logger = logging.getLogger("tasks.aiuibuilder")
 
@@ -42,6 +43,7 @@ PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
 class BuildRequest(BaseModel):
     description: str = Field(min_length=1, max_length=4000)
     name: str | None = Field(default=None, max_length=80)
+    template_key: str | None = Field(default=None, max_length=64)
 
 
 class BuildResponse(BaseModel):
@@ -194,16 +196,23 @@ async def _unique_slug(s, seed: str) -> str:
     raise HTTPException(status_code=503, detail="Could not allocate a unique slug, try again")
 
 
-async def _create_and_spawn_build(email: str, seed: str, description: str) -> tuple[str, str]:
+async def _create_and_spawn_build(
+    email: str, seed: str, description: str, template_key: str | None = None,
+) -> tuple[str, str]:
     """Create a BUILD task owned by `email` and spawn the agent run.
 
     One build platform-wide at a time: raises HTTPException(429) if any BUILD
-    task is already in a live state. Returns (task_id, slug).
+    task is already in a live state. With `template_key`, the template's rules
+    are injected (storage forced 'none') and its prebuilt base app is copied in.
+    Returns (task_id, slug).
     """
-    # Deferred imports avoid a circular import at module load time.
     from claude_executor import build_prompt
     from routes_execution import _RUNNING, _run_execution
-    from routes_tasks import _ensure_app_skeleton
+    from routes_tasks import _copy_template_app, _ensure_app_skeleton, _humanize_slug
+    from templates import _has_template_app
+
+    if template_key is not None and not is_valid_key(template_key):
+        raise HTTPException(status_code=422, detail="Unknown template")
 
     meeting_id = uuid.uuid4()
     async with session() as s:
@@ -219,8 +228,7 @@ async def _create_and_spawn_build(email: str, seed: str, description: str) -> tu
             raise HTTPException(status_code=429, detail="A build is already running")
 
         slug = await _unique_slug(s, seed)
-        # Bind the agent to our allocated slug (see _bind_slug_description).
-        bound_description = _bind_slug_description(slug, description)
+        bound_description = _compose_build_description(slug, template_key, description)
         item = TaskItem(
             meeting_id=meeting_id,
             action_type="BUILD",
@@ -245,9 +253,13 @@ async def _create_and_spawn_build(email: str, seed: str, description: str) -> tu
         await s.refresh(execution)
         task_id, exec_id = item.id, execution.id
 
-    # Scaffold the empty app dir (best-effort — agent recreates if it fails).
+    # Scaffold: copy the prebuilt base app when the template has one, else the
+    # empty skeleton. Best-effort — the agent recreates the dir if this fails.
     try:
-        _ensure_app_skeleton(slug, None)
+        if template_key and _has_template_app(template_key):
+            _copy_template_app(template_key, slug, app_name=_humanize_slug(slug))
+        else:
+            _ensure_app_skeleton(slug, None)
     except Exception:
         pass
 
@@ -289,9 +301,11 @@ async def list_build_templates(user: CurrentUser = Depends(current_user)):
 
 @router.post("/build", response_model=BuildResponse, status_code=201)
 async def start_build(body: BuildRequest, user: CurrentUser = Depends(current_user)):
-    """Fire a one-shot, template-less, frontend-only build for the caller."""
+    """Fire a one-shot frontend-only build (optionally from a template)."""
     seed = body.name or body.description
-    task_id, slug = await _create_and_spawn_build(user.email, seed, body.description)
+    task_id, slug = await _create_and_spawn_build(
+        user.email, seed, body.description, template_key=body.template_key,
+    )
     return BuildResponse(task_id=task_id, slug=slug, status="running")
 
 

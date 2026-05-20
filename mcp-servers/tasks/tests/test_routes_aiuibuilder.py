@@ -89,7 +89,7 @@ def test_build_requires_email():
 
 
 def test_build_happy_path(monkeypatch):
-    async def fake_create(email, seed, description):
+    async def fake_create(email, seed, description, template_key=None):
         assert email == "alice@x.com"
         return ("11111111-1111-1111-1111-111111111111", "todo-list-a1b2")
     monkeypatch.setattr(rb, "_create_and_spawn_build", fake_create)
@@ -107,7 +107,7 @@ def test_build_happy_path(monkeypatch):
 
 
 def test_build_busy_returns_429(monkeypatch):
-    async def busy(email, seed, description):
+    async def busy(email, seed, description, template_key=None):
         raise HTTPException(status_code=429, detail="A build is already running")
     monkeypatch.setattr(rb, "_create_and_spawn_build", busy)
 
@@ -272,3 +272,43 @@ def test_templates_catalog_notes():
     assert "Supabase" in by_key["auth"]["note"]
     assert by_key["crud"]["note"] == "saves in your browser"
     assert by_key["portfolio"]["note"] == ""
+
+
+def test_build_accepts_template_key(monkeypatch):
+    seen = {}
+    async def fake_create(email, seed, description, template_key=None):
+        seen["template_key"] = template_key
+        return ("11111111-1111-1111-1111-111111111111", "portfolio-a1b2")
+    monkeypatch.setattr(rb, "_create_and_spawn_build", fake_create)
+    r = _client().post(
+        "/api/aiuibuilder/build",
+        headers={"X-User-Email": "alice@x.com"},
+        json={"description": "a designer site", "template_key": "portfolio"},
+    )
+    assert r.status_code == 201, r.text
+    assert seen["template_key"] == "portfolio"
+
+
+def test_build_invalid_template_key_422():
+    # Exercises REAL _create_and_spawn_build: validation must happen BEFORE any DB.
+    r = _client().post(
+        "/api/aiuibuilder/build",
+        headers={"X-User-Email": "alice@x.com"},
+        json={"description": "x", "template_key": "definitely-not-a-template"},
+    )
+    assert r.status_code == 422
+
+
+def test_build_template_key_optional(monkeypatch):
+    seen = {}
+    async def fake_create(email, seed, description, template_key=None):
+        seen["template_key"] = template_key
+        return ("t", "s")
+    monkeypatch.setattr(rb, "_create_and_spawn_build", fake_create)
+    r = _client().post(
+        "/api/aiuibuilder/build",
+        headers={"X-User-Email": "alice@x.com"},
+        json={"description": "a todo list"},
+    )
+    assert r.status_code == 201
+    assert seen["template_key"] is None
