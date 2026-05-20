@@ -49,5 +49,15 @@ async def main():
         r = await c.get(f"{BASE}/api/projects")
         print(f"  status={r.status_code} body={r.text[:200]}")
 
+        print("\n=== 7) GET /api/aiuibuilder/build/<random> (mounted + owner-scoped) ===")
+        import uuid as _uuid
+        rid = str(_uuid.uuid4())
+        r = await c.get(f"{BASE}/api/aiuibuilder/build/{rid}", headers={"X-User-Email": EMAIL})
+        print(f"  status={r.status_code} (expect 404 — unknown id)")
+
+        print("\n=== 8) same WITHOUT X-User-Email should 401 ===")
+        r = await c.get(f"{BASE}/api/aiuibuilder/build/{rid}")
+        print(f"  status={r.status_code} (expect 401)")
+
 
 asyncio.run(main())
