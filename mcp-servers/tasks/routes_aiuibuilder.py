@@ -53,7 +53,7 @@ class BuildStatusResponse(BaseModel):
 
 
 def _slugify(seed: str) -> str:
-    """Lowercase + hyphenate the first ~6 words; cap length. Pure (no DB)."""
+    """Lowercase + hyphenate the first ~5 words; cap length. Pure (no DB)."""
     s = re.sub(r"[^a-z0-9]+", "-", (seed or "").strip().lower())
     words = [w for w in s.split("-") if w][:5]
     base = "-".join(words)[:40].strip("-")
@@ -95,12 +95,23 @@ async def _slug_taken(s, slug: str) -> bool:
 
 
 async def _unique_slug(s, seed: str) -> str:
-    """A route-valid slug not already used. Regenerates the suffix on clash."""
+    """A route-valid slug not already used. Regenerates the suffix on clash.
+
+    Must be called under the 'aiuibuilder:build' advisory lock so the
+    check-then-use is race-free. Every candidate (including the high-entropy
+    exhaustion fallback) is DB-checked before being returned — we never return
+    an unchecked slug. Raises 503 if we somehow can't allocate one."""
     for _ in range(8):
         slug = _make_slug(seed)
         if _SLUG_RE.match(slug) and not await _slug_taken(s, slug):
             return slug
-    return f"app-{secrets.token_hex(4)}"
+    # Exhausted the readable-name attempts — try a few high-entropy fallbacks,
+    # still DB-checked so we never write a duplicate built_app_slug.
+    for _ in range(4):
+        slug = f"app-{secrets.token_hex(4)}"
+        if not await _slug_taken(s, slug):
+            return slug
+    raise HTTPException(status_code=503, detail="Could not allocate a unique slug, try again")
 
 
 async def _create_and_spawn_build(email: str, seed: str, description: str) -> tuple[str, str]:
@@ -141,12 +152,14 @@ async def _create_and_spawn_build(email: str, seed: str, description: str) -> tu
             built_app_slug=slug,
         )
         s.add(item)
-        await s.commit()
-        await s.refresh(item)
-
+        # Flush (not commit) to assign item.id, then add the execution so both
+        # rows land in ONE commit — no window where a running task exists with
+        # no execution row if the process dies mid-create.
+        await s.flush()
         execution = TaskExecution(task_id=item.id, status="running", log="")
         s.add(execution)
         await s.commit()
+        await s.refresh(item)
         await s.refresh(execution)
         task_id, exec_id = item.id, execution.id
 
