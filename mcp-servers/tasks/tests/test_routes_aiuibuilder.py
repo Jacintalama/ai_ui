@@ -43,3 +43,58 @@ def test_preview_url_shape():
     assert rb._preview_url("todo-a1b2") == (
         "https://ai-ui.coolestdomain.win/tasks/preview-app/todo-a1b2/"
     )
+
+
+from unittest.mock import AsyncMock
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+
+def _client():
+    from main import app
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def test_build_requires_email():
+    r = _client().post("/api/aiuibuilder/build", json={"description": "a todo app"})
+    assert r.status_code == 401
+
+
+def test_build_happy_path(monkeypatch):
+    async def fake_create(email, seed, description):
+        assert email == "alice@x.com"
+        return ("11111111-1111-1111-1111-111111111111", "todo-list-a1b2")
+    monkeypatch.setattr(rb, "_create_and_spawn_build", fake_create)
+
+    r = _client().post(
+        "/api/aiuibuilder/build",
+        headers={"X-User-Email": "alice@x.com"},
+        json={"description": "a todo list with dark mode"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["slug"] == "todo-list-a1b2"
+    assert body["status"] == "running"
+    assert body["task_id"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_build_busy_returns_429(monkeypatch):
+    async def busy(email, seed, description):
+        raise HTTPException(status_code=429, detail="A build is already running")
+    monkeypatch.setattr(rb, "_create_and_spawn_build", busy)
+
+    r = _client().post(
+        "/api/aiuibuilder/build",
+        headers={"X-User-Email": "alice@x.com"},
+        json={"description": "another app"},
+    )
+    assert r.status_code == 429
+
+
+def test_build_validation_empty_description(monkeypatch):
+    r = _client().post(
+        "/api/aiuibuilder/build",
+        headers={"X-User-Email": "alice@x.com"},
+        json={"description": ""},
+    )
+    assert r.status_code == 422

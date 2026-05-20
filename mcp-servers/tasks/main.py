@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from db import init_db
+from routes_aiuibuilder import router as aiuibuilder_router
 from routes_chat_history import router as chat_history_router
 from routes_cron import router as cron_router
 from routes_db import router as db_router
@@ -74,6 +75,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Tasks Service", version="0.1.0", lifespan=lifespan)
 app.include_router(webhook_router)
+app.include_router(aiuibuilder_router)
 # Schedules MUST be registered before tasks_router (which has a catch-all
 # /api/tasks/{task_id} that would otherwise match /api/tasks/schedules first
 # and route it through admin auth — wrong gate for end-user schedule CRUD).
