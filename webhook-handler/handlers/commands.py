@@ -105,6 +105,11 @@ class CommandRouter:
             self._discord_user_email_map = dict(discord_user_email_map)
             self._tasks_client = tasks_client
 
+        # Strong refs to fire-and-forget background tasks (e.g. _watch_build).
+        # asyncio only weak-references running tasks, so without this a long
+        # watcher could be GC'd mid-flight. Each task removes itself on done.
+        self._background_tasks: set = set()
+
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
         """
@@ -1364,7 +1369,11 @@ class CommandRouter:
                 "(usually a few minutes)."
             )
             if ctx.notify_channel is not None:
-                asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+                watcher = asyncio.create_task(
+                    self._watch_build(ctx, email, task_id, slug)
+                )
+                self._background_tasks.add(watcher)
+                watcher.add_done_callback(self._background_tasks.discard)
             return
 
         try:
@@ -1472,6 +1481,15 @@ class CommandRouter:
         interaction window). Defensive: transient errors don't kill the loop."""
         if ctx.notify_channel is None:
             return
+
+        async def _notify(msg: str) -> None:
+            # Never let a notify failure crash the watcher (it runs as a
+            # detached task — an unhandled raise would die silently).
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_build notify failed task=%s: %s", task_id, exc)
+
         poll_seconds = BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
         max_polls = BUILD_MAX_POLLS if max_polls is None else max_polls
         errors = 0
@@ -1484,7 +1502,7 @@ class CommandRouter:
                 errors += 1
                 logger.warning("watch_build status error (%s) task=%s", e.status, task_id)
                 if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
-                    await ctx.notify_channel(
+                    await _notify(
                         f"Lost track of `{slug}` — check `/aiui aiuibuilder status {slug}`."
                     )
                     return
@@ -1492,14 +1510,14 @@ class CommandRouter:
             status = st.get("status")
             if status == "completed":
                 url = st.get("preview_url") or ""
-                await ctx.notify_channel(f"`{slug}` is ready: {url}".rstrip())
+                await _notify(f"`{slug}` is ready: {url}".rstrip())
                 return
             if status == "failed":
-                await ctx.notify_channel(
+                await _notify(
                     f"Build failed for `{slug}`. Open the App Builder to retry."
                 )
                 return
-        await ctx.notify_channel(
+        await _notify(
             f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
         )
 

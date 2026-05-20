@@ -3,7 +3,9 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from handlers.commands import CommandRouter, CommandContext
+from handlers.commands import (
+    CommandRouter, CommandContext, BUILD_MAX_CONSECUTIVE_ERRORS,
+)
 from clients.tasks import TasksAPIError
 
 
@@ -155,3 +157,29 @@ async def test_watch_build_survives_transient_errors():
     r = _router({"100": "a@x.com"}, tc)
     await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
     assert any("preview-app/s/" in m for m in notified)
+
+
+@pytest.mark.asyncio
+async def test_watch_build_gives_up_after_max_consecutive_errors():
+    notified = []
+    async def notify(msg):
+        notified.append(msg)
+    ctx = _ctx("100", "build x", [], notify=notify)
+    tc = MagicMock()
+    tc.get_build_status = AsyncMock(side_effect=TasksAPIError(0, "boom"))
+    r = _router({"100": "a@x.com"}, tc)
+    await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=20)
+    assert len(notified) == 1
+    assert "Lost track" in notified[0]
+    assert tc.get_build_status.call_count == BUILD_MAX_CONSECUTIVE_ERRORS
+
+
+@pytest.mark.asyncio
+async def test_watch_build_noop_when_notify_channel_none():
+    ctx = _ctx("100", "build x", [], notify=None)
+    tc = MagicMock()
+    tc.get_build_status = AsyncMock()
+    r = _router({"100": "a@x.com"}, tc)
+    # Returns immediately without polling when there's no channel to notify.
+    await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
+    tc.get_build_status.assert_not_awaited()
