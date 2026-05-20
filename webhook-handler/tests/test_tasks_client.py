@@ -131,7 +131,8 @@ async def test_start_build_sends_only_user_email(client):
         assert req.headers.get("x-user-email") == "alice@x.com"
         assert "x-cron-secret" not in {k.lower() for k in req.headers}
         import json
-        assert json.loads(req.content) == {"description": "a todo app", "name": None}
+        assert json.loads(req.content) == {
+            "description": "a todo app", "name": None, "template_key": None}
 
 
 @pytest.mark.asyncio
@@ -142,6 +143,31 @@ async def test_start_build_429_raises(client):
         with pytest.raises(TasksAPIError) as exc:
             await client.start_build("alice@x.com", "another app")
         assert exc.value.status == 429
+
+
+@pytest.mark.asyncio
+async def test_start_build_includes_template_key(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/api/aiuibuilder/build").mock(
+            return_value=Response(201, json={"task_id": "t", "slug": "s", "status": "running"}))
+        await client.start_build("a@x.com", "a designer site", template_key="portfolio")
+        import json
+        sent = json.loads(route.calls.last.request.content)
+        assert sent["template_key"] == "portfolio"
+        assert sent["description"] == "a designer site"
+
+
+@pytest.mark.asyncio
+async def test_list_templates_sends_only_user_email(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.get("/api/aiuibuilder/templates").mock(
+            return_value=Response(200, json=[{"key": "portfolio", "label": "Portfolio",
+                "emoji": "🎨", "description": "personal showcase", "has_app": True, "note": ""}]))
+        result = await client.list_templates("a@x.com")
+        assert result[0]["key"] == "portfolio"
+        req = route.calls.last.request
+        assert req.headers.get("x-user-email") == "a@x.com"
+        assert "x-cron-secret" not in {k.lower() for k in req.headers}
 
 
 @pytest.mark.asyncio

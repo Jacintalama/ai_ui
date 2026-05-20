@@ -83,11 +83,16 @@ class TasksClient:
 
     async def start_build(
         self, user_email: str, description: str, name: str | None = None,
+        template_key: str | None = None,
     ) -> dict[str, Any]:
         resp = await self._request(
             "POST", "/api/aiuibuilder/build", user_email,
-            json={"description": description, "name": name},
+            json={"description": description, "name": name, "template_key": template_key},
         )
+        return resp.json()
+
+    async def list_templates(self, user_email: str) -> list[dict[str, Any]]:
+        resp = await self._request("GET", "/api/aiuibuilder/templates", user_email)
         return resp.json()
 
     async def get_build_status(
