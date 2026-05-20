@@ -480,6 +480,19 @@ build branch** (`test_build_missing_description_shows_usage`, `test_build_happy_
 `test_build_unquoted_description_works`, `test_build_429_says_already_running`). With an empty
 catalog, the first word never matches → template-less → those assertions hold unchanged.
 
+**ALSO update the Layer-2 e2e** `webhook-handler/tests/test_discord_e2e_local.py::test_signed_aiuibuilder_build_reaches_start_build`:
+it drives the real `build` branch through a real `TasksClient` against respx, so the new
+`list_templates` call hits an unmocked URL → `respx.AllMockedAssertionError` (an `AssertionError`,
+NOT a `TasksAPIError`, so it is NOT caught by the branch's `except TasksAPIError`) → the test
+fails. Add a templates stub inside that test's `respx.mock(...)` block, alongside the existing
+build/status/discord mocks:
+```python
+                mock.get(f"{settings.tasks_url}/api/aiuibuilder/templates").mock(
+                    return_value=Response(200, json=[]))
+```
+(Empty catalog → the `build "a todo app"` interaction stays template-less, so the test's
+`start_build`-reached + X-User-Email assertions are unchanged.)
+
 Then append:
 
 ```python
@@ -657,8 +670,11 @@ Update the usage `else` line and `_handle_help`:
 
 - [ ] **Step 4: Run to verify pass (+ no regressions)**
 
-Run: `cd webhook-handler && python -m pytest tests/test_aiuibuilder_build.py tests/test_aiuibuilder_handler.py -q`
-Expected: PASS (all). Then the full suite: `python -m pytest tests/ -q` — all pass.
+Run: `cd webhook-handler && python -m pytest tests/test_aiuibuilder_build.py tests/test_aiuibuilder_handler.py tests/test_discord_e2e_local.py -q`
+Expected: PASS (all — incl. the e2e, which now stubs the templates endpoint). Then the FULL
+suite: `python -m pytest tests/ -q` — all pass. If `test_discord_e2e_local.py` fails with an
+`AllMockedAssertionError`/`AssertionError` about an unmocked `/api/aiuibuilder/templates`, the
+templates stub from Step 1 is missing — add it.
 
 - [ ] **Step 5: Commit**
 
