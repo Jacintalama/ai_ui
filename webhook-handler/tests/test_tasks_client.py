@@ -186,18 +186,17 @@ async def test_get_build_status_endpoint(client):
 
 
 @pytest.mark.asyncio
-async def test_publish_app_posts_and_returns_status():
-    import respx, httpx
-    from clients.tasks import TasksClient
-    client = TasksClient(base_url="http://tasks-test:8210")
-    with respx.mock:
-        route = respx.post("http://tasks-test:8210/api/aiuibuilder/portfolio-ab12/publish").mock(
-            return_value=httpx.Response(200, json={
+async def test_publish_app_posts_and_returns_status(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/api/aiuibuilder/portfolio-ab12/publish").mock(
+            return_value=Response(200, json={
                 "published": True,
                 "public_url": "https://portfolio-ab12.ai-ui.coolestdomain.win/",
             })
         )
         out = await client.publish_app("alice@x.com", "portfolio-ab12")
     assert route.called
-    assert route.calls[0].request.headers["X-User-Email"] == "alice@x.com"
+    req = route.calls.last.request
+    assert req.headers.get("x-user-email") == "alice@x.com"
+    assert "x-cron-secret" not in {k.lower() for k in req.headers}
     assert out["public_url"] == "https://portfolio-ab12.ai-ui.coolestdomain.win/"
