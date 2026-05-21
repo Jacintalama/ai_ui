@@ -19,6 +19,7 @@ from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
 from templates import is_valid_key
+from routes_projects import _publish_slug, PublishStatus
 
 logger = logging.getLogger("tasks.aiuibuilder")
 
@@ -350,3 +351,13 @@ async def get_build_status(task_id: uuid.UUID, user: CurrentUser = Depends(curre
         preview_url=_preview_url(slug) if status == "completed" and slug else None,
         error=(item.result or "")[:500] if status in ("failed", "needs_input") else None,
     )
+
+
+@router.post("/{slug}/publish", response_model=PublishStatus)
+async def publish_built_app(slug: str, user: CurrentUser = Depends(current_user)):
+    """User-scoped publish for a Discord-built app. Ownership-enforced (the
+    builder is auto-added as owner on completion, and _require_role also treats
+    the original build assignee as an implicit owner), so a normal user — not an
+    admin — can publish their own app. Reuses the shared _publish_slug core."""
+    async with session() as s:
+        return await _publish_slug(s, slug, user.email, is_admin=False)

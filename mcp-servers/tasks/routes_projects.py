@@ -738,6 +738,45 @@ async def get_publish(slug: str, user: AdminUser = Depends(current_admin)):
     )
 
 
+async def _publish_slug(s, slug: str, email: str, *, is_admin: bool) -> PublishStatus:
+    """Core publish logic, shared by the admin route and the user-scoped
+    aiuibuilder route. Validates the slug, enforces project ownership
+    (admins bypass via is_admin), verifies apps/<slug>/index.html exists, and
+    idempotently inserts a PublishedApp row. Returns the publish status."""
+    _validate_slug(slug)
+    if not await _user_can_see_project(s, slug, email):
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+    await _require_role(s, slug, email, "owner", is_admin=is_admin)
+
+    index_path = os.path.join(REPO_ROOT, "apps", slug, "index.html")
+    if not os.path.isfile(index_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"apps/{slug}/index.html not found — only static apps with index.html are publishable today.",
+        )
+
+    existing = (
+        await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
+    ).scalar_one_or_none()
+    if existing:
+        return PublishStatus(
+            published=True,
+            public_url=_public_url_for(slug),
+            published_at=existing.published_at.isoformat() if existing.published_at else None,
+            published_by=existing.published_by,
+        )
+    row = PublishedApp(slug=slug, published_by=email, public_host=_public_host_for(slug))
+    s.add(row)
+    await s.commit()
+    await s.refresh(row)
+    return PublishStatus(
+        published=True,
+        public_url=_public_url_for(slug),
+        published_at=row.published_at.isoformat() if row.published_at else None,
+        published_by=row.published_by,
+    )
+
+
 @router.post("/{slug}/publish", response_model=PublishStatus)
 async def publish_app(slug: str, user: AdminUser = Depends(current_admin)):
     """Publish apps/<slug>/ at https://<slug>.ai-ui.coolestdomain.win/.
@@ -745,44 +784,8 @@ async def publish_app(slug: str, user: AdminUser = Depends(current_admin)):
     Owner/admin only. The Caddy wildcard handler reverse-proxies the
     subdomain back into this service's /__public/<slug>/ static route.
     """
-    _validate_slug(slug)
     async with session() as s:
-        if not await _user_can_see_project(s, slug, user.email):
-            raise HTTPException(status_code=403, detail="Not a member of this project")
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
-
-        # Verify apps/<slug>/index.html exists — otherwise publishing is pointless.
-        index_path = os.path.join(REPO_ROOT, "apps", slug, "index.html")
-        if not os.path.isfile(index_path):
-            raise HTTPException(
-                status_code=400,
-                detail=f"apps/{slug}/index.html not found — only static apps with index.html are publishable today.",
-            )
-
-        existing = (
-            await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
-        ).scalar_one_or_none()
-        if existing:
-            return PublishStatus(
-                published=True,
-                public_url=_public_url_for(slug),
-                published_at=existing.published_at.isoformat() if existing.published_at else None,
-                published_by=existing.published_by,
-            )
-        row = PublishedApp(
-            slug=slug,
-            published_by=user.email,
-            public_host=_public_host_for(slug),
-        )
-        s.add(row)
-        await s.commit()
-        await s.refresh(row)
-    return PublishStatus(
-        published=True,
-        public_url=_public_url_for(slug),
-        published_at=row.published_at.isoformat() if row.published_at else None,
-        published_by=row.published_by,
-    )
+        return await _publish_slug(s, slug, user.email, is_admin=user.is_admin)
 
 
 # ---------------------------------------------------------------------------
