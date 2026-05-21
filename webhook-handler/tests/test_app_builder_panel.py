@@ -167,3 +167,8 @@ def test_new_parsers():
         slug_from_unpublish_button(f"{ENHANCE_PREFIX}slug")
     with pytest.raises(ValueError):
         slug_from_enhance_modal(f"{ENHANCE_PREFIX}slug")
+
+
+def test_panel_content_mentions_private_space():
+    from handlers.app_builder_panel import PANEL_CONTENT
+    assert "private" in PANEL_CONTENT.lower()

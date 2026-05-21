@@ -14,7 +14,8 @@ import setup_app_builder_channel as setup  # noqa: E402
 
 def _clear_env(monkeypatch):
     for k in ("DISCORD_BOT_TOKEN", "DISCORD_GUILD_ID", "APP_BUILDER_SETUP_EMAIL",
-              "ADMIN_EMAILS", "TASKS_URL", "APP_BUILDER_CHANNEL_NAME"):
+              "ADMIN_EMAILS", "TASKS_URL", "APP_BUILDER_CHANNEL_NAME",
+              "APP_BUILDER_RESET"):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -90,3 +91,46 @@ def test_empty_catalog_returns_2(monkeypatch):
     monkeypatch.setenv("APP_BUILDER_SETUP_EMAIL", "admin@x.com")
     monkeypatch.setattr(setup, "_fetch_templates", lambda url, email: [])
     assert setup.main() == 2
+
+
+def test_reset_deletes_existing_channel_then_recreates(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "guild")
+    monkeypatch.setenv("APP_BUILDER_SETUP_EMAIL", "admin@x.com")
+    monkeypatch.setenv("APP_BUILDER_RESET", "1")
+
+    calls = {}
+    monkeypatch.setattr(setup, "_fetch_templates",
+                        lambda url, email: [{"key": "portfolio", "label": "Portfolio", "emoji": "x"}])
+    monkeypatch.setattr(setup, "_find_channel", lambda g, n, h: "old-chan")
+    monkeypatch.setattr(setup, "_delete_channel",
+                        lambda c, h: calls.update({"deleted": c}))
+    monkeypatch.setattr(setup, "_create_channel",
+                        lambda g, n, h: calls.update({"created": "new-chan"}) or "new-chan")
+    monkeypatch.setattr(setup, "_post_panel", lambda c, p, h: "msg-1")
+    monkeypatch.setattr(setup, "_pin", lambda c, m, h: None)
+
+    assert setup.main() == 0
+    assert calls["deleted"] == "old-chan"
+    assert calls["created"] == "new-chan"
+
+
+def test_no_reset_keeps_existing_channel(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "guild")
+    monkeypatch.setenv("APP_BUILDER_SETUP_EMAIL", "admin@x.com")
+
+    deleted = {"n": 0}
+    monkeypatch.setattr(setup, "_fetch_templates",
+                        lambda url, email: [{"key": "portfolio", "label": "Portfolio", "emoji": "x"}])
+    monkeypatch.setattr(setup, "_find_channel", lambda g, n, h: "old-chan")
+    monkeypatch.setattr(setup, "_delete_channel",
+                        lambda c, h: deleted.__setitem__("n", deleted["n"] + 1))
+    monkeypatch.setattr(setup, "_create_channel", lambda g, n, h: "x")
+    monkeypatch.setattr(setup, "_post_panel", lambda c, p, h: "msg-1")
+    monkeypatch.setattr(setup, "_pin", lambda c, m, h: None)
+
+    assert setup.main() == 0
+    assert deleted["n"] == 0

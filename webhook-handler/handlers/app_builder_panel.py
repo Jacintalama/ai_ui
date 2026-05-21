@@ -32,9 +32,9 @@ _MAX_BUTTONS = _MAX_PER_ROW * _MAX_ROWS  # 25
 
 PANEL_CONTENT = (
     "\U0001f680 **AIUI App Builder**\n"
-    "Pick a template to start — a short form opens where you describe your app. "
-    "Or hit **Blank** to build from scratch. I'll post the live link here when "
-    "it's ready."
+    "Pick a template and I'll open a **private space** just for you to build, "
+    "preview, and publish your app — only you and the bot see it. Or hit "
+    "**Blank** to start from scratch."
 )
 
 

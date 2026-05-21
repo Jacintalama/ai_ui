@@ -16,6 +16,9 @@ TASKS_URL=http://tasks:8210 resolves):
       webhook-handler python /app/scripts/setup_app_builder_channel.py
 
 The bot must be in the guild with Manage Channels + Send Messages.
+
+Set APP_BUILDER_RESET=1 (or pass --reset) to delete the existing channel and
+post a fresh welcome panel (clean slate; also clears old build threads).
 """
 import os
 import sys
@@ -63,6 +66,14 @@ def _create_channel(guild_id: str, name: str, headers: dict) -> str:
     return r.json()["id"]
 
 
+def _delete_channel(channel_id: str, headers: dict) -> None:
+    url = f"{DISCORD_API}/channels/{channel_id}"
+    with httpx.Client(timeout=30.0) as client:
+        r = client.delete(url, headers=headers)
+    if r.status_code not in (200, 204):
+        print(f"WARN: delete channel returned {r.status_code} {r.text}", file=sys.stderr)
+
+
 def _post_panel(channel_id: str, payload: dict, headers: dict) -> str:
     url = f"{DISCORD_API}/channels/{channel_id}/messages"
     with httpx.Client(timeout=30.0) as client:
@@ -88,6 +99,7 @@ def main() -> int:
         admins = os.environ.get("ADMIN_EMAILS", "").strip()
         email = admins.split(",")[0].strip() if admins else ""
     channel_name = os.environ.get("APP_BUILDER_CHANNEL_NAME", "app-builder").strip()
+    reset = os.environ.get("APP_BUILDER_RESET", "").strip() == "1" or "--reset" in sys.argv
 
     if not token or not guild_id:
         print("ERROR: DISCORD_BOT_TOKEN and DISCORD_GUILD_ID must be set.", file=sys.stderr)
@@ -112,6 +124,10 @@ def main() -> int:
 
     try:
         channel_id = _find_channel(guild_id, channel_name, headers)
+        if channel_id and reset:
+            print(f"Reset: deleting existing channel #{channel_name} ({channel_id})")
+            _delete_channel(channel_id, headers)
+            channel_id = None
         if channel_id:
             print(f"Reusing existing channel #{channel_name} ({channel_id})")
         else:
