@@ -1538,12 +1538,15 @@ class CommandRouter:
             await ctx.respond(self._format_publish_error(e))
             return
         url = (result.get("public_url") or "").strip()
-        await ctx.respond(f"\U0001f389 Published! Live at {url}".rstrip())
+        url_part = f" Live at {url}" if url else ""
+        await ctx.respond(f"\U0001f389 Published!{url_part}")
 
     def _format_publish_error(self, e: TasksAPIError) -> str:
         """Publish-flavored error text."""
         if e.status == 0:
             return "Tasks service unreachable, try again."
+        if e.status == 401:
+            return "Tasks service couldn't identify you — ask Lukas to check your link."
         if e.status == 403:
             return "Only the app's owner can publish it."
         if e.status == 404:

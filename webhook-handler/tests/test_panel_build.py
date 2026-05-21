@@ -126,3 +126,12 @@ async def test_publish_no_index_400():
     tc.publish_app = AsyncMock(side_effect=TasksAPIError(400, "no index"))
     await _router({"100": "a@x.com"}, tc).run_panel_publish(_ctx("100", captured), "slug-1")
     assert any("index.html" in m.lower() or "publishable" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_publish_service_unreachable():
+    captured = []
+    tc = MagicMock()
+    tc.publish_app = AsyncMock(side_effect=TasksAPIError(0, "connect error"))
+    await _router({"100": "a@x.com"}, tc).run_panel_publish(_ctx("100", captured), "slug-1")
+    assert any("unreachable" in m.lower() for m in captured)
