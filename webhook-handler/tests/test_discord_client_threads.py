@@ -25,6 +25,8 @@ async def test_create_private_thread_returns_id():
     body = _j.loads(req.content)
     assert body["type"] == 12
     assert body["name"] == "portfolio-ralph"
+    assert body["invitable"] is False
+    assert body["auto_archive_duration"] == 1440
 
 
 @pytest.mark.asyncio
