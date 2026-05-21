@@ -81,3 +81,26 @@ async def test_modal_submit_blank_key():
     await handler.handle_interaction(payload)
     await asyncio.sleep(0)
     assert captured["key"] is None
+
+
+from handlers.app_builder_panel import PUBLISH_PREFIX
+
+
+@pytest.mark.asyncio
+async def test_publish_button_routes_publish():
+    captured = {}
+    async def fake_pub(ctx, slug):
+        captured.update(ctx=ctx, slug=slug)
+    router = MagicMock(); router.run_panel_publish = fake_pub
+    handler = _handler(router)
+    payload = {
+        "type": 3, "id": "i", "token": "tok",
+        "data": {"custom_id": f"{PUBLISH_PREFIX}portfolio-ab12"},
+        "member": {"user": {"id": "100", "username": "maya"}},
+        "channel_id": "chan-1",
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == 5  # deferred ACK
+    await asyncio.sleep(0)
+    assert captured["slug"] == "portfolio-ab12"
+    assert captured["ctx"].user_id == "100"

@@ -95,4 +95,4 @@ async def test_open_not_published():
         "published": False, "public_url": None,
     })
     await _router({"100": "alice@x.com"}, tc)._handle_aiuibuilder(_ctx("100", "open shopping", captured))
-    assert any("not published" in m.lower() for m in captured)
+    assert any("isn't published" in m.lower() or "not published" in m.lower() for m in captured)

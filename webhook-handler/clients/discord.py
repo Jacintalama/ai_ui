@@ -113,22 +113,27 @@ class DiscordClient:
             logger.error(f"Error editing Discord message: {e}")
             return False
 
-    async def post_channel_message(self, channel_id: str, content: str) -> bool:
+    async def post_channel_message(self, channel_id: str, content: str,
+                                   components: list | None = None) -> bool:
         """Post a fresh message to a channel using the bot token.
 
         Unlike followup_message/edit_original (interaction token, 15-min TTL),
         this works indefinitely — used to report a build result that may finish
-        after the interaction window closes. Requires the bot to have Send
+        after the interaction window closes. Optionally attaches message
+        `components` (e.g. a Publish button). Requires the bot to have Send
         Messages in the channel. Never raises.
         """
         content = content[:2000]
         url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
+        body: dict = {"content": content}
+        if components:
+            body["components"] = components
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     url,
                     headers={"Authorization": f"Bot {self.bot_token}"},
-                    json={"content": content},
+                    json=body,
                 )
                 if response.status_code in (200, 201):
                     return True

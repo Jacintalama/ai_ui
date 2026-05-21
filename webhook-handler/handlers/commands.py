@@ -36,6 +36,9 @@ class CommandContext:
     respond: Callable[[str], Awaitable[None]]
     metadata: dict = field(default_factory=dict)
     notify_channel: Optional[Callable[[str], Awaitable[None]]] = None
+    # (message, slug, preview_url) -> post a rich channel message (e.g. with a
+    # Publish button). Set by the Discord layer; None on other platforms.
+    notify_channel_rich: Optional[Callable[[str, str, str], Awaitable[None]]] = None
 
 
 class VoiceResponseCollector:
@@ -389,7 +392,7 @@ class CommandRouter:
             "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
             "`/aiui license [owner/repo]` \u2014 License compliance check\n"
             "`/aiui cronjob <list|create|delete>` — Manage scheduled prompts\n"
-            "`/aiui aiuibuilder <build|templates|list|status|open>` — Build (optionally from a template) & manage your apps\n"
+            "`/aiui aiuibuilder <build|templates|list|status|open>` — Build, then **Publish** from the build message to go live\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -1459,7 +1462,8 @@ class CommandRouter:
                 status = await self._tasks_client.get_project_status(email, slug)
                 if not status.get("published"):
                     await ctx.respond(
-                        f"`{slug}` is not published yet. Publish it from the App Builder UI first."
+                        f"`{slug}` isn't published yet. Click **Publish** on its build "
+                        "message, or rebuild it to get a fresh Publish button."
                     )
                     return
                 await ctx.respond(f"`{slug}` → {status['public_url']}")
@@ -1627,7 +1631,15 @@ class CommandRouter:
             status = st.get("status")
             if status == "completed":
                 url = st.get("preview_url") or ""
-                await _notify(f"`{slug}` is ready: {url}".rstrip())
+                msg = f"`{slug}` is ready (preview): {url}".rstrip()
+                if ctx.notify_channel_rich is not None:
+                    try:
+                        await ctx.notify_channel_rich(msg, slug, url)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
+                        await _notify(msg)
+                else:
+                    await _notify(msg)
                 return
             if status == "needs_input":
                 detail = (st.get("error") or "").strip()

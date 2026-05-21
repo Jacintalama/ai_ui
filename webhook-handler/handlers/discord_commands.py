@@ -12,6 +12,9 @@ from handlers.app_builder_panel import (
     template_key_from_button,
     template_key_from_modal,
     DESCRIPTION_INPUT_ID,
+    is_publish_button,
+    slug_from_publish_button,
+    build_ready_components,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,8 +98,7 @@ class DiscordCommandHandler:
                 content=msg,
             )
 
-        async def notify_channel(msg: str) -> None:
-            await self.discord.post_channel_message(channel_id, msg)
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
 
         ctx = CommandContext(
             user_id=user_id,
@@ -113,6 +115,7 @@ class DiscordCommandHandler:
                 "guild_id": payload.get("guild_id", ""),
             },
             notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None,
         )
 
         # Fire-and-forget: process in background, edit deferred response
@@ -121,17 +124,65 @@ class DiscordCommandHandler:
         # Immediate ACK — tells Discord we'll follow up (type 5 = DEFERRED)
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
+    def _channel_notifiers(self, channel_id: str):
+        """Build the plain + rich channel notifiers for a ctx. The rich one
+        posts a build-ready message with a Publish button."""
+        async def notify_channel(msg: str) -> None:
+            await self.discord.post_channel_message(channel_id, msg)
+
+        async def notify_channel_rich(msg: str, slug: str, preview_url: str) -> None:
+            await self.discord.post_channel_message(
+                channel_id, msg, components=build_ready_components(slug, preview_url),
+            )
+        return notify_channel, notify_channel_rich
+
     async def _handle_message_component(self, payload: dict[str, Any]) -> dict[str, Any]:
         """A button click. App Builder template buttons open a modal; any other
         component is a harmless no-op (never a 500)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if is_publish_button(custom_id):
+            return await self._handle_publish_component(payload, custom_id)
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
         template_key = template_key_from_button(custom_id)
         logger.info(f"App Builder button clicked: template={template_key}")
         return {"type": MODAL, "data": build_modal_payload(template_key)}
+
+    async def _handle_publish_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """A Publish button click. Route to run_panel_publish in the background,
+        ACK deferred — mirrors the modal-submit pattern."""
+        slug = slug_from_publish_button(custom_id)
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        ctx = CommandContext(
+            user_id=user_id,
+            user_name=user_name,
+            channel_id=channel_id,
+            raw_text=f"aiuibuilder publish {slug}",
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+        )
+        asyncio.create_task(self.router.run_panel_publish(ctx, slug))
+        return {"type": DEFERRED_CHANNEL_MESSAGE}
 
     async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
         """An App Builder modal submission. Extract the description, route to the
@@ -158,8 +209,7 @@ class DiscordCommandHandler:
                 interaction_token=interaction_token, content=msg,
             )
 
-        async def notify_channel(msg: str) -> None:
-            await self.discord.post_channel_message(channel_id, msg)
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
 
         ctx = CommandContext(
             user_id=user_id,
@@ -178,6 +228,7 @@ class DiscordCommandHandler:
                 "guild_id": payload.get("guild_id", ""),
             },
             notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None,
         )
 
         # Fire-and-forget, mirroring _handle_application_command. run_panel_build
