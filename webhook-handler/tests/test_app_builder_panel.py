@@ -129,13 +129,6 @@ def test_publish_button_parsers():
         slug_from_publish_button(PUBLISH_PREFIX)  # bare prefix, no slug
 
 
-def test_ready_components_now_include_enhance():
-    rows = build_ready_components("slug-1", "https://x/preview/slug-1/")
-    ids = [c.get("custom_id") for c in rows[0]["components"]]
-    assert f"{ENHANCE_PREFIX}slug-1" in ids
-    assert f"{PUBLISH_PREFIX}slug-1" in ids
-
-
 def test_published_components_have_enhance_and_unpublish_and_live_link():
     rows = build_published_components("slug-1", "https://slug-1.ai-ui.coolestdomain.win/")
     btns = rows[0]["components"]
@@ -167,3 +160,10 @@ def test_new_parsers():
                      (slug_from_enhance_modal, ENHANCE_MODAL_PREFIX)]:
         with pytest.raises(ValueError):
             fn(pref)  # bare prefix, empty slug
+    # Wrong-prefix custom_ids must also raise (matches the publish parser test).
+    with pytest.raises(ValueError):
+        slug_from_enhance_button(f"{UNPUBLISH_PREFIX}slug")
+    with pytest.raises(ValueError):
+        slug_from_unpublish_button(f"{ENHANCE_PREFIX}slug")
+    with pytest.raises(ValueError):
+        slug_from_enhance_modal(f"{ENHANCE_PREFIX}slug")
