@@ -3,11 +3,17 @@
 One-shot setup, modeled on scripts/register_discord_commands.py. Idempotent:
 re-running reuses a channel with the same name and posts a fresh, re-pinned panel.
 
-Usage:
+Usage (in the repo):
     DISCORD_BOT_TOKEN=... DISCORD_GUILD_ID=... \
     [TASKS_URL=http://tasks:8210] [APP_BUILDER_SETUP_EMAIL=admin@example.com] \
     [APP_BUILDER_CHANNEL_NAME=app-builder] \
-    python scripts/setup_app_builder_channel.py
+    python webhook-handler/scripts/setup_app_builder_channel.py
+
+Usage (inside the deployed webhook-handler container, on the backend network so
+TASKS_URL=http://tasks:8210 resolves):
+    docker compose -f docker-compose.unified.yml exec \
+      -e DISCORD_GUILD_ID=... -e APP_BUILDER_SETUP_EMAIL=admin@example.com \
+      webhook-handler python /app/scripts/setup_app_builder_channel.py
 
 The bot must be in the guild with Manage Channels + Send Messages.
 """
@@ -16,9 +22,12 @@ import sys
 
 import httpx
 
-# Import the pure panel builder from the webhook-handler package.
+# Import the pure panel builder from the webhook-handler package. This script
+# lives in webhook-handler/scripts/, so the parent dir holds the `handlers`
+# package — both in the repo and inside the container image (where this file is
+# /app/scripts/... and `handlers` is /app/handlers).
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(_HERE, "..", "webhook-handler"))
+sys.path.insert(0, os.path.join(_HERE, ".."))
 from handlers.app_builder_panel import build_panel_payload  # noqa: E402
 
 DISCORD_API = "https://discord.com/api/v10"

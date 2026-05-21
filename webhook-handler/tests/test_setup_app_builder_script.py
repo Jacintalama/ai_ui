@@ -1,12 +1,13 @@
-"""scripts/setup_app_builder_channel.py orchestration (helpers monkeypatched)."""
+"""webhook-handler/scripts/setup_app_builder_channel.py orchestration (helpers monkeypatched)."""
 import os
 import sys
 
 import pytest
 
-# Make the scripts/ dir importable (repo_root/scripts).
-_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(_REPO, "scripts"))
+# The script lives in webhook-handler/scripts/ (sibling of this tests/ dir's
+# parent); add that dir to sys.path so it can be imported.
+_WEBHOOK_HANDLER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_WEBHOOK_HANDLER, "scripts"))
 
 import setup_app_builder_channel as setup  # noqa: E402
 
