@@ -67,7 +67,7 @@ async def test_non_owner_rejected(db_session, transport, tmp_path, monkeypatch):
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         r = await c.post("/api/aiuibuilder/alpha/publish",
                          headers={"X-User-Email": "mallory@x.com"})
-    assert r.status_code in (403, 404)
+    assert r.status_code == 403
     assert "alpha.ai-ui" not in r.text
 
 

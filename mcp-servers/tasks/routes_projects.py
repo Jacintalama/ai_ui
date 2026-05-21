@@ -743,7 +743,13 @@ async def _publish_slug(s, slug: str, email: str, *, is_admin: bool) -> PublishS
     aiuibuilder route. Validates the slug, enforces project ownership
     (admins bypass via is_admin), verifies apps/<slug>/index.html exists, and
     idempotently inserts a PublishedApp row. Returns the publish status."""
+    # Slug is validated against routes_projects._SLUG_RE (the wider [a-z0-9._-]
+    # pattern). aiuibuilder generates a tighter [a-z0-9-] slug, so it always
+    # passes; both patterns block path traversal into os.path.join below.
     _validate_slug(slug)
+    # Two checks on purpose: _user_can_see_project gives a generic "not a member"
+    # 403, then _require_role enforces owner-or-admin with its role-specific
+    # error. Defense-in-depth — do not collapse into one.
     if not await _user_can_see_project(s, slug, email):
         raise HTTPException(status_code=403, detail="Not a member of this project")
     await _require_role(s, slug, email, "owner", is_admin=is_admin)
