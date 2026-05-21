@@ -15,6 +15,7 @@ TEXT_INPUT = 4
 STYLE_PRIMARY = 1    # blurple ("blue")
 STYLE_SECONDARY = 2  # grey
 STYLE_SUCCESS = 3    # green
+STYLE_LINK = 5       # link button (opens a URL; carries `url`, not custom_id)
 
 # Text input styles
 TEXT_PARAGRAPH = 2
@@ -110,3 +111,31 @@ def template_key_from_modal(custom_id: str) -> str | None:
     if not is_panel_modal(custom_id):
         raise ValueError(f"not a panel modal custom_id: {custom_id!r}")
     return custom_id[len(BUILD_PREFIX):] or None
+
+
+PUBLISH_PREFIX = "aiuibuild:publish:"  # ready-msg button -> aiuibuild:publish:<slug>
+
+
+def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
+    """Action row for the build-ready message: a green Publish button, plus an
+    'Open preview' link button when a preview_url is available. Link buttons
+    carry `url` and must NOT carry a custom_id."""
+    buttons: list[dict] = [
+        {"type": BUTTON, "style": STYLE_SUCCESS, "label": "\U0001f7e2 Publish",
+         "custom_id": f"{PUBLISH_PREFIX}{slug}"},
+    ]
+    if preview_url:
+        buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                        "label": "\U0001f517 Open preview", "url": preview_url})
+    return [{"type": ACTION_ROW, "components": buttons}]
+
+
+def is_publish_button(custom_id: str) -> bool:
+    return custom_id.startswith(PUBLISH_PREFIX)
+
+
+def slug_from_publish_button(custom_id: str) -> str:
+    """Publish-button custom_id -> slug. Raises ValueError if not a publish id."""
+    if not is_publish_button(custom_id):
+        raise ValueError(f"not a publish button custom_id: {custom_id!r}")
+    return custom_id[len(PUBLISH_PREFIX):]
