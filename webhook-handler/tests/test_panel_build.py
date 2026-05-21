@@ -1,4 +1,5 @@
 """CommandRouter.run_panel_build — App Builder channel build entry."""
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -66,3 +67,26 @@ async def test_build_error_surfaced():
     tc.start_build = AsyncMock(side_effect=TasksAPIError(429, "busy"))
     await _router({"100": "a@x.com"}, tc).run_panel_build(_ctx("100", captured), "portfolio", "x")
     assert any("already running" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_watcher_wired_when_notify_channel_set(monkeypatch):
+    watched = {}
+
+    async def fake_watch(self, ctx, email, task_id, slug):
+        watched["args"] = (email, task_id, slug)
+
+    monkeypatch.setattr(CommandRouter, "_watch_build", fake_watch)
+
+    captured = []
+    tc = MagicMock()
+    tc.start_build = AsyncMock(return_value={"slug": "s", "task_id": "t1"})
+
+    async def notify(msg):
+        pass
+
+    await _router({"100": "a@x.com"}, tc).run_panel_build(
+        _ctx("100", captured, notify=notify), "portfolio", "a portfolio"
+    )
+    await asyncio.sleep(0)
+    assert watched.get("args") == ("a@x.com", "t1", "s")
