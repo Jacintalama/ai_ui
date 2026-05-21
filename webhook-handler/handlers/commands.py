@@ -1598,7 +1598,8 @@ class CommandRouter:
         *, poll_seconds: int | None = None, max_polls: int | None = None,
     ) -> None:
         """Poll the build until it terminates, then post the result to the
-        channel via ctx.notify_channel (bot-token message — outlives the
+        channel — on success via ctx.notify_channel_rich (a Publish button) when
+        set, else ctx.notify_channel (both bot-token messages that outlive the
         interaction window). Defensive: transient errors don't kill the loop."""
         if ctx.notify_channel is None:
             return

@@ -155,7 +155,11 @@ class DiscordCommandHandler:
     async def _handle_publish_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """A Publish button click. Route to run_panel_publish in the background,
         ACK deferred — mirrors the modal-submit pattern."""
-        slug = slug_from_publish_button(custom_id)
+        try:
+            slug = slug_from_publish_button(custom_id)
+        except ValueError:
+            logger.info(f"Ignoring malformed publish custom_id: {custom_id}")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
         interaction_token = payload.get("token", "")
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))

@@ -101,3 +101,10 @@ async def test_publish_button_routes_publish():
     await asyncio.sleep(0)
     assert captured["slug"] == "portfolio-ab12"
     assert captured["ctx"].user_id == "100"
+
+
+@pytest.mark.asyncio
+async def test_malformed_publish_button_is_noop():
+    handler = _handler(MagicMock())
+    resp = await handler.handle_interaction({"type": 3, "data": {"custom_id": "aiuibuild:publish:"}})
+    assert resp["type"] == 6  # DEFERRED_UPDATE_MESSAGE, no 500
