@@ -1407,23 +1407,10 @@ class CommandRouter:
                     'See `aiuibuilder templates`.'
                 )
                 return
-            try:
-                result = await self._tasks_client.start_build(
-                    email, description, template_key=template_key)
-            except TasksAPIError as e:
-                await ctx.respond(self._format_build_error(e))
-                return
-            slug = result["slug"]
-            task_id = result["task_id"]
-            tnote = f" (from the {label_by_key[template_key]} template)" if template_key else ""
-            await ctx.respond(
-                f"Building `{slug}`{tnote} … I'll post the link here when it's ready "
-                "(usually a few minutes)."
+            await self._start_build(
+                ctx, email, template_key, description,
+                template_label=label_by_key.get(template_key) if template_key else None,
             )
-            if ctx.notify_channel is not None:
-                watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
-                self._background_tasks.add(watcher)
-                watcher.add_done_callback(self._background_tasks.discard)
             return
 
         try:
@@ -1487,6 +1474,53 @@ class CommandRouter:
                 await ctx.respond("Tasks service unreachable, try again.")
             else:
                 await ctx.respond(f"Tasks API error ({e.status}).")
+
+    async def _start_build(
+        self, ctx: CommandContext, email: str, template_key: str | None,
+        description: str, *, template_label: str | None = None,
+    ) -> None:
+        """Start a one-shot build and wire the result watcher.
+
+        Shared by the `/aiui aiuibuilder build` text path and the App Builder
+        channel button/modal path. `description` must be non-empty (callers
+        validate). `template_label`, when given, is named in the ack."""
+        try:
+            result = await self._tasks_client.start_build(
+                email, description, template_key=template_key)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        slug = result["slug"]
+        task_id = result["task_id"]
+        tnote = f" (from the {template_label} template)" if template_label else ""
+        await ctx.respond(
+            f"Building `{slug}`{tnote} … I'll post the link here when it's ready "
+            "(usually a few minutes)."
+        )
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._background_tasks.discard)
+
+    async def run_panel_build(
+        self, ctx: CommandContext, template_key: str | None, description: str,
+    ) -> None:
+        """App Builder channel entry (a button+modal submit). Resolves the
+        caller's email, validates, then starts the build. The template key is
+        explicit (from the clicked button), so — unlike the free-text `build`
+        path — a Blank build whose first word matches a template key is never
+        misread as a template build."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+        description = (description or "").strip()
+        if not description:
+            await ctx.respond("Please describe the app you want to build.")
+            return
+        await self._start_build(ctx, email, template_key, description)
 
     def _format_tasks_error(self, e: TasksAPIError) -> str:
         """Map a TasksAPIError to a Discord-friendly reply.
