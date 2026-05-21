@@ -134,3 +134,51 @@ class DiscordClient:
         except Exception as e:
             logger.error(f"Error posting Discord channel message: {e}")
             return False
+
+    async def create_private_thread(self, parent_channel_id: str, name: str) -> str | None:
+        """Create a private thread (type 12) under a text channel using the bot
+        token. Returns the new thread id, or None on failure (never raises) so
+        callers can fall back to posting in the parent channel. Requires the bot
+        to have Create Private Threads."""
+        url = f"{DISCORD_API_BASE}/channels/{parent_channel_id}/threads"
+        body = {
+            "name": name[:100],
+            "type": 12,                    # PRIVATE_THREAD
+            "invitable": False,
+            "auto_archive_duration": 1440,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bot {self.bot_token}"},
+                    json=body,
+                )
+                if response.status_code in (200, 201):
+                    return response.json().get("id")
+                logger.error(
+                    f"Discord create thread error: {response.status_code} {response.text}"
+                )
+                return None
+        except Exception as e:
+            logger.error(f"Error creating Discord private thread: {e}")
+            return None
+
+    async def add_thread_member(self, thread_id: str, user_id: str) -> bool:
+        """Add a user to a thread (so they see the private thread). Bot token.
+        Never raises."""
+        url = f"{DISCORD_API_BASE}/channels/{thread_id}/thread-members/{user_id}"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.put(
+                    url, headers={"Authorization": f"Bot {self.bot_token}"},
+                )
+                if response.status_code in (200, 204):
+                    return True
+                logger.error(
+                    f"Discord add thread member error: {response.status_code} {response.text}"
+                )
+                return False
+        except Exception as e:
+            logger.error(f"Error adding Discord thread member: {e}")
+            return False
