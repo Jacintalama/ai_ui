@@ -135,3 +135,52 @@ async def test_publish_service_unreachable():
     tc.publish_app = AsyncMock(side_effect=TasksAPIError(0, "connect error"))
     await _router({"100": "a@x.com"}, tc).run_panel_publish(_ctx("100", captured), "slug-1")
     assert any("unreachable" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_enhance_unmapped_user_rejected():
+    captured = []
+    await _router({}, MagicMock()).run_panel_enhance(_ctx("9", captured), "slug-1", "change")
+    assert any("isn't linked" in m for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_enhance_happy_path_starts_watcher(monkeypatch):
+    watched = {}
+    async def fake_watch(self, ctx, email, task_id, slug):
+        watched["args"] = (email, task_id, slug)
+    monkeypatch.setattr(CommandRouter, "_watch_build", fake_watch)
+    captured = []
+    tc = MagicMock()
+    tc.enhance_app = AsyncMock(return_value={"task_id": "t9", "slug": "slug-1", "status": "running"})
+    async def notify(m): pass
+    await _router({"100": "a@x.com"}, tc).run_panel_enhance(_ctx("100", captured, notify=notify), "slug-1", "make it blue")
+    tc.enhance_app.assert_awaited_once_with("a@x.com", "slug-1", "make it blue")
+    await asyncio.sleep(0)
+    assert watched.get("args") == ("a@x.com", "t9", "slug-1")
+    assert any("pdating" in m or "nhanc" in m for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_enhance_conflict_409():
+    captured = []
+    tc = MagicMock(); tc.enhance_app = AsyncMock(side_effect=TasksAPIError(409, "busy"))
+    await _router({"100": "a@x.com"}, tc).run_panel_enhance(_ctx("100", captured), "slug-1", "x")
+    assert any("already" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_unpublish_happy_path():
+    captured = []
+    tc = MagicMock(); tc.unpublish_app = AsyncMock(return_value=True)
+    await _router({"100": "a@x.com"}, tc).run_panel_unpublish(_ctx("100", captured), "slug-1")
+    tc.unpublish_app.assert_awaited_once_with("a@x.com", "slug-1")
+    assert any("offline" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_unpublish_not_owner_403():
+    captured = []
+    tc = MagicMock(); tc.unpublish_app = AsyncMock(side_effect=TasksAPIError(403, "no"))
+    await _router({"100": "a@x.com"}, tc).run_panel_unpublish(_ctx("100", captured), "slug-1")
+    assert any("owner" in m.lower() for m in captured)

@@ -39,6 +39,9 @@ class CommandContext:
     # (message, slug, preview_url) -> post a rich channel message (e.g. with a
     # Publish button). Set by the Discord layer; None on other platforms.
     notify_channel_rich: Optional[Callable[[str, str, str], Awaitable[None]]] = None
+    # (public_url) -> edit the publish reply to show the live URL + Enhance/Unpublish
+    # buttons. Set by the Discord layer; None elsewhere.
+    on_published: Optional[Callable[[str], Awaitable[None]]] = None
 
 
 class VoiceResponseCollector:
@@ -1542,8 +1545,74 @@ class CommandRouter:
             await ctx.respond(self._format_publish_error(e))
             return
         url = (result.get("public_url") or "").strip()
+        if ctx.on_published is not None and url:
+            try:
+                await ctx.on_published(url)
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.error("on_published failed slug=%s: %s", slug, exc)
         url_part = f" Live at {url}" if url else ""
         await ctx.respond(f"\U0001f389 Published!{url_part}")
+
+    async def run_panel_enhance(self, ctx: CommandContext, slug: str, prompt: str) -> None:
+        """App Builder Enhance: edit an existing app from a typed change, then
+        watch it like a build and post the updated preview."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        prompt = (prompt or "").strip()
+        if not prompt:
+            await ctx.respond("Tell me what to change.")
+            return
+        try:
+            result = await self._tasks_client.enhance_app(email, slug, prompt)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_enhance_error(e))
+            return
+        task_id = result["task_id"]
+        await ctx.respond(
+            f"Updating `{slug}` … I'll post the new preview here when it's ready."
+        )
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._background_tasks.discard)
+
+    async def run_panel_unpublish(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder Unpublish: take a live app offline."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            await self._tasks_client.unpublish_app(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_unpublish_error(e))
+            return
+        await ctx.respond(f"`{slug}` is offline now (unpublished).")
+
+    def _format_enhance_error(self, e: TasksAPIError) -> str:
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 409:
+            return "An update is already in progress — try again in a minute."
+        if e.status in (401, 403):
+            return "Only the app's owner or an editor can change it."
+        if e.status == 404:
+            return "No app found to enhance (build it first)."
+        if e.status in (400, 422):
+            return "Couldn't start the update — check your description."
+        return f"Couldn't start the update (error {e.status})."
+
+    def _format_unpublish_error(self, e: TasksAPIError) -> str:
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status in (401, 403):
+            return "Only the app's owner can unpublish it."
+        if e.status == 404:
+            return "It's not live right now."
+        return f"Couldn't unpublish (error {e.status})."
 
     def _format_publish_error(self, e: TasksAPIError) -> str:
         """Publish-flavored error text."""
