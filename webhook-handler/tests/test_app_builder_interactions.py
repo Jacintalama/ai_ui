@@ -152,3 +152,22 @@ async def test_enhance_modal_submit_routes():
     assert resp["type"] == 5
     await asyncio.sleep(0)
     assert captured == {"slug": "slug-1", "prompt": "make it blue"}
+
+
+@pytest.mark.asyncio
+async def test_publish_on_published_edits_with_buttons():
+    captured = {}
+    async def fake_pub(ctx, slug):
+        captured["ctx"] = ctx
+    router = MagicMock(); router.run_panel_publish = fake_pub
+    handler = _handler(router)
+    payload = {"type": 3, "id": "i", "token": "tok",
+               "data": {"custom_id": f"{PUBLISH_PREFIX}slug-1"},
+               "member": {"user": {"id": "100", "username": "u"}}, "channel_id": "c"}
+    await handler.handle_interaction(payload)
+    await asyncio.sleep(0)
+    ctx = captured["ctx"]
+    assert ctx.on_published is not None
+    await ctx.on_published("https://slug-1.ai-ui.coolestdomain.win/")
+    call = handler.discord.edit_original.await_args
+    assert call.kwargs.get("components") is not None

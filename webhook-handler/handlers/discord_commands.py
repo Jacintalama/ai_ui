@@ -238,7 +238,11 @@ class DiscordCommandHandler:
             arguments="",
             platform="discord",
             respond=respond,
-            metadata={"interaction_token": interaction_token},
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
         )
         asyncio.create_task(self.router.run_panel_unpublish(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
@@ -276,7 +280,11 @@ class DiscordCommandHandler:
                 arguments="",
                 platform="discord",
                 respond=respond,
-                metadata={"interaction_token": interaction_token},
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
                 notify_channel=notify_channel if channel_id else None,
                 notify_channel_rich=notify_channel_rich if channel_id else None,
             )
