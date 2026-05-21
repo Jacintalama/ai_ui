@@ -293,7 +293,17 @@ class DiscordCommandHandler:
         if not is_panel_modal(custom_id):
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
+        return await self._handle_build_modal_submit(payload, custom_id)
 
+    async def _handle_build_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Build-template modal submit. Open a PRIVATE THREAD for the user, post
+        the build there, and ACK ephemerally with a pointer. Falls back to the
+        main channel if thread creation fails. Returns an ephemeral deferred
+        response within Discord's 3s window; the thread work runs in the
+        background (mirrors the fire-and-forget build pattern)."""
+        data = payload.get("data", {})
+        template_key = template_key_from_modal(custom_id)
+        description = self._extract_modal_value(data, DESCRIPTION_INPUT_ID)
         interaction_token = payload.get("token", "")
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
@@ -301,41 +311,53 @@ class DiscordCommandHandler:
         user_name = user.get("username", "unknown")
         channel_id = payload.get("channel_id", "")
 
-        template_key = template_key_from_modal(custom_id)
-        description = self._extract_modal_value(data, DESCRIPTION_INPUT_ID)
-
-        async def respond(msg: str) -> None:
-            await self.discord.edit_original(
-                interaction_token=interaction_token, content=msg,
+        async def _open_and_build() -> None:
+            target = channel_id
+            in_thread = False
+            thread_id = await self.discord.create_private_thread(
+                channel_id, f"{template_key or 'app'}-{user_name}"[:90]
             )
+            if thread_id:
+                await self.discord.add_thread_member(thread_id, user_id)
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content=f"✅ Opening your private build space → <#{thread_id}>",
+                )
+                target = thread_id
+                in_thread = True
 
-        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+            if in_thread:
+                async def respond(msg: str) -> None:
+                    await self.discord.post_channel_message(target, msg)
+            else:
+                async def respond(msg: str) -> None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token, content=msg,
+                    )
 
-        ctx = CommandContext(
-            user_id=user_id,
-            user_name=user_name,
-            channel_id=channel_id,
-            # Synthetic, for logging only — the authoritative inputs are
-            # template_key + description (run_panel_build uses those, not raw_text).
-            raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
-            subcommand="aiuibuilder",
-            arguments="",
-            platform="discord",
-            respond=respond,
-            metadata={
-                "interaction_id": payload.get("id", ""),
-                "interaction_token": interaction_token,
-                "guild_id": payload.get("guild_id", ""),
-            },
-            notify_channel=notify_channel if channel_id else None,
-            notify_channel_rich=notify_channel_rich if channel_id else None,
-        )
+            notify_channel, notify_channel_rich = self._channel_notifiers(target)
+            ctx = CommandContext(
+                user_id=user_id,
+                user_name=user_name,
+                channel_id=target,
+                raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
+                subcommand="aiuibuilder",
+                arguments="",
+                platform="discord",
+                respond=respond,
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
+                notify_channel=notify_channel,
+                notify_channel_rich=notify_channel_rich,
+            )
+            await self.router.run_panel_build(ctx, template_key, description)
 
-        # Fire-and-forget, mirroring _handle_application_command. run_panel_build
-        # itself is short-lived; its long-running build watcher is tracked with a
-        # strong ref inside CommandRouter (_background_tasks), so it won't be GC'd.
-        asyncio.create_task(self.router.run_panel_build(ctx, template_key, description))
-        return {"type": DEFERRED_CHANNEL_MESSAGE}
+        asyncio.create_task(_open_and_build())
+        # Ephemeral deferred ACK (flags=64) — only the clicking user sees it.
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     @staticmethod
     def _extract_modal_value(data: dict[str, Any], input_custom_id: str) -> str:

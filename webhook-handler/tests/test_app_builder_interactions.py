@@ -12,6 +12,8 @@ def _handler(router):
     discord = MagicMock()
     discord.edit_original = AsyncMock(return_value=True)
     discord.post_channel_message = AsyncMock(return_value=True)
+    discord.create_private_thread = AsyncMock(return_value=None)
+    discord.add_thread_member = AsyncMock(return_value=True)
     return DiscordCommandHandler(discord_client=discord, command_router=router)
 
 
@@ -171,3 +173,67 @@ async def test_publish_on_published_edits_with_buttons():
     await ctx.on_published("https://slug-1.ai-ui.coolestdomain.win/")
     call = handler.discord.edit_original.await_args
     assert call.kwargs.get("components") is not None
+
+
+import asyncio as _aio
+
+
+def _modal_payload(custom_id, value="a portfolio"):
+    return {"type": 5, "id": "i", "token": "tok",
+            "data": {"custom_id": custom_id,
+                     "components": [{"type": 1, "components": [
+                         {"type": 4, "custom_id": DESCRIPTION_INPUT_ID, "value": value}]}]},
+            "member": {"user": {"id": "100", "username": "ralph"}}, "channel_id": "main-chan"}
+
+
+@pytest.mark.asyncio
+async def test_build_modal_opens_private_thread_and_is_ephemeral():
+    captured = {}
+    async def fake_build(ctx, key, desc):
+        captured["ctx"] = ctx
+    router = MagicMock(); router.run_panel_build = fake_build
+    discord = MagicMock()
+    discord.create_private_thread = AsyncMock(return_value="thread-9")
+    discord.add_thread_member = AsyncMock(return_value=True)
+    discord.edit_original = AsyncMock(return_value=True)
+    discord.post_channel_message = AsyncMock(return_value=True)
+    from handlers.discord_commands import DiscordCommandHandler
+    handler = DiscordCommandHandler(discord_client=discord, command_router=router)
+
+    resp = await handler.handle_interaction(_modal_payload(f"{BUILD_PREFIX}portfolio"))
+    assert resp["type"] == 5
+    assert resp["data"]["flags"] == 64
+    await _aio.sleep(0.05)
+
+    discord.create_private_thread.assert_awaited_once()
+    args = discord.create_private_thread.await_args.args
+    assert args[0] == "main-chan"
+    assert "ralph" in args[1]
+    discord.add_thread_member.assert_awaited_once_with("thread-9", "100")
+    ctx = captured["ctx"]
+    await ctx.notify_channel("hi")
+    discord.post_channel_message.assert_awaited_with("thread-9", "hi")
+
+
+@pytest.mark.asyncio
+async def test_build_modal_falls_back_to_channel_when_thread_fails():
+    captured = {}
+    async def fake_build(ctx, key, desc):
+        captured["ctx"] = ctx
+    router = MagicMock(); router.run_panel_build = fake_build
+    discord = MagicMock()
+    discord.create_private_thread = AsyncMock(return_value=None)
+    discord.add_thread_member = AsyncMock(return_value=True)
+    discord.edit_original = AsyncMock(return_value=True)
+    discord.post_channel_message = AsyncMock(return_value=True)
+    from handlers.discord_commands import DiscordCommandHandler
+    handler = DiscordCommandHandler(discord_client=discord, command_router=router)
+
+    resp = await handler.handle_interaction(_modal_payload(f"{BUILD_PREFIX}"))
+    assert resp["type"] == 5
+    await _aio.sleep(0.05)
+
+    discord.add_thread_member.assert_not_awaited()
+    ctx = captured["ctx"]
+    await ctx.notify_channel("hi")
+    discord.post_channel_message.assert_awaited_with("main-chan", "hi")
