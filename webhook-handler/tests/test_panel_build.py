@@ -184,3 +184,16 @@ async def test_unpublish_not_owner_403():
     tc = MagicMock(); tc.unpublish_app = AsyncMock(side_effect=TasksAPIError(403, "no"))
     await _router({"100": "a@x.com"}, tc).run_panel_unpublish(_ctx("100", captured), "slug-1")
     assert any("owner" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_publish_on_published_failure_falls_back_to_respond():
+    captured = []
+    tc = MagicMock()
+    tc.publish_app = AsyncMock(return_value={"public_url": "https://x.example.com/"})
+    async def failing_hook(url):
+        raise RuntimeError("discord down")
+    ctx = _ctx("100", captured)
+    ctx.on_published = failing_hook
+    await _router({"100": "a@x.com"}, tc).run_panel_publish(ctx, "slug-1")
+    assert any("Published" in m for m in captured)

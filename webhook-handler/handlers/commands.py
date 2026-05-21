@@ -1593,6 +1593,7 @@ class CommandRouter:
         await ctx.respond(f"`{slug}` is offline now (unpublished).")
 
     def _format_enhance_error(self, e: TasksAPIError) -> str:
+        """Enhance-flavored error text."""
         if e.status == 0:
             return "Tasks service unreachable, try again."
         if e.status == 409:
@@ -1606,6 +1607,7 @@ class CommandRouter:
         return f"Couldn't start the update (error {e.status})."
 
     def _format_unpublish_error(self, e: TasksAPIError) -> str:
+        """Unpublish-flavored error text."""
         if e.status == 0:
             return "Tasks service unreachable, try again."
         if e.status in (401, 403):
