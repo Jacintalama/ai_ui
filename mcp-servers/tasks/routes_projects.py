@@ -1234,6 +1234,7 @@ async def _unpublish_slug(s, slug: str, email: str, *, is_admin: bool) -> None:
 
 @router.delete("/{slug}/publish", status_code=204)
 async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
+    _validate_slug(slug)  # fast-fail before touching the DB pool
     async with session() as s:
         await _unpublish_slug(s, slug, user.email, is_admin=user.is_admin)
     return None
