@@ -1214,20 +1214,28 @@ async def remove_custom_domain(slug: str, user: AdminUser = Depends(current_admi
     return None
 
 
+async def _unpublish_slug(s, slug: str, email: str, *, is_admin: bool) -> None:
+    """Core unpublish: owner-checked delete of the PublishedApp row. Idempotent
+    (no row → no-op). Shared by the admin route and the user-scoped aiuibuilder
+    route."""
+    _validate_slug(slug)
+    if not await _user_can_see_project(s, slug, email):
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+    await _require_role(s, slug, email, "owner", is_admin=is_admin)
+    existing = (
+        await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
+    ).scalar_one_or_none()
+    if existing is None:
+        return None
+    await s.delete(existing)
+    await s.commit()
+    return None
+
+
 @router.delete("/{slug}/publish", status_code=204)
 async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
-    _validate_slug(slug)
     async with session() as s:
-        if not await _user_can_see_project(s, slug, user.email):
-            raise HTTPException(status_code=403, detail="Not a member of this project")
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
-        existing = (
-            await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
-        ).scalar_one_or_none()
-        if existing is None:
-            return None
-        await s.delete(existing)
-        await s.commit()
+        await _unpublish_slug(s, slug, user.email, is_admin=user.is_admin)
     return None
 
 

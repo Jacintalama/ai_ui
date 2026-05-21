@@ -19,7 +19,7 @@ from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
 from templates import is_valid_key
-from routes_projects import _publish_slug, PublishStatus
+from routes_projects import _publish_slug, _unpublish_slug, PublishStatus
 
 logger = logging.getLogger("tasks.aiuibuilder")
 
@@ -361,3 +361,12 @@ async def publish_built_app(slug: str, user: CurrentUser = Depends(current_user)
     admin — can publish their own app. Reuses the shared _publish_slug core."""
     async with session() as s:
         return await _publish_slug(s, slug, user.email, is_admin=False)
+
+
+@router.delete("/{slug}/publish", status_code=204)
+async def unpublish_built_app(slug: str, user: CurrentUser = Depends(current_user)):
+    """User-scoped unpublish for a Discord-built app (owner-only). Mirrors
+    publish_built_app; reuses the shared _unpublish_slug core."""
+    async with session() as s:
+        await _unpublish_slug(s, slug, user.email, is_admin=False)
+    return None
