@@ -6,6 +6,9 @@ kubernetes/secrets.yaml
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+venv/
+.pytest_cache/
 
 # Playwright
 .playwright-mcp/
