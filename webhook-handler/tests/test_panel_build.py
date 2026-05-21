@@ -90,3 +90,39 @@ async def test_watcher_wired_when_notify_channel_set(monkeypatch):
     )
     await asyncio.sleep(0)
     assert watched.get("args") == ("a@x.com", "t1", "s")
+
+
+@pytest.mark.asyncio
+async def test_publish_unmapped_user_rejected():
+    captured = []
+    await _router({}, MagicMock()).run_panel_publish(_ctx("9", captured), "slug-1")
+    assert any("isn't linked" in m for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_publish_happy_path():
+    captured = []
+    tc = MagicMock()
+    tc.publish_app = AsyncMock(return_value={
+        "published": True, "public_url": "https://slug-1.ai-ui.coolestdomain.win/"})
+    await _router({"100": "a@x.com"}, tc).run_panel_publish(_ctx("100", captured), "slug-1")
+    tc.publish_app.assert_awaited_once_with("a@x.com", "slug-1")
+    assert any("Published" in m and "https://slug-1.ai-ui.coolestdomain.win/" in m for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_publish_non_owner_403():
+    captured = []
+    tc = MagicMock()
+    tc.publish_app = AsyncMock(side_effect=TasksAPIError(403, "denied"))
+    await _router({"100": "a@x.com"}, tc).run_panel_publish(_ctx("100", captured), "slug-1")
+    assert any("owner" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_publish_no_index_400():
+    captured = []
+    tc = MagicMock()
+    tc.publish_app = AsyncMock(side_effect=TasksAPIError(400, "no index"))
+    await _router({"100": "a@x.com"}, tc).run_panel_publish(_ctx("100", captured), "slug-1")
+    assert any("index.html" in m.lower() or "publishable" in m.lower() for m in captured)

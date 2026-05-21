@@ -1522,6 +1522,36 @@ class CommandRouter:
             return
         await self._start_build(ctx, email, template_key, description)
 
+    async def run_panel_publish(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder channel entry for the Publish button. Resolves the
+        caller's email and publishes their built app, then posts the live URL.
+        Ownership is enforced server-side (only the app's owner can publish)."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+        try:
+            result = await self._tasks_client.publish_app(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_publish_error(e))
+            return
+        url = (result.get("public_url") or "").strip()
+        await ctx.respond(f"\U0001f389 Published! Live at {url}".rstrip())
+
+    def _format_publish_error(self, e: TasksAPIError) -> str:
+        """Publish-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 403:
+            return "Only the app's owner can publish it."
+        if e.status == 404:
+            return "Project not found or not yours."
+        if e.status in (400, 422):
+            return "This app isn't publishable yet (it needs an index.html)."
+        return f"Couldn't publish (error {e.status})."
+
     def _format_tasks_error(self, e: TasksAPIError) -> str:
         """Map a TasksAPIError to a Discord-friendly reply.
 
