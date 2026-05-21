@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from handlers.discord_commands import DiscordCommandHandler
 from handlers.app_builder_panel import TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_INPUT_ID, PUBLISH_PREFIX
+from handlers.app_builder_panel import ENHANCE_PREFIX, UNPUBLISH_PREFIX, ENHANCE_MODAL_PREFIX
 
 
 def _handler(router):
@@ -108,3 +109,46 @@ async def test_malformed_publish_button_is_noop():
     handler = _handler(MagicMock())
     resp = await handler.handle_interaction({"type": 3, "data": {"custom_id": "aiuibuild:publish:"}})
     assert resp["type"] == 6  # DEFERRED_UPDATE_MESSAGE, no 500
+
+
+@pytest.mark.asyncio
+async def test_enhance_button_opens_modal():
+    handler = _handler(MagicMock())
+    payload = {"type": 3, "id": "i", "token": "t",
+               "data": {"custom_id": f"{ENHANCE_PREFIX}slug-1"},
+               "member": {"user": {"id": "100", "username": "u"}}, "channel_id": "c"}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == 9
+    assert resp["data"]["custom_id"] == f"{ENHANCE_MODAL_PREFIX}slug-1"
+
+
+@pytest.mark.asyncio
+async def test_unpublish_button_routes():
+    captured = {}
+    async def fake_unpub(ctx, slug): captured["slug"] = slug
+    router = MagicMock(); router.run_panel_unpublish = fake_unpub
+    handler = _handler(router)
+    payload = {"type": 3, "id": "i", "token": "tok",
+               "data": {"custom_id": f"{UNPUBLISH_PREFIX}slug-1"},
+               "member": {"user": {"id": "100", "username": "u"}}, "channel_id": "c"}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == 5
+    await asyncio.sleep(0)
+    assert captured["slug"] == "slug-1"
+
+
+@pytest.mark.asyncio
+async def test_enhance_modal_submit_routes():
+    captured = {}
+    async def fake_enh(ctx, slug, prompt): captured.update(slug=slug, prompt=prompt)
+    router = MagicMock(); router.run_panel_enhance = fake_enh
+    handler = _handler(router)
+    payload = {"type": 5, "id": "i", "token": "tok",
+               "data": {"custom_id": f"{ENHANCE_MODAL_PREFIX}slug-1",
+                        "components": [{"type": 1, "components": [
+                            {"type": 4, "custom_id": "change", "value": "make it blue"}]}]},
+               "member": {"user": {"id": "100", "username": "u"}}, "channel_id": "c"}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == 5
+    await asyncio.sleep(0)
+    assert captured == {"slug": "slug-1", "prompt": "make it blue"}
