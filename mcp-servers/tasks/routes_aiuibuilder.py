@@ -47,6 +47,10 @@ class BuildRequest(BaseModel):
     template_key: str | None = Field(default=None, max_length=64)
 
 
+class EnhanceRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+
+
 class BuildResponse(BaseModel):
     task_id: str
     slug: str
@@ -295,6 +299,82 @@ async def _create_and_spawn_build(
     return str(task_id), slug
 
 
+async def _create_and_spawn_enhance(email: str, slug: str, prompt: str) -> tuple[str, str]:
+    """Create an ENHANCE build task that edits apps/<slug>/ in place and spawn
+    the agent. Reuses the executor's enhance path via the
+    'Enhance apps/<slug>/: ' description prefix. One enhancement per app at a
+    time (409 if one is already running). Returns (task_id, slug)."""
+    from claude_executor import build_enhance_prompt
+    from routes_execution import _RUNNING, _run_execution, _lookup_supabase_config
+    from routes_projects import _require_role
+
+    async with session() as s:
+        # Find the app's most recent BUILD task (the enhance source).
+        source = (await s.execute(
+            select(TaskItem)
+            .where(TaskItem.built_app_slug == slug, TaskItem.action_type == "BUILD")
+            .order_by(TaskItem.created_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+        if source is None:
+            raise HTTPException(status_code=404, detail="No app to enhance for that slug")
+
+        # Editor/owner only (Discord builder is owner). is_admin=False.
+        await _require_role(s, slug, email, "editor", is_admin=False)
+
+        # Serialize check+insert per slug; reject a concurrent enhancement.
+        await s.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"build:{slug}"},
+        )
+        in_flight = (await s.execute(
+            select(TaskItem.id).where(
+                TaskItem.built_app_slug == slug,
+                TaskItem.status.in_(["running", "planning", "awaiting_input"]),
+            ).limit(1)
+        )).scalar_one_or_none()
+        if in_flight:
+            raise HTTPException(status_code=409, detail="An enhancement is already in progress")
+
+        item = TaskItem(
+            meeting_id=uuid.uuid4(),
+            action_type="BUILD",
+            assignee_name=email.split("@")[0],
+            assignee_email=email,
+            description=f"Enhance apps/{slug}/: {prompt.strip()[:400]}",
+            priority="NICE_TO_HAVE",
+            status="running",
+            mode="ai",
+            max_attempts=max(source.max_attempts or 1, 1),
+            built_app_slug=slug,
+            plan_status="approved",
+        )
+        s.add(item)
+        await s.flush()
+        execution = TaskExecution(task_id=item.id, status="running", log="")
+        s.add(execution)
+        await s.commit()
+        await s.refresh(item)
+        await s.refresh(execution)
+        task_id, exec_id, max_attempts = item.id, execution.id, item.max_attempts
+        supabase_url, has_db_uri = await _lookup_supabase_config(s, slug)
+
+    prompt_text = build_enhance_prompt(
+        slug=slug,
+        user_request=prompt.strip(),
+        attempt_count=0,
+        max_attempts=max_attempts,
+        supabase_url=supabase_url,
+        has_db_uri=has_db_uri,
+        user_email=email,
+        attachments=None,
+        selection_block="",
+    )
+    _RUNNING[task_id] = {"task": None, "proc": None}
+    bg = asyncio.create_task(_run_execution(task_id, exec_id, prompt_text))
+    _RUNNING[task_id]["task"] = bg
+    return str(task_id), slug
+
+
 @router.get("/templates", response_model=list[TemplateBrief])
 async def list_build_templates(user: CurrentUser = Depends(current_user)):
     """User-scoped template catalog for the Discord bot. No `rules` (same
@@ -371,3 +451,12 @@ async def unpublish_built_app(slug: str, user: CurrentUser = Depends(current_use
     async with session() as s:
         await _unpublish_slug(s, slug, user.email, is_admin=False)
     return None
+
+
+@router.post("/{slug}/enhance", response_model=BuildResponse, status_code=201)
+async def enhance_built_app(slug: str, body: EnhanceRequest, user: CurrentUser = Depends(current_user)):
+    """User-scoped enhance: edit an existing Discord-built app in place. Returns
+    a BuildResponse so the Discord watcher can poll it like any build."""
+    _validate_slug(slug)
+    task_id, out_slug = await _create_and_spawn_enhance(user.email, slug, body.prompt)
+    return BuildResponse(task_id=task_id, slug=out_slug, status="running")
