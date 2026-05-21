@@ -44,6 +44,8 @@ class DiscordCommandHandler:
         Returns an immediate response:
         - PING -> PONG (type 1)
         - APPLICATION_COMMAND -> DEFERRED (type 5), then process in background
+        - MESSAGE_COMPONENT -> MODAL (type 9), opens the app-builder description form
+        - MODAL_SUBMIT -> DEFERRED (type 5), routes the build to background
         """
         interaction_type = payload.get("type")
 
@@ -163,6 +165,8 @@ class DiscordCommandHandler:
             user_id=user_id,
             user_name=user_name,
             channel_id=channel_id,
+            # Synthetic, for logging only — the authoritative inputs are
+            # template_key + description (run_panel_build uses those, not raw_text).
             raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
             subcommand="aiuibuilder",
             arguments="",
@@ -176,6 +180,9 @@ class DiscordCommandHandler:
             notify_channel=notify_channel if channel_id else None,
         )
 
+        # Fire-and-forget, mirroring _handle_application_command. run_panel_build
+        # itself is short-lived; its long-running build watcher is tracked with a
+        # strong ref inside CommandRouter (_background_tasks), so it won't be GC'd.
         asyncio.create_task(self.router.run_panel_build(ctx, template_key, description))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
