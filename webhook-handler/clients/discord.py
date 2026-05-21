@@ -79,36 +79,26 @@ class DiscordClient:
             logger.error(f"Error sending Discord followup: {e}")
             return False
 
-    async def edit_original(
-        self,
-        interaction_token: str,
-        content: str,
-    ) -> bool:
-        """
-        Edit the original deferred response message.
-
-        Args:
-            interaction_token: The interaction token from the original payload
-            content: New message content (max 2000 chars)
-
-        Returns:
-            True if successful
-        """
+    async def edit_original(self, interaction_token: str, content: str,
+                            components: list | None = None) -> bool:
+        """Edit the original deferred response message. Optionally attaches
+        message `components` (e.g. Enhance/Unpublish buttons)."""
         content = content[:2000]
         url = (
             f"{DISCORD_API_BASE}/webhooks/{self.application_id}"
             f"/{interaction_token}/messages/@original"
         )
-
+        body: dict = {"content": content}
+        if components is not None:
+            body["components"] = components
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.patch(url, json={"content": content})
+                response = await client.patch(url, json=body)
                 if response.status_code in (200, 204):
                     logger.info("Discord original message edited")
                     return True
-                else:
-                    logger.error(f"Discord edit error: {response.status_code} {response.text}")
-                    return False
+                logger.error(f"Discord edit error: {response.status_code} {response.text}")
+                return False
         except Exception as e:
             logger.error(f"Error editing Discord message: {e}")
             return False

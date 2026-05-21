@@ -200,3 +200,29 @@ async def test_publish_app_posts_and_returns_status(client):
     assert req.headers.get("x-user-email") == "alice@x.com"
     assert "x-cron-secret" not in {k.lower() for k in req.headers}
     assert out["public_url"] == "https://portfolio-ab12.ai-ui.coolestdomain.win/"
+
+
+@pytest.mark.asyncio
+async def test_unpublish_app_deletes(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.delete("/api/aiuibuilder/slug-1/publish").mock(return_value=Response(204))
+        ok = await client.unpublish_app("alice@x.com", "slug-1")
+    assert ok is True
+    req = route.calls.last.request
+    assert req.headers.get("x-user-email") == "alice@x.com"
+    assert "x-cron-secret" not in {k.lower() for k in req.headers}
+
+
+@pytest.mark.asyncio
+async def test_enhance_app_posts(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/api/aiuibuilder/slug-1/enhance").mock(
+            return_value=Response(201, json={"task_id": "t1", "slug": "slug-1", "status": "running"})
+        )
+        out = await client.enhance_app("alice@x.com", "slug-1", "make header green")
+    assert out["task_id"] == "t1"
+    req = route.calls.last.request
+    assert req.headers.get("x-user-email") == "alice@x.com"
+    assert "x-cron-secret" not in {k.lower() for k in req.headers}
+    import json as _j
+    assert _j.loads(req.content)["prompt"] == "make header green"

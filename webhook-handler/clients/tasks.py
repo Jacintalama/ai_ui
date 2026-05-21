@@ -108,3 +108,14 @@ class TasksClient:
             "POST", f"/api/aiuibuilder/{slug}/publish", user_email,
         )
         return resp.json()
+
+    async def unpublish_app(self, user_email: str, slug: str) -> bool:
+        await self._request("DELETE", f"/api/aiuibuilder/{slug}/publish", user_email)
+        return True
+
+    async def enhance_app(self, user_email: str, slug: str, prompt: str) -> dict[str, Any]:
+        resp = await self._request(
+            "POST", f"/api/aiuibuilder/{slug}/enhance", user_email,
+            json={"prompt": prompt},
+        )
+        return resp.json()
