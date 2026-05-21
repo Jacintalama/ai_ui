@@ -16,6 +16,7 @@ STYLE_PRIMARY = 1    # blurple ("blue")
 STYLE_SECONDARY = 2  # grey
 STYLE_SUCCESS = 3    # green
 STYLE_LINK = 5       # link button (opens a URL; carries `url`, not custom_id)
+STYLE_DANGER = 4     # red (destructive action, e.g. Unpublish)
 
 # Text input styles
 TEXT_PARAGRAPH = 2
@@ -114,14 +115,17 @@ def template_key_from_modal(custom_id: str) -> str | None:
 
 
 PUBLISH_PREFIX = "aiuibuild:publish:"  # ready-msg button -> aiuibuild:publish:<slug>
+ENHANCE_PREFIX = "aiuibuild:enhance:"
+UNPUBLISH_PREFIX = "aiuibuild:unpublish:"
+ENHANCE_MODAL_PREFIX = "aiuibuild:enhancemodal:"
 
 
 def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
-    """Action row for the build-ready message: a green Publish button, plus an
-    'Open preview' link button when a preview_url is available. Link buttons
-    carry `url` and must NOT carry a custom_id."""
+    """Action row for the build-ready message: green Publish + blurple Enhance,
+    plus an 'Open preview' link button when preview_url is set."""
     buttons: list[dict] = [
         _button("\U0001f7e2 Publish", f"{PUBLISH_PREFIX}{slug}", STYLE_SUCCESS),
+        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
     ]
     if preview_url:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
@@ -142,3 +146,69 @@ def slug_from_publish_button(custom_id: str) -> str:
     if not slug:
         raise ValueError(f"publish button custom_id has no slug: {custom_id!r}")
     return slug
+
+
+def build_published_components(slug: str, public_url: str = "") -> list[dict]:
+    """Buttons on the 'Published!' message: blurple Enhance + red Unpublish,
+    plus an 'Open live' link button."""
+    buttons: list[dict] = [
+        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
+        _button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}", STYLE_DANGER),
+    ]
+    if public_url:
+        buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                        "label": "\U0001f517 Open live", "url": public_url})
+    return [{"type": ACTION_ROW, "components": buttons}]
+
+
+def build_enhance_modal(slug: str) -> dict:
+    """Type-9 MODAL data: a paragraph 'What do you want to change?' field."""
+    return {
+        "title": "Enhance your app"[:45],
+        "custom_id": f"{ENHANCE_MODAL_PREFIX}{slug}",
+        "components": [{
+            "type": ACTION_ROW,
+            "components": [{
+                "type": TEXT_INPUT,
+                "custom_id": "change",
+                "label": "What do you want to change?",
+                "style": TEXT_PARAGRAPH,
+                "required": True,
+                "max_length": 2000,
+                "placeholder": "e.g. make the header green and add an About section",
+            }],
+        }],
+    }
+
+
+def _slug_after(custom_id: str, prefix: str) -> str:
+    if not custom_id.startswith(prefix):
+        raise ValueError(f"not a {prefix!r} custom_id: {custom_id!r}")
+    slug = custom_id[len(prefix):]
+    if not slug:
+        raise ValueError(f"{prefix!r} custom_id has no slug: {custom_id!r}")
+    return slug
+
+
+def is_enhance_button(custom_id: str) -> bool:
+    return custom_id.startswith(ENHANCE_PREFIX)
+
+
+def slug_from_enhance_button(custom_id: str) -> str:
+    return _slug_after(custom_id, ENHANCE_PREFIX)
+
+
+def is_unpublish_button(custom_id: str) -> bool:
+    return custom_id.startswith(UNPUBLISH_PREFIX)
+
+
+def slug_from_unpublish_button(custom_id: str) -> str:
+    return _slug_after(custom_id, UNPUBLISH_PREFIX)
+
+
+def is_enhance_modal(custom_id: str) -> bool:
+    return custom_id.startswith(ENHANCE_MODAL_PREFIX)
+
+
+def slug_from_enhance_modal(custom_id: str) -> str:
+    return _slug_after(custom_id, ENHANCE_MODAL_PREFIX)

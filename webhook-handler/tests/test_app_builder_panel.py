@@ -9,6 +9,14 @@ from handlers.app_builder_panel import (
     build_ready_components, is_publish_button, slug_from_publish_button,
     PUBLISH_PREFIX, STYLE_SUCCESS, STYLE_LINK, BUTTON,
 )
+from handlers.app_builder_panel import (
+    build_published_components, build_enhance_modal,
+    is_enhance_button, slug_from_enhance_button,
+    is_unpublish_button, slug_from_unpublish_button,
+    is_enhance_modal, slug_from_enhance_modal,
+    ENHANCE_PREFIX, UNPUBLISH_PREFIX, ENHANCE_MODAL_PREFIX,
+    STYLE_PRIMARY, STYLE_DANGER, TEXT_INPUT,
+)
 
 _TEMPLATES = [
     {"key": "portfolio", "label": "Portfolio", "emoji": "\U0001f3a8", "description": "..."},
@@ -92,17 +100,23 @@ def test_ready_components_has_publish_and_preview():
     pub = btns[0]
     assert pub["custom_id"] == f"{PUBLISH_PREFIX}portfolio-ab12"
     assert pub["style"] == STYLE_SUCCESS
-    link = btns[1]
+    # Enhance button is now the second button
+    enhance = btns[1]
+    assert enhance["custom_id"] == f"{ENHANCE_PREFIX}portfolio-ab12"
+    assert enhance["style"] == STYLE_PRIMARY
+    # Link button is now the third button
+    link = btns[2]
     assert link["style"] == STYLE_LINK
     assert link["url"] == "https://x/preview/portfolio-ab12/"
     assert "custom_id" not in link  # link buttons must not carry a custom_id
 
 
-def test_ready_components_without_preview_has_only_publish():
+def test_ready_components_without_preview_has_publish_and_enhance():
     rows = build_ready_components("slug-1", "")
     btns = rows[0]["components"]
-    assert len(btns) == 1
+    assert len(btns) == 2
     assert btns[0]["custom_id"] == f"{PUBLISH_PREFIX}slug-1"
+    assert btns[1]["custom_id"] == f"{ENHANCE_PREFIX}slug-1"
 
 
 def test_publish_button_parsers():
@@ -113,3 +127,43 @@ def test_publish_button_parsers():
         slug_from_publish_button("aiuibuild:tpl:x")
     with pytest.raises(ValueError):
         slug_from_publish_button(PUBLISH_PREFIX)  # bare prefix, no slug
+
+
+def test_ready_components_now_include_enhance():
+    rows = build_ready_components("slug-1", "https://x/preview/slug-1/")
+    ids = [c.get("custom_id") for c in rows[0]["components"]]
+    assert f"{ENHANCE_PREFIX}slug-1" in ids
+    assert f"{PUBLISH_PREFIX}slug-1" in ids
+
+
+def test_published_components_have_enhance_and_unpublish_and_live_link():
+    rows = build_published_components("slug-1", "https://slug-1.ai-ui.coolestdomain.win/")
+    btns = rows[0]["components"]
+    ids = [b.get("custom_id") for b in btns]
+    assert f"{ENHANCE_PREFIX}slug-1" in ids
+    assert f"{UNPUBLISH_PREFIX}slug-1" in ids
+    link = [b for b in btns if b["style"] == STYLE_LINK][0]
+    assert link["url"] == "https://slug-1.ai-ui.coolestdomain.win/"
+    assert "custom_id" not in link
+    unpub = [b for b in btns if b.get("custom_id") == f"{UNPUBLISH_PREFIX}slug-1"][0]
+    assert unpub["style"] == STYLE_DANGER
+
+
+def test_enhance_modal_shape():
+    data = build_enhance_modal("slug-1")
+    assert data["custom_id"] == f"{ENHANCE_MODAL_PREFIX}slug-1"
+    inp = data["components"][0]["components"][0]
+    assert inp["type"] == TEXT_INPUT
+    assert inp["custom_id"] == "change"
+    assert inp["required"] is True
+
+
+def test_new_parsers():
+    assert is_enhance_button(f"{ENHANCE_PREFIX}s") and slug_from_enhance_button(f"{ENHANCE_PREFIX}s") == "s"
+    assert is_unpublish_button(f"{UNPUBLISH_PREFIX}s") and slug_from_unpublish_button(f"{UNPUBLISH_PREFIX}s") == "s"
+    assert is_enhance_modal(f"{ENHANCE_MODAL_PREFIX}s") and slug_from_enhance_modal(f"{ENHANCE_MODAL_PREFIX}s") == "s"
+    for fn, pref in [(slug_from_enhance_button, ENHANCE_PREFIX),
+                     (slug_from_unpublish_button, UNPUBLISH_PREFIX),
+                     (slug_from_enhance_modal, ENHANCE_MODAL_PREFIX)]:
+        with pytest.raises(ValueError):
+            fn(pref)  # bare prefix, empty slug
