@@ -102,3 +102,9 @@ class TasksClient:
             "GET", f"/api/aiuibuilder/build/{task_id}", user_email,
         )
         return resp.json()
+
+    async def publish_app(self, user_email: str, slug: str) -> dict[str, Any]:
+        resp = await self._request(
+            "POST", f"/api/aiuibuilder/{slug}/publish", user_email,
+        )
+        return resp.json()
