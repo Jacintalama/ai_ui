@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from handlers.discord_commands import DiscordCommandHandler
-from handlers.app_builder_panel import TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_INPUT_ID
+from handlers.app_builder_panel import TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_INPUT_ID, PUBLISH_PREFIX
 
 
 def _handler(router):
@@ -81,9 +81,6 @@ async def test_modal_submit_blank_key():
     await handler.handle_interaction(payload)
     await asyncio.sleep(0)
     assert captured["key"] is None
-
-
-from handlers.app_builder_panel import PUBLISH_PREFIX
 
 
 @pytest.mark.asyncio

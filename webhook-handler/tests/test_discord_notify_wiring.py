@@ -33,6 +33,7 @@ async def test_notify_channel_posts_to_channel(monkeypatch):
 
     ctx = captured_ctx["ctx"]
     assert ctx.notify_channel is not None
+    assert ctx.notify_channel_rich is not None
     await ctx.notify_channel("hello")
     discord.post_channel_message.assert_awaited_once_with("chan-123", "hello")
 
@@ -56,3 +57,4 @@ async def test_notify_channel_none_without_channel():
     await handler.handle_interaction(payload)
     await asyncio.sleep(0)
     assert captured_ctx["ctx"].notify_channel is None
+    assert captured_ctx["ctx"].notify_channel_rich is None

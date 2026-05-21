@@ -1,7 +1,7 @@
 """Discord interaction handler for /aiui slash commands."""
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from clients.discord import DiscordClient
 from handlers.commands import CommandRouter, CommandContext
@@ -47,7 +47,7 @@ class DiscordCommandHandler:
         Returns an immediate response:
         - PING -> PONG (type 1)
         - APPLICATION_COMMAND -> DEFERRED (type 5), then process in background
-        - MESSAGE_COMPONENT -> MODAL (type 9), opens the app-builder description form
+        - MESSAGE_COMPONENT -> MODAL (type 9) for template buttons; DEFERRED (type 5) for the Publish button
         - MODAL_SUBMIT -> DEFERRED (type 5), routes the build to background
         """
         interaction_type = payload.get("type")
@@ -124,7 +124,9 @@ class DiscordCommandHandler:
         # Immediate ACK — tells Discord we'll follow up (type 5 = DEFERRED)
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
-    def _channel_notifiers(self, channel_id: str):
+    def _channel_notifiers(
+        self, channel_id: str
+    ) -> tuple[Callable[[str], Awaitable[None]], Callable[[str, str, str], Awaitable[None]]]:
         """Build the plain + rich channel notifiers for a ctx. The rich one
         posts a build-ready message with a Publish button."""
         async def notify_channel(msg: str) -> None:
