@@ -121,8 +121,7 @@ def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
     'Open preview' link button when a preview_url is available. Link buttons
     carry `url` and must NOT carry a custom_id."""
     buttons: list[dict] = [
-        {"type": BUTTON, "style": STYLE_SUCCESS, "label": "\U0001f7e2 Publish",
-         "custom_id": f"{PUBLISH_PREFIX}{slug}"},
+        _button("\U0001f7e2 Publish", f"{PUBLISH_PREFIX}{slug}", STYLE_SUCCESS),
     ]
     if preview_url:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
@@ -135,7 +134,11 @@ def is_publish_button(custom_id: str) -> bool:
 
 
 def slug_from_publish_button(custom_id: str) -> str:
-    """Publish-button custom_id -> slug. Raises ValueError if not a publish id."""
+    """Publish-button custom_id -> slug. Raises ValueError if not a publish id
+    or if the slug portion is empty."""
     if not is_publish_button(custom_id):
         raise ValueError(f"not a publish button custom_id: {custom_id!r}")
-    return custom_id[len(PUBLISH_PREFIX):]
+    slug = custom_id[len(PUBLISH_PREFIX):]
+    if not slug:
+        raise ValueError(f"publish button custom_id has no slug: {custom_id!r}")
+    return slug

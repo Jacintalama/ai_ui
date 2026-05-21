@@ -6,6 +6,8 @@ from handlers.app_builder_panel import (
     template_key_from_button, template_key_from_modal,
     TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_INPUT_ID,
     ACTION_ROW, TEXT_INPUT, STYLE_SECONDARY,
+    build_ready_components, is_publish_button, slug_from_publish_button,
+    PUBLISH_PREFIX, STYLE_SUCCESS, STYLE_LINK, BUTTON,
 )
 
 _TEMPLATES = [
@@ -83,12 +85,6 @@ def test_parser_raises_on_wrong_prefix():
         template_key_from_modal(f"{TEMPLATE_PREFIX}portfolio")
 
 
-from handlers.app_builder_panel import (
-    build_ready_components, is_publish_button, slug_from_publish_button,
-    PUBLISH_PREFIX, STYLE_SUCCESS, STYLE_LINK, ACTION_ROW, BUTTON,
-)
-
-
 def test_ready_components_has_publish_and_preview():
     rows = build_ready_components("portfolio-ab12", "https://x/preview/portfolio-ab12/")
     assert rows[0]["type"] == ACTION_ROW
@@ -113,6 +109,7 @@ def test_publish_button_parsers():
     assert is_publish_button(f"{PUBLISH_PREFIX}slug-1")
     assert not is_publish_button("aiuibuild:tpl:portfolio")
     assert slug_from_publish_button(f"{PUBLISH_PREFIX}slug-1") == "slug-1"
-    import pytest
     with pytest.raises(ValueError):
         slug_from_publish_button("aiuibuild:tpl:x")
+    with pytest.raises(ValueError):
+        slug_from_publish_button(PUBLISH_PREFIX)  # bare prefix, no slug
