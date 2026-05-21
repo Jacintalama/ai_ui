@@ -175,9 +175,6 @@ async def test_publish_on_published_edits_with_buttons():
     assert call.kwargs.get("components") is not None
 
 
-import asyncio as _aio
-
-
 def _modal_payload(custom_id, value="a portfolio"):
     return {"type": 5, "id": "i", "token": "tok",
             "data": {"custom_id": custom_id,
@@ -203,7 +200,7 @@ async def test_build_modal_opens_private_thread_and_is_ephemeral():
     resp = await handler.handle_interaction(_modal_payload(f"{BUILD_PREFIX}portfolio"))
     assert resp["type"] == 5
     assert resp["data"]["flags"] == 64
-    await _aio.sleep(0.05)
+    await asyncio.sleep(0.05)
 
     discord.create_private_thread.assert_awaited_once()
     args = discord.create_private_thread.await_args.args
@@ -231,7 +228,7 @@ async def test_build_modal_falls_back_to_channel_when_thread_fails():
 
     resp = await handler.handle_interaction(_modal_payload(f"{BUILD_PREFIX}"))
     assert resp["type"] == 5
-    await _aio.sleep(0.05)
+    await asyncio.sleep(0.05)
 
     discord.add_thread_member.assert_not_awaited()
     ctx = captured["ctx"]

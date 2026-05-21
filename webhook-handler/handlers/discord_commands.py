@@ -312,48 +312,50 @@ class DiscordCommandHandler:
         channel_id = payload.get("channel_id", "")
 
         async def _open_and_build() -> None:
-            target = channel_id
-            in_thread = False
-            thread_id = await self.discord.create_private_thread(
-                channel_id, f"{template_key or 'app'}-{user_name}"[:90]
-            )
-            if thread_id:
-                await self.discord.add_thread_member(thread_id, user_id)
-                await self.discord.edit_original(
-                    interaction_token=interaction_token,
-                    content=f"✅ Opening your private build space → <#{thread_id}>",
+            # Detached task — guard everything so an unexpected error is logged,
+            # not silently swallowed (it does two API calls before the build).
+            try:
+                target = channel_id
+                thread_id = await self.discord.create_private_thread(
+                    channel_id, f"{template_key or 'app'}-{user_name}"[:90]
                 )
-                target = thread_id
-                in_thread = True
-
-            if in_thread:
-                async def respond(msg: str) -> None:
-                    await self.discord.post_channel_message(target, msg)
-            else:
-                async def respond(msg: str) -> None:
+                if thread_id:
+                    await self.discord.add_thread_member(thread_id, user_id)
                     await self.discord.edit_original(
-                        interaction_token=interaction_token, content=msg,
+                        interaction_token=interaction_token,
+                        content=f"✅ Opening your private build space → <#{thread_id}>",
                     )
+                    target = thread_id
 
-            notify_channel, notify_channel_rich = self._channel_notifiers(target)
-            ctx = CommandContext(
-                user_id=user_id,
-                user_name=user_name,
-                channel_id=target,
-                raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
-                subcommand="aiuibuilder",
-                arguments="",
-                platform="discord",
-                respond=respond,
-                metadata={
-                    "interaction_id": payload.get("id", ""),
-                    "interaction_token": interaction_token,
-                    "guild_id": payload.get("guild_id", ""),
-                },
-                notify_channel=notify_channel,
-                notify_channel_rich=notify_channel_rich,
-            )
-            await self.router.run_panel_build(ctx, template_key, description)
+                    async def respond(msg: str) -> None:
+                        await self.discord.post_channel_message(target, msg)
+                else:
+                    async def respond(msg: str) -> None:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token, content=msg,
+                        )
+
+                notify_channel, notify_channel_rich = self._channel_notifiers(target)
+                ctx = CommandContext(
+                    user_id=user_id,
+                    user_name=user_name,
+                    channel_id=target,
+                    raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
+                    subcommand="aiuibuilder",
+                    arguments="",
+                    platform="discord",
+                    respond=respond,
+                    metadata={
+                        "interaction_id": payload.get("id", ""),
+                        "interaction_token": interaction_token,
+                        "guild_id": payload.get("guild_id", ""),
+                    },
+                    notify_channel=notify_channel,
+                    notify_channel_rich=notify_channel_rich,
+                )
+                await self.router.run_panel_build(ctx, template_key, description)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_open_and_build failed user=%s: %s", user_id, exc)
 
         asyncio.create_task(_open_and_build())
         # Ephemeral deferred ACK (flags=64) — only the clicking user sees it.
