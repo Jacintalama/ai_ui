@@ -37,6 +37,11 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
 # the whole platform until someone resolves it in the web UI.
 _LIVE_BUILD_STATES = ("running", "planning")
 
+# Enhance must ALSO block on awaiting_input: a second enhancement can't start
+# while a prior one is parked waiting for clarification on the same app.
+# (Differs from _LIVE_BUILD_STATES, which excludes awaiting_input for new builds.)
+_LIVE_ENHANCE_STATES = ("running", "planning", "awaiting_input")
+
 # Same default as routes_projects.PUBLIC_DOMAIN.
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
 
@@ -329,7 +334,7 @@ async def _create_and_spawn_enhance(email: str, slug: str, prompt: str) -> tuple
         in_flight = (await s.execute(
             select(TaskItem.id).where(
                 TaskItem.built_app_slug == slug,
-                TaskItem.status.in_(["running", "planning", "awaiting_input"]),
+                TaskItem.status.in_(_LIVE_ENHANCE_STATES),
             ).limit(1)
         )).scalar_one_or_none()
         if in_flight:
@@ -369,7 +374,7 @@ async def _create_and_spawn_enhance(email: str, slug: str, prompt: str) -> tuple
         attachments=None,
         selection_block="",
     )
-    _RUNNING[task_id] = {"task": None, "proc": None}
+    _RUNNING[task_id] = {"task": None}
     bg = asyncio.create_task(_run_execution(task_id, exec_id, prompt_text))
     _RUNNING[task_id]["task"] = bg
     return str(task_id), slug
