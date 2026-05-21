@@ -40,7 +40,7 @@ def test_happy_path_creates_and_pins(monkeypatch):
                         lambda url, email: [{"key": "portfolio", "label": "Portfolio", "emoji": "x"}])
     monkeypatch.setattr(setup, "_find_channel", lambda g, n, h: None)
     monkeypatch.setattr(setup, "_create_channel",
-                        lambda g, n, h: calls.setdefault("created", "chan-1") or "chan-1")
+                        lambda g, n, h: calls.update({"created": "chan-1"}) or "chan-1")
     monkeypatch.setattr(setup, "_post_panel",
                         lambda c, p, h: calls.update({"posted": (c, p)}) or "msg-1")
     monkeypatch.setattr(setup, "_pin",
@@ -70,3 +70,22 @@ def test_reuses_existing_channel(monkeypatch):
 
     assert setup.main() == 0
     assert created["n"] == 0  # never created a second channel
+
+
+def test_catalog_fetch_failure_returns_2(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "guild")
+    monkeypatch.setenv("APP_BUILDER_SETUP_EMAIL", "admin@x.com")
+    monkeypatch.setattr(setup, "_fetch_templates",
+                        lambda url, email: (_ for _ in ()).throw(Exception("conn refused")))
+    assert setup.main() == 2
+
+
+def test_empty_catalog_returns_2(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "guild")
+    monkeypatch.setenv("APP_BUILDER_SETUP_EMAIL", "admin@x.com")
+    monkeypatch.setattr(setup, "_fetch_templates", lambda url, email: [])
+    assert setup.main() == 2

@@ -29,7 +29,7 @@ def _fetch_templates(tasks_url: str, email: str) -> list[dict]:
     url = f"{tasks_url.rstrip('/')}/api/aiuibuilder/templates"
     with httpx.Client(timeout=30.0) as client:
         r = client.get(url, headers={"X-User-Email": email})
-    r.raise_for_status()
+        r.raise_for_status()
     return r.json()
 
 
