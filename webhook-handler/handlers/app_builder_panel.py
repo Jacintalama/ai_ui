@@ -45,14 +45,14 @@ def build_panel_payload(templates: list[dict]) -> dict:
     button, laid out 5 per row. Templates beyond the 24-button budget (room left
     for Blank) are dropped — the slash command still reaches them."""
     buttons: list[dict] = []
-    for i, t in enumerate(templates[: _MAX_BUTTONS - 1]):
+    for t in templates[: _MAX_BUTTONS - 1]:
         key = t.get("key")
         if not key:
             continue  # tolerate a malformed row rather than crash
         emoji = (t.get("emoji") or "").strip()
         label = t.get("label", key)
         text = f"{emoji} {label}".strip()
-        style = STYLE_SUCCESS if i % 2 == 0 else STYLE_PRIMARY
+        style = STYLE_SUCCESS if len(buttons) % 2 == 0 else STYLE_PRIMARY
         buttons.append(_button(text, f"{TEMPLATE_PREFIX}{key}", style))
     buttons.append(_button("⬜ Blank", TEMPLATE_PREFIX, STYLE_SECONDARY))
 

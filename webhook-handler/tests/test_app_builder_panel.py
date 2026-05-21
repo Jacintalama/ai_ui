@@ -1,4 +1,5 @@
 """Pure builders for the App Builder channel panel + modal, and custom_id parsing."""
+import pytest
 from handlers.app_builder_panel import (
     build_panel_payload, build_modal_payload,
     is_panel_button, is_panel_modal,
@@ -35,6 +36,9 @@ def test_panel_rows_within_discord_limits():
         assert len(row["components"]) <= 5
     total = sum(len(r["components"]) for r in rows)
     assert total <= 25
+    # Blank must always appear, even under the 25-button cap
+    all_ids = [c["custom_id"] for row in rows for c in row["components"]]
+    assert TEMPLATE_PREFIX in all_ids
 
 
 def test_panel_skips_keyless_rows():
@@ -70,3 +74,10 @@ def test_custom_id_parsers():
     assert is_panel_modal(f"{BUILD_PREFIX}portfolio")
     assert template_key_from_modal(f"{BUILD_PREFIX}portfolio") == "portfolio"
     assert template_key_from_modal(BUILD_PREFIX) is None
+
+
+def test_parser_raises_on_wrong_prefix():
+    with pytest.raises(ValueError):
+        template_key_from_button(f"{BUILD_PREFIX}portfolio")
+    with pytest.raises(ValueError):
+        template_key_from_modal(f"{TEMPLATE_PREFIX}portfolio")
