@@ -192,8 +192,14 @@ filesystem path or shell command client-side.
 Pagination beyond 25 apps, rename/delete actions, multi-select, and
 auto-refreshing the dropdown after a publish/unpublish state change.
 
-## Implementation logistics (decided at planning, not here)
-This entire feature lives in **uncommitted VPS files**. Before implementing we
-must choose where the work happens — pull the App Builder files into the local
-checkout, build + test locally, then deploy back; or edit on the VPS — and how
-the result (plus the surrounding uncommitted VPS work) gets committed to git.
+## Implementation logistics
+This entire feature lives in **uncommitted VPS files**, so the work will be done
+**directly on the VPS** (`/root/proxy-server`, edit in place against the running
+bot). Implications the plan must account for:
+- Run the `tests/test_app_builder_panel.py` (and new handler/router tests) **on
+  the VPS** before restarting the `webhook-handler` container.
+- After verifying, **commit the new code to git** so this feature does not remain
+  uncommitted/untested like the surrounding App Builder work (see the 2026-05-22
+  sync note). Decide at commit time how much of the broader uncommitted VPS state
+  to include vs. scope the commit to just these changes.
+- Restart/redeploy the `webhook-handler` container so the changes take effect.
