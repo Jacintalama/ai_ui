@@ -65,3 +65,12 @@ async def test_run_panel_status_text():
     await _router(tasks).run_panel_status(ctx, "shop")
     joined = "\n".join(sent["text"])
     assert "Shop" in joined and "Role: owner" in joined and "Published: no" in joined
+
+
+async def test_run_panel_status_minimal_no_crash():
+    # API returns only a name (no role/published) — must not KeyError.
+    tasks = FakeTasks(status={"name": "Shop"})
+    ctx, sent = _ctx()
+    await _router(tasks).run_panel_status(ctx, "shop")
+    joined = "\n".join(sent["text"])
+    assert "Shop" in joined and "Role: ?" in joined and "Published: no" in joined

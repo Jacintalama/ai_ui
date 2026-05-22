@@ -1642,8 +1642,8 @@ class CommandRouter:
             await ctx.respond(self._format_status_error(e))
             return
         lines = [
-            f"**{status['name']}** (`{status['slug']}`)",
-            f"Role: {status['role']}",
+            f"**{status.get('name', slug)}** (`{status.get('slug', slug)}`)",
+            f"Role: {status.get('role', '?')}",
             f"Published: {'yes' if status.get('published') else 'no'}",
         ]
         if status.get("public_url"):
@@ -1654,10 +1654,10 @@ class CommandRouter:
 
     @staticmethod
     def _format_status_error(e: TasksAPIError) -> str:
-        if e.status == 404:
-            return "Project not found or not yours."
         if e.status == 0:
             return "Tasks service unreachable, try again."
+        if e.status == 404:
+            return "Project not found or not yours."
         return f"Tasks API error ({e.status})."
 
     def _format_enhance_error(self, e: TasksAPIError) -> str:
