@@ -1,20 +1,43 @@
 """Discord interaction handler for /aiui slash commands."""
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from clients.discord import DiscordClient
 from handlers.commands import CommandRouter, CommandContext
+from handlers.app_builder_panel import (
+    build_modal_payload,
+    is_panel_button,
+    is_panel_modal,
+    template_key_from_button,
+    template_key_from_modal,
+    DESCRIPTION_INPUT_ID,
+    is_publish_button,
+    slug_from_publish_button,
+    build_ready_components,
+    build_enhance_modal,
+    build_published_components,
+    is_enhance_button, slug_from_enhance_button,
+    is_unpublish_button, slug_from_unpublish_button,
+    is_enhance_modal, slug_from_enhance_modal,
+    is_app_select,
+    is_status_button, slug_from_status_button,
+)
 
 logger = logging.getLogger(__name__)
 
-# Discord interaction types
+# Discord interaction types (payload["type"])
 PING = 1
 APPLICATION_COMMAND = 2
+MESSAGE_COMPONENT = 3
+MODAL_SUBMIT = 5  # NOTE: same number as DEFERRED_CHANNEL_MESSAGE below, but a
+                  # different field (interaction type vs. callback type).
 
-# Discord interaction callback types
+# Discord interaction callback (response) types
 PONG = 1
 DEFERRED_CHANNEL_MESSAGE = 5
+DEFERRED_UPDATE_MESSAGE = 6
+MODAL = 9
 
 
 class DiscordCommandHandler:
@@ -31,6 +54,8 @@ class DiscordCommandHandler:
         Returns an immediate response:
         - PING -> PONG (type 1)
         - APPLICATION_COMMAND -> DEFERRED (type 5), then process in background
+        - MESSAGE_COMPONENT -> MODAL (type 9) for template buttons; DEFERRED (type 5) for the Publish button
+        - MODAL_SUBMIT -> DEFERRED (type 5), routes the build to background
         """
         interaction_type = payload.get("type")
 
@@ -42,6 +67,14 @@ class DiscordCommandHandler:
         # APPLICATION_COMMAND — slash command invocation
         if interaction_type == APPLICATION_COMMAND:
             return await self._handle_application_command(payload)
+
+        # MESSAGE_COMPONENT — a button click (e.g. an App Builder template button)
+        if interaction_type == MESSAGE_COMPONENT:
+            return await self._handle_message_component(payload)
+
+        # MODAL_SUBMIT — the "Describe your app" form was submitted
+        if interaction_type == MODAL_SUBMIT:
+            return await self._handle_modal_submit(payload)
 
         logger.info(f"Ignoring Discord interaction type: {interaction_type}")
         return {"type": PONG}
@@ -72,6 +105,13 @@ class DiscordCommandHandler:
                 content=msg,
             )
 
+        async def respond_components(msg: str, components: list) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg, components=components,
+            )
+
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
         ctx = CommandContext(
             user_id=user_id,
             user_name=user_name,
@@ -81,11 +121,14 @@ class DiscordCommandHandler:
             arguments=arguments,
             platform="discord",
             respond=respond,
+            respond_components=respond_components,
             metadata={
                 "interaction_id": payload.get("id", ""),
                 "interaction_token": interaction_token,
                 "guild_id": payload.get("guild_id", ""),
             },
+            notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None,
         )
 
         # Fire-and-forget: process in background, edit deferred response
@@ -93,6 +136,309 @@ class DiscordCommandHandler:
 
         # Immediate ACK — tells Discord we'll follow up (type 5 = DEFERRED)
         return {"type": DEFERRED_CHANNEL_MESSAGE}
+
+    def _channel_notifiers(
+        self, channel_id: str
+    ) -> tuple[Callable[[str], Awaitable[None]], Callable[[str, str, str], Awaitable[None]]]:
+        """Build the plain + rich channel notifiers for a ctx. The rich one
+        posts a build-ready message with a Publish button."""
+        async def notify_channel(msg: str) -> None:
+            await self.discord.post_channel_message(channel_id, msg)
+
+        async def notify_channel_rich(msg: str, slug: str, preview_url: str) -> None:
+            await self.discord.post_channel_message(
+                channel_id, msg, components=build_ready_components(slug, preview_url),
+            )
+        return notify_channel, notify_channel_rich
+
+    async def _handle_message_component(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """A button click. App Builder template buttons open a modal; Enhance
+        opens an enhance modal; Publish/Unpublish route to the background; any
+        other component is a harmless no-op (never a 500)."""
+        data = payload.get("data", {})
+        custom_id = data.get("custom_id", "")
+        if is_enhance_button(custom_id):
+            try:
+                slug = slug_from_enhance_button(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed enhance custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": build_enhance_modal(slug)}
+        if is_unpublish_button(custom_id):
+            return await self._handle_unpublish_component(payload, custom_id)
+        if is_publish_button(custom_id):
+            return await self._handle_publish_component(payload, custom_id)
+        if is_app_select(custom_id):
+            return await self._handle_app_select_component(payload)
+        if is_status_button(custom_id):
+            try:
+                slug = slug_from_status_button(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed status custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_panel_status(ctx, slug))
+        if not is_panel_button(custom_id):
+            logger.info(f"Ignoring unknown component custom_id: {custom_id}")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        template_key = template_key_from_button(custom_id)
+        logger.info(f"App Builder button clicked: template={template_key}")
+        return {"type": MODAL, "data": build_modal_payload(template_key)}
+
+    async def _handle_publish_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """A Publish button click. Route to run_panel_publish in the background,
+        ACK deferred — mirrors the modal-submit pattern."""
+        try:
+            slug = slug_from_publish_button(custom_id)
+        except ValueError:
+            logger.info(f"Ignoring malformed publish custom_id: {custom_id}")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        async def on_published(public_url: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token,
+                content=f"\U0001f389 Published! Live at {public_url}".rstrip(),
+                components=build_published_components(slug, public_url),
+            )
+
+        ctx = CommandContext(
+            user_id=user_id,
+            user_name=user_name,
+            channel_id=channel_id,
+            raw_text=f"aiuibuilder publish {slug}",
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+            on_published=on_published,
+        )
+        asyncio.create_task(self.router.run_panel_publish(ctx, slug))
+        return {"type": DEFERRED_CHANNEL_MESSAGE}
+
+    async def _handle_unpublish_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """An Unpublish button click → run_panel_unpublish in the background, ACK deferred."""
+        try:
+            slug = slug_from_unpublish_button(custom_id)
+        except ValueError:
+            logger.info(f"Ignoring malformed unpublish custom_id: {custom_id}")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""),
+            raw_text=f"aiuibuilder unpublish {slug}",
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+        )
+        asyncio.create_task(self.router.run_panel_unpublish(ctx, slug))
+        return {"type": DEFERRED_CHANNEL_MESSAGE}
+
+    async def _handle_app_select_component(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """A dropdown selection from the 'Your apps' list → ephemeral per-project
+        menu. Routes run_panel_menu in the background, ACK ephemeral-deferred."""
+        data = payload.get("data", {})
+        values = data.get("values") or []
+        if not values:
+            logger.info("Ignoring app-select with no values")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        slug = values[0]
+        return await self._handle_panel_route(
+            payload, lambda ctx: self.router.run_panel_menu(ctx, slug))
+
+    async def _handle_panel_route(
+        self, payload: dict[str, Any], run: Callable[[Any], Awaitable[None]],
+    ) -> dict[str, Any]:
+        """Build an ephemeral CommandContext from a component interaction, schedule
+        `run(ctx)` in the background, and ACK ephemeral-deferred (flags=64)."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        channel_id = payload.get("channel_id", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        async def respond_components(msg: str, components: list) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg, components=components,
+            )
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=channel_id,
+            raw_text="aiuibuilder menu",
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            respond_components=respond_components,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+        )
+        asyncio.create_task(run(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """An App Builder modal submission. Extract the description, route to the
+        build in the background, and ACK deferred — mirrors the slash-command
+        deferred pattern (the watcher posts the link via the bot token later)."""
+        data = payload.get("data", {})
+        custom_id = data.get("custom_id", "")
+        if is_enhance_modal(custom_id):
+            try:
+                slug = slug_from_enhance_modal(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed enhance modal custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            change = self._extract_modal_value(data, "change")
+            interaction_token = payload.get("token", "")
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            channel_id = payload.get("channel_id", "")
+            notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+            async def respond(msg: str) -> None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=msg,
+                )
+
+            ctx = CommandContext(
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=channel_id,
+                raw_text=f"aiuibuilder enhance {slug}",
+                subcommand="aiuibuilder",
+                arguments="",
+                platform="discord",
+                respond=respond,
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
+                notify_channel=notify_channel if channel_id else None,
+                notify_channel_rich=notify_channel_rich if channel_id else None,
+            )
+            asyncio.create_task(self.router.run_panel_enhance(ctx, slug, change))
+            return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if not is_panel_modal(custom_id):
+            logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        return await self._handle_build_modal_submit(payload, custom_id)
+
+    async def _handle_build_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Build-template modal submit. Open a PRIVATE THREAD for the user, post
+        the build there, and ACK ephemerally with a pointer. Falls back to the
+        main channel if thread creation fails. Returns an ephemeral deferred
+        response within Discord's 3s window; the thread work runs in the
+        background (mirrors the fire-and-forget build pattern)."""
+        data = payload.get("data", {})
+        template_key = template_key_from_modal(custom_id)
+        description = self._extract_modal_value(data, DESCRIPTION_INPUT_ID)
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _open_and_build() -> None:
+            # Detached task — guard everything so an unexpected error is logged,
+            # not silently swallowed (it does two API calls before the build).
+            try:
+                target = channel_id
+                thread_id = await self.discord.create_private_thread(
+                    channel_id, f"{template_key or 'app'}-{user_name}"[:90]
+                )
+                if thread_id:
+                    await self.discord.add_thread_member(thread_id, user_id)
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"✅ Opening your private build space → <#{thread_id}>",
+                    )
+                    target = thread_id
+
+                    async def respond(msg: str) -> None:
+                        await self.discord.post_channel_message(target, msg)
+                else:
+                    async def respond(msg: str) -> None:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token, content=msg,
+                        )
+
+                notify_channel, notify_channel_rich = self._channel_notifiers(target)
+                ctx = CommandContext(
+                    user_id=user_id,
+                    user_name=user_name,
+                    channel_id=target,
+                    raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
+                    subcommand="aiuibuilder",
+                    arguments="",
+                    platform="discord",
+                    respond=respond,
+                    metadata={
+                        "interaction_id": payload.get("id", ""),
+                        "interaction_token": interaction_token,
+                        "guild_id": payload.get("guild_id", ""),
+                    },
+                    notify_channel=notify_channel,
+                    notify_channel_rich=notify_channel_rich,
+                )
+                await self.router.run_panel_build(ctx, template_key, description)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_open_and_build failed user=%s: %s", user_id, exc)
+
+        asyncio.create_task(_open_and_build())
+        # Ephemeral deferred ACK (flags=64) — only the clicking user sees it.
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    @staticmethod
+    def _extract_modal_value(data: dict[str, Any], input_custom_id: str) -> str:
+        """Pull a text-input value out of a modal-submit payload.
+        data.components[*].components[*] -> {custom_id, value}."""
+        for row in data.get("components", []):
+            for comp in row.get("components", []):
+                if comp.get("custom_id") == input_custom_id:
+                    return (comp.get("value") or "").strip()
+        return ""
 
     @staticmethod
     def _parse_options(options: list[dict]) -> tuple[str, str]:
