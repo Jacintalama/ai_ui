@@ -79,7 +79,9 @@ Make `/aiui aiuibuilder list` selectable. Selecting an app posts an **ephemeral*
   ("published" if public_url else "not published")[:100]}`. Cap at **25** options
   (Discord max). `placeholder="Select an app to manage…"`, `min_values=1`,
   `max_values=1`. Caller must not invoke this with an empty list (Discord rejects
-  a 0-option select).
+  a 0-option select). Slugs are assumed ≤100 chars so the `value` round-trips
+  back to a real slug in `run_panel_menu`/`run_panel_status` (slugs are short in
+  practice; truncation would otherwise 404).
 - `build_project_menu_components(slug, *, published, public_url, preview_url)
   -> list[dict]`: the state-aware row described above, including the new Status
   button (`STATUS_PREFIX + slug`). Link buttons (Open preview / Open live) are
@@ -98,7 +100,10 @@ Make `/aiui aiuibuilder list` selectable. Selecting an app posts an **ephemeral*
   deferred + `asyncio.create_task(self.router.run_panel_status(ctx, slug))`.
 - Ordering: place these checks alongside the existing `is_publish_button` /
   `is_unpublish_button` / `is_enhance_button` checks before the
-  `is_panel_button` fallthrough so unrelated components stay a no-op.
+  `is_panel_button` fallthrough so unrelated components stay a no-op. Dispatch is
+  by **`custom_id` prefix** (as the existing handler does); the
+  `component_type == 3` check is belt-and-suspenders, not the discriminator —
+  `is_app_select` keys off the distinct `aiuibuild:appselect` id.
 
 **3. `commands.py`:**
 - Add **one** optional callback to `CommandContext`:
@@ -141,6 +146,12 @@ preview" link for not-yet-published apps follows the pattern
 `{PUBLIC_BASE}/tasks/preview-app/{slug}/`. Source `PUBLIC_BASE` from existing
 config/env in `commands.py` (do not hardcode the domain). If no preview base is
 configured, omit the Open-preview link rather than emit a broken URL.
+
+### Not changed
+`scripts/register_discord_commands.py` needs **no change**: the text actions
+(`status <slug>`, `open <slug>`) still exist and work, so the existing
+`aiuibuilder` arg help (`list | status <slug> | open <slug>`) remains accurate.
+The dropdown simply makes `list` self-actionable.
 
 ## Security / permissions
 No new attack surface. The dropdown is built from `list_projects(email)`, which
