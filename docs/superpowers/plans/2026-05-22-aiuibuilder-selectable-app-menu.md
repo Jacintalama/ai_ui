@@ -110,6 +110,9 @@ $SSH "cd $VPS_WH && rm tests/test_smoke.py && cd /root/proxy-server && git add w
 
 - [ ] **Step 1: Write failing tests for the id helpers**
 
+> If `tests/test_app_builder_panel.py` already exists on the VPS, **append** these
+> tests rather than overwriting it (verified absent at plan time, but check first).
+
 ```python
 # tests/test_app_builder_panel.py
 from handlers import app_builder_panel as panel
@@ -292,7 +295,8 @@ def test_project_menu_published():
     labels = _labels(rows)
     assert any("Unpublish" in l for l in labels)
     assert any("Open live" in l for l in labels)
-    assert not any("Publish" == (l or "").strip().split(" ")[-1] for l in labels if l and "Unpublish" not in l)
+    # no standalone Publish button when published (Unpublish is the only *publish* word)
+    assert not any(("Publish" in l and "Unpublish" not in l) for l in labels)
 
 
 def test_project_menu_omits_link_when_url_missing():
