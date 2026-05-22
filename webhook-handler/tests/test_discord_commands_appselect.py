@@ -49,3 +49,13 @@ async def test_select_empty_values_is_noop():
     assert resp == {"type": DEFERRED_UPDATE_MESSAGE}
     await asyncio.sleep(0)
     assert router.calls == []
+
+
+async def test_status_button_malformed_is_noop():
+    # "aiuibuild:status:" has an empty slug -> slug_from_status_button raises -> no-op
+    router = FakeRouter()
+    h = DiscordCommandHandler(FakeDiscord(), router)
+    resp = await h.handle_interaction(_component_payload("aiuibuild:status:"))
+    assert resp == {"type": DEFERRED_UPDATE_MESSAGE}
+    await asyncio.sleep(0)
+    assert router.calls == []

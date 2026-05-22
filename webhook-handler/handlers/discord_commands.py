@@ -177,7 +177,8 @@ class DiscordCommandHandler:
                 logger.info(f"Ignoring malformed status custom_id: {custom_id}")
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return await self._handle_panel_route(
-                payload, lambda ctx: self.router.run_panel_status(ctx, slug))
+                payload, lambda ctx: self.router.run_panel_status(ctx, slug),
+                raw_text=f"aiuibuilder status {slug}")
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -275,10 +276,12 @@ class DiscordCommandHandler:
             return {"type": DEFERRED_UPDATE_MESSAGE}
         slug = values[0]
         return await self._handle_panel_route(
-            payload, lambda ctx: self.router.run_panel_menu(ctx, slug))
+            payload, lambda ctx: self.router.run_panel_menu(ctx, slug),
+            raw_text=f"aiuibuilder menu {slug}")
 
     async def _handle_panel_route(
-        self, payload: dict[str, Any], run: Callable[[Any], Awaitable[None]],
+        self, payload: dict[str, Any], run: Callable[[CommandContext], Awaitable[None]],
+        *, raw_text: str = "aiuibuilder menu",
     ) -> dict[str, Any]:
         """Build an ephemeral CommandContext from a component interaction, schedule
         `run(ctx)` in the background, and ACK ephemeral-deferred (flags=64)."""
@@ -301,7 +304,7 @@ class DiscordCommandHandler:
             user_id=user.get("id", ""),
             user_name=user.get("username", "unknown"),
             channel_id=channel_id,
-            raw_text="aiuibuilder menu",
+            raw_text=raw_text,
             subcommand="aiuibuilder",
             arguments="",
             platform="discord",
