@@ -232,3 +232,29 @@ def is_status_button(custom_id: str) -> bool:
 
 def slug_from_status_button(custom_id: str) -> str:
     return _slug_after(custom_id, STATUS_PREFIX)
+
+
+def build_apps_select_components(projects: list[dict]) -> list[dict]:
+    """One action row holding a string select of the user's apps. value=slug,
+    description shows publish state. Caps at 25 options (Discord max). Caller must
+    NOT pass an empty list (Discord rejects a 0-option select)."""
+    options: list[dict] = []
+    for p in projects[:_MAX_SELECT_OPTIONS]:
+        slug = p.get("slug")
+        if not slug:
+            continue  # tolerate a malformed row rather than crash
+        published = bool(p.get("public_url"))
+        options.append({
+            "label": (p.get("name") or slug)[:100],
+            "value": slug[:100],
+            "description": ("published" if published else "not published")[:100],
+        })
+    select = {
+        "type": SELECT_MENU,
+        "custom_id": APP_SELECT_ID,
+        "placeholder": "Select an app to manage…",
+        "min_values": 1,
+        "max_values": 1,
+        "options": options,
+    }
+    return [{"type": ACTION_ROW, "components": [select]}]
