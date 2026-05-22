@@ -1622,7 +1622,9 @@ class CommandRouter:
         name = status.get("name", slug)
         published = bool(status.get("published"))
         public_url = (status.get("public_url") or "").strip()
-        preview_url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/"
+        # Omit the preview link entirely if no public domain is configured,
+        # rather than emit a broken "https:///..." URL.
+        preview_url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/" if PUBLIC_DOMAIN else ""
         header = f"**{name}** (`{slug}`) — {'published' if published else 'not published'}"
         components = build_project_menu_components(
             slug, published=published, public_url=public_url, preview_url=preview_url,

@@ -157,6 +157,9 @@ class DiscordCommandHandler:
         other component is a harmless no-op (never a 500)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        # All aiuibuild:* component ids are routed by their distinct second
+        # segment (enhance/unpublish/publish/appselect/status/tpl), so check
+        # order doesn't matter — but any NEW prefix added here must stay disjoint.
         if is_enhance_button(custom_id):
             try:
                 slug = slug_from_enhance_button(custom_id)
