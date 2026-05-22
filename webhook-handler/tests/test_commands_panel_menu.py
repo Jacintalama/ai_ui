@@ -74,3 +74,33 @@ async def test_run_panel_status_minimal_no_crash():
     await _router(tasks).run_panel_status(ctx, "shop")
     joined = "\n".join(sent["text"])
     assert "Shop" in joined and "Role: ?" in joined and "Published: no" in joined
+
+
+class FakeTasksList(FakeTasks):
+    def __init__(self, projects):
+        super().__init__()
+        self._projects = projects
+    async def list_projects(self, email):
+        return self._projects
+
+
+async def test_list_attaches_dropdown_when_projects_exist():
+    tasks = FakeTasksList([
+        {"slug": "shop", "name": "Shop", "role": "owner", "public_url": "https://x"},
+    ])
+    ctx, sent = _ctx()
+    ctx.arguments = "list"
+    await _router(tasks)._handle_aiuibuilder(ctx)
+    assert len(sent["comp"]) == 1
+    reply, components = sent["comp"][0]
+    assert "Your apps" in reply
+    select = components[0]["components"][0]
+    assert select["custom_id"] == "aiuibuild:appselect"
+
+
+async def test_list_empty_no_dropdown():
+    ctx, sent = _ctx()
+    ctx.arguments = "list"
+    await _router(FakeTasksList([]))._handle_aiuibuilder(ctx)
+    assert sent["comp"] == []
+    assert any("no projects yet" in m for m in sent["text"])

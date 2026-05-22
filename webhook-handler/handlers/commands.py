@@ -1450,7 +1450,10 @@ class CommandRouter:
                 reply = "\n".join(lines)
                 if len(reply) > 1990:
                     reply = reply[:1980] + "\n... +more"
-                await ctx.respond(reply)
+                if ctx.respond_components is not None:
+                    await ctx.respond_components(reply, build_apps_select_components(projects))
+                else:
+                    await ctx.respond(reply)
 
             elif action == "status":
                 if not rest:
