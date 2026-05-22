@@ -46,3 +46,41 @@ def test_build_apps_select_caps_at_25():
     projects = [{"slug": f"a{i}", "name": f"A{i}", "public_url": None} for i in range(40)]
     rows = panel.build_apps_select_components(projects)
     assert len(rows[0]["components"][0]["options"]) == 25
+
+
+def _labels(rows):
+    return [c.get("label") for c in rows[0]["components"]]
+
+
+def test_project_menu_not_published():
+    rows = panel.build_project_menu_components(
+        "shop", published=False, public_url="", preview_url="https://prev/shop/")
+    labels = _labels(rows)
+    assert any("Enhance" in l for l in labels)
+    assert any("Publish" in l for l in labels)
+    assert any("Open preview" in l for l in labels)
+    assert any("Status" in l for l in labels)
+    assert not any("Unpublish" in l for l in labels)
+
+
+def test_project_menu_published():
+    rows = panel.build_project_menu_components(
+        "shop", published=True, public_url="https://shop.live", preview_url="")
+    labels = _labels(rows)
+    assert any("Unpublish" in l for l in labels)
+    assert any("Open live" in l for l in labels)
+    # no standalone Publish button when published (Unpublish is the only *publish* word)
+    assert not any(("Publish" in l and "Unpublish" not in l) for l in labels)
+
+
+def test_project_menu_omits_link_when_url_missing():
+    rows = panel.build_project_menu_components(
+        "shop", published=False, public_url="", preview_url="")
+    link_buttons = [c for c in rows[0]["components"] if c.get("style") == panel.STYLE_LINK]
+    assert link_buttons == []
+
+
+def test_project_menu_status_custom_id():
+    rows = panel.build_project_menu_components("shop", published=True, public_url="https://x")
+    status = [c for c in rows[0]["components"] if c.get("custom_id", "").startswith(panel.STATUS_PREFIX)]
+    assert status and status[0]["custom_id"] == "aiuibuild:status:shop"

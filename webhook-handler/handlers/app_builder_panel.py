@@ -258,3 +258,26 @@ def build_apps_select_components(projects: list[dict]) -> list[dict]:
         "options": options,
     }
     return [{"type": ACTION_ROW, "components": [select]}]
+
+
+def build_project_menu_components(
+    slug: str, *, published: bool, public_url: str = "", preview_url: str = "",
+) -> list[dict]:
+    """State-aware action row for a selected app:
+    Enhance + (Publish | Unpublish) + an Open link (only when its URL is set) + Status.
+    Max 5 buttons per row; we emit at most 4."""
+    buttons: list[dict] = [
+        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
+    ]
+    if published:
+        buttons.append(_button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}", STYLE_DANGER))
+        if public_url:
+            buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                            "label": "\U0001f517 Open live", "url": public_url})
+    else:
+        buttons.append(_button("\U0001f7e2 Publish", f"{PUBLISH_PREFIX}{slug}", STYLE_SUCCESS))
+        if preview_url:
+            buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                            "label": "\U0001f517 Open preview", "url": preview_url})
+    buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
+    return [{"type": ACTION_ROW, "components": buttons}]
