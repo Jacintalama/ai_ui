@@ -1,11 +1,19 @@
 """Shared command router for slash commands (Slack & Discord)."""
 import asyncio
 import json
+import shlex
 import httpx
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional, Any
 import logging
+import os
+
+from clients.tasks import TasksClient, TasksAPIError
+from handlers.app_builder_panel import (
+    build_apps_select_components,
+    build_project_menu_components,
+)
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -14,6 +22,13 @@ from clients.mcp_proxy import MCPProxyClient
 from config import settings, get_service_endpoints
 
 logger = logging.getLogger(__name__)
+
+BUILD_POLL_SECONDS = 12
+BUILD_MAX_POLLS = 150  # ~30 min at 12s
+BUILD_MAX_CONSECUTIVE_ERRORS = 5
+# Public host for building preview links (matches the tasks service's
+# AIUI_PUBLIC_DOMAIN default; the domain is otherwise hardcoded elsewhere here).
+PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
 
 
 @dataclass
@@ -28,6 +43,17 @@ class CommandContext:
     platform: str  # "slack" or "discord"
     respond: Callable[[str], Awaitable[None]]
     metadata: dict = field(default_factory=dict)
+    notify_channel: Optional[Callable[[str], Awaitable[None]]] = None
+    # (message, slug, preview_url) -> post a rich channel message (e.g. with a
+    # Publish button). Set by the Discord layer; None on other platforms.
+    notify_channel_rich: Optional[Callable[[str, str, str], Awaitable[None]]] = None
+    # (public_url) -> edit the publish reply to show the live URL + Enhance/Unpublish
+    # buttons. Set by the Discord layer; None elsewhere.
+    on_published: Optional[Callable[[str], Awaitable[None]]] = None
+    # (message, components) -> edit the interaction reply to include Discord
+    # components (the apps dropdown or a per-project menu). Set by the Discord
+    # layer; None on other platforms.
+    respond_components: Optional[Callable[[str, list], Awaitable[None]]] = None
 
 
 class VoiceResponseCollector:
@@ -73,6 +99,8 @@ class CommandRouter:
         github_client: Optional[GitHubClient] = None,
         mcp_client: Optional[MCPProxyClient] = None,
         loki_client=None,
+        discord_user_email_map: Optional[dict] = None,
+        tasks_client: Optional[TasksClient] = None,
     ):
         self.openwebui = openwebui_client
         self.n8n = n8n_client
@@ -81,6 +109,24 @@ class CommandRouter:
         self._github_client = github_client
         self._mcp_client = mcp_client
         self._loki_client = loki_client
+
+        # New collaborators — read from settings only when not injected.
+        if discord_user_email_map is None or tasks_client is None:
+            from config import settings
+            self._discord_user_email_map = (
+                dict(discord_user_email_map)
+                if discord_user_email_map is not None
+                else dict(settings.discord_user_email_map)
+            )
+            self._tasks_client = tasks_client or TasksClient(base_url=settings.tasks_url)
+        else:
+            self._discord_user_email_map = dict(discord_user_email_map)
+            self._tasks_client = tasks_client
+
+        # Strong refs to fire-and-forget background tasks (e.g. _watch_build).
+        # asyncio only weak-references running tasks, so without this a long
+        # watcher could be GC'd mid-flight. Each task removes itself on done.
+        self._background_tasks: set = set()
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -107,6 +153,7 @@ class CommandRouter:
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
             "email", "sheets", "rebuild", "web-search",
             "health", "security", "deps", "license",
+            "cronjob", "aiuibuilder",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -131,6 +178,10 @@ class CommandRouter:
                 await self._handle_pr_review(ctx)
             elif ctx.subcommand == "mcp":
                 await self._handle_mcp(ctx)
+            elif ctx.subcommand == "cronjob":
+                await self._handle_cronjob(ctx)
+            elif ctx.subcommand == "aiuibuilder":
+                await self._handle_aiuibuilder(ctx)
             elif ctx.subcommand == "diagnose":
                 await self._handle_diagnose(ctx)
             elif ctx.subcommand == "analyze":
@@ -355,6 +406,8 @@ class CommandRouter:
             "`/aiui security [owner/repo]` \u2014 Deep security audit (OWASP Top 10)\n"
             "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
             "`/aiui license [owner/repo]` \u2014 License compliance check\n"
+            "`/aiui cronjob <list|create|delete>` — Manage scheduled prompts\n"
+            "`/aiui aiuibuilder <build|templates|list|status|open>` — Build, then **Publish** from the build message to go live\n"
             "`/aiui help` — Show this help message"
         )
         await ctx.respond(help_text)
@@ -1222,6 +1275,529 @@ class CommandRouter:
             await ctx.respond(f"*MCP Result:* `{server_id}/{tool_name}`\n```\n{result_str}\n```")
         else:
             await ctx.respond(f"MCP tool `{server_id}/{tool_name}` failed. Check the server/tool name.")
+
+    async def _handle_cronjob(self, ctx: CommandContext) -> None:
+        """Discord → user-scoped cron schedule CRUD via tasks service."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+
+        try:
+            tokens = shlex.split(ctx.arguments) if ctx.arguments else []
+        except ValueError:
+            await ctx.respond(
+                'Couldn\'t parse args. Wrap cron and prompt in double quotes: '
+                '`/aiui cronjob create "0 8 * * *" "summarize emails"`'
+            )
+            return
+
+        action = tokens[0] if tokens else ""
+        rest = tokens[1:]
+
+        try:
+            if action == "list":
+                schedules = await self._tasks_client.list_schedules(email)
+                if not schedules:
+                    await ctx.respond(
+                        "**Your schedules**\n"
+                        "no schedules yet. Create one with "
+                        '`/aiui cronjob create "<cron>" "<prompt>"`.'
+                    )
+                    return
+                lines = ["**Your schedules**"]
+                for s in schedules:
+                    state = "on" if s.get("enabled") else "off"
+                    lines.append(
+                        f"`{s['id']}` `{s['cron_expr']}` — {s['name']} [{state}]"
+                    )
+                reply = "\n".join(lines)
+                if len(reply) > 1990:
+                    reply = reply[:1980] + "\n... +more"
+                await ctx.respond(reply)
+
+            elif action == "create":
+                if len(rest) < 2:
+                    await ctx.respond(
+                        'Need 2 args: `create "<cron>" "<prompt>"`. '
+                        'Example: `/aiui cronjob create "0 8 * * *" "summarize unread emails"`'
+                    )
+                    return
+                cron_expr = rest[0]
+                prompt = " ".join(rest[1:])
+                name = f"discord-{ctx.user_name}-{cron_expr[:20]}"
+                result = await self._tasks_client.create_schedule(
+                    email, name=name, cron=cron_expr, prompt=prompt,
+                )
+                await ctx.respond(
+                    f"Schedule created: `{result['id']}`\n"
+                    f"`{cron_expr}` — {prompt[:200]}"
+                )
+
+            elif action == "delete":
+                if not rest:
+                    await ctx.respond("Need a schedule id: `delete <id>`")
+                    return
+                schedule_id = rest[0]
+                await self._tasks_client.delete_schedule(email, schedule_id)
+                await ctx.respond(f"Deleted `{schedule_id}`.")
+
+            else:
+                await ctx.respond(
+                    "Usage: `/aiui cronjob <list|create|delete>`"
+                )
+
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def _handle_aiuibuilder(self, ctx: CommandContext) -> None:
+        """Discord → App Builder project list / status / open URL."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+
+        # Action is the first word; the remainder is parsed per-action so a
+        # build description can contain spaces/quotes without shlex choking.
+        parts = (ctx.arguments or "").strip().split(None, 1)
+        action = parts[0].lower() if parts else ""
+        remainder = parts[1] if len(parts) > 1 else ""
+
+        if action == "templates":
+            try:
+                catalog = await self._tasks_client.list_templates(email)
+            except TasksAPIError as e:
+                await ctx.respond(self._format_build_error(e))
+                return
+            if not catalog:
+                await ctx.respond("No templates available right now.")
+                return
+            lines = ["**App Builder templates** — `aiui aiuibuilder build <template> <description>`"]
+            for t in catalog:
+                key = t.get("key")
+                if not key:
+                    continue  # tolerate a malformed row rather than KeyError
+                note = f" — {t['note']}" if t.get("note") else ""
+                lines.append(f"`{key}` — {t.get('label', key)}: {t.get('description', '')}{note}")
+            reply = "\n".join(lines)
+            if len(reply) > 1990:
+                reply = reply[:1980] + "\n... +more"
+            await ctx.respond(reply)
+            return
+
+        if action == "build":
+            # Resolve an optional leading template key from the RAW remainder,
+            # before quote-stripping, so `build portfolio "a designer"` works.
+            rem = (remainder or "").strip()
+            sub = rem.split(None, 1)
+            first = (sub[0] if sub else "").lower()
+            after = sub[1] if len(sub) > 1 else ""
+
+            # Catalog lets us recognize template keys; resilient — a failure
+            # just means a template-less build (the user still gets an app).
+            label_by_key: dict[str, str] = {}
+            try:
+                label_by_key = {
+                    t["key"]: t.get("label", t["key"])
+                    for t in await self._tasks_client.list_templates(email)
+                    if t.get("key")
+                }
+            except TasksAPIError:
+                label_by_key = {}
+
+            if first in label_by_key:
+                template_key = first
+                description = after.strip().strip('"').strip()
+                if not description:
+                    description = f"a {label_by_key[first]}"
+            else:
+                template_key = None
+                description = rem.strip('"').strip()
+
+            if not description:
+                await ctx.respond(
+                    'Usage: `aiuibuilder build [template] <description>` — e.g. '
+                    '`aiuibuilder build portfolio a UX designer named Maya`. '
+                    'See `aiuibuilder templates`.'
+                )
+                return
+            await self._start_build(
+                ctx, email, template_key, description,
+                template_label=label_by_key.get(template_key) if template_key else None,
+            )
+            return
+
+        try:
+            rest = shlex.split(remainder) if remainder else []
+        except ValueError:
+            await ctx.respond("Couldn't parse args. Try `aiuibuilder list`.")
+            return
+
+        try:
+            if action == "list":
+                projects = await self._tasks_client.list_projects(email)
+                if not projects:
+                    await ctx.respond("**Your apps**\nno projects yet.")
+                    return
+                lines = ["**Your apps**"]
+                for p in projects:
+                    pub = p.get("public_url") or "(not published)"
+                    lines.append(f"`{p['slug']}` — {p['name']} [{p['role']}] {pub}")
+                reply = "\n".join(lines)
+                if len(reply) > 1990:
+                    reply = reply[:1980] + "\n... +more"
+                await ctx.respond(reply)
+
+            elif action == "status":
+                if not rest:
+                    await ctx.respond("Usage: `aiuibuilder status <slug>`")
+                    return
+                slug = rest[0]
+                status = await self._tasks_client.get_project_status(email, slug)
+                lines = [
+                    f"**{status['name']}** (`{status['slug']}`)",
+                    f"Role: {status['role']}",
+                    f"Published: {'yes' if status.get('published') else 'no'}",
+                ]
+                if status.get("public_url"):
+                    lines.append(f"URL: {status['public_url']}")
+                if status.get("last_commit_at"):
+                    lines.append(f"Last commit: {status['last_commit_at']}")
+                await ctx.respond("\n".join(lines))
+
+            elif action == "open":
+                if not rest:
+                    await ctx.respond("Usage: `aiuibuilder open <slug>`")
+                    return
+                slug = rest[0]
+                status = await self._tasks_client.get_project_status(email, slug)
+                if not status.get("published"):
+                    await ctx.respond(
+                        f"`{slug}` isn't published yet. Click **Publish** on its build "
+                        "message, or rebuild it to get a fresh Publish button."
+                    )
+                    return
+                await ctx.respond(f"`{slug}` → {status['public_url']}")
+
+            else:
+                await ctx.respond("Usage: `/aiui aiuibuilder <build|templates|list|status|open> [args]`")
+
+        except TasksAPIError as e:
+            if e.status == 404:
+                await ctx.respond("Project not found or not yours.")
+            elif e.status == 0:
+                await ctx.respond("Tasks service unreachable, try again.")
+            else:
+                await ctx.respond(f"Tasks API error ({e.status}).")
+
+    async def _start_build(
+        self, ctx: CommandContext, email: str, template_key: str | None,
+        description: str, *, template_label: str | None = None,
+    ) -> None:
+        """Start a one-shot build and wire the result watcher.
+
+        Shared by the `/aiui aiuibuilder build` text path and the App Builder
+        channel button/modal path. `description` must be non-empty (callers
+        validate). `template_label`, when given, is named in the ack."""
+        try:
+            result = await self._tasks_client.start_build(
+                email, description, template_key=template_key)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        slug = result["slug"]
+        task_id = result["task_id"]
+        tnote = f" (from the {template_label} template)" if template_label else ""
+        await ctx.respond(
+            f"Building `{slug}`{tnote} … I'll post the link here when it's ready "
+            "(usually a few minutes)."
+        )
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._background_tasks.discard)
+
+    async def run_panel_build(
+        self, ctx: CommandContext, template_key: str | None, description: str,
+    ) -> None:
+        """App Builder channel entry (a button+modal submit). Resolves the
+        caller's email, validates, then starts the build. The template key is
+        explicit (from the clicked button), so — unlike the free-text `build`
+        path — a Blank build whose first word matches a template key is never
+        misread as a template build."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+        description = (description or "").strip()
+        if not description:
+            await ctx.respond("Please describe the app you want to build.")
+            return
+        await self._start_build(ctx, email, template_key, description)
+
+    async def run_panel_publish(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder channel entry for the Publish button. Resolves the
+        caller's email and publishes their built app, then posts the live URL.
+        Ownership is enforced server-side (only the app's owner can publish)."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond(
+                "Your Discord account isn't linked. Ask Lukas to add you."
+            )
+            return
+        try:
+            result = await self._tasks_client.publish_app(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_publish_error(e))
+            return
+        url = (result.get("public_url") or "").strip()
+        if ctx.on_published is not None and url:
+            try:
+                await ctx.on_published(url)
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.error("on_published failed slug=%s: %s", slug, exc)
+        url_part = f" Live at {url}" if url else ""
+        await ctx.respond(f"\U0001f389 Published!{url_part}")
+
+    async def run_panel_enhance(self, ctx: CommandContext, slug: str, prompt: str) -> None:
+        """App Builder Enhance: edit an existing app from a typed change, then
+        watch it like a build and post the updated preview."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        prompt = (prompt or "").strip()
+        if not prompt:
+            await ctx.respond("Tell me what to change.")
+            return
+        try:
+            result = await self._tasks_client.enhance_app(email, slug, prompt)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_enhance_error(e))
+            return
+        task_id = result["task_id"]
+        await ctx.respond(
+            f"Updating `{slug}` … I'll post the new preview here when it's ready."
+        )
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._background_tasks.discard)
+
+    async def run_panel_unpublish(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder Unpublish: take a live app offline."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            await self._tasks_client.unpublish_app(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_unpublish_error(e))
+            return
+        await ctx.respond(f"`{slug}` is offline now (unpublished).")
+
+    async def run_panel_menu(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder dropdown selection → post that app's ephemeral action menu.
+        Fetches fresh status so the menu reflects current publish state."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            status = await self._tasks_client.get_project_status(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_status_error(e))
+            return
+        name = status.get("name", slug)
+        published = bool(status.get("published"))
+        public_url = (status.get("public_url") or "").strip()
+        preview_url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/"
+        header = f"**{name}** (`{slug}`) — {'published' if published else 'not published'}"
+        components = build_project_menu_components(
+            slug, published=published, public_url=public_url, preview_url=preview_url,
+        )
+        if ctx.respond_components is not None:
+            await ctx.respond_components(header, components)
+        else:
+            await ctx.respond(header)
+
+    async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder Status button → post the app's status text (same shape as
+        the `aiuibuilder status <slug>` text action)."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            status = await self._tasks_client.get_project_status(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_status_error(e))
+            return
+        lines = [
+            f"**{status['name']}** (`{status['slug']}`)",
+            f"Role: {status['role']}",
+            f"Published: {'yes' if status.get('published') else 'no'}",
+        ]
+        if status.get("public_url"):
+            lines.append(f"URL: {status['public_url']}")
+        if status.get("last_commit_at"):
+            lines.append(f"Last commit: {status['last_commit_at']}")
+        await ctx.respond("\n".join(lines))
+
+    @staticmethod
+    def _format_status_error(e: TasksAPIError) -> str:
+        if e.status == 404:
+            return "Project not found or not yours."
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        return f"Tasks API error ({e.status})."
+
+    def _format_enhance_error(self, e: TasksAPIError) -> str:
+        """Enhance-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 409:
+            return "An update is already in progress — try again in a minute."
+        if e.status in (401, 403):
+            return "Only the app's owner or an editor can change it."
+        if e.status == 404:
+            return "No app found to enhance (build it first)."
+        if e.status in (400, 422):
+            return "Couldn't start the update — check your description."
+        return f"Couldn't start the update (error {e.status})."
+
+    def _format_unpublish_error(self, e: TasksAPIError) -> str:
+        """Unpublish-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status in (401, 403):
+            return "Only the app's owner can unpublish it."
+        if e.status == 404:
+            return "It's not live right now."
+        return f"Couldn't unpublish (error {e.status})."
+
+    def _format_publish_error(self, e: TasksAPIError) -> str:
+        """Publish-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 401:
+            return "Tasks service couldn't identify you — ask Lukas to check your link."
+        if e.status == 403:
+            return "Only the app's owner can publish it."
+        if e.status == 404:
+            return "Project not found or not yours."
+        if e.status in (400, 422):
+            return "This app isn't publishable yet (it needs an index.html)."
+        return f"Couldn't publish (error {e.status})."
+
+    def _format_tasks_error(self, e: TasksAPIError) -> str:
+        """Map a TasksAPIError to a Discord-friendly reply.
+
+        Never echoes the request body, secrets, or other users' identifiers.
+        """
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 404:
+            return "No such schedule: not found"
+        if e.status == 400:
+            msg = e.message
+            if "cron_expr" in msg:
+                return f"Invalid cron: {msg}"
+            if "interval" in msg.lower():
+                return "Min interval is 5 min."
+            if "max" in msg.lower() or "quota" in msg.lower():
+                return "You hit the max schedules limit."
+            return "Bad request — check your input."
+        if e.status == 401 or e.status == 403:
+            return "Permission denied by tasks service."
+        return f"Tasks API error ({e.status})."
+
+    def _format_build_error(self, e: TasksAPIError) -> str:
+        """Build-flavored error text (NOT the schedule-flavored _format_tasks_error)."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 429:
+            return "A build is already running — try again in a few minutes."
+        if e.status in (401, 403):
+            return "Your Discord account isn't linked. Ask Lukas to add you."
+        if e.status in (400, 422):
+            return "Couldn't start the build — check your description and try again."
+        return f"Couldn't start the build (error {e.status})."
+
+    async def _watch_build(
+        self, ctx: CommandContext, email: str, task_id: str, slug: str,
+        *, poll_seconds: int | None = None, max_polls: int | None = None,
+    ) -> None:
+        """Poll the build until it terminates, then post the result to the
+        channel — on success via ctx.notify_channel_rich (a Publish button) when
+        set, else ctx.notify_channel (both bot-token messages that outlive the
+        interaction window). Defensive: transient errors don't kill the loop."""
+        if ctx.notify_channel is None:
+            return
+
+        async def _notify(msg: str) -> None:
+            # Never let a notify failure crash the watcher (it runs as a
+            # detached task — an unhandled raise would die silently).
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_build notify failed task=%s: %s", task_id, exc)
+
+        poll_seconds = BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
+        max_polls = BUILD_MAX_POLLS if max_polls is None else max_polls
+        errors = 0
+        for _ in range(max_polls):
+            await asyncio.sleep(poll_seconds)
+            try:
+                st = await self._tasks_client.get_build_status(email, task_id)
+                errors = 0
+            except TasksAPIError as e:
+                errors += 1
+                logger.warning("watch_build status error (%s) task=%s", e.status, task_id)
+                if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
+                    await _notify(
+                        f"Lost track of `{slug}` — check `/aiui aiuibuilder status {slug}`."
+                    )
+                    return
+                continue
+            status = st.get("status")
+            if status == "completed":
+                url = st.get("preview_url") or ""
+                msg = f"`{slug}` is ready (preview): {url}".rstrip()
+                if ctx.notify_channel_rich is not None:
+                    try:
+                        await ctx.notify_channel_rich(msg, slug, url)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
+                        await _notify(msg)
+                else:
+                    await _notify(msg)
+                return
+            if status == "needs_input":
+                detail = (st.get("error") or "").strip()
+                ask = f" It needs to know: {detail}" if detail else ""
+                await _notify(
+                    f"`{slug}` needs more detail to finish.{ask} "
+                    "Continue it in the App Builder, or run `build` again with a "
+                    "more specific description."
+                )
+                return
+            if status == "failed":
+                await _notify(
+                    f"Build failed for `{slug}`. Open the App Builder to retry."
+                )
+                return
+        await _notify(
+            f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
+        )
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""
