@@ -161,6 +161,8 @@ class DiscordCommandHandler:
         other component is a harmless no-op (never a 500)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if cron.is_cron(custom_id):
+            return await self._handle_cron_component(payload, custom_id)
         # All aiuibuild:* component ids are routed by their distinct second
         # segment (enhance/unpublish/publish/appselect/status/tpl), so check
         # order doesn't matter — but any NEW prefix added here must stay disjoint.
@@ -286,6 +288,46 @@ class DiscordCommandHandler:
             payload, lambda ctx: self.router.run_panel_menu(ctx, slug),
             raw_text=f"aiuibuilder menu {slug}")
 
+    async def _handle_cron_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        values = data.get("values") or []
+
+        if cron.is_new(custom_id):
+            return self._ephemeral_components(
+                "How often should it run?", cron.build_frequency_components(), update=False)
+
+        if cron.is_freq_button(custom_id):
+            freq = cron.freq_from_button(custom_id)
+            if freq == "hourly":
+                return {"type": MODAL, "data": cron.build_create_modal("0 * * * *")}
+            if freq == "custom":
+                return {"type": MODAL, "data": cron.build_custom_cron_modal()}
+            if freq == "weekly":
+                return self._ephemeral_components(
+                    "Which day?", cron.build_dow_select(), update=True)
+            return self._ephemeral_components(
+                "At what time? (Asia/Manila)", cron.build_hour_select(freq), update=True)
+
+        if cron.is_dow_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return self._ephemeral_components(
+                "At what time? (Asia/Manila)",
+                cron.build_hour_select("weekly", dow=values[0]), update=True)
+
+        if cron.is_hour_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            freq, dow = cron.hour_context_from_select(custom_id)
+            cron_expr = cron.cron_from_choice(freq, hour=int(values[0]), dow=dow)
+            return {"type": MODAL, "data": cron.build_create_modal(cron_expr)}
+
+        return await self._handle_cron_manage_component(payload, custom_id)
+
+    async def _handle_cron_manage_component(self, payload, custom_id):
+        logger.info(f"Unhandled cron component (manage not yet wired): {custom_id}")
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
     @staticmethod
     def _ephemeral_components(content: str, components: list, *, update: bool) -> dict:
         """Synchronous component response. update=True edits the current (ephemeral)
@@ -341,6 +383,8 @@ class DiscordCommandHandler:
         deferred pattern (the watcher posts the link via the bot token later)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if cron.is_create_modal(custom_id) or cron.is_custom_cron_modal(custom_id):
+            return await self._handle_cron_modal_submit(payload, custom_id)
         if is_enhance_modal(custom_id):
             try:
                 slug = slug_from_enhance_modal(custom_id)
@@ -382,6 +426,32 @@ class DiscordCommandHandler:
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
         return await self._handle_build_modal_submit(payload, custom_id)
+
+    async def _handle_cron_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        name = self._extract_modal_value(data, "name") or ""
+        prompt = self._extract_modal_value(data, "prompt") or ""
+        if cron.is_custom_cron_modal(custom_id):
+            cron_expr = (self._extract_modal_value(data, "cron") or "").strip()
+        else:
+            cron_expr = cron.cron_from_create_modal(custom_id)
+
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="cronjob create",
+            subcommand="cronjob", arguments="", platform="discord",
+            respond=respond,
+        )
+        asyncio.create_task(
+            self.router.run_cron_create(ctx, cron_expr=cron_expr, name=name, prompt=prompt))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": EPHEMERAL}}
 
     async def _handle_build_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """Build-template modal submit. Open a PRIVATE THREAD for the user, post
