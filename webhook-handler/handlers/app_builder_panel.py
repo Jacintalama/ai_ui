@@ -7,7 +7,8 @@ tests/test_app_builder_panel.py.
 from __future__ import annotations
 
 from handlers.schedule_format import (
-    cron_to_human, schedule_status_label, schedule_label,
+    cron_to_human, schedule_status_label, schedule_label, schedule_color,
+    COLOR_GREEN, COLOR_BLURPLE,
 )
 
 # Discord component types
@@ -146,6 +147,26 @@ def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
                         "label": "\U0001f517 Open preview", "url": preview_url})
     return [{"type": ACTION_ROW, "components": buttons}]
+
+
+def build_ready_embed(slug: str, preview_url: str = "", message: str = "") -> dict:
+    """Blue 'Build ready' embed shown with the Publish/Enhance/Preview buttons."""
+    desc = (message or f"Your app `{slug}` is ready to preview and publish.").strip()
+    embed = {"title": "✅ Build ready", "color": COLOR_BLURPLE, "description": desc[:2000]}
+    if preview_url:
+        embed["url"] = preview_url
+    return embed
+
+
+def build_published_embed(slug: str, public_url: str = "") -> dict:
+    """Green 'Published' embed shown with the Enhance/Unpublish buttons."""
+    desc = f"`{slug}` is live."
+    if public_url:
+        desc += f"\n{public_url}"
+    embed = {"title": "🎉 Published!", "color": COLOR_GREEN, "description": desc[:2000]}
+    if public_url:
+        embed["url"] = public_url
+    return embed
 
 
 def is_publish_button(custom_id: str) -> bool:
@@ -371,12 +392,19 @@ def build_schedule_select(schedules: list[dict]) -> list[dict]:
 
 
 def build_schedule_card(s: dict) -> dict:
-    """Clean card for a single schedule: human time + task + status, with
-    state-aware Run / Pause-or-Resume / Edit / Delete buttons."""
+    """Colored embed card for a single schedule (status-colored accent + When /
+    Status fields) with state-aware Run / Pause-or-Resume / Edit / Delete buttons."""
     sid = str(s.get("id", ""))
     when = cron_to_human(s.get("cron_expr", ""))
     prompt = (s.get("prompt") or "").strip() or "(no description)"
-    content = f"📅 **{prompt[:300]}**\n🕒 {when}\n{schedule_status_label(s)}"
+    embed = {
+        "title": f"📅 {prompt}"[:256],
+        "color": schedule_color(s),
+        "fields": [
+            {"name": "When", "value": (when or "—")[:1024], "inline": True},
+            {"name": "Status", "value": schedule_status_label(s), "inline": True},
+        ],
+    }
     buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SECONDARY)]
     if s.get("enabled", True):
         buttons.append(_button("⏸ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
@@ -384,7 +412,7 @@ def build_schedule_card(s: dict) -> dict:
         buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
     buttons.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", STYLE_PRIMARY))
     buttons.append(_button("\U0001f5d1 Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
-    return {"content": content, "components": [{"type": ACTION_ROW, "components": buttons}]}
+    return {"embeds": [embed], "components": [{"type": ACTION_ROW, "components": buttons}]}
 
 
 def build_deleted_card() -> dict:

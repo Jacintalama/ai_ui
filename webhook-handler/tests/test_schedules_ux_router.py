@@ -11,8 +11,8 @@ def _ctx(user_id):
     async def respond(msg):
         cap["text"].append(msg)
 
-    async def respond_components(msg, comps):
-        cap["components"].append((msg, comps))
+    async def respond_components(msg, comps, embeds=None):
+        cap["components"].append((msg, comps, embeds))
 
     ctx = CommandContext(
         user_id=user_id, user_name="t", channel_id="c", raw_text="",
@@ -54,8 +54,8 @@ async def test_run_schedule_card_found_renders_card():
     ctx, cap = _ctx("100")
     await _router({"100": "a@x.com"}, tc).run_schedule_card(ctx, "s1")
     assert cap["components"], "should render a card"
-    content, comps = cap["components"][0]
-    assert "summarize emails" in content
+    msg, comps, embeds = cap["components"][0]
+    assert embeds and "summarize emails" in embeds[0]["title"]
     ids = {b["custom_id"] for row in comps for b in row["components"]}
     assert "aiuisched:run:s1" in ids
 

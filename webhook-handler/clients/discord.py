@@ -79,18 +79,20 @@ class DiscordClient:
             logger.error(f"Error sending Discord followup: {e}")
             return False
 
-    async def edit_original(self, interaction_token: str, content: str,
-                            components: list | None = None) -> bool:
+    async def edit_original(self, interaction_token: str, content: str = "",
+                            components: list | None = None,
+                            embeds: list | None = None) -> bool:
         """Edit the original deferred response message. Optionally attaches
-        message `components` (e.g. Enhance/Unpublish buttons)."""
-        content = content[:2000]
+        message `components` (buttons) and/or `embeds` (colored cards)."""
         url = (
             f"{DISCORD_API_BASE}/webhooks/{self.application_id}"
             f"/{interaction_token}/messages/@original"
         )
-        body: dict = {"content": content}
+        body: dict = {"content": (content or "")[:2000]}
         if components is not None:
             body["components"] = components
+        if embeds is not None:
+            body["embeds"] = embeds
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.patch(url, json=body)
@@ -103,8 +105,9 @@ class DiscordClient:
             logger.error(f"Error editing Discord message: {e}")
             return False
 
-    async def post_channel_message(self, channel_id: str, content: str,
-                                   components: list | None = None) -> bool:
+    async def post_channel_message(self, channel_id: str, content: str = "",
+                                   components: list | None = None,
+                                   embeds: list | None = None) -> bool:
         """Post a fresh message to a channel using the bot token.
 
         Unlike followup_message/edit_original (interaction token, 15-min TTL),
@@ -113,11 +116,12 @@ class DiscordClient:
         `components` (e.g. a Publish button). Requires the bot to have Send
         Messages in the channel. Never raises.
         """
-        content = content[:2000]
         url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
-        body: dict = {"content": content}
+        body: dict = {"content": (content or "")[:2000]}
         if components:
             body["components"] = components
+        if embeds is not None:
+            body["embeds"] = embeds
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(

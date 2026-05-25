@@ -1808,9 +1808,9 @@ class CommandRouter:
             return
         card = build_schedule_card(sched)
         if ctx.respond_components is not None:
-            await ctx.respond_components(card["content"], card["components"])
+            await ctx.respond_components("", card["components"], embeds=card["embeds"])
         else:
-            await ctx.respond(card["content"])
+            await ctx.respond(f"📅 {(sched.get('prompt') or '')[:200]}")
 
     async def get_user_thread(self, discord_id: str) -> str | None:
         return await self._tasks_client.get_user_thread(discord_id)

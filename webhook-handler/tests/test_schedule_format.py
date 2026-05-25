@@ -1,7 +1,20 @@
 """Human-readable formatting for schedules: cron→English, status, dropdown label."""
 import pytest
 
-from handlers.schedule_format import cron_to_human, schedule_status_label, schedule_label
+from handlers.schedule_format import (
+    cron_to_human, schedule_status_label, schedule_label, schedule_color,
+)
+
+
+@pytest.mark.parametrize("sched,expected", [
+    ({"enabled": False}, 0x99AAB5),
+    ({"enabled": True, "last_run_status": "failed"}, 0xED4245),
+    ({"enabled": True, "last_run_status": "running"}, 0xFEE75C),
+    ({"enabled": True, "last_run_status": "completed"}, 0x57F287),
+    ({"enabled": True, "last_run_status": None}, 0x57F287),
+])
+def test_schedule_color(sched, expected):
+    assert schedule_color(sched) == expected
 
 
 @pytest.mark.parametrize("cron,human", [

@@ -48,9 +48,11 @@ def test_schedule_card_clean_text_and_actions():
     s = {"id": "s1", "cron_expr": "*/5 * * * *", "prompt": "summarize emails",
          "enabled": True, "last_run_status": "completed"}
     out = p.build_schedule_card(s)
-    assert "summarize emails" in out["content"]
-    assert "every 5 minutes" in out["content"]
-    assert "*/5" not in out["content"]  # no raw cron leaking through
+    embed = out["embeds"][0]
+    assert "summarize emails" in embed["title"]
+    assert any("every 5 minutes" in f["value"] for f in embed["fields"])
+    assert "*/5" not in str(embed)  # no raw cron leaking through
+    assert isinstance(embed["color"], int)
     ids = {b["custom_id"] for row in out["components"] for b in row["components"]}
     assert ids.issuperset({"aiuisched:run:s1", "aiuisched:edit:s1", "aiuisched:del:s1"})
     assert "aiuisched:pause:s1" in ids

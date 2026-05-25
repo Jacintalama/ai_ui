@@ -43,6 +43,26 @@ def cron_to_human(cron: str) -> str:
     return cron
 
 
+# Shared status palette (also used for embed accent colors elsewhere).
+COLOR_GREEN = 0x57F287
+COLOR_GREY = 0x99AAB5
+COLOR_RED = 0xED4245
+COLOR_YELLOW = 0xFEE75C
+COLOR_BLURPLE = 0x5865F2
+
+
+def schedule_color(sched: dict) -> int:
+    """Accent color for a schedule's embed card, matching its status."""
+    if not sched.get("enabled", True):
+        return COLOR_GREY
+    status = sched.get("last_run_status")
+    if status == "failed":
+        return COLOR_RED
+    if status == "running":
+        return COLOR_YELLOW
+    return COLOR_GREEN
+
+
 def schedule_status_label(sched: dict) -> str:
     """Icon + words describing a schedule's state."""
     if not sched.get("enabled", True):

@@ -24,7 +24,8 @@ from handlers.app_builder_panel import (
     DESCRIPTION_INPUT_ID,
     is_publish_button,
     slug_from_publish_button,
-    build_ready_components,
+    build_ready_components, build_ready_embed,
+    build_published_embed,
     build_enhance_modal,
     build_published_components,
     is_enhance_button, slug_from_enhance_button,
@@ -139,9 +140,9 @@ class DiscordCommandHandler:
                 content=msg,
             )
 
-        async def respond_components(msg: str, components: list) -> None:
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
             await self.discord.edit_original(
-                interaction_token=interaction_token, content=msg, components=components,
+                interaction_token=interaction_token, content=msg, components=components, embeds=embeds,
             )
 
         notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
@@ -181,7 +182,8 @@ class DiscordCommandHandler:
 
         async def notify_channel_rich(msg: str, slug: str, preview_url: str) -> None:
             await self.discord.post_channel_message(
-                channel_id, msg, components=build_ready_components(slug, preview_url),
+                channel_id, "", embeds=[build_ready_embed(slug, preview_url, msg)],
+                components=build_ready_components(slug, preview_url),
             )
         return notify_channel, notify_channel_rich
 
@@ -303,8 +305,8 @@ class DiscordCommandHandler:
 
         async def on_published(public_url: str) -> None:
             await self.discord.edit_original(
-                interaction_token=interaction_token,
-                content=f"\U0001f389 Published! Live at {public_url}".rstrip(),
+                interaction_token=interaction_token, content="",
+                embeds=[build_published_embed(slug, public_url)],
                 components=build_published_components(slug, public_url),
             )
 
@@ -390,9 +392,9 @@ class DiscordCommandHandler:
                 interaction_token=interaction_token, content=msg,
             )
 
-        async def respond_components(msg: str, components: list) -> None:
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
             await self.discord.edit_original(
-                interaction_token=interaction_token, content=msg, components=components,
+                interaction_token=interaction_token, content=msg, components=components, embeds=embeds,
             )
 
         ctx = CommandContext(
