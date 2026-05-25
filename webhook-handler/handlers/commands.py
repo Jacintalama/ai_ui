@@ -1657,6 +1657,130 @@ class CommandRouter:
             lines.append(f"Last commit: {status['last_commit_at']}")
         await ctx.respond("\n".join(lines))
 
+    # ------------------------------------------------------------------ #
+    # Cron-job management methods                                          #
+    # ------------------------------------------------------------------ #
+
+    def _cron_email_or_none(self, ctx: CommandContext) -> str | None:
+        return self._discord_user_email_map.get(ctx.user_id)
+
+    _CRON_NO_EMAIL = (
+        "Your Discord account isn't linked to an AIUI user yet. "
+        "Ask an admin to link it, then try again."
+    )
+
+    async def run_cron_create(self, ctx: CommandContext, *, cron_expr: str,
+                              name: str, prompt: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await ctx.respond(self._CRON_NO_EMAIL)
+            return
+        prompt = (prompt or "").strip()
+        if not prompt:
+            await ctx.respond("Please include a prompt — what should the job do?")
+            return
+        name = (name or "").strip() or f"discord-{ctx.user_name}-{cron_expr[:20]}"
+        try:
+            result = await self._tasks_client.create_schedule(
+                email, name=name, cron=cron_expr, prompt=prompt,
+            )
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        from handlers import cronjob_panel as cp
+        await ctx.respond(
+            f"✅ Scheduled **{name}** — {cp.describe_cron(cron_expr)}\n"
+            f"`{result.get('id','?')}` · {prompt[:200]}"
+        )
+
+    async def run_cron_list(self, ctx: CommandContext) -> None:
+        from handlers import cronjob_panel as cp
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await ctx.respond(self._CRON_NO_EMAIL)
+            return
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        if not schedules:
+            await ctx.respond("You have no schedules yet. Click **⏰ Schedule a task** to make one.")
+            return
+        if ctx.respond_components:
+            await ctx.respond_components("**Your schedules** — pick one to manage:",
+                                         cp.build_schedules_select(schedules))
+        else:
+            await ctx.respond("\n".join(cp.format_schedule_line(s) for s in schedules))
+
+    async def _cron_menu_for(self, ctx: CommandContext, email: str,
+                             schedule_id: str, prefix: str = "") -> None:
+        from handlers import cronjob_panel as cp
+        schedules = await self._tasks_client.list_schedules(email)
+        match = next((s for s in schedules if str(s["id"]) == str(schedule_id)), None)
+        if not match:
+            await ctx.respond("That schedule no longer exists.")
+            return
+        if ctx.respond_components:
+            await ctx.respond_components(prefix + cp.format_schedule_line(match),
+                                         cp.build_schedule_menu(match))
+        else:
+            await ctx.respond(prefix + cp.format_schedule_line(match))
+
+    async def run_cron_menu(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await ctx.respond(self._CRON_NO_EMAIL)
+            return
+        try:
+            await self._cron_menu_for(ctx, email, schedule_id)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_runnow(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await ctx.respond(self._CRON_NO_EMAIL)
+            return
+        try:
+            await self._tasks_client.run_now_schedule(email, schedule_id)
+            await ctx.respond("▶️ Triggered — it will run shortly.")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_pause(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await ctx.respond(self._CRON_NO_EMAIL)
+            return
+        try:
+            await self._tasks_client.disable_schedule(email, schedule_id)
+            await self._cron_menu_for(ctx, email, schedule_id, prefix="⏸ Paused.\n")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_resume(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await ctx.respond(self._CRON_NO_EMAIL)
+            return
+        try:
+            await self._tasks_client.enable_schedule(email, schedule_id)
+            await self._cron_menu_for(ctx, email, schedule_id, prefix="▶ Resumed.\n")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_delete(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await ctx.respond(self._CRON_NO_EMAIL)
+            return
+        try:
+            await self._tasks_client.delete_schedule(email, schedule_id)
+            await ctx.respond("🗑 Schedule deleted.")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
     @staticmethod
     def _format_status_error(e: TasksAPIError) -> str:
         if e.status == 0:
