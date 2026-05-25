@@ -76,6 +76,8 @@ async def test_confirm_creates_schedule_with_thread_delivery():
                         delivery=delivery_channel_id, user=ctx.user_id)
     router = MagicMock()
     router.run_schedule_create = fake_create
+    router.get_user_thread = AsyncMock(return_value=None)
+    router.set_user_thread = AsyncMock(return_value=True)
     handler = _handler(router)
 
     submit = {"type": 5, "id": "i", "token": "tok1", "channel_id": "chan-1",

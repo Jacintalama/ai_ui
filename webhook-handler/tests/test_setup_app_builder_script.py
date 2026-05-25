@@ -133,7 +133,7 @@ def test_posts_schedules_panel_too(monkeypatch):
         b.get("custom_id")
         for p in posted for row in p.get("components", []) for b in row.get("components", [])
     }
-    assert "aiuisched:new" in all_ids  # the Schedules panel was posted
+    assert "aiuisched:open" in all_ids  # the Schedules panel was posted
 
 
 def test_no_reset_keeps_existing_channel(monkeypatch):

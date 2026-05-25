@@ -5,13 +5,12 @@ import pytest
 from handlers import app_builder_panel as p
 
 
-def test_build_schedules_panel_has_new_and_list_buttons():
+def test_build_schedules_panel_has_open_and_link():
     payload = p.build_schedules_panel()
     assert isinstance(payload["content"], str) and payload["content"]
-    buttons = [b for row in payload["components"] for b in row["components"]]
-    ids = {b["custom_id"] for b in buttons}
-    assert p.SCHED_NEW_ID in ids
-    assert p.SCHED_LIST_ID in ids
+    ids = {b["custom_id"] for row in payload["components"] for b in row["components"]}
+    assert p.SCHED_OPEN_ID in ids
+    assert p.LINK_START_ID in ids
 
 
 def test_build_schedule_modal_has_what_and_when_inputs():

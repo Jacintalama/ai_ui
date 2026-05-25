@@ -48,6 +48,7 @@ from handlers.app_builder_panel import (
     is_link_reject, id_from_link_reject,
     is_sched_edit, id_from_edit,
     is_sched_editmodal, id_from_editmodal,
+    is_sched_open, is_sched_select,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,6 +222,16 @@ class DiscordCommandHandler:
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_schedule_list(ctx),
                 raw_text="schedules list")
+        if is_sched_open(custom_id):
+            return await self._handle_sched_open(payload)
+        if is_sched_select(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            sid = values[0]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_schedule_card(ctx, sid),
+                raw_text=f"schedules card {sid}")
         if is_sched_confirm(custom_id):
             return await self._handle_schedule_confirm(payload, custom_id)
         if is_sched_cancel(custom_id):
@@ -569,9 +580,13 @@ class DiscordCommandHandler:
                 # visible only to this user. Fall back to the channel if thread
                 # creation fails.
                 target = channel_id
-                thread_id = await self.discord.create_private_thread(
-                    channel_id, f"schedules-{user_name}"[:90]
-                )
+                thread_id = await self.router.get_user_thread(user_id)
+                if not thread_id:
+                    thread_id = await self.discord.create_private_thread(
+                        channel_id, f"schedules-{user_name}"[:90]
+                    )
+                    if thread_id:
+                        await self.router.set_user_thread(user_id, thread_id)
                 if thread_id:
                     await self.discord.add_thread_member(thread_id, user_id)
                     target = thread_id
@@ -597,6 +612,56 @@ class DiscordCommandHandler:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("_handle_schedule_confirm failed user=%s: %s", user_id, exc)
+
+        asyncio.create_task(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_sched_open(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'Open my schedules' (in #app-builder) → post the dashboard into the
+        user's private thread (create/reuse), and point the ephemeral ACK at it."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _do() -> None:
+            try:
+                dash = await self.router.dashboard_payload(user_id)
+                if dash is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="Your Discord account isn't linked yet. Hit **🔗 Link my account** first.",
+                    )
+                    return
+                thread_id = await self.router.get_user_thread(user_id)
+                if not thread_id:
+                    thread_id = await self.discord.create_private_thread(
+                        channel_id, f"schedules-{user_name}"[:90]
+                    )
+                    if thread_id:
+                        await self.router.set_user_thread(user_id, thread_id)
+                if thread_id:
+                    await self.discord.add_thread_member(thread_id, user_id)
+                    await self.discord.post_channel_message(
+                        thread_id, dash["content"], components=dash["components"])
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"📅 Your schedules are in <#{thread_id}>",
+                    )
+                else:
+                    # Couldn't open a thread — fall back to an ephemeral dashboard.
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=dash["content"], components=dash.get("components"),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_sched_open failed user=%s: %s", user_id, exc)
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't open your schedules — please try again.",
+                )
 
         asyncio.create_task(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}

@@ -151,3 +151,5 @@ class DiscordLink(Base):
     requested_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     decided_at = Column(DateTime(timezone=True), nullable=True)
     decided_by = Column(Text, nullable=True)
+    # The user's private Discord thread for schedules (created/reused by the bot).
+    schedules_thread_id = Column(Text, nullable=True)

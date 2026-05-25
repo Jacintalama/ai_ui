@@ -14,6 +14,8 @@ from handlers.app_builder_panel import (
     build_apps_select_components,
     build_project_menu_components,
     build_schedule_list,
+    build_schedules_dashboard,
+    build_schedule_card,
 )
 
 from clients.openwebui import OpenWebUIClient
@@ -1776,6 +1778,45 @@ class CommandRouter:
                     return {"what": name, "when": ""}
                 return {"what": what, "when": when}
         return None
+
+    async def dashboard_payload(self, discord_id: str) -> dict | None:
+        """The Schedules dashboard message payload for a user's private thread,
+        or None if they're not linked."""
+        email = await self._resolve_email(discord_id)
+        if not email:
+            return None
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError:
+            schedules = []
+        return build_schedules_dashboard(schedules)
+
+    async def run_schedule_card(self, ctx: CommandContext, schedule_id: str) -> None:
+        """Dropdown select → render a single schedule's clean card."""
+        email = await self._resolve_email(ctx.user_id)
+        if not email:
+            await ctx.respond(self._not_linked_msg())
+            return
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        sched = next((s for s in schedules if str(s.get("id")) == schedule_id), None)
+        if not sched:
+            await ctx.respond("Couldn't find that schedule — it may have been deleted.")
+            return
+        card = build_schedule_card(sched)
+        if ctx.respond_components is not None:
+            await ctx.respond_components(card["content"], card["components"])
+        else:
+            await ctx.respond(card["content"])
+
+    async def get_user_thread(self, discord_id: str) -> str | None:
+        return await self._tasks_client.get_user_thread(discord_id)
+
+    async def set_user_thread(self, discord_id: str, thread_id: str) -> bool:
+        return await self._tasks_client.set_user_thread(discord_id, thread_id)
 
     async def request_link(self, discord_id: str, username: str, email: str) -> dict:
         return await self._tasks_client.request_link(discord_id, username, email)

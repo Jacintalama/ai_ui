@@ -6,6 +6,10 @@ tests/test_app_builder_panel.py.
 """
 from __future__ import annotations
 
+from handlers.schedule_format import (
+    cron_to_human, schedule_status_label, schedule_label,
+)
+
 # Discord component types
 ACTION_ROW = 1
 BUTTON = 2
@@ -287,7 +291,9 @@ def build_project_menu_components(
 TEXT_SHORT = 1  # Discord short text-input style (paragraph is 2)
 
 SCHED_NEW_ID = "aiuisched:new"        # New-schedule button (exact match)
-SCHED_LIST_ID = "aiuisched:list"      # My-schedules button (exact match)
+SCHED_LIST_ID = "aiuisched:list"      # My-schedules button (legacy; kept for routing)
+SCHED_OPEN_ID = "aiuisched:open"      # channel "Open my schedules" → private thread
+SCHED_SELECT_ID = "aiuisched:select"  # dropdown of the user's schedules (value=id)
 SCHED_MODAL_ID = "aiuisched:modal"    # create modal custom_id (exact match)
 SCHED_CONFIRM_PREFIX = "aiuisched:confirm:"   # confirm:<token>
 SCHED_CANCEL_PREFIX = "aiuisched:cancel:"     # cancel:<token>
@@ -309,13 +315,77 @@ _MAX_SCHED_ROWS = 5  # Discord allows at most 5 action rows per message
 
 
 def build_schedules_panel() -> dict:
-    """Pinned panel message: New / My schedules / Link buttons."""
+    """Pinned channel panel: 'Open my schedules' (→ private thread) + Link.
+    Everything else (New / list / per-schedule actions) lives in the thread."""
     row = {"type": ACTION_ROW, "components": [
-        _button("⏰ New schedule", SCHED_NEW_ID, STYLE_SUCCESS),
-        _button("\U0001f4cb My schedules", SCHED_LIST_ID, STYLE_SECONDARY),
+        _button("⏰ Open my schedules", SCHED_OPEN_ID, STYLE_SUCCESS),
         _button("\U0001f517 Link my account", LINK_START_ID, STYLE_PRIMARY),
     ]}
     return {"content": SCHEDULES_PANEL_CONTENT, "components": [row]}
+
+
+def build_schedules_dashboard(schedules: list[dict]) -> dict:
+    """Posted inside the user's private thread: a New button + (if any) a
+    dropdown to pick a schedule to manage."""
+    rows = [{"type": ACTION_ROW, "components": [
+        _button("➕ New schedule", SCHED_NEW_ID, STYLE_SUCCESS)]}]
+    if schedules:
+        rows += build_schedule_select(schedules)
+        content = "📅 **Your schedules** — pick one to manage, or add a new one."
+    else:
+        content = ("📅 **Your schedules**\nYou have no schedules yet. "
+                   "Hit **➕ New schedule** to make one.")
+    return {"content": content, "components": rows}
+
+
+def build_schedule_select(schedules: list[dict]) -> list[dict]:
+    """One action row: a string-select of the user's schedules (value=id),
+    labelled in plain English with a status description. Caps at 25 (Discord)."""
+    options: list[dict] = []
+    for s in schedules[:_MAX_SELECT_OPTIONS]:
+        sid = str(s.get("id", ""))
+        if not sid:
+            continue
+        options.append({
+            "label": schedule_label(s)[:100],
+            "value": sid[:100],
+            "description": schedule_status_label(s)[:100],
+        })
+    select = {
+        "type": SELECT_MENU, "custom_id": SCHED_SELECT_ID,
+        "placeholder": "Pick a schedule…", "min_values": 1, "max_values": 1,
+        "options": options,
+    }
+    return [{"type": ACTION_ROW, "components": [select]}]
+
+
+def build_schedule_card(s: dict) -> dict:
+    """Clean card for a single schedule: human time + task + status, with
+    state-aware Run / Pause-or-Resume / Edit / Delete buttons."""
+    sid = str(s.get("id", ""))
+    when = cron_to_human(s.get("cron_expr", ""))
+    prompt = (s.get("prompt") or "").strip() or "(no description)"
+    content = f"📅 **{prompt[:300]}**\n🕒 {when}\n{schedule_status_label(s)}"
+    buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SECONDARY)]
+    if s.get("enabled", True):
+        buttons.append(_button("⏸ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
+    else:
+        buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
+    buttons.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", STYLE_PRIMARY))
+    buttons.append(_button("\U0001f5d1 Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
+    return {"content": content, "components": [{"type": ACTION_ROW, "components": buttons}]}
+
+
+def build_deleted_card() -> dict:
+    return {"content": "🗑 Deleted.", "components": []}
+
+
+def is_sched_open(custom_id: str) -> bool:
+    return custom_id == SCHED_OPEN_ID
+
+
+def is_sched_select(custom_id: str) -> bool:
+    return custom_id == SCHED_SELECT_ID
 
 
 def build_schedule_modal() -> dict:

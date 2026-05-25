@@ -146,6 +146,15 @@ class TasksClient:
         resp = await self._internal_request("GET", f"/discord-links/resolve/{discord_id}")
         return resp.json().get("email")
 
+    async def get_user_thread(self, discord_id: str) -> str | None:
+        resp = await self._internal_request("GET", f"/discord-links/{discord_id}/thread")
+        return resp.json().get("thread_id")
+
+    async def set_user_thread(self, discord_id: str, thread_id: str) -> bool:
+        await self._internal_request(
+            "POST", f"/discord-links/{discord_id}/thread", json={"thread_id": thread_id})
+        return True
+
     async def list_projects(self, user_email: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", "/api/projects", user_email)
         return resp.json()

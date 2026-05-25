@@ -104,3 +104,31 @@ async def resolve_link(
     if link and link.status == "approved":
         return {"email": link.email}
     return {"email": None}
+
+
+class ThreadIn(BaseModel):
+    thread_id: str
+
+
+@router.get("/{discord_id}/thread")
+async def get_thread(discord_id: str, x_internal_secret: str = Header(default="")) -> dict[str, Any]:
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        link = (await s.execute(
+            select(DiscordLink).where(DiscordLink.discord_id == discord_id)
+        )).scalar_one_or_none()
+    return {"thread_id": link.schedules_thread_id if link else None}
+
+
+@router.post("/{discord_id}/thread")
+async def set_thread(
+    discord_id: str, body: ThreadIn, x_internal_secret: str = Header(default=""),
+) -> dict[str, str]:
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        await s.execute(
+            update(DiscordLink).where(DiscordLink.discord_id == discord_id).values(
+                schedules_thread_id=body.thread_id)
+        )
+        await s.commit()
+    return {"status": "ok"}
