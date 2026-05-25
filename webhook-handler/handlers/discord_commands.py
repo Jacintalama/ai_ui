@@ -23,6 +23,7 @@ from handlers.app_builder_panel import (
     is_app_select,
     is_status_button, slug_from_status_button,
 )
+from handlers import cronjob_panel as cron
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,9 @@ PONG = 1
 DEFERRED_CHANNEL_MESSAGE = 5
 DEFERRED_UPDATE_MESSAGE = 6
 MODAL = 9
+CHANNEL_MESSAGE = 4        # CHANNEL_MESSAGE_WITH_SOURCE — new (ephemeral) message
+UPDATE_MESSAGE = 7         # edit the message the component is attached to
+EPHEMERAL = 64             # message flag
 
 
 class DiscordCommandHandler:
@@ -281,6 +285,15 @@ class DiscordCommandHandler:
         return await self._handle_panel_route(
             payload, lambda ctx: self.router.run_panel_menu(ctx, slug),
             raw_text=f"aiuibuilder menu {slug}")
+
+    @staticmethod
+    def _ephemeral_components(content: str, components: list, *, update: bool) -> dict:
+        """Synchronous component response. update=True edits the current (ephemeral)
+        message (type 7); update=False posts a new ephemeral message (type 4)."""
+        return {
+            "type": UPDATE_MESSAGE if update else CHANNEL_MESSAGE,
+            "data": {"content": content, "components": components, "flags": EPHEMERAL},
+        }
 
     async def _handle_panel_route(
         self, payload: dict[str, Any], run: Callable[[CommandContext], Awaitable[None]],
