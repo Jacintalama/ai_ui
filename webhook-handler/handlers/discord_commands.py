@@ -318,8 +318,12 @@ class DiscordCommandHandler:
         if cron.is_hour_select(custom_id):
             if not values:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
-            freq, dow = cron.hour_context_from_select(custom_id)
-            cron_expr = cron.cron_from_choice(freq, hour=int(values[0]), dow=dow)
+            try:
+                freq, dow = cron.hour_context_from_select(custom_id)
+                cron_expr = cron.cron_from_choice(freq, hour=int(values[0]), dow=dow)
+            except ValueError:
+                logger.info(f"Ignoring malformed cron hour custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
             return {"type": MODAL, "data": cron.build_create_modal(cron_expr)}
 
         return await self._handle_cron_manage_component(payload, custom_id)
@@ -378,7 +382,7 @@ class DiscordCommandHandler:
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     @staticmethod
-    def _ephemeral_components(content: str, components: list, *, update: bool) -> dict:
+    def _ephemeral_components(content: str, components: list[dict], *, update: bool) -> dict[str, Any]:
         """Synchronous component response. update=True edits the current (ephemeral)
         message (type 7); update=False posts a new ephemeral message (type 4)."""
         return {

@@ -171,6 +171,14 @@ async def test_cron_hour_select_opens_create_modal_with_built_cron():
     assert resp["data"]["custom_id"] == "cron:create:0_18_*_*_1"
 
 @pytest.mark.asyncio
+async def test_cron_hour_select_malformed_freq_is_noop_not_500():
+    # A forged custom_id with an unknown freq must not raise (cron_from_choice
+    # would ValueError) — it should log + no-op, like the app-builder branches.
+    resp = await _handler(_StubRouter())._handle_message_component(
+        _component_payload("cron:hour:bogus", values=["9"]))
+    assert resp["type"] == DEFERRED_UPDATE_MESSAGE
+
+@pytest.mark.asyncio
 async def test_cron_create_modal_submit_invokes_run_cron_create():
     router = _StubRouter()
     resp = await _handler(router)._handle_modal_submit(
