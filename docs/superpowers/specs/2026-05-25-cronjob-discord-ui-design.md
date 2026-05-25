@@ -120,7 +120,9 @@ mirroring `app_builder_panel.py`:
   `id_from_*`). Plus `encode_cron`/`decode_cron` round-tripping spaces ↔ `_`
   (cron expressions are short; custom_ids stay well under the 100-char limit).
 - A human-readable formatter `describe_cron(cron_expr) -> str` for confirmations
-  and the schedule menu (e.g. `"0 9 * * 1"` → "Mondays at 09:00").
+  and the schedule menu (e.g. `"0 9 * * 1"` → "Mondays at 09:00"). For an
+  expression it cannot humanize (e.g. an arbitrary custom cron such as
+  `*/7 13 5 * *`), it falls back to echoing the raw cron string.
 
 **`webhook-handler/scripts/setup_cronjob_channel.py`** — idempotent setup,
 modeled on `setup_app_builder_channel.py`:
@@ -160,7 +162,9 @@ submit).
 client, format via `cronjob_panel` helpers, respond through the ephemeral
 callbacks; all wrapped in try/except → `_friendly_schedule_error`):
 - `run_cron_create(ctx, *, cron_expr, name, prompt)` — name auto-generated
-  (`discord-{user}-{cron[:20]}`) if blank; confirmation uses `describe_cron`.
+  (`discord-{user}-{cron[:20]}`) if blank; **prompt is trimmed and rejected with a
+  friendly message if blank/whitespace-only** (Discord's "required" check still
+  passes whitespace); confirmation uses `describe_cron`.
 - `run_cron_list(ctx)` — empty → friendly "no schedules yet"; else the
   schedules select.
 - `run_cron_menu(ctx, schedule_id)` — fetch + render the per-schedule menu.
@@ -189,7 +193,7 @@ endpoints:
 | `cron:customcron` | modal submit | parse cron+name+prompt → create |
 | `cron:list` | panel button | ephemeral schedules select |
 | `cron:select` (value=id) | schedule select | per-schedule menu |
-| `cron:runnow:<id>` | menu button | run-now → confirm |
+| `cron:runnow:<id>` | menu button | run-now directly (no confirm) → ▶️ triggered |
 | `cron:pause:<id>` / `cron:resume:<id>` | menu button | disable/enable → refresh menu |
 | `cron:delete:<id>` | menu button | show confirm row |
 | `cron:delconfirm:<id>` / `cron:delcancel` | confirm | delete / dismiss |
@@ -240,6 +244,11 @@ Write failing tests first, then implement:
    - Per-schedule actions → the correct tasks-client method
      (`run_now_schedule` / `enable_schedule` / `disable_schedule` /
      `delete_schedule`).
+   - Pause/resume **re-fetches** the schedule and re-renders the menu so the
+     button flips Pause↔Resume and `enabled`/last-run reflect the post-action
+     state (not a cached toggle).
+   - `run_cron_create` rejects a blank/whitespace-only prompt before calling the
+     API.
 
 Follows the existing app-builder `pytest.ini` and test conventions.
 
