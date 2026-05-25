@@ -138,6 +138,8 @@ services:
       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-JBFqnCBsd6RMkjVDRZzb}
       - ELEVENLABS_MODEL_ID=${ELEVENLABS_MODEL_ID:-eleven_turbo_v2_5}
       - ELEVENLABS_AGENT_ID=${ELEVENLABS_AGENT_ID:-}
+      # Shared secret for the tasks→webhook-handler schedule-result callback.
+      - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
     networks:
       - backend
     depends_on:
@@ -268,6 +270,9 @@ services:
       - AGENT_SSH_KEY_PATH=/run/secrets/agent_ssh_key
       - CRON_SHARED_SECRET=${CRON_SHARED_SECRET:-}
       - IO_GATEWAY_URL=${IO_GATEWAY_URL:-http://api-gateway:8080}
+      # Schedule-result delivery → webhook-handler → user's Discord thread.
+      - WEBHOOK_HANDLER_URL=${WEBHOOK_HANDLER_URL:-http://webhook-handler:8086}
+      - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
     secrets:
       - agent_ssh_key
     volumes:

@@ -78,6 +78,9 @@ class Settings(BaseSettings):
 
     # Tasks service (user-scoped schedules + App Builder)
     tasks_url: str = "http://tasks:8210"
+    # Shared secret for the tasks→webhook-handler schedule-result callback.
+    # The tasks scheduler sends this in X-Internal-Secret; we reject mismatches.
+    internal_callback_secret: str = ""
 
     # Claude Analyzer (PR Review, BRE, Security, etc.)
     claude_analyzer_url: str = "http://claude-analyzer:3000"

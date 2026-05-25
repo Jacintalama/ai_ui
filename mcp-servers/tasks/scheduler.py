@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+import httpx
 from croniter import croniter
 
 logger = logging.getLogger("tasks.scheduler")
@@ -157,18 +159,46 @@ async def _run_scheduled_task(sched: Schedule) -> str:
             )
         except Exception as exc:
             logger.exception("schedule %s run failed: %s", sched.id, scrub(str(exc)))
-            return "failed"
-        # Re-read the task's final status (set by _run_execution)
+            return "failed", ""
+        # Re-read the task's final status + result (set by _run_execution)
         async with session() as s:
             row = (await s.execute(
                 select(TaskItem).where(TaskItem.id == item.id)
             )).scalar_one_or_none()
-        return (row.status if row else None) or "unknown"
+        status = (row.status if row else None) or "unknown"
+        result = (row.result if row else None) or ""
+        return status, result
+
+
+async def _deliver_to_discord(
+    channel_id: str, schedule_name: str, status: str, result: str,
+) -> None:
+    """POST a finished run's result to the webhook-handler, which posts it into
+    the user's Discord thread. Best-effort — never raises into the tick loop.
+    Requires WEBHOOK_HANDLER_URL + INTERNAL_CALLBACK_SECRET in the env."""
+    base = os.environ.get("WEBHOOK_HANDLER_URL", "")
+    secret = os.environ.get("INTERNAL_CALLBACK_SECRET", "")
+    if not base or not secret or not channel_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            await client.post(
+                f"{base.rstrip('/')}/internal/schedule-result",
+                headers={"X-Internal-Secret": secret},
+                json={
+                    "channel_id": channel_id,
+                    "schedule_name": schedule_name,
+                    "status": status,
+                    "result": scrub(result or "")[:6000],
+                },
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("schedule delivery failed (%s): %s", channel_id, scrub(str(exc)))
 
 
 async def _finalize_run(sched: Schedule) -> None:
-    """Background coroutine: run + record last_run_status."""
-    status = await _run_scheduled_task(sched)
+    """Background coroutine: run, record last_run_status, deliver to Discord."""
+    status, result = await _run_scheduled_task(sched)
     async with session() as s:
         await s.execute(
             update(Schedule).where(Schedule.id == sched.id).values(
@@ -176,6 +206,10 @@ async def _finalize_run(sched: Schedule) -> None:
             )
         )
         await s.commit()
+    # Deliver the run's result into the user's Discord thread, if configured.
+    delivery_channel = getattr(sched, "delivery_channel_id", None)
+    if delivery_channel:
+        await _deliver_to_discord(delivery_channel, sched.name, status, result)
 
 
 async def _tick_once() -> None:

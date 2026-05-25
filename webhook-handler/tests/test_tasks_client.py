@@ -226,3 +226,57 @@ async def test_enhance_app_posts(client):
     assert "x-cron-secret" not in {k.lower() for k in req.headers}
     import json as _j
     assert _j.loads(req.content)["prompt"] == "make header green"
+
+
+@pytest.mark.asyncio
+async def test_create_schedule_includes_delivery_channel_id(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/schedules").mock(return_value=Response(201, json={"id": "x"}))
+        await client.create_schedule(
+            "alice@x.com", "test", "0 8 * * *", "summarize emails",
+            delivery_channel_id="123456",
+        )
+        import json
+        sent = json.loads(route.calls.last.request.content)
+        assert sent["delivery_channel_id"] == "123456"
+        assert sent["name"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_create_schedule_omits_delivery_channel_when_none(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/schedules").mock(return_value=Response(201, json={"id": "x"}))
+        await client.create_schedule("alice@x.com", "t", "0 8 * * *", "p")
+        import json
+        sent = json.loads(route.calls.last.request.content)
+        assert "delivery_channel_id" not in sent
+
+
+@pytest.mark.asyncio
+async def test_pause_schedule_posts_disable(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/schedules/sid1/disable").mock(
+            return_value=Response(200, json={"status": "disabled"}))
+        ok = await client.pause_schedule("alice@x.com", "sid1")
+        assert ok is True
+        req = route.calls.last.request
+        assert req.headers.get("x-user-email") == "alice@x.com"
+        assert "x-cron-secret" not in {k.lower() for k in req.headers}
+
+
+@pytest.mark.asyncio
+async def test_resume_schedule_posts_enable(client):
+    with respx.mock(base_url=BASE) as mock:
+        mock.post("/schedules/sid1/enable").mock(
+            return_value=Response(200, json={"status": "enabled"}))
+        assert await client.resume_schedule("alice@x.com", "sid1") is True
+
+
+@pytest.mark.asyncio
+async def test_run_schedule_now_posts_run_now(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/schedules/sid1/run-now").mock(
+            return_value=Response(200, json={"status": "dispatched"}))
+        assert await client.run_schedule_now("alice@x.com", "sid1") is True
+        req = route.calls.last.request
+        assert req.headers.get("x-user-email") == "alice@x.com"

@@ -131,5 +131,8 @@ class Schedule(Base):
     enabled = Column(Boolean, nullable=False, default=True)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_run_status = Column(Text, nullable=True)
+    # Discord channel/thread id to post each run's result into (set when the
+    # schedule is created from Discord). NULL = no delivery (CLI/operator runs).
+    delivery_channel_id = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)

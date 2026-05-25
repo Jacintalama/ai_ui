@@ -58,6 +58,7 @@ class CreateScheduleIn(BaseModel):
     persona: str = ""
     prompt: str = Field(min_length=1)
     enabled: bool = True
+    delivery_channel_id: str | None = None
 
 
 @router.get("")
@@ -110,6 +111,7 @@ async def create_schedule(
             persona=body.persona,
             prompt=body.prompt,
             enabled=body.enabled,
+            delivery_channel_id=body.delivery_channel_id,
         ))
         await s.commit()
     return {"id": str(sid)}
@@ -207,4 +209,5 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "enabled": sch.enabled,
         "last_run_at": sch.last_run_at.isoformat() if sch.last_run_at else None,
         "last_run_status": sch.last_run_status,
+        "delivery_channel_id": sch.delivery_channel_id,
     }

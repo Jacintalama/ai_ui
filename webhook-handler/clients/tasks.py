@@ -59,16 +59,32 @@ class TasksClient:
 
     async def create_schedule(
         self, user_email: str, name: str, cron: str, prompt: str,
-        tz: str = "Asia/Manila",
+        tz: str = "Asia/Manila", delivery_channel_id: str | None = None,
     ) -> dict[str, Any]:
-        resp = await self._request(
-            "POST", "/schedules", user_email,
-            json={"name": name, "cron_expr": cron, "prompt": prompt, "tz": tz},
-        )
+        body: dict[str, Any] = {
+            "name": name, "cron_expr": cron, "prompt": prompt, "tz": tz,
+        }
+        # Only include the delivery target when set — keeps the payload (and the
+        # existing create test) stable for callers that don't deliver to Discord.
+        if delivery_channel_id is not None:
+            body["delivery_channel_id"] = delivery_channel_id
+        resp = await self._request("POST", "/schedules", user_email, json=body)
         return resp.json()
 
     async def delete_schedule(self, user_email: str, schedule_id: str) -> bool:
         await self._request("DELETE", f"/schedules/{schedule_id}", user_email)
+        return True
+
+    async def pause_schedule(self, user_email: str, schedule_id: str) -> bool:
+        await self._request("POST", f"/schedules/{schedule_id}/disable", user_email)
+        return True
+
+    async def resume_schedule(self, user_email: str, schedule_id: str) -> bool:
+        await self._request("POST", f"/schedules/{schedule_id}/enable", user_email)
+        return True
+
+    async def run_schedule_now(self, user_email: str, schedule_id: str) -> bool:
+        await self._request("POST", f"/schedules/{schedule_id}/run-now", user_email)
         return True
 
     async def list_projects(self, user_email: str) -> list[dict[str, Any]]:

@@ -13,6 +13,7 @@ from clients.tasks import TasksClient, TasksAPIError
 from handlers.app_builder_panel import (
     build_apps_select_components,
     build_project_menu_components,
+    build_schedule_list,
 )
 
 from clients.openwebui import OpenWebUIClient
@@ -1656,6 +1657,73 @@ class CommandRouter:
         if status.get("last_commit_at"):
             lines.append(f"Last commit: {status['last_commit_at']}")
         await ctx.respond("\n".join(lines))
+
+    async def run_schedule_list(self, ctx: CommandContext) -> None:
+        """My-schedules button → render the user's schedules + action buttons."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        out = build_schedule_list(schedules)
+        if out["components"] and ctx.respond_components is not None:
+            await ctx.respond_components(out["content"], out["components"])
+        else:
+            await ctx.respond(out["content"])
+
+    async def run_schedule_create(
+        self, ctx: CommandContext, *, name: str, cron: str, prompt: str,
+        delivery_channel_id: str | None = None,
+    ) -> None:
+        """Confirm button → create the schedule for the user, delivering results
+        to their private thread."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            await self._tasks_client.create_schedule(
+                email, name=name, cron=cron, prompt=prompt,
+                delivery_channel_id=delivery_channel_id,
+            )
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        await ctx.respond(
+            f"✅ Scheduled — {name}.\nResults will appear in your private thread."
+        )
+
+    async def run_schedule_action(
+        self, ctx: CommandContext, action: str, schedule_id: str,
+    ) -> None:
+        """Run-now / Pause / Resume / Delete for a single schedule."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            if action == "run":
+                await self._tasks_client.run_schedule_now(email, schedule_id)
+                msg = "▶️ Running now — results will appear in your private thread."
+            elif action == "pause":
+                await self._tasks_client.pause_schedule(email, schedule_id)
+                msg = "⏸ Paused."
+            elif action == "resume":
+                await self._tasks_client.resume_schedule(email, schedule_id)
+                msg = "▶️ Resumed."
+            elif action == "del":
+                await self._tasks_client.delete_schedule(email, schedule_id)
+                msg = "🗑 Deleted."
+            else:
+                msg = "Unknown action."
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        await ctx.respond(msg)
 
     @staticmethod
     def _format_status_error(e: TasksAPIError) -> str:

@@ -1,10 +1,12 @@
 """Discord interaction handler for /aiui slash commands."""
 import asyncio
 import logging
+import uuid
 from typing import Any, Awaitable, Callable
 
 from clients.discord import DiscordClient
 from handlers.commands import CommandRouter, CommandContext
+from handlers.schedule_parse import parse_when
 from handlers.app_builder_panel import (
     build_modal_payload,
     is_panel_button,
@@ -22,6 +24,15 @@ from handlers.app_builder_panel import (
     is_enhance_modal, slug_from_enhance_modal,
     is_app_select,
     is_status_button, slug_from_status_button,
+    build_schedule_modal, build_confirm_components,
+    SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
+    is_sched_new, is_sched_list, is_sched_modal,
+    is_sched_confirm, token_from_confirm,
+    is_sched_cancel, token_from_cancel,
+    is_sched_run, id_from_run,
+    is_sched_pause, id_from_pause,
+    is_sched_resume, id_from_resume,
+    is_sched_del, id_from_del,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,8 +46,10 @@ MODAL_SUBMIT = 5  # NOTE: same number as DEFERRED_CHANNEL_MESSAGE below, but a
 
 # Discord interaction callback (response) types
 PONG = 1
+CHANNEL_MESSAGE_WITH_SOURCE = 4  # immediate message (used for the confirm card)
 DEFERRED_CHANNEL_MESSAGE = 5
 DEFERRED_UPDATE_MESSAGE = 6
+UPDATE_MESSAGE = 7  # edit the component message in place (used for Cancel)
 MODAL = 9
 
 
@@ -46,6 +59,10 @@ class DiscordCommandHandler:
     def __init__(self, discord_client: DiscordClient, command_router: CommandRouter):
         self.discord = discord_client
         self.router = command_router
+        # token -> {name, cron, prompt}: parsed-but-unconfirmed schedules. Popped
+        # on Confirm/Cancel. In-memory and per-process (matches the rest of the
+        # Discord flow); abandoned entries are tiny and harmless.
+        self._pending_schedules: dict[str, dict] = {}
 
     async def handle_interaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
@@ -182,6 +199,38 @@ class DiscordCommandHandler:
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_panel_status(ctx, slug),
                 raw_text=f"aiuibuilder status {slug}")
+        # --- Schedules (aiuisched:*) ---
+        if is_sched_new(custom_id):
+            return {"type": MODAL, "data": build_schedule_modal()}
+        if is_sched_list(custom_id):
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_schedule_list(ctx),
+                raw_text="schedules list")
+        if is_sched_confirm(custom_id):
+            return await self._handle_schedule_confirm(payload, custom_id)
+        if is_sched_cancel(custom_id):
+            try:
+                self._pending_schedules.pop(token_from_cancel(custom_id), None)
+            except ValueError:
+                pass
+            return {"type": UPDATE_MESSAGE,
+                    "data": {"content": "Cancelled.", "components": []}}
+        for pred, extract, action in (
+            (is_sched_run, id_from_run, "run"),
+            (is_sched_pause, id_from_pause, "pause"),
+            (is_sched_resume, id_from_resume, "resume"),
+            (is_sched_del, id_from_del, "del"),
+        ):
+            if pred(custom_id):
+                try:
+                    sid = extract(custom_id)
+                except ValueError:
+                    return {"type": DEFERRED_UPDATE_MESSAGE}
+                return await self._handle_panel_route(
+                    payload,
+                    lambda ctx, a=action, s=sid: self.router.run_schedule_action(ctx, a, s),
+                    raw_text=f"schedules {action} {sid}")
+
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -365,6 +414,8 @@ class DiscordCommandHandler:
             )
             asyncio.create_task(self.router.run_panel_enhance(ctx, slug, change))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if is_sched_modal(custom_id):
+            return self._handle_schedule_modal_submit(payload)
         if not is_panel_modal(custom_id):
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -434,6 +485,91 @@ class DiscordCommandHandler:
 
         asyncio.create_task(_open_and_build())
         # Ephemeral deferred ACK (flags=64) — only the clicking user sees it.
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    def _handle_schedule_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Schedule create modal submit: parse the plain-English 'when', and if
+        it's understood, show an ephemeral confirmation card carrying a token.
+        No I/O — the schedule is only created once the user clicks Confirm."""
+        data = payload.get("data", {})
+        what = self._extract_modal_value(data, SCHED_WHAT_INPUT)
+        when = self._extract_modal_value(data, SCHED_WHEN_INPUT)
+        parsed = parse_when(when)
+        if not what or parsed is None:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": (
+                    "I couldn't read that. Tell me **what** to do and **when** — "
+                    "e.g. *every morning*, *every Monday 9am*, or *every 30 minutes*."
+                ),
+                "flags": 64,
+            }}
+        cron, human = parsed
+        name = f"{human}: {what[:60]}"
+        token = uuid.uuid4().hex[:16]
+        self._pending_schedules[token] = {"name": name, "cron": cron, "prompt": what}
+        return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+            "content": f"📅 **{human}** — {what[:200]}\nLook right?",
+            "components": build_confirm_components(token),
+            "flags": 64,
+        }}
+
+    async def _handle_schedule_confirm(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Confirm button: create the schedule in the background, delivering its
+        results to a private thread. ACK ephemeral-deferred within 3s."""
+        try:
+            token = token_from_confirm(custom_id)
+        except ValueError:
+            token = ""
+        pending = self._pending_schedules.pop(token, None)
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _do() -> None:
+            try:
+                if not pending:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="That schedule request expired — please set it up again.",
+                    )
+                    return
+                # Results land in a private thread (created/reused) so they stay
+                # visible only to this user. Fall back to the channel if thread
+                # creation fails.
+                target = channel_id
+                thread_id = await self.discord.create_private_thread(
+                    channel_id, f"schedules-{user_name}"[:90]
+                )
+                if thread_id:
+                    await self.discord.add_thread_member(thread_id, user_id)
+                    target = thread_id
+
+                async def respond(msg: str) -> None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token, content=msg,
+                    )
+
+                ctx = CommandContext(
+                    user_id=user_id, user_name=user_name, channel_id=channel_id,
+                    raw_text="schedules create", subcommand="aiuibuilder",
+                    arguments="", platform="discord", respond=respond,
+                    metadata={
+                        "interaction_id": payload.get("id", ""),
+                        "interaction_token": interaction_token,
+                        "guild_id": payload.get("guild_id", ""),
+                    },
+                )
+                await self.router.run_schedule_create(
+                    ctx, name=pending["name"], cron=pending["cron"],
+                    prompt=pending["prompt"], delivery_channel_id=target,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_schedule_confirm failed user=%s: %s", user_id, exc)
+
+        asyncio.create_task(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     @staticmethod

@@ -281,3 +281,166 @@ def build_project_menu_components(
                             "label": "\U0001f517 Open preview", "url": preview_url})
     buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
     return [{"type": ACTION_ROW, "components": buttons}]
+
+
+# --- Schedules (Discord cron jobs): panel, modal, confirm card, list ---
+TEXT_SHORT = 1  # Discord short text-input style (paragraph is 2)
+
+SCHED_NEW_ID = "aiuisched:new"        # New-schedule button (exact match)
+SCHED_LIST_ID = "aiuisched:list"      # My-schedules button (exact match)
+SCHED_MODAL_ID = "aiuisched:modal"    # create modal custom_id (exact match)
+SCHED_CONFIRM_PREFIX = "aiuisched:confirm:"   # confirm:<token>
+SCHED_CANCEL_PREFIX = "aiuisched:cancel:"     # cancel:<token>
+SCHED_RUN_PREFIX = "aiuisched:run:"           # run:<schedule_id>
+SCHED_PAUSE_PREFIX = "aiuisched:pause:"       # pause:<schedule_id>
+SCHED_RESUME_PREFIX = "aiuisched:resume:"     # resume:<schedule_id>
+SCHED_DEL_PREFIX = "aiuisched:del:"           # del:<schedule_id>
+SCHED_WHAT_INPUT = "what"
+SCHED_WHEN_INPUT = "when"
+
+SCHEDULES_PANEL_CONTENT = (
+    "⏰ **Scheduled tasks**\n"
+    "Set up a recurring task in plain English — e.g. *summarize my unread "
+    "emails* / *every morning*. Results land in your private thread. "
+    "No coding, no cron syntax."
+)
+
+_MAX_SCHED_ROWS = 5  # Discord allows at most 5 action rows per message
+
+
+def build_schedules_panel() -> dict:
+    """Pinned panel message: 'New schedule' + 'My schedules' buttons."""
+    row = {"type": ACTION_ROW, "components": [
+        _button("⏰ New schedule", SCHED_NEW_ID, STYLE_SUCCESS),
+        _button("\U0001f4cb My schedules", SCHED_LIST_ID, STYLE_SECONDARY),
+    ]}
+    return {"content": SCHEDULES_PANEL_CONTENT, "components": [row]}
+
+
+def build_schedule_modal() -> dict:
+    """Type-9 MODAL data: 'what' (paragraph) + 'when' (short natural language)."""
+    return {
+        "title": "New scheduled task"[:45],
+        "custom_id": SCHED_MODAL_ID,
+        "components": [
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHAT_INPUT,
+                "label": "What should it do?", "style": TEXT_PARAGRAPH,
+                "required": True, "max_length": 2000,
+                "placeholder": "e.g. summarize my unread emails and list the top 3",
+            }]},
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHEN_INPUT,
+                "label": "How often?", "style": TEXT_SHORT,
+                "required": True, "max_length": 60,
+                "placeholder": "every morning  /  every Monday 9am  /  every 30 minutes",
+            }]},
+        ],
+    }
+
+
+def build_confirm_components(token: str) -> list[dict]:
+    """Confirmation-card buttons: Confirm (carries token) + Cancel."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("✅ Confirm", f"{SCHED_CONFIRM_PREFIX}{token}", STYLE_SUCCESS),
+        _button("✖ Cancel", f"{SCHED_CANCEL_PREFIX}{token}", STYLE_SECONDARY),
+    ]}]
+
+
+def build_schedule_list(schedules: list[dict]) -> dict:
+    """Ephemeral 'My schedules' message: a text summary + up to 5 rows of
+    Run / Pause-or-Resume / Delete buttons (one row per schedule)."""
+    if not schedules:
+        return {
+            "content": "You have no schedules yet. Hit **⏰ New schedule** to make one.",
+            "components": [],
+        }
+    lines = ["\U0001f4c5 **Your schedules**"]
+    rows: list[dict] = []
+    for sch in schedules[:_MAX_SCHED_ROWS]:
+        sid = str(sch.get("id", ""))
+        name = sch.get("name") or sid
+        enabled = bool(sch.get("enabled", True))
+        status = sch.get("last_run_status")
+        state = "active" if enabled else "paused"
+        tail = f", last run: {status}" if status else ""
+        lines.append(f"• {name}  *({state}{tail})*")
+        buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SECONDARY)]
+        if enabled:
+            buttons.append(_button("⏸ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
+        else:
+            buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
+        buttons.append(_button("\U0001f5d1 Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
+        rows.append({"type": ACTION_ROW, "components": buttons})
+    if len(schedules) > _MAX_SCHED_ROWS:
+        lines.append(f"…and {len(schedules) - _MAX_SCHED_ROWS} more.")
+    return {"content": "\n".join(lines), "components": rows}
+
+
+def is_sched_new(custom_id: str) -> bool:
+    return custom_id == SCHED_NEW_ID
+
+
+def is_sched_list(custom_id: str) -> bool:
+    return custom_id == SCHED_LIST_ID
+
+
+def is_sched_modal(custom_id: str) -> bool:
+    return custom_id == SCHED_MODAL_ID
+
+
+def _suffix_after(custom_id: str, prefix: str) -> str:
+    if not custom_id.startswith(prefix):
+        raise ValueError(f"not a {prefix!r} custom_id: {custom_id!r}")
+    suffix = custom_id[len(prefix):]
+    if not suffix:
+        raise ValueError(f"{prefix!r} custom_id has no value: {custom_id!r}")
+    return suffix
+
+
+def is_sched_confirm(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_CONFIRM_PREFIX)
+
+
+def token_from_confirm(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_CONFIRM_PREFIX)
+
+
+def is_sched_cancel(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_CANCEL_PREFIX)
+
+
+def token_from_cancel(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_CANCEL_PREFIX)
+
+
+def is_sched_run(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_RUN_PREFIX)
+
+
+def id_from_run(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_RUN_PREFIX)
+
+
+def is_sched_pause(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_PAUSE_PREFIX)
+
+
+def id_from_pause(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_PAUSE_PREFIX)
+
+
+def is_sched_resume(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_RESUME_PREFIX)
+
+
+def id_from_resume(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_RESUME_PREFIX)
+
+
+def is_sched_del(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_DEL_PREFIX)
+
+
+def id_from_del(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_DEL_PREFIX)

@@ -116,6 +116,26 @@ def test_reset_deletes_existing_channel_then_recreates(monkeypatch):
     assert calls["created"] == "new-chan"
 
 
+def test_posts_schedules_panel_too(monkeypatch):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
+    monkeypatch.setenv("DISCORD_GUILD_ID", "guild")
+    monkeypatch.setenv("APP_BUILDER_SETUP_EMAIL", "admin@x.com")
+    posted = []
+    monkeypatch.setattr(setup, "_fetch_templates",
+                        lambda url, email: [{"key": "portfolio", "label": "P", "emoji": "x"}])
+    monkeypatch.setattr(setup, "_find_channel", lambda g, n, h: None)
+    monkeypatch.setattr(setup, "_create_channel", lambda g, n, h: "chan-1")
+    monkeypatch.setattr(setup, "_post_panel", lambda c, p, h: posted.append(p) or "msg")
+    monkeypatch.setattr(setup, "_pin", lambda c, m, h: None)
+    assert setup.main() == 0
+    all_ids = {
+        b.get("custom_id")
+        for p in posted for row in p.get("components", []) for b in row.get("components", [])
+    }
+    assert "aiuisched:new" in all_ids  # the Schedules panel was posted
+
+
 def test_no_reset_keeps_existing_channel(monkeypatch):
     _clear_env(monkeypatch)
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "tok")
