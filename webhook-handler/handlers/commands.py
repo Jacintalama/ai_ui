@@ -7,8 +7,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional, Any
 import logging
+import os
 
 from clients.tasks import TasksClient, TasksAPIError
+from handlers.app_builder_panel import (
+    build_apps_select_components,
+    build_project_menu_components,
+)
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -21,6 +26,9 @@ logger = logging.getLogger(__name__)
 BUILD_POLL_SECONDS = 12
 BUILD_MAX_POLLS = 150  # ~30 min at 12s
 BUILD_MAX_CONSECUTIVE_ERRORS = 5
+# Public host for building preview links (matches the tasks service's
+# AIUI_PUBLIC_DOMAIN default; the domain is otherwise hardcoded elsewhere here).
+PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
 
 
 @dataclass
@@ -42,6 +50,10 @@ class CommandContext:
     # (public_url) -> edit the publish reply to show the live URL + Enhance/Unpublish
     # buttons. Set by the Discord layer; None elsewhere.
     on_published: Optional[Callable[[str], Awaitable[None]]] = None
+    # (message, components) -> edit the interaction reply to include Discord
+    # components (the apps dropdown or a per-project menu). Set by the Discord
+    # layer; None on other platforms.
+    respond_components: Optional[Callable[[str, list], Awaitable[None]]] = None
 
 
 class VoiceResponseCollector:
@@ -1438,7 +1450,10 @@ class CommandRouter:
                 reply = "\n".join(lines)
                 if len(reply) > 1990:
                     reply = reply[:1980] + "\n... +more"
-                await ctx.respond(reply)
+                if ctx.respond_components is not None:
+                    await ctx.respond_components(reply, build_apps_select_components(projects))
+                else:
+                    await ctx.respond(reply)
 
             elif action == "status":
                 if not rest:
@@ -1591,6 +1606,64 @@ class CommandRouter:
             await ctx.respond(self._format_unpublish_error(e))
             return
         await ctx.respond(f"`{slug}` is offline now (unpublished).")
+
+    async def run_panel_menu(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder dropdown selection → post that app's ephemeral action menu.
+        Fetches fresh status so the menu reflects current publish state."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            status = await self._tasks_client.get_project_status(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_status_error(e))
+            return
+        name = status.get("name", slug)
+        published = bool(status.get("published"))
+        public_url = (status.get("public_url") or "").strip()
+        # Omit the preview link entirely if no public domain is configured,
+        # rather than emit a broken "https:///..." URL.
+        preview_url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/" if PUBLIC_DOMAIN else ""
+        header = f"**{name}** (`{slug}`) — {'published' if published else 'not published'}"
+        components = build_project_menu_components(
+            slug, published=published, public_url=public_url, preview_url=preview_url,
+        )
+        if ctx.respond_components is not None:
+            await ctx.respond_components(header, components)
+        else:
+            await ctx.respond(header)
+
+    async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder Status button → post the app's status text (same shape as
+        the `aiuibuilder status <slug>` text action)."""
+        email = self._discord_user_email_map.get(ctx.user_id)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            status = await self._tasks_client.get_project_status(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_status_error(e))
+            return
+        lines = [
+            f"**{status.get('name', slug)}** (`{status.get('slug', slug)}`)",
+            f"Role: {status.get('role', '?')}",
+            f"Published: {'yes' if status.get('published') else 'no'}",
+        ]
+        if status.get("public_url"):
+            lines.append(f"URL: {status['public_url']}")
+        if status.get("last_commit_at"):
+            lines.append(f"Last commit: {status['last_commit_at']}")
+        await ctx.respond("\n".join(lines))
+
+    @staticmethod
+    def _format_status_error(e: TasksAPIError) -> str:
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 404:
+            return "Project not found or not yours."
+        return f"Tasks API error ({e.status})."
 
     def _format_enhance_error(self, e: TasksAPIError) -> str:
         """Enhance-flavored error text."""

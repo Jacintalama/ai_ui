@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jacint Alama — Software Engineer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-cream text-stone-800 font-sans antialiased">
+
+  <!-- NAV -->
+  <header x-data="nav()" class="fixed top-0 left-0 right-0 z-50 border-b border-stone-200 bg-cream/90 backdrop-blur-sm">
+    <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+      <span class="font-mono text-sm font-semibold tracking-widest text-amber-800">JA</span>
+      <button @click="open = !open" class="md:hidden p-2 rounded focus:outline-none focus:ring-2 focus:ring-amber-700" aria-label="Toggle menu">
+        <i data-lucide="menu" class="w-5 h-5"></i>
+      </button>
+      <nav class="hidden md:flex gap-8 font-mono text-xs tracking-widest uppercase text-stone-600">
+        <a href="#about" class="nav-link">About</a>
+        <a href="#skills" class="nav-link">Skills</a>
+        <a href="#projects" class="nav-link">Projects</a>
+        <a href="#contact" class="nav-link">Contact</a>
+      </nav>
+    </div>
+    <div x-show="open" x-transition class="md:hidden bg-cream border-t border-stone-200 px-6 pb-4 flex flex-col gap-4 font-mono text-xs tracking-widest uppercase text-stone-600">
+      <a href="#about" @click="open=false" class="nav-link pt-3">About</a>
+      <a href="#skills" @click="open=false" class="nav-link">Skills</a>
+      <a href="#projects" @click="open=false" class="nav-link">Projects</a>
+      <a href="#contact" @click="open=false" class="nav-link">Contact</a>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- HERO -->
+    <section id="hero" x-data="hero()" class="min-h-screen flex flex-col justify-center pt-20 px-6">
+      <div class="max-w-5xl mx-auto w-full grid-bg py-24">
+        <div class="flex flex-col md:flex-row-reverse items-center md:items-start gap-10">
+          <img src="public/profile.png" alt="Jacint Alama" class="w-36 h-36 rounded-full object-cover object-top shadow-md border-4 border-amber-100 fade-up flex-shrink-0" style="animation-delay:0.1s">
+          <div>
+            <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-4 fade-up" style="animation-delay:0.1s">Hello, I'm</p>
+            <h1 class="font-mono text-5xl sm:text-7xl font-bold text-stone-900 leading-tight mb-4 fade-up" style="animation-delay:0.2s">Jacint<br>Alama</h1>
+            <p class="font-mono text-lg sm:text-2xl text-amber-800 mb-6 fade-up" style="animation-delay:0.3s">Software Engineer</p>
+            <p class="text-stone-600 max-w-xl text-base sm:text-lg leading-relaxed mb-10 fade-up" style="animation-delay:0.4s">
+              I craft reliable backend systems and clean, thoughtful interfaces — tools that get out of the way and let people do their best work.
+            </p>
+            <a href="#projects" class="btn-primary fade-up inline-block" style="animation-delay:0.5s">View my work</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ABOUT -->
+    <section id="about" class="px-6 py-24 border-t border-stone-200">
+      <div class="max-w-5xl mx-auto">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">01. About</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-10">Who I am</h2>
+        <div class="grid md:grid-cols-2 gap-12 text-stone-600 leading-relaxed text-base">
+          <div class="space-y-5">
+            <p>
+              I'm a software engineer with a passion for building clean, useful tools that solve real problems. Whether it's a carefully designed API, a data pipeline that just works, or a UI that feels effortless to use, I care deeply about getting the details right.
+            </p>
+            <p>
+              Over the years I've worked across the full stack — from crafting PostgreSQL schemas and FastAPI services on the backend, to building responsive React frontends and automating workflows with tools like n8n and Docker. I enjoy the full arc of a product, from a blank editor to something live and reliable in production.
+            </p>
+          </div>
+          <div class="space-y-5">
+            <p>
+              Outside of work I contribute to open-source projects, explore new languages (Go has been keeping me busy lately), and write about engineering trade-offs on my blog. I believe good software is mostly about clear thinking — and that the best code is the code that doesn't need explaining.
+            </p>
+            <p>
+              I'm currently open to interesting full-time or contract opportunities, especially in developer tooling, infrastructure, or product engineering.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SKILLS -->
+    <section id="skills" x-data="skills()" class="px-6 py-24 border-t border-stone-200 bg-stone-50/60">
+      <div class="max-w-5xl mx-auto">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">02. Skills</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-12">What I work with</h2>
+        <div class="space-y-10">
+          <template x-for="group in groups" :key="group.label">
+            <div>
+              <h3 class="font-mono text-xs tracking-widest uppercase text-stone-500 mb-4" x-text="group.label"></h3>
+              <div class="flex flex-wrap gap-3">
+                <template x-for="skill in group.items" :key="skill">
+                  <span class="skill-badge" x-text="skill"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROJECTS -->
+    <section id="projects" x-data="projects()" class="px-6 py-24 border-t border-stone-200">
+      <div class="max-w-5xl mx-auto">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">03. Projects</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-12">Things I've built</h2>
+        <div class="grid sm:grid-cols-2 gap-8">
+          <template x-for="project in list" :key="project.name">
+            <div class="project-card group">
+              <div class="flex items-start justify-between mb-3">
+                <h3 class="font-mono font-bold text-stone-900 text-lg group-hover:text-amber-800 transition-colors" x-text="project.name"></h3>
+                <a :href="project.link" class="project-link-btn" aria-label="View project">
+                  <i data-lucide="arrow-up-right" class="w-4 h-4"></i>
+                </a>
+              </div>
+              <p class="text-stone-600 text-sm leading-relaxed mb-5" x-text="project.description"></p>
+              <div class="flex flex-wrap gap-2">
+                <template x-for="tag in project.tags" :key="tag">
+                  <span class="tech-tag" x-text="tag"></span>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONTACT -->
+    <section id="contact" class="px-6 py-24 border-t border-stone-200 bg-stone-50/60">
+      <div class="max-w-5xl mx-auto text-center">
+        <p class="font-mono text-xs tracking-widest text-amber-700 uppercase mb-3">04. Contact</p>
+        <h2 class="font-mono text-3xl sm:text-4xl font-bold text-stone-900 mb-5">Get in touch</h2>
+        <p class="text-stone-600 max-w-md mx-auto mb-10 leading-relaxed">
+          Have a project in mind, a question about my work, or just want to say hello? My inbox is open.
+        </p>
+        <a href="mailto:jacint@example.com" class="btn-primary mb-10 inline-block">jacint@example.com</a>
+        <div class="flex justify-center gap-8 font-mono text-sm text-stone-500">
+          <a href="#" class="social-link flex items-center gap-2">
+            <i data-lucide="github" class="w-4 h-4"></i> GitHub
+          </a>
+          <a href="#" class="social-link flex items-center gap-2">
+            <i data-lucide="linkedin" class="w-4 h-4"></i> LinkedIn
+          </a>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="border-t border-stone-200 px-6 py-6 text-center">
+    <p class="font-mono text-xs text-stone-400">© 2026 Jacint Alama</p>
+  </footer>
+
+</body>
+</html>

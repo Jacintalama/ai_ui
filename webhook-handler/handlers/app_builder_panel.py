@@ -212,3 +212,72 @@ def is_enhance_modal(custom_id: str) -> bool:
 
 def slug_from_enhance_modal(custom_id: str) -> str:
     return _slug_after(custom_id, ENHANCE_MODAL_PREFIX)
+
+
+# --- Selectable "Your apps" list: dropdown + per-project menu ---
+SELECT_MENU = 3  # Discord string-select component type
+
+APP_SELECT_ID = "aiuibuild:appselect"  # the dropdown's custom_id (exact match)
+STATUS_PREFIX = "aiuibuild:status:"     # status button -> aiuibuild:status:<slug>
+_MAX_SELECT_OPTIONS = 25                 # Discord hard limit
+
+
+def is_app_select(custom_id: str) -> bool:
+    return custom_id == APP_SELECT_ID
+
+
+def is_status_button(custom_id: str) -> bool:
+    return custom_id.startswith(STATUS_PREFIX)
+
+
+def slug_from_status_button(custom_id: str) -> str:
+    return _slug_after(custom_id, STATUS_PREFIX)
+
+
+def build_apps_select_components(projects: list[dict]) -> list[dict]:
+    """One action row holding a string select of the user's apps. value=slug,
+    description shows publish state. Caps at 25 options (Discord max). Caller must
+    NOT pass an empty list (Discord rejects a 0-option select)."""
+    options: list[dict] = []
+    for p in projects[:_MAX_SELECT_OPTIONS]:
+        slug = p.get("slug")
+        if not slug:
+            continue  # tolerate a malformed row rather than crash
+        published = bool(p.get("public_url"))
+        options.append({
+            "label": (p.get("name") or slug)[:100],
+            "value": slug[:100],
+            "description": ("published" if published else "not published")[:100],
+        })
+    select = {
+        "type": SELECT_MENU,
+        "custom_id": APP_SELECT_ID,
+        "placeholder": "Select an app to manage…",
+        "min_values": 1,
+        "max_values": 1,
+        "options": options,
+    }
+    return [{"type": ACTION_ROW, "components": [select]}]
+
+
+def build_project_menu_components(
+    slug: str, *, published: bool, public_url: str = "", preview_url: str = "",
+) -> list[dict]:
+    """State-aware action row for a selected app:
+    Enhance + (Publish | Unpublish) + an Open link (only when its URL is set) + Status.
+    Max 5 buttons per row; we emit at most 4."""
+    buttons: list[dict] = [
+        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
+    ]
+    if published:
+        buttons.append(_button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}", STYLE_DANGER))
+        if public_url:
+            buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                            "label": "\U0001f517 Open live", "url": public_url})
+    else:
+        buttons.append(_button("\U0001f7e2 Publish", f"{PUBLISH_PREFIX}{slug}", STYLE_SUCCESS))
+        if preview_url:
+            buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                            "label": "\U0001f517 Open preview", "url": preview_url})
+    buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
+    return [{"type": ACTION_ROW, "components": buttons}]
