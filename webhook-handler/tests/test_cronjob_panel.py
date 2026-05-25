@@ -119,3 +119,54 @@ def test_hour_select_24_options_and_context_in_custom_id():
 def test_hour_select_weekly_carries_dow():
     rows = cp.build_hour_select("weekly", dow="1")
     assert rows[0]["components"][0]["custom_id"] == "cron:hour:weekly:1"
+
+
+def _sched(**kw):
+    base = {"id": "s1", "name": "morning", "cron_expr": "0 9 * * *",
+            "enabled": True, "last_run_status": None, "last_run_at": None}
+    base.update(kw)
+    return base
+
+def test_schedules_select_caps_at_25():
+    schedules = [_sched(id=str(i), name=f"job{i}") for i in range(40)]
+    rows = cp.build_schedules_select(schedules)
+    sel = rows[0]["components"][0]
+    assert sel["custom_id"] == "cron:select"
+    assert len(sel["options"]) == 25
+    assert sel["options"][0]["value"] == "0"
+
+def test_schedule_menu_enabled_shows_pause():
+    rows = cp.build_schedule_menu(_sched(enabled=True))
+    ids = [b["custom_id"] for row in rows for b in row["components"]]
+    assert "cron:runnow:s1" in ids
+    assert "cron:pause:s1" in ids
+    assert "cron:resume:s1" not in ids
+    assert "cron:delete:s1" in ids
+
+def test_schedule_menu_disabled_shows_resume():
+    rows = cp.build_schedule_menu(_sched(enabled=False))
+    ids = [b["custom_id"] for row in rows for b in row["components"]]
+    assert "cron:resume:s1" in ids
+    assert "cron:pause:s1" not in ids
+
+def test_schedule_menu_text_describes_cron():
+    text = cp.format_schedule_line(_sched(cron_expr="0 9 * * *", name="morning"))
+    assert "morning" in text
+    assert "daily at 09:00" in text
+
+def test_delete_confirm_buttons():
+    rows = cp.build_delete_confirm("s1")
+    ids = [b["custom_id"] for row in rows for b in row["components"]]
+    assert ids == ["cron:delconfirm:s1", "cron:delcancel"]
+
+def test_create_modal_carries_cron_and_two_inputs():
+    modal = cp.build_create_modal("0 9 * * *")
+    assert modal["custom_id"] == "cron:create:0_9_*_*_*"
+    field_ids = [c["components"][0]["custom_id"] for c in modal["components"]]
+    assert field_ids == ["name", "prompt"]
+
+def test_custom_cron_modal_three_inputs():
+    modal = cp.build_custom_cron_modal()
+    assert modal["custom_id"] == "cron:customcron"
+    field_ids = [c["components"][0]["custom_id"] for c in modal["components"]]
+    assert field_ids == ["cron", "name", "prompt"]

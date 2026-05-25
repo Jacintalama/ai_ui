@@ -233,3 +233,102 @@ def build_hour_select(freq: str, dow: str | None = None) -> list[dict]:
             ],
         }
     ]
+
+
+# ── schedule list + per-schedule menu ───────────────────────────────
+_MAX_SELECT_OPTIONS = 25
+
+
+def format_schedule_line(sched: dict) -> str:
+    state = "🟢 on" if sched.get("enabled") else "⚪ off"
+    desc = describe_cron(sched.get("cron_expr", ""))
+    last = sched.get("last_run_status")
+    last_str = f" · last: {last}" if last else ""
+    return f"**{sched.get('name','(unnamed)')}** — {desc} [{state}]{last_str}"
+
+
+def build_schedules_select(schedules: list[dict]) -> list[dict]:
+    options = []
+    for s in schedules[:_MAX_SELECT_OPTIONS]:
+        label = (s.get("name") or s.get("id"))[:100]
+        options.append({
+            "label": label,
+            "value": str(s["id"]),
+            "description": describe_cron(s.get("cron_expr", ""))[:100],
+        })
+    return [{
+        "type": 1,
+        "components": [{
+            "type": 3,
+            "custom_id": SELECT,
+            "placeholder": "Select a schedule to manage…",
+            "options": options,
+        }],
+    }]
+
+
+def build_schedule_menu(sched: dict) -> list[dict]:
+    sid = str(sched["id"])
+    toggle = (
+        {"type": 2, "style": 2, "label": "⏸ Pause", "custom_id": action_id("pause", sid)}
+        if sched.get("enabled")
+        else {"type": 2, "style": 3, "label": "▶ Resume", "custom_id": action_id("resume", sid)}
+    )
+    return [{
+        "type": 1,
+        "components": [
+            {"type": 2, "style": 1, "label": "▶️ Run now", "custom_id": action_id("runnow", sid)},
+            toggle,
+            {"type": 2, "style": 4, "label": "🗑 Delete", "custom_id": action_id("delete", sid)},
+        ],
+    }]
+
+
+def build_delete_confirm(schedule_id: str) -> list[dict]:
+    return [{
+        "type": 1,
+        "components": [
+            {"type": 2, "style": 4, "label": "Confirm delete",
+             "custom_id": action_id("delconfirm", schedule_id)},
+            {"type": 2, "style": 2, "label": "Cancel", "custom_id": DELCANCEL},
+        ],
+    }]
+
+
+def _text_input(custom_id: str, label: str, *, style: int, required: bool,
+                placeholder: str = "", max_length: int | None = None) -> dict:
+    comp = {"type": 4, "custom_id": custom_id, "label": label,
+            "style": style, "required": required}
+    if placeholder:
+        comp["placeholder"] = placeholder
+    if max_length:
+        comp["max_length"] = max_length
+    return {"type": 1, "components": [comp]}
+
+
+def build_create_modal(cron_expr: str) -> dict:
+    return {
+        "title": "New scheduled task",
+        "custom_id": create_modal_id(cron_expr),
+        "components": [
+            _text_input("name", "Name (optional)", style=1, required=False,
+                        placeholder="morning-summary", max_length=80),
+            _text_input("prompt", "What should I do?", style=2, required=True,
+                        placeholder="Summarize my unread emails"),
+        ],
+    }
+
+
+def build_custom_cron_modal() -> dict:
+    return {
+        "title": "Custom schedule",
+        "custom_id": CUSTOM_CRON_MODAL,
+        "components": [
+            _text_input("cron", "Cron expression (min hour dom mon dow)", style=1,
+                        required=True, placeholder="0 9 * * 1-5", max_length=60),
+            _text_input("name", "Name (optional)", style=1, required=False,
+                        max_length=80),
+            _text_input("prompt", "What should I do?", style=2, required=True,
+                        placeholder="Summarize my unread emails"),
+        ],
+    }
