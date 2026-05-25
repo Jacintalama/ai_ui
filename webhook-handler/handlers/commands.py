@@ -406,7 +406,8 @@ class CommandRouter:
             "`/aiui security [owner/repo]` \u2014 Deep security audit (OWASP Top 10)\n"
             "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
             "`/aiui license [owner/repo]` \u2014 License compliance check\n"
-            "`/aiui cronjob <list|create|delete>` — Manage scheduled prompts\n"
+            "`/aiui cronjob` — Schedule prompts. Use the **#cron-jobs** channel panel "
+            "(⏰ Schedule a task) or `cronjob create \"<cron>\" \"<prompt>\"`\n"
             "`/aiui aiuibuilder <build|templates|list|status|open>` — Build, then **Publish** from the build message to go live\n"
             "`/aiui help` — Show this help message"
         )
