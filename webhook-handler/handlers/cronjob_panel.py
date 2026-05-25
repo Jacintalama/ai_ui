@@ -151,3 +151,85 @@ def id_from_action(c: str, verb: str) -> str:
     if not c.startswith(prefix):
         raise ValueError(c)
     return c[len(prefix):]
+
+
+# ── component builders ───────────────────────────────────────────────
+_FREQS = [
+    ("daily", "Daily", 1),
+    ("weekdays", "Weekdays", 1),
+    ("weekly", "Weekly", 1),
+    ("hourly", "Hourly", 1),
+    ("custom", "Custom…", 2),
+]
+_DOW_OPTIONS = [
+    ("1", "Monday"), ("2", "Tuesday"), ("3", "Wednesday"), ("4", "Thursday"),
+    ("5", "Friday"), ("6", "Saturday"), ("0", "Sunday"),
+]
+
+
+def build_panel_payload() -> dict:
+    return {
+        "content": (
+            "⏰ **AIUI Cron Jobs**\n"
+            "Schedule a prompt to run automatically.\n"
+            "• **Schedule a task** — pick how often + what to do\n"
+            "• **My schedules** — run now, pause/resume, or delete"
+        ),
+        "components": [
+            {
+                "type": 1,
+                "components": [
+                    {"type": 2, "style": 3, "label": "⏰ Schedule a task", "custom_id": NEW},
+                    {"type": 2, "style": 1, "label": "\U0001f4cb My schedules", "custom_id": LIST},
+                ],
+            }
+        ],
+    }
+
+
+def build_frequency_components() -> list[dict]:
+    return [
+        {
+            "type": 1,
+            "components": [
+                {"type": 2, "style": style, "label": label,
+                 "custom_id": f"{_PREFIX}:freq:{key}"}
+                for key, label, style in _FREQS
+            ],
+        }
+    ]
+
+
+def build_dow_select() -> list[dict]:
+    return [
+        {
+            "type": 1,
+            "components": [
+                {
+                    "type": 3,
+                    "custom_id": DOW_SELECT,
+                    "placeholder": "Which day?",
+                    "options": [{"label": label, "value": val}
+                                for val, label in _DOW_OPTIONS],
+                }
+            ],
+        }
+    ]
+
+
+def build_hour_select(freq: str, dow: str | None = None) -> list[dict]:
+    return [
+        {
+            "type": 1,
+            "components": [
+                {
+                    "type": 3,
+                    "custom_id": hour_select_id(freq, dow),
+                    "placeholder": "At what time? (Asia/Manila)",
+                    "options": [
+                        {"label": f"{h:02d}:00", "value": str(h)} for h in range(24)
+                    ],
+                }
+            ],
+        }
+    ]
