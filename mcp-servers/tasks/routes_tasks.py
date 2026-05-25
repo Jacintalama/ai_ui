@@ -318,10 +318,17 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
             )
             needs_supabase_gate = not already_linked
 
-        # When gating on Supabase we set `built_app_slug` up-front so the chat
-        # message and the resume endpoint can find this task by slug; the
-        # regular build flow leaves it unset (Claude populates it after the
-        # build runs).
+        # Set `built_app_slug` up-front for ANY BUILD task with a known slug.
+        # Previously this was only set for Supabase-gated builds, leaving the
+        # regular flow dependent on the agent emitting `apps/<slug>/` in its
+        # COMPLETED message for the slug-extraction regex to catch. When the
+        # agent personalized a template and replied with prose like "rebranded
+        # to X", that regex returned None and built_app_slug stayed NULL — so
+        # the Preview tab 404'd on a completed task. The slug is canonical the
+        # moment _copy_template_app or _ensure_app_skeleton creates the dir
+        # below, so we write it now. The executor's update logic
+        # (routes_execution.py:225-226) only overwrites when it extracts a NEW
+        # slug, so this stays stable across runs.
         item = TaskItem(
             meeting_id=uuid.uuid4(),  # synthetic — no real meeting
             action_type=body.action_type,
@@ -331,7 +338,7 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
             priority=body.priority,
             status="awaiting_supabase" if needs_supabase_gate else "pending",
             max_attempts=body.max_attempts,
-            built_app_slug=slug if needs_supabase_gate else None,
+            built_app_slug=slug if (slug and body.action_type == "BUILD") else None,
         )
         s.add(item)
         if needs_supabase_gate:
