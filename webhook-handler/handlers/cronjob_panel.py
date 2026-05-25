@@ -64,7 +64,13 @@ DELCANCEL = f"{_PREFIX}:delcancel"
 
 
 def encode_cron(cron_expr: str) -> str:
-    """Pack a cron expression into a single custom_id token (spaces -> '_')."""
+    """Pack a cron expression into a single custom_id token (spaces -> '_').
+
+    Precondition: only safe for `cron_from_choice` output (digits, '*', '-',
+    single-spaced). Never pass raw user input — '_' and multi-space runs are
+    NOT preserved by the decode. The user-typed custom-cron path carries the
+    expression in a modal text field, not a custom_id, so it never reaches here.
+    """
     return cron_expr.replace(" ", "_")
 
 
@@ -209,6 +215,8 @@ def build_dow_select() -> list[dict]:
                     "type": 3,
                     "custom_id": DOW_SELECT,
                     "placeholder": "Which day?",
+                    "min_values": 1,
+                    "max_values": 1,
                     "options": [{"label": label, "value": val}
                                 for val, label in _DOW_OPTIONS],
                 }
@@ -226,6 +234,8 @@ def build_hour_select(freq: str, dow: str | None = None) -> list[dict]:
                     "type": 3,
                     "custom_id": hour_select_id(freq, dow),
                     "placeholder": "At what time? (Asia/Manila)",
+                    "min_values": 1,
+                    "max_values": 1,
                     "options": [
                         {"label": f"{h:02d}:00", "value": str(h)} for h in range(24)
                     ],
@@ -262,6 +272,8 @@ def build_schedules_select(schedules: list[dict]) -> list[dict]:
             "type": 3,
             "custom_id": SELECT,
             "placeholder": "Select a schedule to manage…",
+            "min_values": 1,
+            "max_values": 1,
             "options": options,
         }],
     }]
