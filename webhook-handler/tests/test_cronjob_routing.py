@@ -186,3 +186,36 @@ async def test_cron_custom_modal_submit_uses_typed_cron():
         _modal_payload("cron:customcron", {"cron": "*/30 * * * *", "name": "", "prompt": "p"}))
     await _drain()
     assert router.created == [("*/30 * * * *", "", "p")]
+
+
+@pytest.mark.asyncio
+async def test_cron_list_routes_to_run_cron_list():
+    router = _StubRouter()
+    resp = await _handler(router)._handle_message_component(_component_payload("cron:list"))
+    assert resp["type"] == DEFERRED_CHANNEL_MESSAGE
+    assert resp["data"]["flags"] == 64
+    await _drain()
+    assert router.listed is True
+
+@pytest.mark.asyncio
+async def test_cron_select_routes_to_menu():
+    router = _StubRouter()
+    await _handler(router)._handle_message_component(_component_payload("cron:select", values=["s1"]))
+    await _drain()
+    assert router.menued == "s1"
+
+@pytest.mark.asyncio
+async def test_cron_runnow_pause_resume_delconfirm_route():
+    for verb, attr in [("runnow", "ran"), ("pause", "paused"),
+                       ("resume", "resumed"), ("delconfirm", "deleted")]:
+        router = _StubRouter()
+        await _handler(router)._handle_message_component(_component_payload(f"cron:{verb}:s1"))
+        await _drain()
+        assert getattr(router, attr) == "s1"
+
+@pytest.mark.asyncio
+async def test_cron_delete_shows_confirm_inline():
+    resp = await _handler(_StubRouter())._handle_message_component(_component_payload("cron:delete:s1"))
+    assert resp["type"] == UPDATE_MESSAGE
+    ids = [b["custom_id"] for row in resp["data"]["components"] for b in row["components"]]
+    assert ids == ["cron:delconfirm:s1", "cron:delcancel"]

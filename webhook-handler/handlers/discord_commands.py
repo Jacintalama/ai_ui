@@ -324,8 +324,57 @@ class DiscordCommandHandler:
 
         return await self._handle_cron_manage_component(payload, custom_id)
 
-    async def _handle_cron_manage_component(self, payload, custom_id):
-        logger.info(f"Unhandled cron component (manage not yet wired): {custom_id}")
+    async def _handle_cron_manage_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        values = data.get("values") or []
+
+        if cron.is_list(custom_id):
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_list(ctx),
+                raw_text="cronjob list")
+
+        if cron.is_schedule_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            sid = values[0]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_menu(ctx, sid),
+                raw_text=f"cronjob menu {sid}")
+
+        if cron.is_action(custom_id, "runnow"):
+            sid = cron.id_from_action(custom_id, "runnow")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_runnow(ctx, sid),
+                raw_text="cronjob runnow")
+
+        if cron.is_action(custom_id, "pause"):
+            sid = cron.id_from_action(custom_id, "pause")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_pause(ctx, sid),
+                raw_text="cronjob pause")
+
+        if cron.is_action(custom_id, "resume"):
+            sid = cron.id_from_action(custom_id, "resume")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_resume(ctx, sid),
+                raw_text="cronjob resume")
+
+        if cron.is_action(custom_id, "delete"):
+            sid = cron.id_from_action(custom_id, "delete")
+            return self._ephemeral_components(
+                "Delete this schedule? This can't be undone.",
+                cron.build_delete_confirm(sid), update=True)
+
+        if cron.is_action(custom_id, "delconfirm"):
+            sid = cron.id_from_action(custom_id, "delconfirm")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_delete(ctx, sid),
+                raw_text="cronjob delete")
+
+        if custom_id == cron.DELCANCEL:
+            return self._ephemeral_components("Cancelled.", [], update=True)
+
+        logger.info(f"Ignoring unknown cron custom_id: {custom_id}")
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     @staticmethod
