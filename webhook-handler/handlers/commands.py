@@ -1665,10 +1665,7 @@ class CommandRouter:
     def _cron_email_or_none(self, ctx: CommandContext) -> str | None:
         return self._discord_user_email_map.get(ctx.user_id)
 
-    _CRON_NO_EMAIL = (
-        "Your Discord account isn't linked to an AIUI user yet. "
-        "Ask an admin to link it, then try again."
-    )
+    _CRON_NO_EMAIL = "Your Discord account isn't linked. Ask Lukas to add you."
 
     async def run_cron_create(self, ctx: CommandContext, *, cron_expr: str,
                               name: str, prompt: str) -> None:
