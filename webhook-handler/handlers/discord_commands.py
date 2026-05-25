@@ -49,6 +49,7 @@ from handlers.app_builder_panel import (
     is_sched_edit, id_from_edit,
     is_sched_editmodal, id_from_editmodal,
     is_sched_open, is_sched_select,
+    is_template_select,
 )
 
 logger = logging.getLogger(__name__)
@@ -266,6 +267,12 @@ class DiscordCommandHandler:
             return await self._handle_link_decision(payload, custom_id, approve=False)
         if is_sched_edit(custom_id):
             return await self._handle_sched_edit_open(payload, custom_id)
+
+        if is_template_select(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": build_modal_payload(values[0])}
 
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")

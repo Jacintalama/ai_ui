@@ -4,8 +4,21 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from handlers.discord_commands import DiscordCommandHandler
-from handlers.app_builder_panel import TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_INPUT_ID, PUBLISH_PREFIX
+from handlers.app_builder_panel import TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_INPUT_ID, PUBLISH_PREFIX, TEMPLATE_SELECT_ID
 from handlers.app_builder_panel import ENHANCE_PREFIX, UNPUBLISH_PREFIX, ENHANCE_MODAL_PREFIX
+
+
+@pytest.mark.asyncio
+async def test_template_dropdown_select_opens_build_modal():
+    handler = _handler(MagicMock())
+    payload = {
+        "type": 3, "id": "i", "token": "t",
+        "data": {"custom_id": TEMPLATE_SELECT_ID, "values": ["portfolio"]},
+        "member": {"user": {"id": "100", "username": "a"}}, "channel_id": "c",
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == 9  # MODAL
+    assert resp["data"]["custom_id"] == f"{BUILD_PREFIX}portfolio"
 
 
 def _handler(router):

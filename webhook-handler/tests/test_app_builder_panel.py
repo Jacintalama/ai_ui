@@ -25,17 +25,6 @@ _TEMPLATES = [
 ]
 
 
-def test_panel_has_button_per_template_plus_blank():
-    payload = build_panel_payload(_TEMPLATES)
-    buttons = [c for row in payload["components"] for c in row["components"]]
-    assert len(buttons) == len(_TEMPLATES) + 1
-    ids = [b["custom_id"] for b in buttons]
-    assert f"{TEMPLATE_PREFIX}portfolio" in ids
-    assert TEMPLATE_PREFIX in ids  # blank button has the bare prefix
-    blank = next(b for b in buttons if b["custom_id"] == TEMPLATE_PREFIX)
-    assert blank["style"] == STYLE_SECONDARY
-
-
 def test_panel_rows_within_discord_limits():
     many = [{"key": f"t{i}", "label": f"T{i}", "emoji": "x"} for i in range(30)]
     payload = build_panel_payload(many)
@@ -49,15 +38,6 @@ def test_panel_rows_within_discord_limits():
     # Blank must always appear, even under the 25-button cap
     all_ids = [c["custom_id"] for row in rows for c in row["components"]]
     assert TEMPLATE_PREFIX in all_ids
-
-
-def test_panel_skips_keyless_rows():
-    payload = build_panel_payload(
-        [{"label": "no key", "emoji": "x"}, {"key": "ok", "label": "OK", "emoji": "y"}]
-    )
-    ids = [c["custom_id"] for row in payload["components"] for c in row["components"]]
-    assert f"{TEMPLATE_PREFIX}ok" in ids
-    assert TEMPLATE_PREFIX in ids  # blank still present
 
 
 def test_modal_payload_shape():

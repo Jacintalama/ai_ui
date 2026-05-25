@@ -28,6 +28,7 @@ TEXT_PARAGRAPH = 2
 # custom_id schemes
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button -> aiuibuild:tpl:<key>  ("" = Blank)
 BUILD_PREFIX = "aiuibuild:build:"    # modal  -> aiuibuild:build:<key>
+TEMPLATE_SELECT_ID = "aiuibuild:tplselect"  # "Pick a template" dropdown (value=key)
 DESCRIPTION_INPUT_ID = "description"
 
 _MAX_PER_ROW = 5
@@ -47,26 +48,32 @@ def _button(label: str, custom_id: str, style: int) -> dict:
 
 
 def build_panel_payload(templates: list[dict]) -> dict:
-    """Pinned panel message: one green/blue button per template plus a grey Blank
-    button, laid out 5 per row. Templates beyond the 24-button budget (room left
-    for Blank) are dropped — the slash command still reaches them."""
-    buttons: list[dict] = []
-    for t in templates[: _MAX_BUTTONS - 1]:
+    """Pinned panel: a single 'Pick a template…' dropdown (one option per
+    template, with a 1-line description) plus a Blank button. Replaces the old
+    25-button grid — far less visual clutter, same build flow on selection.
+    Caps at 25 options (Discord's select limit)."""
+    options: list[dict] = []
+    for t in templates[:_MAX_SELECT_OPTIONS]:
         key = t.get("key")
         if not key:
             continue  # tolerate a malformed row rather than crash
         emoji = (t.get("emoji") or "").strip()
-        label = t.get("label", key)
-        text = f"{emoji} {label}".strip()
-        style = STYLE_SUCCESS if len(buttons) % 2 == 0 else STYLE_PRIMARY
-        buttons.append(_button(text, f"{TEMPLATE_PREFIX}{key}", style))
-    buttons.append(_button("⬜ Blank", TEMPLATE_PREFIX, STYLE_SECONDARY))
-
-    rows: list[dict] = []
-    for start in range(0, len(buttons), _MAX_PER_ROW):
-        rows.append({"type": ACTION_ROW, "components": buttons[start : start + _MAX_PER_ROW]})
-    rows = rows[:_MAX_ROWS]
-    return {"content": PANEL_CONTENT, "components": rows}
+        label = f"{emoji} {t.get('label', key)}".strip()
+        opt = {"label": label[:100], "value": key[:100]}
+        desc = (t.get("description") or "").strip()
+        if desc:
+            opt["description"] = desc[:100]
+        options.append(opt)
+    select = {
+        "type": SELECT_MENU, "custom_id": TEMPLATE_SELECT_ID,
+        "placeholder": "Pick a template…", "min_values": 1, "max_values": 1,
+        "options": options,
+    }
+    blank = _button("⬜ Blank", TEMPLATE_PREFIX, STYLE_SECONDARY)
+    return {"content": PANEL_CONTENT, "components": [
+        {"type": ACTION_ROW, "components": [select]},
+        {"type": ACTION_ROW, "components": [blank]},
+    ]}
 
 
 def build_modal_payload(template_key: str | None, template_label: str | None = None) -> dict:
@@ -98,6 +105,10 @@ def build_modal_payload(template_key: str | None, template_label: str | None = N
 
 def is_panel_button(custom_id: str) -> bool:
     return custom_id.startswith(TEMPLATE_PREFIX)
+
+
+def is_template_select(custom_id: str) -> bool:
+    return custom_id == TEMPLATE_SELECT_ID
 
 
 def is_panel_modal(custom_id: str) -> bool:
