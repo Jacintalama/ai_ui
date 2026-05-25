@@ -197,6 +197,40 @@ async def run_now(
     return {"status": "dispatched"}
 
 
+class UpdateScheduleIn(BaseModel):
+    name: str | None = None
+    cron_expr: str | None = None
+    prompt: str | None = None
+
+
+@router.patch("/{schedule_id}")
+async def update_schedule(
+    schedule_id: str,
+    body: UpdateScheduleIn,
+    x_cron_secret: str = Header(default=""),
+    x_user_email: str = Header(default=""),
+) -> dict[str, str]:
+    _, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    await _scoped_schedule(schedule_id, scoped_email)  # 404 if missing / not owner
+    values: dict[str, Any] = {}
+    if body.name is not None:
+        values["name"] = body.name
+    if body.cron_expr is not None:
+        from croniter import croniter
+        if not croniter.is_valid(body.cron_expr):
+            raise HTTPException(status_code=400, detail="invalid cron_expr")
+        values["cron_expr"] = body.cron_expr
+    if body.prompt is not None:
+        values["prompt"] = body.prompt
+    if values:
+        async with session() as s:
+            await s.execute(
+                update(Schedule).where(Schedule.id == uuid.UUID(schedule_id)).values(**values)
+            )
+            await s.commit()
+    return {"status": "updated"}
+
+
 def _serialize(sch: Schedule) -> dict[str, Any]:
     return {
         "id": str(sch.id),

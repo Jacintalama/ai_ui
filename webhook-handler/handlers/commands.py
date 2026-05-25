@@ -1279,7 +1279,7 @@ class CommandRouter:
 
     async def _handle_cronjob(self, ctx: CommandContext) -> None:
         """Discord → user-scoped cron schedule CRUD via tasks service."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond(
                 "Your Discord account isn't linked. Ask Lukas to add you."
@@ -1355,7 +1355,7 @@ class CommandRouter:
 
     async def _handle_aiuibuilder(self, ctx: CommandContext) -> None:
         """Discord → App Builder project list / status / open URL."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond(
                 "Your Discord account isn't linked. Ask Lukas to add you."
@@ -1533,7 +1533,7 @@ class CommandRouter:
         explicit (from the clicked button), so — unlike the free-text `build`
         path — a Blank build whose first word matches a template key is never
         misread as a template build."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond(
                 "Your Discord account isn't linked. Ask Lukas to add you."
@@ -1549,7 +1549,7 @@ class CommandRouter:
         """App Builder channel entry for the Publish button. Resolves the
         caller's email and publishes their built app, then posts the live URL.
         Ownership is enforced server-side (only the app's owner can publish)."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond(
                 "Your Discord account isn't linked. Ask Lukas to add you."
@@ -1573,7 +1573,7 @@ class CommandRouter:
     async def run_panel_enhance(self, ctx: CommandContext, slug: str, prompt: str) -> None:
         """App Builder Enhance: edit an existing app from a typed change, then
         watch it like a build and post the updated preview."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1597,7 +1597,7 @@ class CommandRouter:
 
     async def run_panel_unpublish(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Unpublish: take a live app offline."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1611,7 +1611,7 @@ class CommandRouter:
     async def run_panel_menu(self, ctx: CommandContext, slug: str) -> None:
         """App Builder dropdown selection → post that app's ephemeral action menu.
         Fetches fresh status so the menu reflects current publish state."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1638,7 +1638,7 @@ class CommandRouter:
     async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Status button → post the app's status text (same shape as
         the `aiuibuilder status <slug>` text action)."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1660,7 +1660,7 @@ class CommandRouter:
 
     async def run_schedule_list(self, ctx: CommandContext) -> None:
         """My-schedules button → render the user's schedules + action buttons."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1681,7 +1681,7 @@ class CommandRouter:
     ) -> None:
         """Confirm button → create the schedule for the user, delivering results
         to their private thread."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1701,7 +1701,7 @@ class CommandRouter:
         self, ctx: CommandContext, action: str, schedule_id: str,
     ) -> None:
         """Run-now / Pause / Resume / Delete for a single schedule."""
-        email = self._discord_user_email_map.get(ctx.user_id)
+        email = await self._resolve_email(ctx.user_id)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1724,6 +1724,67 @@ class CommandRouter:
             await ctx.respond(self._format_tasks_error(e))
             return
         await ctx.respond(msg)
+
+    async def _resolve_email(self, discord_id: str) -> str | None:
+        """Resolve a Discord user's email: static env map first (operator-set),
+        then the DB link store. None if unlinked or the tasks service is down."""
+        email = self._discord_user_email_map.get(discord_id)
+        if email:
+            return email
+        try:
+            return await self._tasks_client.resolve_link(discord_id)
+        except TasksAPIError:
+            return None
+
+    @staticmethod
+    def _not_linked_msg() -> str:
+        return ("Your Discord account isn't linked yet. Hit **🔗 Link my account** "
+                "on the Schedules panel to get set up.")
+
+    async def run_schedule_edit(
+        self, ctx: CommandContext, schedule_id: str, *,
+        name: str, cron: str, prompt: str,
+    ) -> None:
+        """Edit-modal submit → update the schedule's time/prompt for this user."""
+        email = await self._resolve_email(ctx.user_id)
+        if not email:
+            await ctx.respond(self._not_linked_msg())
+            return
+        try:
+            await self._tasks_client.update_schedule(
+                email, schedule_id, name=name, cron=cron, prompt=prompt)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        await ctx.respond(f"✅ Updated — {name}.")
+
+    async def get_schedule_for_edit(self, discord_id: str, schedule_id: str) -> dict | None:
+        """Return {what, when} for the Edit-modal prefill, or None if not found /
+        not linked. The schedule's name is '<when-in-English>: <what>'."""
+        email = await self._resolve_email(discord_id)
+        if not email:
+            return None
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError:
+            return None
+        for s in schedules:
+            if str(s.get("id")) == schedule_id:
+                name = s.get("name") or ""
+                when, sep, what = name.partition(": ")
+                if not sep:
+                    return {"what": name, "when": ""}
+                return {"what": what, "when": when}
+        return None
+
+    async def request_link(self, discord_id: str, username: str, email: str) -> dict:
+        return await self._tasks_client.request_link(discord_id, username, email)
+
+    async def approve_link(self, discord_id: str, decided_by: str = "") -> dict:
+        return await self._tasks_client.approve_link(discord_id, decided_by=decided_by)
+
+    async def reject_link(self, discord_id: str) -> bool:
+        return await self._tasks_client.reject_link(discord_id)
 
     @staticmethod
     def _format_status_error(e: TasksAPIError) -> str:

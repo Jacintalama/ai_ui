@@ -172,6 +172,7 @@ async def _run_scheduled_task(sched: Schedule) -> str:
 
 async def _deliver_to_discord(
     channel_id: str, schedule_name: str, status: str, result: str,
+    schedule_id: str = "",
 ) -> None:
     """POST a finished run's result to the webhook-handler, which posts it into
     the user's Discord thread. Best-effort — never raises into the tick loop.
@@ -190,6 +191,7 @@ async def _deliver_to_discord(
                     "schedule_name": schedule_name,
                     "status": status,
                     "result": scrub(result or "")[:6000],
+                    "schedule_id": schedule_id,
                 },
             )
     except Exception as exc:  # noqa: BLE001
@@ -209,7 +211,7 @@ async def _finalize_run(sched: Schedule) -> None:
     # Deliver the run's result into the user's Discord thread, if configured.
     delivery_channel = getattr(sched, "delivery_channel_id", None)
     if delivery_channel:
-        await _deliver_to_discord(delivery_channel, sched.name, status, result)
+        await _deliver_to_discord(delivery_channel, sched.name, status, result, str(sched.id))
 
 
 async def _tick_once() -> None:

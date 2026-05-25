@@ -11,6 +11,8 @@ class FakeTasks:
         if self._error:
             raise self._error
         return {"slug": slug, **self._status}
+    async def resolve_link(self, discord_id):
+        return None
 
 
 def _router(tasks, email_map=None):

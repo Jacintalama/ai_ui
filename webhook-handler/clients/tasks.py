@@ -26,9 +26,12 @@ class TasksAPIError(Exception):
 
 
 class TasksClient:
-    def __init__(self, base_url: str, timeout: float = 15.0):
+    def __init__(self, base_url: str, timeout: float = 15.0, internal_secret: str = ""):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        # For system (non-user-scoped) endpoints like /discord-links/*. Sent as
+        # X-Internal-Secret — NOT the cron secret, and never on /schedules.
+        self._internal_secret = internal_secret
 
     def _headers(self, user_email: str) -> dict[str, str]:
         # ONLY X-User-Email. Never X-Cron-Secret here.
@@ -42,6 +45,24 @@ class TasksClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.request(
                     method, url, headers=self._headers(user_email), **kwargs
+                )
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            raise TasksAPIError(0, f"tasks service unreachable: {e}") from e
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json().get("detail", resp.text)
+            except Exception:
+                detail = resp.text
+            raise TasksAPIError(resp.status_code, str(detail))
+        return resp
+
+    async def _internal_request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """For system endpoints (/discord-links/*) authed with X-Internal-Secret."""
+        url = f"{self.base_url}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.request(
+                    method, url, headers={"X-Internal-Secret": self._internal_secret}, **kwargs
                 )
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise TasksAPIError(0, f"tasks service unreachable: {e}") from e
@@ -86,6 +107,44 @@ class TasksClient:
     async def run_schedule_now(self, user_email: str, schedule_id: str) -> bool:
         await self._request("POST", f"/schedules/{schedule_id}/run-now", user_email)
         return True
+
+    async def update_schedule(
+        self, user_email: str, schedule_id: str, *,
+        name: str | None = None, cron: str | None = None, prompt: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if name is not None:
+            body["name"] = name
+        if cron is not None:
+            body["cron_expr"] = cron
+        if prompt is not None:
+            body["prompt"] = prompt
+        resp = await self._request("PATCH", f"/schedules/{schedule_id}", user_email, json=body)
+        return resp.json()
+
+    # --- Discord-link management (system calls, X-Internal-Secret) ---
+    async def request_link(self, discord_id: str, discord_username: str, email: str) -> dict[str, Any]:
+        resp = await self._internal_request(
+            "POST", "/discord-links/request",
+            json={"discord_id": discord_id, "discord_username": discord_username, "email": email},
+        )
+        return resp.json()
+
+    async def approve_link(self, discord_id: str, decided_by: str = "") -> dict[str, Any]:
+        resp = await self._internal_request(
+            "POST", f"/discord-links/{discord_id}/approve", json={"decided_by": decided_by},
+        )
+        return resp.json()
+
+    async def reject_link(self, discord_id: str, decided_by: str = "") -> bool:
+        await self._internal_request(
+            "POST", f"/discord-links/{discord_id}/reject", json={"decided_by": decided_by},
+        )
+        return True
+
+    async def resolve_link(self, discord_id: str) -> str | None:
+        resp = await self._internal_request("GET", f"/discord-links/resolve/{discord_id}")
+        return resp.json().get("email")
 
     async def list_projects(self, user_email: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", "/api/projects", user_email)

@@ -26,6 +26,8 @@ def _ctx(user_id):
 
 
 def _router(mapping, tc):
+    if not isinstance(getattr(tc, "resolve_link", None), AsyncMock):
+        tc.resolve_link = AsyncMock(return_value=None)
     return CommandRouter(
         openwebui_client=MagicMock(), n8n_client=MagicMock(api_key=""),
         discord_user_email_map=mapping, tasks_client=tc,

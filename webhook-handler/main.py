@@ -508,6 +508,7 @@ class ScheduleResultIn(BaseModel):
     schedule_name: str = ""
     status: str = ""
     result: str = ""
+    schedule_id: str = ""
 
 
 def _format_schedule_result(name: str, status: str, result: str) -> str:
@@ -534,7 +535,12 @@ async def schedule_result(
     if discord_client is None:
         raise HTTPException(status_code=503, detail="Discord not configured")
     message = _format_schedule_result(body.schedule_name, body.status, body.result)
-    await discord_client.post_channel_message(body.channel_id, message)
+    # On a failed run, attach a one-click Retry (reuses the run-now handler).
+    components = None
+    if body.schedule_id and body.status not in ("completed", "skipped"):
+        from handlers.app_builder_panel import build_retry_components
+        components = build_retry_components(body.schedule_id)
+    await discord_client.post_channel_message(body.channel_id, message, components=components)
     return {"status": "delivered"}
 
 

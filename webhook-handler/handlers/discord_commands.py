@@ -1,12 +1,20 @@
 """Discord interaction handler for /aiui slash commands."""
 import asyncio
 import logging
+import re
 import uuid
 from typing import Any, Awaitable, Callable
 
 from clients.discord import DiscordClient
+from config import settings
 from handlers.commands import CommandRouter, CommandContext
 from handlers.schedule_parse import parse_when
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _valid_email(email: str) -> bool:
+    return bool(_EMAIL_RE.match((email or "").strip()))
 from handlers.app_builder_panel import (
     build_modal_payload,
     is_panel_button,
@@ -33,6 +41,13 @@ from handlers.app_builder_panel import (
     is_sched_pause, id_from_pause,
     is_sched_resume, id_from_resume,
     is_sched_del, id_from_del,
+    build_link_modal, build_link_request_components, build_schedule_edit_modal,
+    LINK_EMAIL_INPUT,
+    is_link_start, is_link_modal,
+    is_link_approve, id_from_link_approve,
+    is_link_reject, id_from_link_reject,
+    is_sched_edit, id_from_edit,
+    is_sched_editmodal, id_from_editmodal,
 )
 
 logger = logging.getLogger(__name__)
@@ -231,6 +246,16 @@ class DiscordCommandHandler:
                     lambda ctx, a=action, s=sid: self.router.run_schedule_action(ctx, a, s),
                     raw_text=f"schedules {action} {sid}")
 
+        # --- Linking (aiuilink:*) + schedule Edit ---
+        if is_link_start(custom_id):
+            return {"type": MODAL, "data": build_link_modal()}
+        if is_link_approve(custom_id):
+            return await self._handle_link_decision(payload, custom_id, approve=True)
+        if is_link_reject(custom_id):
+            return await self._handle_link_decision(payload, custom_id, approve=False)
+        if is_sched_edit(custom_id):
+            return await self._handle_sched_edit_open(payload, custom_id)
+
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -416,6 +441,10 @@ class DiscordCommandHandler:
             return {"type": DEFERRED_CHANNEL_MESSAGE}
         if is_sched_modal(custom_id):
             return self._handle_schedule_modal_submit(payload)
+        if is_sched_editmodal(custom_id):
+            return self._handle_sched_edit_submit(payload, custom_id)
+        if is_link_modal(custom_id):
+            return self._handle_link_modal_submit(payload)
         if not is_panel_modal(custom_id):
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -570,6 +599,131 @@ class DiscordCommandHandler:
                 logger.error("_handle_schedule_confirm failed user=%s: %s", user_id, exc)
 
         asyncio.create_task(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    def _handle_link_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Link modal submit: validate email, then (background) record the request
+        and post an Approve/Reject card to the admin channel."""
+        data = payload.get("data", {})
+        email = self._extract_modal_value(data, LINK_EMAIL_INPUT)
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        interaction_token = payload.get("token", "")
+        if not _valid_email(email):
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "That doesn't look like a valid email — try again.",
+                "flags": 64,
+            }}
+
+        async def _do() -> None:
+            try:
+                await self.router.request_link(user_id, user_name, email)
+                admin_channel = settings.discord_alert_channel_id
+                if admin_channel:
+                    await self.discord.post_channel_message(
+                        admin_channel,
+                        f"🔗 **Link request** — <@{user_id}> ({user_name}) → `{email}`",
+                        components=build_link_request_components(user_id),
+                    )
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="✅ Request sent — an admin will review it shortly.",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("link request failed user=%s: %s", user_id, exc)
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't send your request — please try again.",
+                )
+
+        asyncio.create_task(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_link_decision(
+        self, payload: dict[str, Any], custom_id: str, *, approve: bool,
+    ) -> dict[str, Any]:
+        """Admin Approve/Reject button on a link request → update DB + the message."""
+        try:
+            discord_id = (id_from_link_approve(custom_id) if approve
+                          else id_from_link_reject(custom_id))
+        except ValueError:
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        admin = member.get("user", payload.get("user", {}))
+
+        async def _do() -> None:
+            try:
+                if approve:
+                    await self.router.approve_link(discord_id, decided_by=admin.get("username", ""))
+                    text = f"✅ Approved <@{discord_id}>"
+                else:
+                    await self.router.reject_link(discord_id)
+                    text = f"✖ Rejected <@{discord_id}>"
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=text, components=[],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("link decision failed id=%s: %s", discord_id, exc)
+
+        asyncio.create_task(_do())
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _handle_sched_edit_open(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Edit button → fetch the schedule, open a pre-filled modal. Must respond
+        with the modal synchronously (Discord can't defer-then-modal)."""
+        try:
+            schedule_id = id_from_edit(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        data = await self.router.get_schedule_for_edit(user.get("id", ""), schedule_id)
+        if data is None:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "Couldn't load that schedule (are you linked?).",
+                "flags": 64,
+            }}
+        return {"type": MODAL, "data": build_schedule_edit_modal(
+            schedule_id, what=data["what"], when=data["when"])}
+
+    def _handle_sched_edit_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Edit modal submit: re-parse the when, then update the schedule."""
+        try:
+            schedule_id = id_from_editmodal(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        data = payload.get("data", {})
+        what = self._extract_modal_value(data, SCHED_WHAT_INPUT)
+        when = self._extract_modal_value(data, SCHED_WHEN_INPUT)
+        parsed = parse_when(when)
+        if not what or parsed is None:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": ("I couldn't read that time. Try 'every morning', "
+                            "'every Monday 9am', or 'every 30 minutes'."),
+                "flags": 64,
+            }}
+        cron, human = parsed
+        name = f"{human}: {what[:60]}"
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        interaction_token = payload.get("token", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="schedules edit",
+            subcommand="aiuibuilder", arguments="", platform="discord", respond=respond,
+            metadata={"interaction_id": payload.get("id", ""),
+                      "interaction_token": interaction_token,
+                      "guild_id": payload.get("guild_id", "")},
+        )
+        asyncio.create_task(self.router.run_schedule_edit(
+            ctx, schedule_id, name=name, cron=cron, prompt=what))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     @staticmethod

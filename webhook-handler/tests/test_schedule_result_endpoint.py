@@ -8,8 +8,8 @@ class _FakeDiscord:
     def __init__(self):
         self.posted: list[tuple[str, str]] = []
 
-    async def post_channel_message(self, channel_id, content):
-        self.posted.append((channel_id, content))
+    async def post_channel_message(self, channel_id, content, components=None):
+        self.posted.append((channel_id, content, components))
         return True
 
 
@@ -64,10 +64,42 @@ async def test_posts_result_to_channel_on_good_secret(monkeypatch):
         )
     assert resp.status_code == 200
     assert len(fake.posted) == 1
-    channel, content = fake.posted[0]
+    channel, content, _ = fake.posted[0]
     assert channel == "123"
     assert "morning digest" in content
     assert "Top 3 emails" in content
+
+
+@pytest.mark.asyncio
+async def test_failed_run_attaches_retry_button(monkeypatch):
+    main_mod, fake = _wire(monkeypatch, "s3cret")
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={"channel_id": "c", "schedule_name": "n", "status": "failed",
+                  "result": "boom", "schedule_id": "sid9"},
+        )
+    assert resp.status_code == 200
+    _, _, components = fake.posted[0]
+    ids = {b["custom_id"] for row in (components or []) for b in row["components"]}
+    assert "aiuisched:run:sid9" in ids
+
+
+@pytest.mark.asyncio
+async def test_completed_run_has_no_retry_button(monkeypatch):
+    main_mod, fake = _wire(monkeypatch, "s3cret")
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={"channel_id": "c", "schedule_name": "n", "status": "completed",
+                  "result": "ok", "schedule_id": "sid9"},
+        )
+    _, _, components = fake.posted[0]
+    assert not components
 
 
 def test_format_schedule_result_truncates_and_labels():

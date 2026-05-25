@@ -309,10 +309,11 @@ _MAX_SCHED_ROWS = 5  # Discord allows at most 5 action rows per message
 
 
 def build_schedules_panel() -> dict:
-    """Pinned panel message: 'New schedule' + 'My schedules' buttons."""
+    """Pinned panel message: New / My schedules / Link buttons."""
     row = {"type": ACTION_ROW, "components": [
         _button("⏰ New schedule", SCHED_NEW_ID, STYLE_SUCCESS),
         _button("\U0001f4cb My schedules", SCHED_LIST_ID, STYLE_SECONDARY),
+        _button("\U0001f517 Link my account", LINK_START_ID, STYLE_PRIMARY),
     ]}
     return {"content": SCHEDULES_PANEL_CONTENT, "components": [row]}
 
@@ -370,6 +371,7 @@ def build_schedule_list(schedules: list[dict]) -> dict:
             buttons.append(_button("⏸ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
         else:
             buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
+        buttons.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", STYLE_PRIMARY))
         buttons.append(_button("\U0001f5d1 Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
         rows.append({"type": ACTION_ROW, "components": buttons})
     if len(schedules) > _MAX_SCHED_ROWS:
@@ -444,3 +446,104 @@ def is_sched_del(custom_id: str) -> bool:
 
 def id_from_del(custom_id: str) -> str:
     return _suffix_after(custom_id, SCHED_DEL_PREFIX)
+
+
+# --- #3 Retry on failed runs (reuses the run-now handler) ---
+def build_retry_components(schedule_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("🔁 Retry", f"{SCHED_RUN_PREFIX}{schedule_id}", STYLE_SECONDARY),
+    ]}]
+
+
+# --- #4 Edit a schedule ---
+SCHED_EDIT_PREFIX = "aiuisched:edit:"
+SCHED_EDITMODAL_PREFIX = "aiuisched:editmodal:"
+
+
+def build_schedule_edit_modal(schedule_id: str, *, what: str, when: str) -> dict:
+    """Edit modal pre-filled with the schedule's current what + when."""
+    return {
+        "title": "Edit schedule"[:45],
+        "custom_id": f"{SCHED_EDITMODAL_PREFIX}{schedule_id}",
+        "components": [
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHAT_INPUT,
+                "label": "What should it do?", "style": TEXT_PARAGRAPH,
+                "required": True, "max_length": 2000, "value": (what or "")[:2000],
+            }]},
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHEN_INPUT,
+                "label": "How often?", "style": TEXT_SHORT,
+                "required": True, "max_length": 60, "value": (when or "")[:60],
+            }]},
+        ],
+    }
+
+
+def is_sched_edit(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_EDIT_PREFIX)
+
+
+def id_from_edit(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_EDIT_PREFIX)
+
+
+def is_sched_editmodal(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_EDITMODAL_PREFIX)
+
+
+def id_from_editmodal(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_EDITMODAL_PREFIX)
+
+
+# --- #1 Self-service linking (aiuilink:*) ---
+LINK_START_ID = "aiuilink:start"
+LINK_MODAL_ID = "aiuilink:modal"
+LINK_EMAIL_INPUT = "email"
+LINK_APPROVE_PREFIX = "aiuilink:approve:"
+LINK_REJECT_PREFIX = "aiuilink:reject:"
+
+
+def build_link_modal() -> dict:
+    return {
+        "title": "Link your account"[:45],
+        "custom_id": LINK_MODAL_ID,
+        "components": [{"type": ACTION_ROW, "components": [{
+            "type": TEXT_INPUT, "custom_id": LINK_EMAIL_INPUT,
+            "label": "Your work email", "style": TEXT_SHORT,
+            "required": True, "max_length": 200,
+            "placeholder": "you@company.com",
+        }]}],
+    }
+
+
+def build_link_request_components(discord_id: str) -> list[dict]:
+    """Approve/Reject buttons posted to the admin channel for a link request."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("✅ Approve", f"{LINK_APPROVE_PREFIX}{discord_id}", STYLE_SUCCESS),
+        _button("✖ Reject", f"{LINK_REJECT_PREFIX}{discord_id}", STYLE_DANGER),
+    ]}]
+
+
+def is_link_start(custom_id: str) -> bool:
+    return custom_id == LINK_START_ID
+
+
+def is_link_modal(custom_id: str) -> bool:
+    return custom_id == LINK_MODAL_ID
+
+
+def is_link_approve(custom_id: str) -> bool:
+    return custom_id.startswith(LINK_APPROVE_PREFIX)
+
+
+def id_from_link_approve(custom_id: str) -> str:
+    return _suffix_after(custom_id, LINK_APPROVE_PREFIX)
+
+
+def is_link_reject(custom_id: str) -> bool:
+    return custom_id.startswith(LINK_REJECT_PREFIX)
+
+
+def id_from_link_reject(custom_id: str) -> str:
+    return _suffix_after(custom_id, LINK_REJECT_PREFIX)

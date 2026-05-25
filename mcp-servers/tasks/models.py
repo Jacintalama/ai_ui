@@ -136,3 +136,18 @@ class Schedule(Base):
     delivery_channel_id = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class DiscordLink(Base):
+    """Self-service Discord↔email links (admin-approved). One row per Discord
+    user; the webhook-handler resolves an approved row to act as that email."""
+    __tablename__ = "discord_links"
+    __table_args__ = {"schema": "tasks"}
+
+    discord_id = Column(Text, primary_key=True)
+    discord_username = Column(Text, nullable=True)
+    email = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="pending")  # pending|approved|rejected
+    requested_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    decided_by = Column(Text, nullable=True)
