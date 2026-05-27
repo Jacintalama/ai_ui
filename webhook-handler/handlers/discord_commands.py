@@ -647,17 +647,14 @@ class DiscordCommandHandler:
                     components=[],
                 )
                 return
-            # Results land in a private thread (created/reused) so they stay
-            # visible only to this user. Fall back to the channel if thread
-            # creation fails.
+            # Each schedule gets its OWN private thread, named after the
+            # schedule, so its results stay in one place instead of mixing with
+            # other schedules in a shared thread. Fall back to the channel if
+            # thread creation fails.
             target = channel_id
-            thread_id = await self.router.get_user_thread(user_id)
-            if not thread_id:
-                thread_id = await self.discord.create_private_thread(
-                    channel_id, f"schedules-{user_name}"[:90]
-                )
-                if thread_id:
-                    await self.router.set_user_thread(user_id, thread_id)
+            thread_id = await self.discord.create_private_thread(
+                channel_id, pending["name"][:90]
+            )
             if thread_id:
                 await self.discord.add_thread_member(thread_id, user_id)
                 target = thread_id
