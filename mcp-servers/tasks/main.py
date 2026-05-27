@@ -1,4 +1,5 @@
 """Tasks service — admin task approval and AI execution."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from db import init_db
+from routes_aiuibuilder import router as aiuibuilder_router
 from routes_chat_history import router as chat_history_router
 from routes_cron import router as cron_router
 from routes_db import router as db_router
@@ -14,6 +16,8 @@ from routes_execution import router as execution_router
 from routes_graph import router as graph_router
 from routes_preview import router as preview_router
 from routes_projects import router as projects_router
+from routes_schedules import router as schedules_router
+from routes_discord_links import router as discord_links_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
@@ -54,11 +58,33 @@ async def lifespan(app: FastAPI):
             logger.warning("Reaped %d orphan running task(s) at startup", len(reaped))
     except Exception as exc:
         logger.error("Orphan reap failed at startup: %s", exc)
+
+    # Heartbeat scheduler — wakes once per minute, fires due schedules.
+    # Inside lifespan so it definitely runs (FastAPI's @app.on_event hooks
+    # are deprecated and may not execute reliably when `lifespan=` is set).
+    # Inline import keeps scheduler optional if croniter isn't installed —
+    # uvicorn won't fail to boot.
+    try:
+        from scheduler import schedule_tick_loop
+        asyncio.create_task(schedule_tick_loop())
+        logger.info("schedule_tick_loop scheduled")
+    except Exception as exc:
+        logger.warning("schedule_tick_loop NOT started: %s", exc)
+
     yield
 
 
 app = FastAPI(title="Tasks Service", version="0.1.0", lifespan=lifespan)
 app.include_router(webhook_router)
+app.include_router(aiuibuilder_router)
+# Schedules MUST be registered before tasks_router (which has a catch-all
+# /api/tasks/{task_id} that would otherwise match /api/tasks/schedules first
+# and route it through admin auth — wrong gate for end-user schedule CRUD).
+app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Secret)
+# Also mount at /api/tasks/schedules so end-users can reach it via the gateway
+# (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
+app.include_router(schedules_router, prefix="/api/tasks")
+app.include_router(discord_links_router)  # /discord-links — system path (X-Internal-Secret)
 app.include_router(tasks_router)
 app.include_router(execution_router)
 app.include_router(cron_router)
@@ -71,6 +97,23 @@ app.include_router(supabase_oauth_router)
 app.include_router(db_router)
 app.include_router(chat_history_router)
 app.include_router(templates_router)
+
+
+@app.get("/healthz")
+def healthz():
+    """Liveness probe — no DB roundtrip. Used by deploy_orchestrator.sh."""
+    return {"status": "ok"}
+
+
+@app.on_event("startup")
+async def _start_idle_sweep():
+    """Spawn the per-slug auto-stop sweep so previews don't hold ports
+    after the last user leaves. See app_runner._idle_sweep_loop."""
+    import app_runner as _ar
+    from routes_projects import is_slug_presence_empty
+    asyncio.create_task(_ar._idle_sweep_loop(is_slug_presence_empty))
+
+
 app.mount("/tasks/static", StaticFiles(directory="static"), name="static")
 # Read-only public mount of the bundled template reference apps. The
 # /tasks/template-apps path is intercepted by Open WebUI's service worker
@@ -111,6 +154,10 @@ from models import PublishedApp as _PublishedApp
 
 _APP_ROOT_FS = "/workspace/ai_ui/apps"
 _SLUG_ROUTE_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
+
+# Bumped when picker.js itself changes — busts the iframe browser cache for
+# preview HTML served with ?picker=1. Module-level so tests and routes share it.
+PICKER_JS_VERSION = "3"
 
 _MIME_BY_EXT = {
     ".html": "text/html; charset=utf-8",
@@ -335,6 +382,19 @@ async def serve_published_app(
     if ".." in rel.split("/") or rel.startswith("/") or "\x00" in rel:
         raise HTTPException(status_code=400, detail="Invalid path")
 
+    # Access gate: <slug>.ai-ui.<domain>/ is the *published* URL. Drafts
+    # remain reachable only via /tasks/preview-app/<slug>/. A short-lived
+    # 2026-04-30 change relaxed this so any app on disk was reachable, but
+    # that broke the Publish/Unpublish UI — toggling no longer affected
+    # public access. Restore the gate: no published_apps row → 404 (and
+    # no Supabase config leak via aiui-config.js below).
+    async with _db_session() as s:
+        published_row = (await s.execute(
+            _select(_PublishedApp).where(_PublishedApp.slug == slug).limit(1)
+        )).scalar_one_or_none()
+    if published_row is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
     # Synthesize aiui-config.js for the published path so the same agent code
     # works both in preview and published contexts.
     if rel == "aiui-config.js":
@@ -358,13 +418,6 @@ async def serve_published_app(
         )
         return Response(content=js_body, media_type="text/javascript",
                         headers={"Cache-Control": "no-store"})
-
-    # Access gate dropped 2026-04-30: any app on disk is reachable at
-    # <slug>.<domain> for preview. The published_apps row is now a flag for
-    # the "officially published" state (gallery / SEO / metadata) — not an
-    # access gate. If the app dir doesn't exist, fall through to the realpath
-    # check below which will 404 on a missing index.html.
-    pass
 
     base = _os.path.realpath(_os.path.join(_APP_ROOT_FS, slug))
     target = _os.path.realpath(_os.path.join(base, rel))
@@ -470,13 +523,64 @@ async def serve_preview_app(
         # SPA-style fallback: dirless paths fall back to index.html.
         if "." not in _os.path.basename(rel):
             target = _os.path.join(base, "index.html")
-            if not _os.path.isfile(target):
-                raise HTTPException(status_code=404, detail="Not found")
-        else:
+        # Single-HTML uploads: a project may ship one .html that isn't named
+        # index.html (e.g. user dropped 'aiui-design.html'). When the request
+        # resolves to a missing index.html, fall back to the first top-level
+        # .html file so the preview iframe just works without us writing a
+        # duplicate alias file to disk.
+        if _os.path.basename(target) == "index.html" and not _os.path.isfile(target):
+            try:
+                top_html = sorted(
+                    f for f in _os.listdir(base)
+                    if f.lower().endswith(".html")
+                    and _os.path.isfile(_os.path.join(base, f))
+                )
+            except OSError:
+                top_html = []
+            if top_html:
+                target = _os.path.join(base, top_html[0])
+        if not _os.path.isfile(target):
             raise HTTPException(status_code=404, detail="Not found")
 
     ext = _os.path.splitext(target)[1].lower()
     media = _MIME_BY_EXT.get(ext, "application/octet-stream")
+
+    # Picker injection: when serving HTML from the preview, splice
+    # <script src="/tasks/static/picker.js?v=N"></script> before </head>.
+    # The script is inert by default — it only listens for activate/deactivate
+    # messages from the parent — so the cost is one tiny extra fetch per
+    # preview load. Always-on injection means clicking the parent's "Select"
+    # toggle does NOT need to reload the iframe, which preserves any in-app
+    # state the user is testing (form values, route, scroll position, etc.).
+    # Any failure (binary file, missing </head>, decode error) falls through
+    # to the standard FileResponse path — the picker is never load-bearing.
+    if ext in (".html", ".htm"):
+        try:
+            with open(target, "rb") as f:
+                raw = f.read()
+            text = raw.decode("utf-8")
+            head_close_idx = text.lower().find("</head>")
+            if head_close_idx >= 0:
+                tag = (
+                    f'<script src="/tasks/static/picker.js?v={PICKER_JS_VERSION}"></script>'
+                )
+                rewritten = text[:head_close_idx] + tag + text[head_close_idx:]
+                return Response(
+                    content=rewritten,
+                    media_type=media,
+                    headers={"Cache-Control": "no-store"},
+                )
+            else:
+                logger.warning(
+                    "picker injection skipped: no </head> in %s/%s",
+                    slug,
+                    rel,
+                )
+        except Exception as exc:
+            logger.warning(
+                "picker injection failed for %s/%s: %s", slug, rel, exc
+            )
+
     return FileResponse(
         target,
         media_type=media,

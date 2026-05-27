@@ -1,0 +1,1005 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Conference</title>
+  <meta name="description" content="<%= APP_NAME %> — a 2-day developer conference in Berlin, September 12-14, 2026. 42 speakers, 60 talks, 1,500 attendees." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+
+  <div x-data="event">
+
+    <!-- ============================================================ NAV ============================================================ -->
+    <section data-section="nav">
+      <header class="fixed top-0 left-0 right-0 z-40 backdrop-blur-sm"
+              style="background: rgba(10,18,48,0.92); border-bottom: 1px solid rgba(34,211,238,0.12);">
+        <div class="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
+
+          <!-- Logo -->
+          <a href="#" class="font-bold text-xl tracking-tight" style="color: var(--text);">
+            <span style="color: var(--accent);">[ </span><%= APP_NAME %><span style="color: var(--accent);"> ]</span>
+          </a>
+
+          <!-- Desktop nav -->
+          <nav class="hidden md:flex items-center gap-8 text-sm font-medium" style="color: var(--muted);">
+            <a href="#speakers-section" class="hover:text-[#22d3ee] transition-colors">Speakers</a>
+            <a href="#schedule-section" class="hover:text-[#22d3ee] transition-colors">Schedule</a>
+            <a href="#tickets-section" class="hover:text-[#22d3ee] transition-colors">Tickets</a>
+            <a href="#venue-section" class="hover:text-[#22d3ee] transition-colors">Venue</a>
+          </nav>
+
+          <!-- CTA + hamburger -->
+          <div class="flex items-center gap-3">
+            <a href="#tickets-section"
+               class="hidden sm:inline-flex px-5 py-2 rounded-full text-sm font-semibold transition-opacity hover:opacity-90"
+               style="background: var(--accent); color: var(--bg);">
+              Buy Tickets
+            </a>
+            <button @click="mobileMenu = !mobileMenu"
+                    class="md:hidden p-2 rounded-md"
+                    style="color: var(--text);"
+                    aria-label="Toggle navigation menu">
+              <svg x-show="!mobileMenu" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+              </svg>
+              <svg x-show="mobileMenu" x-cloak class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mobile menu -->
+        <div x-show="mobileMenu" x-cloak
+             class="md:hidden px-6 py-4 space-y-3 border-t"
+             style="background: var(--surface); border-color: rgba(34,211,238,0.12);">
+          <a href="#speakers-section" @click="mobileMenu = false" class="block py-2 font-medium hover:text-[#22d3ee]" style="color: var(--muted);">Speakers</a>
+          <a href="#schedule-section" @click="mobileMenu = false" class="block py-2 font-medium hover:text-[#22d3ee]" style="color: var(--muted);">Schedule</a>
+          <a href="#tickets-section" @click="mobileMenu = false" class="block py-2 font-medium hover:text-[#22d3ee]" style="color: var(--muted);">Tickets</a>
+          <a href="#venue-section" @click="mobileMenu = false" class="block py-2 font-medium hover:text-[#22d3ee]" style="color: var(--muted);">Venue</a>
+        </div>
+      </header>
+    </section>
+
+    <!-- ============================================================ HERO ============================================================ -->
+    <section data-section="hero" class="hero-gradient relative min-h-screen flex items-center justify-center overflow-hidden pt-16">
+      <!-- Decorative background grid -->
+      <div class="absolute inset-0 opacity-5" aria-hidden="true"
+           style="background-image: linear-gradient(rgba(34,211,238,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,0.5) 1px, transparent 1px); background-size: 60px 60px;"></div>
+
+      <!-- Glow orb -->
+      <div class="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full opacity-20 blur-3xl pointer-events-none" aria-hidden="true"
+           style="background: radial-gradient(circle, #22d3ee 0%, transparent 70%);"></div>
+
+      <div class="relative text-center px-6 max-w-4xl mx-auto py-20">
+        <p class="text-xs font-semibold tracking-[0.3em] uppercase mb-6" style="color: var(--accent);">
+          September 12–14, 2026 &nbsp;·&nbsp; Berlin, Germany
+        </p>
+
+        <h1 class="font-bold leading-none mb-6" style="font-size: clamp(3.5rem, 10vw, 7rem); color: var(--text);">
+          <%= APP_NAME %>
+        </h1>
+
+        <p class="text-lg md:text-xl max-w-2xl mx-auto mb-10" style="color: var(--muted);">
+          Two days of deep-dive talks, workshops, and conversations with the engineers and founders shaping the next decade of software.
+        </p>
+
+        <!-- Countdown -->
+        <div x-data="countdown('2026-09-12T09:00:00Z')" x-init="init()">
+          <div x-show="!elapsed" class="flex justify-center gap-3 mb-10 flex-wrap">
+            <div class="countdown-box">
+              <div class="num" x-text="days"></div>
+              <div class="label">Days</div>
+            </div>
+            <div class="countdown-box">
+              <div class="num" x-text="hours"></div>
+              <div class="label">Hours</div>
+            </div>
+            <div class="countdown-box">
+              <div class="num" x-text="minutes"></div>
+              <div class="label">Minutes</div>
+            </div>
+            <div class="countdown-box">
+              <div class="num" x-text="seconds"></div>
+              <div class="label">Seconds</div>
+            </div>
+          </div>
+          <div x-show="elapsed" class="text-2xl font-bold mb-10" style="color: var(--accent);">Event in progress</div>
+        </div>
+
+        <div class="flex flex-wrap gap-4 justify-center">
+          <a href="#tickets-section"
+             class="inline-flex items-center gap-2 px-8 py-4 rounded-full font-semibold transition-opacity hover:opacity-90"
+             style="background: var(--accent); color: var(--bg);">
+            Buy Tickets
+          </a>
+          <a href="#schedule-section"
+             class="inline-flex items-center gap-2 px-8 py-4 rounded-full font-semibold transition-colors"
+             style="border: 1px solid rgba(255,255,255,0.25); color: var(--text);">
+            View Schedule
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ STATS ============================================================ -->
+    <section data-section="stats" class="py-20 px-6" style="background: var(--surface);">
+      <div class="max-w-5xl mx-auto">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+
+          <div class="count-up reveal text-center p-8 rounded-2xl" x-data="countUp(60)"
+               style="background: rgba(34,211,238,0.05); border: 1px solid rgba(34,211,238,0.12);">
+            <div class="text-5xl font-bold mb-2" style="color: var(--accent);" x-text="n"></div>
+            <div class="text-sm font-semibold uppercase tracking-widest mb-2" style="color: var(--muted);">Talks</div>
+            <p class="text-sm" style="color: var(--muted);">Curated sessions across 4 tracks from morning to close</p>
+          </div>
+
+          <div class="count-up reveal text-center p-8 rounded-2xl" x-data="countUp(42)"
+               style="background: rgba(34,211,238,0.05); border: 1px solid rgba(34,211,238,0.12);">
+            <div class="text-5xl font-bold mb-2" style="color: var(--accent);" x-text="n"></div>
+            <div class="text-sm font-semibold uppercase tracking-widest mb-2" style="color: var(--muted);">Speakers</div>
+            <p class="text-sm" style="color: var(--muted);">World-class engineers, founders, and researchers</p>
+          </div>
+
+          <div class="count-up reveal text-center p-8 rounded-2xl" x-data="countUp(1500)"
+               style="background: rgba(34,211,238,0.05); border: 1px solid rgba(34,211,238,0.12);">
+            <div class="text-5xl font-bold mb-2" style="color: var(--accent);" x-text="n"></div>
+            <div class="text-sm font-semibold uppercase tracking-widest mb-2" style="color: var(--muted);">Attendees</div>
+            <p class="text-sm" style="color: var(--muted);">Builders from 60+ countries gathering in Berlin</p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ SPEAKERS ============================================================ -->
+    <section data-section="speakers" id="speakers-section" class="py-24 px-6">
+      <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-14 reveal">
+          <p class="text-xs font-semibold tracking-[0.25em] uppercase mb-3" style="color: var(--accent);">Who's Speaking</p>
+          <h2 class="text-4xl md:text-5xl font-bold" style="color: var(--text);">Meet the Speakers</h2>
+          <p class="mt-4 text-base max-w-xl mx-auto" style="color: var(--muted);">
+            Forty-two speakers. Twelve headline acts. Every talk is selected for depth, originality, and real-world impact.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+
+          <!-- Speaker 0 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(0)" @mouseleave="hideBio()"
+               @focusin="showBio(0)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Maya Patel, VP Engineering at Northbeam"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Maya Patel</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">VP Engineering, Northbeam</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 0" x-transition style="color: var(--text);">
+              Maya leads platform engineering at Northbeam, where she scaled their data infrastructure to process 10 billion events per day. She speaks on distributed systems and org design.
+            </div>
+          </div>
+
+          <!-- Speaker 1 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(1)" @mouseleave="hideBio()"
+               @focusin="showBio(1)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Hiroshi Tanaka, Distinguished Engineer at Atlas Systems"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Hiroshi Tanaka</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Distinguished Engineer, Atlas</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 1" x-transition style="color: var(--text);">
+              Hiroshi is the co-designer of Atlas's globally distributed consensus protocol. His 20-year career spans compilers, operating systems, and real-time analytics at scale.
+            </div>
+          </div>
+
+          <!-- Speaker 2 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(2)" @mouseleave="hideBio()"
+               @focusin="showBio(2)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Aisha Mohammed, CTO at Halcyon Labs"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Aisha Mohammed</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">CTO, Halcyon Labs</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 2" x-transition style="color: var(--text);">
+              Aisha built Halcyon's ML platform from the ground up, pioneering edge-deployed inference long before it became mainstream. She is a vocal advocate for responsible AI deployment.
+            </div>
+          </div>
+
+          <!-- Speaker 3 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(3)" @mouseleave="hideBio()"
+               @focusin="showBio(3)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Luca Rossi, Head of Infrastructure at Meridian Cloud"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Luca Rossi</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Head of Infrastructure, Meridian</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 3" x-transition style="color: var(--text);">
+              Luca has run infrastructure for Meridian Cloud's multi-region deployments serving 40 million users. He speaks on Kubernetes at the edge and cost-efficient cloud architecture.
+            </div>
+          </div>
+
+          <!-- Speaker 4 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(4)" @mouseleave="hideBio()"
+               @focusin="showBio(4)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Sofia Chen, Principal Researcher at Cortex AI"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Sofia Chen</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Principal Researcher, Cortex AI</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 4" x-transition style="color: var(--text);">
+              Sofia's research on sparse transformer architectures has been cited over 4,000 times. At Cortex AI she leads the team pushing the boundaries of efficient large-model training.
+            </div>
+          </div>
+
+          <!-- Speaker 5 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(5)" @mouseleave="hideBio()"
+               @focusin="showBio(5)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="James Okoye, Engineering Director at Vantage Systems"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">James Okoye</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Engineering Director, Vantage</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 5" x-transition style="color: var(--text);">
+              James leads a 120-person engineering organization at Vantage. His talks on engineering culture and shipping velocity have helped thousands of teams move faster without burning out.
+            </div>
+          </div>
+
+          <!-- Speaker 6 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(6)" @mouseleave="hideBio()"
+               @focusin="showBio(6)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1488161628813-04466f872be2?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Rafael Torres, Founder of Omnilux"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Rafael Torres</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Founder, Omnilux</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 6" x-transition style="color: var(--text);">
+              Rafael founded Omnilux after shipping developer tooling at three previous startups. He is one of the loudest voices in the open-source observability community.
+            </div>
+          </div>
+
+          <!-- Speaker 7 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(7)" @mouseleave="hideBio()"
+               @focusin="showBio(7)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1605807646983-377bc5a76493?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Priya Sharma, Staff Engineer at Aurora Networks"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Priya Sharma</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Staff Engineer, Aurora Networks</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 7" x-transition style="color: var(--text);">
+              Priya re-architected Aurora's routing protocol handling 2 trillion packets per day. She writes prolifically about network engineering, correctness, and formal verification.
+            </div>
+          </div>
+
+          <!-- Speaker 8 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(8)" @mouseleave="hideBio()"
+               @focusin="showBio(8)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Daniel Weiss, CEO at Solace Technologies"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Daniel Weiss</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">CEO, Solace Technologies</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 8" x-transition style="color: var(--text);">
+              Daniel started Solace in a Berlin co-working space and grew it to a 200-person company with no outside funding. He speaks candidly about bootstrapping, pricing, and founder mindset.
+            </div>
+          </div>
+
+          <!-- Speaker 9 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(9)" @mouseleave="hideBio()"
+               @focusin="showBio(9)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1463453091185-61582044d556?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Marcus Klein, Open Source Lead at Northwind Foundation"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Marcus Klein</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Open Source Lead, Northwind</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 9" x-transition style="color: var(--text);">
+              Marcus maintains three OSS projects with a combined 80,000 GitHub stars and has contributed to the Linux kernel. He will talk about sustainability in open source.
+            </div>
+          </div>
+
+          <!-- Speaker 10 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(10)" @mouseleave="hideBio()"
+               @focusin="showBio(10)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Nia Adeyemi, Product Engineering Manager at Blackbird"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Nia Adeyemi</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Eng. Manager, Blackbird</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 10" x-transition style="color: var(--text);">
+              Nia leads product engineering at Blackbird, where she shaped the hiring and onboarding process that reduced ramp time by 40%. She speaks on inclusive engineering practices.
+            </div>
+          </div>
+
+          <!-- Speaker 11 -->
+          <div class="speaker-card rounded-2xl overflow-hidden reveal"
+               @mouseenter="showBio(11)" @mouseleave="hideBio()"
+               @focusin="showBio(11)" @focusout="hideBio()"
+               tabindex="0"
+               style="background: var(--surface);">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1521119989659-a83eee488004?auto=format&fit=crop&w=400&q=80&crop=faces"
+              alt="Carlos Rivera, Principal Architect at Halcyon Labs"
+              width="400"
+              height="400"
+              class="w-full object-cover"
+              style="height: 240px;"
+            />
+            <div class="p-4">
+              <h3 class="font-bold text-base" style="color: var(--text);">Carlos Rivera</h3>
+              <div class="text-xs mt-1" style="color: var(--muted);">Principal Architect, Halcyon</div>
+            </div>
+            <div class="speaker-bio" x-show="activeSpeaker === 11" x-transition style="color: var(--text);">
+              Carlos designed Halcyon's zero-downtime deployment pipeline that handles 800 production deploys per day. He is passionate about making reliability engineering accessible to small teams.
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ SCHEDULE ============================================================ -->
+    <section data-section="schedule" id="schedule-section" class="py-24 px-6" style="background: var(--surface);">
+      <div class="max-w-4xl mx-auto">
+        <div class="text-center mb-12 reveal">
+          <p class="text-xs font-semibold tracking-[0.25em] uppercase mb-3" style="color: var(--accent);">Programme</p>
+          <h2 class="text-4xl md:text-5xl font-bold" style="color: var(--text);">Schedule</h2>
+          <p class="mt-4 text-base max-w-xl mx-auto" style="color: var(--muted);">
+            Two packed days covering infrastructure, AI systems, developer experience, and engineering leadership.
+          </p>
+        </div>
+
+        <!-- Day tabs -->
+        <div class="flex gap-3 justify-center mb-10 reveal">
+          <button @click="activeDay = 1"
+                  :class="activeDay === 1 ? 'active' : ''"
+                  class="tab-btn">
+            Day 1 — Sept 12
+          </button>
+          <button @click="activeDay = 2"
+                  :class="activeDay === 2 ? 'active' : ''"
+                  class="tab-btn">
+            Day 2 — Sept 13
+          </button>
+        </div>
+
+        <!-- Day 1 -->
+        <div x-show="activeDay === 1"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0">
+          <div class="rounded-2xl overflow-hidden" style="border: 1px solid rgba(255,255,255,0.08);">
+            <div class="timeline-row px-6">
+              <div class="timeline-time">09:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Opening Keynote: Building for the Next Billion Developers</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Maya Patel &nbsp;·&nbsp; Main Stage</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">10:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Distributed Consensus at Global Scale</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Hiroshi Tanaka &nbsp;·&nbsp; Track A — Infrastructure</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">11:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Edge Inference: Shipping ML to 100,000 Devices</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Aisha Mohammed &nbsp;·&nbsp; Track B — AI Systems</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">12:15</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Lunch Break &amp; Networking</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Atrium — Catered lunch, sponsor booths open</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">13:45</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Kubernetes at the Edge: War Stories and Lessons</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Luca Rossi &nbsp;·&nbsp; Track A — Infrastructure</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">14:45</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Sparse Transformers: What Efficiency Really Costs</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Sofia Chen &nbsp;·&nbsp; Track B — AI Systems</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">16:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Shipping Culture: How Fast Teams Stay Sane</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">James Okoye &nbsp;·&nbsp; Track C — Leadership</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">17:15</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Day 1 Closing Panel: The Future of Developer Infrastructure</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Maya Patel, Hiroshi Tanaka, Luca Rossi &nbsp;·&nbsp; Main Stage</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Day 2 -->
+        <div x-show="activeDay === 2"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0">
+          <div class="rounded-2xl overflow-hidden" style="border: 1px solid rgba(255,255,255,0.08);">
+            <div class="timeline-row px-6">
+              <div class="timeline-time">09:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Day 2 Keynote: Open Source as Infrastructure</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Marcus Klein &nbsp;·&nbsp; Main Stage</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">10:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Observability Beyond Logs: A Practitioner's Guide</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Rafael Torres &nbsp;·&nbsp; Track A — Infrastructure</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">11:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Formal Verification in Production Networking</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Priya Sharma &nbsp;·&nbsp; Track A — Infrastructure</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">12:15</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Lunch Break &amp; Networking</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Atrium — Catered lunch, sponsor booths open</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">13:45</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Bootstrapping to 200: Building Without Venture Capital</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Daniel Weiss &nbsp;·&nbsp; Track C — Leadership</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">14:45</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Zero-Downtime at 800 Deploys Per Day</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Carlos Rivera &nbsp;·&nbsp; Track A — Infrastructure</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">16:00</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Inclusive Engineering: Building Teams That Ship</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">Nia Adeyemi &nbsp;·&nbsp; Track C — Leadership</div>
+              </div>
+            </div>
+            <div class="timeline-row px-6">
+              <div class="timeline-time">17:30</div>
+              <div>
+                <div class="font-semibold" style="color: var(--text);">Closing Keynote &amp; Community Awards</div>
+                <div class="text-sm mt-1" style="color: var(--muted);">All speakers &nbsp;·&nbsp; Main Stage</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ SPONSORS ============================================================ -->
+    <section data-section="sponsors" class="py-24 px-6">
+      <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-14 reveal">
+          <p class="text-xs font-semibold tracking-[0.25em] uppercase mb-3" style="color: var(--accent);">Partners</p>
+          <h2 class="text-4xl font-bold" style="color: var(--text);">Our Sponsors</h2>
+          <p class="mt-4 text-base max-w-xl mx-auto" style="color: var(--muted);">
+            These companies make it possible for us to keep ticket prices accessible and invest in world-class production.
+          </p>
+        </div>
+
+        <!-- Platinum -->
+        <div class="mb-12 reveal">
+          <p class="text-center text-xs font-semibold tracking-[0.2em] uppercase mb-6" style="color: var(--muted);">Platinum</p>
+          <div class="flex flex-wrap justify-center items-center gap-12">
+            <span class="sponsor-platinum font-bold" style="color: var(--text);">NORTHWIND</span>
+            <span class="sponsor-platinum font-bold" style="color: var(--text);">ATLAS</span>
+          </div>
+        </div>
+
+        <!-- Gold -->
+        <div class="mb-12 reveal">
+          <p class="text-center text-xs font-semibold tracking-[0.2em] uppercase mb-6" style="color: var(--muted);">Gold</p>
+          <div class="flex flex-wrap justify-center items-center gap-10">
+            <span class="sponsor-gold font-semibold" style="color: var(--text);">MERIDIAN</span>
+            <span class="sponsor-gold font-semibold" style="color: var(--text);">HALCYON</span>
+            <span class="sponsor-gold font-semibold" style="color: var(--text);">VANTAGE</span>
+            <span class="sponsor-gold font-semibold" style="color: var(--text);">CORTEX</span>
+          </div>
+        </div>
+
+        <!-- Silver -->
+        <div class="reveal">
+          <p class="text-center text-xs font-semibold tracking-[0.2em] uppercase mb-6" style="color: var(--muted);">Silver</p>
+          <div class="flex flex-wrap justify-center items-center gap-8">
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">OMNILUX</span>
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">AURORA</span>
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">BLACKBIRD</span>
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">SOLACE</span>
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">PRISM</span>
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">KESTREL</span>
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">TANDEM</span>
+            <span class="sponsor-silver font-medium" style="color: var(--muted);">FABLE</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ VENUE ============================================================ -->
+    <section data-section="venue" id="venue-section" class="py-24 px-6" style="background: var(--surface);">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-14 reveal">
+          <p class="text-xs font-semibold tracking-[0.25em] uppercase mb-3" style="color: var(--accent);">Where We Gather</p>
+          <h2 class="text-4xl md:text-5xl font-bold" style="color: var(--text);">The Venue</h2>
+          <p class="mt-3 text-base" style="color: var(--muted);">Tempodrom Arena &nbsp;·&nbsp; Möckernstrasse 10, 10963 Berlin, Germany</p>
+        </div>
+
+        <!-- Venue photos -->
+        <div class="venue-grid mb-12 reveal">
+          <div class="rounded-2xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1505373877841-8d25f7d46678?auto=format&fit=crop&w=800&q=80"
+              alt="Large modern conference auditorium with tiered seating and a bright stage backdrop"
+              width="800"
+              height="500"
+              class="w-full object-cover"
+              style="height: 280px;"
+            />
+          </div>
+          <div class="rounded-2xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80"
+              alt="Bright open-plan conference lobby with floor-to-ceiling windows and exhibition stands"
+              width="800"
+              height="500"
+              class="w-full object-cover"
+              style="height: 280px;"
+            />
+          </div>
+          <div class="rounded-2xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1540575467063-178a50c2df87?auto=format&fit=crop&w=800&q=80"
+              alt="Evening event hall set up with round tables and ambient lighting for a conference dinner"
+              width="800"
+              height="500"
+              class="w-full object-cover"
+              style="height: 280px;"
+            />
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div class="max-w-3xl mx-auto reveal">
+          <p class="text-base leading-relaxed mb-5" style="color: var(--muted);">
+            The Tempodrom Arena is one of Berlin's most distinctive event spaces — a sweeping, tent-inspired structure set on the banks of the Spree. Originally erected for an alternative cultural festival in the 1980s, it has since been rebuilt in permanent form and now houses a 3,500-seat main hall with state-of-the-art AV infrastructure, three breakout rooms, and a sun-drenched glass atrium ideal for networking. The venue is fully wheelchair accessible and has underground parking for 400 vehicles.
+          </p>
+          <p class="text-base leading-relaxed" style="color: var(--muted);">
+            For the three days of the conference, the entire west wing will be dedicated to sponsor exhibition booths, a curated bookshop, and a barista bar serving specialty coffee from Berlin roasters. The main auditorium seats 1,500 comfortably, with overflow viewing available in the atrium via live broadcast screens. Evening socials on both days will take place in the landscaped courtyard, weather permitting.
+          </p>
+          <!-- Map placeholder -->
+          <div class="mt-10 rounded-2xl flex items-center justify-center"
+               aria-hidden="true"
+               style="height: 180px; background: linear-gradient(135deg, #131c44 0%, #0c1a40 100%); border: 1px solid rgba(34,211,238,0.15);">
+            <div class="text-center">
+              <svg class="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--accent);">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/>
+              </svg>
+              <p class="text-sm font-semibold" style="color: var(--text);">Tempodrom Arena</p>
+              <p class="text-xs mt-1" style="color: var(--muted);">Möckernstrasse 10 &nbsp;·&nbsp; 10963 Berlin</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ TICKETS ============================================================ -->
+    <section data-section="tickets" id="tickets-section" class="py-24 px-6">
+      <div class="max-w-5xl mx-auto">
+        <div class="text-center mb-14 reveal">
+          <p class="text-xs font-semibold tracking-[0.25em] uppercase mb-3" style="color: var(--accent);">Register</p>
+          <h2 class="text-4xl md:text-5xl font-bold" style="color: var(--text);">Tickets</h2>
+          <p class="mt-4 text-base max-w-xl mx-auto" style="color: var(--muted);">
+            All tiers include full 2-day access and a ticket to the Day 1 evening social. Early Bird prices are available until June 30, 2026.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+          <!-- Early Bird -->
+          <div class="ticket-card reveal">
+            <div class="text-xs font-semibold tracking-widest uppercase mb-4" style="color: var(--accent);">Early Bird</div>
+            <div class="text-5xl font-bold mb-1" style="color: var(--text);">$299</div>
+            <div class="text-sm mb-6" style="color: var(--muted);">Limited availability — ends June 30</div>
+            <ul class="space-y-3 mb-8 flex-1">
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Full 2-day conference access
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> All keynotes and breakout sessions
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Catered lunch both days
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Day 1 evening social ticket
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Digital recordings access (post-event)
+              </li>
+            </ul>
+            <a href="#" class="block text-center py-3 rounded-full font-semibold text-sm transition-opacity hover:opacity-90"
+               style="border: 2px solid var(--accent); color: var(--accent);">
+              Register — Early Bird
+            </a>
+          </div>
+
+          <!-- Regular -->
+          <div class="ticket-card featured reveal">
+            <div class="flex items-center justify-between mb-4">
+              <div class="text-xs font-semibold tracking-widest uppercase" style="color: var(--accent);">Regular</div>
+              <span class="text-xs font-semibold px-3 py-1 rounded-full" style="background: rgba(34,211,238,0.15); color: var(--accent);">Most Popular</span>
+            </div>
+            <div class="text-5xl font-bold mb-1" style="color: var(--text);">$449</div>
+            <div class="text-sm mb-6" style="color: var(--muted);">Standard pricing from July 1 onwards</div>
+            <ul class="space-y-3 mb-8 flex-1">
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Full 2-day conference access
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> All keynotes and breakout sessions
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Catered lunch both days
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Day 1 evening social ticket
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Digital recordings access (post-event)
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Workshop pre-registration priority
+              </li>
+            </ul>
+            <a href="#" class="block text-center py-3 rounded-full font-semibold text-sm transition-opacity hover:opacity-90"
+               style="background: var(--accent); color: var(--bg);">
+              Register — Regular
+            </a>
+          </div>
+
+          <!-- VIP -->
+          <div class="ticket-card reveal">
+            <div class="text-xs font-semibold tracking-widest uppercase mb-4" style="color: var(--accent);">VIP</div>
+            <div class="text-5xl font-bold mb-1" style="color: var(--text);">$899</div>
+            <div class="text-sm mb-6" style="color: var(--muted);">Full experience — only 80 spots available</div>
+            <ul class="space-y-3 mb-8 flex-1">
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Everything in Regular
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> VIP lounge access both days
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Speaker dinner — Day 2 evening
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> 1-on-1 office hours with 2 speakers
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Hardcover programme book + tote bag
+              </li>
+              <li class="flex items-start gap-2 text-sm" style="color: var(--muted);">
+                <span style="color: var(--accent);">+</span> Priority seating at all keynotes
+              </li>
+            </ul>
+            <a href="#" class="block text-center py-3 rounded-full font-semibold text-sm transition-opacity hover:opacity-90"
+               style="border: 2px solid var(--accent); color: var(--accent);">
+              Register — VIP
+            </a>
+          </div>
+
+        </div>
+
+        <p class="text-center mt-8 text-sm reveal" style="color: var(--muted);">
+          Group discounts available for teams of 5 or more. Email <span style="color: var(--accent);">tickets@conference.example</span> for details.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================================================ FAQ ============================================================ -->
+    <section data-section="faq" class="py-24 px-6" style="background: var(--surface);">
+      <div class="max-w-3xl mx-auto">
+        <div class="text-center mb-14 reveal">
+          <p class="text-xs font-semibold tracking-[0.25em] uppercase mb-3" style="color: var(--accent);">Questions</p>
+          <h2 class="text-4xl md:text-5xl font-bold" style="color: var(--text);">Frequently Asked</h2>
+        </div>
+
+        <div class="reveal">
+
+          <!-- FAQ 0 -->
+          <div class="faq-item">
+            <button class="faq-question" @click="openFaq = openFaq === 0 ? null : 0" :aria-expanded="openFaq === 0">
+              <span>Is parking available at the venue?</span>
+              <svg class="w-5 h-5 shrink-0 transition-transform" :class="openFaq === 0 ? 'rotate-45' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div class="faq-answer" x-show="openFaq === 0" x-transition>
+              Tempodrom Arena has an underground car park with capacity for 400 vehicles, available at standard Berlin city rates. We recommend arriving by public transport: the venue is a 3-minute walk from Anhalter Bahnhof S-Bahn station and a 5-minute walk from the U-Bahn at Mendelssohn-Bartholdy-Park.
+            </div>
+          </div>
+
+          <!-- FAQ 1 -->
+          <div class="faq-item">
+            <button class="faq-question" @click="openFaq = openFaq === 1 ? null : 1" :aria-expanded="openFaq === 1">
+              <span>Are dietary requirements catered for?</span>
+              <svg class="w-5 h-5 shrink-0 transition-transform" :class="openFaq === 1 ? 'rotate-45' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div class="faq-answer" x-show="openFaq === 1" x-transition>
+              Catered lunches on both days include clearly labelled vegetarian, vegan, gluten-free, and halal options. When registering, please use the dietary requirements field to let us know about allergies or preferences, and we will ensure your needs are met.
+            </div>
+          </div>
+
+          <!-- FAQ 2 -->
+          <div class="faq-item">
+            <button class="faq-question" @click="openFaq = openFaq === 2 ? null : 2" :aria-expanded="openFaq === 2">
+              <span>Will sessions be recorded and made available?</span>
+              <svg class="w-5 h-5 shrink-0 transition-transform" :class="openFaq === 2 ? 'rotate-45' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div class="faq-answer" x-show="openFaq === 2" x-transition>
+              All main-stage keynotes and selected breakout sessions will be professionally recorded and made available to all ticket holders within three weeks of the event. Access is provided via a private streaming portal linked from your confirmation email. Workshop sessions are not recorded out of respect for participant privacy.
+            </div>
+          </div>
+
+          <!-- FAQ 3 -->
+          <div class="faq-item">
+            <button class="faq-question" @click="openFaq = openFaq === 3 ? null : 3" :aria-expanded="openFaq === 3">
+              <span>What is the refund and transfer policy?</span>
+              <svg class="w-5 h-5 shrink-0 transition-transform" :class="openFaq === 3 ? 'rotate-45' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div class="faq-answer" x-show="openFaq === 3" x-transition>
+              Full refunds are available until August 1, 2026. Between August 1 and September 1 a 50% refund is available. After September 1 tickets are non-refundable but fully transferable — contact us at tickets@conference.example to transfer your registration to a colleague or friend at no additional charge.
+            </div>
+          </div>
+
+          <!-- FAQ 4 -->
+          <div class="faq-item">
+            <button class="faq-question" @click="openFaq = openFaq === 4 ? null : 4" :aria-expanded="openFaq === 4">
+              <span>Does the event have a Code of Conduct?</span>
+              <svg class="w-5 h-5 shrink-0 transition-transform" :class="openFaq === 4 ? 'rotate-45' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div class="faq-answer" x-show="openFaq === 4" x-transition>
+              The conference operates under a strict Code of Conduct. We are committed to a welcoming, harassment-free environment for attendees of all backgrounds. A full copy of the code is provided at registration and displayed at the venue. A dedicated safety team is on-site throughout both days; anyone who experiences or witnesses a violation should report it to a staff member wearing a teal lanyard, or via the anonymous reporting link in your attendee portal.
+            </div>
+          </div>
+
+          <!-- FAQ 5 -->
+          <div class="faq-item">
+            <button class="faq-question" @click="openFaq = openFaq === 5 ? null : 5" :aria-expanded="openFaq === 5">
+              <span>What accessibility provisions are available?</span>
+              <svg class="w-5 h-5 shrink-0 transition-transform" :class="openFaq === 5 ? 'rotate-45' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+            <div class="faq-answer" x-show="openFaq === 5" x-transition>
+              Tempodrom Arena is fully wheelchair accessible with step-free entry, accessible restrooms on every level, and reserved seating at the front of all session rooms. Live captioning is provided for all main-stage talks. If you have specific accessibility requirements — sign language interpretation, sensory needs, or anything else — please contact us before August 1 and we will make arrangements.
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ FOOTER ============================================================ -->
+    <section data-section="footer">
+      <footer class="py-14 px-6" style="background: #050d24;">
+        <div class="max-w-6xl mx-auto">
+          <div class="grid md:grid-cols-4 gap-10 mb-10">
+
+            <div class="md:col-span-2">
+              <div class="font-bold text-xl mb-3 tracking-tight" style="color: var(--text);">
+                <span style="color: var(--accent);">[ </span><%= APP_NAME %><span style="color: var(--accent);"> ]</span>
+              </div>
+              <p class="text-sm leading-relaxed max-w-xs" style="color: var(--muted);">
+                A two-day developer conference celebrating the craft of software engineering. September 12–14, 2026 — Tempodrom Arena, Berlin.
+              </p>
+            </div>
+
+            <div>
+              <p class="text-xs font-semibold tracking-[0.15em] uppercase mb-4" style="color: var(--accent);">Quick Links</p>
+              <ul class="space-y-2">
+                <li><a href="#speakers-section" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">Speakers</a></li>
+                <li><a href="#schedule-section" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">Schedule</a></li>
+                <li><a href="#tickets-section" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">Tickets</a></li>
+                <li><a href="#venue-section" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">Venue</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <p class="text-xs font-semibold tracking-[0.15em] uppercase mb-4" style="color: var(--accent);">Follow Along</p>
+              <div class="flex flex-col gap-2">
+                <a href="#" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">Twitter / X</a>
+                <a href="#" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">LinkedIn</a>
+                <a href="#" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">YouTube</a>
+                <a href="#" class="text-sm transition-colors hover:text-[#22d3ee]" style="color: var(--muted);">Mastodon</a>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="border-t pt-6 flex flex-col md:flex-row justify-between items-center gap-4"
+               style="border-color: rgba(255,255,255,0.06);">
+            <p class="text-xs" style="color: var(--muted);">
+              &copy; 2026 <%= APP_NAME %>. All rights reserved.
+            </p>
+            <p class="text-xs" style="color: var(--muted);">
+              Built for engineers, by engineers.
+            </p>
+          </div>
+        </div>
+      </footer>
+    </section>
+
+  </div>
+
+</body>
+</html>

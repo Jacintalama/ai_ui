@@ -16,14 +16,36 @@ EXPECTED_KEYS = {
     "landing", "dashboard", "crud", "crm", "portfolio", "docs",
     "ecommerce", "booking", "chat", "auth", "blog", "blank",
     "invoice", "project-tracker", "ai-chatbot", "expense-tracker",
-    "form-builder", "social-feed",
+    "form-builder", "social-feed", "custom",
+    # Design-forward templates (2026-05-08):
+    "agency", "restaurant", "photography", "event", "real-estate",
+    # Functional templates (2026-05-11):
+    "flight-booking", "food-delivery", "job-board", "movie-tickets", "recipe-site",
 }
+
+# The synthetic 'custom' key is the escape hatch — it intentionally has no
+# template-specific rules block (the agent runs on _BASE_RULES +
+# _GENERATION_LAYOUT alone). Skip it for rules/section checks.
+_RULES_EXEMPT = {"custom"}
 
 REQUIRED_SECTIONS = ("PURPOSE", "TECH", "MUST INCLUDE", "LAYOUT")
 
 
-def test_18_templates_present():
-    assert len(TEMPLATES) == 18
+def test_rules_exempt_set_is_minimal():
+    """The _RULES_EXEMPT set lets templates skip per-template content checks
+    (PURPOSE/TECH/MUST INCLUDE/LAYOUT). It exists ONLY for synthetic keys
+    whose `rules=""` is intentional. If you're adding a key here, document
+    the WHY in the module-level comment above _RULES_EXEMPT — and update
+    this assertion."""
+    from tests.test_templates import _RULES_EXEMPT
+    assert _RULES_EXEMPT == {"custom"}, (
+        "Adding a key to _RULES_EXEMPT requires explicit review. See the "
+        "comment above the constant for guidance."
+    )
+
+
+def test_29_templates_present():
+    assert len(TEMPLATES) == 29
     assert {t.key for t in TEMPLATES} == EXPECTED_KEYS
 
 
@@ -34,6 +56,8 @@ def test_keys_unique():
 
 def test_each_template_has_rules():
     for t in TEMPLATES:
+        if t.key in _RULES_EXEMPT:
+            continue
         body = t.rules.strip()
         assert body, f"{t.key} has empty rules"
         assert len(body) > 200, f"{t.key} rules suspiciously short ({len(body)} chars)"
@@ -41,6 +65,8 @@ def test_each_template_has_rules():
 
 def test_each_template_has_required_sections():
     for t in TEMPLATES:
+        if t.key in _RULES_EXEMPT:
+            continue
         for section in REQUIRED_SECTIONS:
             assert section in t.rules, f"{t.key} missing section {section!r}"
 
@@ -89,8 +115,11 @@ async def test_get_endpoint_excludes_rules_field():
         r = await c.get("/api/templates", headers=ADMIN_HEADERS)
     assert r.status_code == 200
     items = r.json()
-    assert len(items) == 18
-    expected_fields = {"key", "label", "emoji", "description", "placeholder"}
+    assert len(items) == 29
+    expected_fields = {
+        "key", "label", "emoji", "description", "placeholder",
+        "storage", "role_tag", "feature_bullets", "has_app", "svg_mockup",
+    }
     for item in items:
         assert set(item.keys()) == expected_fields, (
             f"unexpected fields on {item.get('key')}: {set(item.keys())}"

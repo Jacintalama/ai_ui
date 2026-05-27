@@ -1,0 +1,27 @@
+/* Skylane palette — light, professional */
+:root {
+  --bg: #f4f5f7;
+  --bg-card: #ffffff;
+  --border: #e5e7eb;
+  --text: #1f2937;
+  --text-muted: #5b6675;
+  --accent: #2563eb;
+}
+
+html { background: var(--bg); }
+body { font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif; }
+
+/* Reduced-motion guard */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Prevent flash of un-Alpine'd content */
+[x-cloak] { display: none !important; }
+
+/* Subtle card lift */
+article { transition: transform 150ms ease-out, background-color 150ms; }

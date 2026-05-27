@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workpath — Job Board</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="appState()" x-init="init()" class="bg-[var(--bg)] text-[var(--text)] font-sans min-h-screen">
+
+  <!-- Header (compact, sticky) -->
+  <header
+    x-data="{ scrolled: false }"
+    x-init="window.addEventListener('scroll', () => { scrolled = window.scrollY > 32; }, { passive: true })"
+    :class="scrolled ? 'h-12 shadow-sm' : 'h-14 shadow-none'"
+    class="sticky top-0 z-30 bg-white/95 backdrop-blur transition-all duration-150 flex items-center px-4 sm:px-6 border-b border-[var(--border)]"
+  >
+    <a href="#" @click.prevent="setView('list')" class="flex items-center gap-2 font-semibold text-[var(--text)]">
+      <span class="inline-block w-6 h-6 rounded bg-[var(--accent)]"></span>
+      <span>Workpath</span>
+    </a>
+    <nav class="ml-auto flex items-center gap-4 text-sm">
+      <button @click="setView('list')" class="hidden sm:inline-block text-[var(--text-muted)] hover:text-[var(--text)] transition">
+        Jobs
+      </button>
+      <button @click="setView('list')" class="hidden sm:inline-block text-[var(--text-muted)] hover:text-[var(--text)] transition">
+        Saved <span x-show="savedJobs.length > 0" x-text="`(${savedJobs.length})`"></span>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium">U</div>
+    </nav>
+  </header>
+
+  <!-- ===================== LIST VIEW ===================== -->
+  <section x-show="view === 'list'" x-transition.duration.200ms class="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+
+    <h1 class="text-3xl sm:text-4xl font-bold mb-1">Find your next role</h1>
+    <p class="text-[var(--text-muted)] mb-8">
+      <span x-text="filteredJobs.length"></span> of <span x-text="jobs.length"></span> jobs match your filters
+    </p>
+
+    <div class="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
+
+      <!-- Filter sidebar -->
+      <aside class="bg-[var(--bg-card)] rounded-xl p-5 space-y-6 h-fit lg:sticky lg:top-20 border border-[var(--border)]">
+
+        <!-- Search -->
+        <div>
+          <label for="job-search" class="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Search</label>
+          <input
+            id="job-search"
+            type="search"
+            x-model="filters.search"
+            @input="onSearchInput()"
+            placeholder="Title or company..."
+            class="mt-2 w-full border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)] bg-white"
+          />
+        </div>
+
+        <!-- Remote mode -->
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Work mode</label>
+          <div class="flex flex-wrap gap-2 mt-2">
+            <template x-for="opt in [['any','Any'],['remote','Remote'],['hybrid','Hybrid'],['onsite','On-site']]" :key="opt[0]">
+              <button
+                @click="filters.remoteMode = opt[0]; applyFilters()"
+                :class="filters.remoteMode === opt[0] ? 'bg-[var(--accent)] text-white' : 'bg-white text-[var(--text-muted)] border border-[var(--border)]'"
+                class="px-3 py-1 rounded-full text-xs font-medium transition"
+                x-text="opt[1]">
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- Salary range -->
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Min salary</label>
+          <input
+            type="range" min="60000" max="250000" step="10000"
+            x-model.number="filters.salaryMin"
+            @input="applyFilters()"
+            class="w-full mt-2 accent-[var(--accent)]"
+          />
+          <div class="text-sm text-[var(--text)] mt-1">
+            From $<span x-text="Math.round(filters.salaryMin / 1000)"></span>k
+          </div>
+        </div>
+
+        <!-- Role family -->
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Role family</label>
+          <div class="flex flex-wrap gap-2 mt-2">
+            <template x-for="rf in roleFamilies" :key="rf">
+              <button
+                @click="toggleRoleFamily(rf)"
+                :class="filters.roleFamilies.includes(rf) ? 'bg-[var(--accent)] text-white' : 'bg-white text-[var(--text-muted)] border border-[var(--border)]'"
+                class="px-3 py-1 rounded-full text-xs font-medium transition"
+                x-text="rf">
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- Seniority -->
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Seniority</label>
+          <div class="flex flex-wrap gap-2 mt-2">
+            <template x-for="opt in [['any','Any'],['junior','Junior'],['mid','Mid'],['senior','Senior'],['staff+','Staff+']]" :key="opt[0]">
+              <button
+                @click="filters.seniority = opt[0]; applyFilters()"
+                :class="filters.seniority === opt[0] ? 'bg-[var(--accent)] text-white' : 'bg-white text-[var(--text-muted)] border border-[var(--border)]'"
+                class="px-3 py-1 rounded-full text-xs font-medium transition"
+                x-text="opt[1]">
+              </button>
+            </template>
+          </div>
+        </div>
+
+      </aside>
+
+      <!-- Job list -->
+      <div>
+
+        <template x-if="filteredJobs.length === 0">
+          <p class="text-center py-16 text-[var(--text-muted)]">No jobs match these filters. Try broadening your search.</p>
+        </template>
+
+        <template x-if="filteredJobs.length > 0">
+          <div class="space-y-3">
+            <template x-for="job in filteredJobs" :key="job.id">
+              <article
+                @click="openJob(job.id)"
+                class="bg-white rounded-xl border border-[var(--border)] p-4 cursor-pointer flex gap-4 items-start">
+
+                <!-- Company logo -->
+                <img
+                  :src="job.logo"
+                  :alt="'Company logo for ' + job.company"
+                  width="48"
+                  height="48"
+                  loading="lazy"
+                  class="w-12 h-12 rounded-lg shrink-0 bg-[var(--bg-card)]"
+                />
+
+                <!-- Job info -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <h2 class="font-semibold text-base leading-snug" x-text="job.title"></h2>
+                      <p class="text-sm text-[var(--text-muted)] mt-0.5" x-text="job.company + ' · ' + job.location"></p>
+                    </div>
+                    <!-- Bookmark button -->
+                    <button
+                      @click.stop="toggleSave(job.id)"
+                      :aria-label="isSaved(job.id) ? 'Remove bookmark for ' + job.title : 'Bookmark ' + job.title"
+                      class="shrink-0 mt-0.5 text-[var(--text-muted)] hover:text-[var(--accent)] transition">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="w-5 h-5" aria-hidden="true"
+                        :fill="isSaved(job.id) ? 'currentColor' : 'none'"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        :class="isSaved(job.id) ? 'text-[var(--accent)]' : ''">
+                        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path>
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    <span class="bg-blue-50 text-[var(--accent)] font-medium px-2 py-0.5 rounded-full" x-text="job.roleFamily"></span>
+                    <span class="bg-gray-100 text-[var(--text-muted)] px-2 py-0.5 rounded-full capitalize" x-text="job.remoteMode"></span>
+                    <span class="bg-gray-100 text-[var(--text-muted)] px-2 py-0.5 rounded-full capitalize" x-text="job.seniority"></span>
+                    <span class="ml-auto text-[var(--text-muted)]" x-text="postedLabel(job.postedDaysAgo)"></span>
+                  </div>
+                  <div class="mt-1 text-sm font-semibold text-[var(--text)]" x-text="formatSalary(job.salaryMin, job.salaryMax)"></div>
+                </div>
+              </article>
+            </template>
+          </div>
+        </template>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== DETAIL VIEW ===================== -->
+  <section x-show="view === 'detail'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)] transition mb-6">
+      &larr; Back to results
+    </button>
+
+    <template x-if="selectedJob">
+      <div>
+        <!-- Job header card -->
+        <div class="bg-white rounded-xl border border-[var(--border)] p-6 mb-6">
+          <div class="flex gap-4 items-start">
+            <img
+              :src="selectedJob.logo"
+              :alt="'Company logo for ' + selectedJob.company"
+              width="64"
+              height="64"
+              loading="eager"
+              class="w-16 h-16 rounded-xl shrink-0 bg-[var(--bg-card)]"
+            />
+            <div class="flex-1 min-w-0">
+              <h2 class="text-2xl font-bold leading-tight" x-text="selectedJob.title"></h2>
+              <p class="text-[var(--text-muted)] mt-1" x-text="selectedJob.company + ' · ' + selectedJob.location"></p>
+              <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                <span class="bg-blue-50 text-[var(--accent)] font-medium px-2 py-1 rounded-full" x-text="selectedJob.roleFamily"></span>
+                <span class="bg-gray-100 text-[var(--text-muted)] px-2 py-1 rounded-full capitalize" x-text="selectedJob.remoteMode"></span>
+                <span class="bg-gray-100 text-[var(--text-muted)] px-2 py-1 rounded-full capitalize" x-text="selectedJob.seniority"></span>
+              </div>
+            </div>
+            <div class="text-right shrink-0">
+              <div class="text-xl font-bold text-[var(--text)]" x-text="formatSalary(selectedJob.salaryMin, selectedJob.salaryMax)"></div>
+              <div class="text-xs text-[var(--text-muted)] mt-1" x-text="postedLabel(selectedJob.postedDaysAgo)"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div class="bg-white rounded-xl border border-[var(--border)] p-6 mb-6">
+          <h3 class="font-semibold text-base mb-4">About this role</h3>
+          <div class="space-y-4 text-sm leading-relaxed text-[var(--text)]">
+            <template x-for="(para, i) in selectedJob.description.split('\n\n')" :key="i">
+              <p x-text="para"></p>
+            </template>
+          </div>
+        </div>
+
+        <!-- Company info card -->
+        <div class="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5 mb-6">
+          <h3 class="font-semibold text-sm mb-2">About the company</h3>
+          <p class="text-sm text-[var(--text-muted)]">
+            <span x-text="selectedJob.company"></span> is a <span x-text="selectedJob.industry"></span> company based in <span x-text="selectedJob.location"></span>.
+          </p>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="flex gap-3">
+          <button
+            @click="toggleSave(selectedJob.id)"
+            :class="isSaved(selectedJob.id) ? 'bg-blue-50 text-[var(--accent)] border-[var(--accent)]' : 'bg-white text-[var(--text-muted)] border-[var(--border)]'"
+            class="px-5 py-2.5 rounded-lg border text-sm font-medium transition hover:opacity-80"
+            x-text="isSaved(selectedJob.id) ? 'Saved' : 'Save job'">
+          </button>
+          <button
+            @click="setView('apply')"
+            class="flex-1 bg-[var(--accent)] hover:opacity-90 text-white rounded-lg px-5 py-2.5 font-semibold text-sm transition">
+            Apply now
+          </button>
+        </div>
+      </div>
+    </template>
+  </section>
+
+  <!-- ===================== APPLY VIEW ===================== -->
+  <section x-show="view === 'apply'" x-transition.duration.200ms class="max-w-2xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)] transition mb-6">
+      &larr; Back to job
+    </button>
+
+    <template x-if="selectedJob">
+      <div>
+        <h2 class="text-2xl font-bold mb-1">Apply for this role</h2>
+        <p class="text-[var(--text-muted)] text-sm mb-6" x-text="selectedJob.title + ' at ' + selectedJob.company"></p>
+
+        <form @submit.prevent="submitApplication()" class="space-y-5">
+
+          <!-- Full name -->
+          <div class="bg-white rounded-xl border border-[var(--border)] p-5 space-y-4">
+            <h3 class="font-semibold text-base">Your details</h3>
+
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-[var(--text-muted)]">Full name <span class="text-red-500">*</span></span>
+              <input
+                type="text"
+                required
+                x-model="application.name"
+                placeholder="Jane Smith"
+                class="border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              />
+            </label>
+
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-[var(--text-muted)]">Email address <span class="text-red-500">*</span></span>
+              <input
+                type="email"
+                required
+                x-model="application.email"
+                placeholder="jane@example.com"
+                class="border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              />
+            </label>
+
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-[var(--text-muted)]">Resume / LinkedIn URL (optional)</span>
+              <input
+                type="url"
+                x-model="application.resume"
+                placeholder="https://linkedin.com/in/yourname"
+                class="border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              />
+            </label>
+          </div>
+
+          <!-- Cover letter -->
+          <div class="bg-white rounded-xl border border-[var(--border)] p-5 space-y-3">
+            <h3 class="font-semibold text-base">Cover letter <span class="text-red-500">*</span></h3>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-[var(--text-muted)]">Why are you a great fit for this role?</span>
+              <textarea
+                required
+                x-model="application.cover"
+                rows="6"
+                placeholder="Tell us about your experience and why you'd excel in this position..."
+                class="border border-[var(--border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)] resize-y"
+              ></textarea>
+            </label>
+          </div>
+
+          <!-- Validation hint -->
+          <p
+            x-show="!application.name || !application.email || !application.cover"
+            class="text-xs text-[var(--text-muted)]">
+            Fields marked * are required.
+          </p>
+
+          <button
+            type="submit"
+            :disabled="!application.name || !application.email || !application.cover"
+            class="w-full bg-[var(--accent)] text-white py-3 rounded-lg font-semibold text-sm hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition">
+            Submit application
+          </button>
+
+        </form>
+      </div>
+    </template>
+  </section>
+
+  <!-- ===================== SUBMITTED VIEW ===================== -->
+  <section x-show="view === 'submitted'" x-transition.duration.200ms class="max-w-2xl mx-auto px-4 sm:px-6 py-16 text-center" x-cloak>
+
+    <!-- Loading skeleton while simulating submission -->
+    <template x-if="isLoading">
+      <div class="space-y-3" aria-live="polite" aria-busy="true">
+        <div class="h-16 bg-gray-200 rounded animate-pulse"></div>
+        <div class="h-8 bg-gray-200 rounded animate-pulse"></div>
+        <div class="h-8 bg-gray-200 rounded animate-pulse w-2/3 mx-auto"></div>
+      </div>
+    </template>
+
+    <template x-if="!isLoading">
+      <div>
+        <div class="inline-flex w-16 h-16 rounded-full bg-[var(--accent)] mb-6 items-center justify-center mx-auto">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+
+        <h2 class="text-3xl font-bold mb-2">Application sent!</h2>
+        <p class="text-[var(--text-muted)] mb-4">
+          Your application has been submitted. The team will be in touch.
+        </p>
+
+        <div class="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-5 mb-8 inline-block">
+          <p class="text-xs text-[var(--text-muted)] mb-1">Tracking ID</p>
+          <p class="text-xl font-mono font-semibold text-[var(--accent)]" x-text="trackingId"></p>
+        </div>
+
+        <div class="flex justify-center gap-3">
+          <button
+            @click="setView('list')"
+            class="bg-[var(--accent)] text-white px-8 py-3 rounded-lg font-semibold text-base hover:opacity-90 transition">
+            Back to jobs
+          </button>
+        </div>
+      </div>
+    </template>
+
+  </section>
+
+  <!-- Toast -->
+  <div
+    x-show="toastMsg"
+    x-transition.opacity.duration.200ms
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded bg-black text-white text-sm shadow-lg"
+    role="status"
+    aria-live="polite"
+    x-text="toastMsg"></div>
+
+
+</body>
+</html>

@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumen Cinemas — Book Tickets</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="appState()" x-init="init()" class="bg-[var(--bg)] text-[var(--text)] font-sans min-h-screen">
+
+  <!-- Header (compact, sticky) -->
+  <header
+    x-data="{ scrolled: false }"
+    x-init="window.addEventListener('scroll', () => { scrolled = window.scrollY > 32; }, { passive: true })"
+    :class="scrolled ? 'h-12 shadow-sm' : 'h-14 shadow-none'"
+    class="sticky top-0 z-30 bg-black/90 backdrop-blur transition-all duration-150 flex items-center px-4 sm:px-6 border-b border-[var(--border)]"
+  >
+    <a href="#" @click.prevent="startOver()" class="flex items-center gap-2 font-semibold text-white">
+      <span class="inline-block w-6 h-6 rounded bg-[var(--accent)]"></span>
+      <span>Lumen Cinemas</span>
+    </a>
+    <nav class="ml-auto flex items-center gap-4 text-sm">
+      <button @click="startOver()" class="hidden sm:inline-block text-[var(--text-muted)] hover:text-white transition">
+        Now Showing
+      </button>
+      <button @click="setView('tickets')" class="hidden sm:inline-block text-[var(--text-muted)] hover:text-white transition">
+        My Tickets <span x-show="bookedShowings.length > 0" x-text="`(${bookedShowings.length})`" class="text-[var(--accent)]"></span>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-[var(--bg-card)] border border-[var(--border)] flex items-center justify-center text-xs font-medium text-white">U</div>
+    </nav>
+  </header>
+
+  <!-- ===================== NOW SHOWING VIEW ===================== -->
+  <section x-show="view === 'now-showing'" x-transition.duration.200ms class="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+
+    <h1 class="text-3xl sm:text-4xl font-bold mb-1 text-white">Now Showing</h1>
+    <p class="text-[var(--text-muted)] mb-6">
+      <span x-text="filteredFilms.length"></span> of <span x-text="films.length"></span> films
+    </p>
+
+    <!-- Genre filter pills -->
+    <div class="flex flex-wrap gap-2 mb-8">
+      <button
+        @click="filters.genre = 'all'; applyFilters()"
+        :class="filters.genre === 'all' ? 'bg-[var(--accent)] text-black' : 'bg-[var(--bg-card)] text-[var(--text-muted)] border border-[var(--border)] hover:border-[var(--accent)]'"
+        class="px-4 py-1.5 rounded-full text-sm font-medium transition">
+        All
+      </button>
+      <template x-for="g in genres.slice(1)" :key="g">
+        <button
+          @click="filters.genre = g.toLowerCase(); applyFilters()"
+          :class="filters.genre === g.toLowerCase() ? 'bg-[var(--accent)] text-black' : 'bg-[var(--bg-card)] text-[var(--text-muted)] border border-[var(--border)] hover:border-[var(--accent)]'"
+          class="px-4 py-1.5 rounded-full text-sm font-medium transition"
+          x-text="g">
+        </button>
+      </template>
+    </div>
+
+    <!-- Theater filter -->
+    <div class="flex flex-wrap gap-2 mb-8">
+      <span class="text-xs text-[var(--text-muted)] self-center mr-1">Theater:</span>
+      <button
+        @click="filters.theaterId = 'all'"
+        :class="filters.theaterId === 'all' ? 'bg-white/10 text-white' : 'text-[var(--text-muted)] hover:text-white'"
+        class="px-3 py-1 rounded text-sm transition">
+        All
+      </button>
+      <template x-for="t in theaters" :key="t.id">
+        <button
+          @click="filters.theaterId = t.id"
+          :class="filters.theaterId === t.id ? 'bg-white/10 text-white' : 'text-[var(--text-muted)] hover:text-white'"
+          class="px-3 py-1 rounded text-sm transition"
+          x-text="t.name">
+        </button>
+      </template>
+    </div>
+
+    <!-- Empty state -->
+    <template x-if="filteredFilms.length === 0">
+      <p class="text-center py-16 text-[var(--text-muted)]">No films match this genre. Try a different filter.</p>
+    </template>
+
+    <!-- Film poster grid -->
+    <template x-if="filteredFilms.length > 0">
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+        <template x-for="film in filteredFilms" :key="film.id">
+          <div class="poster cursor-pointer group" @click="openFilm(film.id)">
+            <div class="relative rounded-xl overflow-hidden bg-[var(--bg-card)] aspect-[2/3]">
+              <img
+                :src="film.poster"
+                :alt="film.title + ' poster'"
+                width="300"
+                height="450"
+                loading="lazy"
+                class="w-full h-full object-cover"
+              />
+              <!-- Rating badge -->
+              <span class="absolute top-2 left-2 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded font-medium"
+                x-text="film.rating"></span>
+            </div>
+            <div class="mt-2 px-0.5">
+              <p class="text-sm font-semibold text-white leading-tight group-hover:text-[var(--accent)] transition" x-text="film.title"></p>
+              <p class="text-xs text-[var(--text-muted)] mt-0.5" x-text="film.genre + ' · ' + runtimeLabel(film.runtime)"></p>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
+  </section>
+
+  <!-- ===================== FILM DETAIL VIEW ===================== -->
+  <section x-show="view === 'film'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-white transition mb-6">
+      &larr; Back to Now Showing
+    </button>
+
+    <template x-if="selectedFilm">
+      <div>
+        <!-- Film hero -->
+        <div class="flex flex-col sm:flex-row gap-6 mb-8">
+          <div class="shrink-0 rounded-xl overflow-hidden w-full sm:w-48 aspect-[2/3] sm:aspect-auto sm:h-72 bg-[var(--bg-card)]">
+            <img
+              :src="selectedFilm.poster"
+              :alt="selectedFilm.title + ' poster'"
+              width="192"
+              height="288"
+              loading="eager"
+              class="w-full h-full object-cover"
+            />
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap gap-2 mb-3">
+              <span class="bg-[var(--bg-card)] border border-[var(--border)] text-white text-xs px-2 py-1 rounded font-medium" x-text="selectedFilm.rating"></span>
+              <span class="bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-muted)] text-xs px-2 py-1 rounded" x-text="selectedFilm.genre"></span>
+              <span class="bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-muted)] text-xs px-2 py-1 rounded" x-text="runtimeLabel(selectedFilm.runtime)"></span>
+            </div>
+            <h2 class="text-3xl font-bold text-white mb-3" x-text="selectedFilm.title"></h2>
+            <p class="text-[var(--text-muted)] text-base leading-relaxed mb-6" x-text="selectedFilm.synopsis"></p>
+            <button
+              @click="openShowtimes(selectedFilm.id)"
+              class="bg-[var(--accent)] hover:opacity-90 text-black font-semibold rounded-lg px-6 py-3 transition">
+              Buy Tickets
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+  </section>
+
+  <!-- ===================== SHOWTIME PICKER VIEW ===================== -->
+  <section x-show="view === 'showtime'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-white transition mb-6">
+      &larr; Back to film
+    </button>
+
+    <template x-if="selectedFilm">
+      <div>
+        <h2 class="text-2xl font-bold text-white mb-1" x-text="selectedFilm.title"></h2>
+        <p class="text-[var(--text-muted)] mb-6">Select a showtime</p>
+
+        <!-- Theater sections -->
+        <template x-for="theater in theaters" :key="theater.id">
+          <div x-show="filters.theaterId === 'all' || filters.theaterId === theater.id" class="mb-8">
+            <div class="flex items-start justify-between mb-3">
+              <div>
+                <h3 class="font-semibold text-white" x-text="theater.name"></h3>
+                <p class="text-xs text-[var(--text-muted)]" x-text="theater.address"></p>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-3">
+              <template x-for="st in showtimes.filter(s => s.filmId === selectedFilmId && s.theaterId === theater.id)" :key="st.id">
+                <button
+                  @click="pickShowtime(st.id)"
+                  class="border border-[var(--border)] bg-[var(--bg-card)] hover:border-[var(--accent)] rounded-lg px-5 py-3 text-left transition group">
+                  <div class="text-lg font-bold text-white group-hover:text-[var(--accent)] transition" x-text="st.slot"></div>
+                  <div class="text-xs text-[var(--text-muted)] mt-0.5" x-text="seatsAvailable(st.id) + ' seats left'"></div>
+                </button>
+              </template>
+            </div>
+          </div>
+        </template>
+
+      </div>
+    </template>
+
+  </section>
+
+  <!-- ===================== SEAT PICKER VIEW ===================== -->
+  <section x-show="view === 'seats'" x-transition.duration.200ms class="max-w-3xl mx-auto px-4 py-8" x-cloak>
+
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-white mb-6 transition">
+      &larr; Back
+    </button>
+
+    <h2 class="text-2xl font-bold text-white mb-1" x-text="(selectedFilm?.title ?? '') + ' · ' + (selectedShowtime?.slot ?? '')"></h2>
+    <p class="text-[var(--text-muted)] mb-6" x-text="theaterById(selectedShowtime?.theaterId)?.name ?? ''"></p>
+
+    <!-- Screen indicator -->
+    <div class="text-center text-xs text-white/40 mb-4 border-t border-[var(--accent)]/30 pt-3 tracking-widest">SCREEN</div>
+
+    <!-- Seat grid -->
+    <div class="space-y-2 max-w-2xl mx-auto" role="grid" aria-label="Seat selection">
+      <template x-for="row in rows()" :key="row">
+        <div class="flex gap-1 justify-center items-center" role="row">
+          <span class="w-6 text-center text-xs text-white/40 shrink-0" x-text="String.fromCharCode(65 + row)" aria-hidden="true"></span>
+          <template x-for="col in cols()" :key="col">
+            <!-- Aisle spacer (cols 4 and 9) -->
+            <template x-if="isAisle(row, col)">
+              <div class="w-4 shrink-0" role="none" aria-hidden="true"></div>
+            </template>
+            <!-- Seat button -->
+            <template x-if="!isAisle(row, col)">
+              <button
+                @click="toggleSeat(row, col)"
+                :class="seatClass(row, col)"
+                :aria-label="'Row ' + String.fromCharCode(65 + row) + ' seat ' + (col + 1) + (isTaken(row, col) ? ' (unavailable)' : isSelected(row, col) ? ' (selected)' : ' (available)')"
+                :aria-pressed="isSelected(row, col)"
+                :disabled="isTaken(row, col)"
+                role="gridcell"
+                class="w-7 h-7 rounded transition-all duration-150 shrink-0">
+              </button>
+            </template>
+          </template>
+          <span class="w-6 text-center text-xs text-white/40 shrink-0" x-text="String.fromCharCode(65 + row)" aria-hidden="true"></span>
+        </div>
+      </template>
+    </div>
+
+    <!-- Legend -->
+    <div class="flex justify-center gap-6 mt-5 text-xs text-[var(--text-muted)]">
+      <span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-gray-600 inline-block"></span> Available</span>
+      <span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-[var(--accent)] inline-block"></span> Selected</span>
+      <span class="flex items-center gap-1.5"><span class="w-4 h-4 rounded bg-gray-700 opacity-60 inline-block"></span> Taken</span>
+    </div>
+
+    <!-- Sticky total bar -->
+    <div class="mt-8 bg-white/5 border border-[var(--border)] rounded-xl p-4 flex items-center justify-between gap-4">
+      <div>
+        <div class="text-xs text-[var(--text-muted)]">Selected</div>
+        <div class="text-white font-semibold" x-text="selectedSeats.length + ' / 8 seats'"></div>
+      </div>
+      <div>
+        <div class="text-xs text-[var(--text-muted)]">Total</div>
+        <div class="text-2xl font-bold text-[var(--accent)]" x-text="'$' + displayedTotal"></div>
+      </div>
+      <button
+        @click="goCheckout()"
+        :disabled="selectedSeats.length === 0"
+        :class="selectedSeats.length === 0 ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90'"
+        class="bg-[var(--accent)] text-black font-semibold rounded-lg px-5 py-2.5 transition">
+        Continue
+      </button>
+    </div>
+
+  </section>
+
+  <!-- ===================== CHECKOUT VIEW ===================== -->
+  <section x-show="view === 'checkout'" x-transition.duration.200ms class="max-w-2xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-white transition mb-6">
+      &larr; Back to seats
+    </button>
+
+    <h2 class="text-2xl font-bold text-white mb-6">Checkout</h2>
+
+    <!-- Order summary -->
+    <div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-5 mb-6">
+      <h3 class="font-semibold text-white mb-4">Order Summary</h3>
+      <div class="flex justify-between text-sm mb-2">
+        <span class="text-[var(--text-muted)]">Film</span>
+        <span class="text-white font-medium" x-text="selectedFilm?.title ?? ''"></span>
+      </div>
+      <div class="flex justify-between text-sm mb-2">
+        <span class="text-[var(--text-muted)]">Showtime</span>
+        <span class="text-white" x-text="(selectedShowtime?.slot ?? '') + ' · ' + (theaterById(selectedShowtime?.theaterId)?.name ?? '')"></span>
+      </div>
+      <div class="flex justify-between text-sm mb-2">
+        <span class="text-[var(--text-muted)]">Seats</span>
+        <span class="text-white" x-text="selectedSeats.length + ' seat' + (selectedSeats.length !== 1 ? 's' : '')"></span>
+      </div>
+      <div class="flex justify-between text-sm mb-2">
+        <span class="text-[var(--text-muted)]">Price per seat</span>
+        <span class="text-white">$<span x-text="SEAT_PRICE.toFixed(2)"></span></span>
+      </div>
+      <div class="border-t border-[var(--border)] mt-3 pt-3 flex justify-between font-semibold">
+        <span class="text-white">Total</span>
+        <span class="text-[var(--accent)] text-lg" x-text="'$' + (selectedSeats.length * SEAT_PRICE)"></span>
+      </div>
+    </div>
+
+    <!-- Payment form -->
+    <div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-5 mb-6 space-y-4">
+      <h3 class="font-semibold text-white">Payment Details</h3>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-[var(--text-muted)]">Cardholder name</span>
+        <input
+          type="text"
+          x-model="cardName"
+          placeholder="Jane Smith"
+          autocomplete="cc-name"
+          class="bg-[var(--bg-card-2)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[var(--accent)] placeholder-gray-600"
+        />
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-[var(--text-muted)]">Card number</span>
+        <input
+          type="text"
+          x-model="cardNumber"
+          placeholder="4242 4242 4242 4242"
+          maxlength="19"
+          autocomplete="cc-number"
+          class="bg-[var(--bg-card-2)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[var(--accent)] placeholder-gray-600 font-mono"
+        />
+      </label>
+
+      <div class="grid grid-cols-2 gap-3">
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-[var(--text-muted)]">Expiry</span>
+          <input
+            type="text"
+            x-model="cardExpiry"
+            placeholder="MM / YY"
+            maxlength="7"
+            autocomplete="cc-exp"
+            class="bg-[var(--bg-card-2)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[var(--accent)] placeholder-gray-600 font-mono"
+          />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-[var(--text-muted)]">CVV</span>
+          <input
+            type="text"
+            x-model="cardCvv"
+            placeholder="123"
+            maxlength="4"
+            autocomplete="cc-csc"
+            class="bg-[var(--bg-card-2)] border border-[var(--border)] rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[var(--accent)] placeholder-gray-600 font-mono"
+          />
+        </label>
+      </div>
+    </div>
+
+    <!-- Loading skeleton while processing payment -->
+    <template x-if="isLoading">
+      <div class="space-y-3" aria-live="polite" aria-busy="true">
+        <div class="h-16 bg-[var(--bg-card)] rounded animate-pulse"></div>
+        <div class="h-8 bg-[var(--bg-card)] rounded animate-pulse w-2/3"></div>
+        <div class="h-8 bg-[var(--bg-card)] rounded animate-pulse w-1/2"></div>
+      </div>
+    </template>
+
+    <template x-if="!isLoading">
+      <button
+        @click="confirmPayment()"
+        :disabled="!cardName || !cardNumber || !cardExpiry || !cardCvv"
+        :class="(!cardName || !cardNumber || !cardExpiry || !cardCvv) ? 'opacity-40 cursor-not-allowed' : 'hover:opacity-90'"
+        class="w-full bg-[var(--accent)] text-black font-semibold rounded-lg py-3 text-base transition">
+        Pay $<span x-text="selectedSeats.length * SEAT_PRICE"></span>
+      </button>
+    </template>
+
+  </section>
+
+  <!-- ===================== TICKETS (CONFIRMATION) VIEW ===================== -->
+  <section x-show="view === 'tickets'" x-transition.duration.200ms class="max-w-2xl mx-auto px-4 sm:px-6 py-16 text-center" x-cloak>
+
+    <template x-if="lastBooking">
+      <div>
+        <!-- Success badge -->
+        <div class="inline-flex w-16 h-16 rounded-full bg-[var(--accent)] mb-6 items-center justify-center mx-auto">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+
+        <h2 class="text-3xl font-bold text-white mb-2">Booking confirmed!</h2>
+        <p class="text-[var(--text-muted)] mb-8">Your tickets are ready. Enjoy the show!</p>
+
+        <!-- Ticket card -->
+        <div class="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-6 mb-8 text-left">
+          <!-- Ticket perforated line -->
+          <div class="border-b border-dashed border-[var(--border)] pb-5 mb-5">
+            <p class="text-xs text-[var(--text-muted)] mb-1">Film</p>
+            <p class="text-xl font-bold text-white" x-text="lastBooking.filmTitle"></p>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4 mb-5">
+            <div>
+              <p class="text-xs text-[var(--text-muted)] mb-1">Showtime</p>
+              <p class="text-white font-semibold" x-text="lastBooking.slot"></p>
+            </div>
+            <div>
+              <p class="text-xs text-[var(--text-muted)] mb-1">Theater</p>
+              <p class="text-white font-semibold" x-text="lastBooking.theater"></p>
+            </div>
+            <div>
+              <p class="text-xs text-[var(--text-muted)] mb-1">Seats</p>
+              <p class="text-white font-semibold" x-text="lastBooking.seats.length + ' seat' + (lastBooking.seats.length !== 1 ? 's' : '')"></p>
+            </div>
+            <div>
+              <p class="text-xs text-[var(--text-muted)] mb-1">Total paid</p>
+              <p class="text-[var(--accent)] font-bold text-lg" x-text="'$' + lastBooking.total"></p>
+            </div>
+          </div>
+
+          <!-- QR code placeholder -->
+          <div class="flex flex-col items-center border-t border-dashed border-[var(--border)] pt-5">
+            <svg viewBox="0 0 120 120" width="120" height="120" aria-label="QR code placeholder" class="mb-3">
+              <!-- Border cells -->
+              <rect x="4"  y="4"  width="40" height="40" rx="2" fill="none" stroke="#f59e0b" stroke-width="3"/>
+              <rect x="76" y="4"  width="40" height="40" rx="2" fill="none" stroke="#f59e0b" stroke-width="3"/>
+              <rect x="4"  y="76" width="40" height="40" rx="2" fill="none" stroke="#f59e0b" stroke-width="3"/>
+              <!-- Finder pattern inner squares -->
+              <rect x="14" y="14" width="20" height="20" rx="1" fill="#f59e0b"/>
+              <rect x="86" y="14" width="20" height="20" rx="1" fill="#f59e0b"/>
+              <rect x="14" y="86" width="20" height="20" rx="1" fill="#f59e0b"/>
+              <!-- Data modules (decorative) -->
+              <rect x="52" y="4"  width="8" height="8" fill="#f59e0b"/>
+              <rect x="64" y="4"  width="8" height="8" fill="#f59e0b"/>
+              <rect x="52" y="16" width="8" height="8" fill="#f59e0b"/>
+              <rect x="64" y="28" width="8" height="8" fill="#f59e0b"/>
+              <rect x="4"  y="52" width="8" height="8" fill="#f59e0b"/>
+              <rect x="16" y="52" width="8" height="8" fill="#f59e0b"/>
+              <rect x="4"  y="64" width="8" height="8" fill="#f59e0b"/>
+              <rect x="28" y="64" width="8" height="8" fill="#f59e0b"/>
+              <rect x="52" y="52" width="8" height="8" fill="#f59e0b"/>
+              <rect x="64" y="52" width="8" height="8" fill="#f59e0b"/>
+              <rect x="76" y="52" width="8" height="8" fill="#f59e0b"/>
+              <rect x="52" y="64" width="8" height="8" fill="#f59e0b"/>
+              <rect x="64" y="76" width="8" height="8" fill="#f59e0b"/>
+              <rect x="76" y="64" width="8" height="8" fill="#f59e0b"/>
+              <rect x="88" y="76" width="8" height="8" fill="#f59e0b"/>
+              <rect x="100" y="52" width="8" height="8" fill="#f59e0b"/>
+              <rect x="100" y="64" width="8" height="8" fill="#f59e0b"/>
+              <rect x="52" y="88" width="8" height="8" fill="#f59e0b"/>
+              <rect x="52" y="100" width="8" height="8" fill="#f59e0b"/>
+              <rect x="64" y="88" width="8" height="8" fill="#f59e0b"/>
+              <rect x="76" y="100" width="8" height="8" fill="#f59e0b"/>
+              <rect x="88" y="88" width="8" height="8" fill="#f59e0b"/>
+              <rect x="100" y="88" width="8" height="8" fill="#f59e0b"/>
+              <rect x="100" y="100" width="8" height="8" fill="#f59e0b"/>
+            </svg>
+            <p class="text-xs text-[var(--text-muted)] mb-1">Confirmation code</p>
+            <p class="text-xl font-mono font-bold text-[var(--accent)]" x-text="lastBooking.confirmationCode"></p>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row justify-center gap-3">
+          <button
+            @click="startOver()"
+            class="bg-[var(--accent)] text-black px-8 py-3 rounded-lg font-semibold text-base hover:opacity-90 transition">
+            Book more tickets
+          </button>
+          <button
+            @click="startOver()"
+            class="bg-[var(--bg-card)] border border-[var(--border)] text-white px-8 py-3 rounded-lg font-semibold text-base hover:border-[var(--accent)] transition">
+            Back to home
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <!-- No booking yet (direct nav to /tickets) -->
+    <template x-if="!lastBooking">
+      <div>
+        <h2 class="text-2xl font-bold text-white mb-2">No bookings yet</h2>
+        <p class="text-[var(--text-muted)] mb-6">Book your first film to see your tickets here.</p>
+        <button
+          @click="startOver()"
+          class="bg-[var(--accent)] text-black px-8 py-3 rounded-lg font-semibold hover:opacity-90 transition">
+          Browse films
+        </button>
+      </div>
+    </template>
+
+  </section>
+
+  <!-- Toast -->
+  <div
+    x-show="toastMsg"
+    x-transition.opacity.duration.200ms
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded bg-black text-white text-sm shadow-lg"
+    role="status"
+    aria-live="polite"
+    x-text="toastMsg">
+  </div>
+
+
+</body>
+</html>

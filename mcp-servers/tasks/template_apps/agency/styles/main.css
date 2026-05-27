@@ -1,0 +1,112 @@
+/* ---- Reduced-motion guard: must be at the TOP of every styles file ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- Scroll-reveal primitives ---- */
+.reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 600ms ease-out, transform 600ms ease-out;
+}
+.reveal.is-visible { opacity: 1; transform: translateY(0); }
+
+/* ---- Image zoom cards ---- */
+.zoom-card { overflow: hidden; }
+.zoom-card img { transition: transform 600ms ease-out; }
+.zoom-card:hover img { transform: scale(1.05); }
+
+/* ---- Marquee ---- */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.marquee {
+  display: flex;
+  gap: 3rem;
+  width: max-content;
+  animation: marquee 40s linear infinite;
+}
+.marquee:hover { animation-play-state: paused; }
+
+/* ---- Agency palette & tokens ---- */
+:root {
+  --bg: #0a0a0b;
+  --surface: #141416;
+  --text: #f4f4f5;
+  --muted: #71717a;
+  --accent: #c1ff00;
+  --serif: "Space Grotesk", system-ui, sans-serif;
+  --sans: "Inter", system-ui, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display { font-family: var(--serif); letter-spacing: -0.02em; }
+
+/* ---- Animated gradient headline ---- */
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+.gradient-text {
+  background: linear-gradient(90deg, var(--accent), #fff, var(--accent));
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gradientShift 8s ease-in-out infinite;
+}
+
+/* ---- Mouse-follow cursor dot ---- */
+.cursor-dot {
+  position: fixed;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: none;
+  mix-blend-mode: difference;
+  transform: translate(-50%, -50%);
+  transition: transform 100ms ease-out;
+  z-index: 50;
+}
+@media (max-width: 768px) { .cursor-dot { display: none; } }
+
+/* ---- Sticky section labels ---- */
+.sticky-label {
+  position: sticky;
+  top: 96px;
+  font-family: var(--serif);
+  color: var(--accent);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ---- Capability card icons ---- */
+.capability-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #0a0a0b;
+  margin-bottom: 1.25rem;
+}
+
+/* ---- Nav transition ---- */
+header {
+  transition: background 300ms ease, border-color 300ms ease;
+}

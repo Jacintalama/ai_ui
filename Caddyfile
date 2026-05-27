@@ -152,6 +152,32 @@
 		reverse_proxy tasks:8210
 	}
 
+	# Liveness probe — used by scripts/deploy_orchestrator.sh post-deploy smoke.
+	# Without this handler, /tasks/healthz would fall through to the Open WebUI
+	# SPA catch-all (returns 200 + HTML), giving a false positive in deploys.
+	# The tasks service has /healthz at root (not /tasks/healthz), so strip prefix.
+	handle /tasks/healthz {
+		uri strip_prefix /tasks
+		reverse_proxy tasks:8210
+	}
+
+	# Schedules API (heartbeat scheduler) — protected by X-Cron-Secret header
+	# inside the tasks service itself, so no gateway/JWT step needed here.
+	# Tasks service exposes /schedules at root, so strip /tasks prefix.
+	#
+	# SECURITY: strip X-User-Email from any client request here. Only the
+	# api-gateway is allowed to set that header (after JWT validation);
+	# end users reach the schedules API via /api/tasks/schedules which goes
+	# through the gateway. Without this strip, an attacker could send
+	# `X-User-Email: someone-else@x.com` directly to /tasks/schedules and
+	# impersonate that user. Belt-and-braces — the tasks service should
+	# also defense-in-depth verify, but the perimeter strip is critical.
+	handle /tasks/schedules* {
+		uri strip_prefix /tasks
+		request_header -X-User-Email
+		reverse_proxy tasks:8210
+	}
+
 	# App Builder page — pretty URL that serves the projects SPA
 	handle /tasks/app-builder {
 		header Cache-Control "no-cache, no-store, must-revalidate"
@@ -169,42 +195,68 @@
 		reverse_proxy tasks:8210
 	}
 
-	# Preview app — proxies to the running app inside the tasks container
+	# Preview app — FastAPI on 8210 handles both static apps (serve from
+	# disk) and dynamic apps (reverse-proxy to per-slug ports 9100-9119
+	# internally). Don't strip the prefix — FastAPI expects the full path.
 	handle /tasks/preview-app/* {
-		uri strip_prefix /tasks/preview-app
-		reverse_proxy tasks:9100
+		reverse_proxy tasks:8210
 	}
 
 	# ---------------------------------------------------------------------------
-	# Google Drive MCP connector
+	# Google Drive MCP connector (via api-gateway for X-User-Email injection)
 	# ---------------------------------------------------------------------------
 	handle /gdrive/* {
-		uri strip_prefix /gdrive
-		reverse_proxy mcp-gdrive:8000
+		reverse_proxy api-gateway:8080
 	}
 
 	# ---------------------------------------------------------------------------
-	# Gmail MCP connector
+	# Gmail MCP connector (via api-gateway for X-User-Email injection)
 	# ---------------------------------------------------------------------------
 	handle /gmail/* {
-		uri strip_prefix /gmail
-		reverse_proxy mcp-gmail:8000
+		reverse_proxy api-gateway:8080
 	}
 
 	# ---------------------------------------------------------------------------
-	# Google Calendar MCP connector
+	# Google Calendar MCP connector (via api-gateway for X-User-Email injection)
 	# ---------------------------------------------------------------------------
 	handle /calendar/* {
-		uri strip_prefix /calendar
-		reverse_proxy mcp-calendar:8000
+		reverse_proxy api-gateway:8080
 	}
 
 	# ---------------------------------------------------------------------------
-	# Meetings MCP — meeting transcript storage
+	# Meetings MCP — meeting transcript storage (via api-gateway for X-User-Email injection)
 	# ---------------------------------------------------------------------------
 	handle /meetings/* {
-		uri strip_prefix /meetings
-		reverse_proxy mcp-meetings:8000
+		reverse_proxy api-gateway:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# Web Search MCP connector (via api-gateway for X-User-Email injection)
+	# ---------------------------------------------------------------------------
+	handle /web-search/* {
+		reverse_proxy api-gateway:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# Meeting KB MCP search/list/get (separate from legacy /mcp/meeting-kb/api/* uploader)
+	# (via api-gateway for X-User-Email injection)
+	# ---------------------------------------------------------------------------
+	handle /meeting-kb/* {
+		reverse_proxy api-gateway:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# Dashboard MCP (via api-gateway for X-User-Email injection)
+	# ---------------------------------------------------------------------------
+	handle /dashboard/* {
+		reverse_proxy api-gateway:8080
+	}
+
+	# ---------------------------------------------------------------------------
+	# Excel-Creator MCP (via api-gateway for X-User-Email injection)
+	# ---------------------------------------------------------------------------
+	handle /excel-creator/* {
+		reverse_proxy api-gateway:8080
 	}
 
 	# ---------------------------------------------------------------------------

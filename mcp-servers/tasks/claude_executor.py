@@ -86,6 +86,29 @@ SCOPE RULES — READ CAREFULLY BEFORE BUILDING:
   4. Place apps under `apps/<slug>/` (e.g. `apps/todo-list/`). Do NOT put
      them under `mcp-servers/` unless they are actually MCP servers.
 
+CONTENT FILL — NON-NEGOTIABLE (overrides "TERSE / SIMPLEST" for any
+content the *visitor* of the built app will see):
+  • Every visible section MUST contain substantive body content. A heading
+    alone is NOT a section. Empty <section> bodies, or sections with only an
+    <h2> and no paragraph/list/grid/cards beneath it, are treated as a BUILD
+    FAILURE even if the file structure and styling are correct.
+  • Forbidden in shipped output: 'Lorem ipsum', 'TODO', 'Coming soon',
+    'Add content here', 'Your bio goes here', or any other placeholder
+    text. Comments like <!-- TODO --> are also forbidden in shipped HTML.
+  • If the user described the section topic but did NOT hand you the exact
+    text (bios, project descriptions, skill lists, taglines, hero copy,
+    About paragraphs), you MUST GENERATE realistic, polished, finished
+    copy yourself in a voice appropriate to the role. Don't ask — generate.
+  • Concrete fill targets per section type: About = 2-3 real paragraphs.
+    Skills = a populated grid of at least 8-12 items grouped sensibly.
+    Projects = at least 3-4 fully-described cards (title + 1-2 sentence
+    description + tech tags + link). Hero = name + tagline + CTA. Contact
+    = realistic-looking email + relevant social links.
+  • Self-check before COMPLETED: mentally scroll the rendered page top to
+    bottom — would a first-time visitor see real text, lists, or cards in
+    EVERY section? If any section would render as empty whitespace below
+    its heading, you are NOT done — go fill it before emitting COMPLETED.
+
 FILE LAYOUT (MANDATORY — create the project folder first, then subfolders, then files):
 
   apps/<slug>/                    ← project root, always created first
@@ -102,28 +125,40 @@ FILE LAYOUT (MANDATORY — create the project folder first, then subfolders, the
     schema.sql                    # Supabase tables + RLS — only for storage="supabase"
     public/                       # static assets (favicon, images); keep tiny — empty is fine
 
-INDEX.HTML CDN BLOCK (in <head>, in this exact order):
+INDEX.HTML CDN BLOCK (in <head>, in this EXACT order — order matters,
+do not rearrange):
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="styles/main.css">
-    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>  <!-- icons; optional -->
     <script type="module" src="src/main.js"></script>
-  For Supabase apps also load before main.js:
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  For Supabase apps also load BEFORE main.js (so the Supabase global is
+  ready when main.js imports run):
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  WHY main.js MUST come BEFORE alpinejs: Alpine fires its `alpine:init`
+  event during its own boot. main.js's job is to register Alpine.data()
+  components — if main.js runs AFTER alpinejs, Alpine has already
+  initialized and its event has already fired, so x-data="myComponent"
+  bindings never resolve and every <template x-for> renders nothing
+  (sections look empty in the browser even though the HTML and the
+  Alpine factory data are both correct). Putting main.js first registers
+  the listener; the deferred alpinejs script then runs and fires the
+  event into the live listener.
 
 ALPINE.JS USAGE (your reactivity layer — use this instead of addEventListener spaghetti):
   • Components live in src/components/<Name>.js as ES modules exporting an Alpine factory:
-        export function loginForm() { return { email: '', password: '', async submit() { /* ... */ } }; }
+        export function loginForm() {{ return {{ email: '', password: '', async submit() {{ /* ... */ }} }}; }}
   • Register in src/main.js:
-        import { loginForm } from './components/LoginForm.js';
-        document.addEventListener('alpine:init', () => { Alpine.data('loginForm', loginForm); });
+        import {{ loginForm }} from './components/LoginForm.js';
+        document.addEventListener('alpine:init', () => {{ Alpine.data('loginForm', loginForm); }});
   • In HTML: <form x-data="loginForm" @submit.prevent="submit"> … </form>
   • Prefer x-data, x-show, x-if, x-on, x-bind, x-model for reactivity.
 
   • index.html MUST be a thin entry — markup skeleton only. NO inline <style>
     blocks beyond a tiny one for an initial loading screen if needed. NO
     inline app logic. The single-file index.html pattern is FORBIDDEN.
-  • src/main.js uses native ES modules: `import { Foo } from './components/Foo.js';`
+  • src/main.js uses native ES modules: `import {{ Foo }} from './components/Foo.js';`
     The browser resolves these directly — no bundler, no build step, no npm install.
   • Every component file in src/components/ must be a valid ES module
     (top-level `export` statements).
@@ -150,8 +185,16 @@ Complete the task autonomously. If you cannot proceed because of:
   - Unclear requirement -> respond ending with: NEEDS_INPUT: <clarifying question>
   - Hard blocker -> respond ending with: NEEDS_STEPS: <numbered manual steps>
 
-When done successfully, respond ending with: COMPLETED: <summary of what you did>
-(include the short commit hash if you made one: "COMPLETED: ... (commit abc1234)")
+Tool usage rule: BEFORE calling Edit or Write on any path that already
+exists, FIRST call Read on that path. Skipping the Read step makes the
+Edit/Write call fail with a "File has not been read yet" tool error and
+forces a retry. New files (paths that do not exist yet) can be Written
+without a prior Read.
+
+When done successfully, respond ending with the literal sentinel on its own
+line: `COMPLETED: <summary of what you did>` (include the short commit hash
+if you made one: `COMPLETED: ... (commit abc1234)`). Use exactly this form —
+the colon is required. Do NOT prefix it with `---` or other markdown.
 
 {supabase_block}"""
 
@@ -410,7 +453,7 @@ FILE LAYOUT (MANDATORY — create these folders BEFORE writing any files):
     The single-file index.html pattern is REPLACED by this layout — do
     not fall back to dumping everything into index.html.
   • src/main.js uses native ES module imports
-    (`import { Foo } from './components/Foo.js';`). No bundler.
+    (`import {{ Foo }} from './components/Foo.js';`). No bundler.
   • Static-only templates omit src/lib/supabase.js, src/lib/api.js, and
     schema.sql; everything else stays.
 
@@ -478,6 +521,12 @@ RULES (in priority order):
      Do not delete data files (apps/{slug}/data/*.db). If schema changes,
      write an ALTER migration; never drop and recreate.
   6. COMMIT: Stage only the files you changed. One commit, clear message.
+  7. CONTENT FILL: If the request adds a new visible section (e.g. "add
+     a testimonials section", "add a pricing section"), the new section
+     MUST contain substantive body content — at least 3 realistic items
+     for a list/grid, 2-3 paragraphs for narrative copy. No empty bodies,
+     no placeholder strings, no <!-- TODO -->. Generate the content
+     yourself in a voice that matches the rest of the app.
 
 WORKFLOW:
   1. If the request replaces a placeholder value (name, brand, copy):
@@ -536,6 +585,7 @@ def build_enhance_prompt(
     has_db_uri: bool = False,
     user_email: str = "",
     attachments: list[str] | None = None,
+    selection_block: str = "",
 ) -> str:
     if error_context:
         err_block = (
@@ -553,6 +603,10 @@ def build_enhance_prompt(
             supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
         ),
     )
+    if selection_block:
+        # Element-picker context lands at the very top so the agent's first
+        # tool call (a Read or grep) is scoped to the selected element.
+        body = selection_block + "\n" + body
     if attachments:
         body += (
             "\n\n## Attached images\n"
@@ -662,12 +716,23 @@ class Outcome:
 
 
 _SENTINEL_RE = re.compile(
+    # Match a sentinel keyword at start-of-line, optionally preceded by a
+    # markdown `---` separator. The keyword may be followed by a colon,
+    # whitespace, period — OR nothing at all (end of text). Claude has been
+    # seen writing all of these:
+    #   COMPLETED: <summary>       (strict form)
+    #   --- COMPLETED Built apps/  (markdown header form)
+    #   COMPLETED. Customized…     (period form, mid-sentence)
+    #   …done.\n\nCOMPLETED        (bare keyword, last token — no terminator)
+    # The terminator `[:\s.]` is therefore OPTIONAL — `\b` already pins the
+    # keyword as a whole word (so "PRECOMPLETED" won't match). Treating any
+    # of these as the sentinel keeps tasks from sitting at "QUEUED" forever
+    # just because of punctuation drift.
     # `rest` captures everything up to the NEXT sentinel (or end-of-string).
     # Non-greedy + lookahead so a multiline COMPLETED block — including a
-    # "Next ideas:" suggestions section — is preserved intact. Single-line
-    # payloads still work (the lookahead falls through to \Z).
-    r"(?P<kind>COMPLETED|NEEDS_INPUT|NEEDS_STEPS):\s*"
-    r"(?P<rest>.*?)(?=\n\s*(?:COMPLETED|NEEDS_INPUT|NEEDS_STEPS):|\Z)",
+    # "Next ideas:" suggestions section — is preserved intact.
+    r"(?:^|\n)\s*(?:-{3,}\s*)?\b(?P<kind>COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s.]?\s*"
+    r"(?P<rest>.*?)(?=\n\s*(?:-{3,}\s*)?\b(?:COMPLETED|FAILED|NEEDS_INPUT|NEEDS_STEPS)\b[:\s.]?|\Z)",
     re.DOTALL,
 )
 
@@ -712,10 +777,73 @@ def parse_outcome(claude_response: str) -> Outcome:
     last = matches[-1]
     kind_map = {
         "COMPLETED": "completed",
+        "FAILED": "failed",
         "NEEDS_INPUT": "needs_input",
         "NEEDS_STEPS": "needs_steps",
     }
     return Outcome(kind=kind_map[last.group("kind")], payload=last.group("rest").strip())
+
+
+def extract_final_body(claude_response: str) -> str:
+    """The agent's final answer with its trailing sentinel section removed.
+
+    For scheduled tasks the agent writes its answer first and ends with a bare
+    `COMPLETED` line, so `parse_outcome`'s payload (text *after* the sentinel)
+    is empty. This returns everything *before* the final sentinel — the actual
+    content to deliver to the user.
+
+    Uses ONLY the final stream-json `result` event (the complete final message)
+    to avoid duplicating the incrementally-streamed `assistant` chunks; falls
+    back to assistant text, then the raw string, when no result event exists.
+    """
+    import json as _json
+    final: str | None = None
+    for line in claude_response.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = _json.loads(line)
+        except Exception:
+            continue
+        if obj.get("type") == "result" and isinstance(obj.get("result"), str):
+            final = obj["result"]  # keep the LAST result event
+    if final is None:
+        final = _extract_assistant_text(claude_response) or claude_response
+    matches = list(_SENTINEL_RE.finditer(final))
+    if matches:
+        final = final[:matches[-1].start()]
+    return final.strip()
+
+
+def line_outcome(claude_response_line: str) -> Outcome | None:
+    """Interpret a single stream-json line from `claude --print --verbose`.
+
+    Returns the parsed Outcome iff the line is claude's terminal `result`
+    event; otherwise None. RemoteExecutor uses this to detect when a run is
+    over and (on `completed`) when to rsync the agent workspace back.
+
+    Why decode the JSON instead of regex-matching the raw line: an escaped
+    `\\n` immediately before a sentinel keyword, or the JSON-closing `"`
+    right after it, breaks regex word boundaries on the raw line. The
+    `result` event is emitted exactly once, last, and its `result` field is
+    the agent's final text — decoding it is reliable where raw matching is
+    not.
+    """
+    import json as _json
+    line = claude_response_line.strip()
+    if not line.startswith("{"):
+        return None
+    try:
+        obj = _json.loads(line)
+    except Exception:
+        return None
+    if obj.get("type") != "result":
+        return None
+    result_text = obj.get("result")
+    if not isinstance(result_text, str):
+        return None
+    return parse_outcome(result_text)
 
 
 # ---------------------------------------------------------------------------
@@ -758,77 +886,26 @@ def extract_app_slug(claude_response: str) -> str | None:
     return match.group(1) if match else None
 
 
-async def run_claude_subprocess(prompt: str, proc_holder: dict | None = None) -> AsyncIterator[str]:
-    """Spawn the claude CLI and stream its stdout.
+async def run_claude_subprocess(
+    prompt: str,
+    proc_holder: dict | None = None,
+) -> AsyncIterator[str]:
+    """LEGACY shim — preserved so existing callers in routes_execution.py
+    keep working until Task 3 migrates them to the executor interface.
 
-    proc_holder (optional): dict where this function stores the spawned
-    subprocess under key "proc" so the cancel endpoint can .kill() it
-    from outside.
-
-    Safety:
-      - Prompt is capped at MAX_PROMPT_CHARS to limit injection of huge payloads.
-      - Hard timeout of EXECUTION_TIMEOUT_SECONDS; process is killed on timeout.
-      - Stdout is capped at MAX_LOG_BYTES; subsequent output is dropped.
-      - cwd is CLAUDE_SANDBOX_DIR if set (snapshot copy), else CLAUDE_WORKSPACE.
+    proc_holder: if provided, this dict gets a "proc" key pointing at the
+    spawned subprocess so the caller can .kill() it externally. New code
+    should use agent_executor.get_executor() + executor.stop() instead.
     """
-    if len(prompt) > MAX_PROMPT_CHARS:
-        prompt = prompt[:MAX_PROMPT_CHARS] + "\n[truncated by tasks service]"
-
-    cwd = CLAUDE_SANDBOX_DIR or CLAUDE_WORKSPACE
-
-    # IS_SANDBOX=1 lets claude accept --dangerously-skip-permissions under root
-    # (the container runs as root and there's no rootless option for us here).
-    env = {**os.environ, "IS_SANDBOX": "1"}
-    # Use stream-json + verbose so each tool call / partial text chunk is
-    # emitted immediately on its own line. The panel parses those lines to
-    # render "Reading foo.py", "Running: docker restart …", etc.
-    # Bound how hard the agent thinks. `--effort low` is plenty for the
-    # typical "edit two lines, commit" case — high effort burns extra LLM
-    # tokens on planning that just isn't needed for surgical edits.
-    # Override per-environment with AIUI_AGENT_EFFORT=medium|high if you
-    # want richer reasoning at the cost of latency.
-    effort = os.environ.get("AIUI_AGENT_EFFORT", "low")
-    extra_flags: list[str] = ["--effort", effort]
-    proc = await asyncio.create_subprocess_exec(
-        "claude",
-        "--print",
-        "--dangerously-skip-permissions",
-        "--output-format", "stream-json",
-        "--verbose",
-        *extra_flags,
-        prompt,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        env=env,
-    )
-    if proc_holder is not None:
-        proc_holder["proc"] = proc
-    assert proc.stdout is not None
-    bytes_yielded = 0
+    from local_executor import LocalExecutor  # local import avoids cycle
+    ex = LocalExecutor()
     try:
-        async with asyncio.timeout(EXECUTION_TIMEOUT_SECONDS):
-            while True:
-                chunk = await proc.stdout.read(4096)
-                if not chunk:
-                    break
-                if bytes_yielded >= MAX_LOG_BYTES:
-                    proc.kill()
-                    yield "\n[OUTPUT CAP exceeded — process killed]\n"
-                    break
-                bytes_yielded += len(chunk)
-                yield chunk.decode("utf-8", errors="replace")
-            await proc.wait()
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        yield f"\n[TIMEOUT after {EXECUTION_TIMEOUT_SECONDS}s — process killed]\n"
-    except asyncio.CancelledError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
-        raise
+        async for chunk in ex.run(prompt, slug=None, execution_id="legacy"):
+            # Surface self._proc to the legacy proc_holder convention so the
+            # existing routes_execution.py cancel path keeps working.
+            if proc_holder is not None and ex._proc is not None and proc_holder.get("proc") is None:
+                proc_holder["proc"] = ex._proc
+            yield chunk
     finally:
         if proc_holder is not None:
             proc_holder["proc"] = None

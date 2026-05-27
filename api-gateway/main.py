@@ -236,6 +236,16 @@ async def health():
     return JSONResponse(content={"status": "ok"})
 
 
+@app.get("/healthz")
+def healthz():
+    """Liveness probe — no upstream call. Used by deploy_orchestrator.sh.
+
+    Registered before the catch-all proxy_handler so it wins routing
+    precedence and is never forwarded to a backend.
+    """
+    return JSONResponse(content={"status": "ok"})
+
+
 # =============================================================================
 # Proxy Helper
 # =============================================================================
@@ -246,10 +256,23 @@ async def forward_request(request: Request, backend_url: str, backend_path: str,
     if request.query_params:
         url = f"{url}?{request.query_params}"
 
+    # Headers we strip from the client request — either hop-by-hop, or
+    # gateway-owned. The gateway-owned ones MUST be stripped (not just
+    # overridden) because Python dicts are case-sensitive and HTTP isn't:
+    # a client sending lowercase 'x-user-email' and the gateway adding
+    # 'X-User-Email' would BOTH end up in the dict and the backend would
+    # see the client's forged value. Strip-then-add is the safe pattern.
+    _STRIPPED = {
+        "host", "connection", "keep-alive", "transfer-encoding",
+        # Gateway-owned trust headers — never trust client claims for these.
+        "x-user-email", "x-user-groups", "x-user-admin", "x-user-name",
+        "x-gateway-validated",
+    }
     headers = {}
     for key, value in request.headers.items():
-        if key.lower() not in ["host", "connection", "keep-alive", "transfer-encoding"]:
+        if key.lower() not in _STRIPPED:
             headers[key] = value
+    # Now safely set gateway-owned headers — no key collision possible.
     headers.update(extra_headers)
 
     body = None
@@ -431,6 +454,30 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/servers") or full_path.startswith("/meta") or full_path.startswith("/openapi"):
         backend_url = MCP_PROXY_URL
         backend_path = full_path
+    elif full_path.startswith("/web-search/"):
+        backend_url = os.getenv("WEB_SEARCH_URL", "http://mcp-web-search:8000")
+        backend_path = full_path[len("/web-search"):]
+    elif full_path.startswith("/gmail/"):
+        backend_url = os.getenv("GMAIL_URL", "http://mcp-gmail:8000")
+        backend_path = full_path[len("/gmail"):]
+    elif full_path.startswith("/gdrive/"):
+        backend_url = os.getenv("GDRIVE_URL", "http://mcp-gdrive:8000")
+        backend_path = full_path[len("/gdrive"):]
+    elif full_path.startswith("/calendar/"):
+        backend_url = os.getenv("CALENDAR_URL", "http://mcp-calendar:8000")
+        backend_path = full_path[len("/calendar"):]
+    elif full_path.startswith("/meetings/"):
+        backend_url = os.getenv("MEETINGS_URL", "http://mcp-meetings:8000")
+        backend_path = full_path[len("/meetings"):]
+    elif full_path.startswith("/meeting-kb/"):
+        backend_url = os.getenv("MEETING_KB_URL", "http://meeting-kb:8200")
+        backend_path = full_path[len("/meeting-kb"):]
+    elif full_path.startswith("/dashboard/"):
+        backend_url = os.getenv("DASHBOARD_URL", "http://mcp-dashboard:8000")
+        backend_path = full_path[len("/dashboard"):]
+    elif full_path.startswith("/excel-creator/"):
+        backend_url = os.getenv("EXCEL_CREATOR_URL", "http://mcp-excel-creator:8000")
+        backend_path = full_path[len("/excel-creator"):]
     else:
         # Everything else goes to Open WebUI (including /admin/* for WebUI admin panel)
         backend_url = OPEN_WEBUI_URL

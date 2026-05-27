@@ -6,6 +6,11 @@ tests/test_app_builder_panel.py.
 """
 from __future__ import annotations
 
+from handlers.schedule_format import (
+    cron_to_human, schedule_status_label, schedule_label, schedule_color,
+    COLOR_GREEN, COLOR_BLURPLE,
+)
+
 # Discord component types
 ACTION_ROW = 1
 BUTTON = 2
@@ -24,6 +29,7 @@ TEXT_PARAGRAPH = 2
 # custom_id schemes
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button -> aiuibuild:tpl:<key>  ("" = Blank)
 BUILD_PREFIX = "aiuibuild:build:"    # modal  -> aiuibuild:build:<key>
+TEMPLATE_SELECT_ID = "aiuibuild:tplselect"  # "Pick a template" dropdown (value=key)
 DESCRIPTION_INPUT_ID = "description"
 
 _MAX_PER_ROW = 5
@@ -42,27 +48,54 @@ def _button(label: str, custom_id: str, style: int) -> dict:
     return {"type": BUTTON, "style": style, "label": label[:80], "custom_id": custom_id}
 
 
+# Robotic/terminal theme: electric-cyan accent bar on the panel embeds.
+ROBOTIC_CYAN = 0x00E5FF
+
+
+def build_panel_embed() -> dict:
+    """Terminal/console-styled embed for the #app-builder channel panel."""
+    return {
+        "title": "🤖 AIUI · APP BUILDER",
+        "color": ROBOTIC_CYAN,
+        "description": (
+            "```\n"
+            "> build unit online\n"
+            "> select a template to deploy\n"
+            "> a private space opens — only you + the bot\n"
+            "> or run  BLANK  for an empty project\n"
+            "```"
+        ),
+        "footer": {"text": "AIUI · automated build unit"},
+    }
+
+
 def build_panel_payload(templates: list[dict]) -> dict:
-    """Pinned panel message: one green/blue button per template plus a grey Blank
-    button, laid out 5 per row. Templates beyond the 24-button budget (room left
-    for Blank) are dropped — the slash command still reaches them."""
-    buttons: list[dict] = []
-    for t in templates[: _MAX_BUTTONS - 1]:
+    """Pinned panel: a single 'Pick a template…' dropdown (one option per
+    template, with a 1-line description) plus a Blank button. Replaces the old
+    25-button grid — far less visual clutter, same build flow on selection.
+    Caps at 25 options (Discord's select limit)."""
+    options: list[dict] = []
+    for t in templates[:_MAX_SELECT_OPTIONS]:
         key = t.get("key")
         if not key:
             continue  # tolerate a malformed row rather than crash
         emoji = (t.get("emoji") or "").strip()
-        label = t.get("label", key)
-        text = f"{emoji} {label}".strip()
-        style = STYLE_SUCCESS if len(buttons) % 2 == 0 else STYLE_PRIMARY
-        buttons.append(_button(text, f"{TEMPLATE_PREFIX}{key}", style))
-    buttons.append(_button("⬜ Blank", TEMPLATE_PREFIX, STYLE_SECONDARY))
-
-    rows: list[dict] = []
-    for start in range(0, len(buttons), _MAX_PER_ROW):
-        rows.append({"type": ACTION_ROW, "components": buttons[start : start + _MAX_PER_ROW]})
-    rows = rows[:_MAX_ROWS]
-    return {"content": PANEL_CONTENT, "components": rows}
+        label = f"{emoji} {t.get('label', key)}".strip()
+        opt = {"label": label[:100], "value": key[:100]}
+        desc = (t.get("description") or "").strip()
+        if desc:
+            opt["description"] = desc[:100]
+        options.append(opt)
+    select = {
+        "type": SELECT_MENU, "custom_id": TEMPLATE_SELECT_ID,
+        "placeholder": "Pick a template…", "min_values": 1, "max_values": 1,
+        "options": options,
+    }
+    blank = _button("⬜ Blank", TEMPLATE_PREFIX, STYLE_SECONDARY)
+    return {"content": "", "embeds": [build_panel_embed()], "components": [
+        {"type": ACTION_ROW, "components": [select]},
+        {"type": ACTION_ROW, "components": [blank]},
+    ]}
 
 
 def build_modal_payload(template_key: str | None, template_label: str | None = None) -> dict:
@@ -94,6 +127,10 @@ def build_modal_payload(template_key: str | None, template_label: str | None = N
 
 def is_panel_button(custom_id: str) -> bool:
     return custom_id.startswith(TEMPLATE_PREFIX)
+
+
+def is_template_select(custom_id: str) -> bool:
+    return custom_id == TEMPLATE_SELECT_ID
 
 
 def is_panel_modal(custom_id: str) -> bool:
@@ -131,6 +168,26 @@ def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
                         "label": "\U0001f517 Open preview", "url": preview_url})
     return [{"type": ACTION_ROW, "components": buttons}]
+
+
+def build_ready_embed(slug: str, preview_url: str = "", message: str = "") -> dict:
+    """Blue 'Build ready' embed shown with the Publish/Enhance/Preview buttons."""
+    desc = (message or f"Your app `{slug}` is ready to preview and publish.").strip()
+    embed = {"title": "✅ Build ready", "color": COLOR_BLURPLE, "description": desc[:2000]}
+    if preview_url:
+        embed["url"] = preview_url
+    return embed
+
+
+def build_published_embed(slug: str, public_url: str = "") -> dict:
+    """Green 'Published' embed shown with the Enhance/Unpublish buttons."""
+    desc = f"`{slug}` is live."
+    if public_url:
+        desc += f"\n{public_url}"
+    embed = {"title": "🎉 Published!", "color": COLOR_GREEN, "description": desc[:2000]}
+    if public_url:
+        embed["url"] = public_url
+    return embed
 
 
 def is_publish_button(custom_id: str) -> bool:
@@ -281,3 +338,388 @@ def build_project_menu_components(
                             "label": "\U0001f517 Open preview", "url": preview_url})
     buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
     return [{"type": ACTION_ROW, "components": buttons}]
+
+
+# --- Schedules (Discord cron jobs): panel, modal, confirm card, list ---
+TEXT_SHORT = 1  # Discord short text-input style (paragraph is 2)
+
+SCHED_NEW_ID = "aiuisched:new"        # New-schedule button (exact match)
+SCHED_LIST_ID = "aiuisched:list"      # My-schedules button (legacy; kept for routing)
+SCHED_OPEN_ID = "aiuisched:open"      # channel "Open my schedules" → private thread
+SCHED_SELECT_ID = "aiuisched:select"  # dropdown of the user's schedules (value=id)
+SCHED_MODAL_ID = "aiuisched:modal"    # create modal custom_id (exact match)
+SCHED_CONFIRM_PREFIX = "aiuisched:confirm:"   # confirm:<token>
+SCHED_CANCEL_PREFIX = "aiuisched:cancel:"     # cancel:<token>
+CONNECT_RESUME_PREFIX = "aiuisched:connected:"  # connected:<token> — "I've connected" resume
+SCHED_RUN_PREFIX = "aiuisched:run:"           # run:<schedule_id>
+SCHED_PAUSE_PREFIX = "aiuisched:pause:"       # pause:<schedule_id>
+SCHED_RESUME_PREFIX = "aiuisched:resume:"     # resume:<schedule_id>
+SCHED_DEL_PREFIX = "aiuisched:del:"           # del:<schedule_id>
+SCHED_WHAT_INPUT = "what"
+SCHED_WHEN_INPUT = "when"
+
+SCHEDULES_PANEL_CONTENT = (
+    "⏰ **Scheduled tasks**\n"
+    "Set up a recurring task in plain English — e.g. *write my daily focus "
+    "list* / *every morning*. Results land in your private thread. "
+    "Times are **Manila time (GMT+8)**. No coding, no cron syntax."
+)
+
+_MAX_SCHED_ROWS = 5  # Discord allows at most 5 action rows per message
+
+
+def build_schedules_embed() -> dict:
+    """Terminal/console-styled embed for the #cron-job channel panel."""
+    return {
+        "title": "⏰ AIUI · SCHEDULER",
+        "color": ROBOTIC_CYAN,
+        "description": (
+            "```\n"
+            "> describe a task in plain english\n"
+            "> set the cycle — e.g. every morning\n"
+            "> times run in Manila · GMT+8\n"
+            "> results -> your private thread\n"
+            "```"
+        ),
+        "footer": {"text": "AIUI · scheduler unit"},
+    }
+
+
+def build_schedules_panel() -> dict:
+    """Pinned channel panel: 'Open my schedules' → the user's private thread,
+    where everything (New / list / per-schedule actions) lives. Access is
+    automatic for anyone who can see the channel — no account-linking step."""
+    row = {"type": ACTION_ROW, "components": [
+        _button("⏰ Open my schedules", SCHED_OPEN_ID, STYLE_SUCCESS),
+    ]}
+    return {"content": "", "embeds": [build_schedules_embed()], "components": [row]}
+
+
+def build_schedules_dashboard(schedules: list[dict]) -> dict:
+    """Posted inside the user's private thread: a New button + (if any) a
+    dropdown to pick a schedule to manage."""
+    rows = [{"type": ACTION_ROW, "components": [
+        _button("➕ New schedule", SCHED_NEW_ID, STYLE_SUCCESS)]}]
+    if schedules:
+        rows += build_schedule_select(schedules)
+        content = "📅 **Your schedules** — pick one to manage, or add a new one."
+    else:
+        content = ("📅 **Your schedules**\nYou have no schedules yet. "
+                   "Hit **➕ New schedule** to make one.")
+    return {"content": content, "components": rows}
+
+
+def build_schedule_select(schedules: list[dict]) -> list[dict]:
+    """One action row: a string-select of the user's schedules (value=id),
+    labelled in plain English with a status description. Caps at 25 (Discord)."""
+    options: list[dict] = []
+    for s in schedules[:_MAX_SELECT_OPTIONS]:
+        sid = str(s.get("id", ""))
+        if not sid:
+            continue
+        options.append({
+            "label": schedule_label(s)[:100],
+            "value": sid[:100],
+            "description": schedule_status_label(s)[:100],
+        })
+    select = {
+        "type": SELECT_MENU, "custom_id": SCHED_SELECT_ID,
+        "placeholder": "Pick a schedule…", "min_values": 1, "max_values": 1,
+        "options": options,
+    }
+    return [{"type": ACTION_ROW, "components": [select]}]
+
+
+def build_schedule_card(s: dict) -> dict:
+    """Colored embed card for a single schedule (status-colored accent + When /
+    Status fields) with state-aware Run / Pause-or-Resume / Edit / Delete buttons."""
+    sid = str(s.get("id", ""))
+    when = cron_to_human(s.get("cron_expr", ""))
+    prompt = (s.get("prompt") or "").strip() or "(no description)"
+    embed = {
+        "author": {"name": "AIUI · Scheduler"},
+        "title": f"📅 {prompt}"[:256],
+        "color": schedule_color(s),
+        "fields": [
+            {"name": "When", "value": (when or "—")[:1024], "inline": True},
+            {"name": "Status", "value": schedule_status_label(s), "inline": True},
+        ],
+        "footer": {"text": "Manila · GMT+8"},
+    }
+    # Intent-coded button hierarchy: green = go, blurple = primary edit,
+    # red = destructive, grey = neutral toggle.
+    buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SUCCESS)]
+    if s.get("enabled", True):
+        buttons.append(_button("⏸️ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
+    else:
+        buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
+    buttons.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", STYLE_PRIMARY))
+    buttons.append(_button("🗑️ Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
+    return {"embeds": [embed], "components": [{"type": ACTION_ROW, "components": buttons}]}
+
+
+def build_deleted_card() -> dict:
+    return {"content": "🗑 Deleted.", "components": []}
+
+
+def is_sched_open(custom_id: str) -> bool:
+    return custom_id == SCHED_OPEN_ID
+
+
+def is_sched_select(custom_id: str) -> bool:
+    return custom_id == SCHED_SELECT_ID
+
+
+def build_schedule_modal() -> dict:
+    """Type-9 MODAL data: 'what' (paragraph) + 'when' (short natural language)."""
+    return {
+        "title": "New scheduled task"[:45],
+        "custom_id": SCHED_MODAL_ID,
+        "components": [
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHAT_INPUT,
+                "label": "What should it do?", "style": TEXT_PARAGRAPH,
+                "required": True, "max_length": 2000,
+                "placeholder": "e.g. write a short daily motivation message and 3 focus tips",
+            }]},
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHEN_INPUT,
+                "label": "How often? (Manila time, GMT+8)", "style": TEXT_SHORT,
+                "required": True, "max_length": 60,
+                "placeholder": "every morning  /  every Monday 9am  /  every 30 minutes",
+            }]},
+        ],
+    }
+
+
+def build_confirm_components(token: str) -> list[dict]:
+    """Confirmation-card buttons: Confirm (carries token) + Cancel."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("✅ Confirm", f"{SCHED_CONFIRM_PREFIX}{token}", STYLE_SUCCESS),
+        _button("✖ Cancel", f"{SCHED_CANCEL_PREFIX}{token}", STYLE_SECONDARY),
+    ]}]
+
+
+def build_connect_components(*, token: str, links: list[tuple[str, str]]) -> list[dict]:
+    """Connect-when-needed card: one link button per connector to authorize, plus
+    an 'I've connected' resume button carrying the parked-schedule token. Link
+    buttons (style 5) carry a `url`, not a custom_id; ≤5 buttons per action row."""
+    buttons = [
+        {"type": BUTTON, "style": STYLE_LINK, "label": f"🔌 Connect {name}"[:80], "url": url}
+        for name, url in links
+    ]
+    buttons.append(
+        _button("✅ I've connected — create it", f"{CONNECT_RESUME_PREFIX}{token}", STYLE_SUCCESS)
+    )
+    return [{"type": ACTION_ROW, "components": buttons[i:i + 5]} for i in range(0, len(buttons), 5)]
+
+
+def is_connect_resume(custom_id: str) -> bool:
+    return custom_id.startswith(CONNECT_RESUME_PREFIX)
+
+
+def token_from_connect_resume(custom_id: str) -> str:
+    if not is_connect_resume(custom_id):
+        raise ValueError(f"not a connect-resume custom_id: {custom_id!r}")
+    return custom_id[len(CONNECT_RESUME_PREFIX):]
+
+
+def build_schedule_list(schedules: list[dict]) -> dict:
+    """Ephemeral 'My schedules' message: a text summary + up to 5 rows of
+    Run / Pause-or-Resume / Delete buttons (one row per schedule)."""
+    if not schedules:
+        return {
+            "content": "You have no schedules yet. Hit **⏰ New schedule** to make one.",
+            "components": [],
+        }
+    lines = ["\U0001f4c5 **Your schedules**"]
+    rows: list[dict] = []
+    for sch in schedules[:_MAX_SCHED_ROWS]:
+        sid = str(sch.get("id", ""))
+        name = sch.get("name") or sid
+        enabled = bool(sch.get("enabled", True))
+        status = sch.get("last_run_status")
+        state = "active" if enabled else "paused"
+        tail = f", last run: {status}" if status else ""
+        lines.append(f"• {name}  *({state}{tail})*")
+        buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SUCCESS)]
+        if enabled:
+            buttons.append(_button("⏸️ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
+        else:
+            buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
+        buttons.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", STYLE_PRIMARY))
+        buttons.append(_button("🗑️ Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
+        rows.append({"type": ACTION_ROW, "components": buttons})
+    if len(schedules) > _MAX_SCHED_ROWS:
+        lines.append(f"…and {len(schedules) - _MAX_SCHED_ROWS} more.")
+    return {"content": "\n".join(lines), "components": rows}
+
+
+def is_sched_new(custom_id: str) -> bool:
+    return custom_id == SCHED_NEW_ID
+
+
+def is_sched_list(custom_id: str) -> bool:
+    return custom_id == SCHED_LIST_ID
+
+
+def is_sched_modal(custom_id: str) -> bool:
+    return custom_id == SCHED_MODAL_ID
+
+
+def _suffix_after(custom_id: str, prefix: str) -> str:
+    if not custom_id.startswith(prefix):
+        raise ValueError(f"not a {prefix!r} custom_id: {custom_id!r}")
+    suffix = custom_id[len(prefix):]
+    if not suffix:
+        raise ValueError(f"{prefix!r} custom_id has no value: {custom_id!r}")
+    return suffix
+
+
+def is_sched_confirm(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_CONFIRM_PREFIX)
+
+
+def token_from_confirm(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_CONFIRM_PREFIX)
+
+
+def is_sched_cancel(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_CANCEL_PREFIX)
+
+
+def token_from_cancel(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_CANCEL_PREFIX)
+
+
+def is_sched_run(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_RUN_PREFIX)
+
+
+def id_from_run(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_RUN_PREFIX)
+
+
+def is_sched_pause(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_PAUSE_PREFIX)
+
+
+def id_from_pause(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_PAUSE_PREFIX)
+
+
+def is_sched_resume(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_RESUME_PREFIX)
+
+
+def id_from_resume(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_RESUME_PREFIX)
+
+
+def is_sched_del(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_DEL_PREFIX)
+
+
+def id_from_del(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_DEL_PREFIX)
+
+
+# --- #3 Retry on failed runs (reuses the run-now handler) ---
+def build_retry_components(schedule_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("🔁 Retry", f"{SCHED_RUN_PREFIX}{schedule_id}", STYLE_SECONDARY),
+    ]}]
+
+
+# --- #4 Edit a schedule ---
+SCHED_EDIT_PREFIX = "aiuisched:edit:"
+SCHED_EDITMODAL_PREFIX = "aiuisched:editmodal:"
+
+
+def build_schedule_edit_modal(schedule_id: str, *, what: str, when: str) -> dict:
+    """Edit modal pre-filled with the schedule's current what + when."""
+    return {
+        "title": "Edit schedule"[:45],
+        "custom_id": f"{SCHED_EDITMODAL_PREFIX}{schedule_id}",
+        "components": [
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHAT_INPUT,
+                "label": "What should it do?", "style": TEXT_PARAGRAPH,
+                "required": True, "max_length": 2000, "value": (what or "")[:2000],
+            }]},
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_WHEN_INPUT,
+                "label": "How often?", "style": TEXT_SHORT,
+                "required": True, "max_length": 60, "value": (when or "")[:60],
+            }]},
+        ],
+    }
+
+
+def is_sched_edit(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_EDIT_PREFIX)
+
+
+def id_from_edit(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_EDIT_PREFIX)
+
+
+def is_sched_editmodal(custom_id: str) -> bool:
+    return custom_id.startswith(SCHED_EDITMODAL_PREFIX)
+
+
+def id_from_editmodal(custom_id: str) -> str:
+    return _suffix_after(custom_id, SCHED_EDITMODAL_PREFIX)
+
+
+# --- #1 Self-service linking (aiuilink:*) ---
+LINK_START_ID = "aiuilink:start"
+LINK_MODAL_ID = "aiuilink:modal"
+LINK_EMAIL_INPUT = "email"
+LINK_APPROVE_PREFIX = "aiuilink:approve:"
+LINK_REJECT_PREFIX = "aiuilink:reject:"
+
+
+def build_link_modal() -> dict:
+    return {
+        "title": "Link your account"[:45],
+        "custom_id": LINK_MODAL_ID,
+        "components": [{"type": ACTION_ROW, "components": [{
+            "type": TEXT_INPUT, "custom_id": LINK_EMAIL_INPUT,
+            "label": "Your work email", "style": TEXT_SHORT,
+            "required": True, "max_length": 200,
+            "placeholder": "you@company.com",
+        }]}],
+    }
+
+
+def build_link_request_components(discord_id: str) -> list[dict]:
+    """Approve/Reject buttons posted to the admin channel for a link request."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("✅ Approve", f"{LINK_APPROVE_PREFIX}{discord_id}", STYLE_SUCCESS),
+        _button("✖ Reject", f"{LINK_REJECT_PREFIX}{discord_id}", STYLE_DANGER),
+    ]}]
+
+
+def is_link_start(custom_id: str) -> bool:
+    return custom_id == LINK_START_ID
+
+
+def is_link_modal(custom_id: str) -> bool:
+    return custom_id == LINK_MODAL_ID
+
+
+def is_link_approve(custom_id: str) -> bool:
+    return custom_id.startswith(LINK_APPROVE_PREFIX)
+
+
+def id_from_link_approve(custom_id: str) -> str:
+    return _suffix_after(custom_id, LINK_APPROVE_PREFIX)
+
+
+def is_link_reject(custom_id: str) -> bool:
+    return custom_id.startswith(LINK_REJECT_PREFIX)
+
+
+def id_from_link_reject(custom_id: str) -> str:
+    return _suffix_after(custom_id, LINK_REJECT_PREFIX)

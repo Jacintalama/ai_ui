@@ -10,6 +10,9 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+import crypto_utils  # encrypt OAuth tokens at rest (AIUI_FERNET_KEY)
+import oauth_state  # verify signed OAuth state (owner identity)
+
 app = FastAPI(
     title="Google Drive MCP",
     description="Browse, search, and read files from your Google Drive.",
@@ -54,9 +57,10 @@ async def get_token(user_email: str) -> Optional[dict]:
                     user_email
                 )
                 if row:
+                    # Tokens are Fernet ciphertext at rest — decrypt on read.
                     return {
-                        "access_token": row["access_token"],
-                        "refresh_token": row["refresh_token"],
+                        "access_token": crypto_utils.decrypt(row["access_token"]),
+                        "refresh_token": crypto_utils.decrypt(row["refresh_token"]) if row["refresh_token"] else None,
                         "token_expiry": row["token_expiry"].isoformat() if row["token_expiry"] else None
                     }
             finally:
@@ -68,10 +72,16 @@ async def get_token(user_email: str) -> Optional[dict]:
 
 async def save_token(user_email: str, token_data: dict):
     """Save token for a user."""
-    _tokens[user_email] = token_data
+    _tokens[user_email] = token_data  # in-memory cache stays plaintext (not at rest)
     if DATABASE_URL:
         try:
             import asyncpg
+            # Encrypt at the DB boundary — tokens are at rest as Fernet ciphertext.
+            enc_access = crypto_utils.encrypt(token_data["access_token"])
+            enc_refresh = (
+                crypto_utils.encrypt(token_data["refresh_token"])
+                if token_data.get("refresh_token") else None
+            )
             conn = await asyncpg.connect(DATABASE_URL)
             try:
                 await conn.execute("""
@@ -80,7 +90,7 @@ async def save_token(user_email: str, token_data: dict):
                     ON CONFLICT (user_email) DO UPDATE
                     SET access_token = $2, refresh_token = COALESCE($3, gdrive_tokens.refresh_token),
                         token_expiry = NOW() + INTERVAL '1 hour', updated_at = NOW()
-                """, user_email, token_data["access_token"], token_data.get("refresh_token"))
+                """, user_email, enc_access, enc_refresh)
             finally:
                 await conn.close()
         except Exception:
@@ -155,9 +165,11 @@ def get_user_email(request: Request) -> str:
 # --- OAuth Endpoints ---
 
 @app.get("/auth/google/start")
-async def auth_start(user_email: str = "default@local"):
+async def auth_start(user_email: str = "default@local", state: str = ""):
     """Start Google OAuth flow."""
-    state = urllib.parse.quote(user_email)
+    # The bot passes a pre-signed `state` (owner identity); fall back to the
+    # legacy email-encoded state for manual use.
+    oauth_state_param = state or urllib.parse.quote(user_email)
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
@@ -165,7 +177,7 @@ async def auth_start(user_email: str = "default@local"):
         "scope": SCOPES,
         "access_type": "offline",
         "prompt": "consent",
-        "state": state,
+        "state": oauth_state_param,
     }
     url = f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
     return RedirectResponse(url)
@@ -174,7 +186,11 @@ async def auth_start(user_email: str = "default@local"):
 @app.get("/auth/google/callback")
 async def auth_callback(code: str, state: str = "default@local"):
     """Handle Google OAuth callback."""
-    user_email = urllib.parse.unquote(state)
+    # Prefer the signed owner identity; fall back to legacy email-encoded state.
+    owner = oauth_state.verify_state(state)
+    if owner is None:
+        owner = urllib.parse.unquote(state)
+    user_email = owner
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(GOOGLE_TOKEN_URL, data={
@@ -212,6 +228,13 @@ async def auth_callback(code: str, state: str = "default@local"):
         </script>
     </body></html>
     """)
+
+
+@app.get("/auth/status")
+async def auth_status_header(request: Request):
+    """Header-based status (X-User-Email via api-gateway) for the connect-UX poll."""
+    tok = await get_token(get_user_email(request))
+    return {"connected": tok is not None}
 
 
 @app.get("/auth/google/status")

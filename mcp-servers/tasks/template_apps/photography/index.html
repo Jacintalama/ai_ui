@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Photography</title>
+  <meta name="description" content="<%= APP_NAME %> — independent photographer working across travel, portraiture, and editorial. Selected work, series, and contact." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+
+  <div x-data="photography" x-init="init()">
+
+    <!-- ============================================================ NAV ============================================================ -->
+    <section data-section="nav">
+      <header class="fixed top-0 left-0 right-0 z-40 backdrop-blur-md"
+              style="background: rgba(0,0,0,0.3);">
+        <div class="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
+
+          <!-- Photographer name / logo -->
+          <a href="#" class="text-white font-light tracking-wide-display text-sm uppercase">
+            <%= APP_NAME %>
+          </a>
+
+          <!-- Desktop nav -->
+          <nav class="hidden md:flex items-center gap-10 text-xs tracking-wide-display uppercase" style="color: var(--muted);">
+            <a href="#series" class="hover:text-white transition-colors">Work</a>
+            <a href="#gallery" class="hover:text-white transition-colors">Series</a>
+            <a href="#about" class="hover:text-white transition-colors">About</a>
+            <a href="#contact" class="hover:text-white transition-colors">Contact</a>
+          </nav>
+
+          <!-- Mobile menu toggle -->
+          <button @click="mobileMenu = !mobileMenu"
+                  class="md:hidden p-2 text-white"
+                  aria-label="Toggle navigation menu">
+            <svg x-show="!mobileMenu" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+            <svg x-show="mobileMenu" x-cloak class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Mobile menu -->
+        <div x-show="mobileMenu" x-cloak
+             class="md:hidden border-t px-6 py-6 space-y-4"
+             style="background: rgba(0,0,0,0.95); border-color: rgba(255,255,255,0.08);">
+          <a href="#series" @click="mobileMenu = false" class="block text-xs tracking-wide-display uppercase py-2" style="color: var(--muted);">Work</a>
+          <a href="#gallery" @click="mobileMenu = false" class="block text-xs tracking-wide-display uppercase py-2" style="color: var(--muted);">Series</a>
+          <a href="#about" @click="mobileMenu = false" class="block text-xs tracking-wide-display uppercase py-2" style="color: var(--muted);">About</a>
+          <a href="#contact" @click="mobileMenu = false" class="block text-xs tracking-wide-display uppercase py-2" style="color: var(--muted);">Contact</a>
+        </div>
+      </header>
+    </section>
+
+    <!-- ============================================================ HERO ============================================================ -->
+    <section data-section="hero" class="relative w-full overflow-hidden" style="min-height: 100vh;">
+      <img
+        loading="eager"
+        fetchpriority="high"
+        src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=2000&q=80"
+        alt="Dramatic mountain ridgeline bathed in golden sunrise light above a sea of clouds"
+        width="2000"
+        height="1333"
+        class="absolute inset-0 w-full h-full object-cover"
+      />
+      <!-- Dark gradient overlay — heavier at bottom-left for text legibility -->
+      <div class="absolute inset-0" style="background: linear-gradient(135deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.2) 60%, rgba(0,0,0,0.05) 100%);"></div>
+
+      <!-- Photographer name + tagline — bottom-left -->
+      <div class="absolute bottom-24 left-8 md:left-16">
+        <h1 class="text-white font-light tracking-wide-display uppercase mb-3" style="font-size: clamp(2rem, 5vw, 4rem); letter-spacing: 0.15em;">
+          <%= APP_NAME %>
+        </h1>
+        <p class="text-sm tracking-wide-display uppercase" style="color: rgba(255,255,255,0.65); letter-spacing: 0.15em;">
+          Travel &middot; Portraiture &middot; Editorial
+        </p>
+      </div>
+
+      <!-- Pulsing scroll-down indicator — centered bottom -->
+      <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+        <span class="text-xs tracking-wide-display uppercase" style="color: rgba(255,255,255,0.45);">Scroll</span>
+        <div class="scroll-indicator" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-white opacity-60" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ SERIES ============================================================ -->
+    <section data-section="series" class="py-24 px-6 md:px-12 max-w-7xl mx-auto">
+
+      <header class="mb-20 reveal">
+        <p class="text-xs tracking-wide-display uppercase mb-4" style="color: var(--muted);">Selected Series</p>
+        <h2 class="text-3xl md:text-4xl font-light tracking-wide-display uppercase text-white">Long-form work</h2>
+      </header>
+
+      <!-- Series 1: Wilderness — image collage on the left -->
+      <div class="flex flex-col lg:flex-row gap-10 mb-24 items-start reveal">
+        <!-- 3-image collage -->
+        <div class="lg:w-1/2 grid grid-cols-2 gap-2 flex-shrink-0">
+          <div class="col-span-2 zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=800&q=80"
+              alt="Glacial lake surrounded by jagged snow-capped peaks under a stormy sky"
+              width="800"
+              height="534"
+              class="w-full object-cover"
+              style="height: 260px;"
+            />
+          </div>
+          <div class="zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=400&q=80"
+              alt="Lone pine tree silhouetted against a vivid orange and purple sunset"
+              width="400"
+              height="300"
+              class="w-full object-cover"
+              style="height: 160px;"
+            />
+          </div>
+          <div class="zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&w=400&q=80"
+              alt="Misty forest trail winding through ancient moss-covered fir trees"
+              width="400"
+              height="300"
+              class="w-full object-cover"
+              style="height: 160px;"
+            />
+          </div>
+        </div>
+        <!-- Text -->
+        <div class="lg:w-1/2 lg:pt-4">
+          <p class="text-xs tracking-wide-display uppercase mb-4" style="color: var(--muted);">Series 01</p>
+          <h3 class="text-2xl md:text-3xl font-light text-white tracking-wide-display uppercase mb-6">Wilderness</h3>
+          <p class="text-base leading-relaxed mb-8" style="color: var(--muted);">
+            Three years traversing remote mountain ranges across four continents. This series documents the raw, unfiltered beauty of places untouched by roads — glacial valleys, high-altitude meadows, and ridge lines at the edge of the inhabited world. Shot on medium format film, printed large.
+          </p>
+          <a href="#gallery" class="inline-flex items-center gap-2 text-sm tracking-wide-display uppercase text-white border-b border-white/30 pb-1 hover:border-white transition-colors">
+            View series
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <!-- Series 2: Urban Rhythm — text on the left, collage on the right -->
+      <div class="flex flex-col lg:flex-row-reverse gap-10 mb-24 items-start reveal">
+        <!-- 3-image collage -->
+        <div class="lg:w-1/2 grid grid-cols-2 gap-2 flex-shrink-0">
+          <div class="col-span-2 zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&w=800&q=80"
+              alt="Downtown skyscrapers reflected in rain-soaked cobblestones at dusk"
+              width="800"
+              height="534"
+              class="w-full object-cover"
+              style="height: 260px;"
+            />
+          </div>
+          <div class="zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1480714378408-67cf0d13bc1b?auto=format&fit=crop&w=400&q=80"
+              alt="Commuters streaming through a busy underground subway station in long exposure blur"
+              width="400"
+              height="300"
+              class="w-full object-cover"
+              style="height: 160px;"
+            />
+          </div>
+          <div class="zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1449824913935-59a10b8d2000?auto=format&fit=crop&w=400&q=80"
+              alt="Narrow alleyway lit by neon signage casting pink and blue shadows on brick walls"
+              width="400"
+              height="300"
+              class="w-full object-cover"
+              style="height: 160px;"
+            />
+          </div>
+        </div>
+        <!-- Text -->
+        <div class="lg:w-1/2 lg:pt-4">
+          <p class="text-xs tracking-wide-display uppercase mb-4" style="color: var(--muted);">Series 02</p>
+          <h3 class="text-2xl md:text-3xl font-light text-white tracking-wide-display uppercase mb-6">Urban Rhythm</h3>
+          <p class="text-base leading-relaxed mb-8" style="color: var(--muted);">
+            Cities are organisms. This series captures the pulse of metropolitan life — the geometry of concrete and glass, the anonymity of crowds, and the fleeting moments of stillness that open between the noise. Shot across Tokyo, New York, Lagos, and Berlin over two years.
+          </p>
+          <a href="#gallery" class="inline-flex items-center gap-2 text-sm tracking-wide-display uppercase text-white border-b border-white/30 pb-1 hover:border-white transition-colors">
+            View series
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <!-- Series 3: Faces — image collage on the left -->
+      <div class="flex flex-col lg:flex-row gap-10 items-start reveal">
+        <!-- 3-image collage -->
+        <div class="lg:w-1/2 grid grid-cols-2 gap-2 flex-shrink-0">
+          <div class="col-span-2 zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?auto=format&fit=crop&w=800&q=80"
+              alt="Close portrait of a woman with silver-streaked hair, direct gaze, soft window light"
+              width="800"
+              height="534"
+              class="w-full object-cover"
+              style="height: 260px;"
+            />
+          </div>
+          <div class="zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80"
+              alt="Young man with curly hair photographed against a plain white studio backdrop"
+              width="400"
+              height="300"
+              class="w-full object-cover"
+              style="height: 160px;"
+            />
+          </div>
+          <div class="zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=400&q=80"
+              alt="Smiling woman in profile illuminated by warm golden hour sunlight outdoors"
+              width="400"
+              height="300"
+              class="w-full object-cover"
+              style="height: 160px;"
+            />
+          </div>
+        </div>
+        <!-- Text -->
+        <div class="lg:w-1/2 lg:pt-4">
+          <p class="text-xs tracking-wide-display uppercase mb-4" style="color: var(--muted);">Series 03</p>
+          <h3 class="text-2xl md:text-3xl font-light text-white tracking-wide-display uppercase mb-6">Faces</h3>
+          <p class="text-base leading-relaxed mb-8" style="color: var(--muted);">
+            A long-term portraiture project exploring identity, vulnerability, and presence. Each sitting is unhurried — often two to three hours of conversation before a single frame is made. The resulting images are candid in spirit even when staged in form.
+          </p>
+          <a href="#gallery" class="inline-flex items-center gap-2 text-sm tracking-wide-display uppercase text-white border-b border-white/30 pb-1 hover:border-white transition-colors">
+            View series
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ============================================================ GALLERY ============================================================ -->
+    <section data-section="gallery" class="py-24 px-6 md:px-12 max-w-screen-2xl mx-auto">
+
+      <header class="mb-12 reveal">
+        <p class="text-xs tracking-wide-display uppercase mb-4" style="color: var(--muted);">Selected Images</p>
+        <h2 class="text-3xl md:text-4xl font-light tracking-wide-display uppercase text-white">Gallery</h2>
+      </header>
+
+      <div class="masonry">
+
+        <!-- Image 0 -->
+        <button type="button" class="zoom-card block w-full" @click="show(0)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=600&q=80"
+            alt="Aerial view of a winding river cutting through a dense autumn forest at peak colour"
+            width="600"
+            height="800"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 1 -->
+        <button type="button" class="zoom-card block w-full" @click="show(1)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1501854140801-50d01698950b?auto=format&fit=crop&w=600&q=80"
+            alt="Sweeping view of rolling green hills under dramatic storm clouds with shafts of light"
+            width="600"
+            height="400"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 2 -->
+        <button type="button" class="zoom-card block w-full" @click="show(2)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?auto=format&fit=crop&w=600&q=80"
+            alt="Endangered Amur leopard resting on a moss-covered rock in dappled forest light"
+            width="600"
+            height="750"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 3 -->
+        <button type="button" class="zoom-card block w-full" @click="show(3)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1533240332313-0db49b459ad6?auto=format&fit=crop&w=600&q=80"
+            alt="Sand dunes casting sharp geometric shadows at the edge of a Saharan oasis"
+            width="600"
+            height="900"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 4 -->
+        <button type="button" class="zoom-card block w-full" @click="show(4)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1493246507139-91e8fad9978e?auto=format&fit=crop&w=600&q=80"
+            alt="Terraced rice paddies in Bali lit by the warm glow of sunrise over misty mountains"
+            width="600"
+            height="450"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 5 -->
+        <button type="button" class="zoom-card block w-full" @click="show(5)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1504701954957-2010ec3bcec1?auto=format&fit=crop&w=600&q=80"
+            alt="Street market vendor arranging vibrant spices in clay bowls in a Marrakech souk"
+            width="600"
+            height="800"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 6 -->
+        <button type="button" class="zoom-card block w-full" @click="show(6)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1519681393784-d120267933ba?auto=format&fit=crop&w=600&q=80"
+            alt="Starry night sky above a snow-covered alpine meadow with a dark silhouetted treeline"
+            width="600"
+            height="900"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 7 -->
+        <button type="button" class="zoom-card block w-full" @click="show(7)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1508739773434-c26b3d09e071?auto=format&fit=crop&w=600&q=80"
+            alt="Weathered fishing boats moored in a tranquil harbour reflecting pastel sunrise colours"
+            width="600"
+            height="400"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 8 -->
+        <button type="button" class="zoom-card block w-full" @click="show(8)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=600&q=80"
+            alt="Winding coastal road carved into cliffs above crashing turquoise waves at golden hour"
+            width="600"
+            height="800"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 9 -->
+        <button type="button" class="zoom-card block w-full" @click="show(9)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1513836279014-a89f7a76ae86?auto=format&fit=crop&w=600&q=80"
+            alt="Looking up through a cathedral of tall pine trees into a vivid blue summer sky"
+            width="600"
+            height="900"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 10 -->
+        <button type="button" class="zoom-card block w-full" @click="show(10)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1502786129293-79981df4e689?auto=format&fit=crop&w=600&q=80"
+            alt="Long exposure of a waterfall cascading over basalt columns in Iceland at blue hour"
+            width="600"
+            height="750"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 11 -->
+        <button type="button" class="zoom-card block w-full" @click="show(11)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1440626915703-785e5f8a4b04?auto=format&fit=crop&w=600&q=80"
+            alt="Lone hiker standing on a rocky summit overlooking an endless valley of low clouds"
+            width="600"
+            height="400"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 12 -->
+        <button type="button" class="zoom-card block w-full" @click="show(12)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1504198453319-5ce911bafcde?auto=format&fit=crop&w=600&q=80"
+            alt="Flamingos wading in a shallow pink salt lake at sunset in the Rift Valley"
+            width="600"
+            height="900"
+            class="w-full"
+          />
+        </button>
+
+        <!-- Image 13 -->
+        <button type="button" class="zoom-card block w-full" @click="show(13)">
+          <img
+            data-img-slot="gallery"
+            loading="lazy"
+            src="https://images.unsplash.com/photo-1500322969630-a26ab6eb64cf?auto=format&fit=crop&w=600&q=80"
+            alt="Sunlight streaming through ancient cathedral arches onto warm stone floors"
+            width="600"
+            height="800"
+            class="w-full"
+          />
+        </button>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ ABOUT ============================================================ -->
+    <section data-section="about" class="py-24 px-6 md:px-12 max-w-7xl mx-auto">
+
+      <div class="flex flex-col lg:flex-row gap-16 items-start reveal">
+
+        <!-- Portrait photo -->
+        <div class="lg:w-2/5 flex-shrink-0">
+          <div class="zoom-card">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?auto=format&fit=crop&w=400&q=80"
+              alt="Photographer standing in a sun-drenched doorway, camera held at waist height"
+              width="400"
+              height="500"
+              class="w-full object-cover"
+              style="max-height: 560px;"
+            />
+          </div>
+        </div>
+
+        <!-- Bio + credits -->
+        <div class="lg:w-3/5">
+          <p class="text-xs tracking-wide-display uppercase mb-6" style="color: var(--muted);">About</p>
+          <h2 class="text-3xl md:text-4xl font-light tracking-wide-display uppercase text-white mb-8"><%= APP_NAME %></h2>
+
+          <p class="text-base leading-relaxed mb-6" style="color: var(--muted);">
+            Based between New York and Cape Town, I have spent the better part of fifteen years making images in places most people never reach. My practice sits at the intersection of documentary precision and a painterly sensitivity to light — work that aims to be honest about the world while still finding beauty in it.
+          </p>
+          <p class="text-base leading-relaxed mb-12" style="color: var(--muted);">
+            I work on long-term personal projects alongside editorial and commercial commissions. My prints are held in private collections across Europe, North America, and South Africa. I am represented for editorial work by a select agency and accept a limited number of commercial assignments each year.
+          </p>
+
+          <!-- Selected clients -->
+          <div class="mb-8">
+            <p class="text-xs tracking-wide-display uppercase mb-4" style="color: var(--muted);">Selected Clients</p>
+            <p class="text-sm leading-relaxed" style="color: rgba(255,255,255,0.7);">
+              The New York Times &middot; Conde Nast &middot; Apple &middot; Patagonia &middot; Hermes &middot; Magnum Photos &middot; National Geographic
+            </p>
+          </div>
+
+          <!-- Selected publications -->
+          <div>
+            <p class="text-xs tracking-wide-display uppercase mb-4" style="color: var(--muted);">Selected Publications</p>
+            <p class="text-sm leading-relaxed" style="color: rgba(255,255,255,0.7);">
+              Aperture &middot; GEO Magazine &middot; Vogue &middot; The Guardian Weekend &middot; Le Monde Magazine
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ CONTACT ============================================================ -->
+    <section data-section="contact" class="py-32 px-6 text-center reveal">
+      <div class="max-w-xl mx-auto">
+        <p class="text-xs tracking-wide-display uppercase mb-8" style="color: var(--muted);">Get in Touch</p>
+        <h2 class="text-4xl md:text-5xl font-light tracking-wide-display uppercase text-white mb-12">Contact</h2>
+
+        <p class="text-sm leading-relaxed mb-12" style="color: var(--muted);">
+          For editorial assignments, commercial enquiries, and print sales, reach out directly.
+        </p>
+
+        <div class="flex flex-col sm:flex-row items-center justify-center gap-6">
+          <!-- Email link -->
+          <a href="mailto:studio@<%= APP_NAME %>.com"
+             class="text-base tracking-wide-display uppercase text-white border-b border-white/30 pb-1 hover:border-white transition-colors">
+            studio@<%= APP_NAME %>.com
+          </a>
+
+          <span class="hidden sm:inline" style="color: var(--muted);">&middot;</span>
+
+          <!-- Instagram link -->
+          <a href="#contact"
+             class="text-base tracking-wide-display uppercase text-white border-b border-white/30 pb-1 hover:border-white transition-colors">
+            Instagram
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ FOOTER ============================================================ -->
+    <section data-section="footer">
+      <footer class="border-t px-6 py-8" style="border-color: rgba(255,255,255,0.08);">
+        <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+          <p class="text-xs tracking-wide-display uppercase" style="color: var(--muted);">
+            &copy; 2024 <%= APP_NAME %>. All rights reserved.
+          </p>
+          <nav class="flex items-center gap-6 text-xs tracking-wide-display uppercase" style="color: var(--muted);">
+            <a href="#" class="hover:text-white transition-colors">Privacy</a>
+            <a href="#about" class="hover:text-white transition-colors">About</a>
+            <a href="#contact" class="hover:text-white transition-colors">Contact</a>
+          </nav>
+        </div>
+      </footer>
+    </section>
+
+    <!-- ============================================================ LIGHTBOX ============================================================ -->
+    <!-- Lightbox overlay — inside the same Alpine root (photography spreads lightbox state) -->
+    <div x-show="open" x-cloak
+         x-effect="document.body.style.overflow = open ? 'hidden' : ''"
+         @click.self="open = false"
+         class="lightbox-overlay">
+      <button type="button" class="lightbox-nav prev" @click.stop="prev()" aria-label="Previous image">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </button>
+      <img :src="src" :alt="alt" loading="lazy" width="1200" height="800" />
+      <button type="button" class="lightbox-nav next" @click.stop="next()" aria-label="Next image">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M9 6l6 6-6 6"/>
+        </svg>
+      </button>
+    </div>
+
+  </div><!-- end x-data="photography" -->
+
+</body>
+</html>

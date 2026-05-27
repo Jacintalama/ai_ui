@@ -1,20 +1,23 @@
 """AI execution: spawns the claude CLI subprocess, streams progress via SSE."""
 import asyncio
 import logging
+import os
 from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
+from sqlalchemy.exc import ProgrammingError
 from sse_starlette.sse import EventSourceResponse
 
+from agent_executor import get_executor
 from auth import AdminUser, current_admin
 from claude_executor import (
     build_prompt, build_clarify_prompt, build_plan_prompt,
     build_tdd_execute_prompt, build_verify_prompt,
-    extract_app_slug, parse_outcome, parse_clarify_done,
-    parse_plan, parse_test_outcome, run_claude_subprocess,
+    extract_app_slug, extract_final_body, parse_outcome, parse_clarify_done,
+    parse_plan, parse_test_outcome,
 )
 from db import session
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
@@ -50,33 +53,97 @@ logger = logging.getLogger("tasks")
 router = APIRouter(prefix="/api/tasks")
 
 # In-process registry of running execution tasks for cancellation.
-# Each entry holds the asyncio task + a mutable dict where the subprocess
-# stores its reference so we can .kill() the actual child process on cancel.
+# Each entry holds the asyncio task + the executor instance that owns the
+# in-flight agent run. Cancel awaits executor.stop() to kill the underlying
+# process (local subprocess or remote SSH session).
 _RUNNING: dict[UUID, dict] = {}
 
 TEAM_EMAIL = "team@aiui.local"
 
 
-async def _stream_claude(prompt: str, execution_id: UUID, task_id: UUID) -> str:
-    """Run a Claude subprocess, stream output to execution log, return full output."""
+async def _stream_claude(
+    prompt: str,
+    execution_id: UUID,
+    task_id: UUID,
+    user_jwt: str | None = None,
+    schedule_id: str | None = None,
+) -> str:
+    """Run a claude run via the configured executor; stream output to the
+    execution log; return the full log as a string.
+
+    AGENT_BACKEND env (read inside get_executor) decides whether this hits
+    a local subprocess or a remote VM. The orchestrator behavior is
+    identical either way — same sentinel stream, same log shape.
+
+    ``user_jwt`` is passed through to the executor so the remote backend can
+    forward it to MCP wrappers running on the agent VM via SSH SendEnv.
+    LocalExecutor ignores it.
+    """
     full_log: list[str] = []
-    proc_holder = _RUNNING.get(task_id, {})
-    async for chunk in run_claude_subprocess(prompt, proc_holder=proc_holder):
-        full_log.append(chunk)
+    executor = get_executor()
+    # Preserve any prior bookkeeping (e.g. the asyncio Task handle stashed
+    # by /execute before the background coro started) and add the executor.
+    entry = _RUNNING.setdefault(task_id, {})
+    entry["executor"] = executor
+
+    # Look up the slug for this task (RemoteExecutor needs it for workspace
+    # keying; LocalExecutor ignores it).
+    async with session() as s:
+        task = (
+            await s.execute(select(TaskItem).where(TaskItem.id == task_id))
+        ).scalar_one_or_none()
+        slug = (task.built_app_slug if task else None) or None
+
+    # If we're on the remote backend, record which agent host is handling
+    # this execution. Used for audit + forensics ("which VM ran this build?").
+    if executor.__class__.__name__ == "RemoteExecutor":
+        agent_host_value = os.environ.get("AGENT_HOST")
         async with session() as s:
             await s.execute(
                 update(TaskExecution)
                 .where(TaskExecution.id == execution_id)
-                .values(log=TaskExecution.log + chunk)
+                .values(agent_host=agent_host_value)
             )
             await s.commit()
+
+    try:
+        async for chunk in executor.run(
+            prompt, slug=slug, execution_id=str(execution_id),
+            user_jwt=user_jwt, schedule_id=schedule_id,
+        ):
+            full_log.append(chunk)
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution)
+                    .where(TaskExecution.id == execution_id)
+                    .values(log=TaskExecution.log + chunk)
+                )
+                await s.commit()
+    finally:
+        # Clear the executor handle but keep the rest of the entry — the
+        # outer _run_execution finally block pops the whole entry.
+        cur = _RUNNING.get(task_id)
+        if cur is not None and cur.get("executor") is executor:
+            cur.pop("executor", None)
+
     return "".join(full_log)
 
 
-async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
+async def _run_execution(
+    task_id: UUID,
+    execution_id: UUID,
+    prompt: str,
+    user_jwt: str | None = None,
+    schedule_id: str | None = None,
+):
     """Background coroutine: stream Claude output, parse outcome, persist.
     In loop mode (max_attempts > 1), handles auto-retry on failure
-    and runs the VERIFY step after COMPLETED."""
+    and runs the VERIFY step after COMPLETED.
+
+    ``schedule_id`` (when set) tells the remote executor to SCP
+    /agent/memory/<schedule_id>.md into the workdir as MEMORY.md before the
+    run, then push it back (scrubbed) after a successful completion.
+    """
     try:
         async with session() as s:
             await s.execute(
@@ -85,7 +152,10 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             )
             await s.commit()
 
-        full_output = await _stream_claude(prompt, execution_id, task_id)
+        full_output = await _stream_claude(
+            prompt, execution_id, task_id,
+            user_jwt=user_jwt, schedule_id=schedule_id,
+        )
         outcome = parse_outcome(full_output)
 
         async with session() as s:
@@ -134,7 +204,8 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                 slug=built_slug,
                 user_email=assignee_email,
             )
-            await _run_execution(task_id, new_exec.id, retry_prompt)
+            await _run_execution(task_id, new_exec.id, retry_prompt,
+                                 user_jwt=user_jwt, schedule_id=schedule_id)
             return
 
         # --- LOOP MODE: VERIFY step after COMPLETED ---
@@ -149,6 +220,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
             verify_output = await _stream_claude(
                 build_verify_prompt(slug=slug, description=task.description),
                 execution_id, task_id,
+                user_jwt=user_jwt, schedule_id=schedule_id,
             )
             test_result = parse_test_outcome(verify_output)
 
@@ -185,7 +257,7 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
                     slug=built_slug,
                     user_email=assignee_email,
                 )
-                await _run_execution(task_id, new_exec.id, retry_prompt)
+                await _run_execution(task_id, new_exec.id, retry_prompt, user_jwt=user_jwt)
                 return
 
         # --- Standard outcome handling ---
@@ -215,10 +287,17 @@ async def _run_execution(task_id: UUID, execution_id: UUID, prompt: str):
         # and Claude's completion message for a tweak rarely repeats the
         # `apps/<slug>/` path — without this guard the slug gets clobbered to
         # NULL, breaking the Preview App button and sidebar polling).
+        # Scheduled tasks write their answer BEFORE the COMPLETED sentinel, so
+        # outcome.payload (text after the sentinel) is empty. Deliver the body.
+        result_payload = outcome.payload
+        if schedule_id and outcome.kind == "completed":
+            body = extract_final_body(full_output)
+            if body:
+                result_payload = body
         update_values = {
             "status": new_task_status,
             "mode": mode_val,
-            "result": outcome.payload,
+            "result": result_payload,
             "completed_at": datetime.utcnow() if outcome.kind == "completed" else None,
             **history_update,
         }
@@ -303,7 +382,7 @@ def _build_execute_prompt(
 
 
 @router.post("/{task_id}/execute", response_model=TaskOut)
-async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
     async with session() as s:
         item = (
             await s.execute(select(TaskItem).where(TaskItem.id == task_id))
@@ -355,10 +434,12 @@ async def execute(task_id: UUID, user: AdminUser = Depends(current_admin)):
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
     prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
-    # Create a holder dict so the subprocess can register its own reference
-    # for hard-kill on cancel.
-    _RUNNING[item.id] = {"task": None, "proc": None}
-    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
+    # Create a holder dict that _stream_claude will fill with the executor
+    # instance so cancel can call executor.stop().
+    _RUNNING[item.id] = {"task": None}
+    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt, user_jwt=user_jwt))
     _RUNNING[item.id]["task"] = bg
     return item
 
@@ -371,6 +452,7 @@ class ResumeRequest(BaseModel):
 async def resume(
     task_id: UUID,
     body: ResumeRequest,
+    request: Request,
     user: AdminUser = Depends(current_admin),
 ):
     """Resume a build that's been gated waiting for Supabase.
@@ -447,16 +529,18 @@ async def resume(
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
     prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
-    _RUNNING[item.id] = {"task": None, "proc": None}
-    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt))
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
+    _RUNNING[item.id] = {"task": None}
+    bg = asyncio.create_task(_run_execution(item.id, execution.id, prompt, user_jwt=user_jwt))
     _RUNNING[item.id]["task"] = bg
     return item
 
 
-async def _plan_bg(tid: UUID, eid: UUID, prompt: str):
+async def _plan_bg(tid: UUID, eid: UUID, prompt: str, user_jwt: str | None = None):
     """Background: run plan subprocess, parse PLAN sentinel, await review."""
     try:
-        full_output = await _stream_claude(prompt, eid, tid)
+        full_output = await _stream_claude(prompt, eid, tid, user_jwt=user_jwt)
         plan_text = parse_plan(full_output)
         async with session() as s:
             await s.execute(
@@ -487,7 +571,7 @@ async def _plan_bg(tid: UUID, eid: UUID, prompt: str):
 
 
 @router.post("/{task_id}/clarify", response_model=TaskOut)
-async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
     """Start the CLARIFY phase — Claude asks structured questions before planning."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -518,11 +602,13 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
         priority=item.priority,
         conversation_history=item.conversation_history or [],
     )
-    _RUNNING[item.id] = {"task": None, "proc": None}
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
+    _RUNNING[item.id] = {"task": None}
 
-    async def _clarify_bg(tid, eid, p):
+    async def _clarify_bg(tid, eid, p, jwt=user_jwt):
         try:
-            full_output = await _stream_claude(p, eid, tid)
+            full_output = await _stream_claude(p, eid, tid, user_jwt=jwt)
             done_text = parse_clarify_done(full_output)
             outcome = parse_outcome(full_output)
 
@@ -553,7 +639,7 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
                         priority=task.priority,
                         requirements=done_text,
                     )
-                    await _plan_bg(tid, plan_exec.id, plan_prompt)
+                    await _plan_bg(tid, plan_exec.id, plan_prompt, user_jwt=jwt)
                 elif outcome.kind == "needs_input":
                     history.append({"role": "ai", "content": outcome.payload, "attempt": 0})
                     await s.execute(
@@ -598,7 +684,7 @@ async def start_clarify(task_id: UUID, user: AdminUser = Depends(current_admin))
 
 
 @router.post("/{task_id}/plan", response_model=TaskOut)
-async def start_plan(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
     """Manually trigger the PLAN phase (can skip CLARIFY if task is clear)."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -630,8 +716,10 @@ async def start_plan(task_id: UUID, user: AdminUser = Depends(current_admin)):
         priority=item.priority,
         requirements=requirements,
     )
-    _RUNNING[item.id] = {"task": None, "proc": None}
-    bg = asyncio.create_task(_plan_bg(item.id, execution.id, prompt))
+    auth = request.headers.get("Authorization", "")
+    user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
+    _RUNNING[item.id] = {"task": None}
+    bg = asyncio.create_task(_plan_bg(item.id, execution.id, prompt, user_jwt=user_jwt))
     _RUNNING[item.id]["task"] = bg
     return item
 
@@ -703,12 +791,12 @@ async def stream(
 async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin)):
     entry = _RUNNING.pop(task_id, None)
     if entry:
-        proc = entry.get("proc")
-        if proc is not None:
+        executor = entry.get("executor")
+        if executor is not None:
             try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
+                await executor.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("executor.stop() raised on cancel: %s", exc)
         task = entry.get("task")
         if task is not None:
             task.cancel()

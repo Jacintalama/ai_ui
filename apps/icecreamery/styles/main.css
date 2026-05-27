@@ -1,0 +1,26 @@
+:root {
+  --cream: #fffbf5;
+}
+
+body {
+  background-color: var(--cream);
+}
+
+.bg-cream {
+  background-color: var(--cream);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Visible focus ring for keyboard users */
+:focus-visible {
+  outline: 3px solid #f43f5e;
+  outline-offset: 2px;
+}
+
+/* Lazy-load images below the fold */
+img[loading="lazy"] {
+  content-visibility: auto;
+}

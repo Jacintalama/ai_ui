@@ -1,12 +1,15 @@
-import { navBar, skillsSection, projectsSection, contactForm } from './components/LandingPage.js';
+import { nav } from './components/Nav.js';
+import { hero } from './components/Hero.js';
+import { skills } from './components/Skills.js';
+import { projects } from './components/Projects.js';
 
 document.addEventListener('alpine:init', () => {
-  Alpine.data('navBar', navBar);
-  Alpine.data('skillsSection', skillsSection);
-  Alpine.data('projectsSection', projectsSection);
-  Alpine.data('contactForm', contactForm);
+  Alpine.data('nav', nav);
+  Alpine.data('hero', hero);
+  Alpine.data('skills', skills);
+  Alpine.data('projects', projects);
 });
 
-document.addEventListener('alpine:initialized', () => {
-  setTimeout(() => window.lucide && window.lucide.createIcons(), 0);
+document.addEventListener('DOMContentLoaded', () => {
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 });

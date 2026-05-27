@@ -1,0 +1,34 @@
+/* Lumen Cinemas palette + transitions */
+:root {
+  --bg: #0a0a0a;
+  --bg-card: #1a1a1a;
+  --bg-card-2: #141414;
+  --text: #ffffff;
+  --text-muted: #9ca3af;
+  --accent: #f59e0b;
+  --border: #2a2a2a;
+}
+
+html { background: var(--bg); }
+body { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+/* Reduced-motion guard */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Prevent flash of un-Alpine'd content */
+[x-cloak] { display: none !important; }
+
+/* Film poster hover lift */
+.poster { transition: transform 150ms ease-out, box-shadow 150ms; }
+.poster:hover { transform: scale(1.02); box-shadow: 0 8px 24px rgba(245, 158, 11, 0.2); }
+
+/* Seat button base — handled by seatClass() in JS + Tailwind, but keep this for browsers
+   that don't support certain Tailwind classes in CDN mode */
+button[aria-label*="seat"] { border: none; outline: none; }
+button[aria-label*="seat"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -22,3 +22,20 @@ def current_admin(request: Request) -> AdminUser:
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return AdminUser(email=email, is_admin=True)
+
+
+@dataclass(frozen=True)
+class CurrentUser:
+    email: str
+
+
+def current_user(request: Request) -> CurrentUser:
+    """FastAPI dep — like current_admin but no admin gate.
+
+    Used by list-my-* endpoints that any authenticated user should reach.
+    Email is lowercased to match the canonical form used in DB rows.
+    """
+    email = request.headers.get("x-user-email", "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="Missing X-User-Email")
+    return CurrentUser(email=email)

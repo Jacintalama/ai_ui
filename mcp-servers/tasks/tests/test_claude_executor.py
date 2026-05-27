@@ -35,6 +35,48 @@ def test_parse_no_sentinel_treated_as_failed():
     assert o.kind == "failed"
 
 
+def test_parse_completed_with_dash_separator_no_colon():
+    """Claude sometimes writes `--- COMPLETED Built apps/foo/` instead of the
+    strict `COMPLETED:` form. Without tolerance, the build looks `failed`,
+    routes_execution flips status to `pending`, and the build overlay sticks
+    on the QUEUED chip even though the agent finished successfully. Real log
+    that triggered the prod incident: `--- COMPLETED Built apps/portfolio/`."""
+    o = parse_outcome(
+        "Wrote files.\n--- COMPLETED Built `apps/portfolio/` - portfolio site"
+    )
+    assert o.kind == "completed"
+    assert "portfolio" in o.payload
+
+
+def test_parse_completed_keyword_only_space():
+    """Bare `COMPLETED <text>` (no colon, no `---`) is also tolerated —
+    same forgiving behavior, prevents stuck-on-QUEUED for any sentinel
+    that happens to drop punctuation."""
+    o = parse_outcome("Did stuff.\nCOMPLETED Built the thing")
+    assert o.kind == "completed"
+    assert o.payload == "Built the thing"
+
+
+def test_parse_does_not_match_keyword_inside_word():
+    """Word-boundary anchor: `PRECOMPLETED` shouldn't trigger, otherwise
+    real prose with these words concatenated could falsely complete a task."""
+    o = parse_outcome("Status: PRECOMPLETED phase pending review.")
+    assert o.kind == "failed"
+
+
+def test_parse_picks_last_sentinel_when_both_forms_present():
+    """If the agent uses both forms (e.g. mid-stream `--- COMPLETED` plus a
+    final `COMPLETED:` block), the LAST one wins — same as before."""
+    text = (
+        "--- COMPLETED Built foo\n"
+        "Then I noticed an issue and fixed it.\n"
+        "COMPLETED: Final summary."
+    )
+    o = parse_outcome(text)
+    assert o.kind == "completed"
+    assert o.payload == "Final summary."
+
+
 # ---------------------------------------------------------------------------
 # _ensure_gitignore_attachments
 # ---------------------------------------------------------------------------

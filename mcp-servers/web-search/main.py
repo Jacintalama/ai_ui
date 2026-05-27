@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
+from url_guard import assert_safe_url, UnsafeURLError
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="MCP Web Search Server")
@@ -104,6 +106,11 @@ async def _brave_search(query: str, count: int) -> list[SearchResult]:
 
 async def _scrape_url(url: str) -> WebScrapeResponse:
     """Fetch a URL, strip boilerplate, and return markdown content."""
+    # SSRF guard: reject private/loopback/link-local/metadata targets before fetch.
+    try:
+        assert_safe_url(url)
+    except UnsafeURLError as exc:
+        raise HTTPException(status_code=400, detail=f"Unsafe URL: {exc}")
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         try:
             resp = await client.get(

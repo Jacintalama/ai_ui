@@ -1,0 +1,102 @@
+"""routes_schedules — CRUD for tasks.schedules.
+
+Smoke-level tests that verify the X-Cron-Secret gate and basic CRUD shape.
+Live DB-backed CRUD (insert + roundtrip persistence) is covered by the
+operator-driven e2e in the plan; we mock db.session here so the routes
+themselves are exercised without a Postgres process.
+
+This file follows the env-stub pattern from test_healthz.py /
+test_publish_access_gate.py: set DATABASE_URL/AIUI_FERNET_KEY/
+CRON_SHARED_SECRET BEFORE importing main, so module-level side effects
+(routes_schedules.CRON_SECRET) read the right value.
+"""
+import os
+import sys
+
+# Stub env BEFORE importing the app — main.py / routes import db, which
+# reads DATABASE_URL at module load.
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://nope/nope")
+if not os.environ.get("AIUI_FERNET_KEY"):
+    from cryptography.fernet import Fernet as _Fernet
+    os.environ["AIUI_FERNET_KEY"] = _Fernet.generate_key().decode()
+
+CRON_SECRET = "test-secret"
+os.environ["CRON_SHARED_SECRET"] = CRON_SECRET
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+
+def test_list_requires_secret():
+    """Without X-Cron-Secret, GET /schedules returns 403."""
+    from main import app
+    client = TestClient(app, raise_server_exceptions=False)
+    r = client.get("/schedules")
+    assert r.status_code == 403
+
+
+def test_create_then_list(monkeypatch):
+    """POST /schedules with a valid X-Cron-Secret returns 201 + an id.
+    GET /schedules with the same secret returns a list including the row.
+
+    db.session is mocked: the route still constructs the Schedule ORM
+    instance correctly, but the AsyncSession.add/commit/execute are
+    no-ops. GET is faked to return the previously-created in-memory rows.
+    """
+    from main import app
+    from models import Schedule
+    import uuid
+
+    # In-memory row store the mocked session pretends to own.
+    rows: list[Schedule] = []
+
+    class _FakeResultScalars:
+        def __init__(self, items): self._items = items
+        def all(self): return list(self._items)
+
+    class _FakeResult:
+        def __init__(self, items): self._items = items
+        def scalars(self): return _FakeResultScalars(self._items)
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj):
+            if isinstance(obj, Schedule):
+                rows.append(obj)
+        async def commit(self): return None
+        async def execute(self, _stmt):
+            return _FakeResult(rows)
+
+    def _fake_session_factory():
+        return _FakeSession()
+
+    monkeypatch.setattr("routes_schedules.session", _fake_session_factory)
+
+    # NB: NOT a context-manager — that triggers FastAPI lifespan startup,
+    # which tries to connect to the stub DB and crashes. Bare TestClient
+    # still routes requests; lifespan is just skipped.
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-Cron-Secret": CRON_SECRET},
+        json={
+            "user_email": "x@y.com",
+            "name": "test-sched",
+            "cron_expr": "*/5 * * * *",
+            "persona": "test",
+            "prompt": "say hi",
+        },
+    )
+    assert r.status_code == 201, r.text
+    sched_id = r.json()["id"]
+    # UUID round-trip sanity
+    uuid.UUID(sched_id)
+
+    r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
+    assert r.status_code == 200, r.text
+    assert any(s["id"] == sched_id for s in r.json())

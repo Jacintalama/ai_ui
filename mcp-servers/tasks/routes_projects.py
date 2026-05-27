@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, CurrentUser, current_user
 from db import session
 from models import ChatMessage, ProjectMember, ProjectSupabase, PublishedApp, TaskItem
 from schemas import InviteRequest, MemberOut, RoleUpdate
@@ -42,6 +42,21 @@ _DOMAIN_RE = re.compile(
 
 router = APIRouter(prefix="/api/projects")
 
+
+class ProjectSummary(BaseModel):
+    slug: str
+    name: str
+    role: str
+    published: bool
+    public_url: str | None = None
+
+
+class ProjectStatus(ProjectSummary):
+    last_commit_at: str | None = None
+    last_commit_message: str | None = None
+    custom_domain: str | None = None
+
+
 TEAM_EMAIL = "team@aiui.local"
 
 # In-memory presence: slug -> { email -> {"last_seen": ts, "is_building": bool} }
@@ -56,6 +71,13 @@ def _prune(slug: str) -> None:
     stale = [e for e, v in bucket.items() if now - v["last_seen"] > _PRESENCE_TTL_SECONDS]
     for e in stale:
         bucket.pop(e, None)
+
+
+def is_slug_presence_empty(slug: str) -> bool:
+    """True iff no live presence entries exist for slug (after pruning).
+    Used by app_runner._idle_sweep_loop to decide when to auto-stop."""
+    _prune(slug)
+    return not _PRESENCE.get(slug, {})
 
 
 async def _user_can_see_project(s, slug: str, email: str) -> bool:
@@ -143,6 +165,102 @@ async def _require_role(s, slug: str, email: str, min_role: str,
             detail=f"This action needs role '{min_role}' — you have '{role}'.",
         )
     return role
+
+
+async def _list_projects_for_email(email: str) -> list[dict]:
+    """All projects where this user is a member, with publish state.
+
+    Single query against ProjectMember + follow-up PublishedApp lookup.
+    Does NOT scan the apps/ directory — project membership lives in the DB,
+    the directory is just storage.
+    """
+    async with session() as s:
+        # 1. All memberships for this email.
+        member_rows = (await s.execute(
+            select(ProjectMember.slug, ProjectMember.role)
+            .where(ProjectMember.user_email == email)
+        )).all()
+        if not member_rows:
+            return []
+        slugs = [r.slug for r in member_rows]
+        role_by_slug = {r.slug: r.role for r in member_rows}
+
+        # 2. Publish state for those slugs in one query.
+        pub_rows = (await s.execute(
+            select(PublishedApp).where(PublishedApp.slug.in_(slugs))
+        )).scalars().all()
+        pub_by_slug = {p.slug: p for p in pub_rows}
+
+    out: list[dict] = []
+    for slug in slugs:
+        pub = pub_by_slug.get(slug)
+        published = pub is not None
+        out.append({
+            "slug": slug,
+            "name": slug.replace("-", " ").title(),
+            "role": role_by_slug[slug],
+            "published": published,
+            "public_url": _public_url_for(slug) if published else None,
+        })
+    return out
+
+
+async def _last_commit_for(slug: str) -> tuple[str | None, str | None]:
+    """Read last commit (ISO timestamp + subject) for `apps/<slug>/` in the
+    monorepo. Returns (None, None) if git fails or there are no commits.
+
+    Per-project directories are subdirs of the monorepo, not independent
+    git repos. Match the pattern used by list_versions: query the monorepo
+    git log filtered by path. cwd defaults to REPO_ROOT.
+    """
+    rc, out = await _run_git(
+        "log", "-1", "--format=%cI%n%s", "--", f"apps/{slug}/",
+    )
+    if rc != 0 or not out.strip():
+        return None, None
+    parts = out.strip().split("\n", 1)
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return (parts[0] if parts else None), None
+
+
+@router.get("", response_model=list[ProjectSummary])
+async def list_my_projects(user: CurrentUser = Depends(current_user)) -> list[ProjectSummary]:
+    """List projects where the caller is a member."""
+    raw = await _list_projects_for_email(user.email)
+    return [ProjectSummary(**r) for r in raw]
+
+
+@router.get("/{slug}/status", response_model=ProjectStatus)
+async def get_my_project_status(
+    slug: str, user: CurrentUser = Depends(current_user),
+) -> ProjectStatus:
+    """Membership + publish status for one project, scoped to caller."""
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            # 404 (not 403) so cross-user existence isn't leaked.
+            raise HTTPException(status_code=404, detail="not found")
+        # Inline the role + publish queries — both small.
+        member = (await s.execute(
+            select(ProjectMember)
+            .where(ProjectMember.slug == slug, ProjectMember.user_email == user.email)
+        )).scalar_one_or_none()
+        role = member.role if member else "viewer"
+        pub = (await s.execute(
+            select(PublishedApp).where(PublishedApp.slug == slug)
+        )).scalar_one_or_none()
+    last_commit_at, last_commit_msg = await _last_commit_for(slug)
+    published = pub is not None
+    return ProjectStatus(
+        slug=slug,
+        name=slug.replace("-", " ").title(),
+        role=role,
+        published=published,
+        public_url=_public_url_for(slug) if published else None,
+        last_commit_at=last_commit_at,
+        last_commit_message=last_commit_msg,
+        custom_domain=getattr(pub, "custom_domain", None) if pub else None,
+    )
 
 
 @router.get("/{slug}/members", response_model=list[MemberOut])
@@ -540,8 +658,14 @@ async def rollback_project(
     if rc != 0:
         raise HTTPException(status_code=404, detail="Commit not found")
 
-    # Guard against dirty tree in apps/<slug>/.
-    rc, dirty = await _run_git("status", "--porcelain", "--", f"apps/{slug}/")
+    # Guard against dirty tree in apps/<slug>/. Ignore untracked files —
+    # `git checkout <sha> -- apps/<slug>/` only touches TRACKED files, so
+    # untracked artifacts (template-skeleton bits, ad-hoc README.md, etc.)
+    # don't conflict with the rollback. Modified or staged tracked files
+    # still block (correctly — they'd lose work).
+    rc, dirty = await _run_git(
+        "status", "--porcelain", "--untracked-files=no", "--", f"apps/{slug}/"
+    )
     if rc == 0 and dirty.strip():
         raise HTTPException(
             status_code=409,
@@ -614,6 +738,51 @@ async def get_publish(slug: str, user: AdminUser = Depends(current_admin)):
     )
 
 
+async def _publish_slug(s, slug: str, email: str, *, is_admin: bool) -> PublishStatus:
+    """Core publish logic, shared by the admin route and the user-scoped
+    aiuibuilder route. Validates the slug, enforces project ownership
+    (admins bypass via is_admin), verifies apps/<slug>/index.html exists, and
+    idempotently inserts a PublishedApp row. Returns the publish status."""
+    # Slug is validated against routes_projects._SLUG_RE (the wider [a-z0-9._-]
+    # pattern). aiuibuilder generates a tighter [a-z0-9-] slug, so it always
+    # passes; both patterns block path traversal into os.path.join below.
+    _validate_slug(slug)
+    # Two checks on purpose: _user_can_see_project gives a generic "not a member"
+    # 403, then _require_role enforces owner-or-admin with its role-specific
+    # error. Defense-in-depth — do not collapse into one.
+    if not await _user_can_see_project(s, slug, email):
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+    await _require_role(s, slug, email, "owner", is_admin=is_admin)
+
+    index_path = os.path.join(REPO_ROOT, "apps", slug, "index.html")
+    if not os.path.isfile(index_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"apps/{slug}/index.html not found — only static apps with index.html are publishable today.",
+        )
+
+    existing = (
+        await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
+    ).scalar_one_or_none()
+    if existing:
+        return PublishStatus(
+            published=True,
+            public_url=_public_url_for(slug),
+            published_at=existing.published_at.isoformat() if existing.published_at else None,
+            published_by=existing.published_by,
+        )
+    row = PublishedApp(slug=slug, published_by=email, public_host=_public_host_for(slug))
+    s.add(row)
+    await s.commit()
+    await s.refresh(row)
+    return PublishStatus(
+        published=True,
+        public_url=_public_url_for(slug),
+        published_at=row.published_at.isoformat() if row.published_at else None,
+        published_by=row.published_by,
+    )
+
+
 @router.post("/{slug}/publish", response_model=PublishStatus)
 async def publish_app(slug: str, user: AdminUser = Depends(current_admin)):
     """Publish apps/<slug>/ at https://<slug>.ai-ui.coolestdomain.win/.
@@ -621,44 +790,8 @@ async def publish_app(slug: str, user: AdminUser = Depends(current_admin)):
     Owner/admin only. The Caddy wildcard handler reverse-proxies the
     subdomain back into this service's /__public/<slug>/ static route.
     """
-    _validate_slug(slug)
     async with session() as s:
-        if not await _user_can_see_project(s, slug, user.email):
-            raise HTTPException(status_code=403, detail="Not a member of this project")
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
-
-        # Verify apps/<slug>/index.html exists — otherwise publishing is pointless.
-        index_path = os.path.join(REPO_ROOT, "apps", slug, "index.html")
-        if not os.path.isfile(index_path):
-            raise HTTPException(
-                status_code=400,
-                detail=f"apps/{slug}/index.html not found — only static apps with index.html are publishable today.",
-            )
-
-        existing = (
-            await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
-        ).scalar_one_or_none()
-        if existing:
-            return PublishStatus(
-                published=True,
-                public_url=_public_url_for(slug),
-                published_at=existing.published_at.isoformat() if existing.published_at else None,
-                published_by=existing.published_by,
-            )
-        row = PublishedApp(
-            slug=slug,
-            published_by=user.email,
-            public_host=_public_host_for(slug),
-        )
-        s.add(row)
-        await s.commit()
-        await s.refresh(row)
-    return PublishStatus(
-        published=True,
-        public_url=_public_url_for(slug),
-        published_at=row.published_at.isoformat() if row.published_at else None,
-        published_by=row.published_by,
-    )
+        return await _publish_slug(s, slug, user.email, is_admin=user.is_admin)
 
 
 # ---------------------------------------------------------------------------
@@ -1081,20 +1214,29 @@ async def remove_custom_domain(slug: str, user: AdminUser = Depends(current_admi
     return None
 
 
+async def _unpublish_slug(s, slug: str, email: str, *, is_admin: bool) -> None:
+    """Core unpublish: owner-checked delete of the PublishedApp row. Idempotent
+    (no row → no-op). Shared by the admin route and the user-scoped aiuibuilder
+    route."""
+    _validate_slug(slug)
+    if not await _user_can_see_project(s, slug, email):
+        raise HTTPException(status_code=403, detail="Not a member of this project")
+    await _require_role(s, slug, email, "owner", is_admin=is_admin)
+    existing = (
+        await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
+    ).scalar_one_or_none()
+    if existing is None:
+        return None
+    await s.delete(existing)
+    await s.commit()
+    return None
+
+
 @router.delete("/{slug}/publish", status_code=204)
 async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
-    _validate_slug(slug)
+    _validate_slug(slug)  # fast-fail before touching the DB pool
     async with session() as s:
-        if not await _user_can_see_project(s, slug, user.email):
-            raise HTTPException(status_code=403, detail="Not a member of this project")
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
-        existing = (
-            await s.execute(select(PublishedApp).where(PublishedApp.slug == slug))
-        ).scalar_one_or_none()
-        if existing is None:
-            return None
-        await s.delete(existing)
-        await s.commit()
+        await _unpublish_slug(s, slug, user.email, is_admin=user.is_admin)
     return None
 
 

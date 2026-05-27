@@ -261,7 +261,14 @@
   <script>
     // Featured templates have a pre-built reference app under
     // mcp-servers/tasks/template_apps/<key>/. We surface them first.
-    const FEATURED_KEYS = new Set(["landing", "portfolio", "crud", "invoice", "dashboard"]);
+    const FEATURED_KEYS = new Set([
+      "landing", "portfolio", "crud", "invoice", "dashboard",
+      "agency", "restaurant", "photography", "event", "real-estate",
+      // Functional templates (2026-05-11)
+      "flight-booking", "food-delivery", "job-board", "movie-tickets", "recipe-site",
+    ]);
+    // Bump this whenever preview assets change to bust Cloudflare's cache.
+    const PREVIEW_VER = "5";
 
     function authHeaders() {
       const h = { "Content-Type": "application/json" };
@@ -317,7 +324,7 @@
 
     function renderCard(t) {
       const isFeatured = FEATURED_KEYS.has(t.key);
-      const previewUrl = isFeatured ? `/tasks/template-apps/${encodeURIComponent(t.key)}/index.html` : null;
+      const previewUrl = isFeatured ? `/tasks/template-apps/${encodeURIComponent(t.key)}/index.html?v=${PREVIEW_VER}` : null;
       const visual = isFeatured
         ? `<div class="visual has-iframe"><iframe src="${previewUrl}" loading="lazy" sandbox="allow-scripts" title="${escapeHtml(t.label)} preview"></iframe></div>`
         : `<div class="visual"><div class="placeholder">${escapeHtml(t.label)}</div></div>`;

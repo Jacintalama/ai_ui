@@ -209,6 +209,42 @@ async def stop_preview(slug: str | None = None) -> None:
     logger.info("Preview stopped: %s (kind=%s)", slug, info.get("kind"))
 
 
+# Idle-stop sweep — stops previews whose page has had no presence
+# heartbeat for PRESENCE_GRACE_SECONDS. Spawned once at app startup.
+PRESENCE_GRACE_SECONDS = 120
+SWEEP_INTERVAL_SECONDS = 30
+
+_empty_since: dict[str, float] = {}
+
+
+async def _idle_sweep_loop(is_slug_empty) -> None:
+    """Run forever: every SWEEP_INTERVAL_SECONDS, stop previews whose
+    presence bucket has been empty for ≥ PRESENCE_GRACE_SECONDS.
+    is_slug_empty is injected so this module stays import-free of
+    routes_projects."""
+    while True:
+        await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
+        try:
+            now = time.time()
+            for slug in list(_running.keys()):
+                if is_slug_empty(slug):
+                    if slug not in _empty_since:
+                        _empty_since[slug] = now
+                    elif now - _empty_since[slug] >= PRESENCE_GRACE_SECONDS:
+                        logger.info("Auto-stopping idle preview: %s", slug)
+                        await stop_preview(slug)
+                        _empty_since.pop(slug, None)
+                else:
+                    _empty_since.pop(slug, None)
+            # Evict orphaned timestamps for slugs that exited _running by
+            # other paths (manual /preview/stop, subprocess crash). Keeps
+            # _empty_since bounded over the process lifetime.
+            for stale in [s for s in _empty_since if s not in _running]:
+                _empty_since.pop(stale, None)
+        except Exception:
+            logger.exception("idle sweep iteration failed")
+
+
 def get_status(slug: str | None = None) -> dict | None:
     """Return status for one slug. If slug is None, returns the first
     running slug for backward-compat (the global slot model is gone)."""

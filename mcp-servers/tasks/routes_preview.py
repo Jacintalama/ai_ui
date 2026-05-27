@@ -92,5 +92,6 @@ async def preview_stop(task_id: UUID, user: AdminUser = Depends(current_admin)):
 
 @router.get("/{task_id}/preview/status")
 async def preview_status(task_id: UUID, user: AdminUser = Depends(current_admin)):
-    status = get_status()
+    item = await _get_build_task(task_id)
+    status = get_status(item.built_app_slug)
     return status or {"running": False}

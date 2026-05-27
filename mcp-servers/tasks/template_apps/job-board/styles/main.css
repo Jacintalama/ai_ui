@@ -1,0 +1,28 @@
+/* Workpath palette + transitions */
+:root {
+  --bg: #ffffff;
+  --bg-card: #f8fafc;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --accent: #2563eb;
+  --border: #e2e8f0;
+}
+
+html { background: var(--bg); }
+body { font-family: "Inter", ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+/* Reduced-motion guard */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Prevent flash of un-Alpine'd content */
+[x-cloak] { display: none !important; }
+
+/* Subtle card lift on hover */
+article { transition: transform 150ms ease-out, box-shadow 150ms; }
+article:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }

@@ -34,6 +34,15 @@
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     [hidden] { display: none !important; }
+    /* Defensive layout clamp for the templates modal. Browser extensions
+       (password managers, ad blockers, "save for later" pickers) sometimes
+       inject phantom UI inside modals that visually collide with template
+       cards — and a stray cached element below the grid would also slip
+       through here. Restrict the grid + modal body to known-good children
+       only so anything else gets `display: none` instead of overlapping
+       the layout. */
+    #templates-modal #tg-grid > :not(.tcard):not(.members-empty) { display: none !important; }
+    #templates-modal .modal-body > :not(.form-hint):not(.filter-row):not(#tg-grid) { display: none !important; }
     html, body { height: 100%; }
     body {
       background: var(--bg);
@@ -486,6 +495,36 @@
     #templates-modal .tcard.kind-crud.featured     .visual { background: linear-gradient(135deg, #10b981 0%, #064e3b 100%); }
     #templates-modal .tcard.kind-invoice.featured  .visual { background: linear-gradient(135deg, #f59e0b 0%, #422006 100%); }
     #templates-modal .tcard.kind-dashboard.featured .visual { background: linear-gradient(135deg, #3b82f6 0%, #1e3a8a 100%); }
+    /* Custom card — escape hatch from template selection. Visually distinct
+       from real templates: dashed border, transparent visual, + glyph. */
+    #templates-modal .tcard[data-key="custom"] {
+      border: 1px dashed var(--border-2);
+      background: transparent;
+    }
+    #templates-modal .tcard[data-key="custom"]:hover {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    #templates-modal .tcard[data-key="custom"] .visual {
+      background: transparent !important;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #templates-modal .tcard[data-key="custom"] .visual img.preview,
+    #templates-modal .tcard[data-key="custom"] .visual .placeholder.fallback {
+      display: none;
+    }
+    #templates-modal .tcard[data-key="custom"] .visual::after {
+      content: "+";
+      font-size: 64px;
+      font-weight: 200;
+      color: var(--muted);
+      line-height: 1;
+    }
+    #templates-modal .tcard[data-key="custom"]:hover .visual::after {
+      color: var(--accent);
+    }
     #templates-modal .tcard .visual .placeholder {
       position: absolute; inset: 0;
       display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px;
@@ -1266,7 +1305,7 @@
 
         let actionBtn = "";
         if (info.action === "preview") {
-          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Open preview</a>`;
+          actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}&tab=preview">Open preview</a>`;
         } else if (info.action === "watch") {
           actionBtn = `<a class="btn primary" href="/tasks/static/preview.html?task=${encodeURIComponent(t.id)}">Watch progress</a>`;
         } else if (info.action === "approve") {
@@ -1425,7 +1464,14 @@
     }
 
     // Templates gallery (in-page modal).
-    const FEATURED_TEMPLATE_KEYS = new Set(["landing", "portfolio", "crud", "invoice", "dashboard"]);
+    const FEATURED_TEMPLATE_KEYS = new Set([
+      "landing", "portfolio", "crud", "invoice", "dashboard",
+      "agency", "restaurant", "photography", "event", "real-estate",
+      // Functional templates (2026-05-11)
+      "flight-booking", "food-delivery", "job-board", "movie-tickets", "recipe-site",
+    ]);
+    // Bump this whenever preview PNGs change to bust Cloudflare's cache.
+    const PREVIEW_VER = "5";
     const tgModal = document.getElementById("templates-modal");
     const tgGrid = document.getElementById("tg-grid");
     const tgFilterRow = document.getElementById("tg-filter-row");
@@ -1452,9 +1498,18 @@
         return;
       }
       // Only show templates with a working base app — no half-built picks.
-      const ready = _templatesCache.filter((t) => t.has_app);
-      ready.sort((a, b) => a.label.localeCompare(b.label));
+      // Custom is the synthetic escape-hatch card — has no template_app on
+      // disk (so has_app=false) and must stay visible regardless of which
+      // filter pill is active. Render it last in the grid.
+      const isCustom = (t) => t.key === "custom";
+      const ready = _templatesCache.filter((t) => t.has_app || isCustom(t));
+      ready.sort((a, b) => {
+        if (isCustom(a)) return 1;   // Custom always sorts to end
+        if (isCustom(b)) return -1;
+        return a.label.localeCompare(b.label);
+      });
       const filtered = ready.filter((t) => {
+        if (isCustom(t)) return true;  // Custom is immune to filter pills
         if (tgActiveFilter === "all") return true;
         if (tgActiveFilter === "static") return t.storage !== "supabase";
         if (tgActiveFilter === "supabase") return t.storage === "supabase";
@@ -1484,7 +1539,7 @@
         // and committed to the repo. Static images bypass every service-worker /
         // CORS / iframe-rendering issue. Re-run the generator after editing a
         // template (`python scripts/generate_template_previews.py`).
-        const previewUrl = "/api/template-preview/" + encodeURIComponent(t.key) + "/preview.png";
+        const previewUrl = "/api/template-preview/" + encodeURIComponent(t.key) + "/preview.png?v=" + PREVIEW_VER;
         const visual = `
           <div class="visual visual-img">
             <div class="placeholder fallback">
@@ -1765,7 +1820,7 @@
             throw new Error("Upload failed (" + resp.status + "): " + txt);
           }
           const data = await resp.json();
-          window.location.href = "/tasks/static/preview.html?task=" + encodeURIComponent(data.task_id);
+          window.location.href = "/tasks/static/preview.html?task=" + encodeURIComponent(data.task_id) + "&tab=preview";
         } catch (err) {
           showToast("Upload failed: " + err.message, true);
           npSubmit.disabled = false;

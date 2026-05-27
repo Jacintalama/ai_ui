@@ -503,6 +503,47 @@ async def voice_webhook(
     }
 
 
+class ScheduleResultIn(BaseModel):
+    channel_id: str
+    schedule_name: str = ""
+    status: str = ""
+    result: str = ""
+    schedule_id: str = ""
+
+
+def _format_schedule_result(name: str, status: str, result: str) -> str:
+    """Format a finished scheduled-task result as a Discord message (<=2000)."""
+    emoji = {"completed": "✅", "skipped": "⏭️"}.get(status, "⚠️")
+    header = f"{emoji} **Scheduled task** — {name}".strip()
+    body = (result or "").strip() or "_(no output)_"
+    return f"{header}\n{body}"[:1990]
+
+
+@app.post("/internal/schedule-result")
+async def schedule_result(
+    body: ScheduleResultIn,
+    x_internal_secret: str = Header(None, alias="X-Internal-Secret"),
+):
+    """Post a finished scheduled-task result into the user's Discord thread.
+
+    Secret-gated: only the tasks container (which holds INTERNAL_CALLBACK_SECRET)
+    may call this. Fails closed when the secret is unset.
+    """
+    expected = settings.internal_callback_secret
+    if not expected or x_internal_secret != expected:
+        raise HTTPException(status_code=403, detail="Invalid internal secret")
+    if discord_client is None:
+        raise HTTPException(status_code=503, detail="Discord not configured")
+    message = _format_schedule_result(body.schedule_name, body.status, body.result)
+    # On a failed run, attach a one-click Retry (reuses the run-now handler).
+    components = None
+    if body.schedule_id and body.status not in ("completed", "skipped"):
+        from handlers.app_builder_panel import build_retry_components
+        components = build_retry_components(body.schedule_id)
+    await discord_client.post_channel_message(body.channel_id, message, components=components)
+    return {"status": "delivered"}
+
+
 @app.post("/webhook/generic")
 async def generic_webhook(request: Request):
     """

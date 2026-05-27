@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Italian restaurant in town</title>
+  <meta name="description" content="<%= APP_NAME %> is a neighborhood Italian restaurant serving wood-fired classics and seasonal small plates, with hand-picked wines and a warm, candlelit dining room." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+
+  <div x-data="restaurant" x-init="init()">
+
+    <!-- ============================================================ NAV ============================================================ -->
+    <section data-section="nav">
+      <header class="fixed top-0 left-0 right-0 z-40 backdrop-blur-sm"
+              style="background: rgba(250,246,239,0.92); border-bottom: 1px solid rgba(42,31,23,0.08);">
+        <div class="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
+          <!-- Logo -->
+          <a href="#" class="font-display font-bold text-xl" style="color: var(--text);">
+            <span style="color: var(--accent);">&#10022;</span> <%= APP_NAME %>
+          </a>
+
+          <!-- Desktop nav -->
+          <nav class="hidden md:flex items-center gap-8 text-sm font-medium" style="color: var(--muted);">
+            <a href="#menu-section" class="hover:text-[var(--accent)] transition-colors">Menu</a>
+            <a href="#story-section" class="hover:text-[var(--accent)] transition-colors">About</a>
+            <a href="#reservation-section" class="hover:text-[var(--accent)] transition-colors">Reservations</a>
+            <a href="#hours-section" class="hover:text-[var(--accent)] transition-colors">Visit</a>
+          </nav>
+
+          <!-- CTA + hamburger -->
+          <div class="flex items-center gap-3">
+            <a href="#reservation-section"
+               class="hidden sm:inline-flex px-5 py-2 rounded-full text-sm font-semibold text-white transition-opacity hover:opacity-90"
+               style="background: var(--accent);">Reserve a table</a>
+            <button @click="mobileMenu = !mobileMenu"
+                    class="md:hidden p-2 rounded-md"
+                    style="color: var(--text);"
+                    aria-label="Toggle menu">
+              <svg x-show="!mobileMenu" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+              <svg x-show="mobileMenu" x-cloak class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mobile menu -->
+        <div x-show="mobileMenu" x-cloak
+             class="md:hidden px-6 py-4 space-y-3 border-t"
+             style="background: var(--surface); border-color: rgba(42,31,23,0.08);">
+          <a href="#menu-section" @click="mobileMenu = false" class="block py-2 font-medium" style="color: var(--muted);">Menu</a>
+          <a href="#story-section" @click="mobileMenu = false" class="block py-2 font-medium" style="color: var(--muted);">About</a>
+          <a href="#reservation-section" @click="mobileMenu = false" class="block py-2 font-medium" style="color: var(--muted);">Reservations</a>
+          <a href="#hours-section" @click="mobileMenu = false" class="block py-2 font-medium" style="color: var(--muted);">Visit</a>
+        </div>
+      </header>
+    </section>
+
+    <!-- ============================================================ HERO ============================================================ -->
+    <section data-section="hero" class="relative min-h-screen flex items-center justify-center overflow-hidden">
+      <img
+        id="hero-img"
+        loading="eager"
+        fetchpriority="high"
+        src="https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1600&q=80"
+        alt="Warm restaurant interior with hanging Edison bulbs, wooden tables and candlelight ambiance"
+        width="1600"
+        height="900"
+        class="absolute inset-0 w-full h-full object-cover"
+      />
+      <!-- Dark overlay -->
+      <div class="absolute inset-0" style="background: rgba(18,10,5,0.52);"></div>
+
+      <div class="relative text-center px-6 max-w-3xl">
+        <p class="text-sm font-medium tracking-[0.25em] mb-6" style="color: var(--accent); text-transform: uppercase;">Wood-fired — Seasonal — Handmade</p>
+        <h1 class="font-display font-bold leading-tight text-white" style="font-size: clamp(3rem, 8vw, 5.5rem);">
+          <%= APP_NAME %>
+        </h1>
+        <p class="mt-6 text-lg md:text-xl max-w-xl mx-auto" style="color: rgba(255,255,255,0.75);">
+          A candlelit trattoria in the heart of the city. We cook with fire, forage seasonally,
+          and believe every table deserves to feel like a welcome home.
+        </p>
+        <div class="mt-10 flex flex-wrap gap-4 justify-center">
+          <a href="#reservation-section"
+             class="inline-flex items-center gap-2 px-8 py-4 rounded-full font-semibold text-white transition-opacity hover:opacity-90"
+             style="background: var(--accent);">
+            Reserve your table
+          </a>
+          <a href="#menu-section"
+             class="inline-flex items-center gap-2 px-8 py-4 rounded-full font-semibold transition-colors"
+             style="border: 1px solid rgba(255,255,255,0.35); color: #fff;">
+            View the menu
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ STORY ============================================================ -->
+    <section data-section="story" id="story-section" class="py-28 px-6">
+      <div class="max-w-6xl mx-auto grid md:grid-cols-2 gap-16 items-center">
+        <div class="reveal">
+          <p class="text-xs font-semibold tracking-[0.2em] uppercase mb-4" style="color: var(--accent);">Our Story</p>
+          <h2 class="font-display font-bold mb-6" style="font-size: clamp(2rem, 4vw, 3rem); color: var(--text);">
+            Born from a family table in Tuscany
+          </h2>
+          <p class="text-base leading-relaxed mb-5" style="color: var(--muted);">
+            Founded in 2014 by chef Marco Ferretti and his partner Elena, <%= APP_NAME %> began as
+            a thirty-seat dining room tucked behind a flower market. Marco trained under the Michelin-starred
+            kitchens of Florence before moving to the city, carrying with him his grandmother's hand-rolled
+            pasta recipes and an unwavering commitment to the wood-fired hearth. From the first night —
+            a sold-out soft opening with a four-course menu scratched on a chalkboard — guests felt the
+            warmth that has defined the restaurant ever since.
+          </p>
+          <p class="text-base leading-relaxed" style="color: var(--muted);">
+            A decade on, the philosophy remains rooted in seasonal sourcing and honest technique. The menu
+            changes every eight weeks in step with what local growers and foragers bring to the back door.
+            You might find wild-nettle pappardelle in March, heirloom tomato bruschetta in August, and
+            slow-braised short rib with white truffle in November. Every dish is cooked to order over
+            applewood and olive-branch embers in the open kitchen — a theatre that anchors the room and
+            fills every corner with the scent of the countryside.
+          </p>
+        </div>
+        <div class="reveal flex justify-center">
+          <div class="zoom-card rounded-2xl overflow-hidden shadow-xl" style="max-width: 420px; width: 100%;">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=400&q=80"
+              alt="Chef Marco Ferretti in his kitchen, plating a dish with careful attention beside a wood-fired hearth"
+              width="400"
+              height="500"
+              class="w-full object-cover"
+              style="height: 500px;"
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ MENU ============================================================ -->
+    <section data-section="menu" id="menu-section" class="py-28 px-6" style="background: var(--surface);">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-12 reveal">
+          <p class="text-xs font-semibold tracking-[0.2em] uppercase mb-3" style="color: var(--accent);">What We Serve</p>
+          <h2 class="font-display font-bold" style="font-size: clamp(2rem, 4vw, 3rem); color: var(--text);">The Menu</h2>
+          <p class="mt-4 text-base max-w-xl mx-auto" style="color: var(--muted);">
+            Cooked to order over applewood embers. Our menu rotates with the seasons — what follows
+            reflects the current kitchen.
+          </p>
+        </div>
+
+        <!-- Tab switcher -->
+        <div class="flex flex-wrap gap-2 justify-center mb-10 reveal">
+          <button @click="activeMenu = 'brunch'"
+                  :class="activeMenu === 'brunch' ? 'active' : ''"
+                  class="tab-btn">Brunch</button>
+          <button @click="activeMenu = 'lunch'"
+                  :class="activeMenu === 'lunch' ? 'active' : ''"
+                  class="tab-btn">Lunch</button>
+          <button @click="activeMenu = 'dinner'"
+                  :class="activeMenu === 'dinner' ? 'active' : ''"
+                  class="tab-btn">Dinner</button>
+          <button @click="activeMenu = 'drinks'"
+                  :class="activeMenu === 'drinks' ? 'active' : ''"
+                  class="tab-btn">Drinks</button>
+        </div>
+
+        <!-- BRUNCH -->
+        <div x-show="activeMenu === 'brunch'"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0">
+          <div class="grid sm:grid-cols-2 gap-6">
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80"
+                alt="Burrata with heirloom tomatoes drizzled with Sicilian olive oil on a marble board"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Burrata and Heirloom Tomatoes</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Creamy buffalo burrata, rainbow tomatoes, fresh basil, aged balsamic</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$14</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?auto=format&fit=crop&w=600&q=80"
+                alt="Soft scrambled eggs on sourdough with shaved black truffle and chive flowers"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Truffle Scrambled Eggs</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Free-range eggs, shaved black truffle, cultured butter, sourdough toast</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$18</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1565958011703-44f9829ba187?auto=format&fit=crop&w=600&q=80"
+                alt="Warm ricotta fritters dusted with powdered sugar alongside a pot of wildflower honey"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Ricotta Fritters</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Lemon-scented ricotta, wildflower honey, dusted with cinnamon sugar</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$12</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1551782450-a2132b4ba21d?auto=format&fit=crop&w=600&q=80"
+                alt="Grilled focaccia with roasted red pepper spread and olive tapenade on a wooden board"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Focaccia with Olive Tapenade</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Wood-fired focaccia, Castelvetrano olive tapenade, roasted peppers</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$10</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- LUNCH -->
+        <div x-show="activeMenu === 'lunch'"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0">
+          <div class="grid sm:grid-cols-2 gap-6">
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=600&q=80"
+                alt="Wood-fired Neapolitan margherita pizza on a copper paddle with fresh basil leaves"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Wood-Fired Margherita</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">San Marzano tomato, fior di latte, fresh basil, extra-virgin olive oil</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$22</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=600&q=80"
+                alt="Tuscan ribollita soup with cannellini beans and cavolo nero in a terracotta bowl"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Tuscan Ribollita</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Cannellini beans, cavolo nero, sourdough bread, rosemary oil</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$16</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1502301197179-65228ab57f78?auto=format&fit=crop&w=600&q=80"
+                alt="Handmade pappardelle pasta tossed in slow-cooked wild boar ragu in a shallow bowl"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Wild Boar Pappardelle</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Hand-rolled egg pasta, slow-braised wild boar, juniper, pecorino</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$26</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1558030006-450675393462?auto=format&fit=crop&w=600&q=80"
+                alt="Seared sea bass with lemon caper butter and grilled asparagus on a white plate"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Pan-Seared Sea Bass</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Day-boat sea bass, caper lemon butter, grilled asparagus, salmoriglio</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$28</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- DINNER -->
+        <div x-show="activeMenu === 'dinner'"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0">
+          <div class="grid sm:grid-cols-2 gap-6">
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1486297678162-eb2a19b0a32d?auto=format&fit=crop&w=600&q=80"
+                alt="Beef short rib braised in Barolo wine plated with white truffle shavings and celery root puree"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Barolo-Braised Short Rib</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">48-hour short rib, white truffle, celery root puree, gremolata</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$42</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1546039907-7fa05f864c02?auto=format&fit=crop&w=600&q=80"
+                alt="Homemade tagliatelle with black truffle butter sauce and aged Parmigiano-Reggiano"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Black Truffle Tagliatelle</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Egg tagliatelle, black truffle butter, aged Parmigiano, cracked pepper</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$34</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1521305916504-4a1121188589?auto=format&fit=crop&w=600&q=80"
+                alt="Grilled whole branzino with herbs and charred lemon half on a dark slate plate"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Whole Roasted Branzino</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Wild branzino, charred lemon, herbs, Taggiasca olives, caperberries</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$38</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1432139509613-5c4255815697?auto=format&fit=crop&w=600&q=80"
+                alt="Tiramisu in a glass with espresso-soaked ladyfingers and thick mascarpone cream"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Classic Tiramisu</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Espresso-soaked savoiardi, mascarpone, dark cocoa, Marsala</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$14</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- DRINKS -->
+        <div x-show="activeMenu === 'drinks'"
+             x-transition:enter="transition ease-out duration-300"
+             x-transition:enter-start="opacity-0 translate-y-2"
+             x-transition:enter-end="opacity-100 translate-y-0">
+          <div class="grid sm:grid-cols-2 gap-6">
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1502301197179-65228ab57f78?auto=format&fit=crop&w=600&q=80"
+                alt="Glass of ruby Barolo red wine beside a small plate of charcuterie in candlelight"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Barolo, Giacomo Conterno</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Full-bodied Nebbiolo, tar and roses, long finish — Piedmont, 2018</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$24</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1558030006-450675393462?auto=format&fit=crop&w=600&q=80"
+                alt="Chilled Aperol spritz in a large wine glass with a slice of orange on the rim"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Aperol Spritz</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Aperol, Prosecco, soda, orange, a classic aperitivo hour essential</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$14</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80"
+                alt="Freshly brewed cortado espresso in a small glass on a wooden saucer with cacao dusting"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Affogato al Caffe</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Double espresso poured over house-made vanilla gelato, cocoa powder</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$9</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="zoom-card rounded-2xl overflow-hidden bg-white shadow-sm">
+              <img
+                loading="lazy"
+                src="https://images.unsplash.com/photo-1565958011703-44f9829ba187?auto=format&fit=crop&w=600&q=80"
+                alt="Homemade sparkling lemonade with muddled basil and a sprig of rosemary in a tall glass"
+                width="600"
+                height="320"
+                class="w-full object-cover"
+                style="height: 200px;"
+              />
+              <div class="p-5">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <h3 class="font-display font-bold text-lg" style="color: var(--text);">Basil Lemon Sparkling</h3>
+                    <p class="text-sm mt-1" style="color: var(--muted);">Hand-pressed lemon, fresh basil, elderflower, sparkling mineral water</p>
+                  </div>
+                  <span class="font-semibold ml-4 shrink-0" style="color: var(--accent);">$8</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ GALLERY ============================================================ -->
+    <section data-section="gallery" class="py-28 px-6">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-12 reveal">
+          <p class="text-xs font-semibold tracking-[0.2em] uppercase mb-3" style="color: var(--accent);">Atmosphere</p>
+          <h2 class="font-display font-bold" style="font-size: clamp(2rem, 4vw, 3rem); color: var(--text);">A glimpse inside</h2>
+        </div>
+        <div class="masonry reveal">
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=600&q=80"
+              alt="Candlelit restaurant dining room with exposed brick walls and warm amber lighting"
+              width="600"
+              height="400"
+              class="w-full object-cover"
+            />
+          </div>
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?auto=format&fit=crop&w=600&q=80"
+              alt="Rustic antipasto spread with cured meats, marinated olives and artisan bread on a linen tablecloth"
+              width="600"
+              height="500"
+              class="w-full object-cover"
+            />
+          </div>
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=600&q=80"
+              alt="Chef hands stretching fresh pasta dough on a flour-dusted marble counter in an open kitchen"
+              width="600"
+              height="350"
+              class="w-full object-cover"
+            />
+          </div>
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=600&q=80"
+              alt="Outdoor terrace with string lights above intimate two-person tables set for an evening dinner"
+              width="600"
+              height="450"
+              class="w-full object-cover"
+            />
+          </div>
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1551782450-a2132b4ba21d?auto=format&fit=crop&w=600&q=80"
+              alt="Wood-burning hearth inside the open kitchen casting a warm orange glow on stacked logs"
+              width="600"
+              height="400"
+              class="w-full object-cover"
+            />
+          </div>
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1551183053-bf91a1d81141?auto=format&fit=crop&w=600&q=80"
+              alt="Sommelier pouring a deep ruby Barolo into a large tulip glass at a white tablecloth table"
+              width="600"
+              height="380"
+              class="w-full object-cover"
+            />
+          </div>
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1432139509613-5c4255815697?auto=format&fit=crop&w=600&q=80"
+              alt="Overhead flatlay of a beautifully plated pasta dish with edible flowers and a silver fork"
+              width="600"
+              height="420"
+              class="w-full object-cover"
+            />
+          </div>
+
+          <div class="rounded-xl overflow-hidden">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1577219491135-ce391730fb2c?auto=format&fit=crop&w=600&q=80"
+              alt="Bartender artfully pouring a house cocktail through ice into a chilled coupe glass"
+              width="600"
+              height="360"
+              class="w-full object-cover"
+            />
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ HOURS ============================================================ -->
+    <section data-section="hours" id="hours-section" class="py-28 px-6" style="background: var(--surface);">
+      <div class="max-w-6xl mx-auto">
+        <div class="text-center mb-14 reveal">
+          <p class="text-xs font-semibold tracking-[0.2em] uppercase mb-3" style="color: var(--accent);">Plan Your Visit</p>
+          <h2 class="font-display font-bold" style="font-size: clamp(2rem, 4vw, 3rem); color: var(--text);">Hours and Location</h2>
+        </div>
+
+        <div class="grid md:grid-cols-2 gap-10 items-start">
+
+          <!-- Hours table -->
+          <div class="reveal">
+            <h3 class="font-display font-bold text-xl mb-6" style="color: var(--text);">Opening Hours</h3>
+            <table class="w-full text-sm" style="border-collapse: separate; border-spacing: 0 0.5rem;">
+              <tbody>
+                <tr>
+                  <td class="py-2 pr-6 font-medium" style="color: var(--muted);">Monday</td>
+                  <td class="py-2 text-right font-medium" style="color: var(--muted);">Closed</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-6 font-medium" style="color: var(--text);">Tuesday</td>
+                  <td class="py-2 text-right" style="color: var(--text);">11:00 am – 10:00 pm</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-6 font-medium" style="color: var(--text);">Wednesday</td>
+                  <td class="py-2 text-right" style="color: var(--text);">11:00 am – 10:00 pm</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-6 font-medium" style="color: var(--text);">Thursday</td>
+                  <td class="py-2 text-right" style="color: var(--text);">11:00 am – 10:30 pm</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-6 font-medium" style="color: var(--text);">Friday</td>
+                  <td class="py-2 text-right" style="color: var(--text);">11:00 am – 11:00 pm</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-6 font-medium" style="color: var(--text);">Saturday</td>
+                  <td class="py-2 text-right" style="color: var(--text);">10:00 am – 11:00 pm</td>
+                </tr>
+                <tr>
+                  <td class="py-2 pr-6 font-medium" style="color: var(--text);">Sunday</td>
+                  <td class="py-2 text-right" style="color: var(--text);">10:00 am – 3:00 pm</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="mt-6 text-sm" style="color: var(--muted);">
+              Kitchen closes 30 minutes before closing time. Brunch is served Saturday and Sunday until 3:00 pm.
+              Walk-ins welcome; reservations strongly recommended on Fridays and Saturdays.
+            </p>
+          </div>
+
+          <!-- Map placeholder -->
+          <div class="reveal">
+            <h3 class="font-display font-bold text-xl mb-6" style="color: var(--text);">Find Us</h3>
+            <div class="map-placeholder" aria-hidden="true">
+              <div class="text-center">
+                <svg class="w-10 h-10 mx-auto mb-3" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true" style="color: var(--accent);">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z"/>
+                </svg>
+                <p class="font-semibold text-base" style="color: var(--text);">48 Via della Vigna, Ground Floor</p>
+                <p class="text-sm mt-1" style="color: var(--muted);">Florence Quarter, City Centre, 10014</p>
+              </div>
+            </div>
+            <div class="mt-6 p-5 rounded-xl" style="background: #f0e8dc;">
+              <p class="text-sm font-medium mb-1" style="color: var(--text);">Getting here</p>
+              <p class="text-sm" style="color: var(--muted);">
+                Three minutes' walk from the Central Market tram stop. Street parking available on Via della Vigna
+                after 7:00 pm. Valet service on weekends from 6:30 pm.
+              </p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ RESERVATION ============================================================ -->
+    <section data-section="reservation" id="reservation-section" class="py-28 px-6">
+      <div class="max-w-2xl mx-auto">
+        <div class="text-center mb-12 reveal">
+          <p class="text-xs font-semibold tracking-[0.2em] uppercase mb-3" style="color: var(--accent);">Book Ahead</p>
+          <h2 class="font-display font-bold" style="font-size: clamp(2rem, 4vw, 3rem); color: var(--text);">Make a Reservation</h2>
+          <p class="mt-4 text-base" style="color: var(--muted);">
+            We accept reservations up to 60 days in advance. For parties larger than 8, please call us directly.
+          </p>
+        </div>
+
+        <form @submit.prevent="submitReservation()"
+              class="reveal rounded-3xl p-8 md:p-10 shadow-md space-y-6"
+              style="background: var(--surface); border: 1px solid rgba(196,106,79,0.15);">
+
+          <div class="grid sm:grid-cols-2 gap-6">
+            <div>
+              <label for="res-date" class="block text-sm font-semibold mb-2" style="color: var(--text);">Date</label>
+              <input
+                id="res-date"
+                type="date"
+                required
+                class="w-full px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#c46a4f]"
+                style="background: var(--bg); border: 1px solid #e8ddd0; color: var(--text);"
+              />
+            </div>
+            <div>
+              <label for="res-time" class="block text-sm font-semibold mb-2" style="color: var(--text);">Time</label>
+              <select
+                id="res-time"
+                required
+                class="w-full px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#c46a4f]"
+                style="background: var(--bg); border: 1px solid #e8ddd0; color: var(--text);"
+              >
+                <option value="">Select a time</option>
+                <option value="11:30">11:30 am</option>
+                <option value="12:00">12:00 pm</option>
+                <option value="12:30">12:30 pm</option>
+                <option value="13:00">1:00 pm</option>
+                <option value="13:30">1:30 pm</option>
+                <option value="18:00">6:00 pm</option>
+                <option value="18:30">6:30 pm</option>
+                <option value="19:00">7:00 pm</option>
+                <option value="19:30">7:30 pm</option>
+                <option value="20:00">8:00 pm</option>
+                <option value="20:30">8:30 pm</option>
+                <option value="21:00">9:00 pm</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label for="res-party" class="block text-sm font-semibold mb-2" style="color: var(--text);">Party size</label>
+            <select
+              id="res-party"
+              required
+              class="w-full px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#c46a4f]"
+              style="background: var(--bg); border: 1px solid #e8ddd0; color: var(--text);"
+            >
+              <option value="">Number of guests</option>
+              <option value="1">1 guest</option>
+              <option value="2">2 guests</option>
+              <option value="3">3 guests</option>
+              <option value="4">4 guests</option>
+              <option value="5">5 guests</option>
+              <option value="6">6 guests</option>
+              <option value="7">7 guests</option>
+              <option value="8">8 guests</option>
+            </select>
+          </div>
+
+          <div class="grid sm:grid-cols-2 gap-6">
+            <div>
+              <label for="res-name" class="block text-sm font-semibold mb-2" style="color: var(--text);">Full name</label>
+              <input
+                id="res-name"
+                type="text"
+                required
+                placeholder="Your name"
+                class="w-full px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#c46a4f]"
+                style="background: var(--bg); border: 1px solid #e8ddd0; color: var(--text);"
+              />
+            </div>
+            <div>
+              <label for="res-email" class="block text-sm font-semibold mb-2" style="color: var(--text);">Email address</label>
+              <input
+                id="res-email"
+                type="email"
+                required
+                placeholder="your@email.com"
+                class="w-full px-4 py-3 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#c46a4f]"
+                style="background: var(--bg); border: 1px solid #e8ddd0; color: var(--text);"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            class="w-full py-4 rounded-full font-semibold text-white transition-opacity hover:opacity-90"
+            style="background: var(--accent);"
+          >
+            Request reservation
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============================================================ FOOTER ============================================================ -->
+    <section data-section="footer">
+      <footer class="py-14 px-6" style="background: var(--text);">
+        <div class="max-w-6xl mx-auto">
+          <div class="grid md:grid-cols-3 gap-10 mb-10">
+            <div>
+              <div class="font-display font-bold text-xl mb-3" style="color: var(--bg);">
+                <span style="color: var(--accent);">&#10022;</span> <%= APP_NAME %>
+              </div>
+              <p class="text-sm leading-relaxed" style="color: rgba(250,246,239,0.55);">
+                A candlelit trattoria serving wood-fired seasonal Italian cuisine.
+                Open Tuesday through Sunday in the heart of the city.
+              </p>
+            </div>
+            <div>
+              <p class="text-xs font-semibold tracking-[0.15em] uppercase mb-4" style="color: var(--accent);">Contact</p>
+              <p class="text-sm mb-2" style="color: rgba(250,246,239,0.7);">48 Via della Vigna, Ground Floor</p>
+              <p class="text-sm mb-2" style="color: rgba(250,246,239,0.7);">Florence Quarter, City Centre</p>
+              <a href="tel:+15551234567" class="text-sm hover:text-white transition-colors" style="color: rgba(250,246,239,0.7);">+1 (555) 123-4567</a>
+            </div>
+            <div>
+              <p class="text-xs font-semibold tracking-[0.15em] uppercase mb-4" style="color: var(--accent);">Follow Along</p>
+              <div class="flex gap-4">
+                <a href="#" class="text-sm font-medium transition-colors hover:text-white" style="color: rgba(250,246,239,0.7);">Instagram</a>
+                <a href="#" class="text-sm font-medium transition-colors hover:text-white" style="color: rgba(250,246,239,0.7);">Facebook</a>
+              </div>
+              <p class="mt-6 text-xs" style="color: rgba(250,246,239,0.35);">
+                For private dining and events, email<br />
+                reservations@<%= APP_NAME | downcase %>.com
+              </p>
+            </div>
+          </div>
+          <div class="border-t pt-6 flex flex-col md:flex-row justify-between items-center gap-4"
+               style="border-color: rgba(250,246,239,0.1);">
+            <p class="text-xs" style="color: rgba(250,246,239,0.35);">
+              &copy; 2026 <%= APP_NAME %>. All rights reserved.
+            </p>
+            <p class="text-xs" style="color: rgba(250,246,239,0.35);">
+              Made with care in the kitchen and on the web.
+            </p>
+          </div>
+        </div>
+      </footer>
+    </section>
+
+  </div>
+
+  <!-- Toast root — same pattern as agency -->
+  <div x-data="{ toasts: [] }" @toast.window="toasts.push($event.detail); setTimeout(() => toasts.shift(), 4000)"
+       class="fixed bottom-6 right-6 space-y-2 z-50">
+    <template x-for="(t, i) in toasts" :key="i">
+      <div class="bg-[var(--text)] text-[var(--bg)] px-6 py-3 rounded-full shadow-lg" x-text="t.msg"></div>
+    </template>
+  </div>
+
+</body>
+</html>

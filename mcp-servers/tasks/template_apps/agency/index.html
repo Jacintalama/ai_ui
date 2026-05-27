@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= APP_NAME %> — Independent design studio</title>
+  <meta name="description" content="<%= APP_NAME %> is an independent design studio building brands, websites, and motion identity for ambitious teams." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+
+  <div id="cursor-dot" class="cursor-dot"></div>
+
+  <div x-data="agency" x-init="init()">
+
+    <!-- ============================================================ NAV ============================================================ -->
+    <section data-section="nav">
+      <header :class="navSolid ? 'bg-[#0a0a0b]/95 border-b border-white/5' : 'bg-transparent'"
+              class="fixed top-0 left-0 right-0 z-40 backdrop-blur">
+        <div class="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
+          <!-- Logo -->
+          <a href="#" class="font-display font-bold text-xl text-white tracking-tight">
+            <span style="color: var(--accent);">&lt;</span><%= APP_NAME %><span style="color: var(--accent);">/&gt;</span>
+          </a>
+
+          <!-- Desktop nav -->
+          <nav class="hidden md:flex items-center gap-8 text-sm" style="color: #a1a1aa;">
+            <a href="#work" class="hover:text-white transition-colors">Work</a>
+            <a href="#capabilities" class="hover:text-white transition-colors">Services</a>
+            <a href="#logos" class="hover:text-white transition-colors">Clients</a>
+            <a href="#cta" class="hover:text-white transition-colors">Contact</a>
+          </nav>
+
+          <!-- CTA + hamburger -->
+          <div class="flex items-center gap-3">
+            <a href="#cta" class="hidden sm:inline-flex px-5 py-2 rounded-full text-sm font-semibold text-black"
+               style="background: var(--accent);">Let's talk</a>
+            <button @click="mobileMenu = !mobileMenu"
+                    class="md:hidden p-2 rounded-md hover:bg-white/10 text-white"
+                    aria-label="Toggle navigation menu">
+              <svg x-show="!mobileMenu" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+              <svg x-show="mobileMenu" x-cloak class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Mobile menu -->
+        <div x-show="mobileMenu" x-cloak
+             class="md:hidden border-t border-white/5 px-6 py-4 space-y-3"
+             style="background: #0a0a0b;">
+          <a href="#work" @click="mobileMenu = false" class="block py-2 text-zinc-300 hover:text-white">Work</a>
+          <a href="#capabilities" @click="mobileMenu = false" class="block py-2 text-zinc-300 hover:text-white">Services</a>
+          <a href="#logos" @click="mobileMenu = false" class="block py-2 text-zinc-300 hover:text-white">Clients</a>
+          <a href="#cta" @click="mobileMenu = false" class="block py-2 text-zinc-300 hover:text-white">Contact</a>
+        </div>
+      </header>
+    </section>
+
+    <!-- ============================================================ HERO ============================================================ -->
+    <section data-section="hero" class="relative min-h-screen flex items-center px-6 pt-24">
+      <img
+        loading="eager"
+        fetchpriority="high"
+        src="https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=80"
+        alt="Modern open-plan studio with daylight pouring through tall windows"
+        width="1600"
+        height="900"
+        class="absolute inset-0 w-full h-full object-cover"
+        style="opacity: 0.35;"
+      />
+      <!-- Dark overlay gradient -->
+      <div class="absolute inset-0" style="background: linear-gradient(to right, #0a0a0b 55%, transparent);"></div>
+
+      <div class="relative max-w-5xl">
+        <p class="text-sm font-mono tracking-[0.2em] mb-6" style="color: var(--accent);">INDEPENDENT STUDIO — EST. 2014</p>
+        <h1 class="font-display font-bold leading-[0.95]" style="font-size: clamp(3rem, 8vw, 6rem);">
+          We build brands<br/>that <span class="gradient-text">don't blend in.</span>
+        </h1>
+        <p class="mt-8 text-xl max-w-2xl" style="color: #a1a1aa;">
+          An independent six-person studio crafting brand systems, websites, and motion identity
+          for ambitious teams shipping in 2026. No junior hand-offs. No bloated processes.
+        </p>
+        <div class="mt-12 flex flex-wrap gap-4">
+          <a href="#cta"
+             class="inline-flex items-center gap-2 px-8 py-4 rounded-full font-semibold text-black"
+             style="background: var(--accent);">
+            Start a project →
+          </a>
+          <a href="#work"
+             class="inline-flex items-center gap-2 px-8 py-4 rounded-full font-semibold border border-white/20 text-white hover:border-white/50 transition-colors">
+            See our work
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ MARQUEE ============================================================ -->
+    <section data-section="marquee" class="py-12 overflow-hidden" style="border-top: 1px solid rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.05);">
+      <div class="marquee font-display text-2xl md:text-4xl" style="color: #3f3f46;">
+        <span>Brand identity</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Web design</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Motion graphics</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Strategy</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Art direction</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Brand identity</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Web design</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Motion graphics</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Strategy</span>
+        <span style="color: var(--accent);">·</span>
+        <span>Art direction</span>
+        <span style="color: var(--accent);">·</span>
+      </div>
+    </section>
+
+    <!-- ============================================================ WORK ============================================================ -->
+    <section data-section="work" class="py-32 px-6 max-w-7xl mx-auto">
+      <div class="sticky-label mb-12 reveal">SELECTED WORK</div>
+
+      <div class="grid md:grid-cols-2 gap-6">
+
+        <!-- Card 1: Northbeam Capital -->
+        <a class="zoom-card reveal block group" href="#">
+          <div class="aspect-[4/3] overflow-hidden rounded-2xl">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1561070791-2526d30994b8?auto=format&fit=crop&w=800&q=80"
+              alt="Northbeam Capital brand identity — clean typographic layout on white paper"
+              width="800"
+              height="600"
+              class="w-full h-full object-cover"
+            />
+          </div>
+          <div class="mt-4 flex justify-between items-start">
+            <div>
+              <h3 class="font-display font-bold text-lg text-white">Northbeam Capital</h3>
+              <div class="mt-1 text-sm" style="color: #71717a;">Brand identity · Web</div>
+            </div>
+            <span class="text-2xl" style="color: var(--accent);">↗</span>
+          </div>
+        </a>
+
+        <!-- Card 2: Halcyon Coffee -->
+        <a class="zoom-card reveal block group" href="#">
+          <div class="aspect-[4/3] overflow-hidden rounded-2xl">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1542744095-291d1f67b221?auto=format&fit=crop&w=800&q=80"
+              alt="Halcyon Coffee packaging design — warm toned product photography with kraft paper bags"
+              width="800"
+              height="600"
+              class="w-full h-full object-cover"
+            />
+          </div>
+          <div class="mt-4 flex justify-between items-start">
+            <div>
+              <h3 class="font-display font-bold text-lg text-white">Halcyon Coffee</h3>
+              <div class="mt-1 text-sm" style="color: #71717a;">Packaging · Brand</div>
+            </div>
+            <span class="text-2xl" style="color: var(--accent);">↗</span>
+          </div>
+        </a>
+
+        <!-- Card 3: Atlas Health -->
+        <a class="zoom-card reveal block group" href="#">
+          <div class="aspect-[4/3] overflow-hidden rounded-2xl">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1558655146-9f40138edfeb?auto=format&fit=crop&w=800&q=80"
+              alt="Atlas Health website — minimal healthcare interface showing appointment booking flow"
+              width="800"
+              height="600"
+              class="w-full h-full object-cover"
+            />
+          </div>
+          <div class="mt-4 flex justify-between items-start">
+            <div>
+              <h3 class="font-display font-bold text-lg text-white">Atlas Health</h3>
+              <div class="mt-1 text-sm" style="color: #71717a;">Web · Motion</div>
+            </div>
+            <span class="text-2xl" style="color: var(--accent);">↗</span>
+          </div>
+        </a>
+
+        <!-- Card 4: Meridian Records -->
+        <a class="zoom-card reveal block group" href="#">
+          <div class="aspect-[4/3] overflow-hidden rounded-2xl">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1467232004584-a241de8bcf5d?auto=format&fit=crop&w=800&q=80"
+              alt="Meridian Records brand campaign — dark moody music studio with vinyl record close-up"
+              width="800"
+              height="600"
+              class="w-full h-full object-cover"
+            />
+          </div>
+          <div class="mt-4 flex justify-between items-start">
+            <div>
+              <h3 class="font-display font-bold text-lg text-white">Meridian Records</h3>
+              <div class="mt-1 text-sm" style="color: #71717a;">Brand · Art direction</div>
+            </div>
+            <span class="text-2xl" style="color: var(--accent);">↗</span>
+          </div>
+        </a>
+
+        <!-- Card 5: Blackbird Cycles -->
+        <a class="zoom-card reveal block group" href="#">
+          <div class="aspect-[4/3] overflow-hidden rounded-2xl">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80"
+              alt="Blackbird Cycles e-commerce website — high contrast product page for premium bicycle components"
+              width="800"
+              height="600"
+              class="w-full h-full object-cover"
+            />
+          </div>
+          <div class="mt-4 flex justify-between items-start">
+            <div>
+              <h3 class="font-display font-bold text-lg text-white">Blackbird Cycles</h3>
+              <div class="mt-1 text-sm" style="color: #71717a;">Web · E-commerce</div>
+            </div>
+            <span class="text-2xl" style="color: var(--accent);">↗</span>
+          </div>
+        </a>
+
+        <!-- Card 6: Oakwell Co -->
+        <a class="zoom-card reveal block group" href="#">
+          <div class="aspect-[4/3] overflow-hidden rounded-2xl">
+            <img
+              loading="lazy"
+              src="https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=800&q=80"
+              alt="Oakwell Co hospitality brand — warm restaurant interior with exposed brick and soft candlelight"
+              width="800"
+              height="600"
+              class="w-full h-full object-cover"
+            />
+          </div>
+          <div class="mt-4 flex justify-between items-start">
+            <div>
+              <h3 class="font-display font-bold text-lg text-white">Oakwell Co</h3>
+              <div class="mt-1 text-sm" style="color: #71717a;">Hospitality · Brand · Web</div>
+            </div>
+            <span class="text-2xl" style="color: var(--accent);">↗</span>
+          </div>
+        </a>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ STATS ============================================================ -->
+    <section data-section="stats" class="py-24" style="background: var(--surface);">
+      <div class="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8">
+
+        <div class="count-up reveal" x-data="countUp(12)">
+          <div class="font-display font-bold" style="font-size: 3rem; color: var(--text);">
+            <span x-text="n"></span><span style="color: var(--accent);">+</span>
+          </div>
+          <div class="mt-2 text-sm" style="color: #71717a;">Years in business</div>
+        </div>
+
+        <div class="count-up reveal" x-data="countUp(247)">
+          <div class="font-display font-bold" style="font-size: 3rem; color: var(--text);">
+            <span x-text="n"></span><span style="color: var(--accent);">+</span>
+          </div>
+          <div class="mt-2 text-sm" style="color: #71717a;">Projects shipped</div>
+        </div>
+
+        <div class="count-up reveal" x-data="countUp(89)">
+          <div class="font-display font-bold" style="font-size: 3rem; color: var(--text);">
+            <span x-text="n"></span><span style="color: var(--accent);">+</span>
+          </div>
+          <div class="mt-2 text-sm" style="color: #71717a;">Clients served</div>
+        </div>
+
+        <div class="count-up reveal" x-data="countUp(34)">
+          <div class="font-display font-bold" style="font-size: 3rem; color: var(--text);">
+            <span x-text="n"></span>
+          </div>
+          <div class="mt-2 text-sm" style="color: #71717a;">Awards and nods</div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ CAPABILITIES ============================================================ -->
+    <section data-section="capabilities" class="py-32 px-6 max-w-7xl mx-auto">
+      <div class="sticky-label mb-12 reveal">WHAT WE DO</div>
+
+      <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+
+        <!-- Strategy -->
+        <div class="reveal rounded-2xl p-8" style="background: var(--surface);">
+          <div class="capability-icon">
+            <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+          </div>
+          <h3 class="font-display font-bold text-xl text-white mb-3">Strategy</h3>
+          <p style="color: #71717a; line-height: 1.6;">
+            Research, positioning, naming, and competitive audits — the full-funnel thinking
+            that defines what to build before we touch a single pixel.
+          </p>
+        </div>
+
+        <!-- Brand -->
+        <div class="reveal rounded-2xl p-8" style="background: var(--surface);">
+          <div class="capability-icon">
+            <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+            </svg>
+          </div>
+          <h3 class="font-display font-bold text-xl text-white mb-3">Brand</h3>
+          <p style="color: #71717a; line-height: 1.6;">
+            Identity systems, voice and tone guidelines, art direction — the visual language
+            your team can build on for years without losing coherence.
+          </p>
+        </div>
+
+        <!-- Web -->
+        <div class="reveal rounded-2xl p-8" style="background: var(--surface);">
+          <div class="capability-icon">
+            <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+            </svg>
+          </div>
+          <h3 class="font-display font-bold text-xl text-white mb-3">Web</h3>
+          <p style="color: #71717a; line-height: 1.6;">
+            Marketing sites, product UI, and custom landing pages — fast, accessible, and
+            finished. We hand off clean code or manage deployment ourselves.
+          </p>
+        </div>
+
+        <!-- Content -->
+        <div class="reveal rounded-2xl p-8" style="background: var(--surface);">
+          <div class="capability-icon">
+            <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </div>
+          <h3 class="font-display font-bold text-xl text-white mb-3">Content</h3>
+          <p style="color: #71717a; line-height: 1.6;">
+            Art direction, photography shoots, and video production — the assets that bring
+            the brand to life across every channel and format.
+          </p>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ============================================================ LOGOS ============================================================ -->
+    <section data-section="logos" class="py-16" style="border-top: 1px solid rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.05);">
+      <div class="max-w-7xl mx-auto px-6">
+        <p class="text-center text-xs tracking-[0.2em] mb-10" style="color: #52525b;">TRUSTED BY AMBITIOUS TEAMS</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-10 items-center justify-items-center">
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">NORTHBEAM</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">HALCYON</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">ATLAS</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">MERIDIAN</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">BLACKBIRD</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">CIRRUS</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">OAKWELL</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">PRISM</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">SOLACE</span>
+          <span class="font-mono text-sm tracking-[0.2em]" style="color: #52525b;">VANTAGE</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ TESTIMONIAL ============================================================ -->
+    <section data-section="testimonial" class="py-32 px-6 max-w-4xl mx-auto reveal">
+      <blockquote class="font-display font-bold leading-tight text-white" style="font-size: clamp(1.75rem, 4vw, 3rem);">
+        "They didn't just redesign our brand — they redesigned how we think about ourselves.
+        Two years later we're still using their system as the north star for every decision we make."
+      </blockquote>
+      <div class="mt-10 flex items-center gap-4">
+        <img
+          loading="lazy"
+          src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80&crop=faces"
+          alt="Maya Patel, CEO of Northbeam, smiling with soft daylight portrait"
+          width="56"
+          height="56"
+          class="rounded-full object-cover"
+        />
+        <div>
+          <div class="font-semibold text-white">Maya Patel</div>
+          <div class="text-sm" style="color: #71717a;">CEO, Northbeam</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ CTA ============================================================ -->
+    <section data-section="cta" id="cta" class="py-32 px-6" style="background: var(--surface);">
+      <div class="max-w-3xl mx-auto text-center">
+        <h2 class="font-display font-bold text-white" style="font-size: clamp(2.5rem, 6vw, 4rem);">
+          Let's build<br/>something great.
+        </h2>
+        <p class="mt-6 text-lg" style="color: #71717a;">
+          Got a project in mind? Drop us a line — we read every message and reply within 24 hours.
+          No pitch decks required.
+        </p>
+
+        <form @submit.prevent="submitContact()" class="mt-12 max-w-md mx-auto space-y-4 text-left">
+          <div>
+            <label for="contact-email" class="block text-sm font-medium text-zinc-300 mb-2">Email address</label>
+            <input
+              id="contact-email"
+              type="email"
+              required
+              placeholder="your@email.com"
+              class="w-full px-6 py-4 rounded-full text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#c1ff00]"
+              style="background: transparent; border: 1px solid rgba(255,255,255,0.2);"
+            />
+          </div>
+          <div>
+            <label for="contact-message" class="block text-sm font-medium text-zinc-300 mb-2">Tell us about your project</label>
+            <textarea
+              id="contact-message"
+              required
+              placeholder="A few sentences is enough — we'll follow up with questions once we've read it"
+              rows="4"
+              class="w-full px-6 py-4 rounded-2xl text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-[#c1ff00] resize-none"
+              style="background: transparent; border: 1px solid rgba(255,255,255,0.2);"
+            ></textarea>
+          </div>
+          <button
+            type="submit"
+            class="w-full px-8 py-4 rounded-full font-semibold text-black transition-opacity hover:opacity-90"
+            style="background: var(--accent);"
+          >
+            Send message →
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============================================================ FOOTER ============================================================ -->
+    <section data-section="footer">
+      <footer class="py-12 px-6" style="border-top: 1px solid rgba(255,255,255,0.05);">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between gap-6">
+          <div>
+            <div class="font-display font-bold text-lg text-white mb-2">
+              <span style="color: var(--accent);">&lt;</span><%= APP_NAME %><span style="color: var(--accent);">/&gt;</span>
+            </div>
+            <div class="text-sm" style="color: #52525b;">© 2026 <%= APP_NAME %>. Built with attention.</div>
+          </div>
+          <div class="flex items-center gap-8 text-sm" style="color: #71717a;">
+            <a href="#" class="hover:text-white transition-colors">Twitter</a>
+            <a href="#" class="hover:text-white transition-colors">Instagram</a>
+            <a href="#" class="hover:text-white transition-colors">Dribbble</a>
+            <a href="#" class="hover:text-white transition-colors">LinkedIn</a>
+          </div>
+        </div>
+      </footer>
+    </section>
+
+  </div>
+
+  <!-- Toast root (listens for the `toast` event dispatched by Alpine) -->
+  <div x-data="{ toasts: [] }"
+       @toast.window="toasts.push($event.detail); setTimeout(() => toasts.shift(), 4000)"
+       class="fixed bottom-6 right-6 space-y-2 z-50">
+    <template x-for="(t, i) in toasts" :key="i">
+      <div class="px-6 py-3 rounded-full shadow-lg font-semibold text-sm"
+           style="background: white; color: #0a0a0b;"
+           x-text="t.msg"></div>
+    </template>
+  </div>
+
+</body>
+</html>

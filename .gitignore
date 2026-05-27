@@ -22,3 +22,24 @@ mcp-servers/gdrive/docker-compose.test.yml
 # Local agent / session state
 .claude/
 .superpowers/
+
+# --- snapshot hardening 2026-05-27 ---
+.env.bak*
+*.bak
+*.bak.*
+.deploy-state
+_tplpng/
+apps/alama-flight/
+apps/*smoke*/
+apps/caddy-auth-test-*/
+apps/create-me-*/
+apps/crudsimple/
+apps/diag-test/
+apps/landing-page-for-aiui-bot-*/
+apps/make-the-*/
+apps/me-a-*/
+apps/ralph-portfolio/
+apps/test-crud/
+apps/test-project/
+apps/testfly/
+apps/upload-*/

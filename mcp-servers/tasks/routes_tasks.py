@@ -6,6 +6,7 @@ from pathlib import PurePath as _PurePath
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import or_, select, text
 
 import uuid
@@ -14,7 +15,7 @@ from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import AdminUser, current_admin
 from db import session
 from models import ChatMessage, ProjectSupabase, TaskItem
-from schemas import AnswerRequest, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, TaskOut
+from schemas import AnswerRequest, ChatMessage as ChatMessageSchema, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, TaskOut
 from templates import _has_template_app, build_rules_for, is_valid_key, requires_supabase
 
 _FILENAME_SAFE_RE = _re.compile(r"[^A-Za-z0-9._-]+")
@@ -317,10 +318,17 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
             )
             needs_supabase_gate = not already_linked
 
-        # When gating on Supabase we set `built_app_slug` up-front so the chat
-        # message and the resume endpoint can find this task by slug; the
-        # regular build flow leaves it unset (Claude populates it after the
-        # build runs).
+        # Set `built_app_slug` up-front for ANY BUILD task with a known slug.
+        # Previously this was only set for Supabase-gated builds, leaving the
+        # regular flow dependent on the agent emitting `apps/<slug>/` in its
+        # COMPLETED message for the slug-extraction regex to catch. When the
+        # agent personalized a template and replied with prose like "rebranded
+        # to X", that regex returned None and built_app_slug stayed NULL — so
+        # the Preview tab 404'd on a completed task. The slug is canonical the
+        # moment _copy_template_app or _ensure_app_skeleton creates the dir
+        # below, so we write it now. The executor's update logic
+        # (routes_execution.py:225-226) only overwrites when it extracts a NEW
+        # slug, so this stays stable across runs.
         item = TaskItem(
             meeting_id=uuid.uuid4(),  # synthetic — no real meeting
             action_type=body.action_type,
@@ -330,7 +338,7 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
             priority=body.priority,
             status="awaiting_supabase" if needs_supabase_gate else "pending",
             max_attempts=body.max_attempts,
-            built_app_slug=slug if needs_supabase_gate else None,
+            built_app_slug=slug if (slug and body.action_type == "BUILD") else None,
         )
         s.add(item)
         if needs_supabase_gate:
@@ -689,6 +697,7 @@ async def enhance(
     source_task_id: UUID = Form(...),
     prompt: str = Form(..., min_length=1, max_length=2000),
     files: list[UploadFile] = File(default_factory=list),
+    selection: str | None = Form(default=None),
     user: AdminUser = Depends(current_admin),
 ):
     """Create a new BUILD task that modifies an existing app, optionally with image attachments.
@@ -702,6 +711,7 @@ async def enhance(
     via the prompt (Task 8 wires the prompt-side reference list).
     """
     import asyncio
+    import json as _json
     from claude_executor import build_enhance_prompt
     from models import TaskExecution
     from routes_execution import _run_execution, _RUNNING, _lookup_supabase_config
@@ -710,6 +720,30 @@ async def enhance(
     if len(files) > MAX_FILES:
         logger.info("enhance: too many attachments user=%s count=%d", user.email, len(files))
         raise HTTPException(400, f"Too many attachments (max {MAX_FILES})")
+
+    # Parse and validate the optional selection field — same contract as /chat.
+    # When present, the picker's payload becomes a SELECTED ELEMENT block at
+    # the top of the build prompt so the agent edits THAT element specifically.
+    parsed_selection: SelectionPayload | None = None
+    if selection is not None:
+        if len(selection) > SELECTION_RAW_MAX:
+            raise HTTPException(
+                400, f"selection field too large (max {SELECTION_RAW_MAX} bytes)"
+            )
+        try:
+            sel_raw = _json.loads(selection)
+        except _json.JSONDecodeError as e:
+            raise HTTPException(400, f"Invalid selection JSON: {e}")
+        try:
+            parsed_selection = SelectionPayload.model_validate(sel_raw)
+        except ValidationError as e:
+            raise HTTPException(400, f"Invalid selection payload: {e.errors()}")
+        logger.info(
+            "enhance: selection present (selector=%s tag=%s source=%s)",
+            parsed_selection.selector,
+            parsed_selection.tag,
+            source_task_id,
+        )
 
     # Read+validate each file fully into memory (≤ 5 MB × 5 = 25 MB worst case)
     validated: list[tuple[str, bytes]] = []  # [(safe_name, body)]
@@ -881,6 +915,10 @@ async def enhance(
             )
 
     # 4. Fire background execution with ENHANCE prompt.
+    selection_block = (
+        _format_selection_block(parsed_selection) + "\n"
+        if parsed_selection else ""
+    )
     prompt_text = build_enhance_prompt(
         slug=source.built_app_slug,
         user_request=prompt.strip(),
@@ -890,6 +928,7 @@ async def enhance(
         has_db_uri=has_db_uri,
         user_email=user.email,
         attachments=attachment_rel_paths or None,
+        selection_block=selection_block,
     )
     _RUNNING[new_task.id] = {"task": None, "proc": None}
     bg = asyncio.create_task(_run_execution(new_task.id, execution.id, prompt_text))
@@ -955,29 +994,141 @@ async def cancel_task(
     return item
 
 
+class SelectionPayload(BaseModel):
+    selector: str = Field(..., max_length=400)
+    friendlyLabel: str | None = Field(default=None, max_length=200)
+    tag: str = Field(..., max_length=40)
+    attrs: dict[str, str] = Field(default_factory=dict)
+    outerHtml: str = Field(..., max_length=2200)
+    styles: dict[str, str] = Field(default_factory=dict)
+    rect: dict[str, float] | None = None
+    url: str | None = Field(default=None, max_length=2000)
+    pickedAt: int | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+SELECTION_RAW_MAX = 8 * 1024  # 8 KB raw cap before parsing
+
+
+def _format_selection_block(sel: SelectionPayload) -> str:
+    style_pairs = "; ".join(f"{k}: {v}" for k, v in sel.styles.items())
+    attrs_str = " ".join(f'{k}="{v}"' for k, v in sel.attrs.items() if v)
+    open_tag = f"<{sel.tag.lower()}{(' ' + attrs_str) if attrs_str else ''}>"
+    friendly_line = (
+        f"  user sees:  {sel.friendlyLabel}\n" if sel.friendlyLabel else ""
+    )
+    return (
+        "SELECTED ELEMENT\n"
+        "The user pointed at this element in their preview. Scope your answer or\n"
+        "edit to this element specifically. Don't change other parts of the page\n"
+        "unless asked.\n"
+        "\n"
+        + friendly_line
+        + f"  selector:   {sel.selector}\n"
+        f"  tag:        {open_tag}\n"
+        + (f"  url:        {sel.url}\n" if sel.url else "")
+        + "\n"
+        "  current outerHTML (truncated):\n"
+        f"    {sel.outerHtml}\n"
+        "\n"
+        "  current computed styles (subset):\n"
+        f"    {style_pairs}\n"
+    )
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
-    body: ChatRequest,
+    source_task_id: str = Form(...),
+    message: str = Form(..., min_length=1, max_length=2000),
+    history: str = Form(default="[]"),
+    files: list[UploadFile] = File(default_factory=list),
+    selection: str | None = Form(default=None),
     user: AdminUser = Depends(current_admin),
 ):
-    """Lightweight chat about an existing app.
+    """Lightweight chat about an existing app, with optional image attachments.
 
     Calls the Anthropic Messages API directly — no build pipeline, no git
     commits, no file edits. The Enhance panel's Chat mode uses this so admins
     can ask questions, brainstorm changes, or just discuss the app without
     triggering an expensive build run that might fail on a greeting like "hi".
 
+    Image attachments (PNG/JPEG/WebP/GIF, ≤5 MB each, ≤5 files) are passed
+    to Claude as `image` content blocks on the latest user message — so users
+    can paste a screenshot and ask "build something like this" or "what's
+    wrong with the layout here?". Images are NOT persisted to disk or chat
+    history; they live only for the duration of this single API call.
+
     Uses Haiku for latency + cost. Retrieves the existing app's file list so
     Claude can give grounded answers about what's in the app.
     """
+    import base64
+    import json
     import os
     import httpx
     from uuid import UUID as _UUID
 
     try:
-        source_id = _UUID(body.source_task_id)
+        source_id = _UUID(source_task_id)
     except (ValueError, AttributeError):
         raise HTTPException(status_code=400, detail="Invalid source_task_id")
+
+    try:
+        history_raw = json.loads(history or "[]")
+        if not isinstance(history_raw, list):
+            raise ValueError("history must be a list")
+        parsed_history = [ChatMessageSchema(**m) for m in history_raw[-40:]]
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid history: {e}")
+
+    parsed_selection: SelectionPayload | None = None
+    if selection is not None:
+        if len(selection) > SELECTION_RAW_MAX:
+            raise HTTPException(
+                400, f"selection field too large (max {SELECTION_RAW_MAX} bytes)"
+            )
+        try:
+            sel_raw = json.loads(selection)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f"Invalid selection JSON: {e}")
+        try:
+            parsed_selection = SelectionPayload.model_validate(sel_raw)
+        except ValidationError as e:
+            raise HTTPException(400, f"Invalid selection payload: {e.errors()}")
+        logger.info(
+            "chat: selection present (selector=%s tag=%s task=%s)",
+            parsed_selection.selector,
+            parsed_selection.tag,
+            source_id,
+        )
+
+    if len(files) > MAX_FILES:
+        raise HTTPException(400, f"Too many attachments (max {MAX_FILES})")
+
+    image_blocks: list[dict] = []
+    for f in files:
+        body_bytes = await f.read(MAX_FILE_BYTES + 1)
+        if len(body_bytes) > MAX_FILE_BYTES:
+            raise HTTPException(400, f"{f.filename}: file too large (max 5 MB)")
+        if f.content_type not in ALLOWED_MIME:
+            raise HTTPException(
+                400,
+                f"Unsupported file type: {f.content_type}. Images only (PNG, JPEG, WebP, GIF).",
+            )
+        sniffed = _sniff_image_mime(body_bytes[:12])
+        if sniffed is None:
+            raise HTTPException(
+                400,
+                f"{f.filename}: file contents do not match a supported image format.",
+            )
+        image_blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": sniffed,
+                "data": base64.b64encode(body_bytes).decode("ascii"),
+            },
+        })
 
     async with session() as s:
         source = await _get_owned_task(s, source_id, user.email)
@@ -1054,7 +1205,13 @@ async def chat(
             f"Only emit this sentinel when the request actually needs a backend.\n\n"
         )
 
+    selection_block = (
+        _format_selection_block(parsed_selection) + "\n"
+        if parsed_selection else ""
+    )
+
     system_prompt = (
+        f"{selection_block}"
         f"You are the AIUI Agent — the BUILDER of the web app at apps/{slug}/. "
         f"You design and ship features. The human is the product owner: they tell you "
         f"what they want, you figure out how to build it and offer to do it. They are "
@@ -1077,31 +1234,51 @@ async def chat(
         f"something concrete. Markdown sparingly: **bold** key phrases, bullets only when "
         f"listing multiple distinct items. Don't lecture.\n\n"
         f"BUILD KICK-OFF: The platform AUTO-FIRES the build pipeline whenever your "
-        f"reply ends with `BUILD_SUGGESTION:` — there is no confirmation button. "
-        f"So include `BUILD_SUGGESTION:` whenever the user asks for a concrete change "
-        f"to the app (add my name, change colors, add a section, fix a bug, wire up "
-        f"a form, etc.) — your reply confirms in 1-2 sentences and the build kicks "
-        f"off automatically. Format:\n"
+        f"reply ends with `BUILD_SUGGESTION:` — there is no confirmation button.\n\n"
+        f"PLAN-FIRST DISCIPLINE — REQUIRED ON EVERY THREAD'S FIRST USER MESSAGE:\n"
+        f"This endpoint serves Plan mode. The user is here to be interviewed before the "
+        f"build fires. On the user's FIRST message in a thread — no matter how specific "
+        f"or feature-rich it looks — you MUST reply with 1-2 short clarifying questions "
+        f"and end your reply WITHOUT `BUILD_SUGGESTION:`.\n"
+        f"Example for \"Redesign portfolio with light theme, add projects, skills, hero\":\n"
+        f"  - \"What palette — warm peach/cream, cool slate, or you pick?\"\n"
+        f"  - \"Which 3-4 projects belong in the showcase, and what fields per card "
+        f"(title + tag + link, or richer)?\"\n"
+        f"  - \"Hero stays centered, or split with profile + headline?\"\n"
+        f"Pick the 1-2 questions whose answers will most change the build outcome. "
+        f"Don't ask trivia.\n\n"
+        f"After the user replies to your clarifying question(s), THEN emit "
+        f"BUILD_SUGGESTION on your next reply. Format:\n"
         f"  BUILD_SUGGESTION: <imperative, concrete one-line summary>\n"
         f"Example:\n"
-        f"  Sure — I'll add 'Ralph Benitez' as the portfolio header title.\n"
-        f"  BUILD_SUGGESTION: Replace the placeholder portfolio header text with 'Ralph Benitez' as the H1.\n"
-        f"\n"
+        f"  Got it — peach palette, 4 projects with title + tag + link, centered hero.\n"
+        f"  BUILD_SUGGESTION: Redesign portfolio with peach light theme, add 4-card projects "
+        f"showcase, skills section, and centered hero — modular component architecture.\n\n"
+        f"EXCEPTIONS — fire BUILD_SUGGESTION immediately, no clarification needed:\n"
+        f"- The user is REPLYING to your clarifying question (their answer = green light).\n"
+        f"- The user explicitly skips the interview: \"just do it\", \"yes do it\", \"build it\", "
+        f"\"go ahead\", \"ship it\", or any clear \"stop asking, build\".\n\n"
         f"DO NOT emit BUILD_SUGGESTION for: greetings, pure questions about how the "
         f"app works (no change requested), brainstorming hypotheticals (\"what could "
-        f"I do?\"), or asks for clarification before you can build. In those cases, "
-        f"answer in plain text and ask follow-up questions.\n"
-        f"DO emit BUILD_SUGGESTION when the user clearly wants the change made now "
-        f"(\"add X\", \"change Y to Z\", \"yes do it\", \"build it\", or any specific "
-        f"feature description). The user expects you to just do it.\n\n"
+        f"I do?\"). Answer in plain text and offer follow-up questions.\n\n"
         f"NEVER refuse with phrases like \"out of scope\", \"beyond what we can do\", "
         f"\"this is a frontend-only app\". The platform handles backend; your job is to "
         f"figure out the design and ship it.\n\n"
         f"APP FILES:\n{file_listing}"
     )
 
-    messages = [m.model_dump() for m in body.history] + [
-        {"role": "user", "content": body.message}
+    # Build the latest user turn. With image attachments, content becomes a
+    # list of blocks (images + the text prompt); without, a plain string —
+    # both forms are accepted by the Anthropic Messages API.
+    if image_blocks:
+        latest_user_content: list[dict] | str = image_blocks + [
+            {"type": "text", "text": message}
+        ]
+    else:
+        latest_user_content = message
+
+    messages = [m.model_dump() for m in parsed_history] + [
+        {"role": "user", "content": latest_user_content}
     ]
 
     try:
