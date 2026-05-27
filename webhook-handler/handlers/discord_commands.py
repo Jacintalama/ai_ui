@@ -649,11 +649,14 @@ class DiscordCommandHandler:
                 return
             # Each schedule gets its OWN private thread, named after the
             # schedule, so its results stay in one place instead of mixing with
-            # other schedules in a shared thread. Fall back to the channel if
-            # thread creation fails.
+            # other schedules in a shared thread. Discord can't nest threads, so
+            # if this came from inside a thread (e.g. the schedules dashboard
+            # thread), create it on the parent channel. Fall back to the current
+            # channel if thread creation fails.
             target = channel_id
+            parent_channel = await self.discord.resolve_thread_parent(channel_id)
             thread_id = await self.discord.create_private_thread(
-                channel_id, pending["name"][:90]
+                parent_channel, pending["name"][:90]
             )
             if thread_id:
                 await self.discord.add_thread_member(thread_id, user_id)
