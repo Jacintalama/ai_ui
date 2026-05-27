@@ -72,24 +72,74 @@ def should_fire(
 # ---------------------------------------------------------------------------
 import uuid as _uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from db import session
 from models import Schedule, TaskItem
 from secret_scrub import scrub
 
+
+# Host-local connector endpoints (published 127.0.0.1 ports) the scheduled agent
+# can call with the owner's x-user-email header. (table, base_url, ops-hint)
+_CONNECTOR_ACCESS = {
+    "Gmail": (
+        "gmail_tokens", "http://127.0.0.1:8016",
+        "POST /gmail_list_emails {\"unread_only\":true,\"max_results\":20} (list inbox), "
+        "/gmail_search_emails {\"query\":\"...\"}, /gmail_read_email {\"message_id\":\"...\"}, "
+        "/gmail_send_email {\"to\":\"...\",\"subject\":\"...\",\"body\":\"...\"}, /gmail_list_labels {}",
+    ),
+    "Google Drive": (
+        "gdrive_tokens", "http://127.0.0.1:8017",
+        "POST /gdrive_list_files {}, /gdrive_search_files {\"query\":\"...\"}, "
+        "/gdrive_read_file {\"file_id\":\"...\"}, /gdrive_get_file_info {\"file_id\":\"...\"}",
+    ),
+}
+
+
+async def _connector_access_note(user_email: str) -> str:
+    """If the owner has connected Gmail/Drive, return a prompt section telling the
+    agent how to reach those connectors (host-local REST, owner-scoped header)."""
+    connected: list[tuple[str, str, str]] = []
+    async with session() as s:
+        for name, (table, base, ops) in _CONNECTOR_ACCESS.items():
+            # table is a fixed internal constant, not user input.
+            row = (await s.execute(
+                text(f"SELECT 1 FROM public.{table} WHERE user_email = :e LIMIT 1"),
+                {"e": user_email},
+            )).first()
+            if row:
+                connected.append((name, base, ops))
+    if not connected:
+        return ""
+    lines = [
+        "\n\n## Connector access — you ARE connected to these accounts",
+        "Use the Bash tool with `curl` to call these LOCAL HTTP endpoints. ALWAYS send "
+        f"headers `Content-Type: application/json` and `x-user-email: {user_email}`. "
+        "Each returns JSON; if you get `{\"error\": ...}`, report it plainly.",
+    ]
+    for name, base, ops in connected:
+        lines.append(f"- **{name}** (base `{base}`): {ops}")
+    lines.append(
+        "Example: `curl -s -X POST -H 'Content-Type: application/json' "
+        f"-H 'x-user-email: {user_email}' "
+        "-d '{\"unread_only\":true,\"max_results\":20}' http://127.0.0.1:8016/gmail_list_emails`"
+    )
+    return "\n".join(lines)
+
 # Cap concurrent agent runs. Without this, if 10 schedules all fire at
 # 20:00 the orchestrator spawns 10 simultaneous SSH+claude sessions and
 # the 3.8GB Hetzner VM OOMs. 3 is a conservative bound; tune via env later.
 _RUN_SEMAPHORE = asyncio.Semaphore(3)
-_NULL_MEETING_UUID = _uuid.UUID("00000000-0000-0000-0000-000000000000")
 
 
 async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
     """Build a TaskItem row from a Schedule and persist it.
 
-    Schedules aren't tied to a meeting; we use the zero-UUID as a sentinel
-    `meeting_id`. The persona is prepended as the system-message-equivalent
+    Schedules aren't tied to a meeting; we mint a fresh random `meeting_id`
+    per run. A shared sentinel would collide with the
+    `(meeting_id, md5(description))` unique index on `items` and block every
+    repeat run (the description is identical each run).
+    The persona is prepended as the system-message-equivalent
     prefix to the prompt body. The agent is reminded to read MEMORY.md
     (which remote_executor SCP's into the workdir before the run).
     """
@@ -102,11 +152,14 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         "Protocol (IMPORTANT — follow exactly):\n"
         "- There is a file named `MEMORY.md` in your current working directory.\n"
         "- Step 1: Read `./MEMORY.md` (no path prefix) for CONTEXT — what you produced on previous runs — so you can avoid repeating yourself.\n"
-        "- Step 2: Do the task now and write your FULL answer as your response (this is what the user receives).\n"
-        "- Step 3: Use the Write tool to append a new `## <current ISO timestamp UTC>` section to `./MEMORY.md` briefly summarising what you produced (no secrets).\n"
-        "- Step 4: AFTER your full answer, end your final response with the single word `COMPLETED` on its own line. The orchestrator needs that exact sentinel.\n"
+        "- Step 2: Use the Write tool to append a new `## <current ISO timestamp UTC>` section to `./MEMORY.md` briefly noting what you are about to produce (no secrets). Do ALL file operations NOW, before your final message.\n"
+        "- Step 3: Your FINAL message is delivered to the user verbatim — so make it your COMPLETE answer to the task. Do NOT call any tools in that final message.\n"
+        "- Step 4: End that SAME final message with the single word `COMPLETED` on its own last line (your full answer first, then `COMPLETED`). The orchestrator needs that exact sentinel in the same message as your answer.\n"
         "- Constraints: Do NOT use `/home/*/.claude/*` paths. Do NOT use Bash for file IO. Only `./MEMORY.md` via the Write/Edit/Read tools."
     )
+    # Append connector access (Gmail/Drive REST) if the owner has connected them,
+    # so a task like "read my unread email" can actually reach the mailbox.
+    desc = desc + await _connector_access_note(sched.user_email)
     # Use a synthetic slug derived from schedule_id so the remote executor
     # has a per-schedule workdir to drop MEMORY.md into. UUIDs match the
     # _VALID_SLUG regex (lowercase hex + dashes), and prefixing with `sched-`
@@ -114,7 +167,7 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
     sched_slug = f"sched-{str(sched.id)[:8]}"
     item = TaskItem(
         id=_uuid.uuid4(),
-        meeting_id=_NULL_MEETING_UUID,
+        meeting_id=_uuid.uuid4(),
         action_type="BUILD",
         assignee_name=sched.user_email.split("@")[0],
         assignee_email=sched.user_email,
