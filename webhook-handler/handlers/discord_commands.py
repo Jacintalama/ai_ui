@@ -775,17 +775,28 @@ class DiscordCommandHandler:
                         content="Your Discord account isn't linked yet. Hit **🔗 Link my account** first.",
                     )
                     return
+                async def _post_dashboard(tid: str) -> bool:
+                    """Add the user to `tid` and post the dashboard there.
+                    Returns True only if the post actually landed — a deleted
+                    thread makes post_channel_message return False."""
+                    await self.discord.add_thread_member(tid, user_id)
+                    return await self.discord.post_channel_message(
+                        tid, dash["content"], components=dash["components"])
+
+                # Try the stored thread first. If the user deleted it the post
+                # fails (False), so fall through and create a fresh one rather
+                # than pointing them at a dead thread (renders as #unknown).
                 thread_id = await self.router.get_user_thread(user_id)
-                if not thread_id:
+                posted = bool(thread_id) and await _post_dashboard(thread_id)
+                if not posted:
                     thread_id = await self.discord.create_private_thread(
                         channel_id, f"schedules-{user_name}"[:90]
                     )
                     if thread_id:
                         await self.router.set_user_thread(user_id, thread_id)
-                if thread_id:
-                    await self.discord.add_thread_member(thread_id, user_id)
-                    await self.discord.post_channel_message(
-                        thread_id, dash["content"], components=dash["components"])
+                        posted = await _post_dashboard(thread_id)
+
+                if posted and thread_id:
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
                         content=f"📅 Your schedules are in <#{thread_id}>",
