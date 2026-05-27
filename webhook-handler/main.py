@@ -25,6 +25,7 @@ from handlers.automation import AutomationWebhookHandler
 from handlers.commands import CommandRouter, CommandContext, VoiceResponseCollector
 from handlers.slack_commands import SlackCommandHandler
 from handlers.discord_commands import DiscordCommandHandler
+from schedule_format import build_schedule_embed, short_summary
 from voice_bot import start_voice_bot
 from scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
@@ -511,14 +512,6 @@ class ScheduleResultIn(BaseModel):
     schedule_id: str = ""
 
 
-def _format_schedule_result(name: str, status: str, result: str) -> str:
-    """Format a finished scheduled-task result as a Discord message (<=2000)."""
-    emoji = {"completed": "✅", "skipped": "⏭️"}.get(status, "⚠️")
-    header = f"{emoji} **Scheduled task** — {name}".strip()
-    body = (result or "").strip() or "_(no output)_"
-    return f"{header}\n{body}"[:1990]
-
-
 @app.post("/internal/schedule-result")
 async def schedule_result(
     body: ScheduleResultIn,
@@ -534,13 +527,15 @@ async def schedule_result(
         raise HTTPException(status_code=403, detail="Invalid internal secret")
     if discord_client is None:
         raise HTTPException(status_code=503, detail="Discord not configured")
-    message = _format_schedule_result(body.schedule_name, body.status, body.result)
+    embed = build_schedule_embed(body.schedule_name, body.status, body.result)
+    content = short_summary(body.schedule_name, body.status)
     # On a failed run, attach a one-click Retry (reuses the run-now handler).
     components = None
     if body.schedule_id and body.status not in ("completed", "skipped"):
         from handlers.app_builder_panel import build_retry_components
         components = build_retry_components(body.schedule_id)
-    await discord_client.post_channel_message(body.channel_id, message, components=components)
+    await discord_client.post_channel_message(
+        body.channel_id, content, components=components, embeds=[embed])
     return {"status": "delivered"}
 
 
