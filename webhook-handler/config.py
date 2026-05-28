@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # Claude Analyzer (PR Review, BRE, Security, etc.)
     claude_analyzer_url: str = "http://claude-analyzer:3000"
 
+    # Tasks service public base URL (browser-visible). Used to deep-link into
+    # the visual editor from the Discord build-ready card.
+    tasks_public_url: str = "https://ai-ui.coolestdomain.win"
+
     # Slack
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
