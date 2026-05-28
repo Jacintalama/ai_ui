@@ -19,6 +19,7 @@ STYLE_LINK = 5       # link button (opens a URL; carries `url`, not custom_id)
 STYLE_DANGER = 4     # red (destructive action, e.g. Unpublish)
 
 # Text input styles
+TEXT_SHORT = 1
 TEXT_PARAGRAPH = 2
 
 # custom_id schemes
@@ -292,3 +293,248 @@ def build_project_menu_components(
                             "label": "\U0001f517 Open preview", "url": preview_url})
     buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
     return [{"type": ACTION_ROW, "components": buttons}]
+
+
+# ============================================================================
+# RECOVERY STUBS — lost v2 polish for the scheduler / connections panels
+#
+# These symbols were written in earlier session work and deployed live to the
+# VPS production webhook-handler container, but were lost from local working
+# tree during a subagent's destructive filesystem operation on 2026-05-28.
+# Production VPS (Hetzner) IP is currently blocked at Hetzner's edge pending
+# an abuse-team unblock request, so the canonical copies in
+# `webhook-handler:/app/handlers/app_builder_panel.py` are unreachable.
+#
+# These STUBS exist solely so that:
+#   1. The module imports cleanly (downstream code/tests don't ImportError).
+#   2. The 9 tests that exercise this surface area FAIL with assertion errors
+#      (not collection errors), making the regression obvious.
+#
+# DO NOT treat any function below as finished code. After Hetzner unblocks,
+# replace this whole block by `docker cp` of the live VPS file, then re-run
+# the 9 currently-broken tests to confirm restoration.
+#
+# Tracking: see commit history around 97e450869 / 2b0d3c28c.
+# ============================================================================
+
+# --- schedule create flow ---
+SCHED_NEW_ID = "aiuisched:new"
+SCHED_LIST_ID = "aiuisched:list"
+SCHED_OPEN_ID = "aiuisched:open"
+SCHED_SELECT_ID = "aiuisched:select"
+SCHED_MODAL_ID = "aiuisched:modal"
+SCHED_WHAT_INPUT = "what"
+SCHED_WHEN_INPUT = "when"
+SCHED_CONFIRM_PREFIX = "aiuisched:confirm:"
+SCHED_CANCEL_PREFIX = "aiuisched:cancel:"
+SCHED_RUN_PREFIX = "aiuisched:run:"
+SCHED_PAUSE_PREFIX = "aiuisched:pause:"
+SCHED_RESUME_PREFIX = "aiuisched:resume:"
+SCHED_DEL_PREFIX = "aiuisched:del:"
+SCHED_EDIT_PREFIX = "aiuisched:edit:"
+SCHED_EDITMODAL_PREFIX = "aiuisched:editmodal:"
+SCHED_RETRYMODAL_PREFIX = "aiuisched:retrymodal:"
+CONNECT_RESUME_PREFIX = "aiuisched:connectresume:"
+
+# --- account linking ---
+LINK_EMAIL_INPUT = "email"
+LINK_START_ID = "aiuilink:start"
+LINK_MODAL_ID = "aiuilink:modal"
+LINK_APPROVE_PREFIX = "aiuilink:approve:"
+LINK_REJECT_PREFIX = "aiuilink:reject:"
+
+# --- connections panel ---
+CONN_OPEN_ID = "aiuiconn:open"
+CONN_REFRESH_ID = "aiuiconn:refresh"
+CONN_DISCONNECT_PREFIX = "aiuiconn:disconnect:"
+CONN_DISCONNECT_CONFIRM_PREFIX = "aiuiconn:dccfm:"
+CONN_DISCONNECT_CANCEL_ID = "aiuiconn:dccx"
+
+# --- template select ---
+TEMPLATE_SELECT_ID = "aiuibuild:tplselect"
+
+
+def _stub_id_match(prefix_or_id: str, custom_id: str) -> bool:
+    """Predicate stub: exact-match for IDs, startswith for prefixes."""
+    if prefix_or_id.endswith(":"):
+        return custom_id.startswith(prefix_or_id)
+    return custom_id == prefix_or_id
+
+
+def _stub_extract(custom_id: str, prefix: str) -> str:
+    if not custom_id.startswith(prefix):
+        raise ValueError(f"not a {prefix} custom_id: {custom_id!r}")
+    return custom_id[len(prefix):]
+
+
+# --- predicates / extractors (stubbed) ---
+
+def is_sched_new(custom_id: str) -> bool:           return custom_id == SCHED_NEW_ID
+def is_sched_list(custom_id: str) -> bool:          return custom_id == SCHED_LIST_ID
+def is_sched_open(custom_id: str) -> bool:          return custom_id == SCHED_OPEN_ID
+def is_sched_select(custom_id: str) -> bool:        return custom_id == SCHED_SELECT_ID
+def is_sched_modal(custom_id: str) -> bool:         return custom_id == SCHED_MODAL_ID
+
+def is_sched_confirm(custom_id: str) -> bool:       return custom_id.startswith(SCHED_CONFIRM_PREFIX)
+def token_from_confirm(custom_id: str) -> str:      return _stub_extract(custom_id, SCHED_CONFIRM_PREFIX)
+def is_sched_cancel(custom_id: str) -> bool:        return custom_id.startswith(SCHED_CANCEL_PREFIX)
+def token_from_cancel(custom_id: str) -> str:       return _stub_extract(custom_id, SCHED_CANCEL_PREFIX)
+
+def is_sched_run(custom_id: str) -> bool:           return custom_id.startswith(SCHED_RUN_PREFIX)
+def id_from_run(custom_id: str) -> str:             return _stub_extract(custom_id, SCHED_RUN_PREFIX)
+def is_sched_pause(custom_id: str) -> bool:         return custom_id.startswith(SCHED_PAUSE_PREFIX)
+def id_from_pause(custom_id: str) -> str:           return _stub_extract(custom_id, SCHED_PAUSE_PREFIX)
+def is_sched_resume(custom_id: str) -> bool:        return custom_id.startswith(SCHED_RESUME_PREFIX)
+def id_from_resume(custom_id: str) -> str:          return _stub_extract(custom_id, SCHED_RESUME_PREFIX)
+def is_sched_del(custom_id: str) -> bool:           return custom_id.startswith(SCHED_DEL_PREFIX)
+def id_from_del(custom_id: str) -> str:             return _stub_extract(custom_id, SCHED_DEL_PREFIX)
+
+def is_sched_edit(custom_id: str) -> bool:          return custom_id.startswith(SCHED_EDIT_PREFIX)
+def id_from_edit(custom_id: str) -> str:            return _stub_extract(custom_id, SCHED_EDIT_PREFIX)
+def is_sched_editmodal(custom_id: str) -> bool:     return custom_id.startswith(SCHED_EDITMODAL_PREFIX)
+def id_from_editmodal(custom_id: str) -> str:       return _stub_extract(custom_id, SCHED_EDITMODAL_PREFIX)
+
+def is_sched_retrymodal(custom_id: str) -> bool:    return custom_id.startswith(SCHED_RETRYMODAL_PREFIX)
+def token_from_retrymodal(custom_id: str) -> str:   return _stub_extract(custom_id, SCHED_RETRYMODAL_PREFIX)
+
+def is_connect_resume(custom_id: str) -> bool:      return custom_id.startswith(CONNECT_RESUME_PREFIX)
+def token_from_connect_resume(custom_id: str) -> str: return _stub_extract(custom_id, CONNECT_RESUME_PREFIX)
+
+def is_link_start(custom_id: str) -> bool:          return custom_id == LINK_START_ID
+def is_link_modal(custom_id: str) -> bool:          return custom_id == LINK_MODAL_ID
+def is_link_approve(custom_id: str) -> bool:        return custom_id.startswith(LINK_APPROVE_PREFIX)
+def id_from_link_approve(custom_id: str) -> str:    return _stub_extract(custom_id, LINK_APPROVE_PREFIX)
+def is_link_reject(custom_id: str) -> bool:         return custom_id.startswith(LINK_REJECT_PREFIX)
+def id_from_link_reject(custom_id: str) -> str:     return _stub_extract(custom_id, LINK_REJECT_PREFIX)
+
+def is_template_select(custom_id: str) -> bool:     return custom_id == TEMPLATE_SELECT_ID
+
+def is_connections_open(custom_id: str) -> bool:    return custom_id in (CONN_OPEN_ID, CONN_REFRESH_ID)
+def is_connections_refresh(custom_id: str) -> bool: return custom_id == CONN_REFRESH_ID
+def is_connections_disconnect(custom_id: str) -> bool:           return custom_id.startswith(CONN_DISCONNECT_PREFIX)
+def connector_from_disconnect(custom_id: str) -> str:            return _stub_extract(custom_id, CONN_DISCONNECT_PREFIX)
+def is_connections_disconnect_confirm(custom_id: str) -> bool:   return custom_id.startswith(CONN_DISCONNECT_CONFIRM_PREFIX)
+def connector_from_disconnect_confirm(custom_id: str) -> str:    return _stub_extract(custom_id, CONN_DISCONNECT_CONFIRM_PREFIX)
+def is_connections_disconnect_cancel(custom_id: str) -> bool:    return custom_id == CONN_DISCONNECT_CANCEL_ID
+
+
+# --- builders (stubbed — return shape-empty payloads) ---
+
+def _stub_empty_panel() -> dict:
+    return {"content": "[stubbed — lost v2 polish, recovery pending VPS unblock]",
+            "embeds": [], "components": []}
+
+
+def build_schedule_modal(*, what: str = "", when: str = "") -> dict:
+    return {"title": "New scheduled task", "custom_id": SCHED_MODAL_ID,
+            "components": [
+                {"type": ACTION_ROW, "components": [{
+                    "type": TEXT_INPUT, "custom_id": SCHED_WHAT_INPUT,
+                    "label": "What should it do?", "style": TEXT_PARAGRAPH,
+                    "required": True, "max_length": 2000,
+                    **({"value": what[:2000]} if what else {})}]},
+                {"type": ACTION_ROW, "components": [{
+                    "type": TEXT_INPUT, "custom_id": SCHED_WHEN_INPUT,
+                    "label": "How often?", "style": TEXT_SHORT,
+                    "required": True, "max_length": 60,
+                    **({"value": when[:60]} if when else {})}]},
+            ]}
+
+
+def build_confirm_components(token: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Confirm", f"{SCHED_CONFIRM_PREFIX}{token}", STYLE_SUCCESS),
+        _button("Cancel", f"{SCHED_CANCEL_PREFIX}{token}", STYLE_SECONDARY),
+    ]}]
+
+
+def build_connect_components(*, token: str, links: list[tuple[str, str]]) -> list[dict]:
+    buttons = [{"type": BUTTON, "style": STYLE_LINK,
+                "label": f"Connect {name}"[:80], "url": url}
+               for name, url in links]
+    buttons.append(_button("I've connected, create it",
+                           f"{CONNECT_RESUME_PREFIX}{token}", STYLE_SUCCESS))
+    return [{"type": ACTION_ROW, "components": buttons[i:i + 5]}
+            for i in range(0, len(buttons), 5)]
+
+
+def build_retry_prompt_components(token: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Edit and retry", f"{SCHED_RETRYMODAL_PREFIX}{token}", STYLE_PRIMARY),
+    ]}]
+
+
+def build_schedule_edit_modal(schedule_id: str, *, what: str, when: str) -> dict:
+    return {"title": "Edit schedule"[:45],
+            "custom_id": f"{SCHED_EDITMODAL_PREFIX}{schedule_id}",
+            "components": [
+                {"type": ACTION_ROW, "components": [{
+                    "type": TEXT_INPUT, "custom_id": SCHED_WHAT_INPUT,
+                    "label": "What should it do?", "style": TEXT_PARAGRAPH,
+                    "required": True, "max_length": 2000, "value": (what or "")[:2000]}]},
+                {"type": ACTION_ROW, "components": [{
+                    "type": TEXT_INPUT, "custom_id": SCHED_WHEN_INPUT,
+                    "label": "How often?", "style": TEXT_SHORT,
+                    "required": True, "max_length": 60, "value": (when or "")[:60]}]},
+            ]}
+
+
+def build_link_modal() -> dict:
+    return {"title": "Link your account"[:45], "custom_id": LINK_MODAL_ID,
+            "components": [{"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": LINK_EMAIL_INPUT,
+                "label": "Email", "style": TEXT_SHORT,
+                "required": True, "max_length": 254}]}]}
+
+
+def build_link_request_components(discord_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Approve", f"{LINK_APPROVE_PREFIX}{discord_id}", STYLE_SUCCESS),
+        _button("Reject", f"{LINK_REJECT_PREFIX}{discord_id}", STYLE_DANGER),
+    ]}]
+
+
+def build_connections_panel(statuses: dict, owner: str, connect_links: dict) -> dict:
+    return _stub_empty_panel()
+
+
+def build_disconnect_confirm(connector_key: str, connector_name: str) -> dict:
+    return _stub_empty_panel()
+
+
+def build_schedule_list(schedules: list[dict]) -> dict:
+    return _stub_empty_panel()
+
+
+def build_schedules_dashboard(schedules: list[dict]) -> dict:
+    return _stub_empty_panel()
+
+
+def build_schedule_card(s: dict) -> dict:
+    return _stub_empty_panel()
+
+
+def build_schedules_panel() -> dict:
+    return _stub_empty_panel()
+
+
+def build_retry_components(schedule_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Retry", f"{SCHED_RUN_PREFIX}{schedule_id}", STYLE_SECONDARY),
+    ]}]
+
+
+def validate_schedule_prompt(what: str) -> str | None:
+    """Stub — real validator was 'too short / too vague' rules. Passes everything for now."""
+    return None
+
+
+# --- build_*_embed stubs (the agent's app_builder_panel.py also removed these) ---
+
+def build_ready_embed(slug: str, preview_url: str = "", message: str = "") -> dict:
+    return {"title": "Build ready", "description": message or f"`{slug}` ready"}
+
+
+def build_published_embed(slug: str, public_url: str = "") -> dict:
+    return {"title": "Published!",
+            "description": f"`{slug}` is live." + (f"\n{public_url}" if public_url else "")}
