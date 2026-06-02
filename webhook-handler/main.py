@@ -24,6 +24,7 @@ from handlers.generic import GenericWebhookHandler
 from handlers.automation import AutomationWebhookHandler
 from handlers.commands import CommandRouter, CommandContext, VoiceResponseCollector
 from handlers.slack_commands import SlackCommandHandler
+from handlers.slack_interactions import SlackInteractionsHandler
 from handlers.discord_commands import DiscordCommandHandler
 from voice_bot import start_voice_bot
 from scheduler import (
@@ -53,6 +54,7 @@ generic_handler: Optional[GenericWebhookHandler] = None
 automation_handler: Optional[AutomationWebhookHandler] = None
 command_router: Optional[CommandRouter] = None
 slack_command_handler: Optional[SlackCommandHandler] = None
+slack_interactions_handler: Optional[SlackInteractionsHandler] = None
 discord_client: Optional[DiscordClient] = None
 discord_command_handler: Optional[DiscordCommandHandler] = None
 loki_client: Optional[LokiClient] = None
@@ -80,7 +82,7 @@ async def lifespan(app: FastAPI):
     global openwebui_client, github_client, github_handler
     global mcp_handler, n8n_client
     global slack_client, slack_handler, generic_handler, automation_handler
-    global command_router, slack_command_handler
+    global command_router, slack_command_handler, slack_interactions_handler
     global discord_client, discord_command_handler
     global loki_client
 
@@ -156,7 +158,11 @@ async def lifespan(app: FastAPI):
             slack_client=slack_client,
             command_router=command_router,
         )
-        logger.info("Slack slash commands enabled")
+        slack_interactions_handler = SlackInteractionsHandler(
+            slack_client=slack_client,
+            command_router=command_router,
+        )
+        logger.info("Slack slash commands + interactivity enabled")
 
     # Discord client (only if configured)
     if settings.discord_public_key:
@@ -423,6 +429,46 @@ async def slack_commands_webhook(
 
     result = await slack_command_handler.handle_command(form_data)
     return JSONResponse(content=result, status_code=200)
+
+
+@app.post("/webhook/slack/interactions")
+async def slack_interactions_webhook(
+    request: Request,
+    x_slack_request_timestamp: str = Header(None, alias="X-Slack-Request-Timestamp"),
+    x_slack_signature: str = Header(None, alias="X-Slack-Signature"),
+):
+    """
+    Handle Slack interactivity (App Builder panel buttons + modal submits).
+
+    Slack sends application/x-www-form-urlencoded with a single `payload` field
+    holding the JSON. Button clicks open a modal; modal submits start a build.
+    Must ACK within 3 seconds; the build runs in the background.
+    """
+    if not slack_interactions_handler:
+        raise HTTPException(status_code=503, detail="Slack integration not configured")
+
+    body = await request.body()
+
+    # Verify Slack signature
+    if settings.slack_signing_secret:
+        if not verify_slack_signature(
+            body=body,
+            timestamp=x_slack_request_timestamp or "",
+            signature=x_slack_signature or "",
+            signing_secret=settings.slack_signing_secret,
+        ):
+            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+    form_data = dict(await request.form())
+    import json
+    try:
+        payload = json.loads(form_data.get("payload", "{}"))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid interaction payload")
+
+    logger.info(f"Slack interaction: {payload.get('type')}")
+    result = await slack_interactions_handler.handle_interaction(payload)
+    return JSONResponse(content=result or {}, status_code=200)
 
 
 @app.post("/webhook/discord")

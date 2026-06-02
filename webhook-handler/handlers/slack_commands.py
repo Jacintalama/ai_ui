@@ -46,6 +46,12 @@ class SlackCommandHandler:
                     response_type="ephemeral",
                 )
 
+        async def notify_channel(msg: str) -> None:
+            # Bot-token channel post — outlives the response_url window so a
+            # long App Builder build can deliver its link when it finishes.
+            if channel_id:
+                await self.slack.post_message(channel=channel_id, text=msg)
+
         ctx = CommandContext(
             user_id=user_id,
             user_name=user_name,
@@ -60,6 +66,7 @@ class SlackCommandHandler:
                 "response_url": response_url,
                 "team_id": form_data.get("team_id", ""),
             },
+            notify_channel=notify_channel if channel_id else None,
         )
 
         # Fire-and-forget: process in background, respond via response_url

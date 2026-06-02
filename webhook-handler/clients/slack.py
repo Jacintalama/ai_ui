@@ -101,6 +101,58 @@ class SlackClient:
             logger.error(f"Error posting Slack message: {e}")
             return None
 
+    async def get_user_email(self, user_id: str) -> Optional[str]:
+        """Resolve a Slack user's profile email via users.info.
+
+        Requires the `users:read.email` scope. Returns the lowercased email,
+        or None if the call fails or the profile has no email. Never raises —
+        callers treat None as "couldn't link this user".
+        """
+        if not user_id:
+            return None
+        url = f"{self.base_url}/users.info"
+        headers = {"Authorization": f"Bearer {self.bot_token}"}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(url, params={"user": user_id}, headers=headers)
+                data = response.json()
+            if not data.get("ok"):
+                logger.warning(f"Slack users.info error: {data.get('error')}")
+                return None
+            email = (
+                data.get("user", {}).get("profile", {}).get("email")
+                or ""
+            ).strip().lower()
+            return email or None
+        except Exception as e:
+            logger.error(f"Error resolving Slack user email: {e}")
+            return None
+
+    async def open_modal(self, trigger_id: str, view: dict) -> bool:
+        """Open a modal via views.open. The trigger_id comes from an
+        interaction payload (button click) and is valid for ~3 seconds.
+        Returns True on success; logs and returns False otherwise. Never raises.
+        """
+        url = f"{self.base_url}/views.open"
+        headers = {
+            "Authorization": f"Bearer {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url, json={"trigger_id": trigger_id, "view": view}, headers=headers
+                )
+                data = response.json()
+            if data.get("ok"):
+                logger.info("Slack modal opened")
+                return True
+            logger.error(f"Slack views.open error: {data.get('error')} {data.get('response_metadata')}")
+            return False
+        except Exception as e:
+            logger.error(f"Error opening Slack modal: {e}")
+            return False
+
     async def post_to_response_url(
         self,
         response_url: str,

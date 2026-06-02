@@ -1282,7 +1282,7 @@ class CommandRouter:
 
     async def _handle_cronjob(self, ctx: CommandContext) -> None:
         """Discord → user-scoped cron schedule CRUD via tasks service."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond(
                 "Your Discord account isn't linked. Ask Lukas to add you."
@@ -1357,12 +1357,10 @@ class CommandRouter:
             await ctx.respond(self._format_tasks_error(e))
 
     async def _handle_aiuibuilder(self, ctx: CommandContext) -> None:
-        """Discord → App Builder project list / status / open URL."""
-        email = await self._resolve_email(ctx.user_id)
+        """Discord/Slack → App Builder project list / status / open URL."""
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await ctx.respond(self._not_linked_text(ctx))
             return
 
         # Action is the first word; the remainder is parsed per-action so a
@@ -1536,11 +1534,9 @@ class CommandRouter:
         explicit (from the clicked button), so — unlike the free-text `build`
         path — a Blank build whose first word matches a template key is never
         misread as a template build."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await ctx.respond(self._not_linked_text(ctx))
             return
         description = (description or "").strip()
         if not description:
@@ -1552,7 +1548,7 @@ class CommandRouter:
         """App Builder channel entry for the Publish button. Resolves the
         caller's email and publishes their built app, then posts the live URL.
         Ownership is enforced server-side (only the app's owner can publish)."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond(
                 "Your Discord account isn't linked. Ask Lukas to add you."
@@ -1576,7 +1572,7 @@ class CommandRouter:
     async def run_panel_enhance(self, ctx: CommandContext, slug: str, prompt: str) -> None:
         """App Builder Enhance: edit an existing app from a typed change, then
         watch it like a build and post the updated preview."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1600,7 +1596,7 @@ class CommandRouter:
 
     async def run_panel_unpublish(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Unpublish: take a live app offline."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1614,7 +1610,7 @@ class CommandRouter:
     async def run_panel_menu(self, ctx: CommandContext, slug: str) -> None:
         """App Builder dropdown selection → post that app's ephemeral action menu.
         Fetches fresh status so the menu reflects current publish state."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1641,7 +1637,7 @@ class CommandRouter:
     async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Status button → post the app's status text (same shape as
         the `aiuibuilder status <slug>` text action)."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1663,7 +1659,7 @@ class CommandRouter:
 
     async def run_schedule_list(self, ctx: CommandContext) -> None:
         """My-schedules button → render the user's schedules + action buttons."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1684,7 +1680,7 @@ class CommandRouter:
     ) -> None:
         """Confirm button → create the schedule for the user, delivering results
         to their private thread."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1704,7 +1700,7 @@ class CommandRouter:
         self, ctx: CommandContext, action: str, schedule_id: str,
     ) -> None:
         """Run-now / Pause / Resume / Delete for a single schedule."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
@@ -1739,6 +1735,28 @@ class CommandRouter:
         except TasksAPIError:
             return None
 
+    async def _resolve_email_for_ctx(self, ctx: CommandContext) -> str | None:
+        """Platform-aware email resolution for build/connector flows. Slack reads
+        the caller's profile email via the Web API (needs the users:read.email
+        scope); Discord keeps the static-map + DB-link-store path unchanged."""
+        if ctx.platform == "slack":
+            if self._slack_client is None:
+                return None
+            try:
+                return await self._slack_client.get_user_email(ctx.user_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("slack get_user_email failed user=%s: %s", ctx.user_id, e)
+                return None
+        return await self._resolve_email(ctx.user_id)
+
+    @staticmethod
+    def _not_linked_text(ctx: CommandContext) -> str:
+        """The 'no email' message, worded for the caller's platform."""
+        if ctx.platform == "slack":
+            return ("I couldn't read your email from Slack. Ask an admin to grant the "
+                    "bot the `users:read.email` scope, then try again.")
+        return "Your Discord account isn't linked. Ask Lukas to add you."
+
     @staticmethod
     def _not_linked_msg() -> str:
         return ("Your Discord account isn't linked yet. Hit **🔗 Link my account** "
@@ -1749,7 +1767,7 @@ class CommandRouter:
         name: str, cron: str, prompt: str,
     ) -> None:
         """Edit-modal submit → update the schedule's time/prompt for this user."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond(self._not_linked_msg())
             return
@@ -1794,7 +1812,7 @@ class CommandRouter:
 
     async def run_schedule_card(self, ctx: CommandContext, schedule_id: str) -> None:
         """Dropdown select → render a single schedule's clean card."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await ctx.respond(self._not_linked_msg())
             return
