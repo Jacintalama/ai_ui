@@ -117,3 +117,39 @@ async def test_post_message_text_only_still_works():
     assert body["thread_ts"] == "1234.5678"
     assert "blocks" not in body
     assert "attachments" not in body
+
+
+# ---------------------------------------------------------------------------
+# Task A2 — open_dm
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_open_dm_returns_channel_id():
+    """ok=True response returns the DM channel id."""
+    respx.post(f"{SLACK}/conversations.open").mock(
+        return_value=httpx.Response(200, json={"ok": True, "channel": {"id": "D123"}})
+    )
+    client = SlackClient(bot_token="xoxb-test")
+    result = await client.open_dm("U456")
+    assert result == "D123"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_open_dm_not_ok_returns_none():
+    """ok=False response returns None."""
+    respx.post(f"{SLACK}/conversations.open").mock(
+        return_value=httpx.Response(200, json={"ok": False, "error": "user_not_found"})
+    )
+    client = SlackClient(bot_token="xoxb-test")
+    result = await client.open_dm("U999")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_open_dm_empty_user_id_returns_none():
+    """Empty user_id short-circuits without making a network call."""
+    client = SlackClient(bot_token="xoxb-test")
+    result = await client.open_dm("")
+    assert result is None

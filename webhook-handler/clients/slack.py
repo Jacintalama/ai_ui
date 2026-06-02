@@ -162,6 +162,32 @@ class SlackClient:
             logger.error(f"Error opening Slack modal: {e}")
             return False
 
+    async def open_dm(self, user_id: str) -> Optional[str]:
+        """Open a direct-message channel with a user via conversations.open.
+
+        Returns the DM channel id on success, or None on error/empty input.
+        Never raises. Requires the `im:write` scope at runtime.
+        """
+        if not user_id:
+            return None
+        url = f"{self.base_url}/conversations.open"
+        headers = {
+            "Authorization": f"Bearer {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                data = (
+                    await client.post(url, json={"users": user_id}, headers=headers)
+                ).json()
+            if data.get("ok"):
+                return data.get("channel", {}).get("id")
+            logger.error(f"Slack conversations.open error: {data.get('error')}")
+            return None
+        except Exception as e:
+            logger.error(f"Error opening Slack DM: {e}")
+            return None
+
     async def post_to_response_url(
         self,
         response_url: str,
