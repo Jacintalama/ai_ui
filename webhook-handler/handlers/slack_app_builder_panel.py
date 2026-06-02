@@ -268,7 +268,9 @@ def build_apps_list_blocks(apps: list[dict]) -> list[dict]:
     visible = apps[:_MAX_LIST_ROWS]
     blocks: list[dict] = []
     for app in visible:
-        slug = app.get("slug", "")
+        slug = app.get("slug") or ""
+        if not slug:
+            continue
         published = bool(app.get("published"))
         state_label = "published" if published else "draft"
         blocks.append({

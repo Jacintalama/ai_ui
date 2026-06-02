@@ -220,9 +220,8 @@ def test_build_ready_attachment_shape():
 def test_build_ready_no_link_when_no_url():
     att = build_ready_attachment("my-app")
     elements = att["blocks"][-1]["elements"]
-    # no link button if no preview_url
-    assert all(e.get("type") != "button" or e.get("url") is None for e in elements
-               if e.get("action_id") not in (f"{PUBLISH_PREFIX}my-app", f"{ENHANCE_PREFIX}my-app"))
+    assert len(elements) == 2                      # Publish + Enhance only
+    assert all(e.get("url") is None for e in elements)
 
 
 def test_build_ready_attachment_with_preview_url():
@@ -326,6 +325,18 @@ def test_apps_list_more_than_10_shows_context_block():
     assert "10" in text
 
 
+def test_apps_list_skips_slugless_apps():
+    """Apps with no/empty slug must be silently dropped (empty slug => bare action_id prefix)."""
+    apps = [{"slug": "", "published": False}, {"slug": "good-app", "published": False}]
+    blocks = build_apps_list_blocks(apps)
+    ids = _all_action_ids(blocks)
+    # only the valid app's action_ids should appear
+    assert any(i.endswith("good-app") for i in ids)
+    # no bare-prefix action_ids (e.g. "aiuibuild:status:" with nothing after)
+    assert not any(i in (STATUS_PREFIX, PUBLISH_PREFIX, ENHANCE_PREFIX, UNPUBLISH_PREFIX)
+                   for i in ids)
+
+
 def test_enhance_modal_view_shape():
     view = build_enhance_modal_view("my-app")
     assert view["type"] == "modal"
@@ -345,6 +356,12 @@ def test_enhance_modal_slug_in_callback_and_metadata():
     view = build_enhance_modal_view("another-slug")
     assert "another-slug" in view["callback_id"]
     assert view["private_metadata"] == "another-slug"
+
+
+def test_enhance_modal_title_truncated_for_long_slug():
+    view = build_enhance_modal_view("a-very-long-slug-exceeding-limit")
+    assert len(view["title"]["text"]) <= 24
+    assert view["private_metadata"] == "a-very-long-slug-exceeding-limit"
 
 
 def test_enhance_text_from_view_extracts_value():
