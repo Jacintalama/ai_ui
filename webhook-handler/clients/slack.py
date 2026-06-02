@@ -59,7 +59,10 @@ class SlackClient:
         self,
         channel: str,
         text: str,
-        thread_ts: Optional[str] = None
+        thread_ts: Optional[str] = None,
+        *,
+        blocks=None,
+        attachments=None,
     ) -> Optional[str]:
         """
         Post a message to a Slack channel.
@@ -68,6 +71,8 @@ class SlackClient:
             channel: Channel ID
             text: Message text (supports markdown)
             thread_ts: Thread timestamp to reply in thread
+            blocks: Block Kit blocks list (keyword-only)
+            attachments: Legacy attachments list (keyword-only)
 
         Returns:
             Message timestamp if successful, None on error
@@ -83,6 +88,10 @@ class SlackClient:
         }
         if thread_ts:
             payload["thread_ts"] = thread_ts
+        if blocks is not None:
+            payload["blocks"] = blocks
+        if attachments is not None:
+            payload["attachments"] = attachments
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

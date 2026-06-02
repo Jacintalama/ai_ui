@@ -68,3 +68,52 @@ async def test_open_modal_failure_returns_false():
     )
     client = SlackClient(bot_token="xoxb-test")
     assert await client.open_modal("t", {"type": "modal"}) is False
+
+
+# ---------------------------------------------------------------------------
+# Task A1 — post_message with blocks + attachments
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_message_with_blocks_and_attachments():
+    """Blocks and attachments are forwarded in the JSON body; ts is returned."""
+    import json as _json
+
+    route = respx.post(f"{SLACK}/chat.postMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "ts": "1111.2222"})
+    )
+    client = SlackClient(bot_token="xoxb-test")
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "hello"}}]
+    attachments = [{"color": "#36a64f", "blocks": []}]
+    ts = await client.post_message(
+        "C999",
+        "fallback",
+        blocks=blocks,
+        attachments=attachments,
+    )
+    assert ts == "1111.2222"
+    body = _json.loads(route.calls.last.request.content)
+    assert body["blocks"] == blocks
+    assert body["attachments"] == attachments
+    assert body["text"] == "fallback"
+    assert body["channel"] == "C999"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_post_message_text_only_still_works():
+    """Existing text-only callers keep working; blocks/attachments absent from body."""
+    import json as _json
+
+    route = respx.post(f"{SLACK}/chat.postMessage").mock(
+        return_value=httpx.Response(200, json={"ok": True, "ts": "9999.0001"})
+    )
+    client = SlackClient(bot_token="xoxb-test")
+    ts = await client.post_message("C001", "plain text", thread_ts="1234.5678")
+    assert ts == "9999.0001"
+    body = _json.loads(route.calls.last.request.content)
+    assert body["text"] == "plain text"
+    assert body["thread_ts"] == "1234.5678"
+    assert "blocks" not in body
+    assert "attachments" not in body
