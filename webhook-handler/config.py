@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     # the visual editor from the Discord build-ready card.
     tasks_public_url: str = "https://ai-ui.coolestdomain.win"
 
+    # Google connectors (Gmail/Drive). Internal URLs (backend network) for the
+    # /auth/status check; public URLs (via Caddy -> api-gateway) for the browser
+    # connect link the user opens.
+    gmail_url: str = "http://mcp-gmail:8000"
+    gdrive_url: str = "http://mcp-gdrive:8000"
+    gmail_public_url: str = "https://ai-ui.coolestdomain.win/gmail"
+    gdrive_public_url: str = "https://ai-ui.coolestdomain.win/gdrive"
+
     # Slack
     slack_bot_token: str = ""
     slack_signing_secret: str = ""

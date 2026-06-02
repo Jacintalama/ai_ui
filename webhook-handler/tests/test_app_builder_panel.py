@@ -111,6 +111,23 @@ def test_publish_button_parsers():
     assert slug_from_publish_button(f"{PUBLISH_PREFIX}slug-1") == "slug-1"
     with pytest.raises(ValueError):
         slug_from_publish_button("aiuibuild:tpl:x")
+
+
+def test_connect_components_and_resume_parsers():
+    from handlers.app_builder_panel import (
+        build_connect_components, is_connect_resume, token_from_connect_resume,
+        CONNECT_RESUME_PREFIX, STYLE_LINK,
+    )
+    rows = build_connect_components(
+        token="tok123", links=[("Gmail", "https://x/auth?state=a"), ("Drive", "https://x/auth?state=b")])
+    btns = [b for row in rows for b in row["components"]]
+    # Two link buttons (one per connector) + the 'I've connected' resume button.
+    assert sum(1 for b in btns if b.get("style") == STYLE_LINK and "url" in b) == 2
+    resume = next(b for b in btns if b.get("custom_id", "").startswith(CONNECT_RESUME_PREFIX))
+    assert is_connect_resume(resume["custom_id"])
+    assert token_from_connect_resume(resume["custom_id"]) == "tok123"
+    with pytest.raises(ValueError):
+        token_from_connect_resume("aiuisched:confirm:tok123")
     with pytest.raises(ValueError):
         slug_from_publish_button(PUBLISH_PREFIX)  # bare prefix, no slug
 

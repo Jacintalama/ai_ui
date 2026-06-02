@@ -6,8 +6,10 @@ import uuid
 from typing import Any, Awaitable, Callable
 
 from clients.discord import DiscordClient
+from clients import connectors
 from config import settings
 from handlers.commands import CommandRouter, CommandContext
+from handlers import connector_intent
 from handlers.schedule_parse import parse_when
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -15,6 +17,11 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def _valid_email(email: str) -> bool:
     return bool(_EMAIL_RE.match((email or "").strip()))
+
+
+def _needs_connect(needs: set[str], *, linked: set[str]) -> list[str]:
+    """Connectors that must be linked before saving a schedule (web is never gated)."""
+    return [c for c in ("gmail", "drive") if c in needs and c not in linked]
 from handlers.app_builder_panel import (
     build_modal_payload,
     is_panel_button,
@@ -33,7 +40,8 @@ from handlers.app_builder_panel import (
     is_enhance_modal, slug_from_enhance_modal,
     is_app_select,
     is_status_button, slug_from_status_button,
-    build_schedule_modal, build_confirm_components,
+    build_schedule_modal, build_confirm_components, build_connect_components,
+    is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
     is_sched_new, is_sched_list, is_sched_modal,
     is_sched_confirm, token_from_confirm,
@@ -241,6 +249,8 @@ class DiscordCommandHandler:
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_schedule_card(ctx, sid),
                 raw_text=f"schedules card {sid}")
+        if is_connect_resume(custom_id):
+            return await self._handle_connect_resume(payload, custom_id)
         if is_sched_confirm(custom_id):
             return await self._handle_schedule_confirm(payload, custom_id)
         if is_sched_cancel(custom_id):
@@ -570,7 +580,7 @@ class DiscordCommandHandler:
             asyncio.create_task(self.router.run_panel_enhance(ctx, slug, change))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
         if is_sched_modal(custom_id):
-            return self._handle_schedule_modal_submit(payload)
+            return await self._handle_schedule_modal_submit(payload)
         if is_sched_editmodal(custom_id):
             return self._handle_sched_edit_submit(payload, custom_id)
         if is_link_modal(custom_id):
@@ -672,7 +682,7 @@ class DiscordCommandHandler:
         # Ephemeral deferred ACK (flags=64) — only the clicking user sees it.
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
-    def _handle_schedule_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_schedule_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Schedule create modal submit: parse the plain-English 'when', and if
         it's understood, show an ephemeral confirmation card carrying a token.
         No I/O — the schedule is only created once the user clicks Confirm."""
@@ -692,6 +702,38 @@ class DiscordCommandHandler:
         name = f"{human}: {what[:60]}"
         token = uuid.uuid4().hex[:16]
         self._pending_schedules[token] = {"name": name, "cron": cron, "prompt": what}
+        # Gate on connector intent: if the task needs Gmail/Drive and the owner
+        # hasn't connected it, show Connect buttons instead of the confirm card.
+        # The schedule is parked under `token` until they connect + resume. Tasks
+        # with no Gmail/Drive intent skip the gate entirely (no email resolution).
+        needs = connector_intent.detect(what)
+        if needs & {"gmail", "drive"}:
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            owner = await self.router._resolve_email_auto(user.get("id", ""))
+            linked: set[str] = set()
+            if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
+                linked.add("gmail")
+            if "drive" in needs and await connectors.is_connected("drive", owner, base_url=settings.gdrive_url):
+                linked.add("drive")
+            missing = _needs_connect(needs, linked=linked)
+            if missing:
+                links: list[tuple[str, str]] = []
+                if "gmail" in missing:
+                    links.append(("Gmail", connectors.connect_url(
+                        "gmail", owner, public_base=settings.gmail_public_url)))
+                if "drive" in missing:
+                    links.append(("Drive", connectors.connect_url(
+                        "drive", owner, public_base=settings.gdrive_public_url)))
+                return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                    "content": (
+                        f"📅 **{human}** — {what[:150]}\n"
+                        "This task needs access to your account. Connect below (link is valid "
+                        "10 min), then hit **✅ I've connected — create it**."
+                    ),
+                    "components": build_connect_components(token=token, links=links),
+                    "flags": 64,
+                }}
         return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
             "content": f"📅 **{human}** — {what[:200]}\nLook right?",
             "components": build_confirm_components(token),
@@ -699,67 +741,124 @@ class DiscordCommandHandler:
         }}
 
     async def _handle_schedule_confirm(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
-        """Confirm button: create the schedule in the background, delivering its
-        results to a private thread. ACK ephemeral-deferred within 3s."""
+        """Confirm button: create the parked schedule in the background, delivering
+        its results to a private thread. ACK ephemeral-deferred within 3s."""
         try:
             token = token_from_confirm(custom_id)
         except ValueError:
             token = ""
-        pending = self._pending_schedules.pop(token, None)
         interaction_token = payload.get("token", "")
+        asyncio.create_task(
+            self._create_pending_schedule(payload, token, interaction_token)
+        )
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _create_pending_schedule(
+        self, payload: dict[str, Any], token: str, interaction_token: str,
+    ) -> None:
+        """Shared create path for Confirm + 'I've connected' resume: pop the parked
+        schedule, deliver results to the user's private thread (created/reused),
+        create the schedule, and edit the card. Guarantees a terminal follow-up."""
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
         user_id = user.get("id", "")
         user_name = user.get("username", "unknown")
         channel_id = payload.get("channel_id", "")
+        try:
+            pending = self._pending_schedules.pop(token, None)
+            if not pending:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="That schedule request expired — please set it up again.",
+                )
+                return
+            # Results land in a private thread (created/reused) so they stay
+            # visible only to this user. Fall back to the channel if thread
+            # creation fails.
+            target = channel_id
+            thread_id = await self.router.get_user_thread(user_id)
+            if not thread_id:
+                thread_id = await self.discord.create_private_thread(
+                    channel_id, f"schedules-{user_name}"[:90]
+                )
+                if thread_id:
+                    await self.router.set_user_thread(user_id, thread_id)
+            if thread_id:
+                await self.discord.add_thread_member(thread_id, user_id)
+                target = thread_id
+
+            async def respond(msg: str) -> None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=msg,
+                )
+
+            ctx = CommandContext(
+                user_id=user_id, user_name=user_name, channel_id=channel_id,
+                raw_text="schedules create", subcommand="aiuibuilder",
+                arguments="", platform="discord", respond=respond,
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
+            )
+            await self.router.run_schedule_create(
+                ctx, name=pending["name"], cron=pending["cron"],
+                prompt=pending["prompt"], delivery_channel_id=target,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_create_pending_schedule failed user=%s: %s", user_id, exc)
+
+    async def _handle_connect_resume(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """'I've connected — create it' → re-check connection; if satisfied, create
+        the parked schedule. Otherwise tell the user what's still missing."""
+        try:
+            token = token_from_connect_resume(custom_id)
+        except ValueError:
+            token = ""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
 
         async def _do() -> None:
             try:
+                pending = self._pending_schedules.get(token)
                 if not pending:
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
-                        content="That schedule request expired — please set it up again.",
+                        content="That request expired — please set it up again.",
+                        components=[],
                     )
                     return
-                # Results land in a private thread (created/reused) so they stay
-                # visible only to this user. Fall back to the channel if thread
-                # creation fails.
-                target = channel_id
-                thread_id = await self.router.get_user_thread(user_id)
-                if not thread_id:
-                    thread_id = await self.discord.create_private_thread(
-                        channel_id, f"schedules-{user_name}"[:90]
-                    )
-                    if thread_id:
-                        await self.router.set_user_thread(user_id, thread_id)
-                if thread_id:
-                    await self.discord.add_thread_member(thread_id, user_id)
-                    target = thread_id
-
-                async def respond(msg: str) -> None:
+                owner = await self.router._resolve_email_auto(user_id)
+                needs = connector_intent.detect(pending["prompt"])
+                linked: set[str] = set()
+                if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
+                    linked.add("gmail")
+                if "drive" in needs and await connectors.is_connected("drive", owner, base_url=settings.gdrive_url):
+                    linked.add("drive")
+                missing = _needs_connect(needs, linked=linked)
+                if missing:
                     await self.discord.edit_original(
-                        interaction_token=interaction_token, content=msg,
+                        interaction_token=interaction_token,
+                        content=(f"Still not connected: {', '.join(missing)}. "
+                                 "Connect, then tap **✅ I've connected — create it** again."),
                     )
-
-                ctx = CommandContext(
-                    user_id=user_id, user_name=user_name, channel_id=channel_id,
-                    raw_text="schedules create", subcommand="aiuibuilder",
-                    arguments="", platform="discord", respond=respond,
-                    metadata={
-                        "interaction_id": payload.get("id", ""),
-                        "interaction_token": interaction_token,
-                        "guild_id": payload.get("guild_id", ""),
-                    },
-                )
-                await self.router.run_schedule_create(
-                    ctx, name=pending["name"], cron=pending["cron"],
-                    prompt=pending["prompt"], delivery_channel_id=target,
-                )
+                    return
+                await self._create_pending_schedule(payload, token, interaction_token)
             except Exception as exc:  # noqa: BLE001
-                logger.error("_handle_schedule_confirm failed user=%s: %s", user_id, exc)
+                logger.error("_handle_connect_resume failed user=%s: %s", user_id, exc)
+                try:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="⚠️ Something went wrong — please try again.",
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("failed to deliver connect-resume error follow-up")
 
         asyncio.create_task(_do())
-        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+        return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_sched_open(self, payload: dict[str, Any]) -> dict[str, Any]:
         """'Open my schedules' (in #app-builder) → post the dashboard into the

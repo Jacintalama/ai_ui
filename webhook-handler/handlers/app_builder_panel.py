@@ -23,6 +23,9 @@ STYLE_SUCCESS = 3    # green
 STYLE_LINK = 5       # link button (opens a URL; carries `url`, not custom_id)
 STYLE_DANGER = 4     # red (destructive action, e.g. Unpublish)
 
+# Terminal/console-styled embed accent for the channel panels.
+ROBOTIC_CYAN = 0x00E5FF
+
 # Text input styles
 TEXT_PARAGRAPH = 2
 
@@ -341,6 +344,7 @@ SCHED_SELECT_ID = "aiuisched:select"  # dropdown of the user's schedules (value=
 SCHED_MODAL_ID = "aiuisched:modal"    # create modal custom_id (exact match)
 SCHED_CONFIRM_PREFIX = "aiuisched:confirm:"   # confirm:<token>
 SCHED_CANCEL_PREFIX = "aiuisched:cancel:"     # cancel:<token>
+CONNECT_RESUME_PREFIX = "aiuisched:connected:"  # connected:<token> — "I've connected" resume
 SCHED_RUN_PREFIX = "aiuisched:run:"           # run:<schedule_id>
 SCHED_PAUSE_PREFIX = "aiuisched:pause:"       # pause:<schedule_id>
 SCHED_RESUME_PREFIX = "aiuisched:resume:"     # resume:<schedule_id>
@@ -467,6 +471,64 @@ def build_confirm_components(token: str) -> list[dict]:
         _button("✅ Confirm", f"{SCHED_CONFIRM_PREFIX}{token}", STYLE_SUCCESS),
         _button("✖ Cancel", f"{SCHED_CANCEL_PREFIX}{token}", STYLE_SECONDARY),
     ]}]
+
+
+def build_connect_components(*, token: str, links: list[tuple[str, str]]) -> list[dict]:
+    """Connect-when-needed card: one link button per connector to authorize, plus
+    an 'I've connected' resume button carrying the parked-schedule token. Link
+    buttons (style 5) carry a `url`, not a custom_id; ≤5 buttons per action row."""
+    buttons = [
+        {"type": BUTTON, "style": STYLE_LINK, "label": f"🔌 Connect {name}"[:80], "url": url}
+        for name, url in links
+    ]
+    buttons.append(
+        _button("✅ I've connected — create it", f"{CONNECT_RESUME_PREFIX}{token}", STYLE_SUCCESS)
+    )
+    return [{"type": ACTION_ROW, "components": buttons[i:i + 5]} for i in range(0, len(buttons), 5)]
+
+
+def is_connect_resume(custom_id: str) -> bool:
+    return custom_id.startswith(CONNECT_RESUME_PREFIX)
+
+
+def token_from_connect_resume(custom_id: str) -> str:
+    if not is_connect_resume(custom_id):
+        raise ValueError(f"not a connect-resume custom_id: {custom_id!r}")
+    return custom_id[len(CONNECT_RESUME_PREFIX):]
+
+
+def build_panel_embed() -> dict:
+    """Terminal/console-styled embed for the #app-builder channel panel."""
+    return {
+        "title": "🤖 AIUI · APP BUILDER",
+        "color": ROBOTIC_CYAN,
+        "description": (
+            "```\n"
+            "> build unit online\n"
+            "> select a template to deploy\n"
+            "> a private space opens — only you + the bot\n"
+            "> or run  BLANK  for an empty project\n"
+            "```"
+        ),
+        "footer": {"text": "AIUI · automated build unit"},
+    }
+
+
+def build_schedules_embed() -> dict:
+    """Terminal/console-styled embed for the #cron-job channel panel."""
+    return {
+        "title": "⏰ AIUI · SCHEDULER",
+        "color": ROBOTIC_CYAN,
+        "description": (
+            "```\n"
+            "> describe a task in plain english\n"
+            "> set the cycle — e.g. every morning\n"
+            "> times run in Manila · GMT+8\n"
+            "> results -> your private thread\n"
+            "```"
+        ),
+        "footer": {"text": "AIUI · scheduler unit"},
+    }
 
 
 def build_schedule_list(schedules: list[dict]) -> dict:

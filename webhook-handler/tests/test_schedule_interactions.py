@@ -6,8 +6,18 @@ from unittest.mock import AsyncMock, MagicMock
 from handlers.discord_commands import DiscordCommandHandler
 from handlers.app_builder_panel import (
     SCHED_NEW_ID, SCHED_LIST_ID, SCHED_MODAL_ID,
-    SCHED_WHAT_INPUT, SCHED_WHEN_INPUT, SCHED_CONFIRM_PREFIX,
+    SCHED_WHAT_INPUT, SCHED_WHEN_INPUT, SCHED_CONFIRM_PREFIX, CONNECT_RESUME_PREFIX,
 )
+import clients.connectors as _connectors
+
+
+def _sched_submit(what, when, *, token="tok1", channel_id="chan-1", user_id="100"):
+    return {"type": 5, "id": "i", "token": token, "channel_id": channel_id,
+            "member": {"user": {"id": user_id, "username": "alice"}},
+            "data": {"custom_id": SCHED_MODAL_ID, "components": [
+                {"type": 1, "components": [{"type": 4, "custom_id": SCHED_WHAT_INPUT, "value": what}]},
+                {"type": 1, "components": [{"type": 4, "custom_id": SCHED_WHEN_INPUT, "value": when}]},
+            ]}}
 
 
 def _handler(router):
@@ -37,20 +47,29 @@ async def test_new_button_opens_schedule_modal():
 
 
 @pytest.mark.asyncio
-async def test_modal_submit_parseable_shows_confirm_card():
-    handler = _handler(MagicMock())
-    submit = {"type": 5, "id": "i", "token": "tok1", "channel_id": "chan-1",
-              "member": {"user": {"id": "100", "username": "alice"}},
-              "data": {"custom_id": SCHED_MODAL_ID, "components": [
-                  {"type": 1, "components": [{"type": 4, "custom_id": SCHED_WHAT_INPUT, "value": "summarize emails"}]},
-                  {"type": 1, "components": [{"type": 4, "custom_id": SCHED_WHEN_INPUT, "value": "every morning"}]},
-              ]}}
-    resp = await handler.handle_interaction(submit)
+async def test_modal_submit_parseable_shows_confirm_card(monkeypatch):
+    # Gmail intent ("emails") but the user is already connected -> confirm card.
+    monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=True))
+    router = MagicMock()
+    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
+    handler = _handler(router)
+    resp = await handler.handle_interaction(_sched_submit("summarize emails", "every morning"))
     assert resp["type"] == 4  # CHANNEL_MESSAGE_WITH_SOURCE
     assert resp["data"]["flags"] == 64  # ephemeral
     buttons = [b for row in resp["data"]["components"] for b in row["components"]]
     assert any(b["custom_id"].startswith(SCHED_CONFIRM_PREFIX) for b in buttons)
     assert "8:00 AM" in resp["data"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_modal_submit_no_connector_intent_skips_gate():
+    # No Gmail/Drive intent -> the connector gate never runs (no email resolution).
+    router = MagicMock()  # _resolve_email_auto deliberately NOT provided
+    handler = _handler(router)
+    resp = await handler.handle_interaction(_sched_submit("write my focus list", "every morning"))
+    assert resp["type"] == 4
+    buttons = [b for row in resp["data"]["components"] for b in row["components"]]
+    assert any(b["custom_id"].startswith(SCHED_CONFIRM_PREFIX) for b in buttons)
 
 
 @pytest.mark.asyncio
@@ -68,7 +87,8 @@ async def test_modal_submit_unparseable_when_errors_no_card():
 
 
 @pytest.mark.asyncio
-async def test_confirm_creates_schedule_with_thread_delivery():
+async def test_confirm_creates_schedule_with_thread_delivery(monkeypatch):
+    monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=True))
     captured = {}
 
     async def fake_create(ctx, *, name, cron, prompt, delivery_channel_id=None):
@@ -78,15 +98,10 @@ async def test_confirm_creates_schedule_with_thread_delivery():
     router.run_schedule_create = fake_create
     router.get_user_thread = AsyncMock(return_value=None)
     router.set_user_thread = AsyncMock(return_value=True)
+    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
     handler = _handler(router)
 
-    submit = {"type": 5, "id": "i", "token": "tok1", "channel_id": "chan-1",
-              "member": {"user": {"id": "100", "username": "alice"}},
-              "data": {"custom_id": SCHED_MODAL_ID, "components": [
-                  {"type": 1, "components": [{"type": 4, "custom_id": SCHED_WHAT_INPUT, "value": "summarize emails"}]},
-                  {"type": 1, "components": [{"type": 4, "custom_id": SCHED_WHEN_INPUT, "value": "every morning"}]},
-              ]}}
-    card = await handler.handle_interaction(submit)
+    card = await handler.handle_interaction(_sched_submit("summarize emails", "every morning"))
     confirm_id = next(
         b["custom_id"] for row in card["data"]["components"]
         for b in row["components"] if b["custom_id"].startswith(SCHED_CONFIRM_PREFIX)
@@ -151,3 +166,50 @@ async def test_action_button_acks_and_routes(prefix, action):
     assert resp["type"] == 5 and resp["data"]["flags"] == 64
     await _drain()
     assert calls == [(action, "sid-7", "100")]
+
+
+@pytest.mark.asyncio
+async def test_modal_submit_gmail_unconnected_shows_connect_card(monkeypatch):
+    # Gmail intent + not connected -> Connect card (link button + 'I've connected'),
+    # NOT the confirm card. The schedule is parked until the user connects.
+    monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=False))
+    router = MagicMock()
+    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
+    handler = _handler(router)
+    resp = await handler.handle_interaction(_sched_submit("summarize my emails", "every morning"))
+    assert resp["type"] == 4 and resp["data"]["flags"] == 64
+    buttons = [b for row in resp["data"]["components"] for b in row["components"]]
+    assert not any(b.get("custom_id", "").startswith(SCHED_CONFIRM_PREFIX) for b in buttons)
+    assert any(b.get("custom_id", "").startswith(CONNECT_RESUME_PREFIX) for b in buttons)
+    assert any(b.get("style") == 5 and "url" in b for b in buttons)  # a Connect link button
+
+
+@pytest.mark.asyncio
+async def test_connect_resume_creates_after_connecting(monkeypatch):
+    captured = {}
+
+    async def fake_create(ctx, *, name, cron, prompt, delivery_channel_id=None):
+        captured.update(cron=cron, prompt=prompt, delivery=delivery_channel_id)
+    router = MagicMock()
+    router.run_schedule_create = fake_create
+    router.get_user_thread = AsyncMock(return_value=None)
+    router.set_user_thread = AsyncMock(return_value=True)
+    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
+    handler = _handler(router)
+
+    # 1) Not connected yet -> connect card, schedule parked under a token.
+    monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=False))
+    card = await handler.handle_interaction(_sched_submit("summarize my emails", "every morning"))
+    resume_id = next(
+        b["custom_id"] for row in card["data"]["components"]
+        for b in row["components"] if b.get("custom_id", "").startswith(CONNECT_RESUME_PREFIX)
+    )
+
+    # 2) Now connected -> 'I've connected' resume creates the parked schedule.
+    monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=True))
+    resp = await handler.handle_interaction(_component(resume_id))
+    assert resp["type"] == 6  # DEFERRED_UPDATE_MESSAGE
+    await _drain()
+    assert captured["cron"] == "0 8 * * *"
+    assert captured["prompt"] == "summarize my emails"
+    assert captured["delivery"] == "thread-9"

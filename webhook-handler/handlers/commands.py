@@ -1749,6 +1749,12 @@ class CommandRouter:
                 return None
         return await self._resolve_email(ctx.user_id)
 
+    async def _resolve_email_auto(self, discord_id: str) -> str:
+        """Identity for the schedule/connector flow, which is open to anyone who
+        can see the channel: a real email when mapped/linked (so connector-backed
+        tasks keep working), else a stable synthetic identity — no linking step."""
+        return await self._resolve_email(discord_id) or f"discord-{discord_id}@aiui.local"
+
     @staticmethod
     def _not_linked_text(ctx: CommandContext) -> str:
         """The 'no email' message, worded for the caller's platform."""
