@@ -52,6 +52,7 @@ from handlers.app_builder_panel import (
     is_sched_open, is_sched_select,
     is_template_select,
 )
+from handlers import cronjob_panel as cron
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,9 @@ DEFERRED_CHANNEL_MESSAGE = 5
 DEFERRED_UPDATE_MESSAGE = 6
 UPDATE_MESSAGE = 7  # edit the component message in place (used for Cancel)
 MODAL = 9
+CHANNEL_MESSAGE = 4        # CHANNEL_MESSAGE_WITH_SOURCE — new (ephemeral) message
+UPDATE_MESSAGE = 7         # edit the message the component is attached to
+EPHEMERAL = 64             # message flag
 
 
 class DiscordCommandHandler:
@@ -180,10 +184,10 @@ class DiscordCommandHandler:
         async def notify_channel(msg: str) -> None:
             await self.discord.post_channel_message(channel_id, msg)
 
-        async def notify_channel_rich(msg: str, slug: str, preview_url: str) -> None:
+        async def notify_channel_rich(msg: str, slug: str, preview_url: str, owner: str) -> None:
             await self.discord.post_channel_message(
                 channel_id, "", embeds=[build_ready_embed(slug, preview_url, msg)],
-                components=build_ready_components(slug, preview_url),
+                components=build_ready_components(slug, preview_url, owner=owner),
             )
         return notify_channel, notify_channel_rich
 
@@ -193,6 +197,8 @@ class DiscordCommandHandler:
         other component is a harmless no-op (never a 500)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if cron.is_cron(custom_id):
+            return await self._handle_cron_component(payload, custom_id)
         # All aiuibuild:* component ids are routed by their distinct second
         # segment (enhance/unpublish/publish/appselect/status/tpl), so check
         # order doesn't matter — but any NEW prefix added here must stay disjoint.
@@ -376,6 +382,108 @@ class DiscordCommandHandler:
             payload, lambda ctx: self.router.run_panel_menu(ctx, slug),
             raw_text=f"aiuibuilder menu {slug}")
 
+    async def _handle_cron_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        values = data.get("values") or []
+
+        if cron.is_new(custom_id):
+            return self._ephemeral_components(
+                "How often should it run?", cron.build_frequency_components(), update=False)
+
+        if cron.is_freq_button(custom_id):
+            freq = cron.freq_from_button(custom_id)
+            if freq == "hourly":
+                return {"type": MODAL, "data": cron.build_create_modal("0 * * * *")}
+            if freq == "custom":
+                return {"type": MODAL, "data": cron.build_custom_cron_modal()}
+            if freq == "weekly":
+                return self._ephemeral_components(
+                    "Which day?", cron.build_dow_select(), update=True)
+            return self._ephemeral_components(
+                "At what time? (Asia/Manila)", cron.build_hour_select(freq), update=True)
+
+        if cron.is_dow_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return self._ephemeral_components(
+                "At what time? (Asia/Manila)",
+                cron.build_hour_select("weekly", dow=values[0]), update=True)
+
+        if cron.is_hour_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            try:
+                freq, dow = cron.hour_context_from_select(custom_id)
+                cron_expr = cron.cron_from_choice(freq, hour=int(values[0]), dow=dow)
+            except ValueError:
+                logger.info(f"Ignoring malformed cron hour custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": cron.build_create_modal(cron_expr)}
+
+        return await self._handle_cron_manage_component(payload, custom_id)
+
+    async def _handle_cron_manage_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        values = data.get("values") or []
+
+        if cron.is_list(custom_id):
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_list(ctx),
+                raw_text="cronjob list")
+
+        if cron.is_schedule_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            sid = values[0]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_menu(ctx, sid),
+                raw_text=f"cronjob menu {sid}")
+
+        if cron.is_action(custom_id, "runnow"):
+            sid = cron.id_from_action(custom_id, "runnow")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_runnow(ctx, sid),
+                raw_text="cronjob runnow")
+
+        if cron.is_action(custom_id, "pause"):
+            sid = cron.id_from_action(custom_id, "pause")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_pause(ctx, sid),
+                raw_text="cronjob pause")
+
+        if cron.is_action(custom_id, "resume"):
+            sid = cron.id_from_action(custom_id, "resume")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_resume(ctx, sid),
+                raw_text="cronjob resume")
+
+        if cron.is_action(custom_id, "delete"):
+            sid = cron.id_from_action(custom_id, "delete")
+            return self._ephemeral_components(
+                "Delete this schedule? This can't be undone.",
+                cron.build_delete_confirm(sid), update=True)
+
+        if cron.is_action(custom_id, "delconfirm"):
+            sid = cron.id_from_action(custom_id, "delconfirm")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_delete(ctx, sid),
+                raw_text="cronjob delete")
+
+        if custom_id == cron.DELCANCEL:
+            return self._ephemeral_components("Cancelled.", [], update=True)
+
+        logger.info(f"Ignoring unknown cron custom_id: {custom_id}")
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    @staticmethod
+    def _ephemeral_components(content: str, components: list[dict], *, update: bool) -> dict[str, Any]:
+        """Synchronous component response. update=True edits the current (ephemeral)
+        message (type 7); update=False posts a new ephemeral message (type 4)."""
+        return {
+            "type": UPDATE_MESSAGE if update else CHANNEL_MESSAGE,
+            "data": {"content": content, "components": components, "flags": EPHEMERAL},
+        }
+
     async def _handle_panel_route(
         self, payload: dict[str, Any], run: Callable[[CommandContext], Awaitable[None]],
         *, raw_text: str = "aiuibuilder menu",
@@ -422,6 +530,8 @@ class DiscordCommandHandler:
         deferred pattern (the watcher posts the link via the bot token later)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if cron.is_create_modal(custom_id) or cron.is_custom_cron_modal(custom_id):
+            return await self._handle_cron_modal_submit(payload, custom_id)
         if is_enhance_modal(custom_id):
             try:
                 slug = slug_from_enhance_modal(custom_id)
@@ -469,6 +579,32 @@ class DiscordCommandHandler:
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
         return await self._handle_build_modal_submit(payload, custom_id)
+
+    async def _handle_cron_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        name = self._extract_modal_value(data, "name") or ""
+        prompt = self._extract_modal_value(data, "prompt") or ""
+        if cron.is_custom_cron_modal(custom_id):
+            cron_expr = (self._extract_modal_value(data, "cron") or "").strip()
+        else:
+            cron_expr = cron.cron_from_create_modal(custom_id)
+
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="cronjob create",
+            subcommand="cronjob", arguments="", platform="discord",
+            respond=respond,
+        )
+        asyncio.create_task(
+            self.router.run_cron_create(ctx, cron_expr=cron_expr, name=name, prompt=prompt))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": EPHEMERAL}}
 
     async def _handle_build_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """Build-template modal submit. Open a PRIVATE THREAD for the user, post

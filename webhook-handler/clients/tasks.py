@@ -108,6 +108,24 @@ class TasksClient:
         await self._request("POST", f"/schedules/{schedule_id}/run-now", user_email)
         return True
 
+    async def enable_schedule(self, user_email: str, schedule_id: str) -> dict[str, Any]:
+        resp = await self._request(
+            "POST", f"/schedules/{schedule_id}/enable", user_email,
+        )
+        return resp.json()
+
+    async def disable_schedule(self, user_email: str, schedule_id: str) -> dict[str, Any]:
+        resp = await self._request(
+            "POST", f"/schedules/{schedule_id}/disable", user_email,
+        )
+        return resp.json()
+
+    async def run_now_schedule(self, user_email: str, schedule_id: str) -> dict[str, Any]:
+        resp = await self._request(
+            "POST", f"/schedules/{schedule_id}/run-now", user_email,
+        )
+        return resp.json()
+
     async def update_schedule(
         self, user_email: str, schedule_id: str, *,
         name: str | None = None, cron: str | None = None, prompt: str | None = None,

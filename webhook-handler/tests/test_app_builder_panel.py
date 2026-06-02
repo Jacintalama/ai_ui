@@ -74,7 +74,8 @@ def test_parser_raises_on_wrong_prefix():
 
 
 def test_ready_components_has_publish_and_preview():
-    rows = build_ready_components("portfolio-ab12", "https://x/preview/portfolio-ab12/")
+    rows = build_ready_components("portfolio-ab12", "https://x/preview/portfolio-ab12/",
+                                  owner="alice@example.com")
     assert rows[0]["type"] == ACTION_ROW
     btns = rows[0]["components"]
     pub = btns[0]
@@ -89,14 +90,19 @@ def test_ready_components_has_publish_and_preview():
     assert link["style"] == STYLE_LINK
     assert link["url"] == "https://x/preview/portfolio-ab12/"
     assert "custom_id" not in link  # link buttons must not carry a custom_id
+    # Visual-edit link button is appended last
+    assert any("Visual edit" in b.get("label", "") for b in btns)
 
 
 def test_ready_components_without_preview_has_publish_and_enhance():
-    rows = build_ready_components("slug-1", "")
+    rows = build_ready_components("slug-1", "", owner="alice@example.com")
     btns = rows[0]["components"]
-    assert len(btns) == 2
+    # Publish + Enhance + Visual edit (no preview link without a preview_url)
+    assert len(btns) == 3
     assert btns[0]["custom_id"] == f"{PUBLISH_PREFIX}slug-1"
     assert btns[1]["custom_id"] == f"{ENHANCE_PREFIX}slug-1"
+    assert btns[2]["style"] == STYLE_LINK
+    assert "Visual edit" in btns[2]["label"]
 
 
 def test_publish_button_parsers():

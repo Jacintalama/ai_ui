@@ -13,6 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from db import init_db  # noqa: E402
 
+# Ensure tests that don't touch the DB can be collected without DATABASE_URL set.
+# The dummy DSN is only read at import time; the db_session fixture still needs
+# a real DATABASE_URL in env (CI sets it) because that's when a connection is opened.
+os.environ.setdefault("DATABASE_URL", "postgresql://nobody@nowhere/nobody")
+
 # Use the same DB as the running app — DATABASE_URL is set in the container env.
 RAW_DB_URL = os.environ["DATABASE_URL"]
 SQLA_DB_URL = RAW_DB_URL.replace("postgresql://", "postgresql+asyncpg://")

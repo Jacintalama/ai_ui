@@ -136,9 +136,14 @@ UNPUBLISH_PREFIX = "aiuibuild:unpublish:"
 ENHANCE_MODAL_PREFIX = "aiuibuild:enhancemodal:"
 
 
-def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
+def build_ready_components(slug: str, preview_url: str = "", *, owner: str) -> list[dict]:
     """Action row for the build-ready message: green Publish + blurple Enhance,
-    plus an 'Open preview' link button when preview_url is set."""
+    plus an 'Open preview' link button when preview_url is set, plus a
+    'Visual edit' link button that deep-links into the tasks editor with a
+    slug-bound signed token."""
+    from config import settings  # local import — avoid top-level cycle
+    from handlers.visual_edit_token import sign_edit_token
+
     buttons: list[dict] = [
         _button("\U0001f7e2 Publish", f"{PUBLISH_PREFIX}{slug}", STYLE_SUCCESS),
         _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
@@ -146,6 +151,13 @@ def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
     if preview_url:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
                         "label": "\U0001f517 Open preview", "url": preview_url})
+
+    token = sign_edit_token(slug, owner)
+    edit_url = (
+        f"{settings.tasks_public_url.rstrip('/')}/tasks/edit/{slug}?token={token}"
+    )
+    buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                    "label": "Visual edit", "url": edit_url})
     return [{"type": ACTION_ROW, "components": buttons}]
 
 
