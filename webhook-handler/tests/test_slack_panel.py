@@ -58,6 +58,20 @@ def test_panel_blank_button_present():
     assert BLANK_ACTION_ID in blank_ids
 
 
+def test_panel_options_carry_description():
+    # Each template's one-line description appears under the option so users
+    # understand what the template builds.
+    tpls = [{"key": "landing", "label": "Landing page", "description": "marketing / product page"},
+            {"key": "blank2", "label": "No-desc"}]  # missing description tolerated
+    selects = _static_selects(build_panel_blocks(tpls))
+    by_value = {o["value"]: o for o in selects[0]["options"]}
+    landing = by_value[f"{TEMPLATE_PREFIX}landing"]
+    assert landing["description"]["type"] == "plain_text"
+    assert landing["description"]["text"] == "marketing / product page"
+    # An option with no description simply omits the field (no crash).
+    assert "description" not in by_value[f"{TEMPLATE_PREFIX}blank2"]
+
+
 def test_panel_skips_keyless_rows():
     blocks = build_panel_blocks(
         [{"label": "no key", "emoji": "x"}, {"key": "ok", "label": "OK", "emoji": "y"}]

@@ -79,8 +79,14 @@ def build_panel_blocks(templates: list[dict]) -> list[dict]:
         if not key:
             continue
         label = (t.get("label") or key)[:_OPT_TEXT_MAX]
-        options.append({"text": {"type": "plain_text", "text": label},
-                        "value": f"{TEMPLATE_PREFIX}{key}"})
+        opt = {"text": {"type": "plain_text", "text": label},
+               "value": f"{TEMPLATE_PREFIX}{key}"}
+        # A short second line so any user understands what the template builds
+        # (e.g. "marketing / product page"). Slack caps option descriptions at 75.
+        desc = (t.get("description") or "").strip()
+        if desc:
+            opt["description"] = {"type": "plain_text", "text": desc[:_OPT_TEXT_MAX]}
+        options.append(opt)
     select = {
         "type": "static_select",
         "action_id": TEMPLATE_SELECT_ACTION_ID,
