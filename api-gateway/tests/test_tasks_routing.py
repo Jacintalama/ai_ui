@@ -1,0 +1,57 @@
+"""The gateway must route public /tasks/* paths (preview-app, static) to the
+Tasks service. Without this they fall through to Open WebUI, whose SPA then
+renders "404: Not Found" for built-app preview links.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from fastapi import Response  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+
+def _client_capturing(monkeypatch):
+    import main
+    captured = {}
+
+    async def fake_forward(request, backend_url, backend_path, extra_headers):
+        captured["url"] = backend_url
+        captured["path"] = backend_path
+        return Response(content=b"ok", status_code=200)
+
+    monkeypatch.setattr(main, "forward_request", fake_forward)
+    return TestClient(main.app, raise_server_exceptions=False), captured
+
+
+def test_tasks_preview_app_routes_to_tasks_service(monkeypatch):
+    client, captured = _client_capturing(monkeypatch)
+    r = client.get("/tasks/preview-app/chicken-joy-afa6/")
+    assert r.status_code == 200
+    assert "tasks" in captured["url"]
+    assert "open-webui" not in captured["url"]
+    # Path is forwarded intact — the tasks service mounts these WITH the /tasks prefix.
+    assert captured["path"] == "/tasks/preview-app/chicken-joy-afa6/"
+
+
+def test_tasks_static_routes_to_tasks_service(monkeypatch):
+    client, captured = _client_capturing(monkeypatch)
+    r = client.get("/tasks/static/app.css")
+    assert r.status_code == 200
+    assert "tasks" in captured["url"]
+
+
+def test_non_tasks_path_still_routes_to_open_webui(monkeypatch):
+    """Regression: ordinary paths must still reach Open WebUI."""
+    client, captured = _client_capturing(monkeypatch)
+    r = client.get("/some/webui/page")
+    assert r.status_code == 200
+    assert "open-webui" in captured["url"]
+
+
+def test_api_tasks_still_routes_to_tasks_service(monkeypatch):
+    """Regression: the existing /api/tasks route is unaffected."""
+    client, captured = _client_capturing(monkeypatch)
+    r = client.get("/api/tasks/whatever")
+    assert r.status_code == 200
+    assert "tasks" in captured["url"]
