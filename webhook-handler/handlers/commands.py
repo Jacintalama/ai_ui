@@ -121,7 +121,10 @@ class CommandRouter:
                 if discord_user_email_map is not None
                 else dict(settings.discord_user_email_map)
             )
-            self._tasks_client = tasks_client or TasksClient(base_url=settings.tasks_url)
+            self._tasks_client = tasks_client or TasksClient(
+                base_url=settings.tasks_url,
+                internal_secret=settings.internal_callback_secret,
+            )
         else:
             self._discord_user_email_map = dict(discord_user_email_map)
             self._tasks_client = tasks_client
