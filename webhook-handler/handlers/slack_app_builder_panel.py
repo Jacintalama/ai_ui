@@ -46,6 +46,40 @@ PANEL_TEXT = (
     "and I'll build it in a private DM with you. Or choose Blank to start from scratch."
 )
 
+# Plain-language descriptions shown under each template in the dropdown, so any
+# user (non-technical included) understands what they're picking. Keyed by the
+# catalog `key`; falls back to the catalog's own description for unknown keys.
+# Kept <= 75 chars (Slack's option-description limit).
+FRIENDLY_DESCRIPTIONS = {
+    "landing": "A one-page site to promote a product or service",
+    "dashboard": "Charts and key numbers at a glance",
+    "crud": "Add, edit, and keep track of a list of records",
+    "crm": "Track contacts, leads, and deals",
+    "portfolio": "Show off your work or personal profile",
+    "docs": "A documentation or help site",
+    "ecommerce": "An online store with a product catalog and cart",
+    "booking": "Let people book appointments or time slots",
+    "chat": "A real-time messaging app",
+    "auth": "An app with login and members-only pages",
+    "blog": "Publish articles and blog posts",
+    "invoice": "Create, edit, and print invoices or quotes",
+    "project-tracker": "Track tasks on a board with stages and a timeline",
+    "ai-chatbot": "An AI assistant that answers from your own docs",
+    "expense-tracker": "Track spending by category against budgets",
+    "form-builder": "Build forms by drag-and-drop and collect responses",
+    "social-feed": "A mini social network: posts, likes, and follows",
+    "flight-booking": "Search flights and walk through booking",
+    "food-delivery": "Browse restaurants and order food to a cart",
+    "job-board": "Post jobs, or search and apply for them",
+    "movie-tickets": "Pick cinema seats and check out tickets",
+    "recipe-site": "Browse recipes with a step-by-step cook mode",
+    "agency": "A bold marketing site for a studio or agency",
+    "restaurant": "A site for a restaurant or cafe (menu, hours)",
+    "photography": "A photo portfolio for a photographer",
+    "event": "A site for a conference, festival, or event",
+    "real-estate": "Browse property listings for sale or rent",
+}
+
 
 def _button(text: str, action_id: str, *, primary: bool = False) -> dict:
     btn = {
@@ -81,9 +115,10 @@ def build_panel_blocks(templates: list[dict]) -> list[dict]:
         label = (t.get("label") or key)[:_OPT_TEXT_MAX]
         opt = {"text": {"type": "plain_text", "text": label},
                "value": f"{TEMPLATE_PREFIX}{key}"}
-        # A short second line so any user understands what the template builds
-        # (e.g. "marketing / product page"). Slack caps option descriptions at 75.
-        desc = (t.get("description") or "").strip()
+        # A short second line so any user understands what the template builds.
+        # Prefer the plain-language override; fall back to the catalog's own
+        # description. Slack caps option descriptions at 75 chars.
+        desc = (FRIENDLY_DESCRIPTIONS.get(key) or t.get("description") or "").strip()
         if desc:
             opt["description"] = {"type": "plain_text", "text": desc[:_OPT_TEXT_MAX]}
         options.append(opt)

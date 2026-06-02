@@ -5,7 +5,7 @@ from handlers.slack_app_builder_panel import (
     is_panel_button, is_panel_modal,
     template_key_from_button, template_key_from_modal,
     TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_BLOCK_ID, DESCRIPTION_INPUT_ID,
-    TEMPLATE_SELECT_ACTION_ID, BLANK_ACTION_ID,
+    TEMPLATE_SELECT_ACTION_ID, BLANK_ACTION_ID, FRIENDLY_DESCRIPTIONS,
     # B5
     PUBLISH_PREFIX, ENHANCE_PREFIX, ENHANCE_MODAL_PREFIX,
     UNPUBLISH_PREFIX, STATUS_PREFIX,
@@ -61,15 +61,27 @@ def test_panel_blank_button_present():
 def test_panel_options_carry_description():
     # Each template's one-line description appears under the option so users
     # understand what the template builds.
-    tpls = [{"key": "landing", "label": "Landing page", "description": "marketing / product page"},
-            {"key": "blank2", "label": "No-desc"}]  # missing description tolerated
+    tpls = [
+        {"key": "landing", "label": "Landing page", "description": "marketing / product page"},
+        {"key": "weird-key", "label": "Weird", "description": "catalog only"},  # not in override map
+        {"key": "blank2", "label": "No-desc"},  # no description anywhere
+    ]
     selects = _static_selects(build_panel_blocks(tpls))
     by_value = {o["value"]: o for o in selects[0]["options"]}
+    # A known template uses the plain-language override, not the terse catalog text.
     landing = by_value[f"{TEMPLATE_PREFIX}landing"]
     assert landing["description"]["type"] == "plain_text"
-    assert landing["description"]["text"] == "marketing / product page"
-    # An option with no description simply omits the field (no crash).
+    assert landing["description"]["text"] == FRIENDLY_DESCRIPTIONS["landing"]
+    assert landing["description"]["text"] != "marketing / product page"
+    # An unknown key falls back to the catalog's own description.
+    assert by_value[f"{TEMPLATE_PREFIX}weird-key"]["description"]["text"] == "catalog only"
+    # No description anywhere -> field omitted (no crash).
     assert "description" not in by_value[f"{TEMPLATE_PREFIX}blank2"]
+
+
+def test_friendly_descriptions_within_slack_limit():
+    # Slack caps option descriptions at 75 chars.
+    assert all(len(v) <= 75 for v in FRIENDLY_DESCRIPTIONS.values())
 
 
 def test_panel_skips_keyless_rows():
