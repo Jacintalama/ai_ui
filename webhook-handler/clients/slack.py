@@ -188,12 +188,55 @@ class SlackClient:
             logger.error(f"Error opening Slack DM: {e}")
             return None
 
+    async def post_ephemeral(
+        self,
+        channel: str,
+        user: str,
+        text: str,
+        *,
+        blocks=None,
+    ) -> bool:
+        """Post an ephemeral message visible only to a specific user.
+
+        Args:
+            channel: Channel ID where the ephemeral appears
+            user: User ID who sees the message
+            text: Message text
+            blocks: Optional Block Kit blocks list (keyword-only)
+
+        Returns:
+            True if successful, False on error. Never raises.
+        """
+        url = f"{self.base_url}/chat.postEphemeral"
+        headers = {
+            "Authorization": f"Bearer {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        payload: dict = {"channel": channel, "user": user, "text": text}
+        if blocks is not None:
+            payload["blocks"] = blocks
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                data = (
+                    await client.post(url, json=payload, headers=headers)
+                ).json()
+            if data.get("ok"):
+                logger.info(f"Posted ephemeral to {channel} for {user}")
+                return True
+            logger.error(f"Slack chat.postEphemeral error: {data.get('error')}")
+            return False
+        except Exception as e:
+            logger.error(f"Error posting Slack ephemeral: {e}")
+            return False
+
     async def post_to_response_url(
         self,
         response_url: str,
         text: str,
         response_type: str = "ephemeral",
         replace_original: bool = False,
+        *,
+        blocks=None,
     ) -> bool:
         """
         Post to a Slack response_url (slash command / interaction callback).
@@ -205,6 +248,7 @@ class SlackClient:
             text: Message text
             response_type: "ephemeral" (visible to invoker) or "in_channel"
             replace_original: Whether to replace the original message
+            blocks: Optional Block Kit blocks list (keyword-only)
 
         Returns:
             True if successful
@@ -214,6 +258,8 @@ class SlackClient:
             "response_type": response_type,
             "replace_original": replace_original,
         }
+        if blocks is not None:
+            payload["blocks"] = blocks
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
