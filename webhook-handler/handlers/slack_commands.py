@@ -74,22 +74,11 @@ class SlackCommandHandler:
         # router's Discord-oriented text path.
         if subcommand == "aiuibuilder" and (arguments or "").strip().split()[:1] == ["list"]:
             async def _render_list() -> None:
-                ctx_min = CommandContext(
-                    user_id=user_id,
-                    user_name=user_name,
-                    channel_id=channel_id,
-                    raw_text=text,
-                    subcommand="aiuibuilder",
-                    arguments=arguments,
-                    platform="slack",
-                    respond=respond,
-                    metadata={},
-                )
-                email = await self.router._resolve_email_for_ctx(ctx_min)
+                email = await self.router._resolve_email_for_ctx(ctx)
                 if not email:
                     await self.slack.post_to_response_url(
                         response_url,
-                        self.router._not_linked_text(ctx_min),
+                        self.router._not_linked_text(ctx),
                         response_type="ephemeral",
                     )
                     return
@@ -110,7 +99,9 @@ class SlackCommandHandler:
                     blocks=build_apps_list_blocks(apps),
                 )
 
-            asyncio.create_task(_render_list())
+            task = asyncio.create_task(_render_list())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
             return {"response_type": "ephemeral", "text": "Fetching your apps..."}
 
         # Fire-and-forget: process in background, respond via response_url

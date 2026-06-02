@@ -1,7 +1,7 @@
 """Slack slash handler wires notify_channel so builds post the link to channel."""
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 from handlers.slack_commands import SlackCommandHandler
 from handlers.commands import CommandRouter
@@ -27,6 +27,7 @@ def _list_router() -> MagicMock:
         return_value=[{"slug": "app1", "published": True}]
     )
     router._not_linked_text = MagicMock(return_value="not linked")
+    router._background_tasks = set()
     return router
 
 
@@ -150,3 +151,29 @@ async def test_other_subcommand_still_uses_router_execute():
     router.execute.assert_awaited_once()
     # list_projects must NOT have been called (this is not the list path)
     router._tasks_client.list_projects.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_aiuibuilder_list_fetch_error_posts_message():
+    """list path: when list_projects raises, post error text without blocks."""
+    router = _list_router()
+    router._tasks_client.list_projects = AsyncMock(side_effect=Exception("boom"))
+    handler, slack, _ = _handler(router=router)
+    form = {
+        "command": "/aiui",
+        "text": "aiuibuilder list",
+        "user_id": "U1",
+        "user_name": "maya",
+        "channel_id": "C1",
+        "response_url": "https://hooks/x",
+        "team_id": "T1",
+    }
+    await handler.handle_command(form)
+    await asyncio.sleep(0)
+    slack.post_to_response_url.assert_awaited_once()
+    call_kwargs = slack.post_to_response_url.call_args.kwargs
+    assert "blocks" not in call_kwargs, "Error response must not include blocks"
+    call_args = slack.post_to_response_url.call_args.args
+    # Error text appears as positional arg or in kwargs
+    posted_text = call_args[1] if len(call_args) > 1 else call_kwargs.get("text", "")
+    assert "Couldn't fetch your apps" in posted_text
