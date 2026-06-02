@@ -10,14 +10,27 @@ import logging
 from typing import Any, Optional
 
 from clients.slack import SlackClient
+from clients.tasks import TasksAPIError
 from handlers.commands import CommandRouter, CommandContext
 from handlers.slack_app_builder_panel import (
     TEMPLATE_SELECT_ACTION_ID,
+    PUBLISH_PREFIX,
+    UNPUBLISH_PREFIX,
+    STATUS_PREFIX,
+    ENHANCE_PREFIX,
+    ENHANCE_MODAL_PREFIX,
     build_modal_view,
     build_ready_attachment,
+    build_published_attachment,
+    build_enhance_modal_view,
     description_from_view,
+    enhance_text_from_view,
+    is_action,
+    is_enhance_modal,
     is_panel_button,
     is_panel_modal,
+    slug_from_action,
+    slug_from_enhance_modal,
     template_key_from_button,
     template_key_from_modal,
 )
@@ -70,8 +83,44 @@ class SlackInteractionsHandler:
             await self.slack.open_modal(trigger_id, view)
             return {}
 
+        for prefix, handler in (
+            (PUBLISH_PREFIX, self._do_publish),
+            (UNPUBLISH_PREFIX, self._do_unpublish),
+            (STATUS_PREFIX, self._do_status),
+            (ENHANCE_PREFIX, self._do_open_enhance),
+        ):
+            if is_action(action_id, prefix):
+                slug = slug_from_action(action_id, prefix)
+                if prefix == ENHANCE_PREFIX:
+                    await handler(payload, slug)
+                else:
+                    task = asyncio.create_task(handler(payload, slug))
+                    self.router._background_tasks.add(task)
+                    task.add_done_callback(self.router._background_tasks.discard)
+                return {}
+
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
         return {}
+
+    def _slack_ctx(self, user_id: str, user_name: str = "user") -> CommandContext:
+        """Minimal context just for email resolution / not-linked messaging."""
+        async def _noop(_: str) -> None:
+            ...
+
+        return CommandContext(
+            user_id=user_id,
+            user_name=user_name,
+            channel_id="",
+            raw_text="",
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="slack",
+            respond=_noop,
+            metadata={},
+        )
+
+    async def _email_for(self, user_id: str) -> Optional[str]:
+        return await self.router._resolve_email_for_ctx(self._slack_ctx(user_id))
 
     def _dm_context(
         self,
@@ -178,5 +227,162 @@ class SlackInteractionsHandler:
             task.add_done_callback(self.router._background_tasks.discard)
             return {}  # empty 200 closes the modal
 
+        if is_enhance_modal(callback_id):
+            slug = slug_from_enhance_modal(callback_id)
+            prompt = enhance_text_from_view(view)
+
+            async def _start_enhance() -> None:
+                try:
+                    email = await self._email_for(user_id)
+                    if not email:
+                        dm = await self.slack.open_dm(user_id)
+                        if dm:
+                            await self.slack.post_message(
+                                channel=dm,
+                                text=self.router._not_linked_text(self._slack_ctx(user_id)),
+                            )
+                        return
+                    dm = await self.slack.open_dm(user_id)
+                    if dm:
+                        await self.slack.post_message(
+                            channel=dm, text=f"Enhancing {slug}..."
+                        )
+                    ctx = self._dm_context(
+                        payload,
+                        dm_id=dm,
+                        origin_channel="",
+                        user_id=user_id,
+                        user_name=user_name,
+                        subcommand="aiuibuilder",
+                        raw_text=f"aiuibuilder enhance {slug}",
+                    )
+                    await self.router.run_panel_enhance(ctx, slug, prompt)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Slack enhance _start_enhance failed user=%s: %s", user_id, exc)
+
+            task = asyncio.create_task(_start_enhance())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
         logger.info(f"Ignoring unknown Slack callback_id: {callback_id}")
         return {}
+
+    # ------------------------------------------------------------------
+    # D10 — Publish / Unpublish management handlers
+    # ------------------------------------------------------------------
+
+    async def _do_publish(self, payload: dict[str, Any], slug: str) -> None:
+        """Handle a Publish button click — resolves email, publishes, DMs result."""
+        user_id: str = payload.get("user", {}).get("id", "")
+        try:
+            email = await self._email_for(user_id)
+            if not email:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=self.router._not_linked_text(self._slack_ctx(user_id)),
+                    )
+                return
+            result = await self.router._tasks_client.publish_app(email, slug)
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(
+                    channel=dm,
+                    text=f"Published: {slug}",
+                    attachments=[build_published_attachment(slug, result.get("public_url", ""))],
+                )
+        except (TasksAPIError, Exception) as exc:  # noqa: BLE001
+            logger.error("_do_publish failed slug=%s user=%s: %s", slug, user_id, exc)
+            try:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=f"Couldn't publish {slug}: {exc}. Try /aiui aiuibuilder status {slug}.",
+                    )
+            except Exception as inner:  # noqa: BLE001
+                logger.error("_do_publish error DM failed: %s", inner)
+
+    async def _do_unpublish(self, payload: dict[str, Any], slug: str) -> None:
+        """Handle an Unpublish button click — resolves email, unpublishes, DMs result."""
+        user_id: str = payload.get("user", {}).get("id", "")
+        try:
+            email = await self._email_for(user_id)
+            if not email:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=self.router._not_linked_text(self._slack_ctx(user_id)),
+                    )
+                return
+            await self.router._tasks_client.unpublish_app(email, slug)
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(
+                    channel=dm,
+                    text=f"Unpublished: {slug}",
+                    attachments=[build_ready_attachment(slug)],
+                )
+        except (TasksAPIError, Exception) as exc:  # noqa: BLE001
+            logger.error("_do_unpublish failed slug=%s user=%s: %s", slug, user_id, exc)
+            try:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=f"Couldn't unpublish {slug}: {exc}. Try /aiui aiuibuilder status {slug}.",
+                    )
+            except Exception as inner:  # noqa: BLE001
+                logger.error("_do_unpublish error DM failed: %s", inner)
+
+    # ------------------------------------------------------------------
+    # D11 — Status handler
+    # ------------------------------------------------------------------
+
+    async def _do_status(self, payload: dict[str, Any], slug: str) -> None:
+        """Handle a Status button click — resolves email, fetches status, DMs summary."""
+        user_id: str = payload.get("user", {}).get("id", "")
+        try:
+            email = await self._email_for(user_id)
+            if not email:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=self.router._not_linked_text(self._slack_ctx(user_id)),
+                    )
+                return
+            status = await self.router._tasks_client.get_project_status(email, slug)
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                published_str = "yes" if status.get("published") else "no"
+                lines = [
+                    f"{status.get('name', slug)} ({slug})",
+                    f"Published: {published_str}",
+                ]
+                if status.get("public_url"):
+                    lines.append(f"URL: {status['public_url']}")
+                await self.slack.post_message(channel=dm, text="\n".join(lines))
+        except (TasksAPIError, Exception) as exc:  # noqa: BLE001
+            logger.error("_do_status failed slug=%s user=%s: %s", slug, user_id, exc)
+            try:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=f"Couldn't get status for {slug}: {exc}. Try /aiui aiuibuilder status {slug}.",
+                    )
+            except Exception as inner:  # noqa: BLE001
+                logger.error("_do_status error DM failed: %s", inner)
+
+    # ------------------------------------------------------------------
+    # D12 — Enhance modal opener
+    # ------------------------------------------------------------------
+
+    async def _do_open_enhance(self, payload: dict[str, Any], slug: str) -> None:
+        """Handle an Enhance button click — opens the enhance modal synchronously."""
+        trigger_id: str = payload.get("trigger_id", "")
+        await self.slack.open_modal(trigger_id, build_enhance_modal_view(slug))

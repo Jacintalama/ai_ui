@@ -281,3 +281,174 @@ async def test_build_submit_dm_open_fails_falls_back_to_ephemeral():
     await ctx.notify_channel_rich("ready", "todo-2", "https://x/q", "leo@x.com")
     slack.post_ephemeral.assert_awaited_once()
     slack.post_message.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# D10 — Publish / Unpublish buttons
+# ---------------------------------------------------------------------------
+
+from handlers.slack_app_builder_panel import (
+    PUBLISH_PREFIX, UNPUBLISH_PREFIX, STATUS_PREFIX,
+    ENHANCE_PREFIX, ENHANCE_MODAL_PREFIX,
+)
+
+
+def _mgmt_router():
+    """Router mock wired for management action tests."""
+    router = MagicMock()
+    router._background_tasks = set()
+    router._resolve_email_for_ctx = AsyncMock(return_value="u@x.com")
+    router._not_linked_text = MagicMock(return_value="not-linked msg")
+    router._tasks_client = MagicMock()
+    router._tasks_client.publish_app = AsyncMock(return_value={"public_url": "https://x/live"})
+    router._tasks_client.unpublish_app = AsyncMock(return_value=True)
+    router._tasks_client.get_project_status = AsyncMock(return_value={
+        "name": "My App", "slug": "my-app", "published": True,
+        "public_url": "https://x/live", "last_commit_at": "2026-01-01",
+    })
+    router.run_panel_enhance = AsyncMock()
+    return router
+
+
+def _block_actions_payload(action_id: str, user_id: str = "U1") -> dict:
+    return {
+        "type": "block_actions",
+        "trigger_id": "trig-mgmt",
+        "user": {"id": user_id, "username": "tester"},
+        "channel": {"id": "C-panel"},
+        "team": {"id": "T1"},
+        "actions": [{"action_id": action_id}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_publish_button_calls_publish_app_and_dms_user():
+    router = _mgmt_router()
+    handler, slack = _handler(router)
+
+    payload = _block_actions_payload(f"{PUBLISH_PREFIX}my-app")
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+
+    # Let background task run
+    await asyncio.sleep(0)
+
+    router._tasks_client.publish_app.assert_awaited_once_with("u@x.com", "my-app")
+    slack.open_dm.assert_awaited()
+    # post_message should have been called (published attachment)
+    slack.post_message.assert_awaited()
+    # The message should include "my-app"
+    call_kwargs = slack.post_message.call_args
+    assert "my-app" in str(call_kwargs)
+
+
+@pytest.mark.asyncio
+async def test_publish_button_email_none_posts_not_linked():
+    router = _mgmt_router()
+    router._resolve_email_for_ctx = AsyncMock(return_value=None)
+    handler, slack = _handler(router)
+
+    payload = _block_actions_payload(f"{PUBLISH_PREFIX}my-app", user_id="U99")
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.publish_app.assert_not_awaited()
+    # Should have posted not-linked text via DM or post_message
+    slack.open_dm.assert_awaited()
+    slack.post_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unpublish_button_calls_unpublish_app_and_dms_user():
+    router = _mgmt_router()
+    handler, slack = _handler(router)
+
+    payload = _block_actions_payload(f"{UNPUBLISH_PREFIX}my-app")
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.unpublish_app.assert_awaited_once_with("u@x.com", "my-app")
+    slack.open_dm.assert_awaited()
+    slack.post_message.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# D11 — Status button
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_status_button_calls_get_project_status_and_dms_user():
+    router = _mgmt_router()
+    handler, slack = _handler(router)
+
+    payload = _block_actions_payload(f"{STATUS_PREFIX}my-app")
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.get_project_status.assert_awaited_once_with("u@x.com", "my-app")
+    slack.open_dm.assert_awaited()
+    slack.post_message.assert_awaited()
+    # The DM text should mention the slug and published state
+    call_kwargs = slack.post_message.call_args
+    text = call_kwargs.kwargs.get("text", "") or str(call_kwargs)
+    assert "my-app" in text
+    assert "yes" in text.lower() or "published" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# D12 — Enhance button opens modal + enhance modal submit runs enhance
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_enhance_button_opens_modal():
+    router = _mgmt_router()
+    handler, slack = _handler(router)
+
+    payload = _block_actions_payload(f"{ENHANCE_PREFIX}my-app")
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+
+    slack.open_modal.assert_awaited_once()
+    trigger, view = slack.open_modal.call_args.args
+    assert trigger == "trig-mgmt"
+    assert view["callback_id"] == f"{ENHANCE_MODAL_PREFIX}my-app"
+
+
+@pytest.mark.asyncio
+async def test_enhance_modal_submit_runs_panel_enhance():
+    router = _mgmt_router()
+    handler, slack = _handler(router)
+    # open_dm returns "D9" (set in _handler)
+
+    payload = {
+        "type": "view_submission",
+        "trigger_id": "trig-enh",
+        "user": {"id": "U1", "username": "tester"},
+        "team": {"id": "T1"},
+        "view": {
+            "callback_id": f"{ENHANCE_MODAL_PREFIX}my-app",
+            "private_metadata": "my-app",
+            "state": {"values": {
+                "enhance_block": {
+                    "enhance_input": {"value": "make it blue"},
+                }
+            }},
+        },
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router.run_panel_enhance.assert_awaited_once()
+    call_args = router.run_panel_enhance.call_args
+    ctx_arg = call_args.args[0]
+    slug_arg = call_args.args[1]
+    prompt_arg = call_args.args[2]
+    assert slug_arg == "my-app"
+    assert prompt_arg == "make it blue"
+    assert ctx_arg.channel_id == "D9"
+    assert ctx_arg.notify_channel is not None
+    assert ctx_arg.notify_channel_rich is not None
