@@ -10,7 +10,6 @@ import logging
 from typing import Any, Optional
 
 from clients.slack import SlackClient
-from clients.tasks import TasksAPIError
 from handlers.commands import CommandRouter, CommandContext
 from handlers.slack_app_builder_panel import (
     TEMPLATE_SELECT_ACTION_ID,
@@ -121,6 +120,19 @@ class SlackInteractionsHandler:
 
     async def _email_for(self, user_id: str) -> Optional[str]:
         return await self.router._resolve_email_for_ctx(self._slack_ctx(user_id))
+
+    async def _bail_if_not_linked(self, user_id: str) -> Optional[str]:
+        """Return the caller's email, or DM the not-linked message and return None."""
+        email = await self._email_for(user_id)
+        if email:
+            return email
+        dm = await self.slack.open_dm(user_id)
+        if dm:
+            await self.slack.post_message(
+                channel=dm,
+                text=self.router._not_linked_text(self._slack_ctx(user_id)),
+            )
+        return None
 
     def _dm_context(
         self,
@@ -233,14 +245,8 @@ class SlackInteractionsHandler:
 
             async def _start_enhance() -> None:
                 try:
-                    email = await self._email_for(user_id)
+                    email = await self._bail_if_not_linked(user_id)
                     if not email:
-                        dm = await self.slack.open_dm(user_id)
-                        if dm:
-                            await self.slack.post_message(
-                                channel=dm,
-                                text=self.router._not_linked_text(self._slack_ctx(user_id)),
-                            )
                         return
                     dm = await self.slack.open_dm(user_id)
                     if dm:
@@ -276,15 +282,12 @@ class SlackInteractionsHandler:
         """Handle a Publish button click — resolves email, publishes, DMs result."""
         user_id: str = payload.get("user", {}).get("id", "")
         try:
-            email = await self._email_for(user_id)
+            email = await self._bail_if_not_linked(user_id)
             if not email:
-                dm = await self.slack.open_dm(user_id)
-                if dm:
-                    await self.slack.post_message(
-                        channel=dm,
-                        text=self.router._not_linked_text(self._slack_ctx(user_id)),
-                    )
                 return
+            # Call _tasks_client.publish_app directly (not router.run_panel_publish) because
+            # the router's run_panel_* methods render Discord-style text via ctx.respond and
+            # discard the result; we need the returned public_url to build the Slack attachment.
             result = await self.router._tasks_client.publish_app(email, slug)
             dm = await self.slack.open_dm(user_id)
             if dm:
@@ -293,7 +296,7 @@ class SlackInteractionsHandler:
                     text=f"Published: {slug}",
                     attachments=[build_published_attachment(slug, result.get("public_url", ""))],
                 )
-        except (TasksAPIError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.error("_do_publish failed slug=%s user=%s: %s", slug, user_id, exc)
             try:
                 dm = await self.slack.open_dm(user_id)
@@ -309,14 +312,8 @@ class SlackInteractionsHandler:
         """Handle an Unpublish button click — resolves email, unpublishes, DMs result."""
         user_id: str = payload.get("user", {}).get("id", "")
         try:
-            email = await self._email_for(user_id)
+            email = await self._bail_if_not_linked(user_id)
             if not email:
-                dm = await self.slack.open_dm(user_id)
-                if dm:
-                    await self.slack.post_message(
-                        channel=dm,
-                        text=self.router._not_linked_text(self._slack_ctx(user_id)),
-                    )
                 return
             await self.router._tasks_client.unpublish_app(email, slug)
             dm = await self.slack.open_dm(user_id)
@@ -326,7 +323,7 @@ class SlackInteractionsHandler:
                     text=f"Unpublished: {slug}",
                     attachments=[build_ready_attachment(slug)],
                 )
-        except (TasksAPIError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.error("_do_unpublish failed slug=%s user=%s: %s", slug, user_id, exc)
             try:
                 dm = await self.slack.open_dm(user_id)
@@ -346,15 +343,12 @@ class SlackInteractionsHandler:
         """Handle a Status button click — resolves email, fetches status, DMs summary."""
         user_id: str = payload.get("user", {}).get("id", "")
         try:
-            email = await self._email_for(user_id)
+            email = await self._bail_if_not_linked(user_id)
             if not email:
-                dm = await self.slack.open_dm(user_id)
-                if dm:
-                    await self.slack.post_message(
-                        channel=dm,
-                        text=self.router._not_linked_text(self._slack_ctx(user_id)),
-                    )
                 return
+            # Call _tasks_client.get_project_status directly (not router.run_panel_status) because
+            # the router's run_panel_* methods render Discord-style text via ctx.respond and discard
+            # the result; we need the returned dict to format a Slack-specific DM summary.
             status = await self.router._tasks_client.get_project_status(email, slug)
             dm = await self.slack.open_dm(user_id)
             if dm:
@@ -366,7 +360,7 @@ class SlackInteractionsHandler:
                 if status.get("public_url"):
                     lines.append(f"URL: {status['public_url']}")
                 await self.slack.post_message(channel=dm, text="\n".join(lines))
-        except (TasksAPIError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.error("_do_status failed slug=%s user=%s: %s", slug, user_id, exc)
             try:
                 dm = await self.slack.open_dm(user_id)
@@ -384,5 +378,8 @@ class SlackInteractionsHandler:
 
     async def _do_open_enhance(self, payload: dict[str, Any], slug: str) -> None:
         """Handle an Enhance button click — opens the enhance modal synchronously."""
-        trigger_id: str = payload.get("trigger_id", "")
-        await self.slack.open_modal(trigger_id, build_enhance_modal_view(slug))
+        trigger_id = payload.get("trigger_id", "")
+        try:
+            await self.slack.open_modal(trigger_id, build_enhance_modal_view(slug))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_do_open_enhance failed slug=%s: %s", slug, exc)

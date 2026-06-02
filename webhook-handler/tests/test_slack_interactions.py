@@ -360,6 +360,22 @@ async def test_publish_button_email_none_posts_not_linked():
 
 
 @pytest.mark.asyncio
+async def test_unpublish_button_email_none_posts_not_linked():
+    router = _mgmt_router()
+    router._resolve_email_for_ctx = AsyncMock(return_value=None)
+    handler, slack = _handler(router)
+
+    payload = _block_actions_payload(f"{UNPUBLISH_PREFIX}my-app", user_id="U99")
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.unpublish_app.assert_not_awaited()
+    slack.open_dm.assert_awaited()
+    slack.post_message.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_unpublish_button_calls_unpublish_app_and_dms_user():
     router = _mgmt_router()
     handler, slack = _handler(router)
@@ -396,6 +412,22 @@ async def test_status_button_calls_get_project_status_and_dms_user():
     text = call_kwargs.kwargs.get("text", "") or str(call_kwargs)
     assert "my-app" in text
     assert "yes" in text.lower() or "published" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_status_button_email_none_posts_not_linked():
+    router = _mgmt_router()
+    router._resolve_email_for_ctx = AsyncMock(return_value=None)
+    handler, slack = _handler(router)
+
+    payload = _block_actions_payload(f"{STATUS_PREFIX}my-app", user_id="U99")
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.get_project_status.assert_not_awaited()
+    slack.open_dm.assert_awaited()
+    slack.post_message.assert_awaited()
 
 
 # ---------------------------------------------------------------------------
