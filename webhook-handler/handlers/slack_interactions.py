@@ -7,7 +7,7 @@ button -> modal -> build flow, adapted to Block Kit / views.
 """
 import asyncio
 import logging
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Optional
 
 from clients.slack import SlackClient
 from handlers.commands import CommandRouter, CommandContext
@@ -147,30 +147,35 @@ class SlackInteractionsHandler:
             description = description_from_view(view)
 
             async def _start() -> None:
-                dm_id = await self.slack.open_dm(user_id)
-                if dm_id:
-                    if origin_channel:
-                        await self.slack.post_ephemeral(
-                            origin_channel,
-                            user_id,
-                            "Starting your build - I've sent it to your DMs.",
+                try:
+                    dm_id = await self.slack.open_dm(user_id)
+                    if dm_id:
+                        if origin_channel:
+                            await self.slack.post_ephemeral(
+                                origin_channel,
+                                user_id,
+                                "Starting your build - I've sent it to your DMs.",
+                            )
+                        await self.slack.post_message(
+                            channel=dm_id,
+                            text=f"Building `{template_key or 'app'}`...",
                         )
-                    await self.slack.post_message(
-                        channel=dm_id,
-                        text=f"Building `{template_key or 'app'}`...",
+                    ctx = self._dm_context(
+                        payload,
+                        dm_id=dm_id,
+                        origin_channel=origin_channel,
+                        user_id=user_id,
+                        user_name=user_name,
+                        subcommand="aiuibuilder",
+                        raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
                     )
-                ctx = self._dm_context(
-                    payload,
-                    dm_id=dm_id,
-                    origin_channel=origin_channel,
-                    user_id=user_id,
-                    user_name=user_name,
-                    subcommand="aiuibuilder",
-                    raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
-                )
-                await self.router.run_panel_build(ctx, template_key, description)
+                    await self.router.run_panel_build(ctx, template_key, description)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Slack build _start failed user=%s: %s", user_id, exc)
 
-            asyncio.create_task(_start())
+            task = asyncio.create_task(_start())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
             return {}  # empty 200 closes the modal
 
         logger.info(f"Ignoring unknown Slack callback_id: {callback_id}")
