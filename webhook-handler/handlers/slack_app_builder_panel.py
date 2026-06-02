@@ -16,24 +16,41 @@ BUILD_PREFIX = "aiuibuild:build:"    # modal callback_id -> aiuibuild:build:<key
 DESCRIPTION_BLOCK_ID = "description_block"
 DESCRIPTION_INPUT_ID = "description"
 
+# B4 — dropdown panel constants
+TEMPLATE_SELECT_ACTION_ID = "aiuibuild:tpl_select"
+BLANK_ACTION_ID = TEMPLATE_PREFIX  # bare prefix == Blank
+_SELECT_OPTION_MAX = 100
+_OPT_TEXT_MAX = 75
+
+# B5 — management action_id prefixes
+PUBLISH_PREFIX = "aiuibuild:publish:"
+ENHANCE_PREFIX = "aiuibuild:enhance:"
+ENHANCE_MODAL_PREFIX = "aiuibuild:enhmodal:"
+UNPUBLISH_PREFIX = "aiuibuild:unpublish:"
+STATUS_PREFIX = "aiuibuild:status:"
+
+# B6 — card colours
+COLOR_READY = "#36a64f"
+COLOR_PUBLISHED = "#2eb67d"
+
+# B7 — app-list cap
+_MAX_LIST_ROWS = 10
+
 # Slack Block Kit limits
-_MAX_PER_ACTIONS_BLOCK = 5
-_MAX_BUTTONS = 25          # leave the rest to the slash command
 _BUTTON_TEXT_MAX = 75
 _TITLE_MAX = 24           # modal title plain_text hard limit
 
 PANEL_TEXT = (
-    ":rocket: *AIUI App Builder*\n"
-    "Pick a template to start — a short form opens where you describe your app. "
-    "Or hit *Blank* to build from scratch. I'll post the live link here when "
-    "it's ready."
+    "*AIUI App Builder*\n"
+    "Pick a template to start - a short form opens where you describe your app, "
+    "and I'll build it in a private DM with you. Or choose Blank to start from scratch."
 )
 
 
 def _button(text: str, action_id: str, *, primary: bool = False) -> dict:
     btn = {
         "type": "button",
-        "text": {"type": "plain_text", "text": (text or "?")[:_BUTTON_TEXT_MAX], "emoji": True},
+        "text": {"type": "plain_text", "text": (text or "?")[:_BUTTON_TEXT_MAX]},
         "action_id": action_id,
     }
     if primary:
@@ -41,31 +58,45 @@ def _button(text: str, action_id: str, *, primary: bool = False) -> dict:
     return btn
 
 
+def _link_button(text: str, url: str) -> dict:
+    return {
+        "type": "button",
+        "text": {"type": "plain_text", "text": text[:_BUTTON_TEXT_MAX]},
+        "url": url,
+    }
+
+
+# ---------------------------------------------------------------------------
+# B4 — dropdown panel
+# ---------------------------------------------------------------------------
+
 def build_panel_blocks(templates: list[dict]) -> list[dict]:
-    """Block Kit panel: a header section plus actions blocks (max 5 buttons
-    each) — one button per template plus a trailing Blank button. Templates
-    beyond the 24-button budget (room left for Blank) are dropped; the slash
-    command still reaches them. Keyless rows are tolerated, not fatal."""
-    buttons: list[dict] = []
-    for t in templates[: _MAX_BUTTONS - 1]:
+    """Header + a 'Pick a template' dropdown (one option per template) + a Blank
+    button. static_select allows up to 100 options, so no template is dropped."""
+    options = []
+    for t in templates[:_SELECT_OPTION_MAX]:
         key = t.get("key")
         if not key:
-            continue  # tolerate a malformed row rather than crash
-        emoji = (t.get("emoji") or "").strip()
-        label = t.get("label", key)
-        text = f"{emoji} {label}".strip()
-        buttons.append(_button(text, f"{TEMPLATE_PREFIX}{key}", primary=(len(buttons) % 2 == 0)))
-    buttons.append(_button("Blank", TEMPLATE_PREFIX))
-
-    blocks: list[dict] = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": PANEL_TEXT}}
+            continue
+        label = (t.get("label") or key)[:_OPT_TEXT_MAX]
+        options.append({"text": {"type": "plain_text", "text": label},
+                        "value": f"{TEMPLATE_PREFIX}{key}"})
+    select = {
+        "type": "static_select",
+        "action_id": TEMPLATE_SELECT_ACTION_ID,
+        "placeholder": {"type": "plain_text", "text": "Pick a template..."},
+        "options": options or [{"text": {"type": "plain_text", "text": "Blank"}, "value": TEMPLATE_PREFIX}],
+    }
+    blank = _button("Blank", BLANK_ACTION_ID)
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": PANEL_TEXT}},
+        {"type": "actions", "elements": [select, blank]},
     ]
-    for start in range(0, len(buttons), _MAX_PER_ACTIONS_BLOCK):
-        blocks.append(
-            {"type": "actions", "elements": buttons[start : start + _MAX_PER_ACTIONS_BLOCK]}
-        )
-    return blocks
 
+
+# ---------------------------------------------------------------------------
+# Build description modal
+# ---------------------------------------------------------------------------
 
 def build_modal_view(
     template_key: str | None,
@@ -113,6 +144,10 @@ def description_from_view(view: dict) -> str:
     return (element.get("value") or "").strip()
 
 
+# ---------------------------------------------------------------------------
+# Panel button / modal id parsers
+# ---------------------------------------------------------------------------
+
 def is_panel_button(action_id: str) -> bool:
     return bool(action_id) and action_id.startswith(TEMPLATE_PREFIX)
 
@@ -133,3 +168,177 @@ def template_key_from_modal(callback_id: str) -> str | None:
     if not is_panel_modal(callback_id):
         raise ValueError(f"not a panel modal callback_id: {callback_id!r}")
     return callback_id[len(BUILD_PREFIX):] or None
+
+
+# ---------------------------------------------------------------------------
+# B5 — management action_id parsers
+# ---------------------------------------------------------------------------
+
+def is_action(action_id: str, prefix: str) -> bool:
+    return bool(action_id) and action_id.startswith(prefix)
+
+
+def slug_from_action(action_id: str, prefix: str) -> str:
+    if not is_action(action_id, prefix):
+        raise ValueError(f"not a {prefix!r} action_id: {action_id!r}")
+    return action_id[len(prefix):]
+
+
+def is_enhance_modal(callback_id: str) -> bool:
+    return bool(callback_id) and callback_id.startswith(ENHANCE_MODAL_PREFIX)
+
+
+def slug_from_enhance_modal(callback_id: str) -> str:
+    if not is_enhance_modal(callback_id):
+        raise ValueError(f"not an enhance modal callback_id: {callback_id!r}")
+    return callback_id[len(ENHANCE_MODAL_PREFIX):]
+
+
+# ---------------------------------------------------------------------------
+# B6 — build-ready + published card attachments
+# ---------------------------------------------------------------------------
+
+def build_ready_attachment(slug: str, preview_url: str = "") -> dict:
+    """Green build-ready card: Publish / Enhance + optional Open preview link."""
+    elements: list[dict] = [
+        _button("Publish", f"{PUBLISH_PREFIX}{slug}", primary=True),
+        _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
+    ]
+    if preview_url:
+        elements.append(_link_button("Open preview", preview_url))
+    return {
+        "color": COLOR_READY,
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Build ready: {slug}*\nYour app is ready to preview and publish.",
+                },
+            },
+            {"type": "actions", "elements": elements},
+        ],
+    }
+
+
+def build_published_attachment(slug: str, public_url: str = "") -> dict:
+    """Blue published card: Enhance / Unpublish + optional Open link."""
+    elements: list[dict] = [
+        _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
+        _button("Unpublish", f"{UNPUBLISH_PREFIX}{slug}"),
+    ]
+    if public_url:
+        elements.append(_link_button("Open", public_url))
+    desc = f"*Published: {slug}*" + (f"\n{public_url}" if public_url else "")
+    return {
+        "color": COLOR_PUBLISHED,
+        "blocks": [
+            {"type": "section", "text": {"type": "mrkdwn", "text": desc}},
+            {"type": "actions", "elements": elements},
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# B7 — app-list blocks (state-aware) + enhance modal
+# ---------------------------------------------------------------------------
+
+def build_apps_list_blocks(apps: list[dict]) -> list[dict]:
+    """One section + one actions row per app, capped at _MAX_LIST_ROWS.
+
+    Published apps get: Status, Enhance, Unpublish.
+    Draft apps get: Status, Publish, Enhance.
+    Empty list -> single 'no apps' section.
+    More than 10 apps -> context block noting truncation.
+    """
+    if not apps:
+        return [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        "You have no apps yet. "
+                        "Use the App Builder panel to create one."
+                    ),
+                },
+            }
+        ]
+
+    visible = apps[:_MAX_LIST_ROWS]
+    blocks: list[dict] = []
+    for app in visible:
+        slug = app.get("slug", "")
+        published = bool(app.get("published"))
+        state_label = "published" if published else "draft"
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*{slug}* - {state_label}"},
+        })
+        if published:
+            row_buttons = [
+                _button("Status", f"{STATUS_PREFIX}{slug}"),
+                _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
+                _button("Unpublish", f"{UNPUBLISH_PREFIX}{slug}"),
+            ]
+        else:
+            row_buttons = [
+                _button("Status", f"{STATUS_PREFIX}{slug}"),
+                _button("Publish", f"{PUBLISH_PREFIX}{slug}", primary=True),
+                _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
+            ]
+        blocks.append({"type": "actions", "elements": row_buttons})
+
+    if len(apps) > _MAX_LIST_ROWS:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"Showing first {_MAX_LIST_ROWS}. "
+                        "Use `/aiui aiuibuilder status <slug>` for others."
+                    ),
+                }
+            ],
+        })
+
+    return blocks
+
+
+def build_enhance_modal_view(slug: str) -> dict:
+    """Modal for requesting an enhancement on an existing app."""
+    return {
+        "type": "modal",
+        "callback_id": f"{ENHANCE_MODAL_PREFIX}{slug}",
+        "private_metadata": slug,
+        "title": {"type": "plain_text", "text": f"Enhance: {slug}"[:_TITLE_MAX]},
+        "submit": {"type": "plain_text", "text": "Apply"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "enhance_block",
+                "label": {"type": "plain_text", "text": "What should change?"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "enhance_input",
+                    "multiline": True,
+                    "max_length": 3000,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "What should change?",
+                    },
+                },
+            }
+        ],
+    }
+
+
+def enhance_text_from_view(view: dict) -> str:
+    """Pull the typed enhancement request out of a view_submission payload's view.
+    view.state.values['enhance_block']['enhance_input'].value."""
+    values = (view or {}).get("state", {}).get("values", {})
+    block = values.get("enhance_block", {})
+    element = block.get("enhance_input", {})
+    return (element.get("value") or "").strip()
