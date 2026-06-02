@@ -207,6 +207,9 @@ class SlackInteractionsHandler:
             origin_channel = view.get("private_metadata", "") or ""
             description = description_from_view(view)
 
+            # Note: if open_dm fails here, origin_channel is kept as an ephemeral
+            # fallback (build path). The enhance path has no origin_channel fallback
+            # (it originates from a DM card), so _start_enhance bails explicitly.
             async def _start() -> None:
                 try:
                     dm_id = await self.slack.open_dm(user_id)
@@ -249,10 +252,20 @@ class SlackInteractionsHandler:
                     if not email:
                         return
                     dm = await self.slack.open_dm(user_id)
-                    if dm:
-                        await self.slack.post_message(
-                            channel=dm, text=f"Enhancing {slug}..."
+                    # The enhance path always originates from a DM card, so there is no
+                    # origin_channel fallback. If the DM cannot be opened, bail
+                    # observably instead of running the enhance and silently swallowing
+                    # all output. (Contrast with the build path's _start, which keeps
+                    # origin_channel as an ephemeral fallback when open_dm fails.)
+                    if not dm:
+                        logger.error(
+                            "Slack enhance: open_dm returned None for user=%s slug=%s",
+                            user_id, slug,
                         )
+                        return
+                    await self.slack.post_message(
+                        channel=dm, text=f"Enhancing {slug}..."
+                    )
                     ctx = self._dm_context(
                         payload,
                         dm_id=dm,

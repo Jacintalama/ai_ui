@@ -484,3 +484,37 @@ async def test_enhance_modal_submit_runs_panel_enhance():
     assert ctx_arg.channel_id == "D9"
     assert ctx_arg.notify_channel is not None
     assert ctx_arg.notify_channel_rich is not None
+
+
+@pytest.mark.asyncio
+async def test_enhance_modal_submit_dm_open_fails_is_silent_safe():
+    """When open_dm returns None in the enhance flow, _start_enhance bails
+    before building the context, so run_panel_enhance is never called and
+    no exception propagates to the caller."""
+    router = _mgmt_router()
+    router._resolve_email_for_ctx = AsyncMock(return_value="u@x.com")
+
+    handler, slack = _handler(router)
+    slack.open_dm = AsyncMock(return_value=None)
+
+    payload = {
+        "type": "view_submission",
+        "trigger_id": "trig-enh-fail",
+        "user": {"id": "U1", "username": "tester"},
+        "team": {"id": "T1"},
+        "view": {
+            "callback_id": f"{ENHANCE_MODAL_PREFIX}my-app",
+            "private_metadata": "my-app",
+            "state": {"values": {
+                "enhance_block": {
+                    "enhance_input": {"value": "make it blue"},
+                }
+            }},
+        },
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}  # immediate empty 200, no exception
+    await asyncio.sleep(0)
+
+    # Bailed before building ctx: enhance must NOT have been called
+    router.run_panel_enhance.assert_not_awaited()
