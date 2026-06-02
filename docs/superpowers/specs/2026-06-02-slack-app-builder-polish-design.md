@@ -174,6 +174,27 @@ asyncio.sleep(0)` to drain fire-and-forget; no live network.
 - **Gate:** full webhook-handler suite stays green (currently 390 passing);
   Discord tests untouched.
 
+## Implementation notes (from spec review)
+
+Wiring gotchas the plan must respect (verified against `commands.py`):
+
+- **`notify_channel_rich` is a 4-arg callback:** `(msg, slug, url, email)` — the
+  Slack closure must accept all four (Discord already passes `email`; the Slack
+  closure receives it and renders `build_ready_blocks(slug, url)`, ignoring
+  `email` unless useful). The 2-arg `build_ready_blocks(slug, preview_url)` in
+  the UI section is the *builder*, not the callback.
+- **The watcher needs `notify_channel` set, not just `notify_channel_rich`:**
+  `_watch_build` early-returns if `ctx.notify_channel is None`, and
+  `run_panel_enhance` only starts the watcher when `notify_channel` is set. So
+  the DM-targeted `CommandContext` MUST set `notify_channel` (plain text) **and**
+  `notify_channel_rich` (the Block Kit card) — both pointing at the DM channel —
+  or the build/enhance result will never post.
+- **Enhance re-render parity:** the "refreshed card" after an enhance reuses the
+  same `build_ready_blocks` builder (enhance completion flows through the same
+  `notify_channel_rich` path as a build).
+- **Green-gate baseline:** the current webhook-handler suite is **390** passing
+  (the 129 figure in older notes is stale).
+
 ## Out of scope
 
 - Cron/Schedules UI for Slack (Discord-only; explicitly deferred).
