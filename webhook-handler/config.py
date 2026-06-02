@@ -1,7 +1,47 @@
 """Configuration management for webhook handler."""
+import logging
 import os
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+def parse_discord_user_email_map(raw: str) -> dict[str, str]:
+    """Parse DISCORD_USER_EMAIL_MAP env var.
+
+    Format: comma-separated `<snowflake_id>:<email>` pairs.
+    Drops entries with non-numeric IDs or missing colons (logs at DEBUG).
+    Lowercases emails. Warns on duplicate emails (silent cross-user risk).
+    Returns the count via logger.info, never the contents.
+    """
+    if not raw:
+        return {}
+    out: dict[str, str] = {}
+    seen_emails: dict[str, str] = {}  # email -> first discord_id that claimed it
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if ":" not in entry:
+            logger.debug("DISCORD_USER_EMAIL_MAP: skipping malformed entry")
+            continue
+        did, _, email = entry.partition(":")
+        did = did.strip()
+        email = email.strip().lower()
+        if not did.isdigit():
+            logger.debug("DISCORD_USER_EMAIL_MAP: non-numeric ID dropped")
+            continue
+        if not email:
+            continue
+        if email in seen_emails:
+            logger.warning(
+                "DISCORD_USER_EMAIL_MAP: duplicate email — two Discord IDs "
+                "claim the same account (silent cross-user impersonation risk)"
+            )
+        seen_emails[email] = did
+        out[did] = email
+    logger.info(f"DISCORD_USER_EMAIL_MAP: loaded {len(out)} entries")
+    return out
 
 
 class Settings(BaseSettings):
@@ -36,12 +76,22 @@ class Settings(BaseSettings):
     n8n_webhook_url: str = "http://n8n:5678"
     n8n_api_key: str = ""
 
+    # Tasks service (user-scoped schedules + App Builder)
+    tasks_url: str = "http://tasks:8210"
+    tasks_public_url: str = "https://ai-ui.coolestdomain.win"
+    # Google connectors (Gmail/Drive). Internal URLs (backend network) for the
+    # /auth/status check; public URLs (via Caddy→api-gateway) for the browser
+    # connect link. Both services listen on :8000 internally.
+    gmail_url: str = "http://mcp-gmail:8000"
+    gdrive_url: str = "http://mcp-gdrive:8000"
+    gmail_public_url: str = "https://ai-ui.coolestdomain.win/gmail"
+    gdrive_public_url: str = "https://ai-ui.coolestdomain.win/gdrive"
+    # Shared secret for the tasks→webhook-handler schedule-result callback.
+    # The tasks scheduler sends this in X-Internal-Secret; we reject mismatches.
+    internal_callback_secret: str = ""
+
     # Claude Analyzer (PR Review, BRE, Security, etc.)
     claude_analyzer_url: str = "http://claude-analyzer:3000"
-
-    # Tasks service public base URL (browser-visible). Used to deep-link into
-    # the visual editor from the Discord build-ready card.
-    tasks_public_url: str = "https://ai-ui.coolestdomain.win"
 
     # Slack
     slack_bot_token: str = ""
@@ -52,6 +102,15 @@ class Settings(BaseSettings):
     discord_public_key: str = ""
     discord_bot_token: str = ""
     discord_alert_channel_id: str = ""
+    discord_user_email_map_raw: str = Field(default="", alias="DISCORD_USER_EMAIL_MAP")
+
+    @property
+    def discord_user_email_map(self) -> dict[str, str]:
+        if not hasattr(self, "_discord_map_cache"):
+            self._discord_map_cache = parse_discord_user_email_map(
+                self.discord_user_email_map_raw
+            )
+        return self._discord_map_cache
 
     # Voice (ElevenLabs)
     voice_webhook_secret: str = ""
@@ -75,6 +134,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
 
 
 settings = Settings()
