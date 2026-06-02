@@ -1,4 +1,5 @@
 """SlackClient.get_user_email and open_modal (mocked Slack Web API)."""
+import json
 import httpx
 import pytest
 import respx
@@ -78,8 +79,6 @@ async def test_open_modal_failure_returns_false():
 @respx.mock
 async def test_post_message_with_blocks_and_attachments():
     """Blocks and attachments are forwarded in the JSON body; ts is returned."""
-    import json as _json
-
     route = respx.post(f"{SLACK}/chat.postMessage").mock(
         return_value=httpx.Response(200, json={"ok": True, "ts": "1111.2222"})
     )
@@ -93,7 +92,7 @@ async def test_post_message_with_blocks_and_attachments():
         attachments=attachments,
     )
     assert ts == "1111.2222"
-    body = _json.loads(route.calls.last.request.content)
+    body = json.loads(route.calls.last.request.content)
     assert body["blocks"] == blocks
     assert body["attachments"] == attachments
     assert body["text"] == "fallback"
@@ -104,15 +103,13 @@ async def test_post_message_with_blocks_and_attachments():
 @respx.mock
 async def test_post_message_text_only_still_works():
     """Existing text-only callers keep working; blocks/attachments absent from body."""
-    import json as _json
-
     route = respx.post(f"{SLACK}/chat.postMessage").mock(
         return_value=httpx.Response(200, json={"ok": True, "ts": "9999.0001"})
     )
     client = SlackClient(bot_token="xoxb-test")
     ts = await client.post_message("C001", "plain text", thread_ts="1234.5678")
     assert ts == "9999.0001"
-    body = _json.loads(route.calls.last.request.content)
+    body = json.loads(route.calls.last.request.content)
     assert body["text"] == "plain text"
     assert body["thread_ts"] == "1234.5678"
     assert "blocks" not in body
@@ -163,15 +160,13 @@ async def test_open_dm_empty_user_id_returns_none():
 @respx.mock
 async def test_post_ephemeral_sends_channel_user_and_returns_true():
     """post_ephemeral sends channel+user in body and returns True on ok."""
-    import json as _json
-
     route = respx.post(f"{SLACK}/chat.postEphemeral").mock(
         return_value=httpx.Response(200, json={"ok": True})
     )
     client = SlackClient(bot_token="xoxb-test")
     result = await client.post_ephemeral("C111", "U222", "hello ephemeral")
     assert result is True
-    body = _json.loads(route.calls.last.request.content)
+    body = json.loads(route.calls.last.request.content)
     assert body["channel"] == "C111"
     assert body["user"] == "U222"
     assert body["text"] == "hello ephemeral"
@@ -182,8 +177,6 @@ async def test_post_ephemeral_sends_channel_user_and_returns_true():
 @respx.mock
 async def test_post_ephemeral_with_blocks():
     """post_ephemeral includes blocks in body when provided."""
-    import json as _json
-
     route = respx.post(f"{SLACK}/chat.postEphemeral").mock(
         return_value=httpx.Response(200, json={"ok": True})
     )
@@ -191,7 +184,7 @@ async def test_post_ephemeral_with_blocks():
     blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": "block text"}}]
     result = await client.post_ephemeral("C111", "U222", "fallback", blocks=blocks)
     assert result is True
-    body = _json.loads(route.calls.last.request.content)
+    body = json.loads(route.calls.last.request.content)
     assert body["blocks"] == blocks
 
 
@@ -211,8 +204,6 @@ async def test_post_ephemeral_not_ok_returns_false():
 @respx.mock
 async def test_post_to_response_url_with_blocks():
     """post_to_response_url includes blocks in body when given."""
-    import json as _json
-
     route = respx.post("https://hooks.slack.com/callback/test").mock(
         return_value=httpx.Response(200, text="ok")
     )
@@ -224,7 +215,7 @@ async def test_post_to_response_url_with_blocks():
         blocks=blocks,
     )
     assert result is True
-    body = _json.loads(route.calls.last.request.content)
+    body = json.loads(route.calls.last.request.content)
     assert body["blocks"] == blocks
     assert body["text"] == "fallback"
 
@@ -233,8 +224,6 @@ async def test_post_to_response_url_with_blocks():
 @respx.mock
 async def test_post_to_response_url_without_blocks_unchanged():
     """Existing callers without blocks still work; blocks absent from body."""
-    import json as _json
-
     route = respx.post("https://hooks.slack.com/callback/test2").mock(
         return_value=httpx.Response(200, text="ok")
     )
@@ -246,7 +235,7 @@ async def test_post_to_response_url_without_blocks_unchanged():
         replace_original=True,
     )
     assert result is True
-    body = _json.loads(route.calls.last.request.content)
+    body = json.loads(route.calls.last.request.content)
     assert body["response_type"] == "in_channel"
     assert body["replace_original"] is True
     assert "blocks" not in body

@@ -61,8 +61,8 @@ class SlackClient:
         text: str,
         thread_ts: Optional[str] = None,
         *,
-        blocks=None,
-        attachments=None,
+        blocks: Optional[list] = None,
+        attachments: Optional[list] = None,
     ) -> Optional[str]:
         """
         Post a message to a Slack channel.
@@ -194,7 +194,7 @@ class SlackClient:
         user: str,
         text: str,
         *,
-        blocks=None,
+        blocks: Optional[list] = None,
     ) -> bool:
         """Post an ephemeral message visible only to a specific user.
 
@@ -236,7 +236,7 @@ class SlackClient:
         response_type: str = "ephemeral",
         replace_original: bool = False,
         *,
-        blocks=None,
+        blocks: Optional[list] = None,
     ) -> bool:
         """
         Post to a Slack response_url (slash command / interaction callback).
