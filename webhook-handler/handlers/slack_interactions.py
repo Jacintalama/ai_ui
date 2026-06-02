@@ -7,12 +7,14 @@ button -> modal -> build flow, adapted to Block Kit / views.
 """
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable, Optional
 
 from clients.slack import SlackClient
 from handlers.commands import CommandRouter, CommandContext
 from handlers.slack_app_builder_panel import (
+    TEMPLATE_SELECT_ACTION_ID,
     build_modal_view,
+    build_ready_attachment,
     description_from_view,
     is_panel_button,
     is_panel_modal,
@@ -43,64 +45,133 @@ class SlackInteractionsHandler:
         return {}
 
     async def _handle_block_actions(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """A panel button click opens the 'Describe your app' modal. The
-        originating channel is stashed in the modal's private_metadata so the
-        submit handler knows where to post the result. Unknown buttons no-op."""
+        """A panel button click or dropdown selection opens the 'Describe your
+        app' modal. The originating channel is stashed in the modal's
+        private_metadata so the submit handler knows where to post the result.
+        Unknown actions no-op."""
         actions = payload.get("actions", [])
         action_id = actions[0].get("action_id", "") if actions else ""
-        if not is_panel_button(action_id):
-            logger.info(f"Ignoring unknown Slack action_id: {action_id}")
-            return {}
-        template_key = template_key_from_button(action_id)
         trigger_id = payload.get("trigger_id", "")
         channel_id = (payload.get("channel") or {}).get("id", "")
-        logger.info(f"App Builder button clicked: template={template_key}")
-        view = build_modal_view(template_key, None, channel_id)
-        await self.slack.open_modal(trigger_id, view)
-        return {}
 
-    async def _handle_view_submission(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """The 'Describe your app' modal was submitted. Resolve inputs, route
-        the build to the background (run_panel_build resolves the email and
-        starts the watcher), and return empty 200 to close the modal. Both the
-        ack and the final link post to the originating channel."""
-        view = payload.get("view", {})
-        callback_id = view.get("callback_id", "")
-        if not is_panel_modal(callback_id):
-            logger.info(f"Ignoring unknown Slack callback_id: {callback_id}")
+        if action_id == TEMPLATE_SELECT_ACTION_ID:
+            # C8: dropdown select — read the chosen option value
+            selected_value = (actions[0].get("selected_option") or {}).get("value", "")
+            template_key = template_key_from_button(selected_value) if selected_value else None
+            logger.info(f"App Builder dropdown selected: template={template_key}")
+            view = build_modal_view(template_key, None, channel_id)
+            await self.slack.open_modal(trigger_id, view)
             return {}
 
-        template_key = template_key_from_modal(callback_id)
-        channel_id = view.get("private_metadata", "") or ""
-        description = description_from_view(view)
-        user = payload.get("user", {})
-        user_id = user.get("id", "")
-        user_name = user.get("username") or user.get("name", "unknown")
+        if is_panel_button(action_id):
+            template_key = template_key_from_button(action_id)
+            logger.info(f"App Builder button clicked: template={template_key}")
+            view = build_modal_view(template_key, None, channel_id)
+            await self.slack.open_modal(trigger_id, view)
+            return {}
+
+        logger.info(f"Ignoring unknown Slack action_id: {action_id}")
+        return {}
+
+    def _dm_context(
+        self,
+        payload: dict[str, Any],
+        *,
+        dm_id: Optional[str],
+        origin_channel: str,
+        user_id: str,
+        user_name: str,
+        subcommand: str,
+        raw_text: str,
+    ) -> CommandContext:
+        """Build a DM-targeted CommandContext with shared closures.
+
+        If dm_id is set, all messages go to the DM channel; otherwise they
+        fall back to an ephemeral in the origin channel. Both notify_channel
+        and notify_channel_rich are always set so the watcher never early-exits.
+        """
+        target = dm_id or origin_channel
 
         async def respond(msg: str) -> None:
-            if channel_id:
-                await self.slack.post_message(channel=channel_id, text=msg)
+            if dm_id:
+                await self.slack.post_message(channel=dm_id, text=msg)
+            elif origin_channel:
+                await self.slack.post_ephemeral(origin_channel, user_id, msg)
 
         async def notify_channel(msg: str) -> None:
-            if channel_id:
-                await self.slack.post_message(channel=channel_id, text=msg)
+            await respond(msg)
 
-        ctx = CommandContext(
+        async def notify_channel_rich(msg: str, slug: str, url: str, owner: str) -> None:
+            att = build_ready_attachment(slug, url)
+            if dm_id:
+                await self.slack.post_message(
+                    channel=dm_id,
+                    text=f"Build ready: {slug}",
+                    attachments=[att],
+                )
+            elif origin_channel:
+                await self.slack.post_ephemeral(
+                    origin_channel,
+                    user_id,
+                    f"Build ready: {slug}",
+                    blocks=att["blocks"],
+                )
+
+        return CommandContext(
             user_id=user_id,
             user_name=user_name,
-            channel_id=channel_id,
-            # Synthetic, for logging only — run_panel_build uses the explicit
-            # template_key + description, not raw_text.
-            raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
-            subcommand="aiuibuilder",
+            channel_id=target,
+            raw_text=raw_text,
+            subcommand=subcommand,
             arguments="",
             platform="slack",
             respond=respond,
             metadata={"team_id": payload.get("team", {}).get("id", "")},
-            notify_channel=notify_channel if channel_id else None,
+            notify_channel=notify_channel,
+            notify_channel_rich=notify_channel_rich,
         )
 
-        # Fire-and-forget; the long-running watcher is tracked inside
-        # CommandRouter._background_tasks so it won't be GC'd.
-        asyncio.create_task(self.router.run_panel_build(ctx, template_key, description))
-        return {}  # empty 200 closes the modal
+    async def _handle_view_submission(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """The 'Describe your app' modal was submitted. Open a DM with the user,
+        post an ephemeral ack in the origin channel, then run the build in the
+        DM. Returns empty dict immediately to close the modal."""
+        view = payload.get("view", {})
+        callback_id = view.get("callback_id", "")
+        user = payload.get("user", {})
+        user_id = user.get("id", "")
+        user_name = user.get("username") or user.get("name", "unknown")
+
+        if is_panel_modal(callback_id):
+            template_key = template_key_from_modal(callback_id)
+            origin_channel = view.get("private_metadata", "") or ""
+            description = description_from_view(view)
+
+            async def _start() -> None:
+                dm_id = await self.slack.open_dm(user_id)
+                if dm_id:
+                    if origin_channel:
+                        await self.slack.post_ephemeral(
+                            origin_channel,
+                            user_id,
+                            "Starting your build - I've sent it to your DMs.",
+                        )
+                    await self.slack.post_message(
+                        channel=dm_id,
+                        text=f"Building `{template_key or 'app'}`...",
+                    )
+                ctx = self._dm_context(
+                    payload,
+                    dm_id=dm_id,
+                    origin_channel=origin_channel,
+                    user_id=user_id,
+                    user_name=user_name,
+                    subcommand="aiuibuilder",
+                    raw_text=f"aiuibuilder build {template_key or ''} {description}".strip(),
+                )
+                await self.router.run_panel_build(ctx, template_key, description)
+
+            asyncio.create_task(_start())
+            return {}  # empty 200 closes the modal
+
+        logger.info(f"Ignoring unknown Slack callback_id: {callback_id}")
+        return {}

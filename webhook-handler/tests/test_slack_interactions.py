@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from handlers.slack_interactions import SlackInteractionsHandler
 from handlers.slack_app_builder_panel import (
     TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_BLOCK_ID, DESCRIPTION_INPUT_ID,
+    TEMPLATE_SELECT_ACTION_ID,
 )
 
 
@@ -13,6 +14,8 @@ def _handler(router, slack=None):
     slack = slack or MagicMock()
     slack.open_modal = AsyncMock(return_value=True)
     slack.post_message = AsyncMock(return_value="ts")
+    slack.post_ephemeral = AsyncMock(return_value=True)
+    slack.open_dm = AsyncMock(return_value="D9")
     return SlackInteractionsHandler(slack_client=slack, command_router=router), slack
 
 
@@ -58,6 +61,7 @@ async def test_modal_submit_routes_build():
     router = MagicMock()
     router.run_panel_build = fake_run
     handler, slack = _handler(router)
+    # open_dm returns "D9" (default from _handler)
     payload = {
         "type": "view_submission",
         "user": {"id": "U1", "username": "maya"},
@@ -76,8 +80,10 @@ async def test_modal_submit_routes_build():
     assert captured["desc"] == "a portfolio for Maya"
     assert captured["ctx"].user_id == "U1"
     assert captured["ctx"].platform == "slack"
-    assert captured["ctx"].channel_id == "C-chan"
+    # With DM flow: channel_id is the DM channel, not the origin
+    assert captured["ctx"].channel_id == "D9"
     assert captured["ctx"].notify_channel is not None
+    assert captured["ctx"].notify_channel_rich is not None
 
 
 @pytest.mark.asyncio
@@ -107,8 +113,8 @@ async def test_modal_submit_blank_key():
 
 
 @pytest.mark.asyncio
-async def test_modal_submit_notify_channel_posts_to_channel():
-    """The notify_channel wired by the handler posts to the modal's channel."""
+async def test_modal_submit_notify_channel_posts_to_dm():
+    """With DM flow: notify_channel posts to the DM channel (not the origin)."""
     captured = {}
 
     async def fake_run(ctx, template_key, description):
@@ -117,6 +123,7 @@ async def test_modal_submit_notify_channel_posts_to_channel():
     router = MagicMock()
     router.run_panel_build = fake_run
     handler, slack = _handler(router)
+    # open_dm returns "D9" (default from _handler)
     payload = {
         "type": "view_submission",
         "user": {"id": "U1", "username": "maya"},
@@ -130,8 +137,9 @@ async def test_modal_submit_notify_channel_posts_to_channel():
     }
     await handler.handle_interaction(payload)
     await asyncio.sleep(0)
+    slack.post_message.reset_mock()
     await captured["ctx"].notify_channel("`slug` is ready: http://x")
-    slack.post_message.assert_awaited_with(channel="C-target", text="`slug` is ready: http://x")
+    slack.post_message.assert_awaited_with(channel="D9", text="`slug` is ready: http://x")
 
 
 @pytest.mark.asyncio
@@ -139,3 +147,137 @@ async def test_unknown_interaction_type_is_noop():
     handler, slack = _handler(MagicMock())
     resp = await handler.handle_interaction({"type": "shortcut"})
     assert resp == {}
+
+
+# ---------------------------------------------------------------------------
+# C8 — dropdown select opens the build modal
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_template_select_opens_modal():
+    """A static_select action (TEMPLATE_SELECT_ACTION_ID) opens the build modal
+    for the chosen template key, just like the Blank button path."""
+    handler, slack = _handler(MagicMock())
+    payload = {
+        "type": "block_actions",
+        "user": {"id": "U2", "username": "leo"},
+        "trigger_id": "trig-select",
+        "channel": {"id": "C-panel"},
+        "actions": [{
+            "action_id": TEMPLATE_SELECT_ACTION_ID,
+            "type": "static_select",
+            "selected_option": {"value": f"{TEMPLATE_PREFIX}portfolio"},
+        }],
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    slack.open_modal.assert_awaited_once()
+    trigger, view = slack.open_modal.call_args.args
+    assert trigger == "trig-select"
+    assert view["callback_id"] == f"{BUILD_PREFIX}portfolio"
+    assert view["private_metadata"] == "C-panel"
+
+
+# ---------------------------------------------------------------------------
+# C9 — build runs in a private DM
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_build_submit_opens_dm_and_runs_in_dm():
+    """Modal submit: open_dm succeeds -> ephemeral in origin channel, post_message
+    in DM, run_panel_build called with ctx.channel_id == DM id, and both
+    notify_channel and notify_channel_rich are set. Calling notify_channel_rich
+    posts to the DM with attachments."""
+    captured = {}
+
+    router = MagicMock()
+    router.run_panel_build = AsyncMock(side_effect=lambda ctx, key, desc: captured.update(ctx=ctx))
+
+    handler, slack = _handler(router)
+    slack.open_dm = AsyncMock(return_value="D9")
+
+    payload = {
+        "type": "view_submission",
+        "user": {"id": "U3", "username": "maya"},
+        "team": {"id": "T1"},
+        "view": {
+            "callback_id": f"{BUILD_PREFIX}portfolio",
+            "private_metadata": "C-panel",
+            "state": {"values": {
+                DESCRIPTION_BLOCK_ID: {DESCRIPTION_INPUT_ID: {"value": "a portfolio for maya"}}
+            }},
+        },
+    }
+
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}  # immediate empty 200
+
+    # Let the background task run
+    await asyncio.sleep(0)
+
+    slack.open_dm.assert_awaited_once_with("U3")
+    # ephemeral in origin channel telling user to check DMs
+    slack.post_ephemeral.assert_awaited_once()
+    ephemeral_args = slack.post_ephemeral.call_args
+    assert ephemeral_args.args[0] == "C-panel"   # channel
+    assert ephemeral_args.args[1] == "U3"         # user
+
+    # run_panel_build was called
+    router.run_panel_build.assert_awaited_once()
+    ctx = captured["ctx"]
+    assert ctx.channel_id == "D9"
+    assert ctx.user_id == "U3"
+    assert ctx.notify_channel is not None
+    assert ctx.notify_channel_rich is not None
+
+    # Calling notify_channel_rich should post to the DM with attachments
+    slack.post_message.reset_mock()
+    await ctx.notify_channel_rich("ready", "todo-1", "https://x/p", "maya@x.com")
+    slack.post_message.assert_awaited_once()
+    call_kwargs = slack.post_message.call_args
+    assert call_kwargs.kwargs.get("channel") == "D9" or call_kwargs.args[0] == "D9"
+    # attachments must be present
+    attachments = call_kwargs.kwargs.get("attachments")
+    assert attachments is not None and len(attachments) > 0
+
+
+@pytest.mark.asyncio
+async def test_build_submit_dm_open_fails_falls_back_to_ephemeral():
+    """When open_dm returns None, run_panel_build is still called with
+    ctx.channel_id == origin channel; calling notify_channel_rich posts via
+    post_ephemeral (not post_message)."""
+    captured = {}
+
+    router = MagicMock()
+    router.run_panel_build = AsyncMock(side_effect=lambda ctx, key, desc: captured.update(ctx=ctx))
+
+    handler, slack = _handler(router)
+    slack.open_dm = AsyncMock(return_value=None)
+
+    payload = {
+        "type": "view_submission",
+        "user": {"id": "U4", "username": "leo"},
+        "team": {"id": "T1"},
+        "view": {
+            "callback_id": f"{BUILD_PREFIX}portfolio",
+            "private_metadata": "C-panel",
+            "state": {"values": {
+                DESCRIPTION_BLOCK_ID: {DESCRIPTION_INPUT_ID: {"value": "a landing page"}}
+            }},
+        },
+    }
+
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router.run_panel_build.assert_awaited_once()
+    ctx = captured["ctx"]
+    assert ctx.channel_id == "C-panel"  # falls back to origin
+
+    # notify_channel_rich should use post_ephemeral (not post_message) when no DM
+    slack.post_ephemeral.reset_mock()
+    slack.post_message.reset_mock()
+    await ctx.notify_channel_rich("ready", "todo-2", "https://x/q", "leo@x.com")
+    slack.post_ephemeral.assert_awaited_once()
+    slack.post_message.assert_not_awaited()
