@@ -1,11 +1,13 @@
 """Pure builders for the Slack App Builder panel + modal, and id parsing."""
 import pytest
 from handlers.slack_app_builder_panel import (
-    build_panel_blocks, build_modal_view, description_from_view,
+    build_panel_blocks, build_template_picker_blocks,
+    build_modal_view, description_from_view,
     is_panel_button, is_panel_modal,
     template_key_from_button, template_key_from_modal,
     TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_BLOCK_ID, DESCRIPTION_INPUT_ID,
     TEMPLATE_SELECT_ACTION_ID, BLANK_ACTION_ID, FRIENDLY_DESCRIPTIONS,
+    PANEL_NEW_ID, PANEL_MYAPPS_ID,
     # B5
     PUBLISH_PREFIX, ENHANCE_PREFIX, ENHANCE_MODAL_PREFIX,
     UNPUBLISH_PREFIX, STATUS_PREFIX,
@@ -38,9 +40,25 @@ def _action_buttons(blocks):
             for el in b["elements"] if el.get("type") == "button"]
 
 
-def test_panel_has_static_select_with_all_templates():
+def test_slack_entry_panel_two_buttons():
     blocks = build_panel_blocks(_TEMPLATES)
-    assert blocks[0]["type"] == "section"
+    ids = {e["action_id"] for b in blocks if b["type"] == "actions"
+           for e in b["elements"]}
+    assert {PANEL_NEW_ID, PANEL_MYAPPS_ID} <= ids
+    assert not any(e.get("type") == "static_select"
+                   for b in blocks if b["type"] == "actions"
+                   for e in b["elements"])
+
+
+def test_slack_template_picker_blocks_have_select():
+    blocks = build_template_picker_blocks(_TEMPLATES)
+    assert any(e.get("action_id") == TEMPLATE_SELECT_ACTION_ID
+               for b in blocks if b["type"] in ("actions", "section")
+               for e in (b.get("elements") or []))
+
+
+def test_panel_has_static_select_with_all_templates():
+    blocks = build_template_picker_blocks(_TEMPLATES)
     selects = _static_selects(blocks)
     assert len(selects) == 1
     select = selects[0]
@@ -52,7 +70,7 @@ def test_panel_has_static_select_with_all_templates():
 
 
 def test_panel_blank_button_present():
-    blocks = build_panel_blocks(_TEMPLATES)
+    blocks = build_template_picker_blocks(_TEMPLATES)
     buttons = _action_buttons(blocks)
     blank_ids = [b["action_id"] for b in buttons]
     assert BLANK_ACTION_ID in blank_ids
@@ -66,7 +84,7 @@ def test_panel_options_carry_description():
         {"key": "weird-key", "label": "Weird", "description": "catalog only"},  # not in override map
         {"key": "blank2", "label": "No-desc"},  # no description anywhere
     ]
-    selects = _static_selects(build_panel_blocks(tpls))
+    selects = _static_selects(build_template_picker_blocks(tpls))
     by_value = {o["value"]: o for o in selects[0]["options"]}
     # A known template uses the plain-language override, not the terse catalog text.
     landing = by_value[f"{TEMPLATE_PREFIX}landing"]
@@ -85,7 +103,7 @@ def test_friendly_descriptions_within_slack_limit():
 
 
 def test_panel_skips_keyless_rows():
-    blocks = build_panel_blocks(
+    blocks = build_template_picker_blocks(
         [{"label": "no key", "emoji": "x"}, {"key": "ok", "label": "OK", "emoji": "y"}]
     )
     selects = _static_selects(blocks)
@@ -98,7 +116,7 @@ def test_panel_skips_keyless_rows():
 
 def test_panel_30_templates_all_appear():
     many = [{"key": f"t{i}", "label": f"T{i}"} for i in range(30)]
-    blocks = build_panel_blocks(many)
+    blocks = build_template_picker_blocks(many)
     selects = _static_selects(blocks)
     assert len(selects) == 1
     option_values = [o["value"] for o in selects[0]["options"]]
@@ -108,7 +126,7 @@ def test_panel_30_templates_all_appear():
 
 
 def test_panel_empty_templates_has_blank_option_in_select():
-    blocks = build_panel_blocks([])
+    blocks = build_template_picker_blocks([])
     selects = _static_selects(blocks)
     assert len(selects) == 1
     assert selects[0]["options"][0]["value"] == TEMPLATE_PREFIX
@@ -116,7 +134,7 @@ def test_panel_empty_templates_has_blank_option_in_select():
 
 def test_panel_option_text_truncated_to_75():
     long_label = "A" * 100
-    blocks = build_panel_blocks([{"key": "x", "label": long_label}])
+    blocks = build_template_picker_blocks([{"key": "x", "label": long_label}])
     selects = _static_selects(blocks)
     for opt in selects[0]["options"]:
         assert len(opt["text"]["text"]) <= 75
