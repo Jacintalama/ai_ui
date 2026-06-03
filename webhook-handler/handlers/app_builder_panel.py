@@ -30,6 +30,8 @@ ROBOTIC_CYAN = 0x00E5FF
 TEXT_PARAGRAPH = 2
 
 # custom_id schemes
+PANEL_NEW_ID = "aiuibuild:new"        # entry panel "Build an app" button
+PANEL_MYAPPS_ID = "aiuibuild:myapps"  # entry panel "My apps" button
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button -> aiuibuild:tpl:<key>  ("" = Blank)
 BUILD_PREFIX = "aiuibuild:build:"    # modal  -> aiuibuild:build:<key>
 TEMPLATE_SELECT_ID = "aiuibuild:tplselect"  # "Pick a template" dropdown (value=key)
@@ -41,9 +43,9 @@ _MAX_BUTTONS = _MAX_PER_ROW * _MAX_ROWS  # 25
 
 PANEL_CONTENT = (
     "\U0001f680 **AIUI App Builder**\n"
-    "Pick a template and I'll open a **private space** just for you to build, "
-    "preview, and publish your app — only you and the bot see it. Or hit "
-    "**Blank** to start from scratch."
+    "Hit **\U0001f680 Build an app** and I'll open a **private space** just for "
+    "you to build, preview, and publish your app — only you and the bot see it. "
+    "Or hit **\U0001f4c2 My apps** to revisit what you've already made."
 )
 
 
@@ -52,10 +54,23 @@ def _button(label: str, custom_id: str, style: int) -> dict:
 
 
 def build_panel_payload(templates: list[dict]) -> dict:
-    """Pinned panel: a single 'Pick a template…' dropdown (one option per
-    template, with a 1-line description) plus a Blank button. Replaces the old
-    25-button grid — far less visual clutter, same build flow on selection.
-    Caps at 25 options (Discord's select limit)."""
+    """Pinned entry panel: two buttons — '\U0001f680 Build an app' (opens a
+    private build space) and '\U0001f4c2 My apps' (revisit existing apps). The
+    template dropdown + Blank now live in build_template_picker_components(),
+    posted into the user's private thread once they click Build. The `templates`
+    arg is unused here but kept so the setup script's call signature is stable."""
+    return {"content": PANEL_CONTENT, "components": [
+        {"type": ACTION_ROW, "components": [
+            _button("\U0001f680 Build an app", PANEL_NEW_ID, STYLE_SUCCESS),
+            _button("\U0001f4c2 My apps", PANEL_MYAPPS_ID, STYLE_PRIMARY),
+        ]},
+    ]}
+
+
+def build_template_picker_components(templates: list[dict]) -> list[dict]:
+    """Template picker rows: a single 'Pick a template…' dropdown (one option
+    per template, with a 1-line description) plus a Blank button. Posted into
+    the user's private thread. Caps at 25 options (Discord's select limit)."""
     options: list[dict] = []
     for t in templates[:_MAX_SELECT_OPTIONS]:
         key = t.get("key")
@@ -74,10 +89,10 @@ def build_panel_payload(templates: list[dict]) -> dict:
         "options": options,
     }
     blank = _button("⬜ Blank", TEMPLATE_PREFIX, STYLE_SECONDARY)
-    return {"content": PANEL_CONTENT, "components": [
+    return [
         {"type": ACTION_ROW, "components": [select]},
         {"type": ACTION_ROW, "components": [blank]},
-    ]}
+    ]
 
 
 def build_modal_payload(template_key: str | None, template_label: str | None = None) -> dict:
@@ -105,6 +120,14 @@ def build_modal_payload(template_key: str | None, template_label: str | None = N
             }
         ],
     }
+
+
+def is_panel_new(custom_id: str) -> bool:
+    return custom_id == PANEL_NEW_ID
+
+
+def is_panel_myapps(custom_id: str) -> bool:
+    return custom_id == PANEL_MYAPPS_ID
 
 
 def is_panel_button(custom_id: str) -> bool:
