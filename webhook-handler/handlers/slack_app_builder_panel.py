@@ -16,7 +16,11 @@ BUILD_PREFIX = "aiuibuild:build:"    # modal callback_id -> aiuibuild:build:<key
 DESCRIPTION_BLOCK_ID = "description_block"
 DESCRIPTION_INPUT_ID = "description"
 
-# B4 — dropdown panel constants
+# Entry-panel button action_ids (shared with the Discord panel — same strings)
+PANEL_NEW_ID = "aiuibuild:new"        # entry panel "Build an app" button
+PANEL_MYAPPS_ID = "aiuibuild:myapps"  # entry panel "My apps" button
+
+# B4 — template picker constants
 TEMPLATE_SELECT_ACTION_ID = "aiuibuild:tpl_select"
 BLANK_ACTION_ID = TEMPLATE_PREFIX  # bare prefix == Blank
 _SELECT_OPTION_MAX = 100
@@ -42,8 +46,8 @@ _TITLE_MAX = 24           # modal title plain_text hard limit
 
 PANEL_TEXT = (
     "*AIUI App Builder*\n"
-    "Pick a template to start - a short form opens where you describe your app, "
-    "and I'll build it in a private DM with you. Or choose Blank to start from scratch."
+    "Tap *Build an app* to start something new, or *My apps* to manage what "
+    "you've already made. Everything happens in a private DM with you."
 )
 
 # Plain-language descriptions shown under each template in the dropdown, so any
@@ -101,12 +105,30 @@ def _link_button(text: str, url: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# B4 — dropdown panel
+# Entry panel (2-button) + template picker
 # ---------------------------------------------------------------------------
 
 def build_panel_blocks(templates: list[dict]) -> list[dict]:
-    """Header + a 'Pick a template' dropdown (one option per template) + a Blank
-    button. static_select allows up to 100 options, so no template is dropped."""
+    """Pinned entry panel: header + two buttons (Build an app / My apps).
+
+    The dropdown + Blank button now live in build_template_picker_blocks, posted
+    into the user's DM after they tap 'Build an app'. `templates` is accepted for
+    signature compatibility with existing callers but not used here."""
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": PANEL_TEXT}},
+        {
+            "type": "actions",
+            "elements": [
+                _button("\U0001f680 Build an app", PANEL_NEW_ID, primary=True),
+                _button("\U0001f4c2 My apps", PANEL_MYAPPS_ID),
+            ],
+        },
+    ]
+
+
+def build_template_picker_blocks(templates: list[dict]) -> list[dict]:
+    """A 'Pick a template' dropdown (one option per template) + a Blank button.
+    static_select allows up to 100 options, so no template is dropped."""
     options = []
     for t in templates[:_SELECT_OPTION_MAX]:
         key = t.get("key")
@@ -130,7 +152,16 @@ def build_panel_blocks(templates: list[dict]) -> list[dict]:
     }
     blank = _button("Blank", BLANK_ACTION_ID)
     return [
-        {"type": "section", "text": {"type": "mrkdwn", "text": PANEL_TEXT}},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    "Pick a template to start - a short form opens where you "
+                    "describe your app. Or choose Blank to start from scratch."
+                ),
+            },
+        },
         {"type": "actions", "elements": [select, blank]},
     ]
 

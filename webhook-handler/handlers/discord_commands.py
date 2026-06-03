@@ -59,6 +59,10 @@ from handlers.app_builder_panel import (
     is_sched_editmodal, id_from_editmodal,
     is_sched_open, is_sched_select,
     is_template_select,
+    is_panel_new,
+    is_panel_myapps,
+    build_template_picker_components,
+    build_apps_select_components,
 )
 from handlers import cronjob_panel as cron
 
@@ -291,6 +295,12 @@ class DiscordCommandHandler:
             if not values:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return {"type": MODAL, "data": build_modal_payload(values[0])}
+
+        if is_panel_new(custom_id):
+            return await self._handle_build_new(payload)
+
+        if is_panel_myapps(custom_id):
+            return await self._handle_my_apps(payload)
 
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
@@ -860,6 +870,128 @@ class DiscordCommandHandler:
         asyncio.create_task(_do())
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
+    async def _get_or_make_thread(
+        self, user_id: str, channel_id: str, user_name: str,
+    ) -> str | None:
+        """Reuse the user's private thread or create one. Returns the thread id
+        (and adds the user as a member) or None if a thread couldn't be opened."""
+        thread_id = await self.router.get_user_thread(user_id)
+        if not thread_id:
+            thread_id = await self.discord.create_private_thread(
+                channel_id, f"aiui-{user_name}"[:90]
+            )
+            if thread_id:
+                await self.router.set_user_thread(user_id, thread_id)
+        if thread_id:
+            await self.discord.add_thread_member(thread_id, user_id)
+        return thread_id
+
+    async def _handle_build_new(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'🚀 Build an app' (in #app-builder) → post the template picker into the
+        user's private thread (create/reuse), and point the ephemeral ACK at it."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _do() -> None:
+            try:
+                email = await self.router._resolve_email_auto(user_id)
+                templates = await self.router._tasks_client.list_templates(email)
+                components = build_template_picker_components(templates)
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name)
+                if thread_id:
+                    await self.discord.post_channel_message(
+                        thread_id,
+                        "Pick a template — or **Blank** to start from scratch:",
+                        components=components,
+                    )
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"🚀 Your builder is ready in <#{thread_id}>",
+                    )
+                else:
+                    # Couldn't open a thread — fall back to an ephemeral picker.
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="Pick a template — or **Blank** to start from scratch:",
+                        components=components,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_build_new failed user=%s: %s", user_id, exc)
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't open the builder — please try again.",
+                )
+
+        asyncio.create_task(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_my_apps(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'📂 My apps' (in #app-builder) → post the user's existing apps as a
+        dropdown into their private thread (create/reuse), or an empty-state
+        message if they have none. Requires a linked account."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _do() -> None:
+            try:
+                email = await self.router._resolve_email(user_id)
+                if email is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=self.router._not_linked_msg(),
+                    )
+                    return
+                projects = await self.router._tasks_client.list_projects(email)
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name)
+                if thread_id:
+                    if projects:
+                        await self.discord.post_channel_message(
+                            thread_id,
+                            "Your apps:",
+                            components=build_apps_select_components(projects),
+                        )
+                    else:
+                        await self.discord.post_channel_message(
+                            thread_id,
+                            "📂 No apps yet — hit 🚀 Build an app",
+                        )
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"📂 Your apps are in <#{thread_id}>",
+                    )
+                else:
+                    # Couldn't open a thread — fall back to an ephemeral reply.
+                    if projects:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token,
+                            content="Your apps:",
+                            components=build_apps_select_components(projects),
+                        )
+                    else:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token,
+                            content="📂 No apps yet — hit 🚀 Build an app",
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_my_apps failed user=%s: %s", user_id, exc)
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't open your apps — please try again.",
+                )
+
+        asyncio.create_task(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
     async def _handle_sched_open(self, payload: dict[str, Any]) -> dict[str, Any]:
         """'Open my schedules' (in #app-builder) → post the dashboard into the
         user's private thread (create/reuse), and point the ephemeral ACK at it."""
@@ -879,15 +1011,9 @@ class DiscordCommandHandler:
                         content="Your Discord account isn't linked yet. Hit **🔗 Link my account** first.",
                     )
                     return
-                thread_id = await self.router.get_user_thread(user_id)
-                if not thread_id:
-                    thread_id = await self.discord.create_private_thread(
-                        channel_id, f"schedules-{user_name}"[:90]
-                    )
-                    if thread_id:
-                        await self.router.set_user_thread(user_id, thread_id)
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name)
                 if thread_id:
-                    await self.discord.add_thread_member(thread_id, user_id)
                     await self.discord.post_channel_message(
                         thread_id, dash["content"], components=dash["components"])
                     await self.discord.edit_original(

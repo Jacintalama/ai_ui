@@ -17,6 +17,11 @@ from handlers.app_builder_panel import (
     ENHANCE_PREFIX, UNPUBLISH_PREFIX, ENHANCE_MODAL_PREFIX,
     STYLE_PRIMARY, STYLE_DANGER, TEXT_INPUT,
 )
+from handlers.app_builder_panel import (
+    build_template_picker_components,
+    PANEL_NEW_ID, PANEL_MYAPPS_ID, TEMPLATE_SELECT_ID,
+    is_panel_new, is_panel_myapps, SELECT_MENU,
+)
 
 _TEMPLATES = [
     {"key": "portfolio", "label": "Portfolio", "emoji": "\U0001f3a8", "description": "..."},
@@ -25,17 +30,16 @@ _TEMPLATES = [
 ]
 
 
-def test_panel_rows_within_discord_limits():
+def test_template_picker_rows_within_discord_limits():
     many = [{"key": f"t{i}", "label": f"T{i}", "emoji": "x"} for i in range(30)]
-    payload = build_panel_payload(many)
-    rows = payload["components"]
+    rows = build_template_picker_components(many)
     assert len(rows) <= 5
     for row in rows:
         assert row["type"] == ACTION_ROW
         assert len(row["components"]) <= 5
     total = sum(len(r["components"]) for r in rows)
     assert total <= 25
-    # Blank must always appear, even under the 25-button cap
+    # Blank must always appear, even under the 25-option cap
     all_ids = [c["custom_id"] for row in rows for c in row["components"]]
     assert TEMPLATE_PREFIX in all_ids
 
@@ -175,3 +179,32 @@ def test_new_parsers():
 def test_panel_content_mentions_private_space():
     from handlers.app_builder_panel import PANEL_CONTENT
     assert "private" in PANEL_CONTENT.lower()
+
+
+_ENTRY_TEMPLATES = [
+    {"key": "portfolio", "label": "Portfolio", "emoji": "🎨", "description": "A personal site"},
+]
+
+
+def test_entry_panel_has_two_buttons():
+    payload = build_panel_payload(_ENTRY_TEMPLATES)
+    buttons = [c for row in payload["components"] for c in row["components"]
+               if c["type"] == BUTTON]
+    ids = {b["custom_id"] for b in buttons}
+    assert ids == {PANEL_NEW_ID, PANEL_MYAPPS_ID}
+    assert not any(c["type"] == SELECT_MENU
+                   for row in payload["components"] for c in row["components"])
+
+
+def test_template_picker_has_dropdown_and_blank():
+    comps = build_template_picker_components(_ENTRY_TEMPLATES)
+    flat = [c for row in comps for c in row["components"]]
+    assert any(c["type"] == SELECT_MENU and c["custom_id"] == TEMPLATE_SELECT_ID
+               for c in flat)
+    assert any(c["type"] == BUTTON and c["custom_id"] == TEMPLATE_PREFIX
+               for c in flat)  # Blank
+
+
+def test_panel_id_predicates():
+    assert is_panel_new(PANEL_NEW_ID) and not is_panel_new("x")
+    assert is_panel_myapps(PANEL_MYAPPS_ID) and not is_panel_myapps("x")

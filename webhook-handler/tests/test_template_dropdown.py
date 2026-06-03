@@ -1,5 +1,14 @@
-"""App Builder panel: 25-button grid → a 'Pick a template' dropdown + Blank."""
+"""App Builder template picker: a 'Pick a template' dropdown + Blank.
+
+The dropdown + Blank now live in the extracted ``build_template_picker_components``
+(posted into the user's private thread); the pinned panel itself is a 2-button
+entry. These tests assert the picker shape.
+"""
 from handlers import app_builder_panel as p
+
+
+def _picker(templates):
+    return {"components": p.build_template_picker_components(templates)}
 
 _TEMPLATES = [
     {"key": "portfolio", "label": "Portfolio", "emoji": "🎨", "description": "personal showcase"},
@@ -18,7 +27,7 @@ def _buttons(payload):
 
 
 def test_panel_uses_template_dropdown_plus_blank():
-    payload = p.build_panel_payload(_TEMPLATES)
+    payload = _picker(_TEMPLATES)
     selects = _selects(payload)
     assert len(selects) == 1
     sel = selects[0]
@@ -33,13 +42,13 @@ def test_panel_uses_template_dropdown_plus_blank():
 
 def test_panel_dropdown_caps_at_25():
     many = [{"key": f"t{i}", "label": f"T{i}", "emoji": "•", "description": "d"} for i in range(40)]
-    sel = _selects(p.build_panel_payload(many))[0]
+    sel = _selects(_picker(many))[0]
     assert len(sel["options"]) <= 25
 
 
 def test_panel_skips_keyless_templates():
-    payload = p.build_panel_payload([{"label": "no key"},
-                                     {"key": "ok", "label": "OK", "emoji": "x", "description": "d"}])
+    payload = _picker([{"label": "no key"},
+                       {"key": "ok", "label": "OK", "emoji": "x", "description": "d"}])
     vals = {o["value"] for o in _selects(payload)[0]["options"]}
     assert vals == {"ok"}
 
