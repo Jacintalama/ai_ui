@@ -112,7 +112,9 @@ async def test_my_apps_not_linked():
 # Slack — Build an app button -> template picker in DM
 # ---------------------------------------------------------------------------
 from handlers.slack_interactions import SlackInteractionsHandler
-from handlers.slack_app_builder_panel import PANEL_NEW_ID, TEMPLATE_SELECT_ACTION_ID
+from handlers.slack_app_builder_panel import (
+    PANEL_NEW_ID, PANEL_MYAPPS_ID, TEMPLATE_SELECT_ACTION_ID,
+)
 
 
 def _slack_action(action_id, user="U1", channel="C-app"):
@@ -156,3 +158,36 @@ async def test_slack_build_new_falls_back_to_ephemeral_when_no_dm():
     eph = slack.post_ephemeral.await_args
     assert eph.args[0] == "C-app"
     assert eph.kwargs.get("blocks")
+
+
+# ---------------------------------------------------------------------------
+# Slack — My apps button -> apps list in DM
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_slack_my_apps_posts_list_to_dm():
+    slack = MagicMock(); slack.open_dm = AsyncMock(return_value="D1")
+    slack.post_message = AsyncMock(); slack.post_ephemeral = AsyncMock()
+    router = MagicMock()
+    router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(
+        return_value=[{"slug": "shop", "name": "Shop"}])
+    router._background_tasks = set()
+    h = SlackInteractionsHandler(slack_client=slack, command_router=router)
+    await h.handle_interaction(_slack_action("aiuibuild:myapps")); await asyncio.sleep(0)
+    assert slack.post_message.await_args.kwargs.get("channel") == "D1"
+
+
+@pytest.mark.asyncio
+async def test_slack_my_apps_empty_state():
+    slack = MagicMock(); slack.open_dm = AsyncMock(return_value="D1")
+    slack.post_message = AsyncMock(); slack.post_ephemeral = AsyncMock()
+    router = MagicMock()
+    router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(return_value=[])
+    router._background_tasks = set()
+    h = SlackInteractionsHandler(slack_client=slack, command_router=router)
+    await h.handle_interaction(_slack_action("aiuibuild:myapps")); await asyncio.sleep(0)
+    txt = " ".join(str(c.kwargs) for c in slack.post_message.await_args_list)
+    assert "No apps yet" in txt
