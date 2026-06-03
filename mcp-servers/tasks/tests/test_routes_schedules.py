@@ -264,3 +264,100 @@ def test_create_defaults_delivery_platform_discord(monkeypatch):
     assert r.status_code == 201, r.text
     assert len(rows) == 1
     assert rows[0].delivery_platform == "discord"
+
+
+def test_serialize_includes_delivery_platform():
+    """The serialized schedule dict exposes delivery_platform so bots can
+    filter LIST output by platform."""
+    from routes_schedules import _serialize
+    from models import Schedule
+    import uuid
+
+    sch = Schedule(
+        id=uuid.uuid4(),
+        user_email="x@y.com",
+        name="s",
+        cron_expr="0 8 * * *",
+        prompt="hi",
+        delivery_platform="slack",
+    )
+    out = _serialize(sch)
+    assert "delivery_platform" in out
+    assert out["delivery_platform"] == "slack"
+
+
+def _make_platform_filter_session(all_rows):
+    """A mocked db.session whose execute() inspects the compiled WHERE clause
+    and returns only rows matching the delivery_platform literal (if any)."""
+
+    class _R:
+        def __init__(self, rs): self._rs = rs
+        def scalars(self):
+            class _S:
+                def all(self_inner): return self._rs
+            return _S()
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj): pass
+        async def commit(self): return None
+        async def execute(self, stmt):
+            try:
+                compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            except Exception:
+                compiled = ""
+            # If the statement filters on a specific platform, honor it.
+            for plat in ("slack", "discord"):
+                if f"'{plat}'" in compiled:
+                    return _R([r for r in all_rows if r.delivery_platform == plat])
+            return _R(all_rows)
+
+    return lambda: _FakeSession()
+
+
+def test_list_filters_by_platform(monkeypatch):
+    """GET /schedules?platform=slack only returns rows whose
+    delivery_platform == 'slack'."""
+    from main import app
+    from models import Schedule
+    import uuid
+
+    all_rows = [
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="a",
+                 cron_expr="0 8 * * *", prompt="x", delivery_platform="slack"),
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="b",
+                 cron_expr="0 9 * * *", prompt="y", delivery_platform="discord"),
+    ]
+    monkeypatch.setattr(
+        "routes_schedules.session", _make_platform_filter_session(all_rows)
+    )
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules?platform=slack", headers={"X-Cron-Secret": CRON_SECRET})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert len(data) == 1
+    assert all(s["delivery_platform"] == "slack" for s in data)
+
+
+def test_list_no_platform_returns_all(monkeypatch):
+    """Omitting the platform param returns all rows (backward compatible)."""
+    from main import app
+    from models import Schedule
+    import uuid
+
+    all_rows = [
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="a",
+                 cron_expr="0 8 * * *", prompt="x", delivery_platform="slack"),
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="b",
+                 cron_expr="0 9 * * *", prompt="y", delivery_platform="discord"),
+    ]
+    monkeypatch.setattr(
+        "routes_schedules.session", _make_platform_filter_session(all_rows)
+    )
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 2

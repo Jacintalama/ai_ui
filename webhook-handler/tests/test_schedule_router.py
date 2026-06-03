@@ -40,7 +40,7 @@ async def test_run_schedule_list_empty_uses_text():
     tc.list_schedules = AsyncMock(return_value=[])
     ctx, cap = _ctx("100")
     await _router({"100": "a@x.com"}, tc).run_schedule_list(ctx)
-    tc.list_schedules.assert_awaited_once_with("a@x.com")
+    tc.list_schedules.assert_awaited_once_with("a@x.com", platform="discord")
     assert cap["text"] and "no schedules" in cap["text"][0].lower()
     assert cap["components"] == []
 

@@ -74,8 +74,13 @@ class TasksClient:
             raise TasksAPIError(resp.status_code, str(detail))
         return resp
 
-    async def list_schedules(self, user_email: str) -> list[dict[str, Any]]:
-        resp = await self._request("GET", "/schedules", user_email)
+    async def list_schedules(
+        self, user_email: str, platform: str | None = None,
+    ) -> list[dict[str, Any]]:
+        kwargs: dict[str, Any] = {}
+        if platform is not None:
+            kwargs["params"] = {"platform": platform}
+        resp = await self._request("GET", "/schedules", user_email, **kwargs)
         return resp.json()
 
     async def create_schedule(

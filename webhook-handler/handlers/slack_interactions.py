@@ -221,7 +221,8 @@ class SlackInteractionsHandler:
                     email = await self._bail_if_not_linked(user_id)
                     if not email:
                         return
-                    scheds = await self.router._tasks_client.list_schedules(email)
+                    scheds = await self.router._tasks_client.list_schedules(
+                        email, platform="slack")
                     blocks = build_schedules_dashboard(scheds)
                     dm = await self.slack.open_dm(user_id)
                     if dm:
@@ -301,7 +302,8 @@ class SlackInteractionsHandler:
                 return
             method = getattr(self.router._tasks_client, method_name)
             await method(email, sched_id)
-            scheds = await self.router._tasks_client.list_schedules(email)
+            scheds = await self.router._tasks_client.list_schedules(
+                email, platform="slack")
             dm = await self.slack.open_dm(user_id)
             if dm:
                 await self.slack.post_message(
