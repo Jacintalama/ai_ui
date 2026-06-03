@@ -647,11 +647,12 @@ class DiscordCommandHandler:
             # not silently swallowed (it does two API calls before the build).
             try:
                 target = channel_id
-                thread_id = await self.discord.create_private_thread(
-                    channel_id, f"{template_key or 'app'}-{user_name}"[:90]
-                )
+                # App Builder delivery goes to the user's BUILDER thread
+                # (reused across builds), kept separate from the cron
+                # scheduler's schedules thread.
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="builder")
                 if thread_id:
-                    await self.discord.add_thread_member(thread_id, user_id)
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
                         content=f"✅ Opening your private build space → <#{thread_id}>",
@@ -871,17 +872,33 @@ class DiscordCommandHandler:
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _get_or_make_thread(
-        self, user_id: str, channel_id: str, user_name: str,
+        self, user_id: str, channel_id: str, user_name: str, *, kind: str,
     ) -> str | None:
         """Reuse the user's private thread or create one. Returns the thread id
-        (and adds the user as a member) or None if a thread couldn't be opened."""
-        thread_id = await self.router.get_user_thread(user_id)
+        (and adds the user as a member) or None if a thread couldn't be opened.
+
+        ``kind`` selects which per-user thread slot is used so the App Builder
+        and the cron scheduler keep separate threads:
+          - ``"builder"``   → builder-thread slot, new threads ``aiui-apps-<user>``
+          - ``"schedules"`` → schedules-thread slot, new threads ``schedules-<user>``
+        """
+        if kind == "builder":
+            get_thread = self.router.get_user_builder_thread
+            set_thread = self.router.set_user_builder_thread
+            name = f"aiui-apps-{user_name}"
+        elif kind == "schedules":
+            get_thread = self.router.get_user_thread
+            set_thread = self.router.set_user_thread
+            name = f"schedules-{user_name}"
+        else:  # pragma: no cover - defensive
+            raise ValueError(f"unknown thread kind: {kind!r}")
+        thread_id = await get_thread(user_id)
         if not thread_id:
             thread_id = await self.discord.create_private_thread(
-                channel_id, f"aiui-{user_name}"[:90]
+                channel_id, name[:90]
             )
             if thread_id:
-                await self.router.set_user_thread(user_id, thread_id)
+                await set_thread(user_id, thread_id)
         if thread_id:
             await self.discord.add_thread_member(thread_id, user_id)
         return thread_id
@@ -902,7 +919,7 @@ class DiscordCommandHandler:
                 templates = await self.router._tasks_client.list_templates(email)
                 components = build_template_picker_components(templates)
                 thread_id = await self._get_or_make_thread(
-                    user_id, channel_id, user_name)
+                    user_id, channel_id, user_name, kind="builder")
                 if thread_id:
                     await self.discord.post_channel_message(
                         thread_id,
@@ -952,7 +969,7 @@ class DiscordCommandHandler:
                     return
                 projects = await self.router._tasks_client.list_projects(email)
                 thread_id = await self._get_or_make_thread(
-                    user_id, channel_id, user_name)
+                    user_id, channel_id, user_name, kind="builder")
                 if thread_id:
                     if projects:
                         await self.discord.post_channel_message(
@@ -1012,7 +1029,7 @@ class DiscordCommandHandler:
                     )
                     return
                 thread_id = await self._get_or_make_thread(
-                    user_id, channel_id, user_name)
+                    user_id, channel_id, user_name, kind="schedules")
                 if thread_id:
                     await self.discord.post_channel_message(
                         thread_id, dash["content"], components=dash["components"])

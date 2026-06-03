@@ -57,6 +57,8 @@ async def test_modal_submit_routes_build():
     async def fake_run(ctx, template_key, description):
         captured.update(ctx=ctx, key=template_key, desc=description)
     router = MagicMock(); router.run_panel_build = fake_run
+    router.get_user_builder_thread = AsyncMock(return_value=None)
+    router.set_user_builder_thread = AsyncMock()
     handler = _handler(router)
     payload = {
         "type": 5, "id": "i", "token": "tok",
@@ -83,6 +85,8 @@ async def test_modal_submit_blank_key():
     async def fake_run(ctx, template_key, description):
         captured["key"] = template_key
     router = MagicMock(); router.run_panel_build = fake_run
+    router.get_user_builder_thread = AsyncMock(return_value=None)
+    router.set_user_builder_thread = AsyncMock()
     handler = _handler(router)
     payload = {
         "type": 5, "token": "tok",
@@ -202,6 +206,8 @@ async def test_build_modal_opens_private_thread_and_is_ephemeral():
     async def fake_build(ctx, key, desc):
         captured["ctx"] = ctx
     router = MagicMock(); router.run_panel_build = fake_build
+    router.get_user_builder_thread = AsyncMock(return_value=None)
+    router.set_user_builder_thread = AsyncMock()
     discord = MagicMock()
     discord.create_private_thread = AsyncMock(return_value="thread-9")
     discord.add_thread_member = AsyncMock(return_value=True)
@@ -231,6 +237,8 @@ async def test_build_modal_falls_back_to_channel_when_thread_fails():
     async def fake_build(ctx, key, desc):
         captured["ctx"] = ctx
     router = MagicMock(); router.run_panel_build = fake_build
+    router.get_user_builder_thread = AsyncMock(return_value=None)
+    router.set_user_builder_thread = AsyncMock()
     discord = MagicMock()
     discord.create_private_thread = AsyncMock(return_value=None)
     discord.add_thread_member = AsyncMock(return_value=True)
