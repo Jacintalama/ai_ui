@@ -70,7 +70,7 @@
             await s.commit()
         return {"ok": True}
     ```
-    (match the exact param/model names the existing endpoints use — `ThreadIn`, `_require_internal`.)
+    (match the existing endpoints EXACTLY — `ThreadIn`, `_require_internal`; the real `set_thread` uses an `update()` statement and returns `{"status": "ok"}`, and `get_thread` returns `{"thread_id": ...}`. Mirror those shapes so the client + tests stay uniform.)
 - [ ] **Step 4: Run tests, verify pass.** Confirm the migration file is idempotent.
 - [ ] **Step 5: Commit** `feat(tasks): builder_thread_id column + /discord-links builder-thread endpoints`
 
@@ -154,8 +154,14 @@
 
 - [ ] **Step 1: Write failing test** — clicking "Build an app" / "My apps" uses `router.get_user_builder_thread`/`set_user_builder_thread` (NOT `get_user_thread`), and `_handle_sched_open` STILL uses `get_user_thread` (the schedules one). Assert the two flows resolve different thread accessors.
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** — parametrize `_get_or_make_thread(user_id, channel_id, user_name, *, kind)` where `kind="builder"` uses `get_user_builder_thread`/`set_user_builder_thread` and names new threads `aiui-apps-{user_name}`, while `kind="schedules"` keeps the existing `get_user_thread`/`set_user_thread` + `schedules-{user_name}` name. `_handle_build_new`/`_handle_my_apps` pass `kind="builder"`; `_handle_sched_open` passes `kind="schedules"`. (This also reverts the earlier cosmetic rename so schedules threads are `schedules-` again.)
-- [ ] **Step 4: Run, verify pass** (full suite — schedules tests must stay green).
+- [ ] **Step 3: Implement** — parametrize `_get_or_make_thread(user_id, channel_id, user_name, *, kind)` where `kind="builder"` uses `get_user_builder_thread`/`set_user_builder_thread` and names new threads `aiui-apps-{user_name}`, while `kind="schedules"` keeps `get_user_thread`/`set_user_thread` + `schedules-{user_name}`.
+  **Route EVERY thread call-site by kind (reviewer-flagged):**
+  - `_handle_build_new` / `_handle_my_apps` → `kind="builder"`.
+  - `_handle_sched_open` → `kind="schedules"`.
+  - The **inline schedules thread path (~line 789)** that calls `get_user_thread`/`set_user_thread` directly and names `schedules-{user_name}` → leave on the SCHEDULES accessors (it's the cron path).
+  - The **build-completion / build flow** (`run_panel_build` and any post that delivers a finished build) currently uses `get_user_thread` (schedules) — it MUST now use the BUILDER thread so a finished build lands in the app-builder thread, not the cron thread. Grep all `get_user_thread`/`set_user_thread`/`create_private_thread` call sites and confirm each is intentionally builder vs schedules before finishing.
+  (Net effect: cron threads are `schedules-<user>` again; all App Builder activity — picker, builds, my-apps — uses `aiui-apps-<user>`.)
+- [ ] **Step 4: Run, verify pass** (full suite — schedules tests must stay green; add/adjust a test asserting the build flow resolves the BUILDER thread).
 - [ ] **Step 5: Commit** `fix(discord): App Builder uses its own thread, separate from cron schedules`
 
 ---
@@ -166,7 +172,10 @@
 
 - [ ] **Step 1: Write failing tests** — the per-app actions include a Preview link button (url = published `public_url` or draft preview url) and a Delete button (`aiuibuild:del:<slug>`); clicking Delete renders a confirm card (`build_delete_confirm_components(slug)`); confirm → `router.delete_app(email, slug)` called; cancel → no delete.
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** — add the Preview link + Delete button to the app-action components (find where a selected app's actions are rendered — `build_project_menu_components` ~338, used by the app-select handler). Add confirm-card builder + `is_app_delete`/`is_del_confirm`/`is_del_cancel` predicates + `slug_from_*`. Wire handlers: delete→show confirm; del-confirm→`_resolve_email`+`delete_app`+success msg; del-cancel→dismiss. Preview is a link button (no handler). Owner-only: rely on the endpoint's 403 + show a friendly message.
+- [ ] **Step 3: Implement** — in `build_project_menu_components` (~338, used by `run_panel_menu`).
+  **Discord 5-buttons-per-row limit (reviewer-flagged):** the menu ALREADY has an "Open live"/"Open preview" link button — that IS Preview; do NOT add a 6th button. Just ensure that link is present/labeled as the open/preview affordance (uses `public_url` when published, else the draft preview url built from `PUBLIC_DOMAIN` like the existing code). Add ONLY the **Delete** button; if the published row would exceed 5 buttons, put Delete on a SECOND action row.
+  - Add confirm-card builder `build_delete_confirm_components(slug)` + ids `aiuibuild:del:`, `aiuibuild:del-confirm:`, `aiuibuild:del-cancel:` + predicates/`slug_from_*`.
+  - Wire handlers (prefer a `run_panel_delete(ctx, slug)` mirroring `run_panel_unpublish`, resolving email via `_resolve_email_for_ctx`): delete→show confirm card; del-confirm→`delete_app(email, slug)`+success msg (friendly message on 403); del-cancel→dismiss. Preview is the existing link button (no handler).
 - [ ] **Step 4: Run, verify pass** (full suite).
 - [ ] **Step 5: Commit** `feat(discord): Preview + Delete (confirm) in My apps`
 
@@ -179,8 +188,8 @@
 - [ ] **Step 1: Write failing tests** — each row in `build_apps_list_blocks` includes a Preview link button (`"url"` = published public_url or draft preview url) and a Delete button carrying `DELETE_PREFIX+slug` with a Block Kit `confirm` object; `_handle_block_actions` routes the delete action → `_tasks_client.delete_app(email, slug)` and reports back in the DM.
 - [ ] **Step 2: Run, verify fail.**
 - [ ] **Step 3: Implement**
-  - `build_apps_list_blocks`: for each app compute `open_url = app.get("public_url") if app.get("published") else f"{settings.tasks_public_url.rstrip('/')}/tasks/preview-app/{slug}/"`; add a link button `{"type":"button","text":{...,"text":"Preview"},"url":open_url}` and a Delete button with a `confirm` object (title "Delete app?", text "This permanently deletes <name>. No undo.", confirm "Delete", deny "Cancel"), action_id `f"{DELETE_PREFIX}{slug}"`. Add a `DELETE_PREFIX = "aiuibuild:del:"` constant.
-  - `slack_interactions.py`: in `_handle_block_actions`, add a `DELETE_PREFIX` branch (mirror the existing `_do_publish`/`_do_unpublish` action dispatch loop): resolve email via `_email_for`, `await self.router._tasks_client.delete_app(email, slug)`, then post a confirmation (and ideally re-render the list). Background-task tracked.
+  - `build_apps_list_blocks`: for each app compute `open_url = app.get("public_url") if app.get("published") else f"{settings.tasks_public_url.rstrip('/')}/tasks/preview-app/{slug}/"`. **`_button` takes neither `url` nor `confirm` (reviewer-flagged)** — use the existing `_link_button(text, url)` helper for **Preview**, and build the **Delete** button as a RAW dict with a Block Kit `confirm` object: `{"type":"button","text":{"type":"plain_text","text":"Delete"},"style":"danger","action_id":f"{DELETE_PREFIX}{slug}","confirm":{"title":{"type":"plain_text","text":"Delete app?"},"text":{"type":"mrkdwn","text":"This permanently deletes *<name>*. No undo."},"confirm":{"type":"plain_text","text":"Delete"},"deny":{"type":"plain_text","text":"Cancel"}}}`. Add `DELETE_PREFIX = "aiuibuild:del:"`.
+  - `slack_interactions.py`: add a `DELETE_PREFIX` entry to the existing `(prefix, handler)` dispatch loop (mirror `_do_unpublish`): resolve email via `self._bail_if_not_linked(user_id)` (early-returns on unlinked), `await self.router._tasks_client.delete_app(email, slug)`, then post a confirmation to the DM. Background-task tracked.
 - [ ] **Step 4: Run, verify pass** (full suite).
 - [ ] **Step 5: Commit** `feat(slack): Preview + Delete (confirm) in My apps`
 
