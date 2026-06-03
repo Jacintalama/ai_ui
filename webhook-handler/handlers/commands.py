@@ -1610,6 +1610,19 @@ class CommandRouter:
             return
         await ctx.respond(f"`{slug}` is offline now (unpublished).")
 
+    async def run_panel_delete(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder Delete: permanently remove an app (after confirm)."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            return
+        try:
+            await self._tasks_client.delete_app(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_delete_error(e))
+            return
+        await ctx.respond(f"`{slug}` has been deleted.")
+
     async def run_panel_menu(self, ctx: CommandContext, slug: str) -> None:
         """App Builder dropdown selection → post that app's ephemeral action menu.
         Fetches fresh status so the menu reflects current publish state."""
@@ -2014,6 +2027,16 @@ class CommandRouter:
         if e.status == 404:
             return "It's not live right now."
         return f"Couldn't unpublish (error {e.status})."
+
+    def _format_delete_error(self, e: TasksAPIError) -> str:
+        """Delete-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status in (401, 403):
+            return "Only the app's owner can delete it."
+        if e.status == 404:
+            return "That app doesn't exist (already deleted?)."
+        return f"Couldn't delete (error {e.status})."
 
     def _format_publish_error(self, e: TasksAPIError) -> str:
         """Publish-flavored error text."""

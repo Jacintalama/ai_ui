@@ -189,6 +189,31 @@ async def test_unpublish_not_owner_403():
 
 
 @pytest.mark.asyncio
+async def test_delete_happy_path():
+    captured = []
+    tc = MagicMock(); tc.delete_app = AsyncMock(return_value=True)
+    await _router({"100": "a@x.com"}, tc).run_panel_delete(_ctx("100", captured), "slug-1")
+    tc.delete_app.assert_awaited_once_with("a@x.com", "slug-1")
+    assert any("delet" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_delete_not_owner_403():
+    captured = []
+    tc = MagicMock(); tc.delete_app = AsyncMock(side_effect=TasksAPIError(403, "no"))
+    await _router({"100": "a@x.com"}, tc).run_panel_delete(_ctx("100", captured), "slug-1")
+    tc.delete_app.assert_awaited_once_with("a@x.com", "slug-1")
+    assert any("owner" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_delete_unmapped_user_rejected():
+    captured = []
+    await _router({}, MagicMock()).run_panel_delete(_ctx("9", captured), "slug-1")
+    assert any("isn't linked" in m for m in captured)
+
+
+@pytest.mark.asyncio
 async def test_publish_on_published_failure_falls_back_to_respond():
     captured = []
     tc = MagicMock()

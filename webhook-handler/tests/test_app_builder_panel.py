@@ -208,3 +208,73 @@ def test_template_picker_has_dropdown_and_blank():
 def test_panel_id_predicates():
     assert is_panel_new(PANEL_NEW_ID) and not is_panel_new("x")
     assert is_panel_myapps(PANEL_MYAPPS_ID) and not is_panel_myapps("x")
+
+
+# --- Delete (with confirm) in the per-app "My apps" menu ---
+from handlers.app_builder_panel import (
+    build_project_menu_components,
+    build_delete_confirm_components,
+    DELETE_PREFIX, DEL_CONFIRM_PREFIX, DEL_CANCEL_PREFIX,
+    is_app_delete, slug_from_delete_button,
+    is_del_confirm, slug_from_del_confirm,
+    is_del_cancel, slug_from_del_cancel,
+)
+
+
+def _flat_buttons(rows):
+    return [c for row in rows for c in row["components"]]
+
+
+def test_project_menu_has_delete_button_draft():
+    rows = build_project_menu_components(
+        "shop", published=False, preview_url="https://x/tasks/preview-app/shop/")
+    btns = _flat_buttons(rows)
+    ids = [b.get("custom_id") for b in btns]
+    assert f"{DELETE_PREFIX}shop" in ids
+    # Delete button is danger style
+    delete = next(b for b in btns if b.get("custom_id") == f"{DELETE_PREFIX}shop")
+    assert delete["style"] == STYLE_DANGER
+    # the open/preview link button is still present
+    assert any(b.get("style") == STYLE_LINK and b.get("url") for b in btns)
+    # ≤5 buttons per action row
+    for row in rows:
+        assert len(row["components"]) <= 5
+
+
+def test_project_menu_has_delete_button_published():
+    rows = build_project_menu_components(
+        "shop", published=True, public_url="https://shop.example.com/")
+    btns = _flat_buttons(rows)
+    ids = [b.get("custom_id") for b in btns]
+    assert f"{DELETE_PREFIX}shop" in ids
+    # the open/live link button is still present
+    assert any(b.get("style") == STYLE_LINK and b.get("url") for b in btns)
+    # ≤5 buttons per action row (published row may overflow Delete to row 2)
+    for row in rows:
+        assert len(row["components"]) <= 5
+
+
+def test_delete_confirm_components_shape():
+    rows = build_delete_confirm_components("shop")
+    btns = _flat_buttons(rows)
+    ids = [b["custom_id"] for b in btns]
+    assert f"{DEL_CONFIRM_PREFIX}shop" in ids
+    assert f"{DEL_CANCEL_PREFIX}shop" in ids
+    confirm = next(b for b in btns if b["custom_id"] == f"{DEL_CONFIRM_PREFIX}shop")
+    assert confirm["style"] == STYLE_DANGER
+    for row in rows:
+        assert len(row["components"]) <= 5
+
+
+def test_delete_parsers_roundtrip():
+    assert is_app_delete(f"{DELETE_PREFIX}s") and slug_from_delete_button(f"{DELETE_PREFIX}s") == "s"
+    assert is_del_confirm(f"{DEL_CONFIRM_PREFIX}s") and slug_from_del_confirm(f"{DEL_CONFIRM_PREFIX}s") == "s"
+    assert is_del_cancel(f"{DEL_CANCEL_PREFIX}s") and slug_from_del_cancel(f"{DEL_CANCEL_PREFIX}s") == "s"
+    # delete predicate must not match the confirm/cancel ids (disjoint routing)
+    assert not is_app_delete(f"{DEL_CONFIRM_PREFIX}s")
+    assert not is_app_delete(f"{DEL_CANCEL_PREFIX}s")
+    for fn, pref in [(slug_from_delete_button, DELETE_PREFIX),
+                     (slug_from_del_confirm, DEL_CONFIRM_PREFIX),
+                     (slug_from_del_cancel, DEL_CANCEL_PREFIX)]:
+        with pytest.raises(ValueError):
+            fn(pref)  # bare prefix, empty slug

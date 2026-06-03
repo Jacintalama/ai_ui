@@ -255,3 +255,62 @@ async def test_build_modal_falls_back_to_channel_when_thread_fails():
     ctx = captured["ctx"]
     await ctx.notify_channel("hi")
     discord.post_channel_message.assert_awaited_with("main-chan", "hi")
+
+
+# --- Delete (with confirm) flow ---
+from handlers.app_builder_panel import (
+    DELETE_PREFIX, DEL_CONFIRM_PREFIX, DEL_CANCEL_PREFIX,
+)
+
+
+@pytest.mark.asyncio
+async def test_delete_button_shows_confirm_card():
+    handler = _handler(MagicMock())
+    payload = {"type": 3, "id": "i", "token": "tok",
+               "data": {"custom_id": f"{DELETE_PREFIX}slug-1"},
+               "member": {"user": {"id": "100", "username": "u"}}, "channel_id": "c"}
+    resp = await handler.handle_interaction(payload)
+    # Confirm card rendered synchronously (ephemeral message), not a delete.
+    assert resp["type"] in (4, 7)
+    ids = [c["custom_id"] for row in resp["data"]["components"]
+           for c in row["components"]]
+    assert f"{DEL_CONFIRM_PREFIX}slug-1" in ids
+    assert f"{DEL_CANCEL_PREFIX}slug-1" in ids
+
+
+@pytest.mark.asyncio
+async def test_delete_button_malformed_is_noop():
+    handler = _handler(MagicMock())
+    resp = await handler.handle_interaction(
+        {"type": 3, "data": {"custom_id": f"{DELETE_PREFIX}"}})
+    assert resp["type"] == 6  # DEFERRED_UPDATE_MESSAGE, no 500
+
+
+@pytest.mark.asyncio
+async def test_del_confirm_routes_to_run_panel_delete():
+    captured = {}
+    async def fake_delete(ctx, slug): captured["slug"] = slug
+    router = MagicMock(); router.run_panel_delete = fake_delete
+    handler = _handler(router)
+    payload = {"type": 3, "id": "i", "token": "tok",
+               "data": {"custom_id": f"{DEL_CONFIRM_PREFIX}slug-1"},
+               "member": {"user": {"id": "100", "username": "u"}}, "channel_id": "c"}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == 5
+    await asyncio.sleep(0)
+    assert captured["slug"] == "slug-1"
+
+
+@pytest.mark.asyncio
+async def test_del_cancel_does_not_delete():
+    router = MagicMock()
+    router.run_panel_delete = AsyncMock()
+    handler = _handler(router)
+    payload = {"type": 3, "id": "i", "token": "tok",
+               "data": {"custom_id": f"{DEL_CANCEL_PREFIX}slug-1"},
+               "member": {"user": {"id": "100", "username": "u"}}, "channel_id": "c"}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == 7  # UPDATE_MESSAGE — "Cancelled."
+    assert "cancel" in resp["data"]["content"].lower()
+    await asyncio.sleep(0)
+    router.run_panel_delete.assert_not_awaited()
