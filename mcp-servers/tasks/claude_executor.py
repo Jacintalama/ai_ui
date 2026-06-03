@@ -758,8 +758,12 @@ def _extract_assistant_text(stream_text: str) -> str:
             obj = _json.loads(line)
         except Exception:
             continue
-        if obj.get("type") == "result" and isinstance(obj.get("result"), str):
-            out.append(obj["result"])
+        if obj.get("type") == "result":
+            if isinstance(obj.get("result"), str):
+                out.append(obj["result"])
+            elif obj.get("is_error"):
+                sub = obj.get("subtype") or "error"
+                out.append(f"The run ended with an error ({sub}) and produced no output.")
         elif obj.get("type") == "assistant":
             for item in (obj.get("message", {}) or {}).get("content", []) or []:
                 if item.get("type") == "text" and isinstance(item.get("text"), str):
@@ -770,10 +774,14 @@ def _extract_assistant_text(stream_text: str) -> str:
 def parse_outcome(claude_response: str) -> Outcome:
     """Find the LAST sentinel in Claude's text output. Supports both raw
     text and stream-json (newline-delimited JSON) formats."""
-    text = _extract_assistant_text(claude_response) or claude_response
+    text = _extract_assistant_text(claude_response)
+    if not text:
+        stripped = (claude_response or "").strip()
+        # Never surface a raw stream-json blob as the user-facing message.
+        text = "(the run produced no output)" if stripped.startswith("{") else stripped
     matches = list(_SENTINEL_RE.finditer(text))
     if not matches:
-        return Outcome(kind="failed", payload=text.strip()[:500] or claude_response.strip()[:500])
+        return Outcome(kind="failed", payload=text.strip()[:500] or "(no output)")
     last = matches[-1]
     kind_map = {
         "COMPLETED": "completed",

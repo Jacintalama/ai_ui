@@ -152,3 +152,20 @@ def test_ensure_gitignore_attachments_skips_when_app_dir_missing(tmp_path):
 
     assert not missing.exists()
     assert not (tmp_path / ".gitignore").exists()
+
+
+def test_parse_outcome_error_result_no_raw_json():
+    """An error_during_execution envelope must NOT leak raw JSON into the payload."""
+    stream = '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"duration_ms":0,"session_id":"x"}'
+    o = parse_outcome(stream)
+    assert o.kind == "failed"
+    assert '"type":"result"' not in o.payload
+    assert "error_during_execution" not in o.payload or "error" in o.payload.lower()
+    assert "{" not in o.payload  # clean human message, not a JSON dump
+
+
+def test_parse_outcome_empty_stream_no_raw_json():
+    """A JSON stream with no assistant text and no result string -> clean message, not raw JSON."""
+    stream = '{"type":"system","subtype":"init","session_id":"y"}'
+    o = parse_outcome(stream)
+    assert "{" not in o.payload
