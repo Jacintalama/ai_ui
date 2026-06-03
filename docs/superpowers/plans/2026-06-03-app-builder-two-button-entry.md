@@ -182,7 +182,8 @@ async def test_build_new_posts_template_picker_to_thread():
     router.get_user_thread = AsyncMock(return_value=None)
     router.set_user_thread = AsyncMock()
     router._resolve_email_auto = AsyncMock(return_value="maya@x.com")
-    router.list_templates = AsyncMock(return_value=[{"key": "portfolio", "label": "Portfolio"}])
+    router._tasks_client = MagicMock()
+    router._tasks_client.list_templates = AsyncMock(return_value=[{"key": "portfolio", "label": "Portfolio"}])
     h = DiscordCommandHandler(discord, router)
     resp = await h.handle_interaction(_payload(PANEL_NEW_ID))
     await asyncio.sleep(0)
@@ -194,7 +195,7 @@ async def test_build_new_posts_template_picker_to_thread():
     assert any(c.get("custom_id") == TEMPLATE_SELECT_ID for c in flat)
 ```
 
-> NOTE for implementer: confirm the real `DiscordCommandHandler` constructor signature and how it fetches templates (it may use `self.router.list_templates` or a tasks client). Adjust the mock to match. Read `discord_commands.py:497 _handle_panel_route` and `:863 _handle_sched_open` first; mirror their exact deferral/threading calls.
+> VERIFIED method names (reviewer-checked): templates come from `self.router._tasks_client.list_templates(email)` — there is NO `router.list_templates`. The template catalog is generic, so the synthetic email from `_resolve_email_auto(user_id)` is fine here (not-linked is enforced later at build time, as today). Mirror `_handle_sched_open` (discord_commands.py:863) for the exact deferral/threading calls.
 
 - [ ] **Step 2: Run, verify failure**
 
@@ -223,7 +224,8 @@ async def _handle_build_new(self, payload: dict[str, Any]) -> dict[str, Any]:
 
     async def _do() -> None:
         try:
-            templates = await self.router.list_templates(user_id)  # confirm method
+            email = await self.router._resolve_email_auto(user_id)  # synthetic ok; catalog is generic
+            templates = await self.router._tasks_client.list_templates(email)
             thread_id = await self._get_or_make_thread(user_id, channel_id, user_name)
             if thread_id:
                 await self.discord.post_channel_message(
@@ -278,8 +280,9 @@ async def test_my_apps_posts_apps_dropdown_to_thread():
     discord.edit_original = AsyncMock()
     router = MagicMock()
     router.get_user_thread = AsyncMock(return_value="T1"); router.set_user_thread = AsyncMock()
-    router._resolve_email_auto = AsyncMock(return_value="maya@x.com")
-    router.list_projects = AsyncMock(return_value=[{"slug": "shop-1", "name": "Shop"}])
+    router._resolve_email = AsyncMock(return_value="maya@x.com")  # REAL email (None = not linked)
+    router._tasks_client = MagicMock()
+    router._tasks_client.list_projects = AsyncMock(return_value=[{"slug": "shop-1", "name": "Shop"}])
     h = DiscordCommandHandler(discord, router)
     await h.handle_interaction(_payload("aiuibuild:myapps")); await asyncio.sleep(0)
     assert discord.post_channel_message.await_args.args[0] == "T1"
@@ -291,19 +294,19 @@ async def test_my_apps_empty_state():
     discord.edit_original = AsyncMock()
     router = MagicMock()
     router.get_user_thread = AsyncMock(return_value="T1"); router.set_user_thread = AsyncMock()
-    router._resolve_email_auto = AsyncMock(return_value="maya@x.com")
-    router.list_projects = AsyncMock(return_value=[])
+    router._resolve_email = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(return_value=[])
     h = DiscordCommandHandler(discord, router)
     await h.handle_interaction(_payload("aiuibuild:myapps")); await asyncio.sleep(0)
     posted = " ".join(str(c.args) for c in discord.post_channel_message.await_args_list)
     assert "No apps yet" in posted
 ```
 
-> NOTE: confirm `_resolve_email_auto` / `list_projects` are the real router methods (grep `discord_commands.py` + `commands.py`); adjust if the names differ. If the user isn't linked, reuse the existing not-linked path rather than the empty state.
+> VERIFIED (reviewer-checked): use `self.router._resolve_email(user_id)` (or `_resolve_email_for_ctx`) which returns **None when not linked** — do NOT use `_resolve_email_auto` here (it returns a synthetic email and can never express "not linked"). Apps come from `self.router._tasks_client.list_projects(email)` — there is NO `router.list_projects`.
 
 - [ ] **Step 2: Run, verify failure** — `pytest tests/test_two_button_entry.py -k my_apps -q` → FAIL.
 
-- [ ] **Step 3: Implement** `_handle_my_apps`: resolve email (existing path; not-linked → existing prompt) → `list_projects(email)` → get/make thread → `post_channel_message(thread, …, components=build_apps_select_components(projects))` (or "No apps yet — hit 🚀 Build an app" when empty) → `edit_original` pointer. Reuse `_get_or_make_thread`.
+- [ ] **Step 3: Implement** `_handle_my_apps`: `email = await self.router._resolve_email(user_id)`; if `email is None` → `edit_original` with the existing not-linked text (`self.router._not_linked_text(...)` / `_not_linked_msg()`); else `projects = await self.router._tasks_client.list_projects(email)` → get/make thread → when projects: `post_channel_message(thread, "Your apps:", components=build_apps_select_components(projects))`; when empty: `post_channel_message(thread, "📂 No apps yet — hit 🚀 Build an app")` (custom text, since `build_apps_select_components([])` would be an empty select) → `edit_original` pointer. Reuse `_get_or_make_thread`.
 
 - [ ] **Step 4: Run, verify pass** — `pytest tests/test_two_button_entry.py -k my_apps -q` → PASS.
 
@@ -382,7 +385,11 @@ async def test_slack_build_new_posts_picker_to_dm():
     slack = MagicMock()
     slack.open_dm = AsyncMock(return_value="D1"); slack.post_message = AsyncMock()
     slack.post_ephemeral = AsyncMock()
-    router = MagicMock(); router.list_templates = AsyncMock(return_value=[{"key": "portfolio", "label": "P"}])
+    router = MagicMock()
+    router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock()
+    router._tasks_client.list_templates = AsyncMock(return_value=[{"key": "portfolio", "label": "P"}])
+    router._background_tasks = set()
     h = SlackInteractionsHandler(slack_client=slack, command_router=router)
     await h.handle_interaction(_slack_action(PANEL_NEW_ID)); await asyncio.sleep(0)
     slack.open_dm.assert_awaited_once_with("U1")
@@ -399,7 +406,8 @@ if action_id == PANEL_NEW_ID:
     user_id = (payload.get("user") or {}).get("id", "")
     origin = (payload.get("channel") or {}).get("id", "")
     async def _do():
-        templates = await self.router.list_templates(user_id)  # confirm method
+        email = await self.router._resolve_email_for_ctx(self._slack_ctx(user_id))  # synthetic-free; catalog generic, "" ok
+        templates = await self.router._tasks_client.list_templates(email or "")
         dm = await self.slack.open_dm(user_id)
         blocks = build_template_picker_blocks(templates)
         if dm:
@@ -440,6 +448,7 @@ async def test_slack_my_apps_posts_list_to_dm():
     router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
     router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(
         return_value=[{"slug": "shop", "name": "Shop"}])
+    router._background_tasks = set()
     h = SlackInteractionsHandler(slack_client=slack, command_router=router)
     await h.handle_interaction(_slack_action("aiuibuild:myapps")); await asyncio.sleep(0)
     assert slack.post_message.await_args.kwargs.get("channel") == "D1"
@@ -451,17 +460,18 @@ async def test_slack_my_apps_empty_state():
     router = MagicMock()
     router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
     router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(return_value=[])
+    router._background_tasks = set()
     h = SlackInteractionsHandler(slack_client=slack, command_router=router)
     await h.handle_interaction(_slack_action("aiuibuild:myapps")); await asyncio.sleep(0)
     txt = " ".join(str(c.kwargs) for c in slack.post_message.await_args_list)
     assert "No apps yet" in txt
 ```
 
-> NOTE: match how the existing `aiuibuilder list` interception (`slack_commands.py:73`) fetches + renders apps; reuse that exact path/builder. If it already has a "list apps to DM" helper, call it instead of re-implementing.
+> VERIFIED (reviewer-checked): mirror the existing `_render_list` at `slack_commands.py:73-105` almost verbatim — it already does resolve-email → `_tasks_client.list_projects(email)` → `build_apps_list_blocks(apps)` with not-linked + fetch-error branches. The ONLY change is the destination: post to the DM (`open_dm` + `post_message(blocks=)`) instead of `post_to_response_url`. Use `_bail_if_not_linked(user_id)` for the not-linked path.
 
 - [ ] **Step 2: Run, verify failure** — FAIL.
 
-- [ ] **Step 3: Implement** `PANEL_MYAPPS_ID` branch: resolve email via `_bail_if_not_linked(user_id)` (returns None + posts not-linked when unlinked) → `list_projects(email)` → `open_dm` → `post_message(channel=dm, blocks=build_apps_list_blocks(projects))` or empty-state text → ephemeral pointer; fall back to ephemeral in origin if `open_dm` is None.
+- [ ] **Step 3: Implement** `PANEL_MYAPPS_ID` branch (background task; add it to `self.router._background_tasks`): `email = await self._bail_if_not_linked(user_id)` (returns None + posts not-linked DM when unlinked → return); else `projects = await self.router._tasks_client.list_projects(email)` → `dm = await self.slack.open_dm(user_id)` → when projects: `post_message(channel=dm, text="Your apps", blocks=build_apps_list_blocks(projects))`; when empty: `post_message(channel=dm, text="📂 No apps yet — hit 🚀 Build an app")` (custom text, not the builder's default) → ephemeral "📩 Sent to your DM" in origin. If `open_dm` is None → `post_ephemeral(origin, user_id, …, blocks=…)` fallback.
 
 - [ ] **Step 4: Run, verify pass** — PASS.
 
