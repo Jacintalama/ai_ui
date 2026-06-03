@@ -22,6 +22,11 @@ from handlers.schedule_parse import parse_when
         ("hourly", "0 * * * *", "every hour"),
         ("daily", "0 8 * * *", "every day at 8:00 AM"),
         ("weekly", "0 8 * * 1", "every Monday at 8:00 AM"),
+        ("every 9:26pm", "26 21 * * *", "every day at 9:26 PM"),
+        ("every 9pm", "0 21 * * *", "every day at 9:00 PM"),
+        ("every 21:00", "0 21 * * *", "every day at 9:00 PM"),
+        ("at 9am", "0 9 * * *", "every day at 9:00 AM"),
+        ("9:30pm", "30 21 * * *", "every day at 9:30 PM"),
     ],
 )
 def test_parse_when_natural_language(text, cron, human):
@@ -43,7 +48,7 @@ def test_parse_when_rejects_invalid_cron_lookalike():
     assert parse_when("99 99 * * *") is None
 
 
-@pytest.mark.parametrize("text", ["", "   ", "sometime next week maybe", "asap", "tomorrow"])
+@pytest.mark.parametrize("text", ["", "   ", "sometime next week maybe", "asap", "tomorrow", "every 9", "9"])
 def test_parse_when_unparseable_returns_none(text):
     assert parse_when(text) is None
 
