@@ -6,6 +6,7 @@ that and hands the decoded dict here. Mirrors handlers/discord_commands.py's
 button -> modal -> build flow, adapted to Block Kit / views.
 """
 import asyncio
+import json
 import logging
 from typing import Any, Optional
 
@@ -38,6 +39,27 @@ from handlers.slack_app_builder_panel import (
     template_key_from_button,
     template_key_from_modal,
 )
+from handlers.app_builder_panel import (
+    SCHED_OPEN_ID,
+    SCHED_NEW_ID,
+    SCHED_MODAL_ID,
+    SCHED_EDITMODAL_PREFIX,
+    SCHED_RUN_PREFIX,
+    SCHED_PAUSE_PREFIX,
+    SCHED_RESUME_PREFIX,
+    SCHED_DEL_PREFIX,
+    SCHED_EDIT_PREFIX,
+)
+from handlers.slack_schedule_panel import (
+    build_schedules_dashboard,
+    build_schedule_modal,
+    build_schedule_edit_modal,
+    SCHED_WHAT_BLOCK_ID,
+    SCHED_WHAT_INPUT_ID,
+    SCHED_WHEN_BLOCK_ID,
+    SCHED_WHEN_INPUT_ID,
+)
+from handlers.schedule_parse import parse_when
 
 logger = logging.getLogger(__name__)
 
@@ -189,8 +211,109 @@ class SlackInteractionsHandler:
             task.add_done_callback(self.router._background_tasks.discard)
             return {}
 
+        # ----- Cron scheduler panel (aiuisched:*) -----
+        if action_id == SCHED_OPEN_ID:
+            user_id = (payload.get("user") or {}).get("id", "")
+            origin = (payload.get("channel") or {}).get("id", "")
+
+            async def _do_sched_open() -> None:
+                try:
+                    email = await self._bail_if_not_linked(user_id)
+                    if not email:
+                        return
+                    scheds = await self.router._tasks_client.list_schedules(email)
+                    blocks = build_schedules_dashboard(scheds)
+                    dm = await self.slack.open_dm(user_id)
+                    if dm:
+                        await self.slack.post_message(
+                            channel=dm, text="Your schedules", blocks=blocks
+                        )
+                        if origin:
+                            await self.slack.post_ephemeral(
+                                origin, user_id, "\U0001f4e9 Sent to your DM."
+                            )
+                    elif origin:
+                        await self.slack.post_ephemeral(
+                            origin, user_id, "Your schedules", blocks=blocks
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Slack SCHED_OPEN failed user=%s: %s", user_id, exc)
+
+            task = asyncio.create_task(_do_sched_open())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        if action_id == SCHED_NEW_ID:
+            await self.slack.open_modal(trigger_id, build_schedule_modal())
+            return {}
+
+        for prefix, method_name in (
+            (SCHED_RUN_PREFIX, "run_schedule_now"),
+            (SCHED_PAUSE_PREFIX, "pause_schedule"),
+            (SCHED_RESUME_PREFIX, "resume_schedule"),
+            (SCHED_DEL_PREFIX, "delete_schedule"),
+        ):
+            if action_id.startswith(prefix):
+                sched_id = action_id[len(prefix):]
+                user_id = (payload.get("user") or {}).get("id", "")
+                task = asyncio.create_task(
+                    self._do_sched_action(user_id, method_name, sched_id)
+                )
+                self.router._background_tasks.add(task)
+                task.add_done_callback(self.router._background_tasks.discard)
+                return {}
+
+        if action_id.startswith(SCHED_EDIT_PREFIX):
+            # Open the edit modal SYNCHRONOUSLY with no preceding I/O — the
+            # prefill rides in the button's `value` (set by build_schedule_card),
+            # so we never fetch here. Slack trigger_ids expire ~3s after the
+            # interaction; any await before open_modal risks the modal failing
+            # silently under prod latency. Ownership is enforced server-side by
+            # the tasks endpoint at update time.
+            sched_id = action_id[len(SCHED_EDIT_PREFIX):]
+            raw_value = (actions[0].get("value") or "") if actions else ""
+            try:
+                data = json.loads(raw_value) if raw_value else {}
+            except (ValueError, TypeError):
+                data = {}
+            sched = {
+                "id": data.get("id") or sched_id,
+                "prompt": data.get("prompt", ""),
+                "cron_expr": data.get("cron", ""),
+            }
+            await self.slack.open_modal(
+                trigger_id, build_schedule_edit_modal(sched)
+            )
+            return {}
+
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
         return {}
+
+    async def _do_sched_action(
+        self, user_id: str, method_name: str, sched_id: str
+    ) -> None:
+        """Run a Run/Pause/Resume/Delete schedule action, then re-post the
+        updated dashboard to the user's DM."""
+        try:
+            email = await self._bail_if_not_linked(user_id)
+            if not email:
+                return
+            method = getattr(self.router._tasks_client, method_name)
+            await method(email, sched_id)
+            scheds = await self.router._tasks_client.list_schedules(email)
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(
+                    channel=dm,
+                    text="Your schedules",
+                    blocks=build_schedules_dashboard(scheds),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Slack sched action %s failed user=%s id=%s: %s",
+                method_name, user_id, sched_id, exc,
+            )
 
     def _slack_ctx(self, user_id: str, user_name: str = "user") -> CommandContext:
         """Minimal context just for email resolution / not-linked messaging."""
@@ -375,8 +498,126 @@ class SlackInteractionsHandler:
             task.add_done_callback(self.router._background_tasks.discard)
             return {}
 
+        # ----- Cron scheduler: create modal -----
+        if callback_id == SCHED_MODAL_ID:
+            what = self._sched_value(view, SCHED_WHAT_BLOCK_ID, SCHED_WHAT_INPUT_ID)
+            when = self._sched_value(view, SCHED_WHEN_BLOCK_ID, SCHED_WHEN_INPUT_ID)
+            parsed = parse_when(when)
+            if parsed is None:
+                return self._sched_when_error()
+            cron, human = parsed
+            name = self._sched_name_from_prompt(what)
+
+            async def _create() -> None:
+                try:
+                    email = await self._email_for(user_id)
+                    if not email:
+                        dm = await self.slack.open_dm(user_id)
+                        if dm:
+                            await self.slack.post_message(
+                                channel=dm,
+                                text=self.router._not_linked_text(
+                                    self._slack_ctx(user_id)
+                                ),
+                            )
+                        return
+                    dm = await self.slack.open_dm(user_id)
+                    await self.router._tasks_client.create_schedule(
+                        email,
+                        name=name,
+                        cron=cron,
+                        prompt=what,
+                        delivery_channel_id=dm,
+                        delivery_platform="slack",
+                    )
+                    if dm:
+                        await self.slack.post_message(
+                            channel=dm, text=f"✅ Scheduled — runs {human}"
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Slack schedule create failed user=%s: %s", user_id, exc
+                    )
+
+            task = asyncio.create_task(_create())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        # ----- Cron scheduler: edit modal -----
+        if callback_id.startswith(SCHED_EDITMODAL_PREFIX):
+            sched_id = callback_id[len(SCHED_EDITMODAL_PREFIX):]
+            what = self._sched_value(view, SCHED_WHAT_BLOCK_ID, SCHED_WHAT_INPUT_ID)
+            when = self._sched_value(view, SCHED_WHEN_BLOCK_ID, SCHED_WHEN_INPUT_ID)
+            parsed = parse_when(when)
+            if parsed is None:
+                return self._sched_when_error()
+            cron, human = parsed
+            name = self._sched_name_from_prompt(what)
+
+            async def _edit() -> None:
+                try:
+                    email = await self._email_for(user_id)
+                    if not email:
+                        dm = await self.slack.open_dm(user_id)
+                        if dm:
+                            await self.slack.post_message(
+                                channel=dm,
+                                text=self.router._not_linked_text(
+                                    self._slack_ctx(user_id)
+                                ),
+                            )
+                        return
+                    await self.router._tasks_client.update_schedule(
+                        email, sched_id, name=name, cron=cron, prompt=what
+                    )
+                    dm = await self.slack.open_dm(user_id)
+                    if dm:
+                        await self.slack.post_message(
+                            channel=dm,
+                            text=f"✅ Updated — runs {human}",
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Slack schedule edit failed user=%s id=%s: %s",
+                        user_id, sched_id, exc,
+                    )
+
+            task = asyncio.create_task(_edit())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
         logger.info(f"Ignoring unknown Slack callback_id: {callback_id}")
         return {}
+
+    @staticmethod
+    def _sched_value(view: dict[str, Any], block_id: str, input_id: str) -> str:
+        """Read a plain_text_input value out of a view's state, stripped."""
+        return (
+            ((view.get("state", {}).get("values", {}).get(block_id, {}) or {})
+             .get(input_id, {}) or {})
+            .get("value")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _sched_name_from_prompt(prompt: str) -> str:
+        """Derive a short schedule name from the prompt (first ~40 chars)."""
+        name = (prompt or "").strip()
+        return name[:40] if name else "Scheduled task"
+
+    @staticmethod
+    def _sched_when_error() -> dict[str, Any]:
+        """Slack modal validation error on the 'when' block (no schedule created)."""
+        return {
+            "response_action": "errors",
+            "errors": {
+                SCHED_WHEN_BLOCK_ID:
+                    "Couldn't understand that schedule time — try e.g. "
+                    "'every morning at 8am'.",
+            },
+        }
 
     # ------------------------------------------------------------------
     # D10 — Publish / Unpublish management handlers

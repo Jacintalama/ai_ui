@@ -109,3 +109,78 @@ def test_format_schedule_result_truncates_and_labels():
     assert len(long_msg) <= 2000
     skipped = main_mod._format_schedule_result("d", "skipped", "")
     assert "d" in skipped
+
+
+class _FakeSlack:
+    def __init__(self):
+        self.posted: list[dict] = []
+
+    async def post_message(self, channel, text, thread_ts=None, *, blocks=None,
+                           attachments=None):
+        self.posted.append(
+            {"channel": channel, "text": text, "blocks": blocks}
+        )
+        return "ts1"
+
+
+def _wire_slack(monkeypatch, secret):
+    import main as main_mod
+    fake = _FakeSlack()
+    monkeypatch.setattr(main_mod.settings, "internal_callback_secret", secret)
+    monkeypatch.setattr(main_mod, "slack_client", fake)
+    # Prove the Slack branch runs BEFORE the discord_client guard.
+    monkeypatch.setattr(main_mod, "discord_client", None)
+    return main_mod, fake
+
+
+@pytest.mark.asyncio
+async def test_slack_platform_posts_via_slack_client(monkeypatch):
+    main_mod, slack = _wire_slack(monkeypatch, "s3cret")
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={"platform": "slack", "channel_id": "C123",
+                  "schedule_name": "morning digest", "status": "completed",
+                  "result": "Top 3 emails: ..."},
+        )
+    assert resp.status_code == 200
+    assert len(slack.posted) == 1
+    call = slack.posted[0]
+    assert call["channel"] == "C123"
+    assert "morning digest" in call["text"]
+    assert "Top 3 emails" in call["text"]
+    assert call["blocks"] is None
+
+
+@pytest.mark.asyncio
+async def test_slack_failed_run_attaches_retry_blocks(monkeypatch):
+    main_mod, slack = _wire_slack(monkeypatch, "s3cret")
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={"platform": "slack", "channel_id": "C1", "schedule_name": "n",
+                  "status": "failed", "result": "boom", "schedule_id": "sid9"},
+        )
+    assert resp.status_code == 200
+    assert slack.posted[0]["blocks"] is not None
+
+
+@pytest.mark.asyncio
+async def test_default_platform_is_discord(monkeypatch):
+    # Platform omitted → Discord path (existing behavior) still used.
+    main_mod, fake = _wire(monkeypatch, "s3cret")
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={"channel_id": "123", "schedule_name": "n",
+                  "status": "completed", "result": "ok"},
+        )
+    assert resp.status_code == 200
+    assert len(fake.posted) == 1
+    assert fake.posted[0][0] == "123"

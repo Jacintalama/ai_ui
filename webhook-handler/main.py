@@ -555,6 +555,7 @@ class ScheduleResultIn(BaseModel):
     status: str = ""
     result: str = ""
     schedule_id: str = ""
+    platform: str = "discord"
 
 
 def _format_schedule_result(name: str, status: str, result: str) -> str:
@@ -578,6 +579,16 @@ async def schedule_result(
     expected = settings.internal_callback_secret
     if not expected or x_internal_secret != expected:
         raise HTTPException(status_code=403, detail="Invalid internal secret")
+    if body.platform == "slack":
+        if slack_client is None:
+            raise HTTPException(status_code=503, detail="Slack not configured")
+        text = _format_schedule_result(body.schedule_name, body.status, body.result)
+        blocks = None
+        if body.schedule_id and body.status not in ("completed", "skipped"):
+            from handlers.slack_schedule_panel import build_retry_blocks
+            blocks = build_retry_blocks(body.schedule_id)
+        await slack_client.post_message(channel=body.channel_id, text=text, blocks=blocks)
+        return {"status": "delivered"}
     if discord_client is None:
         raise HTTPException(status_code=503, detail="Discord not configured")
     message = _format_schedule_result(body.schedule_name, body.status, body.result)

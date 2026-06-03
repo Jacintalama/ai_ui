@@ -53,6 +53,7 @@ async def test_create_schedule_201(client):
             "cron_expr": "0 8 * * *",
             "prompt": "summarize emails",
             "tz": "Asia/Manila",
+            "delivery_platform": "discord",
         }
 
 
@@ -250,6 +251,29 @@ async def test_create_schedule_omits_delivery_channel_when_none(client):
         import json
         sent = json.loads(route.calls.last.request.content)
         assert "delivery_channel_id" not in sent
+
+
+@pytest.mark.asyncio
+async def test_create_schedule_includes_delivery_platform(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/schedules").mock(return_value=Response(201, json={"id": "x"}))
+        await client.create_schedule(
+            "alice@x.com", "test", "0 8 * * *", "summarize emails",
+            delivery_platform="slack",
+        )
+        import json
+        sent = json.loads(route.calls.last.request.content)
+        assert sent["delivery_platform"] == "slack"
+
+
+@pytest.mark.asyncio
+async def test_create_schedule_defaults_delivery_platform_discord(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/schedules").mock(return_value=Response(201, json={"id": "x"}))
+        await client.create_schedule("alice@x.com", "t", "0 8 * * *", "p")
+        import json
+        sent = json.loads(route.calls.last.request.content)
+        assert sent["delivery_platform"] == "discord"
 
 
 @pytest.mark.asyncio

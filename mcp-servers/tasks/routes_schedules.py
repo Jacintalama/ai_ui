@@ -59,6 +59,7 @@ class CreateScheduleIn(BaseModel):
     prompt: str = Field(min_length=1)
     enabled: bool = True
     delivery_channel_id: str | None = None
+    delivery_platform: str = "discord"
 
 
 @router.get("")
@@ -112,6 +113,7 @@ async def create_schedule(
             prompt=body.prompt,
             enabled=body.enabled,
             delivery_channel_id=body.delivery_channel_id,
+            delivery_platform=body.delivery_platform,
         ))
         await s.commit()
     return {"id": str(sid)}

@@ -170,12 +170,13 @@ async def _run_scheduled_task(sched: Schedule) -> str:
         return status, result
 
 
-async def _deliver_to_discord(
-    channel_id: str, schedule_name: str, status: str, result: str,
+async def _deliver_result(
+    channel_id: str, platform: str, schedule_name: str, status: str, result: str,
     schedule_id: str = "",
 ) -> None:
     """POST a finished run's result to the webhook-handler, which posts it into
-    the user's Discord thread. Best-effort — never raises into the tick loop.
+    the user's thread on the given platform (discord|slack). Best-effort —
+    never raises into the tick loop.
     Requires WEBHOOK_HANDLER_URL + INTERNAL_CALLBACK_SECRET in the env."""
     base = os.environ.get("WEBHOOK_HANDLER_URL", "")
     secret = os.environ.get("INTERNAL_CALLBACK_SECRET", "")
@@ -188,6 +189,7 @@ async def _deliver_to_discord(
                 headers={"X-Internal-Secret": secret},
                 json={
                     "channel_id": channel_id,
+                    "platform": platform,
                     "schedule_name": schedule_name,
                     "status": status,
                     "result": scrub(result or "")[:6000],
@@ -208,10 +210,11 @@ async def _finalize_run(sched: Schedule) -> None:
             )
         )
         await s.commit()
-    # Deliver the run's result into the user's Discord thread, if configured.
+    # Deliver the run's result into the user's thread, if configured.
     delivery_channel = getattr(sched, "delivery_channel_id", None)
     if delivery_channel:
-        await _deliver_to_discord(delivery_channel, sched.name, status, result, str(sched.id))
+        platform = getattr(sched, "delivery_platform", "discord") or "discord"
+        await _deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))
 
 
 async def _tick_once() -> None:
