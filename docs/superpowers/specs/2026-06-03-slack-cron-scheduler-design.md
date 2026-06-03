@@ -83,3 +83,11 @@ Per-schedule actions (Run/Pause/Resume/Edit/Delete) → existing tasks-client me
 - Connector (Gmail/Drive) gating on Slack.
 - Changing schedule semantics, cron parsing, or execution.
 - Migrating existing Discord schedules.
+
+## Implementation notes (from spec review — keep Discord behavior byte-for-byte)
+- **Default `delivery_platform = "discord"` everywhere** (migration 018, `Schedule` model, `CreateScheduleIn`, and `ScheduleResultIn`) so the existing Discord path is unchanged and older callers stay green. Add `platform` to `ScheduleResultIn` with default `"discord"`.
+- **`/internal/schedule-result` guard order:** the endpoint currently does `if discord_client is None: raise 503` at the top. Branch on `platform` BEFORE that — the Slack path must be gated on `slack_client is not None` (a Discord-less deploy must not 503 a Slack delivery). `slack_client` is a module-level global set in `main.py`'s lifespan (gated on `settings.slack_bot_token`).
+- **`slack_client.post_message(channel, text, *, blocks=)`:** `text` is a required positional (Slack fallback/notification). Pass both `text=` (mrkdwn fallback) and `blocks=`.
+- **Tasks route verbs:** use the existing client methods (`pause_schedule`→`/disable`, `resume_schedule`→`/enable`, `run_schedule_now`→`/run-now`). Do NOT introduce new route names.
+- **Slack Retry button:** build a Slack-native Block Kit Retry button wired to `aiuisched:run:<id>` — do NOT reuse the Discord `build_retry_components` (it returns Discord component dicts). The Discord branch keeps using `build_retry_components`.
+- `_finalize_run` receives the full `Schedule` ORM object and the engine uses `expire_on_commit=False`, so `sched.delivery_platform` is available after the column is added.
