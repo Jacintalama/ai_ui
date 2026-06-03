@@ -19,7 +19,7 @@ from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
 from templates import is_valid_key
-from routes_projects import _publish_slug, _unpublish_slug, _validate_slug, PublishStatus
+from routes_projects import _delete_slug, _publish_slug, _unpublish_slug, _validate_slug, PublishStatus
 
 logger = logging.getLogger("tasks.aiuibuilder")
 
@@ -455,6 +455,16 @@ async def unpublish_built_app(slug: str, user: CurrentUser = Depends(current_use
     _validate_slug(slug)  # fast-fail before touching the DB pool
     async with session() as s:
         await _unpublish_slug(s, slug, user.email, is_admin=False)
+    return None
+
+
+@router.delete("/{slug}/app", status_code=204)
+async def delete_built_app(slug: str, user: CurrentUser = Depends(current_user)):
+    """User-scoped owner-only hard delete of a built app. No undo. Mirrors
+    unpublish_built_app; reuses the shared _delete_slug core."""
+    _validate_slug(slug)  # fast-fail before touching the DB pool
+    async with session() as s:
+        await _delete_slug(s, slug, user.email, is_admin=False)
     return None
 
 

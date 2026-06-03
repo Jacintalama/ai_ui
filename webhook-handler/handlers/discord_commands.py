@@ -40,6 +40,10 @@ from handlers.app_builder_panel import (
     is_enhance_modal, slug_from_enhance_modal,
     is_app_select,
     is_status_button, slug_from_status_button,
+    is_app_delete, slug_from_delete_button,
+    is_del_confirm, slug_from_del_confirm,
+    is_del_cancel, slug_from_del_cancel,
+    build_delete_confirm_components,
     build_schedule_modal, build_confirm_components, build_connect_components,
     is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
@@ -236,6 +240,23 @@ class DiscordCommandHandler:
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_panel_status(ctx, slug),
                 raw_text=f"aiuibuilder status {slug}")
+        # Delete confirm/cancel checked before the bare delete button: their ids
+        # ("aiuibuild:del-confirm:" / "aiuibuild:del-cancel:") are disjoint from
+        # the delete prefix ("aiuibuild:del:"), but order keeps intent explicit.
+        if is_del_confirm(custom_id):
+            return await self._handle_delete_confirm_component(payload, custom_id)
+        if is_del_cancel(custom_id):
+            return {"type": UPDATE_MESSAGE,
+                    "data": {"content": "Cancelled.", "components": []}}
+        if is_app_delete(custom_id):
+            try:
+                slug = slug_from_delete_button(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed delete custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return self._ephemeral_components(
+                f"Delete `{slug}`? This can't be undone.",
+                build_delete_confirm_components(slug), update=False)
         # --- Schedules (aiuisched:*) ---
         if is_sched_new(custom_id):
             return {"type": MODAL, "data": build_schedule_modal()}
@@ -387,6 +408,40 @@ class DiscordCommandHandler:
             },
         )
         asyncio.create_task(self.router.run_panel_unpublish(ctx, slug))
+        return {"type": DEFERRED_CHANNEL_MESSAGE}
+
+    async def _handle_delete_confirm_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """A delete-confirm button click → run_panel_delete in the background, ACK deferred."""
+        try:
+            slug = slug_from_del_confirm(custom_id)
+        except ValueError:
+            logger.info(f"Ignoring malformed delete-confirm custom_id: {custom_id}")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""),
+            raw_text=f"aiuibuilder delete {slug}",
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+        )
+        asyncio.create_task(self.router.run_panel_delete(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
     async def _handle_app_select_component(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -647,11 +702,12 @@ class DiscordCommandHandler:
             # not silently swallowed (it does two API calls before the build).
             try:
                 target = channel_id
-                thread_id = await self.discord.create_private_thread(
-                    channel_id, f"{template_key or 'app'}-{user_name}"[:90]
-                )
+                # App Builder delivery goes to the user's BUILDER thread
+                # (reused across builds), kept separate from the cron
+                # scheduler's schedules thread.
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="builder")
                 if thread_id:
-                    await self.discord.add_thread_member(thread_id, user_id)
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
                         content=f"✅ Opening your private build space → <#{thread_id}>",
@@ -871,17 +927,33 @@ class DiscordCommandHandler:
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _get_or_make_thread(
-        self, user_id: str, channel_id: str, user_name: str,
+        self, user_id: str, channel_id: str, user_name: str, *, kind: str,
     ) -> str | None:
         """Reuse the user's private thread or create one. Returns the thread id
-        (and adds the user as a member) or None if a thread couldn't be opened."""
-        thread_id = await self.router.get_user_thread(user_id)
+        (and adds the user as a member) or None if a thread couldn't be opened.
+
+        ``kind`` selects which per-user thread slot is used so the App Builder
+        and the cron scheduler keep separate threads:
+          - ``"builder"``   → builder-thread slot, new threads ``aiui-apps-<user>``
+          - ``"schedules"`` → schedules-thread slot, new threads ``schedules-<user>``
+        """
+        if kind == "builder":
+            get_thread = self.router.get_user_builder_thread
+            set_thread = self.router.set_user_builder_thread
+            name = f"aiui-apps-{user_name}"
+        elif kind == "schedules":
+            get_thread = self.router.get_user_thread
+            set_thread = self.router.set_user_thread
+            name = f"schedules-{user_name}"
+        else:  # pragma: no cover - defensive
+            raise ValueError(f"unknown thread kind: {kind!r}")
+        thread_id = await get_thread(user_id)
         if not thread_id:
             thread_id = await self.discord.create_private_thread(
-                channel_id, f"aiui-{user_name}"[:90]
+                channel_id, name[:90]
             )
             if thread_id:
-                await self.router.set_user_thread(user_id, thread_id)
+                await set_thread(user_id, thread_id)
         if thread_id:
             await self.discord.add_thread_member(thread_id, user_id)
         return thread_id
@@ -902,7 +974,7 @@ class DiscordCommandHandler:
                 templates = await self.router._tasks_client.list_templates(email)
                 components = build_template_picker_components(templates)
                 thread_id = await self._get_or_make_thread(
-                    user_id, channel_id, user_name)
+                    user_id, channel_id, user_name, kind="builder")
                 if thread_id:
                     await self.discord.post_channel_message(
                         thread_id,
@@ -952,7 +1024,7 @@ class DiscordCommandHandler:
                     return
                 projects = await self.router._tasks_client.list_projects(email)
                 thread_id = await self._get_or_make_thread(
-                    user_id, channel_id, user_name)
+                    user_id, channel_id, user_name, kind="builder")
                 if thread_id:
                     if projects:
                         await self.discord.post_channel_message(
@@ -1012,7 +1084,7 @@ class DiscordCommandHandler:
                     )
                     return
                 thread_id = await self._get_or_make_thread(
-                    user_id, channel_id, user_name)
+                    user_id, channel_id, user_name, kind="schedules")
                 if thread_id:
                     await self.discord.post_channel_message(
                         thread_id, dash["content"], components=dash["components"])

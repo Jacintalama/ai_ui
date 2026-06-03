@@ -153,3 +153,5 @@ class DiscordLink(Base):
     decided_by = Column(Text, nullable=True)
     # The user's private Discord thread for schedules (created/reused by the bot).
     schedules_thread_id = Column(Text, nullable=True)
+    # The user's private Discord thread for the App Builder (created/reused by the bot).
+    builder_thread_id = Column(Text, nullable=True)

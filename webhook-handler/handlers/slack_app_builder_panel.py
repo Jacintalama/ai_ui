@@ -10,6 +10,8 @@ them as `action_id` (buttons) and `callback_id` (modal views).
 """
 from __future__ import annotations
 
+from config import settings
+
 # custom_id schemes (shared shape with the Discord panel)
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button action_id -> aiuibuild:tpl:<key>  ("" = Blank)
 BUILD_PREFIX = "aiuibuild:build:"    # modal callback_id -> aiuibuild:build:<key>
@@ -32,6 +34,7 @@ ENHANCE_PREFIX = "aiuibuild:enhance:"
 ENHANCE_MODAL_PREFIX = "aiuibuild:enhmodal:"
 UNPUBLISH_PREFIX = "aiuibuild:unpublish:"
 STATUS_PREFIX = "aiuibuild:status:"
+DELETE_PREFIX = "aiuibuild:del:"
 
 # B6 — card colours
 COLOR_READY = "#36a64f"
@@ -101,6 +104,25 @@ def _link_button(text: str, url: str) -> dict:
         "type": "button",
         "text": {"type": "plain_text", "text": text[:_BUTTON_TEXT_MAX]},
         "url": url,
+    }
+
+
+def _delete_button(slug: str, name: str) -> dict:
+    """Danger-styled Delete button with a native Slack confirm dialog."""
+    return {
+        "type": "button",
+        "text": {"type": "plain_text", "text": "Delete"},
+        "style": "danger",
+        "action_id": f"{DELETE_PREFIX}{slug}",
+        "confirm": {
+            "title": {"type": "plain_text", "text": "Delete app?"},
+            "text": {
+                "type": "mrkdwn",
+                "text": f"This permanently deletes *{name}*. No undo.",
+            },
+            "confirm": {"type": "plain_text", "text": "Delete"},
+            "deny": {"type": "plain_text", "text": "Cancel"},
+        },
     }
 
 
@@ -344,6 +366,7 @@ def build_apps_list_blocks(apps: list[dict]) -> list[dict]:
         if not slug:
             continue
         published = bool(app.get("published"))
+        name = app.get("name") or slug
         state_label = "published" if published else "draft"
         blocks.append({
             "type": "section",
@@ -355,13 +378,23 @@ def build_apps_list_blocks(apps: list[dict]) -> list[dict]:
                 _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
                 _button("Unpublish", f"{UNPUBLISH_PREFIX}{slug}"),
             ]
+            open_url = app.get("public_url") or ""
         else:
             row_buttons = [
                 _button("Status", f"{STATUS_PREFIX}{slug}"),
                 _button("Publish", f"{PUBLISH_PREFIX}{slug}", primary=True),
                 _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
             ]
-        blocks.append({"type": "actions", "elements": row_buttons})
+            open_url = f"{settings.tasks_public_url.rstrip('/')}/tasks/preview-app/{slug}/"
+
+        if open_url:
+            row_buttons.append(_link_button("Preview", open_url))
+        row_buttons.append(_delete_button(slug, name))
+
+        # Slack caps an actions block at 5 elements — split into a second
+        # actions block if a row would exceed that.
+        for i in range(0, len(row_buttons), 5):
+            blocks.append({"type": "actions", "elements": row_buttons[i:i + 5]})
 
     if len(apps) > _MAX_LIST_ROWS:
         blocks.append({

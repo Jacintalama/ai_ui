@@ -293,6 +293,9 @@ SELECT_MENU = 3  # Discord string-select component type
 
 APP_SELECT_ID = "aiuibuild:appselect"  # the dropdown's custom_id (exact match)
 STATUS_PREFIX = "aiuibuild:status:"     # status button -> aiuibuild:status:<slug>
+DELETE_PREFIX = "aiuibuild:del:"         # delete button -> aiuibuild:del:<slug>
+DEL_CONFIRM_PREFIX = "aiuibuild:del-confirm:"  # confirm-delete -> :<slug>
+DEL_CANCEL_PREFIX = "aiuibuild:del-cancel:"    # cancel-delete  -> :<slug>
 _MAX_SELECT_OPTIONS = 25                 # Discord hard limit
 
 
@@ -306,6 +309,40 @@ def is_status_button(custom_id: str) -> bool:
 
 def slug_from_status_button(custom_id: str) -> str:
     return _slug_after(custom_id, STATUS_PREFIX)
+
+
+def is_app_delete(custom_id: str) -> bool:
+    return custom_id.startswith(DELETE_PREFIX)
+
+
+def slug_from_delete_button(custom_id: str) -> str:
+    return _slug_after(custom_id, DELETE_PREFIX)
+
+
+def is_del_confirm(custom_id: str) -> bool:
+    return custom_id.startswith(DEL_CONFIRM_PREFIX)
+
+
+def slug_from_del_confirm(custom_id: str) -> str:
+    return _slug_after(custom_id, DEL_CONFIRM_PREFIX)
+
+
+def is_del_cancel(custom_id: str) -> bool:
+    return custom_id.startswith(DEL_CANCEL_PREFIX)
+
+
+def slug_from_del_cancel(custom_id: str) -> str:
+    return _slug_after(custom_id, DEL_CANCEL_PREFIX)
+
+
+def build_delete_confirm_components(slug: str) -> list[dict]:
+    """Confirmation-card buttons for deleting an app: a red Confirm (carries the
+    slug) + a grey Cancel. Mirrors build_confirm_components but slug-bound and
+    danger-styled, since delete is destructive."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("🗑 Delete it", f"{DEL_CONFIRM_PREFIX}{slug}", STYLE_DANGER),
+        _button("✖ Cancel", f"{DEL_CANCEL_PREFIX}{slug}", STYLE_SECONDARY),
+    ]}]
 
 
 def build_apps_select_components(projects: list[dict]) -> list[dict]:
@@ -337,9 +374,11 @@ def build_apps_select_components(projects: list[dict]) -> list[dict]:
 def build_project_menu_components(
     slug: str, *, published: bool, public_url: str = "", preview_url: str = "",
 ) -> list[dict]:
-    """State-aware action row for a selected app:
-    Enhance + (Publish | Unpublish) + an Open link (only when its URL is set) + Status.
-    Max 5 buttons per row; we emit at most 4."""
+    """State-aware action buttons for a selected app:
+    Enhance + (Publish | Unpublish) + an Open/Preview link (only when its URL is
+    set) + Status + Delete. Discord allows at most 5 buttons per action row, so
+    the buttons overflow into a second action row when needed (a published app
+    with its 'Open live' link reaches 5, pushing Delete to row 2)."""
     buttons: list[dict] = [
         _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
     ]
@@ -354,7 +393,10 @@ def build_project_menu_components(
             buttons.append({"type": BUTTON, "style": STYLE_LINK,
                             "label": "\U0001f517 Open preview", "url": preview_url})
     buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
-    return [{"type": ACTION_ROW, "components": buttons}]
+    buttons.append(_button("🗑 Delete", f"{DELETE_PREFIX}{slug}", STYLE_DANGER))
+    # Chunk into action rows of at most 5 buttons (Discord's per-row limit).
+    return [{"type": ACTION_ROW, "components": buttons[i:i + _MAX_PER_ROW]}
+            for i in range(0, len(buttons), _MAX_PER_ROW)]
 
 
 # --- Schedules (Discord cron jobs): panel, modal, confirm card, list ---

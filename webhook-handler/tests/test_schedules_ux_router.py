@@ -79,3 +79,15 @@ async def test_thread_passthroughs():
     assert await r.set_user_thread("100", "t9") is True
     tc.get_user_thread.assert_awaited_once_with("100")
     tc.set_user_thread.assert_awaited_once_with("100", "t9")
+
+
+@pytest.mark.asyncio
+async def test_builder_thread_passthroughs():
+    tc = MagicMock()
+    tc.get_user_builder_thread = AsyncMock(return_value="b9")
+    tc.set_user_builder_thread = AsyncMock(return_value=True)
+    r = _router({}, tc)
+    assert await r.get_user_builder_thread("100") == "b9"
+    assert await r.set_user_builder_thread("100", "b9") is True
+    tc.get_user_builder_thread.assert_awaited_once_with("100")
+    tc.set_user_builder_thread.assert_awaited_once_with("100", "b9")

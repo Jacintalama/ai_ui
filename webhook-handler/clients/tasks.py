@@ -173,6 +173,17 @@ class TasksClient:
             "POST", f"/discord-links/{discord_id}/thread", json={"thread_id": thread_id})
         return True
 
+    async def get_user_builder_thread(self, discord_id: str) -> str | None:
+        resp = await self._internal_request(
+            "GET", f"/discord-links/{discord_id}/builder-thread")
+        return resp.json().get("thread_id")
+
+    async def set_user_builder_thread(self, discord_id: str, thread_id: str) -> bool:
+        await self._internal_request(
+            "POST", f"/discord-links/{discord_id}/builder-thread",
+            json={"thread_id": thread_id})
+        return True
+
     async def list_projects(self, user_email: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", "/api/projects", user_email)
         return resp.json()
@@ -213,6 +224,10 @@ class TasksClient:
 
     async def unpublish_app(self, user_email: str, slug: str) -> bool:
         await self._request("DELETE", f"/api/aiuibuilder/{slug}/publish", user_email)
+        return True
+
+    async def delete_app(self, user_email: str, slug: str) -> bool:
+        await self._request("DELETE", f"/api/aiuibuilder/{slug}/app", user_email)
         return True
 
     async def enhance_app(self, user_email: str, slug: str, prompt: str) -> dict[str, Any]:
