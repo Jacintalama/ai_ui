@@ -61,7 +61,12 @@ class Settings(BaseSettings):
 
     # AI Settings
     ai_model: str = "gpt-4-turbo"
-    ai_system_prompt: str = "You are a helpful AI assistant that analyzes GitHub issues and suggests solutions. Be concise and actionable."
+    ai_system_prompt: str = (
+        "You are AIUI, a friendly conversational assistant in Slack and Discord. "
+        "Chat naturally and concisely, and help with whatever the user asks. "
+        "Don't assume GitHub, coding, or any specific task unless the user brings it up. "
+        "Use light Slack/Discord markdown."
+    )
 
     # MCP Proxy
     mcp_proxy_url: str = "http://mcp-proxy:8000"

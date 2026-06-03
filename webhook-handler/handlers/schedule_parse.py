@@ -98,6 +98,23 @@ def parse_when(text: str) -> tuple[str, str] | None:
     if low in ("hourly", "every hour"):
         return "0 * * * *", "every hour"
 
+    # "every 9pm" / "every 9:26pm" / "every 21:00" -> daily at that time.
+    # Require am/pm or a colon so a bare "every 9" (ambiguous) is not matched.
+    m = re.fullmatch(r"every (\d{1,2})(?::(\d{2}))?\s*(am|pm)?", low)
+    if m and (m.group(2) is not None or m.group(3) is not None):
+        hour = _to_24h(int(m.group(1)), m.group(3))
+        minute = int(m.group(2)) if m.group(2) else 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{minute} {hour} * * *", f"every day at {_fmt_time(hour, minute)}"
+
+    # "at 9pm" / "9:30pm" -> daily at that time (am/pm required to avoid ambiguity).
+    m = re.fullmatch(r"(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", low)
+    if m:
+        hour = _to_24h(int(m.group(1)), m.group(3))
+        minute = int(m.group(2)) if m.group(2) else 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{minute} {hour} * * *", f"every day at {_fmt_time(hour, minute)}"
+
     # "every day at 8pm" / "daily at 6:30am" / "every day at 20:30"
     m = re.fullmatch(r"(?:every day|daily) at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?", low)
     if m:
