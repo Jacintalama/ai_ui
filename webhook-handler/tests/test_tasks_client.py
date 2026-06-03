@@ -39,6 +39,24 @@ async def test_list_schedules_returns_payload(client):
 
 
 @pytest.mark.asyncio
+async def test_list_schedules_with_platform_adds_query_param(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.get("/schedules").mock(return_value=Response(200, json=[]))
+        await client.list_schedules("u@x.com", platform="slack")
+        req = route.calls.last.request
+        assert req.url.params.get("platform") == "slack"
+
+
+@pytest.mark.asyncio
+async def test_list_schedules_without_platform_omits_query_param(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.get("/schedules").mock(return_value=Response(200, json=[]))
+        await client.list_schedules("u@x.com")
+        req = route.calls.last.request
+        assert "platform" not in req.url.params
+
+
+@pytest.mark.asyncio
 async def test_create_schedule_201(client):
     with respx.mock(base_url=BASE) as mock:
         route = mock.post("/schedules").mock(return_value=Response(201, json={"id": "new-id"}))
