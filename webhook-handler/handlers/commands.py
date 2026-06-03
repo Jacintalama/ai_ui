@@ -1846,6 +1846,12 @@ class CommandRouter:
     async def set_user_thread(self, discord_id: str, thread_id: str) -> bool:
         return await self._tasks_client.set_user_thread(discord_id, thread_id)
 
+    async def get_user_builder_thread(self, discord_id: str) -> str | None:
+        return await self._tasks_client.get_user_builder_thread(discord_id)
+
+    async def set_user_builder_thread(self, discord_id: str, thread_id: str) -> bool:
+        return await self._tasks_client.set_user_builder_thread(discord_id, thread_id)
+
     async def request_link(self, discord_id: str, username: str, email: str) -> dict:
         return await self._tasks_client.request_link(discord_id, username, email)
 
