@@ -8,6 +8,8 @@ Slack note: Slack's _button has no danger/secondary style — only an optional
 `primary=True`. "Primary" Discord actions map to primary=True; everything else
 is a plain button.
 """
+import json
+
 from handlers.slack_app_builder_panel import _button
 from handlers.app_builder_panel import (
     SCHED_OPEN_ID,
@@ -30,8 +32,32 @@ SCHED_WHEN_INPUT_ID = "sched_when_input"
 _TITLE_MAX = 24  # Slack modal title limit
 
 
+_EDIT_VALUE_PROMPT_MAX = 1500  # leave headroom under Slack's 2000-char value cap
+
+
 def _section(text: str) -> dict:
     return {"type": "section", "text": {"type": "mrkdwn", "text": text}}
+
+
+def _build_edit_button(sched: dict, sid: str) -> dict:
+    """Primary 'Edit' button whose `value` carries the prefill (id/prompt/cron)
+    as JSON, so the edit modal can be opened synchronously at click time with no
+    network fetch. Prompt is truncated to stay under Slack's 2000-char value cap.
+    The action_id stays exactly SCHED_EDIT_PREFIX+id so routing is unchanged."""
+    value = json.dumps(
+        {
+            "id": sid,
+            "prompt": (sched.get("prompt") or "")[:_EDIT_VALUE_PROMPT_MAX],
+            "cron": sched.get("cron_expr", ""),
+        }
+    )
+    return {
+        "type": "button",
+        "text": {"type": "plain_text", "text": "✏️ Edit"},
+        "style": "primary",
+        "action_id": f"{SCHED_EDIT_PREFIX}{sid}",
+        "value": value,
+    }
 
 
 def build_schedules_panel() -> list[dict]:
@@ -80,7 +106,7 @@ def build_schedule_card(sched: dict) -> list[dict]:
         elements.append(_button("⏸ Pause", f"{SCHED_PAUSE_PREFIX}{sid}"))
     else:
         elements.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}"))
-    elements.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", primary=True))
+    elements.append(_build_edit_button(sched, sid))
     elements.append(_button("🗑 Delete", f"{SCHED_DEL_PREFIX}{sid}"))
 
     return [

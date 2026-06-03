@@ -6,6 +6,7 @@ that and hands the decoded dict here. Mirrors handlers/discord_commands.py's
 button -> modal -> build flow, adapted to Block Kit / views.
 """
 import asyncio
+import json
 import logging
 from typing import Any, Optional
 
@@ -264,36 +265,26 @@ class SlackInteractionsHandler:
                 return {}
 
         if action_id.startswith(SCHED_EDIT_PREFIX):
+            # Open the edit modal SYNCHRONOUSLY with no preceding I/O — the
+            # prefill rides in the button's `value` (set by build_schedule_card),
+            # so we never fetch here. Slack trigger_ids expire ~3s after the
+            # interaction; any await before open_modal risks the modal failing
+            # silently under prod latency. Ownership is enforced server-side by
+            # the tasks endpoint at update time.
             sched_id = action_id[len(SCHED_EDIT_PREFIX):]
-            user_id = (payload.get("user") or {}).get("id", "")
-
-            async def _do_sched_edit_open() -> None:
-                try:
-                    email = await self._bail_if_not_linked(user_id)
-                    if not email:
-                        return
-                    scheds = await self.router._tasks_client.list_schedules(email)
-                    sched = next(
-                        (s for s in scheds if str(s.get("id")) == sched_id), None
-                    )
-                    if sched is None:
-                        logger.warning(
-                            "Slack SCHED_EDIT: schedule %s not found for %s",
-                            sched_id, email,
-                        )
-                        return
-                    await self.slack.open_modal(
-                        trigger_id, build_schedule_edit_modal(sched)
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "Slack SCHED_EDIT failed user=%s id=%s: %s",
-                        user_id, sched_id, exc,
-                    )
-
-            task = asyncio.create_task(_do_sched_edit_open())
-            self.router._background_tasks.add(task)
-            task.add_done_callback(self.router._background_tasks.discard)
+            raw_value = (actions[0].get("value") or "") if actions else ""
+            try:
+                data = json.loads(raw_value) if raw_value else {}
+            except (ValueError, TypeError):
+                data = {}
+            sched = {
+                "id": data.get("id") or sched_id,
+                "prompt": data.get("prompt", ""),
+                "cron_expr": data.get("cron", ""),
+            }
+            await self.slack.open_modal(
+                trigger_id, build_schedule_edit_modal(sched)
+            )
             return {}
 
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")

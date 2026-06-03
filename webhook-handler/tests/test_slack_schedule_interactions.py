@@ -4,6 +4,8 @@ Mirrors the App Builder interaction tests (test_slack_interactions.py): Mock
 slack + router._tasks_client, AsyncMocks, router._background_tasks = set().
 """
 import asyncio
+import json
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -54,14 +56,18 @@ def _sched_router():
     return router
 
 
-def _block_actions_payload(action_id: str, user_id: str = "U1") -> dict:
+def _block_actions_payload(action_id: str, user_id: str = "U1",
+                           value: str = None) -> dict:
+    action = {"action_id": action_id}
+    if value is not None:
+        action["value"] = value
     return {
         "type": "block_actions",
         "trigger_id": "trig-sched",
         "user": {"id": user_id, "username": "tester"},
         "channel": {"id": "C-panel"},
         "team": {"id": "T1"},
-        "actions": [{"action_id": action_id}],
+        "actions": [action],
     }
 
 
@@ -143,18 +149,34 @@ async def test_sched_del_prefix_calls_delete():
 
 @pytest.mark.asyncio
 async def test_sched_edit_prefix_opens_edit_modal():
+    """Edit-open is synchronous: the prefill rides in the button `value`, so the
+    modal opens with NO preceding network I/O (avoids trigger_id expiry)."""
     router = _sched_router()
     handler, slack = _handler(router)
 
+    value = json.dumps(
+        {"id": "7", "prompt": "summarize my unread emails", "cron": "0 9 * * *"}
+    )
     resp = await handler.handle_interaction(
-        _block_actions_payload(f"{SCHED_EDIT_PREFIX}7")
+        _block_actions_payload(f"{SCHED_EDIT_PREFIX}7", value=value)
     )
     assert resp == {}
     await asyncio.sleep(0)
 
     slack.open_modal.assert_awaited_once()
     trigger, view = slack.open_modal.call_args.args
+    assert trigger == "trig-sched"
     assert view["callback_id"] == f"{SCHED_EDITMODAL_PREFIX}7"
+    # prefill came from the button value, not a fetch
+    inputs = [
+        b for b in view["blocks"]
+        if b.get("element", {}).get("type") == "plain_text_input"
+    ]
+    initials = {b["element"].get("initial_value") for b in inputs}
+    assert "summarize my unread emails" in initials
+    assert "0 9 * * *" in initials
+    # no schedule fetch for the edit-open path
+    router._tasks_client.list_schedules.assert_not_awaited()
 
 
 @pytest.mark.asyncio

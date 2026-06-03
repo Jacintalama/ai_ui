@@ -1,5 +1,7 @@
 """Tests for Slack Block Kit builders for the cron scheduler (Slack mirror of
 the Discord schedule panel)."""
+import json
+
 from handlers.slack_schedule_panel import (
     build_schedules_panel,
     build_schedules_dashboard,
@@ -61,6 +63,40 @@ def test_dashboard_with_one_schedule():
     assert f"{SCHED_EDIT_PREFIX}{_SCHED['id']}" in ids
     assert f"{SCHED_DEL_PREFIX}{_SCHED['id']}" in ids
     _assert_actions_blocks_within_limit(blocks)
+
+
+def _edit_button(blocks: list[dict]) -> dict:
+    for b in blocks:
+        if b.get("type") == "actions":
+            for el in b.get("elements", []):
+                if el.get("action_id") == f"{SCHED_EDIT_PREFIX}{_SCHED['id']}":
+                    return el
+    raise AssertionError("edit button not found")
+
+
+def test_edit_button_carries_prefill_value():
+    """Edit button must carry the prefill (id/prompt/cron) as JSON in `value`
+    so the edit modal can open synchronously with no fetch at click time."""
+    blocks = build_schedule_card(_SCHED)
+    btn = _edit_button(blocks)
+    assert "value" in btn
+    data = json.loads(btn["value"])
+    assert data["id"] == str(_SCHED["id"])
+    assert data["prompt"] == _SCHED["prompt"]
+    assert data["cron"] == _SCHED["cron_expr"]
+    # action_id unchanged so routing stays the same
+    assert btn["action_id"] == f"{SCHED_EDIT_PREFIX}{_SCHED['id']}"
+
+
+def test_edit_button_value_truncates_long_prompt():
+    """Slack button `value` max is 2000 chars; the prompt is truncated to stay
+    safely under the limit."""
+    long = "x" * 5000
+    blocks = build_schedule_card({**_SCHED, "prompt": long})
+    btn = _edit_button(blocks)
+    assert len(btn["value"]) <= 2000
+    data = json.loads(btn["value"])
+    assert len(data["prompt"]) <= 1500
 
 
 def test_dashboard_empty_has_no_schedules_text():
