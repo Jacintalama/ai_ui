@@ -12,6 +12,7 @@ from typing import Any, Optional
 from clients.slack import SlackClient
 from handlers.commands import CommandRouter, CommandContext
 from handlers.slack_app_builder_panel import (
+    PANEL_NEW_ID,
     TEMPLATE_SELECT_ACTION_ID,
     PUBLISH_PREFIX,
     UNPUBLISH_PREFIX,
@@ -19,6 +20,7 @@ from handlers.slack_app_builder_panel import (
     ENHANCE_PREFIX,
     ENHANCE_MODAL_PREFIX,
     build_modal_view,
+    build_template_picker_blocks,
     build_ready_attachment,
     build_published_attachment,
     build_enhance_modal_view,
@@ -97,6 +99,41 @@ class SlackInteractionsHandler:
                     self.router._background_tasks.add(task)
                     task.add_done_callback(self.router._background_tasks.discard)
                 return {}
+
+        if action_id == PANEL_NEW_ID:
+            # Entry-panel "Build an app": post the template picker into the
+            # user's DM and leave an ephemeral pointer in the origin channel.
+            # Falls back to an ephemeral picker in-channel if the DM won't open.
+            user_id = (payload.get("user") or {}).get("id", "")
+            origin = (payload.get("channel") or {}).get("id", "")
+
+            async def _do() -> None:
+                try:
+                    email = await self.router._resolve_email_for_ctx(
+                        self._slack_ctx(user_id)
+                    )
+                    templates = await self.router._tasks_client.list_templates(email or "")
+                    blocks = build_template_picker_blocks(templates)
+                    dm = await self.slack.open_dm(user_id)
+                    if dm:
+                        await self.slack.post_message(
+                            channel=dm, text="Pick a template", blocks=blocks
+                        )
+                        if origin:
+                            await self.slack.post_ephemeral(
+                                origin, user_id, "\U0001f4e9 Sent to your DM."
+                            )
+                    elif origin:
+                        await self.slack.post_ephemeral(
+                            origin, user_id, "Pick a template", blocks=blocks
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Slack PANEL_NEW _do failed user=%s: %s", user_id, exc)
+
+            task = asyncio.create_task(_do())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
 
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
         return {}

@@ -106,3 +106,53 @@ async def test_my_apps_not_linked():
     content = discord.edit_original.await_args.kwargs.get("content", "")
     assert "isn't linked" in content
     router._tasks_client.list_projects.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Slack — Build an app button -> template picker in DM
+# ---------------------------------------------------------------------------
+from handlers.slack_interactions import SlackInteractionsHandler
+from handlers.slack_app_builder_panel import PANEL_NEW_ID, TEMPLATE_SELECT_ACTION_ID
+
+
+def _slack_action(action_id, user="U1", channel="C-app"):
+    return {"type": "block_actions", "user": {"id": user, "username": "maya"},
+            "trigger_id": "t", "channel": {"id": channel},
+            "actions": [{"action_id": action_id}]}
+
+
+@pytest.mark.asyncio
+async def test_slack_build_new_posts_picker_to_dm():
+    slack = MagicMock()
+    slack.open_dm = AsyncMock(return_value="D1"); slack.post_message = AsyncMock()
+    slack.post_ephemeral = AsyncMock()
+    router = MagicMock()
+    router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock()
+    router._tasks_client.list_templates = AsyncMock(return_value=[{"key": "portfolio", "label": "P"}])
+    router._background_tasks = set()
+    h = SlackInteractionsHandler(slack_client=slack, command_router=router)
+    await h.handle_interaction(_slack_action(PANEL_NEW_ID)); await asyncio.sleep(0)
+    slack.open_dm.assert_awaited_once_with("U1")
+    posted = slack.post_message.await_args
+    assert posted.kwargs.get("channel") == "D1"
+    slack.post_ephemeral.assert_awaited_once()
+    assert slack.post_ephemeral.await_args.args[0] == "C-app"
+
+
+@pytest.mark.asyncio
+async def test_slack_build_new_falls_back_to_ephemeral_when_no_dm():
+    slack = MagicMock()
+    slack.open_dm = AsyncMock(return_value=None); slack.post_message = AsyncMock()
+    slack.post_ephemeral = AsyncMock()
+    router = MagicMock()
+    router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock()
+    router._tasks_client.list_templates = AsyncMock(return_value=[{"key": "portfolio", "label": "P"}])
+    router._background_tasks = set()
+    h = SlackInteractionsHandler(slack_client=slack, command_router=router)
+    await h.handle_interaction(_slack_action(PANEL_NEW_ID)); await asyncio.sleep(0)
+    slack.post_message.assert_not_awaited()
+    eph = slack.post_ephemeral.await_args
+    assert eph.args[0] == "C-app"
+    assert eph.kwargs.get("blocks")
