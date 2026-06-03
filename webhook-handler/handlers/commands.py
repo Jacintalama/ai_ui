@@ -1306,7 +1306,7 @@ class CommandRouter:
 
         try:
             if action == "list":
-                schedules = await self._tasks_client.list_schedules(email)
+                schedules = await self._tasks_client.list_schedules(email, platform="discord")
                 if not schedules:
                     await ctx.respond(
                         "**Your schedules**\n"
@@ -1680,7 +1680,7 @@ class CommandRouter:
             await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
             return
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
             return
@@ -1808,7 +1808,7 @@ class CommandRouter:
         if not email:
             return None
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError:
             return None
         for s in schedules:
@@ -1827,7 +1827,7 @@ class CommandRouter:
         if not email:
             return None
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError:
             schedules = []
         return build_schedules_dashboard(schedules)
@@ -1839,7 +1839,7 @@ class CommandRouter:
             await ctx.respond(self._not_linked_msg())
             return
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
             return
@@ -1914,7 +1914,7 @@ class CommandRouter:
             await ctx.respond(self._CRON_NO_EMAIL)
             return
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
             return
@@ -1930,7 +1930,7 @@ class CommandRouter:
     async def _cron_menu_for(self, ctx: CommandContext, email: str,
                              schedule_id: str, prefix: str = "") -> None:
         from handlers import cronjob_panel as cp
-        schedules = await self._tasks_client.list_schedules(email)
+        schedules = await self._tasks_client.list_schedules(email, platform="discord")
         match = next((s for s in schedules if str(s["id"]) == str(schedule_id)), None)
         if not match:
             await ctx.respond("That schedule no longer exists.")

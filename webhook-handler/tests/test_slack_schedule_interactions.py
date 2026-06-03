@@ -95,7 +95,8 @@ async def test_sched_open_posts_dashboard_to_dm():
     assert resp == {}
     await asyncio.sleep(0)
 
-    router._tasks_client.list_schedules.assert_awaited_once_with("u@x.com")
+    router._tasks_client.list_schedules.assert_awaited_once_with(
+        "u@x.com", platform="slack")
     slack.open_dm.assert_awaited()
     # dashboard posted to the DM channel
     slack.post_message.assert_awaited()
@@ -131,6 +132,9 @@ async def test_sched_run_prefix_calls_run_now():
     await asyncio.sleep(0)
 
     router._tasks_client.run_schedule_now.assert_awaited_once_with("u@x.com", "7")
+    # the re-render after the action also scopes to slack schedules only
+    router._tasks_client.list_schedules.assert_awaited_with(
+        "u@x.com", platform="slack")
 
 
 @pytest.mark.asyncio

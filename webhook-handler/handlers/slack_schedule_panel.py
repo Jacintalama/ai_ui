@@ -11,6 +11,7 @@ is a plain button.
 import json
 
 from handlers.slack_app_builder_panel import _button
+from handlers.schedule_format import cron_to_human
 from handlers.app_builder_panel import (
     SCHED_OPEN_ID,
     SCHED_NEW_ID,
@@ -97,7 +98,8 @@ def build_schedule_card(sched: dict) -> list[dict]:
     Run / Pause-or-Resume / Edit / Delete buttons (≤5 elements)."""
     sid = str(sched.get("id", ""))
     prompt = (sched.get("prompt") or "").strip() or "(no description)"
-    cron = (sched.get("cron_expr") or "").strip() or "—"
+    cron_raw = (sched.get("cron_expr") or "").strip()
+    when = cron_to_human(cron_raw) if cron_raw else "—"
     enabled = sched.get("enabled", True)
     state = "🟢 enabled" if enabled else "⚪ paused"
 
@@ -110,7 +112,7 @@ def build_schedule_card(sched: dict) -> list[dict]:
     elements.append(_button("🗑 Delete", f"{SCHED_DEL_PREFIX}{sid}"))
 
     return [
-        _section(f"*{prompt}*\n`{cron}` · {state}"),
+        _section(f"*{prompt}*\n{when} · {state}"),
         {"type": "actions", "elements": elements},
     ]
 

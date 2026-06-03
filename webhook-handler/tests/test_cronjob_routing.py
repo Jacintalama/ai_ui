@@ -20,8 +20,8 @@ class _FakeTasks:
     def __init__(self): self.calls = []
     async def create_schedule(self, email, name, cron, prompt, **kw):
         self.calls.append(("create", email, name, cron, prompt)); return {"id": "s9"}
-    async def list_schedules(self, email):
-        self.calls.append(("list", email)); return [
+    async def list_schedules(self, email, platform=None):
+        self.calls.append(("list", email, platform)); return [
             {"id": "s1", "name": "m", "cron_expr": "0 9 * * *", "enabled": True,
              "last_run_status": None}]
     async def run_now_schedule(self, email, sid):
@@ -65,6 +65,16 @@ async def test_run_cron_list_renders_select():
     assert comps
     sel = comps[-1][1][0]["components"][0]
     assert sel["custom_id"] == "cron:select"
+    # the list is scoped to discord schedules only
+    assert ("list", "u@x.com", "discord") in tasks.calls
+
+@pytest.mark.asyncio
+async def test_run_cron_menu_lists_with_discord_platform():
+    tasks = _FakeTasks(); r = _router(tasks)
+    ctx, _, comps = _ctx()
+    await r.run_cron_menu(ctx, "s1")
+    # _cron_menu_for re-fetches the schedule list scoped to discord
+    assert ("list", "u@x.com", "discord") in tasks.calls
 
 @pytest.mark.asyncio
 async def test_run_cron_runnow_calls_api():

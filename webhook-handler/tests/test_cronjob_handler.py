@@ -57,7 +57,7 @@ async def test_list_empty():
     router = _router({"100": "alice@x.com"}, tc)
     await router._handle_cronjob(_ctx("100", "list", captured))
     assert any("no schedules" in m.lower() for m in captured)
-    tc.list_schedules.assert_called_once_with("alice@x.com")
+    tc.list_schedules.assert_called_once_with("alice@x.com", platform="discord")
 
 
 @pytest.mark.asyncio

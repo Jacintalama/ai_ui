@@ -110,6 +110,25 @@ def test_dashboard_empty_has_no_schedules_text():
     _assert_actions_blocks_within_limit(blocks)
 
 
+def _section_texts(blocks: list[dict]) -> str:
+    return " ".join(
+        b.get("text", {}).get("text", "")
+        for b in blocks
+        if b.get("type") == "section"
+    )
+
+
+def test_card_renders_human_time_not_raw_cron():
+    """The card shows a human-readable time ('every day at 9:41 PM') instead of
+    the raw cron expression ('41 21 * * *')."""
+    blocks = build_schedule_card(
+        {"id": "1", "prompt": "x", "cron_expr": "41 21 * * *", "enabled": True})
+    text = _section_texts(blocks)
+    assert "9:41 PM" in text
+    assert "every day at" in text
+    assert "41 21 * * *" not in text
+
+
 def test_card_enabled_has_pause_not_resume():
     blocks = build_schedule_card({**_SCHED, "enabled": True})
     ids = _action_ids(blocks)
