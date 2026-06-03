@@ -558,15 +558,20 @@ class ScheduleResultIn(BaseModel):
     platform: str = "discord"
 
 
-def _format_schedule_result(name: str, status: str, result: str) -> str:
+def _format_schedule_result(
+    name: str, status: str, result: str, platform: str = "discord"
+) -> str:
     """Format a finished scheduled-task result as a clean, quiet message (<=1990).
 
     `name` is platform-specific: Discord passes ``"<when>: <prompt>"`` while Slack
-    passes the bare prompt. Split on the first ``": "`` to recover an optional
-    schedule-context footer; fall back to the whole name if there's no separator.
+    passes the bare prompt. Only Discord names carry a ``"<when>: <prompt>"``
+    structure, so the ``": "`` split is gated on ``platform == "discord"``. For
+    any other platform (e.g. Slack) the whole name is the title with no footer,
+    so a prompt that happens to contain ``": "`` (e.g. ``"remind me: drink water"``)
+    renders intact.
     """
     try:
-        if ": " in name:
+        if platform == "discord" and ": " in name:
             when, title = name.split(": ", 1)
         else:
             when, title = None, name
@@ -598,7 +603,9 @@ async def schedule_result(
     if body.platform == "slack":
         if slack_client is None:
             raise HTTPException(status_code=503, detail="Slack not configured")
-        text = _format_schedule_result(body.schedule_name, body.status, body.result)
+        text = _format_schedule_result(
+            body.schedule_name, body.status, body.result, platform="slack"
+        )
         blocks = None
         if body.schedule_id and body.status not in ("completed", "skipped"):
             from handlers.slack_schedule_panel import build_retry_blocks
@@ -607,7 +614,9 @@ async def schedule_result(
         return {"status": "delivered"}
     if discord_client is None:
         raise HTTPException(status_code=503, detail="Discord not configured")
-    message = _format_schedule_result(body.schedule_name, body.status, body.result)
+    message = _format_schedule_result(
+        body.schedule_name, body.status, body.result, platform="discord"
+    )
     # On a failed run, attach a one-click Retry (reuses the run-now handler).
     components = None
     if body.schedule_id and body.status not in ("completed", "skipped"):

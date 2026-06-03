@@ -55,7 +55,10 @@ from main import _format_schedule_result  # noqa: E402
 
 def test_discord_style_completed_has_title_and_when_no_emoji():
     out = _format_schedule_result(
-        "every day at 9:41 PM: give me the best quote", "completed", "Be yourself."
+        "every day at 9:41 PM: give me the best quote",
+        "completed",
+        "Be yourself.",
+        platform="discord",
     )
     assert "**give me the best quote**" in out
     assert "_every day at 9:41 PM_" in out
@@ -63,17 +66,35 @@ def test_discord_style_completed_has_title_and_when_no_emoji():
 
 
 def test_slack_style_completed_has_title_no_footer_no_emoji():
-    out = _format_schedule_result("give me the best quote", "completed", "Be yourself.")
+    out = _format_schedule_result(
+        "give me the best quote", "completed", "Be yourself.", platform="slack"
+    )
     assert "**give me the best quote**" in out
     assert "_" not in out  # no italic footer line at all
     assert "✅" not in out
 
 
+def test_slack_prompt_with_colon_not_split_no_footer():
+    # A Slack schedule name is the BARE prompt. A prompt that happens to contain
+    # ": " must NOT be split into when/title — render the whole prompt as title
+    # with no footer.
+    out = _format_schedule_result(
+        "remind me: drink water", "completed", "ok", platform="slack"
+    )
+    assert "**remind me: drink water**" in out
+    assert "_remind me_" not in out
+    assert "_" not in out  # no italic footer line at all
+
+
 def test_failed_status_starts_with_warning():
-    out = _format_schedule_result("give me the best quote", "failed", "boom")
+    out = _format_schedule_result(
+        "give me the best quote", "failed", "boom", platform="slack"
+    )
     assert out.startswith("⚠️")
 
 
 def test_huge_result_truncated_to_1990():
-    out = _format_schedule_result("x: do thing", "completed", "y" * 5000)
+    out = _format_schedule_result(
+        "x: do thing", "completed", "y" * 5000, platform="discord"
+    )
     assert len(out) <= 1990
