@@ -1240,26 +1240,27 @@ async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
     return None
 
 
-@router.delete("/{slug}", status_code=204)
-async def delete_project(slug: str, user: AdminUser = Depends(current_admin)):
-    """Owner-only hard delete: removes the app folder on disk and every DB
-    row that references this slug — items, executions (cascade), members,
-    chat history, supabase config, published mapping. There's no undo."""
+async def _delete_slug(s, slug: str, email: str, *, is_admin: bool) -> None:
+    """Core hard delete: removes the app folder on disk and every DB row that
+    references this slug — items, executions (cascade), members, chat history,
+    supabase config, published mapping. There's no undo. Owner-checked for
+    non-admins. Shared by the admin route and the user-scoped aiuibuilder
+    route (mirrors _unpublish_slug)."""
     from sqlalchemy import delete as _del
     import shutil
     _validate_slug(slug)
-    async with session() as s:
-        if not await _user_can_see_project(s, slug, user.email):
+    if not is_admin:
+        if not await _user_can_see_project(s, slug, email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
-        # DB cascade: items first (executions FK-cascade off items),
-        # then per-slug tables.
-        await s.execute(_del(TaskItem).where(TaskItem.built_app_slug == slug))
-        await s.execute(_del(ChatMessage).where(ChatMessage.slug == slug))
-        await s.execute(_del(ProjectSupabase).where(ProjectSupabase.slug == slug))
-        await s.execute(_del(PublishedApp).where(PublishedApp.slug == slug))
-        await s.execute(_del(ProjectMember).where(ProjectMember.slug == slug))
-        await s.commit()
+        await _require_role(s, slug, email, "owner", is_admin=False)
+    # DB cascade: items first (executions FK-cascade off items),
+    # then per-slug tables.
+    await s.execute(_del(TaskItem).where(TaskItem.built_app_slug == slug))
+    await s.execute(_del(ChatMessage).where(ChatMessage.slug == slug))
+    await s.execute(_del(ProjectSupabase).where(ProjectSupabase.slug == slug))
+    await s.execute(_del(PublishedApp).where(PublishedApp.slug == slug))
+    await s.execute(_del(ProjectMember).where(ProjectMember.slug == slug))
+    await s.commit()
     # Filesystem: remove the app's folder if present. Best-effort — DB is
     # already wiped, so we don't fail the whole call on rmtree errors.
     workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
@@ -1269,4 +1270,15 @@ async def delete_project(slug: str, user: AdminUser = Depends(current_admin)):
             shutil.rmtree(app_dir)
         except Exception:
             pass
+    return None
+
+
+@router.delete("/{slug}", status_code=204)
+async def delete_project(slug: str, user: AdminUser = Depends(current_admin)):
+    """Owner-only hard delete: removes the app folder on disk and every DB
+    row that references this slug — items, executions (cascade), members,
+    chat history, supabase config, published mapping. There's no undo."""
+    _validate_slug(slug)
+    async with session() as s:
+        await _delete_slug(s, slug, user.email, is_admin=True)
     return None
