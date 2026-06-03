@@ -192,3 +192,75 @@ def test_create_then_list(monkeypatch):
     r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
     assert r.status_code == 200, r.text
     assert any(s["id"] == sched_id for s in r.json())
+
+
+def _make_capture_session(rows):
+    """A mocked db.session whose add() captures Schedule rows into `rows`."""
+    from models import Schedule
+
+    class _FakeResult:
+        def scalars(self):
+            class _S:
+                def all(self_inner): return list(rows)
+            return _S()
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj):
+            if isinstance(obj, Schedule):
+                rows.append(obj)
+        async def commit(self): return None
+        async def execute(self, _stmt):
+            return _FakeResult()
+
+    return lambda: _FakeSession()
+
+
+def test_create_with_delivery_platform_slack(monkeypatch):
+    """POST /schedules with delivery_platform='slack' persists 'slack' on the row."""
+    from main import app
+
+    rows = []
+    monkeypatch.setattr("routes_schedules.session", _make_capture_session(rows))
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-Cron-Secret": CRON_SECRET},
+        json={
+            "user_email": "x@y.com",
+            "name": "slack-sched",
+            "cron_expr": "*/5 * * * *",
+            "persona": "test",
+            "prompt": "say hi",
+            "delivery_platform": "slack",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert len(rows) == 1
+    assert rows[0].delivery_platform == "slack"
+
+
+def test_create_defaults_delivery_platform_discord(monkeypatch):
+    """Omitting delivery_platform defaults the inserted row to 'discord'."""
+    from main import app
+
+    rows = []
+    monkeypatch.setattr("routes_schedules.session", _make_capture_session(rows))
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-Cron-Secret": CRON_SECRET},
+        json={
+            "user_email": "x@y.com",
+            "name": "discord-sched",
+            "cron_expr": "*/5 * * * *",
+            "persona": "test",
+            "prompt": "say hi",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert len(rows) == 1
+    assert rows[0].delivery_platform == "discord"
