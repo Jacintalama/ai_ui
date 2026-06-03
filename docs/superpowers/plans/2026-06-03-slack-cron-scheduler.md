@@ -31,7 +31,8 @@
     ```
   - `models.py` Schedule: `delivery_platform = Column(Text, nullable=False, server_default="discord")` (next to `delivery_channel_id`).
   - `routes_schedules.py` `CreateScheduleIn`: add `delivery_platform: str = "discord"`; on insert, set `delivery_platform=body.delivery_platform`.
-  - `scheduler.py`: rename `_deliver_to_discord` → `_deliver_result` and add a `platform: str` param; include `"platform": platform` in the POST json. In `_finalize_run`, read `platform = getattr(sched, "delivery_platform", "discord") or "discord"` and call `_deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))`.
+  - `scheduler.py`: rename `_deliver_to_discord` → `_deliver_result` and add a `platform: str` param; include `"platform": platform` in the POST json. In `_finalize_run`, read `platform = getattr(sched, "delivery_platform", "discord") or "discord"` and call `_deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))`. (`_deliver_to_discord` has exactly ONE caller — `_finalize_run`; run-now goes through `_finalize_run` too, so no second call site.)
+  - (Optional) add `delivery_platform` to `_serialize` if a builder/test needs it — the Slack dashboard only needs `id`/`name`/`cron_expr`/`enabled` which are already serialized, so this is not required.
 - [ ] **Step 4: Re-verify** imports + route registration; report DB-test baseline.
 - [ ] **Step 5: Commit** `feat(tasks): delivery_platform on schedules + platform-aware delivery seam`
 
@@ -58,7 +59,7 @@
             from handlers.slack_schedule_panel import build_retry_blocks
             blocks = build_retry_blocks(body.schedule_id)
         await slack_client.post_message(channel=body.channel_id, text=text, blocks=blocks)
-        return {"ok": True}
+        return {"status": "delivered"}  # match the Discord path's return shape
     # --- existing Discord path below (discord_client guard + post_channel_message) ---
     ```
     (`_format_schedule_result` is plain text and works for Slack mrkdwn fallback; reuse it.)
@@ -81,10 +82,10 @@ Mirror the Discord builders (`app_builder_panel.py` schedule section) in Block K
   - `build_schedules_dashboard(schedules)` → a "New schedule" button (`SCHED_NEW_ID`) + one row/section per schedule; empty list → "no schedules yet" text.
   - `build_schedule_card(sched)` → Run(`SCHED_RUN_PREFIX+id`)/Pause or Resume/Edit/Delete buttons.
   - `build_schedule_modal()` → a `view` dict (callback_id `SCHED_MODAL_ID`) with two `plain_text_input` blocks: "what" + "when".
-  - `build_schedule_edit_modal(sched)` → pre-filled edit `view` (callback_id `SCHED_EDITMODAL_PREFIX+id`).
-  - `build_retry_blocks(schedule_id)` → a Block Kit actions block with a "Retry" button (`SCHED_RUN_PREFIX+id`).
+  - `build_schedule_edit_modal(sched)` → pre-filled edit `view` (callback_id `SCHED_EDITMODAL_PREFIX+id`). **NOTE:** the schedule row stores `cron_expr` but NOT a human-readable "when" (it's not persisted/serialized). Pre-fill the "what" field with `sched["prompt"]` and pre-fill the "when" field with the raw `sched["cron_expr"]` (and note in the field hint that a cron expression or plain English is accepted; the submit handler runs `parse_when` which should pass through a valid cron unchanged — verify `parse_when` accepts a raw cron, else accept cron directly in the edit path). Do NOT write the builder against a non-existent human-`when` field.
+  - `build_retry_blocks(schedule_id)` → a Block Kit actions block with a "Retry" button (`SCHED_RUN_PREFIX+id`). (Slack-native — do NOT reuse Discord's `build_retry_components`.)
 - [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** the builders (Block Kit; use the existing Slack `_button`/`_link_button` style from `slack_app_builder_panel.py`, or local helpers). Pause vs Resume button depends on `sched["enabled"]`. Keep ≤5 elements per actions block.
+- [ ] **Step 3: Implement** the builders (Block Kit). **Use the Slack `_button(text, action_id, *, primary=False)` helper — it has NO danger/secondary style constants; do NOT port Discord's `STYLE_SUCCESS`/`STYLE_DANGER`.** Map "primary" actions to `primary=True`, everything else plain. Pause vs Resume button depends on `sched["enabled"]`. Keep ≤5 elements per actions block.
 - [ ] **Step 4: Run, verify pass; full suite green.**
 - [ ] **Step 5: Commit** `feat(slack): schedule panel/dashboard/card/modal Block Kit builders`
 
