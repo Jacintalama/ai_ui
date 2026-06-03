@@ -559,11 +559,27 @@ class ScheduleResultIn(BaseModel):
 
 
 def _format_schedule_result(name: str, status: str, result: str) -> str:
-    """Format a finished scheduled-task result as a Discord message (<=2000)."""
-    emoji = {"completed": "✅", "skipped": "⏭️"}.get(status, "⚠️")
-    header = f"{emoji} **Scheduled task** — {name}".strip()
+    """Format a finished scheduled-task result as a clean, quiet message (<=1990).
+
+    `name` is platform-specific: Discord passes ``"<when>: <prompt>"`` while Slack
+    passes the bare prompt. Split on the first ``": "`` to recover an optional
+    schedule-context footer; fall back to the whole name if there's no separator.
+    """
+    try:
+        if ": " in name:
+            when, title = name.split(": ", 1)
+        else:
+            when, title = None, name
+    except Exception:
+        when, title = None, name
     body = (result or "").strip() or "_(no output)_"
-    return f"{header}\n{body}"[:1990]
+    if status == "completed":
+        text = f"**{title}**\n\n{body}"
+        if when:
+            text += f"\n\n_{when}_"
+    else:
+        text = f"⚠️ **{title}** — {status}\n\n{body}"
+    return text[:1990]
 
 
 @app.post("/internal/schedule-result")

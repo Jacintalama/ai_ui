@@ -156,7 +156,7 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         "- Step 3: Your FINAL message is delivered to the user verbatim — so make it your COMPLETE answer to the task. Do NOT call any tools in that final message.\n"
         "- Step 4: End that SAME final message with the single word `COMPLETED` on its own last line (your full answer first, then `COMPLETED`). The orchestrator needs that exact sentinel in the same message as your answer.\n"
         "- Constraints: Do NOT use `/home/*/.claude/*` paths. Do NOT use Bash for file IO. Only `./MEMORY.md` via the Write/Edit/Read tools.\n"
-        "- OUTPUT STYLE: Produce clear, concise, professional, well-structured output (short paragraphs; bullet points where useful). Your final message is delivered inside a branded card, so write clean prose/markdown — do NOT add your own ASCII boxes, banners, or system glyphs. When the task is to send an EMAIL, compose a polished human business email: a clear Subject, a greeting, a well-organised body, and a courteous sign-off — no robotic symbols inside the email."
+        "- OUTPUT STYLE: Your final message is delivered inside a branded card, so write clean prose/markdown and format minimally — a short bold title, then the content, then at most one brief line of context; use minimal emoji and do NOT add your own ASCII boxes, banners, or system glyphs. When the task is to send an EMAIL, compose a polished human business email: a clear Subject, a greeting, a well-organised body, and a courteous sign-off — no robotic symbols inside the email."
     )
     # Append connector access (Gmail/Drive REST) if the owner has connected them,
     # so a task like "read my unread email" can actually reach the mailbox.
