@@ -126,18 +126,31 @@ async def set_thread(
 ) -> dict[str, str]:
     _require_internal(x_internal_secret)
     async with session() as s:
-        await s.execute(
-            update(DiscordLink).where(DiscordLink.discord_id == discord_id).values(
-                schedules_thread_id=body.thread_id)
-        )
+        link = (await s.execute(
+            select(DiscordLink).where(DiscordLink.discord_id == discord_id)
+        )).scalar_one_or_none()
+        if link:
+            link.schedules_thread_id = body.thread_id
+        else:
+            # Unlinked users have no link row yet. Create a placeholder so the
+            # thread mapping persists — otherwise an UPDATE matches zero rows and
+            # the bot creates a fresh thread on every open. email is NOT NULL, so
+            # use the synthetic identity the rest of the system uses for unlinked
+            # Discord users; status stays "pending" so resolve_link never treats
+            # this as an approved link. A later /request upserts the real email
+            # and preserves schedules_thread_id.
+            s.add(DiscordLink(
+                discord_id=discord_id,
+                email=f"discord-{discord_id}@aiui.local",
+                status="pending",
+                schedules_thread_id=body.thread_id,
+            ))
         await s.commit()
     return {"status": "ok"}
 
 
 @router.get("/{discord_id}/builder-thread")
-async def get_builder_thread(
-    discord_id: str, x_internal_secret: str = Header(default=""),
-) -> dict[str, Any]:
+async def get_builder_thread(discord_id: str, x_internal_secret: str = Header(default="")) -> dict[str, Any]:
     _require_internal(x_internal_secret)
     async with session() as s:
         link = (await s.execute(
@@ -152,9 +165,19 @@ async def set_builder_thread(
 ) -> dict[str, str]:
     _require_internal(x_internal_secret)
     async with session() as s:
-        await s.execute(
-            update(DiscordLink).where(DiscordLink.discord_id == discord_id).values(
-                builder_thread_id=body.thread_id)
-        )
+        link = (await s.execute(
+            select(DiscordLink).where(DiscordLink.discord_id == discord_id)
+        )).scalar_one_or_none()
+        if link:
+            link.builder_thread_id = body.thread_id
+        else:
+            # Same placeholder rationale as set_thread (unlinked users) so the
+            # App Builder thread mapping persists across opens.
+            s.add(DiscordLink(
+                discord_id=discord_id,
+                email=f"discord-{discord_id}@aiui.local",
+                status="pending",
+                builder_thread_id=body.thread_id,
+            ))
         await s.commit()
     return {"status": "ok"}
