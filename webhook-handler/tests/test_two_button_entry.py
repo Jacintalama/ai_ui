@@ -2,7 +2,9 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from handlers.discord_commands import DiscordCommandHandler
-from handlers.app_builder_panel import PANEL_NEW_ID, TEMPLATE_SELECT_ID
+from handlers.app_builder_panel import (
+    PANEL_NEW_ID, PANEL_MYAPPS_ID, TEMPLATE_SELECT_ID, APP_SELECT_ID,
+)
 
 
 def _payload(custom_id, user_id="U1"):
@@ -52,3 +54,55 @@ async def test_build_new_returns_deferred_ephemeral():
     resp = await h.handle_interaction(_payload(PANEL_NEW_ID))
     assert resp["type"] == 5
     assert resp["data"]["flags"] == 64
+
+
+@pytest.mark.asyncio
+async def test_my_apps_posts_apps_dropdown_to_thread():
+    discord = MagicMock(); discord.create_private_thread = AsyncMock(return_value="T1")
+    discord.add_thread_member = AsyncMock(); discord.post_channel_message = AsyncMock()
+    discord.edit_original = AsyncMock()
+    router = MagicMock()
+    router.get_user_thread = AsyncMock(return_value="T1"); router.set_user_thread = AsyncMock()
+    router._resolve_email = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock()
+    router._tasks_client.list_projects = AsyncMock(return_value=[{"slug": "shop-1", "name": "Shop"}])
+    h = DiscordCommandHandler(discord, router)
+    await h.handle_interaction(_payload(PANEL_MYAPPS_ID)); await asyncio.sleep(0)
+    assert discord.post_channel_message.await_args.args[0] == "T1"
+    args = discord.post_channel_message.await_args
+    comps = args.kwargs.get("components") or (args.args[2] if len(args.args) > 2 else [])
+    flat = [c for row in comps for c in row["components"]]
+    assert any(c.get("custom_id") == APP_SELECT_ID for c in flat)
+
+
+@pytest.mark.asyncio
+async def test_my_apps_empty_state():
+    discord = MagicMock(); discord.create_private_thread = AsyncMock(return_value="T1")
+    discord.add_thread_member = AsyncMock(); discord.post_channel_message = AsyncMock()
+    discord.edit_original = AsyncMock()
+    router = MagicMock()
+    router.get_user_thread = AsyncMock(return_value="T1"); router.set_user_thread = AsyncMock()
+    router._resolve_email = AsyncMock(return_value="maya@x.com")
+    router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(return_value=[])
+    h = DiscordCommandHandler(discord, router)
+    await h.handle_interaction(_payload(PANEL_MYAPPS_ID)); await asyncio.sleep(0)
+    posted = " ".join(str(c.args) for c in discord.post_channel_message.await_args_list)
+    assert "No apps yet" in posted
+
+
+@pytest.mark.asyncio
+async def test_my_apps_not_linked():
+    discord = MagicMock(); discord.create_private_thread = AsyncMock(return_value="T1")
+    discord.add_thread_member = AsyncMock(); discord.post_channel_message = AsyncMock()
+    discord.edit_original = AsyncMock()
+    router = MagicMock()
+    router.get_user_thread = AsyncMock(return_value="T1"); router.set_user_thread = AsyncMock()
+    router._resolve_email = AsyncMock(return_value=None)
+    router._not_linked_msg = MagicMock(return_value="Your Discord account isn't linked yet.")
+    router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(return_value=[])
+    h = DiscordCommandHandler(discord, router)
+    await h.handle_interaction(_payload(PANEL_MYAPPS_ID)); await asyncio.sleep(0)
+    assert discord.post_channel_message.await_count == 0
+    content = discord.edit_original.await_args.kwargs.get("content", "")
+    assert "isn't linked" in content
+    router._tasks_client.list_projects.assert_not_awaited()
