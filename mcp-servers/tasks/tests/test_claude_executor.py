@@ -1,4 +1,4 @@
-from claude_executor import _ensure_gitignore_attachments, build_prompt, parse_outcome
+from claude_executor import _ensure_gitignore_attachments, build_prompt, parse_outcome, extract_final_body
 
 
 def test_build_prompt_includes_task_fields():
@@ -169,3 +169,11 @@ def test_parse_outcome_empty_stream_no_raw_json():
     stream = '{"type":"system","subtype":"init","session_id":"y"}'
     o = parse_outcome(stream)
     assert "{" not in o.payload
+
+
+def test_extract_final_body_error_result_no_raw_json():
+    """The scheduled-delivery body path must not emit raw error-JSON either."""
+    stream = '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0}'
+    body = extract_final_body(stream)
+    assert '"type":"result"' not in body
+    assert "{" not in body

@@ -777,7 +777,6 @@ def parse_outcome(claude_response: str) -> Outcome:
     text = _extract_assistant_text(claude_response)
     if not text:
         stripped = (claude_response or "").strip()
-        # Never surface a raw stream-json blob as the user-facing message.
         text = "(the run produced no output)" if stripped.startswith("{") else stripped
     matches = list(_SENTINEL_RE.finditer(text))
     if not matches:
@@ -790,6 +789,41 @@ def parse_outcome(claude_response: str) -> Outcome:
         "NEEDS_STEPS": "needs_steps",
     }
     return Outcome(kind=kind_map[last.group("kind")], payload=last.group("rest").strip())
+
+
+def extract_final_body(claude_response: str) -> str:
+    """The agent's final answer with its trailing sentinel section removed.
+
+    For scheduled tasks the agent writes its answer first and ends with a bare
+    `COMPLETED` line, so `parse_outcome`'s payload (text *after* the sentinel)
+    is empty. This returns everything *before* the final sentinel — the actual
+    content to deliver to the user.
+
+    Uses ONLY the final stream-json `result` event (the complete final message)
+    to avoid duplicating the incrementally-streamed `assistant` chunks; falls
+    back to assistant text, then the raw string, when no result event exists.
+    """
+    import json as _json
+    final: str | None = None
+    for line in claude_response.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = _json.loads(line)
+        except Exception:
+            continue
+        if obj.get("type") == "result" and isinstance(obj.get("result"), str):
+            final = obj["result"]  # keep the LAST result event
+    if final is None:
+        final = _extract_assistant_text(claude_response)
+        if not final:
+            stripped = (claude_response or "").strip()
+            final = "(the run produced no output)" if stripped.startswith("{") else stripped
+    matches = list(_SENTINEL_RE.finditer(final))
+    if matches:
+        final = final[:matches[-1].start()]
+    return final.strip()
 
 
 def line_outcome(claude_response_line: str) -> Outcome | None:
