@@ -10,7 +10,7 @@ from handlers.slack_app_builder_panel import (
     PANEL_NEW_ID, PANEL_MYAPPS_ID,
     # B5
     PUBLISH_PREFIX, ENHANCE_PREFIX, ENHANCE_MODAL_PREFIX,
-    UNPUBLISH_PREFIX, STATUS_PREFIX,
+    UNPUBLISH_PREFIX, STATUS_PREFIX, DELETE_PREFIX,
     is_action, slug_from_action, is_enhance_modal, slug_from_enhance_modal,
     # B6
     build_ready_attachment, build_published_attachment,
@@ -420,3 +420,70 @@ def test_enhance_text_from_view_extracts_value():
 def test_enhance_text_from_view_empty_fallback():
     assert enhance_text_from_view({}) == ""
     assert enhance_text_from_view({"state": {"values": {}}}) == ""
+
+
+# ---------------------------------------------------------------------------
+# TASK 7 — Preview + Delete (with confirm) per app row
+# ---------------------------------------------------------------------------
+
+from config import settings  # noqa: E402
+
+
+def _all_elements(blocks):
+    return [el for b in blocks if b["type"] == "actions" for el in b["elements"]]
+
+
+def _find_delete(blocks, slug):
+    for el in _all_elements(blocks):
+        if el.get("action_id") == f"{DELETE_PREFIX}{slug}":
+            return el
+    return None
+
+
+def _find_preview_url(blocks):
+    # Preview is a link button (has a "url", no action_id used for routing).
+    for el in _all_elements(blocks):
+        if el.get("url"):
+            return el["url"]
+    return None
+
+
+def test_apps_list_draft_has_preview_url_to_tasks_preview():
+    blocks = build_apps_list_blocks([{"slug": "draft-app", "name": "Draft", "published": False}])
+    url = _find_preview_url(blocks)
+    expected = f"{settings.tasks_public_url.rstrip('/')}/tasks/preview-app/draft-app/"
+    assert url == expected
+
+
+def test_apps_list_published_preview_uses_public_url():
+    blocks = build_apps_list_blocks(
+        [{"slug": "live-app", "name": "Live", "published": True, "public_url": "https://live/site"}]
+    )
+    url = _find_preview_url(blocks)
+    assert url == "https://live/site"
+
+
+def test_apps_list_has_delete_button_with_confirm():
+    blocks = build_apps_list_blocks([{"slug": "my-app", "name": "My App", "published": False}])
+    el = _find_delete(blocks, "my-app")
+    assert el is not None
+    assert el["action_id"] == f"{DELETE_PREFIX}my-app"
+    confirm = el.get("confirm")
+    assert isinstance(confirm, dict)
+    assert "title" in confirm
+    assert "text" in confirm
+    assert "confirm" in confirm
+    assert "deny" in confirm
+
+
+def test_apps_list_delete_present_for_both_states():
+    blocks = build_apps_list_blocks(_APPS)
+    assert _find_delete(blocks, "my-app") is not None
+    assert _find_delete(blocks, "live-app") is not None
+
+
+def test_apps_list_rows_within_five_elements_per_block():
+    blocks = build_apps_list_blocks(_APPS)
+    for b in blocks:
+        if b["type"] == "actions":
+            assert len(b["elements"]) <= 5

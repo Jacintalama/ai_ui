@@ -18,6 +18,7 @@ from handlers.slack_app_builder_panel import (
     PUBLISH_PREFIX,
     UNPUBLISH_PREFIX,
     STATUS_PREFIX,
+    DELETE_PREFIX,
     ENHANCE_PREFIX,
     ENHANCE_MODAL_PREFIX,
     build_modal_view,
@@ -89,6 +90,7 @@ class SlackInteractionsHandler:
         for prefix, handler in (
             (PUBLISH_PREFIX, self._do_publish),
             (UNPUBLISH_PREFIX, self._do_unpublish),
+            (DELETE_PREFIX, self._do_delete),
             (STATUS_PREFIX, self._do_status),
             (ENHANCE_PREFIX, self._do_open_enhance),
         ):
@@ -436,6 +438,36 @@ class SlackInteractionsHandler:
                     )
             except Exception as inner:  # noqa: BLE001
                 logger.error("_do_unpublish error DM failed: %s", inner)
+
+    async def _do_delete(self, payload: dict[str, Any], slug: str) -> None:
+        """Handle a Delete button click — resolves email, deletes, DMs result.
+
+        The destructive confirm dialog is enforced client-side by Slack (the
+        button carries a `confirm` object), so by the time this fires the user
+        has already confirmed."""
+        user_id: str = payload.get("user", {}).get("id", "")
+        try:
+            email = await self._bail_if_not_linked(user_id)
+            if not email:
+                return
+            await self.router._tasks_client.delete_app(email, slug)
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(
+                    channel=dm,
+                    text=f"Deleted: {slug}",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_do_delete failed slug=%s user=%s: %s", slug, user_id, exc)
+            try:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=f"Couldn't delete {slug}: {exc}. Try /aiui aiuibuilder status {slug}.",
+                    )
+            except Exception as inner:  # noqa: BLE001
+                logger.error("_do_delete error DM failed: %s", inner)
 
     # ------------------------------------------------------------------
     # D11 — Status handler

@@ -298,3 +298,55 @@ async def test_slack_my_apps_empty_state():
     await h.handle_interaction(_slack_action("aiuibuild:myapps")); await asyncio.sleep(0)
     txt = " ".join(str(c.kwargs) for c in slack.post_message.await_args_list)
     assert "No apps yet" in txt
+
+
+# ---------------------------------------------------------------------------
+# TASK 7 — Delete action routes to _tasks_client.delete_app + confirmation
+# ---------------------------------------------------------------------------
+
+from handlers.slack_app_builder_panel import DELETE_PREFIX  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_slack_delete_action_calls_delete_app_and_dms():
+    slack = MagicMock()
+    slack.open_dm = AsyncMock(return_value="D1")
+    slack.post_message = AsyncMock()
+    slack.post_ephemeral = AsyncMock()
+    router = MagicMock()
+    router._resolve_email_for_ctx = AsyncMock(return_value="maya@x.com")
+    router._not_linked_text = MagicMock(return_value="not linked")
+    router._tasks_client = MagicMock()
+    router._tasks_client.delete_app = AsyncMock(return_value=True)
+    router._background_tasks = set()
+    h = SlackInteractionsHandler(slack_client=slack, command_router=router)
+
+    resp = await h.handle_interaction(_slack_action(f"{DELETE_PREFIX}shop"))
+    assert resp == {}
+    # Background-task tracked
+    assert len(router._background_tasks) >= 1
+    await asyncio.sleep(0)
+
+    router._tasks_client.delete_app.assert_awaited_once_with("maya@x.com", "shop")
+    slack.post_message.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_slack_delete_action_email_none_skips_delete():
+    slack = MagicMock()
+    slack.open_dm = AsyncMock(return_value="D1")
+    slack.post_message = AsyncMock()
+    slack.post_ephemeral = AsyncMock()
+    router = MagicMock()
+    router._resolve_email_for_ctx = AsyncMock(return_value=None)
+    router._not_linked_text = MagicMock(return_value="not linked")
+    router._tasks_client = MagicMock()
+    router._tasks_client.delete_app = AsyncMock(return_value=True)
+    router._background_tasks = set()
+    h = SlackInteractionsHandler(slack_client=slack, command_router=router)
+
+    resp = await h.handle_interaction(_slack_action(f"{DELETE_PREFIX}shop"))
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.delete_app.assert_not_awaited()
