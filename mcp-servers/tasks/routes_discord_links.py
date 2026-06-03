@@ -132,3 +132,29 @@ async def set_thread(
         )
         await s.commit()
     return {"status": "ok"}
+
+
+@router.get("/{discord_id}/builder-thread")
+async def get_builder_thread(
+    discord_id: str, x_internal_secret: str = Header(default=""),
+) -> dict[str, Any]:
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        link = (await s.execute(
+            select(DiscordLink).where(DiscordLink.discord_id == discord_id)
+        )).scalar_one_or_none()
+    return {"thread_id": link.builder_thread_id if link else None}
+
+
+@router.post("/{discord_id}/builder-thread")
+async def set_builder_thread(
+    discord_id: str, body: ThreadIn, x_internal_secret: str = Header(default=""),
+) -> dict[str, str]:
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        await s.execute(
+            update(DiscordLink).where(DiscordLink.discord_id == discord_id).values(
+                builder_thread_id=body.thread_id)
+        )
+        await s.commit()
+    return {"status": "ok"}
