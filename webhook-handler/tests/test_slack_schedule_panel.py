@@ -180,3 +180,84 @@ def test_retry_blocks():
     ids = _action_ids(blocks)
     assert f"{SCHED_RUN_PREFIX}{_SCHED['id']}" in ids
     _assert_actions_blocks_within_limit(blocks)
+
+
+# --- Futuristic restyle: header / rails / badges / count / button order ---
+
+def _types(blocks: list[dict]) -> list[str]:
+    return [b.get("type", "") for b in blocks]
+
+
+def _header_text(blocks: list[dict]) -> str:
+    for b in blocks:
+        if b.get("type") == "header":
+            return b.get("text", {}).get("text", "")
+    return ""
+
+
+def _context_text(blocks: list[dict]) -> str:
+    out = []
+    for b in blocks:
+        if b.get("type") == "context":
+            for el in b.get("elements", []):
+                out.append(el.get("text", ""))
+    return " ".join(out)
+
+
+def test_dashboard_has_header_block():
+    blocks = build_schedules_dashboard([_SCHED])
+    assert "header" in _types(blocks)
+    assert "Your Schedules" in _header_text(blocks)
+
+
+def test_dashboard_has_divider_rails():
+    """One leading rail + one rail after each card = len + 1 dividers."""
+    scheds = [_SCHED, {**_SCHED, "id": "sched-456", "enabled": False}]
+    blocks = build_schedules_dashboard(scheds)
+    dividers = [b for b in blocks if b.get("type") == "divider"]
+    assert len(dividers) == len(scheds) + 1
+
+
+def test_dashboard_count_line_shows_active_count():
+    scheds = [_SCHED, {**_SCHED, "id": "s2", "enabled": False}]
+    blocks = build_schedules_dashboard(scheds)
+    ctx = _context_text(blocks).lower()
+    assert "1 active" in ctx
+    assert "paused" in ctx
+
+
+def test_card_enabled_badge_says_active():
+    blocks = build_schedule_card({**_SCHED, "enabled": True})
+    text = _section_texts(blocks)
+    assert "Active" in text
+    assert "Paused" not in text
+
+
+def test_card_disabled_badge_says_paused():
+    blocks = build_schedule_card({**_SCHED, "enabled": False})
+    text = _section_texts(blocks)
+    assert "Paused" in text
+
+
+def test_new_schedule_button_is_at_bottom():
+    """New schedule must come AFTER the last card's Run button, not before it."""
+    blocks = build_schedules_dashboard([_SCHED])
+
+    def _first_action_index(action_id: str) -> int:
+        for i, b in enumerate(blocks):
+            if b.get("type") == "actions":
+                if any(el.get("action_id") == action_id
+                       for el in b.get("elements", [])):
+                    return i
+        return -1
+
+    new_idx = _first_action_index(SCHED_NEW_ID)
+    run_idx = _first_action_index(f"{SCHED_RUN_PREFIX}{_SCHED['id']}")
+    assert new_idx > run_idx >= 0
+
+
+def test_card_has_no_internal_divider():
+    """The dashboard owns the rails; a standalone card stays divider-free so it
+    renders clean when reused (e.g. in commands.py)."""
+    blocks = build_schedule_card(_SCHED)
+    assert "divider" not in _types(blocks)

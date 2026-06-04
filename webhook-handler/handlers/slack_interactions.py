@@ -258,8 +258,10 @@ class SlackInteractionsHandler:
             if action_id.startswith(prefix):
                 sched_id = action_id[len(prefix):]
                 user_id = (payload.get("user") or {}).get("id", "")
+                response_url = payload.get("response_url", "")
                 task = asyncio.create_task(
-                    self._do_sched_action(user_id, method_name, sched_id)
+                    self._do_sched_action(
+                        user_id, method_name, sched_id, response_url)
                 )
                 self.router._background_tasks.add(task)
                 task.add_done_callback(self.router._background_tasks.discard)
@@ -292,10 +294,16 @@ class SlackInteractionsHandler:
         return {}
 
     async def _do_sched_action(
-        self, user_id: str, method_name: str, sched_id: str
+        self, user_id: str, method_name: str, sched_id: str,
+        response_url: str = "",
     ) -> None:
-        """Run a Run/Pause/Resume/Delete schedule action, then re-post the
-        updated dashboard to the user's DM."""
+        """Run a Run/Pause/Resume/Delete schedule action, then refresh the
+        schedules panel.
+
+        If the click carried a ``response_url`` (it came from an existing
+        panel), the refreshed dashboard REPLACES that panel in place, so we
+        no longer stack a brand-new copy on every action. Without one, fall
+        back to posting the dashboard to the user's DM."""
         try:
             email = await self._bail_if_not_linked(user_id)
             if not email:
@@ -304,12 +312,22 @@ class SlackInteractionsHandler:
             await method(email, sched_id)
             scheds = await self.router._tasks_client.list_schedules(
                 email, platform="slack")
+            blocks = build_schedules_dashboard(scheds)
+            if response_url:
+                await self.slack.post_to_response_url(
+                    response_url,
+                    "Your schedules",
+                    response_type="in_channel",
+                    replace_original=True,
+                    blocks=blocks,
+                )
+                return
             dm = await self.slack.open_dm(user_id)
             if dm:
                 await self.slack.post_message(
                     channel=dm,
                     text="Your schedules",
-                    blocks=build_schedules_dashboard(scheds),
+                    blocks=blocks,
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error(
@@ -379,7 +397,7 @@ class SlackInteractionsHandler:
             await respond(msg)
 
         async def notify_channel_rich(msg: str, slug: str, url: str, owner: str) -> None:
-            att = build_ready_attachment(slug, url)
+            att = build_ready_attachment(slug, url, owner=owner)
             if dm_id:
                 await self.slack.post_message(
                     channel=dm_id,
@@ -524,6 +542,12 @@ class SlackInteractionsHandler:
                             )
                         return
                     dm = await self.slack.open_dm(user_id)
+                    if not dm:
+                        logger.error(
+                            "Slack schedule create failed user=%s: could not open DM",
+                            user_id,
+                        )
+                        return
                     await self.router._tasks_client.create_schedule(
                         email,
                         name=name,

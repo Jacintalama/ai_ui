@@ -40,6 +40,23 @@ def _section(text: str) -> dict:
     return {"type": "section", "text": {"type": "mrkdwn", "text": text}}
 
 
+def _context(text: str) -> dict:
+    """Muted, smaller helper line (Slack renders context blocks in gray)."""
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
+
+
+def _divider() -> dict:
+    return {"type": "divider"}
+
+
+def _new_schedule_actions() -> dict:
+    """The '➕ New schedule' actions block, pinned at the bottom of the list."""
+    return {
+        "type": "actions",
+        "elements": [_button("➕ New schedule", SCHED_NEW_ID, primary=True)],
+    }
+
+
 def _build_edit_button(sched: dict, sid: str) -> dict:
     """Primary 'Edit' button whose `value` carries the prefill (id/prompt/cron)
     as JSON, so the edit modal can be opened synchronously at click time with no
@@ -76,20 +93,33 @@ def build_schedules_panel() -> list[dict]:
 
 
 def build_schedules_dashboard(schedules: list[dict]) -> list[dict]:
-    """Posted in the user's private view: a 'New schedule' button + one card per
-    schedule. Empty list → a 'no schedules' section."""
-    blocks: list[dict] = [
-        _section("*📅 Your schedules*"),
-        {
-            "type": "actions",
-            "elements": [_button("➕ New schedule", SCHED_NEW_ID, primary=True)],
-        },
-    ]
+    """Posted in the user's private view: a big header + a live active/paused
+    count, then one card per schedule separated by divider rails, with the
+    '➕ New schedule' button pinned at the bottom. Empty list → a friendly
+    'no schedules' section."""
+    header = {
+        "type": "header",
+        "text": {"type": "plain_text", "text": "📅 Your Schedules", "emoji": True},
+    }
     if not schedules:
-        blocks.append(_section("You have no schedules yet."))
-        return blocks
+        return [
+            header,
+            _section("_You have no schedules yet. Create one below._"),
+            _divider(),
+            _new_schedule_actions(),
+        ]
+
+    active = sum(1 for s in schedules if s.get("enabled", True))
+    paused = len(schedules) - active
+    count = f"{active} active"
+    if paused:
+        count += f" · {paused} paused"
+
+    blocks: list[dict] = [header, _context(count), _divider()]
     for sched in schedules:
         blocks.extend(build_schedule_card(sched))
+        blocks.append(_divider())
+    blocks.append(_new_schedule_actions())
     return blocks
 
 
@@ -101,7 +131,7 @@ def build_schedule_card(sched: dict) -> list[dict]:
     cron_raw = (sched.get("cron_expr") or "").strip()
     when = cron_to_human(cron_raw) if cron_raw else "—"
     enabled = sched.get("enabled", True)
-    state = "🟢 enabled" if enabled else "⚪ paused"
+    badge = "🟢 Active" if enabled else "⚪ Paused"
 
     elements = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}")]
     if enabled:
@@ -112,7 +142,7 @@ def build_schedule_card(sched: dict) -> list[dict]:
     elements.append(_button("🗑 Delete", f"{SCHED_DEL_PREFIX}{sid}"))
 
     return [
-        _section(f"*{prompt}*\n{when} · {state}"),
+        _section(f"*{prompt}*\n🕗 {when}   {badge}"),
         {"type": "actions", "elements": elements},
     ]
 

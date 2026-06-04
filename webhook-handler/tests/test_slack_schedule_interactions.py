@@ -138,6 +138,49 @@ async def test_sched_run_prefix_calls_run_now():
 
 
 @pytest.mark.asyncio
+async def test_sched_action_updates_panel_in_place_via_response_url():
+    """When the action click carries a response_url (it was clicked inside an
+    existing panel), the refreshed dashboard REPLACES that panel in place
+    instead of posting a brand-new one (no more stacked duplicates)."""
+    router = _sched_router()
+    handler, slack = _handler(router)
+    slack.post_to_response_url = AsyncMock(return_value=True)
+
+    payload = _block_actions_payload(f"{SCHED_RUN_PREFIX}7")
+    payload["response_url"] = "https://hooks.slack.test/resp-abc"
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    slack.post_to_response_url.assert_awaited_once()
+    args, kwargs = slack.post_to_response_url.call_args
+    assert args[0] == "https://hooks.slack.test/resp-abc"
+    assert kwargs.get("replace_original") is True
+    assert kwargs.get("blocks")
+    # NOT a fresh DM post — that was the duplicate-stacking bug
+    slack.post_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sched_action_without_response_url_falls_back_to_dm_post():
+    """No response_url (e.g. legacy panel) → keep the old behavior: post the
+    refreshed dashboard to the DM."""
+    router = _sched_router()
+    handler, slack = _handler(router)
+    slack.post_to_response_url = AsyncMock(return_value=True)
+
+    # _block_actions_payload sets no response_url
+    resp = await handler.handle_interaction(
+        _block_actions_payload(f"{SCHED_RUN_PREFIX}7")
+    )
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    slack.post_to_response_url.assert_not_awaited()
+    slack.post_message.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_sched_del_prefix_calls_delete():
     router = _sched_router()
     handler, slack = _handler(router)
