@@ -25,7 +25,9 @@ def _unb64(s: str) -> bytes:
 
 
 def _mac(owner: str, ts: str, slug: str) -> bytes:
-    return hmac.new(_SECRET, f"{owner}:{ts}:{slug}".encode("utf-8"),
+    # `edit_tok:` domain prefix keeps these distinct from edit_cap / oauth_state
+    # tokens that share OAUTH_STATE_SECRET (token-confusion guard).
+    return hmac.new(_SECRET, f"edit_tok:{owner}:{ts}:{slug}".encode("utf-8"),
                     hashlib.sha256).digest()
 
 

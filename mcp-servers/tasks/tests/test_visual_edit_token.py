@@ -47,3 +47,16 @@ def test_verify_returns_none_when_secret_missing(monkeypatch):
         # Restore the module's _SECRET so later tests still work.
         monkeypatch.setenv("OAUTH_STATE_SECRET", "test-secret-123")
         importlib.reload(visual_edit_token)
+
+
+def test_old_unprefixed_token_rejected():
+    """A token signed WITHOUT the edit_tok: domain prefix must no longer verify
+    (domain-separation guard)."""
+    import base64, hashlib, hmac, time
+    secret = b"test-secret-123"
+    owner, slug = "ralph@example.com", "my-slug"
+    ts = str(int(time.time()))
+    old_sig = hmac.new(secret, f"{owner}:{ts}:{slug}".encode(), hashlib.sha256).digest()
+    b = lambda x: base64.urlsafe_b64encode(x).decode().rstrip("=")
+    old_token = f"{b(owner.encode())}.{b(ts.encode())}.{b(old_sig)}"
+    assert verify_edit_token(old_token, slug) is None

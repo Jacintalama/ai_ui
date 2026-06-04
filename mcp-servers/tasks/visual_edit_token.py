@@ -30,7 +30,7 @@ def verify_edit_token(token: str, slug: str) -> str | None:
     except Exception:
         return None
     expected = hmac.new(
-        _SECRET, f"{owner}:{ts}:{slug}".encode("utf-8"),
+        _SECRET, f"edit_tok:{owner}:{ts}:{slug}".encode("utf-8"),
         hashlib.sha256,
     ).digest()
     if not hmac.compare_digest(sig, expected):
