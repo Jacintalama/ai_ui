@@ -151,6 +151,8 @@ from sqlalchemy import select as _select
 
 from db import session as _db_session
 from models import PublishedApp as _PublishedApp
+from edit_capability import mint_capability as _mint_capability
+from visual_edit_token import verify_edit_token as _verify_edit_token
 
 _APP_ROOT_FS = "/workspace/ai_ui/apps"
 _SLUG_ROUTE_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
@@ -475,6 +477,67 @@ async def serve_published_app(
 # kill any other user's preview.
 # ---------------------------------------------------------------------------
 import app_runner as _app_runner
+
+
+async def _resolve_edit_task(slug: str, owner: str) -> str | None:
+    """Latest task_id for `slug` if `owner` may edit it (editor+), else None.
+
+    Reuses routes_projects._require_role so the deep-link path enforces the same
+    authorization as the logged-in web path."""
+    from routes_projects import _require_role
+    from models import TaskItem
+    async with _db_session() as s:
+        try:
+            await _require_role(s, slug, owner, "editor")
+        except HTTPException:
+            return None
+        row = (
+            await s.execute(
+                _select(TaskItem.id)
+                .where(TaskItem.built_app_slug == slug)
+                .order_by(TaskItem.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    return str(row) if row else None
+
+
+def _render_preview_edit_mode(task_id: str, cap: str) -> str:
+    """Serve preview.html with a JSON-encoded, XSS-safe edit-context seed so the
+    editor opens scoped to one task without a web login."""
+    import json as _json
+    path = _os.path.join(_os.path.dirname(__file__), "static", "preview.html")
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    payload = _json.dumps({"task_id": task_id, "cap": cap})
+    # Defense-in-depth: neutralize </script> / tag-breakout in the JSON literal.
+    payload = (payload.replace("<", "\\u003c")
+                      .replace(">", "\\u003e")
+                      .replace("&", "\\u0026"))
+    seed = "<script>window.__EDIT_CTX__ = " + payload + ";</script>"
+    idx = html.lower().find("</head>")
+    return seed + html if idx == -1 else html[:idx] + seed + html[idx:]
+
+
+@app.get("/tasks/edit/{slug}", include_in_schema=False)
+async def tasks_edit(slug: str, token: str = ""):
+    """Token-authenticated deep link into the visual editor (no web login).
+
+    Verifies the signed edit token, resolves the owner's task, mints a
+    single-task capability, and serves preview.html in edit mode. Never depends
+    on current_admin (the gateway forwards this with X-User-Admin: false)."""
+    if not _SLUG_ROUTE_RE.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid slug")
+    owner = _verify_edit_token(token, slug)
+    if not owner:
+        raise HTTPException(status_code=403, detail="Invalid or expired edit link")
+    task_id = await _resolve_edit_task(slug, owner)
+    if not task_id:
+        raise HTTPException(status_code=403, detail="App not found for this user")
+    cap = _mint_capability(owner, slug, task_id)
+    html = _render_preview_edit_mode(task_id, cap)
+    return Response(content=html, media_type="text/html",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.get("/tasks/preview-app/{slug}", include_in_schema=False)
