@@ -1,5 +1,6 @@
 """Read the trusted gateway headers and expose the current admin user."""
 from dataclasses import dataclass
+from uuid import UUID
 
 from fastapi import HTTPException, Request
 
@@ -39,3 +40,25 @@ def current_user(request: Request) -> CurrentUser:
     if not email:
         raise HTTPException(status_code=401, detail="Missing X-User-Email")
     return CurrentUser(email=email)
+
+
+def current_admin_or_capability(task_id: UUID, request: Request) -> AdminUser:
+    """FastAPI dep for the Visual Editor: accept EITHER the admin gateway
+    headers OR a single-task edit capability (`X-Edit-Capability`).
+
+    When a capability is present it must be valid and bound to THIS exact
+    `task_id`; we then return the owner as a NON-admin principal so the
+    endpoint's `_require_role(..., is_admin=False)` still re-checks the owner's
+    live role on the app (least privilege — a stale or revoked role is caught).
+    A capability never falls back to `current_admin`, so it works behind the
+    gateway's `X-User-Admin: false`. With no capability header, behavior is the
+    unchanged admin path."""
+    cap = request.headers.get("x-edit-capability", "").strip()
+    if cap:
+        from edit_capability import verify_capability
+        data = verify_capability(cap)
+        if not data or data["task_id"] != str(task_id):
+            raise HTTPException(status_code=403, detail="Invalid edit capability")
+        return AdminUser(email=(data["owner"] or "").strip().lower(),
+                         is_admin=False)
+    return current_admin(request)

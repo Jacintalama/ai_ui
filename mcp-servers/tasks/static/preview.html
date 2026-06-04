@@ -2935,7 +2935,11 @@
   "use strict";
 
   const API_BASE = "/api/tasks";
-  const taskId = new URLSearchParams(window.location.search).get("task");
+  // Edit-mode deep link (Visual Editor): the server injects __EDIT_CTX__ with a
+  // task id and a single-task capability so the editor works without a web login.
+  const _EDIT_CTX = (window.__EDIT_CTX__ || null);
+  const taskId = (_EDIT_CTX && _EDIT_CTX.task_id)
+    || new URLSearchParams(window.location.search).get("task");
 
   if (!taskId) {
     document.body.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Missing ?task= parameter</div><div class="empty-sub">Open this page with a task id: <code>/tasks/static/preview.html?task=&lt;id&gt;</code></div></div>';
@@ -3502,13 +3506,28 @@
       const token = localStorage.getItem("token");
       if (token) h.Authorization = "Bearer " + token;
     } catch (_) {}
+    // Edit-mode: send the single-task capability so the backend authorizes this
+    // one task without admin gateway headers.
+    if (_EDIT_CTX && _EDIT_CTX.cap) h["X-Edit-Capability"] = _EDIT_CTX.cap;
     return h;
+  }
+  let _editExpiredShown = false;
+  function _showEditExpired() {
+    if (_editExpiredShown || !_EDIT_CTX) return;
+    _editExpiredShown = true;
+    const d = document.createElement("div");
+    d.textContent = "This edit session expired. Reopen Visual Editor from the bot.";
+    d.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;"
+      + "background:#b91c1c;color:#fff;padding:10px 16px;text-align:center;"
+      + "font:14px system-ui,sans-serif";
+    document.body.appendChild(d);
   }
   async function apiFetch(method, path, body) {
     const opts = { method, credentials: "include", headers: authHeaders() };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const r = await fetch(API_BASE + path, opts);
     if (!r.ok) {
+      if (r.status === 401 || r.status === 403) _showEditExpired();
       const text = await r.text().catch(() => r.statusText);
       const err = new Error(r.status + " " + text);
       err.status = r.status;

@@ -12,7 +12,7 @@ from sqlalchemy import or_, select, text
 import uuid
 
 from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, current_admin_or_capability
 from db import session
 from models import ChatMessage, ProjectSupabase, TaskItem
 from schemas import AnswerRequest, ChatMessage as ChatMessageSchema, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, TaskOut
@@ -228,7 +228,7 @@ async def history(
 
 
 @router.get("/{task_id}", response_model=TaskOut)
-async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     """Return a single task. Used by preview.html to watch build status.
 
     Read access extends beyond assignee — project members (people invited

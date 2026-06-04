@@ -12,7 +12,7 @@ from sqlalchemy.exc import ProgrammingError
 from sse_starlette.sse import EventSourceResponse
 
 from agent_executor import get_executor
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, current_admin_or_capability
 from claude_executor import (
     build_prompt, build_clarify_prompt, build_plan_prompt,
     build_tdd_execute_prompt, build_verify_prompt,
@@ -375,7 +375,7 @@ def _build_execute_prompt(
 
 
 @router.post("/{task_id}/execute", response_model=TaskOut)
-async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
+async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin_or_capability)):
     async with session() as s:
         item = (
             await s.execute(select(TaskItem).where(TaskItem.id == task_id))
@@ -446,7 +446,7 @@ async def resume(
     task_id: UUID,
     body: ResumeRequest,
     request: Request,
-    user: AdminUser = Depends(current_admin),
+    user: AdminUser = Depends(current_admin_or_capability),
 ):
     """Resume a build that's been gated waiting for Supabase.
 
@@ -564,7 +564,7 @@ async def _plan_bg(tid: UUID, eid: UUID, prompt: str, user_jwt: str | None = Non
 
 
 @router.post("/{task_id}/clarify", response_model=TaskOut)
-async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
+async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin_or_capability)):
     """Start the CLARIFY phase — Claude asks structured questions before planning."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -677,7 +677,7 @@ async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depen
 
 
 @router.post("/{task_id}/plan", response_model=TaskOut)
-async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
+async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin_or_capability)):
     """Manually trigger the PLAN phase (can skip CLARIFY if task is clear)."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -718,7 +718,7 @@ async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(
 
 
 @router.post("/{task_id}/review-plan", response_model=TaskOut)
-async def review_plan(task_id: UUID, body: PlanReviewRequest, user: AdminUser = Depends(current_admin)):
+async def review_plan(task_id: UUID, body: PlanReviewRequest, user: AdminUser = Depends(current_admin_or_capability)):
     """Admin approves or rejects a plan."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -745,7 +745,7 @@ async def stream(
     task_id: UUID,
     request: Request,
     from_: int = 0,
-    user: AdminUser = Depends(current_admin),
+    user: AdminUser = Depends(current_admin_or_capability),
 ):
     """SSE stream of execution log. Pass `?from_=<line_no>` to resume after disconnect."""
 
@@ -781,7 +781,7 @@ async def stream(
 
 
 @router.post("/{task_id}/cancel", response_model=TaskOut)
-async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     entry = _RUNNING.pop(task_id, None)
     if entry:
         executor = entry.get("executor")
@@ -794,6 +794,21 @@ async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin)):
         if task is not None:
             task.cancel()
     async with session() as s:
+        # Non-admin callers (edit-capability) must own/edit this task. The
+        # capability dependency already binds the call to this task_id; this is
+        # the ownership half (MF-2 — admins keep their broad cancel).
+        if not user.is_admin:
+            item = (
+                await s.execute(select(TaskItem).where(TaskItem.id == task_id))
+            ).scalar_one_or_none()
+            if item is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if item.built_app_slug:
+                from routes_projects import _require_role
+                await _require_role(s, item.built_app_slug, user.email, "editor",
+                                    is_admin=False)
+            elif item.assignee_email not in (user.email, TEAM_EMAIL):
+                raise HTTPException(status_code=403, detail="Not your task")
         # Put the task back to pending so admin can retry / manual-claim.
         await s.execute(
             update(TaskItem).where(TaskItem.id == task_id).values(status="pending", mode=None)
