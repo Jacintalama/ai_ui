@@ -610,7 +610,17 @@ async def schedule_result(
         if body.schedule_id and body.status not in ("completed", "skipped"):
             from handlers.slack_schedule_panel import build_retry_blocks
             blocks = build_retry_blocks(body.schedule_id)
-        await slack_client.post_message(channel=body.channel_id, text=text, blocks=blocks)
+        ts = await slack_client.post_message(
+            channel=body.channel_id, text=text, blocks=blocks
+        )
+        if not ts:
+            logger.error(
+                "Slack schedule-result delivery failed schedule_id=%s channel=%s status=%s",
+                body.schedule_id,
+                body.channel_id,
+                body.status,
+            )
+            raise HTTPException(status_code=502, detail="Slack delivery failed")
         return {"status": "delivered"}
     if discord_client is None:
         raise HTTPException(status_code=503, detail="Discord not configured")

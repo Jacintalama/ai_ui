@@ -524,6 +524,12 @@ class SlackInteractionsHandler:
                             )
                         return
                     dm = await self.slack.open_dm(user_id)
+                    if not dm:
+                        logger.error(
+                            "Slack schedule create failed user=%s: could not open DM",
+                            user_id,
+                        )
+                        return
                     await self.router._tasks_client.create_schedule(
                         email,
                         name=name,
