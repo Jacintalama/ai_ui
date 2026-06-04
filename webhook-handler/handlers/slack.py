@@ -109,13 +109,21 @@ class SlackWebhookHandler:
 
     async def _handle_direct_message(self, event: dict[str, Any]) -> dict[str, Any]:
         """Handle direct message to bot."""
+        # Only respond to a freshly-typed user message. Skip bot echoes (bot_id)
+        # and ANY subtype event (message_changed, message_deleted, bot_message,
+        # etc.). Editing the schedules panel in place fires `message_changed` in
+        # the DM, whose text/user live under event["message"]; without this guard
+        # the bot treats its own edit as a blank user message and replies
+        # "your message came through blank".
+        if event.get("bot_id") or event.get("subtype"):
+            return {"success": True, "message": "Skipped non-user message"}
+
         text = event.get("text", "")
         channel = event.get("channel", "")
         user = event.get("user", "unknown")
 
-        # Skip bot messages
-        if event.get("bot_id"):
-            return {"success": True, "message": "Skipped bot message"}
+        if not text.strip():
+            return {"success": True, "message": "Skipped empty message"}
 
         logger.info(f"Slack DM from {user}: {text[:100]}")
 
