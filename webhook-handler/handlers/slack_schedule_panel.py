@@ -22,6 +22,7 @@ from handlers.app_builder_panel import (
     SCHED_RESUME_PREFIX,
     SCHED_DEL_PREFIX,
     SCHED_EDIT_PREFIX,
+    CONNECT_RESUME_PREFIX,
 )
 
 # Stable block_id / action_id pairs for the modal inputs.
@@ -197,10 +198,13 @@ def build_schedule_modal() -> dict:
 
 def build_schedule_edit_modal(sched: dict) -> dict:
     """Edit-schedule modal view (callback_id == SCHED_EDITMODAL_PREFIX+id) with
-    the 'what' input pre-filled from prompt and 'when' from the raw cron_expr."""
+    the 'what' input pre-filled from prompt and 'when' shown in plain English
+    (e.g. 'every day at 2:00 PM') instead of the raw cron, matching Discord.
+    parse_when round-trips the English back to cron on save."""
     sid = str(sched.get("id", ""))
     prompt = (sched.get("prompt") or "").strip()
     cron = (sched.get("cron_expr") or "").strip()
+    when = cron_to_human(cron) if cron else ""
     return {
         "type": "modal",
         "callback_id": f"{SCHED_EDITMODAL_PREFIX}{sid}",
@@ -233,11 +237,32 @@ def build_schedule_edit_modal(sched: dict) -> dict:
                     "action_id": SCHED_WHEN_INPUT_ID,
                     "multiline": False,
                     "max_length": 100,
-                    "initial_value": cron,
+                    "initial_value": when,
                 },
             },
         ],
     }
+
+
+def build_connect_blocks(
+    token: str, links: list[tuple[str, str]], header: str
+) -> list[dict]:
+    """Connect-when-needed card: a header section + one link button per connector
+    to authorize, plus a primary '✅ I've connected — create it' button carrying
+    the parked-schedule token. Mirrors the Discord connect card."""
+    elements: list[dict] = []
+    for label, url in links:
+        elements.append({
+            "type": "button",
+            "text": {"type": "plain_text", "text": f"🔗 Connect {label}"},
+            "url": url,
+            "action_id": f"aiuisched:connectlink:{label.lower()}",
+        })
+    elements.append(_button(
+        "✅ I've connected — create it",
+        f"{CONNECT_RESUME_PREFIX}{token}", primary=True,
+    ))
+    return [_section(header), {"type": "actions", "elements": elements}]
 
 
 def build_retry_blocks(schedule_id: str) -> list[dict]:

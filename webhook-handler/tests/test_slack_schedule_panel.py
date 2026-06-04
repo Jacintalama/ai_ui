@@ -172,7 +172,9 @@ def test_edit_modal_prefilled():
     inputs = _plain_text_input_blocks(view)
     initials = {b["element"].get("initial_value") for b in inputs}
     assert _SCHED["prompt"] in initials
-    assert _SCHED["cron_expr"] in initials
+    # When is prefilled in plain English (matches Discord), not the raw cron.
+    assert "every day at 9:00 AM" in initials
+    assert _SCHED["cron_expr"] not in initials
 
 
 def test_retry_blocks():
@@ -261,3 +263,14 @@ def test_card_has_no_internal_divider():
     renders clean when reused (e.g. in commands.py)."""
     blocks = build_schedule_card(_SCHED)
     assert "divider" not in _types(blocks)
+
+
+def test_connect_blocks_have_link_button_and_resume():
+    from handlers.slack_schedule_panel import build_connect_blocks
+    from handlers.app_builder_panel import CONNECT_RESUME_PREFIX
+    blocks = build_connect_blocks(
+        "tok1", [("Gmail", "https://e.com/connect")], "needs access")
+    urls = [el.get("url") for b in blocks if b.get("type") == "actions"
+            for el in b.get("elements", []) if el.get("url")]
+    assert "https://e.com/connect" in urls
+    assert f"{CONNECT_RESUME_PREFIX}tok1" in _action_ids(blocks)

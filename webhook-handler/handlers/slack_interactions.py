@@ -49,17 +49,23 @@ from handlers.app_builder_panel import (
     SCHED_RESUME_PREFIX,
     SCHED_DEL_PREFIX,
     SCHED_EDIT_PREFIX,
+    CONNECT_RESUME_PREFIX,
 )
 from handlers.slack_schedule_panel import (
     build_schedules_dashboard,
     build_schedule_modal,
     build_schedule_edit_modal,
+    build_connect_blocks,
     SCHED_WHAT_BLOCK_ID,
     SCHED_WHAT_INPUT_ID,
     SCHED_WHEN_BLOCK_ID,
     SCHED_WHEN_INPUT_ID,
 )
 from handlers.schedule_parse import parse_when
+from handlers import connector_intent
+from clients import connectors
+from config import settings
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +77,36 @@ class SlackInteractionsHandler:
     def __init__(self, slack_client: SlackClient, command_router: CommandRouter):
         self.slack = slack_client
         self.router = command_router
+        # token -> parked schedule awaiting a connector connection, mirroring the
+        # Discord connector gate. {name, cron, prompt, human, dm}.
+        self._pending_schedules: dict[str, dict] = {}
+
+    @staticmethod
+    def _missing_connectors(needs: set[str], linked: set[str]) -> list[str]:
+        """gmail/drive in `needs` that aren't linked yet (web is never gated)."""
+        return [c for c in ("gmail", "drive") if c in needs and c not in linked]
+
+    async def _linked_connectors(self, needs: set[str], owner: str) -> set[str]:
+        """Subset of {gmail,drive} in `needs` that `owner` has already connected."""
+        linked: set[str] = set()
+        if "gmail" in needs and await connectors.is_connected(
+                "gmail", owner, base_url=settings.gmail_url):
+            linked.add("gmail")
+        if "drive" in needs and await connectors.is_connected(
+                "drive", owner, base_url=settings.gdrive_url):
+            linked.add("drive")
+        return linked
+
+    def _connect_links(self, missing: list[str], owner: str) -> list[tuple[str, str]]:
+        """(label, signed connect URL) per missing connector."""
+        links: list[tuple[str, str]] = []
+        if "gmail" in missing:
+            links.append(("Gmail", connectors.connect_url(
+                "gmail", owner, public_base=settings.gmail_public_url)))
+        if "drive" in missing:
+            links.append(("Drive", connectors.connect_url(
+                "drive", owner, public_base=settings.gdrive_public_url)))
+        return links
 
     async def handle_interaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Returns the body Slack expects: empty dict (=> empty 200) both to
@@ -290,8 +326,69 @@ class SlackInteractionsHandler:
             )
             return {}
 
+        if action_id.startswith(CONNECT_RESUME_PREFIX):
+            token = action_id[len(CONNECT_RESUME_PREFIX):]
+            user_id = (payload.get("user") or {}).get("id", "")
+            response_url = payload.get("response_url", "")
+            task = asyncio.create_task(
+                self._do_connect_resume(user_id, token, response_url))
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
         return {}
+
+    async def _resume_reply(self, response_url: str, text: str) -> None:
+        """Update the connect card in place (replace_original) on resume."""
+        if response_url:
+            await self.slack.post_to_response_url(
+                response_url, text, response_type="in_channel",
+                replace_original=True,
+            )
+
+    async def _do_connect_resume(
+        self, user_id: str, token: str, response_url: str
+    ) -> None:
+        """'I've connected — create it' → re-check the connection; if satisfied,
+        create the parked schedule, otherwise say what's still missing."""
+        try:
+            pending = self._pending_schedules.get(token)
+            if not pending:
+                await self._resume_reply(
+                    response_url, "That request expired. Please set it up again.")
+                return
+            email = await self._email_for(user_id)
+            if not email:
+                await self._resume_reply(
+                    response_url,
+                    self.router._not_linked_text(self._slack_ctx(user_id)))
+                return
+            needs = connector_intent.detect(pending["prompt"])
+            linked = await self._linked_connectors(needs, email)
+            missing = self._missing_connectors(needs, linked)
+            if missing:
+                await self._resume_reply(
+                    response_url,
+                    f"Still not connected: {', '.join(missing)}. Connect, then "
+                    "tap *✅ I've connected — create it* again.")
+                return
+            self._pending_schedules.pop(token, None)
+            await self.router._tasks_client.create_schedule(
+                email,
+                name=pending["name"],
+                cron=pending["cron"],
+                prompt=pending["prompt"],
+                delivery_channel_id=pending["dm"],
+                delivery_platform="slack",
+            )
+            await self._resume_reply(
+                response_url, f"✅ Scheduled — runs {pending['human']}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Slack connect-resume failed user=%s token=%s: %s",
+                user_id, token, exc,
+            )
 
     async def _do_sched_action(
         self, user_id: str, method_name: str, sched_id: str,
@@ -548,6 +645,33 @@ class SlackInteractionsHandler:
                             user_id,
                         )
                         return
+                    # Gate on connector intent: if the task needs Gmail/Drive and
+                    # the owner hasn't connected it, park the schedule and show a
+                    # Connect card instead of creating. They resume via the
+                    # "I've connected" button. Mirrors the Discord gate.
+                    needs = connector_intent.detect(what)
+                    if needs & {"gmail", "drive"}:
+                        linked = await self._linked_connectors(needs, email)
+                        missing = self._missing_connectors(needs, linked)
+                        if missing:
+                            token = uuid.uuid4().hex[:16]
+                            self._pending_schedules[token] = {
+                                "name": name, "cron": cron, "prompt": what,
+                                "human": human, "dm": dm,
+                            }
+                            header = (
+                                f"📅 *{human}* — {what[:150]}\n"
+                                "This task needs access to your account. Connect "
+                                "below (link is valid 10 min), then hit "
+                                "*✅ I've connected — create it*."
+                            )
+                            await self.slack.post_message(
+                                channel=dm, text="Connect to continue",
+                                blocks=build_connect_blocks(
+                                    token, self._connect_links(missing, email),
+                                    header),
+                            )
+                            return
                     await self.router._tasks_client.create_schedule(
                         email,
                         name=name,

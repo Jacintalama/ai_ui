@@ -18,6 +18,7 @@ from handlers.app_builder_panel import (
     SCHED_RUN_PREFIX,
     SCHED_DEL_PREFIX,
     SCHED_EDIT_PREFIX,
+    CONNECT_RESUME_PREFIX,
 )
 from handlers.slack_schedule_panel import (
     SCHED_WHAT_BLOCK_ID,
@@ -221,7 +222,8 @@ async def test_sched_edit_prefix_opens_edit_modal():
     ]
     initials = {b["element"].get("initial_value") for b in inputs}
     assert "summarize my unread emails" in initials
-    assert "0 9 * * *" in initials
+    # When is prefilled in plain English (matches Discord), not raw cron.
+    assert "every day at 9:00 AM" in initials
     # no schedule fetch for the edit-open path
     router._tasks_client.list_schedules.assert_not_awaited()
 
@@ -231,9 +233,14 @@ async def test_create_submission_parseable_creates_schedule():
     router = _sched_router()
     handler, slack = _handler(router)
 
+    # "emails" triggers the Gmail connector gate; simulate already-connected so
+    # the create path runs (the gate itself is covered by its own tests).
     with patch(
         "handlers.slack_interactions.parse_when",
         return_value=("0 8 * * *", "every day at 8:00 AM"),
+    ), patch(
+        "handlers.slack_interactions.connectors.is_connected",
+        new=AsyncMock(return_value=True),
     ):
         resp = await handler.handle_interaction(
             _view_submission_payload(
@@ -242,8 +249,9 @@ async def test_create_submission_parseable_creates_schedule():
                 when="every morning at 8am",
             )
         )
+        # Drain the background task WHILE the patch is still active.
+        await asyncio.sleep(0)
     assert resp == {}  # empty 200 closes the modal
-    await asyncio.sleep(0)
 
     router._tasks_client.create_schedule.assert_awaited_once()
     _args, kwargs = router._tasks_client.create_schedule.call_args
@@ -301,3 +309,109 @@ async def test_edit_submission_parseable_calls_update():
     assert args[1] == "7"
     assert kwargs["cron"] == "0 7 * * 1"
     assert kwargs["prompt"] == "updated prompt text"
+
+
+# --- Connector gate (Gmail/Drive) on schedule create ---
+
+def _resume_pending(handler, token="tok9"):
+    handler._pending_schedules[token] = {
+        "name": "n", "cron": "0 8 * * *", "prompt": "email me a quote",
+        "human": "every day at 8:00 AM", "dm": "D9",
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_unconnected_connector_shows_connect_card_no_create():
+    router = _sched_router()
+    handler, slack = _handler(router)
+    with patch(
+        "handlers.slack_interactions.parse_when",
+        return_value=("0 8 * * *", "every day at 8:00 AM"),
+    ), patch(
+        "handlers.slack_interactions.connectors.is_connected",
+        new=AsyncMock(return_value=False),
+    ):
+        resp = await handler.handle_interaction(
+            _view_submission_payload(
+                SCHED_MODAL_ID,
+                what="send a quote to my email rambo@x.com",
+                when="every morning at 8am",
+            )
+        )
+        await asyncio.sleep(0)  # drain while patch is active
+    assert resp == {}
+    # Parked behind the gate, not created.
+    router._tasks_client.create_schedule.assert_not_awaited()
+    blocks = slack.post_message.call_args.kwargs.get("blocks") or []
+    ids = [el.get("action_id") for b in blocks if b.get("type") == "actions"
+           for el in b.get("elements", [])]
+    assert any(i and i.startswith(CONNECT_RESUME_PREFIX) for i in ids)
+    assert len(handler._pending_schedules) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_no_connector_intent_creates_without_checking():
+    router = _sched_router()
+    handler, slack = _handler(router)
+    checked = {"hit": False}
+
+    async def _fake_is_connected(*a, **k):
+        checked["hit"] = True
+        return False
+
+    with patch(
+        "handlers.slack_interactions.parse_when",
+        return_value=("0 8 * * *", "every day at 8:00 AM"),
+    ), patch(
+        "handlers.slack_interactions.connectors.is_connected",
+        new=_fake_is_connected,
+    ):
+        await handler.handle_interaction(
+            _view_submission_payload(
+                SCHED_MODAL_ID, what="give me a motivational quote",
+                when="every morning at 8am",
+            )
+        )
+    await asyncio.sleep(0)
+    router._tasks_client.create_schedule.assert_awaited_once()
+    assert checked["hit"] is False  # no Gmail/Drive intent -> no connection check
+    assert handler._pending_schedules == {}
+
+
+@pytest.mark.asyncio
+async def test_connect_resume_creates_when_connected():
+    router = _sched_router()
+    handler, slack = _handler(router)
+    slack.post_to_response_url = AsyncMock(return_value=True)
+    _resume_pending(handler)
+    payload = _block_actions_payload(f"{CONNECT_RESUME_PREFIX}tok9")
+    payload["response_url"] = "https://hooks.slack.test/resume"
+    with patch(
+        "handlers.slack_interactions.connectors.is_connected",
+        new=AsyncMock(return_value=True),
+    ):
+        resp = await handler.handle_interaction(payload)
+        await asyncio.sleep(0)  # drain while patch is active
+    assert resp == {}
+    router._tasks_client.create_schedule.assert_awaited_once()
+    assert "tok9" not in handler._pending_schedules
+    assert "Scheduled" in slack.post_to_response_url.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_connect_resume_still_missing_keeps_parked_no_create():
+    router = _sched_router()
+    handler, slack = _handler(router)
+    slack.post_to_response_url = AsyncMock(return_value=True)
+    _resume_pending(handler)
+    payload = _block_actions_payload(f"{CONNECT_RESUME_PREFIX}tok9")
+    payload["response_url"] = "https://hooks.slack.test/resume"
+    with patch(
+        "handlers.slack_interactions.connectors.is_connected",
+        new=AsyncMock(return_value=False),
+    ):
+        await handler.handle_interaction(payload)
+        await asyncio.sleep(0)  # drain while patch is active
+    router._tasks_client.create_schedule.assert_not_awaited()
+    assert "tok9" in handler._pending_schedules
+    assert "Still not connected" in slack.post_to_response_url.call_args.args[1]
