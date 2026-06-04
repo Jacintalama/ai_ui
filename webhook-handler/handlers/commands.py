@@ -1642,8 +1642,10 @@ class CommandRouter:
         # rather than emit a broken "https:///..." URL.
         preview_url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/" if PUBLIC_DOMAIN else ""
         header = f"**{name}** (`{slug}`) — {'published' if published else 'not published'}"
+        owner = await self._resolve_email_for_ctx(ctx) or ""
         components = build_project_menu_components(
-            slug, published=published, public_url=public_url, preview_url=preview_url,
+            slug, published=published, public_url=public_url,
+            preview_url=preview_url, owner=owner,
         )
         if ctx.respond_components is not None:
             await ctx.respond_components(header, components)

@@ -1,4 +1,4 @@
-"""Build-ready card now has a 4th button: a 'Visual edit' link with a
+"""Build-ready card now has a 4th button: a 'Visual Editor' link with a
 slug-bound signed token."""
 import os
 os.environ.setdefault("OAUTH_STATE_SECRET", "test-secret-123")
@@ -15,13 +15,13 @@ def test_visual_edit_button_present():
     rows = build_ready_components("my-slug", "https://preview.example/x",
                                   owner="ralph@example.com")
     labels = [c.get("label", "") for c in _flat(rows)]
-    assert any("Visual edit" in lbl for lbl in labels)
+    assert any("Visual Editor" in lbl for lbl in labels)
 
 
 def test_visual_edit_url_carries_signed_slug_token():
     rows = build_ready_components("my-slug", "https://preview.example/x",
                                   owner="ralph@example.com")
-    btn = next(c for c in _flat(rows) if "Visual edit" in c.get("label", ""))
+    btn = next(c for c in _flat(rows) if "Visual Editor" in c.get("label", ""))
     assert btn["style"] == 5  # LINK
     url = btn["url"]
     assert url.startswith("https://")

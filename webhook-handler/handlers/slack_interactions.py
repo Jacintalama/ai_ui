@@ -217,7 +217,7 @@ class SlackInteractionsHandler:
                             await self.slack.post_message(
                                 channel=dm,
                                 text="Your apps",
-                                blocks=build_apps_list_blocks(projects),
+                                blocks=build_apps_list_blocks(projects, owner=email),
                             )
                         else:
                             await self.slack.post_message(
@@ -232,7 +232,7 @@ class SlackInteractionsHandler:
                         if projects:
                             await self.slack.post_ephemeral(
                                 origin, user_id, "Your apps",
-                                blocks=build_apps_list_blocks(projects),
+                                blocks=build_apps_list_blocks(projects, owner=email),
                             )
                         else:
                             await self.slack.post_ephemeral(
@@ -789,7 +789,7 @@ class SlackInteractionsHandler:
                 await self.slack.post_message(
                     channel=dm,
                     text=f"Published: {slug}",
-                    attachments=[build_published_attachment(slug, result.get("public_url", ""))],
+                    attachments=[build_published_attachment(slug, result.get("public_url", ""), owner=email)],
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("_do_publish failed slug=%s user=%s: %s", slug, user_id, exc)
@@ -816,7 +816,7 @@ class SlackInteractionsHandler:
                 await self.slack.post_message(
                     channel=dm,
                     text=f"Unpublished: {slug}",
-                    attachments=[build_ready_attachment(slug)],
+                    attachments=[build_ready_attachment(slug, owner=email)],
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("_do_unpublish failed slug=%s user=%s: %s", slug, user_id, exc)

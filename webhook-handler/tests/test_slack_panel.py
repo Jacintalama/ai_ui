@@ -258,13 +258,13 @@ def test_build_ready_attachment_shape():
     elements = actions[0]["elements"]
     action_ids = [e.get("action_id") for e in elements]
     assert f"{PUBLISH_PREFIX}my-app" in action_ids
-    assert f"{ENHANCE_PREFIX}my-app" in action_ids
+    assert f"{ENHANCE_PREFIX}my-app" not in action_ids  # Enhance replaced
 
 
 def test_build_ready_no_link_when_no_url():
-    att = build_ready_attachment("my-app")
+    att = build_ready_attachment("my-app")        # no owner -> no Visual Editor link
     elements = att["blocks"][-1]["elements"]
-    assert len(elements) == 2                      # Publish + Enhance only
+    assert len(elements) == 1                      # Publish only
     assert all(e.get("url") is None for e in elements)
 
 
@@ -283,7 +283,7 @@ def test_build_published_attachment_shape():
     actions = [b for b in blocks if b["type"] == "actions"]
     elements = actions[0]["elements"]
     action_ids = [e.get("action_id") for e in elements]
-    assert f"{ENHANCE_PREFIX}my-app" in action_ids
+    assert f"{ENHANCE_PREFIX}my-app" not in action_ids  # Enhance replaced
     assert f"{UNPUBLISH_PREFIX}my-app" in action_ids
 
 
@@ -336,13 +336,20 @@ def test_apps_list_published_has_unpublish_button():
     assert f"{UNPUBLISH_PREFIX}live-app" in ids
 
 
-def test_apps_list_both_have_status_and_enhance():
+def test_apps_list_both_have_status_no_enhance():
     blocks = build_apps_list_blocks(_APPS)
     ids = _all_action_ids(blocks)
     assert f"{STATUS_PREFIX}my-app" in ids
-    assert f"{ENHANCE_PREFIX}my-app" in ids
+    assert f"{ENHANCE_PREFIX}my-app" not in ids   # Enhance replaced by Visual Editor
     assert f"{STATUS_PREFIX}live-app" in ids
-    assert f"{ENHANCE_PREFIX}live-app" in ids
+    assert f"{ENHANCE_PREFIX}live-app" not in ids
+
+
+def test_apps_list_visual_editor_link_when_owner():
+    blocks = build_apps_list_blocks(_APPS, owner="alice@example.com")
+    labels = [el.get("text", {}).get("text", "")
+              for b in blocks if b["type"] == "actions" for el in b["elements"]]
+    assert any("Visual Editor" in lbl for lbl in labels)
 
 
 def test_apps_list_empty_shows_no_apps_message():

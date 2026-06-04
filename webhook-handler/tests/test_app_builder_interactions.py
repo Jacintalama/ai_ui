@@ -109,6 +109,7 @@ async def test_publish_button_routes_publish():
     async def fake_pub(ctx, slug):
         captured.update(ctx=ctx, slug=slug)
     router = MagicMock(); router.run_panel_publish = fake_pub
+    router._resolve_email_auto = AsyncMock(return_value="owner@x.com")
     handler = _handler(router)
     payload = {
         "type": 3, "id": "i", "token": "tok",
@@ -179,6 +180,7 @@ async def test_publish_on_published_edits_with_buttons():
     async def fake_pub(ctx, slug):
         captured["ctx"] = ctx
     router = MagicMock(); router.run_panel_publish = fake_pub
+    router._resolve_email_auto = AsyncMock(return_value="owner@x.com")
     handler = _handler(router)
     payload = {"type": 3, "id": "i", "token": "tok",
                "data": {"custom_id": f"{PUBLISH_PREFIX}slug-1"},

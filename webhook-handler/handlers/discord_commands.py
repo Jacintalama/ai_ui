@@ -351,10 +351,12 @@ class DiscordCommandHandler:
             )
 
         async def on_published(public_url: str) -> None:
+            owner = await self.router._resolve_email_auto(user_id)
             await self.discord.edit_original(
                 interaction_token=interaction_token, content="",
                 embeds=[build_published_embed(slug, public_url)],
-                components=build_published_components(slug, public_url),
+                components=build_published_components(
+                    slug, public_url, owner=owner),
             )
 
         ctx = CommandContext(

@@ -162,6 +162,19 @@ UNPUBLISH_PREFIX = "aiuibuild:unpublish:"
 ENHANCE_MODAL_PREFIX = "aiuibuild:enhancemodal:"
 
 
+def _visual_editor_button(slug: str, owner: str) -> dict | None:
+    """Link button that deep-links into the web Visual Editor for `slug`, signed
+    for `owner` (a fresh short-lived token per render). None if owner is unknown."""
+    if not owner:
+        return None
+    from config import settings
+    from handlers.visual_edit_token import sign_edit_token
+    token = sign_edit_token(slug, owner)
+    url = f"{settings.tasks_public_url.rstrip('/')}/tasks/edit/{slug}?token={token}"
+    return {"type": BUTTON, "style": STYLE_LINK, "label": "🎨 Visual Editor",
+            "url": url}
+
+
 def build_ready_components(slug: str, preview_url: str = "", *, owner: str) -> list[dict]:
     """Action row for the build-ready message: green Publish + blurple Enhance,
     plus an 'Open preview' link button when preview_url is set, plus a
@@ -172,18 +185,13 @@ def build_ready_components(slug: str, preview_url: str = "", *, owner: str) -> l
 
     buttons: list[dict] = [
         _button("\U0001f7e2 Publish", f"{PUBLISH_PREFIX}{slug}", STYLE_SUCCESS),
-        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
     ]
     if preview_url:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
                         "label": "\U0001f517 Open preview", "url": preview_url})
-
-    token = sign_edit_token(slug, owner)
-    edit_url = (
-        f"{settings.tasks_public_url.rstrip('/')}/tasks/edit/{slug}?token={token}"
-    )
-    buttons.append({"type": BUTTON, "style": STYLE_LINK,
-                    "label": "Visual edit", "url": edit_url})
+    ve = _visual_editor_button(slug, owner)
+    if ve:
+        buttons.append(ve)
     return [{"type": ACTION_ROW, "components": buttons}]
 
 
@@ -222,13 +230,16 @@ def slug_from_publish_button(custom_id: str) -> str:
     return slug
 
 
-def build_published_components(slug: str, public_url: str = "") -> list[dict]:
-    """Buttons on the 'Published!' message: blurple Enhance + red Unpublish,
+def build_published_components(slug: str, public_url: str = "", *,
+                               owner: str = "") -> list[dict]:
+    """Buttons on the 'Published!' message: 🎨 Visual Editor + red Unpublish,
     plus an 'Open live' link button."""
-    buttons: list[dict] = [
-        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
-        _button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}", STYLE_DANGER),
-    ]
+    buttons: list[dict] = []
+    ve = _visual_editor_button(slug, owner)
+    if ve:
+        buttons.append(ve)
+    buttons.append(_button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}",
+                           STYLE_DANGER))
     if public_url:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
                         "label": "\U0001f517 Open live", "url": public_url})
@@ -373,15 +384,17 @@ def build_apps_select_components(projects: list[dict]) -> list[dict]:
 
 def build_project_menu_components(
     slug: str, *, published: bool, public_url: str = "", preview_url: str = "",
+    owner: str = "",
 ) -> list[dict]:
     """State-aware action buttons for a selected app:
-    Enhance + (Publish | Unpublish) + an Open/Preview link (only when its URL is
-    set) + Status + Delete. Discord allows at most 5 buttons per action row, so
-    the buttons overflow into a second action row when needed (a published app
-    with its 'Open live' link reaches 5, pushing Delete to row 2)."""
-    buttons: list[dict] = [
-        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
-    ]
+    🎨 Visual Editor + (Publish | Unpublish) + an Open/Preview link (only when
+    its URL is set) + Status + Delete. Discord allows at most 5 buttons per action
+    row, so the buttons overflow into a second action row when needed (a published
+    app with its 'Open live' link reaches 5, pushing Delete to row 2)."""
+    buttons: list[dict] = []
+    ve = _visual_editor_button(slug, owner)
+    if ve:
+        buttons.append(ve)
     if published:
         buttons.append(_button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}", STYLE_DANGER))
         if public_url:

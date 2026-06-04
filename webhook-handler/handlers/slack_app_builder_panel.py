@@ -292,20 +292,27 @@ def slug_from_enhance_modal(callback_id: str) -> str:
 # B6 — build-ready + published card attachments
 # ---------------------------------------------------------------------------
 
+def _visual_editor_link(slug: str, owner: str) -> dict | None:
+    """🎨 Visual Editor link button deep-linking into the web editor for `slug`,
+    signed for `owner` (fresh short-lived token per render). None if no owner."""
+    if not owner:
+        return None
+    from handlers.visual_edit_token import sign_edit_token
+    token = sign_edit_token(slug, owner)
+    url = f"{settings.tasks_public_url.rstrip('/')}/tasks/edit/{slug}?token={token}"
+    return _link_button("🎨 Visual Editor", url)
+
+
 def build_ready_attachment(slug: str, preview_url: str = "", *, owner: str = "") -> dict:
-    """Green build-ready card: Publish / Enhance + optional editor/preview links."""
+    """Green build-ready card: Publish + optional preview link + 🎨 Visual Editor."""
     elements: list[dict] = [
         _button("Publish", f"{PUBLISH_PREFIX}{slug}", primary=True),
-        _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
     ]
     if preview_url:
         elements.append(_link_button("Open preview", preview_url))
-    if owner:
-        from handlers.visual_edit_token import sign_edit_token
-
-        token = sign_edit_token(slug, owner)
-        edit_url = f"{settings.tasks_public_url.rstrip('/')}/tasks/edit/{slug}?token={token}"
-        elements.append(_link_button("Visual edit", edit_url))
+    ve = _visual_editor_link(slug, owner)
+    if ve:
+        elements.append(ve)
     return {
         "color": COLOR_READY,
         "blocks": [
@@ -321,12 +328,14 @@ def build_ready_attachment(slug: str, preview_url: str = "", *, owner: str = "")
     }
 
 
-def build_published_attachment(slug: str, public_url: str = "") -> dict:
-    """Blue published card: Enhance / Unpublish + optional Open link."""
-    elements: list[dict] = [
-        _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
-        _button("Unpublish", f"{UNPUBLISH_PREFIX}{slug}"),
-    ]
+def build_published_attachment(slug: str, public_url: str = "", *,
+                               owner: str = "") -> dict:
+    """Blue published card: 🎨 Visual Editor / Unpublish + optional Open link."""
+    elements: list[dict] = []
+    ve = _visual_editor_link(slug, owner)
+    if ve:
+        elements.append(ve)
+    elements.append(_button("Unpublish", f"{UNPUBLISH_PREFIX}{slug}"))
     if public_url:
         elements.append(_link_button("Open", public_url))
     desc = f"*Published: {slug}*" + (f"\n{public_url}" if public_url else "")
@@ -343,7 +352,7 @@ def build_published_attachment(slug: str, public_url: str = "") -> dict:
 # B7 — app-list blocks (state-aware) + enhance modal
 # ---------------------------------------------------------------------------
 
-def build_apps_list_blocks(apps: list[dict]) -> list[dict]:
+def build_apps_list_blocks(apps: list[dict], *, owner: str = "") -> list[dict]:
     """One section + one actions row per app, capped at _MAX_LIST_ROWS.
 
     Published apps get: Status, Enhance, Unpublish.
@@ -381,7 +390,6 @@ def build_apps_list_blocks(apps: list[dict]) -> list[dict]:
         if published:
             row_buttons = [
                 _button("Status", f"{STATUS_PREFIX}{slug}"),
-                _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
                 _button("Unpublish", f"{UNPUBLISH_PREFIX}{slug}"),
             ]
             open_url = app.get("public_url") or ""
@@ -389,10 +397,12 @@ def build_apps_list_blocks(apps: list[dict]) -> list[dict]:
             row_buttons = [
                 _button("Status", f"{STATUS_PREFIX}{slug}"),
                 _button("Publish", f"{PUBLISH_PREFIX}{slug}", primary=True),
-                _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
             ]
             open_url = f"{settings.tasks_public_url.rstrip('/')}/tasks/preview-app/{slug}/"
 
+        ve = _visual_editor_link(slug, owner)
+        if ve:
+            row_buttons.insert(1, ve)  # right after Status
         if open_url:
             row_buttons.append(_link_button("Preview", open_url))
         row_buttons.append(_delete_button(slug, name))

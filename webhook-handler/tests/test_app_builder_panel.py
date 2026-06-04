@@ -82,31 +82,22 @@ def test_ready_components_has_publish_and_preview():
                                   owner="alice@example.com")
     assert rows[0]["type"] == ACTION_ROW
     btns = rows[0]["components"]
-    pub = btns[0]
-    assert pub["custom_id"] == f"{PUBLISH_PREFIX}portfolio-ab12"
-    assert pub["style"] == STYLE_SUCCESS
-    # Enhance button is now the second button
-    enhance = btns[1]
-    assert enhance["custom_id"] == f"{ENHANCE_PREFIX}portfolio-ab12"
-    assert enhance["style"] == STYLE_PRIMARY
-    # Link button is now the third button
-    link = btns[2]
-    assert link["style"] == STYLE_LINK
-    assert link["url"] == "https://x/preview/portfolio-ab12/"
-    assert "custom_id" not in link  # link buttons must not carry a custom_id
-    # Visual-edit link button is appended last
-    assert any("Visual edit" in b.get("label", "") for b in btns)
+    assert btns[0]["custom_id"] == f"{PUBLISH_PREFIX}portfolio-ab12"
+    assert btns[0]["style"] == STYLE_SUCCESS
+    # Enhance is gone — replaced by the Visual Editor link.
+    assert not any(b.get("custom_id", "").startswith(ENHANCE_PREFIX) for b in btns)
+    assert any(b.get("url") == "https://x/preview/portfolio-ab12/" for b in btns)
+    assert any("Visual Editor" in b.get("label", "") for b in btns)
 
 
-def test_ready_components_without_preview_has_publish_and_enhance():
+def test_ready_components_without_preview_has_publish_and_visual_editor():
     rows = build_ready_components("slug-1", "", owner="alice@example.com")
     btns = rows[0]["components"]
-    # Publish + Enhance + Visual edit (no preview link without a preview_url)
-    assert len(btns) == 3
+    # Publish + Visual Editor (no preview link without a preview_url)
+    assert len(btns) == 2
     assert btns[0]["custom_id"] == f"{PUBLISH_PREFIX}slug-1"
-    assert btns[1]["custom_id"] == f"{ENHANCE_PREFIX}slug-1"
-    assert btns[2]["style"] == STYLE_LINK
-    assert "Visual edit" in btns[2]["label"]
+    assert btns[1]["style"] == STYLE_LINK
+    assert "Visual Editor" in btns[1]["label"]
 
 
 def test_publish_button_parsers():
@@ -136,15 +127,17 @@ def test_connect_components_and_resume_parsers():
         slug_from_publish_button(PUBLISH_PREFIX)  # bare prefix, no slug
 
 
-def test_published_components_have_enhance_and_unpublish_and_live_link():
-    rows = build_published_components("slug-1", "https://slug-1.ai-ui.coolestdomain.win/")
+def test_published_components_have_visual_editor_and_unpublish_and_live_link():
+    rows = build_published_components(
+        "slug-1", "https://slug-1.ai-ui.coolestdomain.win/", owner="alice@example.com")
     btns = rows[0]["components"]
     ids = [b.get("custom_id") for b in btns]
-    assert f"{ENHANCE_PREFIX}slug-1" in ids
+    assert f"{ENHANCE_PREFIX}slug-1" not in ids          # Enhance replaced
+    assert any("Visual Editor" in b.get("label", "") for b in btns)
     assert f"{UNPUBLISH_PREFIX}slug-1" in ids
-    link = [b for b in btns if b["style"] == STYLE_LINK][0]
-    assert link["url"] == "https://slug-1.ai-ui.coolestdomain.win/"
-    assert "custom_id" not in link
+    live = [b for b in btns
+            if b.get("url") == "https://slug-1.ai-ui.coolestdomain.win/"][0]
+    assert "custom_id" not in live
     unpub = [b for b in btns if b.get("custom_id") == f"{UNPUBLISH_PREFIX}slug-1"][0]
     assert unpub["style"] == STYLE_DANGER
 
