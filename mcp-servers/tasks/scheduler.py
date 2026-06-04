@@ -239,7 +239,7 @@ async def _deliver_result(
         return
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            await client.post(
+            response = await client.post(
                 f"{base.rstrip('/')}/internal/schedule-result",
                 headers={"X-Internal-Secret": secret},
                 json={
@@ -251,6 +251,13 @@ async def _deliver_result(
                     "schedule_id": schedule_id,
                 },
             )
+            if response.status_code >= 400:
+                logger.warning(
+                    "schedule delivery failed (%s): webhook returned %s %s",
+                    channel_id,
+                    response.status_code,
+                    scrub(getattr(response, "text", ""))[:500],
+                )
     except Exception as exc:  # noqa: BLE001
         logger.warning("schedule delivery failed (%s): %s", channel_id, scrub(str(exc)))
 

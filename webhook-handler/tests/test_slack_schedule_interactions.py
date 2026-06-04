@@ -264,6 +264,30 @@ async def test_create_submission_parseable_creates_schedule():
 
 
 @pytest.mark.asyncio
+async def test_create_submission_without_dm_does_not_create_schedule():
+    router = _sched_router()
+    handler, slack = _handler(router)
+    slack.open_dm.return_value = None
+
+    with patch(
+        "handlers.slack_interactions.parse_when",
+        return_value=("0 8 * * *", "every day at 8:00 AM"),
+    ):
+        resp = await handler.handle_interaction(
+            _view_submission_payload(
+                SCHED_MODAL_ID,
+                what="summarize my unread emails and list the top 3",
+                when="every morning at 8am",
+            )
+        )
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.create_schedule.assert_not_awaited()
+    slack.post_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_create_submission_unparseable_returns_errors_and_no_create():
     router = _sched_router()
     handler, slack = _handler(router)

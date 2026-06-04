@@ -117,13 +117,14 @@ def test_format_schedule_result_truncates_completed_and_labels_skipped():
 class _FakeSlack:
     def __init__(self):
         self.posted: list[dict] = []
+        self.next_result = "ts1"
 
     async def post_message(self, channel, text, thread_ts=None, *, blocks=None,
                            attachments=None):
         self.posted.append(
             {"channel": channel, "text": text, "blocks": blocks}
         )
-        return "ts1"
+        return self.next_result
 
 
 def _wire_slack(monkeypatch, secret):
@@ -171,6 +172,23 @@ async def test_slack_failed_run_attaches_retry_blocks(monkeypatch):
         )
     assert resp.status_code == 200
     assert slack.posted[0]["blocks"] is not None
+
+
+@pytest.mark.asyncio
+async def test_slack_delivery_failure_returns_bad_gateway(monkeypatch):
+    main_mod, slack = _wire_slack(monkeypatch, "s3cret")
+    slack.next_result = None
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={"platform": "slack", "channel_id": "C1",
+                  "schedule_name": "n", "status": "completed",
+                  "result": "ok"},
+        )
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "Slack delivery failed"
 
 
 @pytest.mark.asyncio
