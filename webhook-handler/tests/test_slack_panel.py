@@ -1,5 +1,8 @@
 """Pure builders for the Slack App Builder panel + modal, and id parsing."""
+from urllib.parse import parse_qs, urlparse
+
 import pytest
+from handlers.visual_edit_token import verify_edit_token
 from handlers.slack_app_builder_panel import (
     build_panel_blocks, build_template_picker_blocks,
     build_modal_view, description_from_view,
@@ -274,6 +277,21 @@ def test_build_ready_attachment_with_preview_url():
     link_btns = [e for e in elements if e.get("url") == "https://example.com/preview"]
     assert len(link_btns) == 1
     assert link_btns[0]["text"]["text"] == "Open preview"
+
+
+def test_build_ready_attachment_with_owner_has_visual_edit_link():
+    att = build_ready_attachment(
+        "my-app",
+        preview_url="https://example.com/preview",
+        owner="maya@example.com",
+    )
+    elements = att["blocks"][-1]["elements"]
+    edit_btn = next(e for e in elements if e["text"]["text"] == "Visual edit")
+
+    parsed = urlparse(edit_btn["url"])
+    token = parse_qs(parsed.query)["token"][0]
+    assert parsed.path == "/tasks/edit/my-app"
+    assert verify_edit_token(token, "my-app") == "maya@example.com"
 
 
 def test_build_published_attachment_shape():

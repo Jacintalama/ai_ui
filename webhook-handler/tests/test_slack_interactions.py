@@ -1,8 +1,11 @@
 """SlackInteractionsHandler: button click -> modal, modal submit -> build."""
 import asyncio
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from handlers.visual_edit_token import verify_edit_token
 from handlers.slack_interactions import SlackInteractionsHandler
 from handlers.slack_app_builder_panel import (
     TEMPLATE_PREFIX, BUILD_PREFIX, DESCRIPTION_BLOCK_ID, DESCRIPTION_INPUT_ID,
@@ -239,6 +242,12 @@ async def test_build_submit_opens_dm_and_runs_in_dm():
     # attachments must be present
     attachments = call_kwargs.kwargs.get("attachments")
     assert attachments is not None and len(attachments) > 0
+    elements = attachments[0]["blocks"][-1]["elements"]
+    edit_btn = next(e for e in elements if e["text"]["text"] == "Visual edit")
+    parsed = urlparse(edit_btn["url"])
+    token = parse_qs(parsed.query)["token"][0]
+    assert parsed.path == "/tasks/edit/todo-1"
+    assert verify_edit_token(token, "todo-1") == "maya@x.com"
 
 
 @pytest.mark.asyncio

@@ -379,7 +379,7 @@ class SlackInteractionsHandler:
             await respond(msg)
 
         async def notify_channel_rich(msg: str, slug: str, url: str, owner: str) -> None:
-            att = build_ready_attachment(slug, url)
+            att = build_ready_attachment(slug, url, owner=owner)
             if dm_id:
                 await self.slack.post_message(
                     channel=dm_id,

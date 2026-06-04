@@ -292,14 +292,20 @@ def slug_from_enhance_modal(callback_id: str) -> str:
 # B6 — build-ready + published card attachments
 # ---------------------------------------------------------------------------
 
-def build_ready_attachment(slug: str, preview_url: str = "") -> dict:
-    """Green build-ready card: Publish / Enhance + optional Open preview link."""
+def build_ready_attachment(slug: str, preview_url: str = "", *, owner: str = "") -> dict:
+    """Green build-ready card: Publish / Enhance + optional editor/preview links."""
     elements: list[dict] = [
         _button("Publish", f"{PUBLISH_PREFIX}{slug}", primary=True),
         _button("Enhance", f"{ENHANCE_PREFIX}{slug}"),
     ]
     if preview_url:
         elements.append(_link_button("Open preview", preview_url))
+    if owner:
+        from handlers.visual_edit_token import sign_edit_token
+
+        token = sign_edit_token(slug, owner)
+        edit_url = f"{settings.tasks_public_url.rstrip('/')}/tasks/edit/{slug}?token={token}"
+        elements.append(_link_button("Visual edit", edit_url))
     return {
         "color": COLOR_READY,
         "blocks": [
