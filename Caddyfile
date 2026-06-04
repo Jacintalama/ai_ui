@@ -144,6 +144,12 @@
 	handle /api/supabase/* {
 		reverse_proxy api-gateway:8080
 	}
+	# Managed public app links returned by Publish in Discord/Slack.
+	# The tasks service enforces the published_apps access gate.
+	handle /apps/* {
+		header Cache-Control "public, max-age=120"
+		reverse_proxy tasks:8210
+	}
 	# Static frontend (panel JS + history page) — public, no auth on assets
 	handle /tasks/static/* {
 		header Cache-Control "no-cache, no-store, must-revalidate"

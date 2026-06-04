@@ -22,6 +22,7 @@ import os
 os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
 import pytest
+from fastapi import Response
 from httpx import ASGITransport, AsyncClient
 
 import crypto_utils
@@ -130,3 +131,24 @@ async def test_published_app_serves_normally(
         r = await c.get("/__public/alpha/")
     assert r.status_code == 200
     assert "live content" in r.text
+
+
+async def test_apex_apps_path_delegates_to_published_access_gate(
+    transport, monkeypatch
+):
+    """The live URL returned to bots uses /apps/<slug>/ on the apex domain.
+    It must delegate to the same access-gated handler as the legacy route."""
+    captured = {}
+
+    async def fake_serve_published_app(slug, file_path="", request=None):
+        captured["slug"] = slug
+        captured["file_path"] = file_path
+        return Response("ok", media_type="text/plain")
+
+    monkeypatch.setattr("main.serve_published_app", fake_serve_published_app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/apps/alpha/app.css")
+    assert r.status_code == 200
+    assert r.text == "ok"
+    assert captured == {"slug": "alpha", "file_path": "app.css"}

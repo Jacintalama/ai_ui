@@ -444,6 +444,10 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/api/supabase"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
         backend_path = full_path
+    # /apps/<slug>/* → published app static route on Tasks.
+    elif full_path.startswith("/apps/"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
     # /mcp/* → MCP Proxy (tool endpoints)
     elif full_path.startswith("/mcp"):
         backend_url = MCP_PROXY_URL

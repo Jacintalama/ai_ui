@@ -41,6 +41,15 @@ def test_tasks_static_routes_to_tasks_service(monkeypatch):
     assert "tasks" in captured["url"]
 
 
+def test_public_apps_path_routes_to_tasks_service(monkeypatch):
+    client, captured = _client_capturing(monkeypatch)
+    r = client.get("/apps/alpha/")
+    assert r.status_code == 200
+    assert "tasks" in captured["url"]
+    assert "open-webui" not in captured["url"]
+    assert captured["path"] == "/apps/alpha/"
+
+
 def test_non_tasks_path_still_routes_to_open_webui(monkeypatch):
     """Regression: ordinary paths must still reach Open WebUI."""
     client, captured = _client_capturing(monkeypatch)
