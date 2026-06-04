@@ -558,6 +558,23 @@ class ScheduleResultIn(BaseModel):
     platform: str = "discord"
 
 
+def _to_slack_mrkdwn(text: str) -> str:
+    """Convert common Markdown to Slack mrkdwn so AI output renders correctly.
+
+    Slack uses *bold* (single asterisk), not Markdown's **bold**, and
+    <url|label> links, not [label](url). Without this, **bold** shows literal
+    asterisks. Discord renders standard Markdown natively, so this is Slack-only.
+    """
+    # [label](url) -> <url|label> (do links first so their parens are untouched).
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r"<\2|\1>", text)
+    # Markdown headings at line start -> a bold line.
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$", r"*\1*", text)
+    # **bold** / __bold__ -> *bold*
+    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    text = re.sub(r"__(.+?)__", r"*\1*", text)
+    return text
+
+
 def _format_schedule_result(
     name: str, status: str, result: str, platform: str = "discord"
 ) -> str:
@@ -584,6 +601,8 @@ def _format_schedule_result(
     else:
         # Failed/skipped runs still name the schedule so the user knows what broke.
         text = f"⚠️ **{title}** — {status}\n\n{body}"
+    if platform == "slack":
+        text = _to_slack_mrkdwn(text)
     return text[:1990]
 
 

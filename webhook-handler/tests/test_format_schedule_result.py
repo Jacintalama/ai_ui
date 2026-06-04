@@ -86,8 +86,41 @@ def test_failed_keeps_name_and_warning():
         "give me the best quote", "failed", "boom", platform="slack"
     )
     assert out.startswith("⚠️")
-    assert "**give me the best quote**" in out
+    assert "give me the best quote" in out  # name present
+    assert "**" not in out  # Slack bold is single-asterisk
     assert "boom" in out
+
+
+def test_slack_converts_double_asterisk_bold_to_single():
+    """AI output uses Markdown **bold**, but Slack mrkdwn needs *bold* — else the
+    asterisks render literally."""
+    out = _format_schedule_result(
+        "x", "completed", "**Daily Motivation**\nbe good", platform="slack"
+    )
+    assert "*Daily Motivation*" in out
+    assert "**" not in out
+
+
+def test_discord_keeps_double_asterisk_bold():
+    out = _format_schedule_result(
+        "x", "completed", "**Daily Motivation**", platform="discord"
+    )
+    assert "**Daily Motivation**" in out
+
+
+def test_slack_converts_heading_to_bold():
+    out = _format_schedule_result(
+        "x", "completed", "# Title\nbody", platform="slack"
+    )
+    assert "*Title*" in out
+    assert "#" not in out
+
+
+def test_slack_converts_markdown_link():
+    out = _format_schedule_result(
+        "x", "completed", "see [docs](https://e.com)", platform="slack"
+    )
+    assert "<https://e.com|docs>" in out
 
 
 def test_failed_discord_strips_when_prefix_from_title():
