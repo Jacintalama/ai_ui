@@ -53,44 +53,50 @@ sys.modules["apscheduler.triggers.cron"].CronTrigger = _FakeCronTrigger  # type:
 from main import _format_schedule_result  # noqa: E402
 
 
-def test_discord_style_completed_has_title_and_when_no_emoji():
+def test_completed_discord_is_output_only():
+    """A successful run shows ONLY the output — no prompt echo, no when footer."""
     out = _format_schedule_result(
         "every day at 9:41 PM: give me the best quote",
         "completed",
         "Be yourself.",
         platform="discord",
     )
-    assert "**give me the best quote**" in out
-    assert "_every day at 9:41 PM_" in out
+    assert out == "Be yourself."
+    assert "give me the best quote" not in out
+    assert "9:41 PM" not in out
     assert "✅" not in out
 
 
-def test_slack_style_completed_has_title_no_footer_no_emoji():
+def test_completed_slack_is_output_only():
     out = _format_schedule_result(
         "give me the best quote", "completed", "Be yourself.", platform="slack"
     )
-    assert "**give me the best quote**" in out
-    assert "_" not in out  # no italic footer line at all
-    assert "✅" not in out
+    assert out == "Be yourself."
+    assert "give me the best quote" not in out
 
 
-def test_slack_prompt_with_colon_not_split_no_footer():
-    # A Slack schedule name is the BARE prompt. A prompt that happens to contain
-    # ": " must NOT be split into when/title — render the whole prompt as title
-    # with no footer.
-    out = _format_schedule_result(
-        "remind me: drink water", "completed", "ok", platform="slack"
-    )
-    assert "**remind me: drink water**" in out
-    assert "_remind me_" not in out
-    assert "_" not in out  # no italic footer line at all
+def test_completed_empty_output_shows_placeholder():
+    out = _format_schedule_result("x", "completed", "", platform="slack")
+    assert out == "_(no output)_"
 
 
-def test_failed_status_starts_with_warning():
+def test_failed_keeps_name_and_warning():
+    """A failed run still names the schedule so you know what broke."""
     out = _format_schedule_result(
         "give me the best quote", "failed", "boom", platform="slack"
     )
     assert out.startswith("⚠️")
+    assert "**give me the best quote**" in out
+    assert "boom" in out
+
+
+def test_failed_discord_strips_when_prefix_from_title():
+    out = _format_schedule_result(
+        "every day at 9:41 PM: give me the best quote", "failed", "boom",
+        platform="discord",
+    )
+    assert "**give me the best quote**" in out
+    assert "9:41 PM" not in out  # the "<when>: " prefix is stripped off the title
 
 
 def test_huge_result_truncated_to_1990():

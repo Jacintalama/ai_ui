@@ -66,7 +66,8 @@ async def test_posts_result_to_channel_on_good_secret(monkeypatch):
     assert len(fake.posted) == 1
     channel, content, _ = fake.posted[0]
     assert channel == "123"
-    assert "morning digest" in content
+    # Completed runs deliver output only — the schedule name is NOT echoed.
+    assert "morning digest" not in content
     assert "Top 3 emails" in content
 
 
@@ -102,11 +103,13 @@ async def test_completed_run_has_no_retry_button(monkeypatch):
     assert not components
 
 
-def test_format_schedule_result_truncates_and_labels():
+def test_format_schedule_result_truncates_completed_and_labels_skipped():
     import main as main_mod
+    # Completed = output only (no name echo), still truncated under the cap.
     long_msg = main_mod._format_schedule_result("digest", "completed", "x" * 5000)
-    assert "digest" in long_msg
+    assert "digest" not in long_msg
     assert len(long_msg) <= 2000
+    # Non-completed (skipped/failed) still names the schedule.
     skipped = main_mod._format_schedule_result("d", "skipped", "")
     assert "d" in skipped
 
@@ -149,7 +152,8 @@ async def test_slack_platform_posts_via_slack_client(monkeypatch):
     assert len(slack.posted) == 1
     call = slack.posted[0]
     assert call["channel"] == "C123"
-    assert "morning digest" in call["text"]
+    # Completed runs deliver output only — the schedule name is NOT echoed.
+    assert "morning digest" not in call["text"]
     assert "Top 3 emails" in call["text"]
     assert call["blocks"] is None
 
