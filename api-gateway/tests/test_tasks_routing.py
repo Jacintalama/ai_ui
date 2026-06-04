@@ -41,6 +41,14 @@ def test_tasks_static_routes_to_tasks_service(monkeypatch):
     assert "tasks" in captured["url"]
 
 
+def test_tasks_healthz_routes_to_tasks_root_health(monkeypatch):
+    client, captured = _client_capturing(monkeypatch)
+    r = client.get("/tasks/healthz")
+    assert r.status_code == 200
+    assert "tasks" in captured["url"]
+    assert captured["path"] == "/healthz"
+
+
 def test_public_apps_path_routes_to_tasks_service(monkeypatch):
     client, captured = _client_capturing(monkeypatch)
     r = client.get("/apps/alpha/")

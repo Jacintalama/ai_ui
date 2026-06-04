@@ -482,6 +482,11 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/excel-creator/"):
         backend_url = os.getenv("EXCEL_CREATOR_URL", "http://mcp-excel-creator:8000")
         backend_path = full_path[len("/excel-creator"):]
+    # /tasks/healthz → Tasks service root health. Host-level Caddy sends this
+    # through the gateway in production, while Tasks exposes /healthz at root.
+    elif full_path == "/tasks/healthz":
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = "/healthz"
     # /tasks/* (preview-app, static assets, app-builder UI) → Tasks service.
     # These are NOT under /api, so without this branch they fall through to
     # Open WebUI and its SPA renders "404: Not Found" for built-app preview
