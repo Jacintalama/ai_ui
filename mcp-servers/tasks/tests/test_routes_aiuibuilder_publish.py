@@ -52,7 +52,7 @@ async def test_owner_can_publish(db_session, transport, tmp_path, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["published"] is True
-    assert body["public_url"] == "https://alpha.ai-ui.coolestdomain.win/"
+    assert body["public_url"] == "https://ai-ui.coolestdomain.win/apps/alpha/"
     row = (await db_session.execute(
         select(PublishedApp).where(PublishedApp.slug == "alpha")
     )).scalar_one_or_none()

@@ -137,9 +137,11 @@ async def app_builder_page() -> FileResponse:
 
 
 # ---------------------------------------------------------------------------
-# Public hosting for published apps. Caddy rewrites
-#   <slug>.ai-ui.coolestdomain.win/<path>  →  /__public/<slug>/<path>
-# and proxies into this service. We serve files directly from the
+# Public hosting for published apps. Caddy/gateway route
+#   ai-ui.coolestdomain.win/apps/<slug>/<path>  ->  /apps/<slug>/<path>
+# and the legacy Caddy wildcard rewrites
+#   <slug>.ai-ui.coolestdomain.win/<path>  ->  /__public/<slug>/<path>
+# before proxying into this service. We serve files directly from the
 # /workspace/ai_ui/apps/<slug>/ directory if (and only if) the slug has a
 # row in tasks.published_apps. Strict path validation prevents traversal.
 # ---------------------------------------------------------------------------
@@ -458,6 +460,17 @@ async def serve_published_app(
         media_type=media,
         headers={"Cache-Control": "public, max-age=120"},
     )
+
+
+@app.get("/apps/{slug}", include_in_schema=False)
+@app.get("/apps/{slug}/", include_in_schema=False)
+@app.get("/apps/{slug}/{file_path:path}", include_in_schema=False)
+async def serve_published_app_on_apex(
+    slug: str,
+    file_path: str = "",
+    request: Request = None,
+):
+    return await serve_published_app(slug=slug, file_path=file_path, request=request)
 
 
 # ---------------------------------------------------------------------------

@@ -5162,7 +5162,7 @@
   function _renderPubButton(state, custom) {
     // Tri-state badge:
     //   "Publish" (grey)  — nothing published anywhere
-    //   "Preview" (amber) — published only at the generic auto subdomain
+    //   "Preview" (amber) — published only at the generic managed URL
     //                       (visible URL but not yet on the user's real domain)
     //   "Live"    (green) — a custom domain is attached AND verified;
     //                       the app is live at the user's real URL.
@@ -5453,7 +5453,7 @@
     if (!hasDomain) {
       $cdInputRow.hidden = false;
       $cdAttached.hidden = true;
-      // Verified-only UI hidden; auto subdomain section visible.
+      // Verified-only UI hidden; managed URL section visible.
       if ($autoSection) $autoSection.hidden = false;
     } else {
       $cdInputRow.hidden = true;
@@ -5463,9 +5463,9 @@
       $cdOpen.href = url;
 
       if (cd.verified) {
-        // Verified state: hide DNS block + auto-subdomain section. The
+        // Verified state: hide DNS block + managed URL section. The
         // custom domain is now the canonical URL — no point showing the
-        // backup auto subdomain or DNS instructions any more.
+        // backup managed URL or DNS instructions any more.
         $cdDnsBlock.hidden = true;
         $cdVerifiedMsg.hidden = false;
         $cdVerifiedUrl.textContent = url;
@@ -5511,8 +5511,8 @@
       const token = localStorage.getItem("token");
       const auth = { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) };
 
-      // If the app isn't published yet, publish to the auto subdomain
-      // first — the custom-domain endpoint requires a publish row.
+      // If the app isn't published yet, publish to the managed URL first —
+      // the custom-domain endpoint requires a publish row.
       if (!_publishedState || !_publishedState.published) {
         $cdAttach.textContent = "Publishing…";
         const pubResp = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish`, {
