@@ -104,8 +104,10 @@ class SlackCommandHandler:
             task.add_done_callback(self.router._background_tasks.discard)
             return {"response_type": "ephemeral", "text": "Fetching your apps..."}
 
-        # Fire-and-forget: process in background, respond via response_url
-        asyncio.create_task(self.router.execute(ctx))
+        # Fire-and-forget: process in background, respond via response_url.
+        task = asyncio.create_task(self.router.execute(ctx))
+        self.router._background_tasks.add(task)
+        task.add_done_callback(self.router._background_tasks.discard)
 
         # Immediate ACK (must return within 3 seconds)
         return {

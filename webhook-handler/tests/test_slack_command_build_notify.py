@@ -13,6 +13,7 @@ def _handler(router=None):
     slack.post_to_response_url = AsyncMock(return_value=True)
     router = router or MagicMock()
     router.execute = AsyncMock(return_value=None)
+    router._background_tasks = set()
     return SlackCommandHandler(slack_client=slack, command_router=router), slack, router
 
 
@@ -151,6 +152,40 @@ async def test_other_subcommand_still_uses_router_execute():
     router.execute.assert_awaited_once()
     # list_projects must NOT have been called (this is not the list path)
     router._tasks_client.list_projects.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_other_subcommand_tracks_execute_background_task():
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def execute(_ctx):
+        started.set()
+        await release.wait()
+
+    router = _list_router()
+    handler, _slack, _ = _handler(router=router)
+    router.execute = execute
+    form = {
+        "command": "/aiui",
+        "text": "status",
+        "user_id": "U1",
+        "user_name": "maya",
+        "channel_id": "C1",
+        "response_url": "https://hooks/x",
+        "team_id": "T1",
+    }
+
+    await handler.handle_command(form)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert len(router._background_tasks) == 1
+    release.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+        if not router._background_tasks:
+            break
+    assert len(router._background_tasks) == 0
 
 
 @pytest.mark.asyncio
