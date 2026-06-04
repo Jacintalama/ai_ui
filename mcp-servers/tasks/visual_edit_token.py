@@ -9,7 +9,10 @@ import os
 import time
 
 _SECRET = os.environ.get("OAUTH_STATE_SECRET", "").encode()
-EDIT_TOKEN_TTL_SECONDS = 1800
+# Long-lived link token (default 30 days): it only authorizes "open the editor
+# for this slug"; ownership is re-checked and the short-lived edit capability is
+# minted fresh on every load. Keep in sync with the webhook-handler signer.
+EDIT_TOKEN_TTL_SECONDS = int(os.environ.get("EDIT_TOKEN_TTL_SECONDS", "2592000"))
 
 
 def _unb64(s: str) -> bytes:

@@ -13,7 +13,11 @@ import os
 import time
 
 _SECRET = os.environ.get("OAUTH_STATE_SECRET", "").encode()
-EDIT_TOKEN_TTL_SECONDS = 1800  # 30 minutes
+# The link token only proves "owner may open the editor for this slug" (ownership
+# is re-checked server-side on every load, and the *powerful* edit capability is
+# minted fresh with a short TTL per load). So this can live long enough that a
+# Visual Editor link sitting in chat history doesn't go stale. Default 30 days.
+EDIT_TOKEN_TTL_SECONDS = int(os.environ.get("EDIT_TOKEN_TTL_SECONDS", "2592000"))
 
 
 def _b64(b: bytes) -> str:

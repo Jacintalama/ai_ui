@@ -519,6 +519,26 @@ def _render_preview_edit_mode(task_id: str, cap: str) -> str:
     return seed + html if idx == -1 else html[:idx] + seed + html[idx:]
 
 
+def _edit_error_page(message: str, status: int = 403) -> Response:
+    """Friendly HTML page instead of raw JSON when an edit link can't be opened.
+    `message` is a fixed, developer-controlled string (never user input)."""
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Visual Editor</title></head>"
+        "<body style='font:16px system-ui,-apple-system,sans-serif;background:#0b0b0c;"
+        "color:#eee;display:flex;min-height:100vh;align-items:center;"
+        "justify-content:center;text-align:center;margin:0'>"
+        "<div style='max-width:440px;padding:24px'>"
+        "<div style='font-size:44px'>🎨</div>"
+        f"<h2 style='margin:12px 0;font-weight:600'>{message}</h2>"
+        "<p style='color:#9aa'>Open <b>🎨 Visual Editor</b> again from Discord or "
+        "Slack to get a fresh link.</p></div></body></html>"
+    )
+    return Response(content=html, status_code=status, media_type="text/html",
+                    headers={"Cache-Control": "no-store"})
+
+
 @app.get("/tasks/edit/{slug}", include_in_schema=False)
 async def tasks_edit(slug: str, token: str = ""):
     """Token-authenticated deep link into the visual editor (no web login).
@@ -527,13 +547,13 @@ async def tasks_edit(slug: str, token: str = ""):
     single-task capability, and serves preview.html in edit mode. Never depends
     on current_admin (the gateway forwards this with X-User-Admin: false)."""
     if not _SLUG_ROUTE_RE.match(slug):
-        raise HTTPException(status_code=400, detail="Invalid slug")
+        return _edit_error_page("That editor link looks malformed.", 400)
     owner = _verify_edit_token(token, slug)
     if not owner:
-        raise HTTPException(status_code=403, detail="Invalid or expired edit link")
+        return _edit_error_page("This editor link has expired.", 403)
     task_id = await _resolve_edit_task(slug, owner)
     if not task_id:
-        raise HTTPException(status_code=403, detail="App not found for this user")
+        return _edit_error_page("We couldn't find that app for your account.", 403)
     cap = _mint_capability(owner, slug, task_id)
     html = _render_preview_edit_mode(task_id, cap)
     return Response(content=html, media_type="text/html",

@@ -31,7 +31,7 @@ def test_wrong_slug_rejected():
 def test_ttl_constants_match():
     """Both sides MUST have the same TTL or they'll disagree on expiry."""
     from handlers.visual_edit_token import EDIT_TOKEN_TTL_SECONDS as WH_TTL
-    assert WH_TTL == EDIT_TOKEN_TTL_SECONDS == 1800
+    assert WH_TTL == EDIT_TOKEN_TTL_SECONDS  # both sides must agree
 
 
 def test_verify_returns_none_when_secret_missing(monkeypatch):

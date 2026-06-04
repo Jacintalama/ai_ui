@@ -48,5 +48,7 @@ def test_malformed_returns_none():
     assert verify_edit_token("only-one-part", "x") is None
 
 
-def test_ttl_is_30_minutes():
-    assert EDIT_TOKEN_TTL_SECONDS == 1800
+def test_ttl_is_generous_so_chat_links_dont_go_stale():
+    # The link token is long-lived (default 30 days); the *capability* minted on
+    # load is the short-lived credential. Must be well beyond a single session.
+    assert EDIT_TOKEN_TTL_SECONDS >= 86400
