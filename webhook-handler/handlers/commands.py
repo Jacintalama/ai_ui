@@ -1288,9 +1288,7 @@ class CommandRouter:
         """Discord → user-scoped cron schedule CRUD via tasks service."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await self._respond_not_linked(ctx)
             return
 
         try:
@@ -1554,9 +1552,7 @@ class CommandRouter:
         Ownership is enforced server-side (only the app's owner can publish)."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await self._respond_not_linked(ctx)
             return
         try:
             result = await self._tasks_client.publish_app(email, slug)
@@ -1578,7 +1574,7 @@ class CommandRouter:
         watch it like a build and post the updated preview."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         prompt = (prompt or "").strip()
         if not prompt:
@@ -1602,7 +1598,7 @@ class CommandRouter:
         """App Builder Unpublish: take a live app offline."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.unpublish_app(email, slug)
@@ -1615,7 +1611,7 @@ class CommandRouter:
         """App Builder Delete: permanently remove an app (after confirm)."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.delete_app(email, slug)
@@ -1629,7 +1625,7 @@ class CommandRouter:
         Fetches fresh status so the menu reflects current publish state."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             status = await self._tasks_client.get_project_status(email, slug)
@@ -1658,7 +1654,7 @@ class CommandRouter:
         the `aiuibuilder status <slug>` text action)."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             status = await self._tasks_client.get_project_status(email, slug)
@@ -1680,7 +1676,7 @@ class CommandRouter:
         """My-schedules button → render the user's schedules + action buttons."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             schedules = await self._tasks_client.list_schedules(email, platform="discord")
@@ -1701,7 +1697,7 @@ class CommandRouter:
         to their private thread."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.create_schedule(
@@ -1721,7 +1717,7 @@ class CommandRouter:
         """Run-now / Pause / Resume / Delete for a single schedule."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             if action == "run":
@@ -1779,10 +1775,6 @@ class CommandRouter:
         """The 'no email' message, worded for the caller's platform."""
         if ctx.platform == "slack":
             return onboarding.not_linked_text_slack()
-        return onboarding.not_linked_text_discord()
-
-    @staticmethod
-    def _not_linked_msg() -> str:
         return onboarding.not_linked_text_discord()
 
     async def _respond_not_linked(self, ctx: CommandContext) -> None:
@@ -1894,13 +1886,11 @@ class CommandRouter:
     def _cron_email_or_none(self, ctx: CommandContext) -> str | None:
         return self._discord_user_email_map.get(ctx.user_id)
 
-    _CRON_NO_EMAIL = "Your Discord account isn't linked. Ask Lukas to add you."
-
     async def run_cron_create(self, ctx: CommandContext, *, cron_expr: str,
                               name: str, prompt: str) -> None:
         email = self._cron_email_or_none(ctx)
         if not email:
-            await ctx.respond(self._CRON_NO_EMAIL)
+            await self._respond_not_linked(ctx)
             return
         prompt = (prompt or "").strip()
         if not prompt:
@@ -1924,7 +1914,7 @@ class CommandRouter:
         from handlers import cronjob_panel as cp
         email = self._cron_email_or_none(ctx)
         if not email:
-            await ctx.respond(self._CRON_NO_EMAIL)
+            await self._respond_not_linked(ctx)
             return
         try:
             schedules = await self._tasks_client.list_schedules(email, platform="discord")
@@ -1957,7 +1947,7 @@ class CommandRouter:
     async def run_cron_menu(self, ctx: CommandContext, schedule_id: str) -> None:
         email = self._cron_email_or_none(ctx)
         if not email:
-            await ctx.respond(self._CRON_NO_EMAIL)
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._cron_menu_for(ctx, email, schedule_id)
@@ -1967,7 +1957,7 @@ class CommandRouter:
     async def run_cron_runnow(self, ctx: CommandContext, schedule_id: str) -> None:
         email = self._cron_email_or_none(ctx)
         if not email:
-            await ctx.respond(self._CRON_NO_EMAIL)
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.run_now_schedule(email, schedule_id)
@@ -1978,7 +1968,7 @@ class CommandRouter:
     async def run_cron_pause(self, ctx: CommandContext, schedule_id: str) -> None:
         email = self._cron_email_or_none(ctx)
         if not email:
-            await ctx.respond(self._CRON_NO_EMAIL)
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.disable_schedule(email, schedule_id)
@@ -1989,7 +1979,7 @@ class CommandRouter:
     async def run_cron_resume(self, ctx: CommandContext, schedule_id: str) -> None:
         email = self._cron_email_or_none(ctx)
         if not email:
-            await ctx.respond(self._CRON_NO_EMAIL)
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.enable_schedule(email, schedule_id)
@@ -2000,7 +1990,7 @@ class CommandRouter:
     async def run_cron_delete(self, ctx: CommandContext, schedule_id: str) -> None:
         email = self._cron_email_or_none(ctx)
         if not email:
-            await ctx.respond(self._CRON_NO_EMAIL)
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.delete_schedule(email, schedule_id)
@@ -2056,7 +2046,7 @@ class CommandRouter:
         if e.status == 0:
             return "Tasks service unreachable, try again."
         if e.status == 401:
-            return "Tasks service couldn't identify you — ask Lukas to check your link."
+            return "I couldn't verify your account — tap 🔗 Link my account and try again."
         if e.status == 403:
             return "Only the app's owner can publish it."
         if e.status == 404:
@@ -2094,7 +2084,7 @@ class CommandRouter:
         if e.status == 429:
             return "A build is already running — try again in a few minutes."
         if e.status in (401, 403):
-            return "Your Discord account isn't linked. Ask Lukas to add you."
+            return onboarding.not_linked_text_discord()
         if e.status in (400, 422):
             return "Couldn't start the build — check your description and try again."
         return f"Couldn't start the build (error {e.status})."
