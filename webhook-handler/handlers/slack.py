@@ -5,6 +5,7 @@ import logging
 
 from clients.openwebui import OpenWebUIClient
 from clients.slack import SlackClient
+from handlers import onboarding
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,15 @@ class SlackWebhookHandler:
 
         logger.info(f"Slack mention from {user} in {channel}: {clean_text[:100]}")
 
+        if onboarding.looks_like_getting_started(clean_text):
+            await self.slack.post_message(
+                channel=channel,
+                text="Welcome — here's how to start.",
+                blocks=onboarding.welcome_blocks_slack(),
+                thread_ts=thread_ts,
+            )
+            return {"success": True, "message": "Welcome card sent"}
+
         system_prompt = self.ai_system_prompt or (
             "You are a helpful AI assistant responding in Slack. "
             "Be concise and use Slack markdown formatting."
@@ -96,10 +106,13 @@ class SlackWebhookHandler:
             return {"success": False, "error": "Failed to get AI response"}
 
         response_text = self.slack.format_ai_response(analysis)
+        section_text = response_text[:2900] if len(response_text) > 2900 else response_text
+        answer_block = {"type": "section", "text": {"type": "mrkdwn", "text": section_text}}
         ts = await self.slack.post_message(
             channel=channel,
             text=response_text,
-            thread_ts=thread_ts
+            thread_ts=thread_ts,
+            blocks=[answer_block, onboarding.buttons_footer_slack()],
         )
 
         if not ts:
@@ -127,6 +140,14 @@ class SlackWebhookHandler:
 
         logger.info(f"Slack DM from {user}: {text[:100]}")
 
+        if onboarding.looks_like_getting_started(text):
+            await self.slack.post_message(
+                channel=channel,
+                text="Welcome — here's how to start.",
+                blocks=onboarding.welcome_blocks_slack(),
+            )
+            return {"success": True, "message": "Welcome card sent"}
+
         system_prompt = self.ai_system_prompt or (
             "You are a helpful AI assistant responding to direct messages in Slack. "
             "Be concise and helpful."
@@ -134,18 +155,21 @@ class SlackWebhookHandler:
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
+            {"role": "user", "content": text},
         ]
 
-        analysis = await self.openwebui.chat_completion(
-            messages=messages,
-            model=self.ai_model
-        )
+        analysis = await self.openwebui.chat_completion(messages=messages, model=self.ai_model)
 
         if not analysis:
             return {"success": False, "error": "Failed to get AI response"}
 
         response_text = self.slack.format_ai_response(analysis)
-        await self.slack.post_message(channel=channel, text=response_text)
+        section_text = response_text[:2900] if len(response_text) > 2900 else response_text
+        answer_block = {"type": "section", "text": {"type": "mrkdwn", "text": section_text}}
+        await self.slack.post_message(
+            channel=channel,
+            text=response_text,
+            blocks=[answer_block, onboarding.buttons_footer_slack()],
+        )
 
         return {"success": True, "message": "DM handled, response sent"}
