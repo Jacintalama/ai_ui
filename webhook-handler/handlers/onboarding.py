@@ -103,3 +103,21 @@ def looks_like_getting_started(text: str) -> bool:
     if len(t.split()) <= 2:
         return True
     return bool(_GREETING_RE.match(t))
+
+
+def approval_dm_discord(approved: bool) -> tuple[str, list[dict] | None]:
+    """DM content sent to the requester when an admin decides their link request."""
+    if approved:
+        text = (
+            "\U0001f389 You're in! Tap **\U0001f680 Build an app** to create "
+            "your first one."
+        )
+        components = [{"type": ACTION_ROW, "components": [
+            _button("\U0001f680 Build an app", PANEL_NEW_ID, STYLE_SUCCESS),
+        ]}]
+        return text, components
+    text = (
+        "Your access request wasn't approved this time. If you think that's a "
+        "mistake, reach out to your team admin."
+    )
+    return text, None

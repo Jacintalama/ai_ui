@@ -61,3 +61,17 @@ def test_getting_started_matches_greetings_and_help(text):
 ])
 def test_getting_started_ignores_real_requests(text):
     assert ob.looks_like_getting_started(text) is False
+
+
+def test_approval_dm_approved_has_build_button():
+    text, components = ob.approval_dm_discord(approved=True)
+    assert "you're in" in text.lower()
+    assert components is not None
+    assert components[0]["components"][0]["custom_id"] == PANEL_NEW_ID
+
+
+def test_approval_dm_rejected_is_polite_and_buttonless():
+    text, components = ob.approval_dm_discord(approved=False)
+    assert components is None
+    assert "wasn't approved" in text.lower()
+    assert "Lukas" not in text
