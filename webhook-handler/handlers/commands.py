@@ -393,32 +393,26 @@ class CommandRouter:
         lines = ["*Service Status*\n"] + list(results)
         await ctx.respond("\n".join(lines))
 
+    @staticmethod
+    def _help_text() -> str:
+        return (
+            "**Here's what I can do**\n"
+            "• \U0001f680 **Build an app** — describe a website and I'll build it.\n"
+            "• ⏰ **Schedule a task** — run something on a repeat (e.g. "
+            "*summarize my emails every morning*).\n"
+            "• \U0001f4ac **Ask a question** — just type `/aiui ask <your question>`.\n"
+            "\nTip: tap a button in the **AIUI App Builder** panel — no commands needed.\n"
+            "\n_Advanced (for technical users):_ `/aiui aiuibuilder`, `/aiui mcp`, `/aiui pr-review`, "
+            "`/aiui analyze`, `/aiui security`, `/aiui web-search`."
+        )
+
     async def _handle_help(self, ctx: CommandContext) -> None:
         """Show available commands."""
-        help_text = (
-            "*Available Commands*\n"
-            "`/aiui ask <question>` — Ask the AI a question\n"
-            "`/aiui pr-review <number>` — AI review of a GitHub PR\n"
-            "`/aiui mcp <server> <tool> [json_args]` — Execute an MCP tool\n"
-            "`/aiui workflow <name>` — Trigger an n8n workflow\n"
-            "`/aiui workflows` — List active n8n workflows\n"
-            "`/aiui report` — Generate end-of-day activity report\n"
-            "`/aiui status` — Check service health\n"
-            "`/aiui diagnose [container]` \u2014 AI diagnosis of recent errors\n"
-            "`/aiui analyze [owner/repo]` \u2014 AI analysis of a GitHub codebase\n"
-            "`/aiui email` \u2014 Summarize recent emails (via n8n Gmail)\n"
-            "`/aiui sheets [daily|errors]` \u2014 Generate report to Google Sheets\n"
-            "`/aiui rebuild [owner/repo]` \u2014 Research solutions & generate rebuild plan\n"
-            "`/aiui health [owner/repo]` \u2014 Code quality & architecture health assessment\n"
-            "`/aiui security [owner/repo]` \u2014 Deep security audit (OWASP Top 10)\n"
-            "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
-            "`/aiui license [owner/repo]` \u2014 License compliance check\n"
-            "`/aiui cronjob` — Schedule prompts. Use the **#cron-jobs** channel panel "
-            "(⏰ Schedule a task) or `cronjob create \"<cron>\" \"<prompt>\"`\n"
-            "`/aiui aiuibuilder <build|templates|list|status|open>` — Build, then **Publish** from the build message to go live\n"
-            "`/aiui help` — Show this help message"
-        )
-        await ctx.respond(help_text)
+        text = self._help_text()
+        if ctx.platform != "slack" and ctx.respond_components is not None:
+            await ctx.respond_components(text, onboarding.welcome_components_discord())
+            return
+        await ctx.respond(text)
 
     async def _handle_diagnose(self, ctx: CommandContext) -> None:
         """Query Loki for error logs and run AI diagnosis."""
