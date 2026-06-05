@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from handlers.discord_commands import DiscordCommandHandler
-from handlers.app_builder_panel import SCHED_OPEN_ID, SCHED_SELECT_ID
+from handlers.app_builder_panel import SCHED_OPEN_ID, SCHED_SELECT_ID, LINK_START_ID
 
 
 def _handler(router):
@@ -63,6 +63,10 @@ async def test_open_not_linked_prompts_link():
     await _drain()
     handler.discord.post_channel_message.assert_not_called()
     handler.discord.edit_original.assert_awaited()
+    # The not-linked response renders the self-service Link button (no "Lukas").
+    kwargs = handler.discord.edit_original.call_args.kwargs
+    assert "Lukas" not in kwargs["content"]
+    assert kwargs["components"][0]["components"][0]["custom_id"] == LINK_START_ID
 
 
 @pytest.mark.asyncio

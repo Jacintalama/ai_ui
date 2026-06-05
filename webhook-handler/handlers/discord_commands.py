@@ -1084,7 +1084,8 @@ class DiscordCommandHandler:
                 if dash is None:
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
-                        content="Your Discord account isn't linked yet. Hit **🔗 Link my account** first.",
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
                     )
                     return
                 thread_id = await self._get_or_make_thread(
