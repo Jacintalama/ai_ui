@@ -62,3 +62,19 @@ def current_admin_or_capability(task_id: UUID, request: Request) -> AdminUser:
         return AdminUser(email=(data["owner"] or "").strip().lower(),
                          is_admin=False)
     return current_admin(request)
+
+
+def current_admin_or_capability_for_slug(slug: str, request: Request) -> AdminUser:
+    """Like current_admin_or_capability, but for endpoints keyed by project
+    slug rather than task_id. Used by /api/projects/{slug}/<read> endpoints
+    the Visual Editor needs at load time (chat history, dep graph, publish
+    status, versions). Cap must be valid and bound to this exact slug."""
+    cap = request.headers.get("x-edit-capability", "").strip()
+    if cap:
+        from edit_capability import verify_capability
+        data = verify_capability(cap)
+        if not data or data["slug"] != slug:
+            raise HTTPException(status_code=403, detail="Invalid edit capability")
+        return AdminUser(email=(data["owner"] or "").strip().lower(),
+                         is_admin=False)
+    return current_admin(request)

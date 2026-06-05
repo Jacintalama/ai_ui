@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 
-from auth import AdminUser, current_admin, CurrentUser, current_user
+from auth import AdminUser, current_admin, current_admin_or_capability_for_slug, CurrentUser, current_user
 from db import session
 from models import ChatMessage, ProjectMember, ProjectSupabase, PublishedApp, TaskItem
 from schemas import InviteRequest, MemberOut, RoleUpdate
@@ -548,7 +548,7 @@ def _validate_slug(slug: str) -> None:
 
 
 @router.get("/{slug}/versions", response_model=list[VersionEntry])
-async def list_versions(slug: str, user: AdminUser = Depends(current_admin)):
+async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
     """List all commits that touched apps/<slug>/.
 
     Each commit is cross-referenced with the tasks table so we can mark:
@@ -723,7 +723,7 @@ def _public_url_for(slug: str) -> str:
 
 
 @router.get("/{slug}/publish", response_model=PublishStatus)
-async def get_publish(slug: str, user: AdminUser = Depends(current_admin)):
+async def get_publish(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):

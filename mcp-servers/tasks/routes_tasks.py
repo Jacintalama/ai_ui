@@ -183,7 +183,7 @@ async def list_tasks(
 
 
 @router.get("/{task_id}/executions")
-async def list_executions(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def list_executions(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     """Return execution history for a task — used by the panel to show what AI did."""
     from models import TaskExecution
     async with session() as s:

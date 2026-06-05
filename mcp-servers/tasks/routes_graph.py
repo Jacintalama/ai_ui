@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, current_admin_or_capability_for_slug
 from db import session
 from routes_projects import _require_role, _user_can_see_project, _validate_slug
 
@@ -305,7 +305,7 @@ def _build_graph(app_root: str) -> dict:
 
 
 @router.get("/{slug}/graph")
-async def get_project_graph(slug: str, user: AdminUser = Depends(current_admin)) -> dict:
+async def get_project_graph(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)) -> dict:
     """Return a {nodes, edges} graph of the project's file structure."""
     _validate_slug(slug)
     async with session() as s:

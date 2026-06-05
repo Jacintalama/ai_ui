@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app_runner import get_status, start_preview, stop_preview
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, current_admin_or_capability
 from db import session
 from models import TaskItem
 
@@ -37,7 +37,7 @@ async def _get_build_task(task_id: UUID) -> TaskItem:
 
 
 @router.get("/{task_id}/files")
-async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     item = await _get_build_task(task_id)
     app_dir = Path(WORKSPACE) / "apps" / item.built_app_slug
     if not app_dir.is_dir():
@@ -54,7 +54,7 @@ async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin)):
 
 
 @router.get("/{task_id}/files/{file_path:path}")
-async def read_file(task_id: UUID, file_path: str, user: AdminUser = Depends(current_admin)):
+async def read_file(task_id: UUID, file_path: str, user: AdminUser = Depends(current_admin_or_capability)):
     item = await _get_build_task(task_id)
     app_dir = Path(WORKSPACE) / "apps" / item.built_app_slug
     app_dir_resolved = app_dir.resolve()
@@ -75,7 +75,7 @@ async def read_file(task_id: UUID, file_path: str, user: AdminUser = Depends(cur
 
 
 @router.post("/{task_id}/preview/start")
-async def preview_start(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def preview_start(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     item = await _get_build_task(task_id)
     try:
         port = await start_preview(item.built_app_slug)
@@ -85,13 +85,13 @@ async def preview_start(task_id: UUID, user: AdminUser = Depends(current_admin))
 
 
 @router.post("/{task_id}/preview/stop")
-async def preview_stop(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def preview_stop(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     await stop_preview()
     return {"status": "stopped"}
 
 
 @router.get("/{task_id}/preview/status")
-async def preview_status(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def preview_status(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     item = await _get_build_task(task_id)
     status = get_status(item.built_app_slug)
     return status or {"running": False}
