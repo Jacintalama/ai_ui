@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 from handlers.discord_commands import DiscordCommandHandler
 from handlers.app_builder_panel import (
     PANEL_NEW_ID, PANEL_MYAPPS_ID, TEMPLATE_SELECT_ID, APP_SELECT_ID,
+    LINK_START_ID,
 )
 
 
@@ -98,13 +99,19 @@ async def test_my_apps_not_linked():
     router = MagicMock()
     router.get_user_thread = AsyncMock(return_value="T1"); router.set_user_thread = AsyncMock()
     router._resolve_email = AsyncMock(return_value=None)
-    router._not_linked_msg = MagicMock(return_value="Your Discord account isn't linked yet.")
     router._tasks_client = MagicMock(); router._tasks_client.list_projects = AsyncMock(return_value=[])
     h = DiscordCommandHandler(discord, router)
     await h.handle_interaction(_payload(PANEL_MYAPPS_ID)); await asyncio.sleep(0)
     assert discord.post_channel_message.await_count == 0
-    content = discord.edit_original.await_args.kwargs.get("content", "")
-    assert "isn't linked" in content
+    # New unified not-linked card: friendly self-service text + Link button row,
+    # no person's name, and we never reach the tasks API.
+    kwargs = discord.edit_original.await_args.kwargs
+    content = kwargs.get("content", "")
+    assert "Link my account" in content
+    assert "Lukas" not in content and "isn't linked" not in content
+    components = kwargs.get("components") or []
+    ids = [c.get("custom_id") for row in components for c in row["components"]]
+    assert LINK_START_ID in ids
     router._tasks_client.list_projects.assert_not_awaited()
 
 

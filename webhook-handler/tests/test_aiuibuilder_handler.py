@@ -31,7 +31,12 @@ def _router(mapping, tasks_client):
 async def test_unmapped_user_rejected():
     captured = []
     await _router({}, MagicMock())._handle_aiuibuilder(_ctx("999", "list", captured))
-    assert any("isn't linked" in m for m in captured)
+    # New unified not-linked card: Discord ctx without respond_components falls
+    # back to the friendly self-service text (no person's name).
+    assert captured, "expected a not-linked response"
+    assert any("Link my account" in m for m in captured)
+    assert all("Lukas" not in m for m in captured)
+    assert all("isn't linked" not in m for m in captured)
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 import pytest
 from handlers.commands import CommandRouter, CommandContext
+from handlers.app_builder_panel import LINK_START_ID
 from clients.tasks import TasksAPIError
 
 
@@ -49,8 +50,13 @@ async def test_run_panel_menu_published_uses_respond_components():
 async def test_run_panel_menu_not_linked():
     ctx, sent = _ctx()
     await _router(FakeTasks(), email_map={}).run_panel_menu(ctx, "shop")
-    assert sent["comp"] == []
-    assert any("isn't linked" in m for m in sent["text"])
+    # New unified not-linked card: this ctx has respond_components, so the Link
+    # button row must be rendered (not a bare text response, not empty comps).
+    assert len(sent["comp"]) == 1
+    header, components = sent["comp"][0]
+    assert "Lukas" not in header and "isn't linked" not in header
+    ids = [c.get("custom_id") for c in components[0]["components"]]
+    assert LINK_START_ID in ids
 
 
 async def test_run_panel_menu_404():

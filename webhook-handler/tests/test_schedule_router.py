@@ -4,7 +4,18 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from handlers.commands import CommandRouter, CommandContext
+from handlers.app_builder_panel import LINK_START_ID
 from clients.tasks import TasksAPIError
+
+
+def _assert_link_button_card(cap):
+    """New unified not-linked card: this ctx has respond_components, so the Link
+    button row is rendered (not bare text, no person's name)."""
+    assert cap["components"], "expected the link-button card"
+    content, components = cap["components"][0]
+    assert "Lukas" not in content and "isn't linked" not in content
+    ids = [c.get("custom_id") for c in components[0]["components"]]
+    assert LINK_START_ID in ids
 
 
 def _ctx(user_id):
@@ -63,7 +74,7 @@ async def test_run_schedule_list_with_items_uses_components():
 async def test_run_schedule_list_unmapped_user():
     ctx, cap = _ctx("999")
     await _router({}, MagicMock()).run_schedule_list(ctx)
-    assert any("isn't linked" in m for m in cap["text"])
+    _assert_link_button_card(cap)
 
 
 @pytest.mark.asyncio
@@ -90,7 +101,7 @@ async def test_run_schedule_create_unmapped_user():
     ctx, cap = _ctx("999")
     await _router({}, tc).run_schedule_create(ctx, name="n", cron="0 8 * * *", prompt="p")
     tc.create_schedule.assert_not_called()
-    assert any("isn't linked" in m for m in cap["text"])
+    _assert_link_button_card(cap)
 
 
 @pytest.mark.asyncio

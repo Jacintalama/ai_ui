@@ -75,8 +75,10 @@ async def test_execute_routes_aiuibuilder():
 
 
 @pytest.mark.asyncio
-async def test_help_lists_new_commands():
-    """Help text must advertise the two new subcommands.
+async def test_help_leads_with_user_actions():
+    """New help copy leads with the plain-language user actions (Build / Schedule
+    / Ask) and demotes dev commands to the Advanced line: `cronjob` is gone and
+    `aiuibuilder` survives only as an Advanced entry.
 
     NOTE: must be `async def` + pytest.mark.asyncio. `asyncio.get_event_loop()`
     raises a hard RuntimeError on Python 3.12 and is deprecated on 3.11.
@@ -89,7 +91,17 @@ async def test_help_lists_new_commands():
         subcommand="help", arguments="", platform="discord",
         respond=respond, metadata={},
     )
+    # No respond_components on this ctx → _handle_help sends the help text.
     await r._handle_help(ctx)
     text = captured[0]
-    assert "cronjob" in text
-    assert "aiuibuilder" in text
+    # Leads with the user-facing actions.
+    assert "Build an app" in text
+    assert "Schedule a task" in text
+    assert "Ask" in text
+    # cronjob is no longer advertised; aiuibuilder is demoted to Advanced.
+    assert "cronjob" not in text
+    assert "Advanced" in text
+    advanced = text.split("Advanced", 1)[1]
+    assert "aiuibuilder" in advanced
+    # The static builder is the single source of truth for the copy.
+    assert text == CommandRouter._help_text()

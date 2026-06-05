@@ -27,11 +27,20 @@ def _router(mapping, tasks_client):
     )
 
 
+def _assert_not_linked(captured):
+    """New unified not-linked card: Discord ctx without respond_components falls
+    back to the friendly self-service text (no person's name)."""
+    assert captured, "expected a not-linked response"
+    assert any("Link my account" in m for m in captured)
+    assert all("Lukas" not in m for m in captured)
+    assert all("isn't linked" not in m for m in captured)
+
+
 @pytest.mark.asyncio
 async def test_unmapped_user_rejected():
     captured = []
     await _router({}, MagicMock()).run_panel_build(_ctx("9", captured), "portfolio", "x")
-    assert any("isn't linked" in m for m in captured)
+    _assert_not_linked(captured)
 
 
 @pytest.mark.asyncio
@@ -98,7 +107,7 @@ async def test_watcher_wired_when_notify_channel_set(monkeypatch):
 async def test_publish_unmapped_user_rejected():
     captured = []
     await _router({}, MagicMock()).run_panel_publish(_ctx("9", captured), "slug-1")
-    assert any("isn't linked" in m for m in captured)
+    _assert_not_linked(captured)
 
 
 @pytest.mark.asyncio
@@ -143,7 +152,7 @@ async def test_publish_service_unreachable():
 async def test_enhance_unmapped_user_rejected():
     captured = []
     await _router({}, MagicMock()).run_panel_enhance(_ctx("9", captured), "slug-1", "change")
-    assert any("isn't linked" in m for m in captured)
+    _assert_not_linked(captured)
 
 
 @pytest.mark.asyncio
@@ -210,7 +219,7 @@ async def test_delete_not_owner_403():
 async def test_delete_unmapped_user_rejected():
     captured = []
     await _router({}, MagicMock()).run_panel_delete(_ctx("9", captured), "slug-1")
-    assert any("isn't linked" in m for m in captured)
+    _assert_not_linked(captured)
 
 
 @pytest.mark.asyncio

@@ -70,8 +70,24 @@ async def test_empty_text_dm_is_ignored():
 
 @pytest.mark.asyncio
 async def test_real_user_dm_still_replies():
-    """A normal user DM with text must still get an AI reply (no over-filtering)."""
+    """A substantive user DM (non-greeting) must still get an AI reply (no
+    over-filtering). Greetings now route to the welcome card, so use a real
+    question to exercise the AI-answer path."""
     handler, openwebui, slack = _handler()
-    await handler.handle_event(_dm_payload({"text": "hello there", "user": "U1"}))
+    await handler.handle_event(
+        _dm_payload({"text": "what time is the meeting tomorrow", "user": "U1"}))
     openwebui.chat_completion.assert_awaited_once()
     slack.post_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_greeting_dm_shows_welcome_card_without_calling_ai():
+    """A greeting/getting-started DM now posts the welcome card and must NOT
+    call the AI."""
+    handler, openwebui, slack = _handler()
+    from handlers import onboarding
+    await handler.handle_event(_dm_payload({"text": "hello there", "user": "U1"}))
+    openwebui.chat_completion.assert_not_awaited()
+    slack.post_message.assert_awaited_once()
+    assert slack.post_message.await_args.kwargs.get("blocks") == \
+        onboarding.welcome_blocks_slack()
