@@ -139,6 +139,39 @@ class DiscordClient:
             logger.error(f"Error posting Discord channel message: {e}")
             return False
 
+    async def open_dm(self, user_id: str) -> str | None:
+        """Open (or fetch) the bot↔user DM channel. Returns the DM channel id,
+        or None on failure (never raises). Works when the user shares a server
+        with the bot."""
+        url = f"{DISCORD_API_BASE}/users/@me/channels"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bot {self.bot_token}"},
+                    json={"recipient_id": user_id},
+                )
+                if response.status_code in (200, 201):
+                    return response.json().get("id")
+                logger.error(
+                    f"Discord open_dm error: {response.status_code} {response.text}"
+                )
+                return None
+        except Exception as e:
+            logger.error(f"Error opening Discord DM: {e}")
+            return None
+
+    async def send_dm(self, user_id: str, content: str = "",
+                      components: list | None = None) -> bool:
+        """DM a user: open the DM channel then post. Best-effort — returns False
+        (never raises) so a failed DM never breaks the caller's main action."""
+        dm_id = await self.open_dm(user_id)
+        if not dm_id:
+            return False
+        return await self.post_channel_message(
+            dm_id, content=content, components=components
+        )
+
     async def create_private_thread(self, parent_channel_id: str, name: str) -> str | None:
         """Create a private thread (type 12) under a text channel using the bot
         token. Returns the new thread id, or None on failure (never raises) so
