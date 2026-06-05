@@ -17,6 +17,7 @@ from handlers.app_builder_panel import (
     build_schedules_dashboard,
     build_schedule_card,
 )
+from handlers import onboarding
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -1363,7 +1364,7 @@ class CommandRouter:
         """Discord/Slack → App Builder project list / status / open URL."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(self._not_linked_text(ctx))
+            await self._respond_not_linked(ctx)
             return
 
         # Action is the first word; the remainder is parsed per-action so a
@@ -1539,7 +1540,7 @@ class CommandRouter:
         misread as a template build."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(self._not_linked_text(ctx))
+            await self._respond_not_linked(ctx)
             return
         description = (description or "").strip()
         if not description:
@@ -1777,14 +1778,24 @@ class CommandRouter:
     def _not_linked_text(ctx: CommandContext) -> str:
         """The 'no email' message, worded for the caller's platform."""
         if ctx.platform == "slack":
-            return ("I couldn't read your email from Slack. Ask an admin to grant the "
-                    "bot the `users:read.email` scope, then try again.")
-        return "Your Discord account isn't linked. Ask Lukas to add you."
+            return onboarding.not_linked_text_slack()
+        return onboarding.not_linked_text_discord()
 
     @staticmethod
     def _not_linked_msg() -> str:
-        return ("Your Discord account isn't linked yet. Hit **🔗 Link my account** "
-                "on the Schedules panel to get set up.")
+        return onboarding.not_linked_text_discord()
+
+    async def _respond_not_linked(self, ctx: CommandContext) -> None:
+        """Friendly, self-service not-linked response. On Discord, render the
+        Link button inline when the context supports components; otherwise send
+        plain text. On Slack, send the plain-language wording (auto-read; no
+        button to offer)."""
+        if ctx.platform != "slack" and ctx.respond_components is not None:
+            await ctx.respond_components(
+                onboarding.not_linked_text_discord(), onboarding.link_button_row(),
+            )
+            return
+        await ctx.respond(self._not_linked_text(ctx))
 
     async def run_schedule_edit(
         self, ctx: CommandContext, schedule_id: str, *,
@@ -1793,7 +1804,7 @@ class CommandRouter:
         """Edit-modal submit → update the schedule's time/prompt for this user."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(self._not_linked_msg())
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.update_schedule(
@@ -1838,7 +1849,7 @@ class CommandRouter:
         """Dropdown select → render a single schedule's clean card."""
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(self._not_linked_msg())
+            await self._respond_not_linked(ctx)
             return
         try:
             schedules = await self._tasks_client.list_schedules(email, platform="discord")

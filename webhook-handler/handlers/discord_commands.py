@@ -1022,7 +1022,8 @@ class DiscordCommandHandler:
                 if email is None:
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
-                        content=self.router._not_linked_msg(),
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
                     )
                     return
                 projects = await self.router._tasks_client.list_projects(email)
