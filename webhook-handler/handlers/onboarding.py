@@ -17,6 +17,20 @@ from handlers.app_builder_panel import (
     SCHED_OPEN_ID,
     _button,
 )
+from handlers.slack_app_builder_panel import _button as _slack_button
+
+__all__ = [
+    "WELCOME_TEXT_DISCORD",
+    "WELCOME_TEXT_SLACK",
+    "not_linked_text_discord",
+    "link_button_row",
+    "welcome_components_discord",
+    "not_linked_text_slack",
+    "welcome_blocks_slack",
+    "buttons_footer_slack",
+    "looks_like_getting_started",
+    "approval_dm_discord",
+]
 
 # --- Discord copy ---
 WELCOME_TEXT_DISCORD = (
@@ -46,8 +60,6 @@ def welcome_components_discord() -> list[dict]:
         _button("⏰ Schedule a task", SCHED_OPEN_ID, STYLE_PRIMARY),
     ]}]
 
-
-from handlers.slack_app_builder_panel import _button as _slack_button
 
 # --- Slack copy ---
 WELCOME_TEXT_SLACK = (
@@ -95,12 +107,11 @@ _GREETING_RE = re.compile(
 
 
 def looks_like_getting_started(text: str) -> bool:
-    """True for greetings/help/very-short messages (show the welcome card);
-    False for substantive requests (answer normally + buttons footer)."""
+    """True for greetings / help phrases / empty input (show the welcome card);
+    False for substantive requests — including terse ones like "fix bug" — which
+    are answered normally (the answer already carries a buttons footer)."""
     t = (text or "").strip()
     if not t:
-        return True
-    if len(t.split()) <= 2:
         return True
     return bool(_GREETING_RE.match(t))
 

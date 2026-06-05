@@ -63,6 +63,15 @@ def test_getting_started_ignores_real_requests(text):
     assert ob.looks_like_getting_started(text) is False
 
 
+@pytest.mark.parametrize("text", ["fix bug", "stripe checkout", "add feature"])
+def test_getting_started_ignores_terse_real_requests(text):
+    assert ob.looks_like_getting_started(text) is False
+
+
+def test_getting_started_true_for_empty():
+    assert ob.looks_like_getting_started("   ") is True
+
+
 def test_approval_dm_approved_has_build_button():
     text, components = ob.approval_dm_discord(approved=True)
     assert "you're in" in text.lower()
