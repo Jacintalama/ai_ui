@@ -69,6 +69,7 @@ from handlers.app_builder_panel import (
     build_apps_select_components,
 )
 from handlers import cronjob_panel as cron
+from handlers import onboarding
 
 logger = logging.getLogger(__name__)
 
@@ -1173,6 +1174,11 @@ class DiscordCommandHandler:
                     text = f"✖ Rejected <@{discord_id}>"
                 await self.discord.edit_original(
                     interaction_token=interaction_token, content=text, components=[],
+                )
+                # Notify the requester (best-effort — never block the admin action).
+                dm_text, dm_components = onboarding.approval_dm_discord(approve)
+                await self.discord.send_dm(
+                    discord_id, content=dm_text, components=dm_components,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("link decision failed id=%s: %s", discord_id, exc)
