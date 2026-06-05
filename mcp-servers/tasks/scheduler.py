@@ -185,6 +185,22 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
     return item
 
 
+def _deliverable_result(raw_log: str, fallback: str = "") -> str:
+    """The text to deliver for a finished scheduled run.
+
+    Scheduled-task agents are told to write their answer FIRST and end with a
+    bare ``COMPLETED`` line (see the persona in ``_create_task_from_schedule``).
+    ``parse_outcome`` returns the text *after* the sentinel, which is therefore
+    empty — and that empty payload is what gets persisted to ``TaskItem.result``.
+    So we recover the actual answer (everything *before* the final sentinel)
+    from the raw stream-json transcript via ``extract_final_body``. Falls back to
+    the stored result, then an empty string, when the transcript yields nothing.
+    """
+    from claude_executor import extract_final_body
+    body = extract_final_body(raw_log).strip() if raw_log else ""
+    return body or (fallback or "")
+
+
 async def _run_scheduled_task(sched: Schedule) -> str:
     """Dispatch to existing execution flow. Returns final status string.
 
@@ -216,13 +232,20 @@ async def _run_scheduled_task(sched: Schedule) -> str:
         except Exception as exc:
             logger.exception("schedule %s run failed: %s", sched.id, scrub(str(exc)))
             return "failed", ""
-        # Re-read the task's final status + result (set by _run_execution)
+        # Re-read the task's final status + result (set by _run_execution).
+        # Also read the execution's raw transcript: scheduled agents put their
+        # answer BEFORE the COMPLETED sentinel, so TaskItem.result (the
+        # after-sentinel payload) is empty — recover the answer via the log.
         async with session() as s:
             row = (await s.execute(
                 select(TaskItem).where(TaskItem.id == item.id)
             )).scalar_one_or_none()
+            ex = (await s.execute(
+                select(TaskExecution).where(TaskExecution.id == execution_id)
+            )).scalar_one_or_none()
         status = (row.status if row else None) or "unknown"
-        result = (row.result if row else None) or ""
+        raw_log = (ex.log if ex else "") or ""
+        result = _deliverable_result(raw_log, (row.result if row else None) or "")
         return status, result
 
 

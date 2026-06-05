@@ -47,3 +47,27 @@ async def test_deliver_result_logs_webhook_non_2xx(monkeypatch, caplog):
         and "502" in record.message
         for record in caplog.records
     )
+
+
+def test_deliverable_result_recovers_answer_before_sentinel():
+    """Scheduled agents write the answer BEFORE the bare COMPLETED sentinel, so
+    parse_outcome's after-sentinel payload (stored as TaskItem.result) is empty.
+    _deliverable_result must recover the answer body from the raw transcript."""
+    import scheduler
+
+    transcript = (
+        '{"type":"result","is_error":false,'
+        '"result":"**Daily Quote**\\n\\n> Stay hungry.\\n\\nCOMPLETED"}\n'
+    )
+    out = scheduler._deliverable_result(transcript, "")
+    assert "Daily Quote" in out
+    assert "Stay hungry" in out
+    assert "COMPLETED" not in out  # the sentinel is stripped
+    assert out.strip() != ""
+
+
+def test_deliverable_result_falls_back_to_stored_when_no_transcript():
+    import scheduler
+
+    assert scheduler._deliverable_result("", "stored payload") == "stored payload"
+    assert scheduler._deliverable_result("", "") == ""
