@@ -1,7 +1,7 @@
 # Recruiting Outreach Automation — Design Spec
 
 **Date:** 2026-06-08
-**Status:** Approved (high-level), spec-review iteration 2
+**Status:** Spec review passed (iteration 3 / final) — ready for planning
 **Author:** brainstormed with Jacint
 
 ## 1. Problem & Goal
@@ -254,10 +254,11 @@ none are needed because the n8n base falls back to the hosted default in code.
   message + 🔁 Retry. Never 500 the interaction.
 - No candidates found → "I couldn't find engineers matching that — try a broader
   role or remove the location."
-- `N8NClient.trigger_workflow` returns `None`/`{"status":"error"}` (timeout / empty
-  body / n8n error — already logged by the client) → store a partial summary
-  ("Found N engineers but sending failed — they're saved; I'll retry sends") and
-  surface the found count.
+- The tasks-side `httpx` POST to n8n returns non-2xx or times out (mirror
+  `routes_cron.py`'s `try/except httpx`, but instead of raising store a partial
+  summary): "Found N engineers but sending failed — they're saved; I'll retry
+  sends", and surface the found count. (No `N8NClient` is involved — this is a raw
+  `httpx` call in the tasks service.)
 - GitHub rate-limit / 403 → the agent reports it via the `FAILED:` path.
 
 ## 8. Testing strategy
