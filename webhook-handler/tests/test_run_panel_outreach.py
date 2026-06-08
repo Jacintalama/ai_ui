@@ -37,6 +37,7 @@ async def test_run_panel_outreach_empty_jobdesc():
     ctx = _ctx(AsyncMock())
     await r.run_panel_outreach(ctx, "Python", "", "   ", 10)
     ctx.respond.assert_awaited()  # asks for a description; no task started
+    r._tasks_client.start_outreach.assert_not_called()
 
 
 @pytest.mark.asyncio

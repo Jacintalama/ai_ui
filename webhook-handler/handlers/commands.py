@@ -2202,8 +2202,9 @@ class CommandRouter:
             try:
                 st = await self._tasks_client.get_outreach_status(email, task_id)
                 errors = 0
-            except TasksAPIError:
+            except TasksAPIError as e:
                 errors += 1
+                logger.warning("watch_outreach status error (%s) task=%s", e.status, task_id)
                 if errors >= OUTREACH_MAX_CONSECUTIVE_ERRORS:
                     await _notify("Lost track of the outreach run — try again.")
                     return
