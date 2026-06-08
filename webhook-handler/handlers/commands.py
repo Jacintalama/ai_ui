@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 BUILD_POLL_SECONDS = 12
 BUILD_MAX_POLLS = 150  # ~30 min at 12s
 BUILD_MAX_CONSECUTIVE_ERRORS = 5
+
+OUTREACH_POLL_SECONDS = 12
+OUTREACH_MAX_POLLS = 80   # ~16 min, > agent EXECUTION_TIMEOUT_SECONDS (600s) + n8n
+OUTREACH_MAX_CONSECUTIVE_ERRORS = 5
 # Public host for building preview links (matches the tasks service's
 # AIUI_PUBLIC_DOMAIN default; the domain is otherwise hardcoded elsewhere here).
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
@@ -2149,6 +2153,73 @@ class CommandRouter:
         await _notify(
             f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
         )
+
+    async def run_panel_outreach(
+        self, ctx: CommandContext, role: str, location: str,
+        jobdesc: str, count: int,
+    ) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        if not (jobdesc or "").strip():
+            await ctx.respond("Please paste the job description so I know what to send.")
+            return
+        try:
+            result = await self._tasks_client.start_outreach(email, {
+                "role": role, "location": location, "jobdesc": jobdesc, "count": count})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        task_id = result["task_id"]
+        where = f"{role}" + (f" · {location}" if location else "")
+        await ctx.respond(
+            f"\U0001f50e Searching GitHub for **{where}** … I'll post the results "
+            "in your thread when it's done (usually a minute or two).")
+        if ctx.notify_channel is not None:
+            w = asyncio.create_task(self._watch_outreach(ctx, email, task_id))
+            self._background_tasks.add(w)
+            w.add_done_callback(self._background_tasks.discard)
+
+    async def _watch_outreach(
+        self, ctx: CommandContext, email: str, task_id: str,
+        *, poll_seconds: int | None = None, max_polls: int | None = None,
+    ) -> None:
+        if ctx.notify_channel is None:
+            return
+
+        async def _notify(msg: str) -> None:
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_outreach notify failed task=%s: %s", task_id, exc)
+
+        poll_seconds = OUTREACH_POLL_SECONDS if poll_seconds is None else poll_seconds
+        max_polls = OUTREACH_MAX_POLLS if max_polls is None else max_polls
+        errors = 0
+        for _ in range(max_polls):
+            await asyncio.sleep(poll_seconds)
+            try:
+                st = await self._tasks_client.get_outreach_status(email, task_id)
+                errors = 0
+            except TasksAPIError:
+                errors += 1
+                if errors >= OUTREACH_MAX_CONSECUTIVE_ERRORS:
+                    await _notify("Lost track of the outreach run — try again.")
+                    return
+                continue
+            status = st.get("status")
+            if status == "completed":
+                text = (st.get("text") or "").strip() or "Outreach complete."
+                url = st.get("sheet_url") or ""
+                await _notify(f"✅ {text}" + (f"\n\U0001f449 {url}" if url else ""))
+                return
+            if status == "failed":
+                text = (st.get("text") or "").strip()
+                await _notify("⚠️ Outreach didn't complete. "
+                              + (text or "Try a broader role or remove the location."))
+                return
+        await _notify("Outreach is still running — check back shortly.")
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""
