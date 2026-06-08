@@ -334,11 +334,22 @@ In `discord_commands.py`:
                  for row in data.get("components", [])
                  for c in row.get("components", [])}
        role, location, jobdesc, count = recruiting_panel.parse_outreach_modal(values)
-       ctx = self._ctx_from_component(payload, raw_text="outreach")  # mirror existing modal ctx build
+       # Build the ctx EXACTLY like the enhance-modal submit branch does
+       # (discord_commands.py ~631-647): it wires notify_channel via
+       # _channel_notifiers(channel_id), which the watcher needs to post results.
+       notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+       ctx = CommandContext(... , channel_id=channel_id, platform="discord",
+                            notify_channel=notify_channel,
+                            notify_channel_rich=notify_channel_rich, ...)
        asyncio.create_task(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
        return {"type": DEFERRED_CHANNEL_MESSAGE}
    ```
-   Use the SAME ctx-construction helper the schedule/build modal submit uses (so `ctx.notify_channel` is wired to the channel). Read that branch and copy its ctx setup verbatim, only swapping the field extraction + the `run_panel_outreach` call.
+   **There is no `_ctx_from_component` helper** — the ctx is built inline in each
+   modal-submit branch. Copy the **enhance-modal** branch's ctx setup verbatim
+   (it uses `self._channel_notifiers(channel_id)` to set `notify_channel` /
+   `notify_channel_rich`; the schedule branch and `_handle_panel_route` do NOT set
+   `notify_channel`, so don't copy those). Only swap the field extraction + the
+   `run_panel_outreach` call.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -460,9 +471,11 @@ from handlers.commands import CommandRouter, CommandContext
 
 
 def _ctx(notify):
+    # channel_id is a REQUIRED CommandContext field (no default) — omitting it
+    # raises TypeError, not the intended "method undefined" failure.
     return CommandContext(
-        user_id="100", user_name="alice", raw_text="outreach", subcommand="",
-        arguments="", platform="discord", respond=AsyncMock(),
+        user_id="100", user_name="alice", channel_id="c", raw_text="outreach",
+        subcommand="", arguments="", platform="discord", respond=AsyncMock(),
         respond_components=AsyncMock(), notify_channel=notify,
     )
 
@@ -911,11 +924,50 @@ git commit -m "test(outreach): lock n8n POST url + payload shape"
 ## Task 7: Tasks routes + `_run_outreach` (`routes_outreach.py`)
 
 **Files:**
+- Create: `mcp-servers/tasks/migrations/019_outreach_action_type.sql`
 - Create: `mcp-servers/tasks/routes_outreach.py`
 - Modify: `mcp-servers/tasks/main.py` (register router)
 - Test: `mcp-servers/tasks/tests/test_routes_outreach.py` (pure-ish: mock the DB session + agent stream; do NOT use `db_session`)
 
-Mirror `routes_aiuibuilder._create_and_spawn_build` for task creation and
+> **BLOCKER fixed here first.** `migrations/001_init.sql` defines
+> `action_type TEXT NOT NULL CHECK (action_type IN ('RESEARCH','BUILD','INTEGRATE','ASK_USER'))`.
+> Inserting `action_type="OUTREACH"` (the route below) would raise an
+> IntegrityError at runtime — and the pure unit tests would NOT catch it. The
+> migration below widens the constraint. Migrations are applied automatically on
+> every tasks-service boot by `db.py:_run_migrations()` (sorted `*.sql`), so they
+> MUST be idempotent — the DO-block below is name-agnostic and safe to re-run.
+
+- [ ] **Step 0a: Write the migration** (`migrations/019_outreach_action_type.sql`)
+
+```sql
+-- 019: allow the OUTREACH action_type (idempotent, name-agnostic)
+DO $$
+DECLARE c text;
+BEGIN
+  SELECT conname INTO c FROM pg_constraint
+   WHERE conrelid = 'tasks.items'::regclass AND contype = 'c'
+     AND pg_get_constraintdef(oid) ILIKE '%action_type%';
+  IF c IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE tasks.items DROP CONSTRAINT %I', c);
+  END IF;
+  ALTER TABLE tasks.items
+    ADD CONSTRAINT items_action_type_check
+    CHECK (action_type IN ('RESEARCH','BUILD','INTEGRATE','ASK_USER','OUTREACH'));
+END $$;
+```
+
+> Confirm `019` is the next free number (`ls migrations/`); bump if 019 already
+> exists. Confirm the schema-qualified table name (`tasks.items`) matches
+> `001_init.sql` (it uses the `tasks` schema).
+
+- [ ] **Step 0b: Commit the migration**
+
+```bash
+git add mcp-servers/tasks/migrations/019_outreach_action_type.sql
+git commit -m "feat(outreach): migration — allow OUTREACH action_type"
+```
+
+Then continue with the routes below. Mirror `routes_aiuibuilder._create_and_spawn_build` for task creation and
 `routes_execution._run_execution` for the agent run + `parse_outcome` branching.
 `_run_outreach` does: stream agent → `parse_outcome` (failed?) → on completed,
 `extract_candidates` → `cap_and_dedupe` → `post_outreach_to_n8n` → store summary
@@ -1188,7 +1240,7 @@ async def test_view_submission_dispatches(monkeypatch):
 
 - [ ] **Step 3: Implement** the Slack panel (blocks + modal `view` with 4 input blocks + `outreach_fields_from_view(view) -> (role, location, jobdesc, count)` reusing `recruiting_panel.parse_outreach_modal` for the count clamp) and wire two branches into `slack_interactions.py`:
   - in `_handle_block_actions`: `if action_id == srp.OUT_FIND_ACTION_ID: await self.slack.open_modal(trigger_id, srp.build_outreach_view(channel_id)); return {}`
-  - in `_handle_view_submission`: `if view.get("callback_id") == srp.OUT_MODAL_CALLBACK:` extract fields, build a Slack `CommandContext` (mirror the schedule submit's ctx with `notify_channel` posting to the DM/channel in `private_metadata`), `asyncio.create_task(self.router.run_panel_outreach(...))`, return the ACK the schedule submit uses.
+  - in `_handle_view_submission`: `if view.get("callback_id") == srp.OUT_MODAL_CALLBACK:` extract fields, then build the ctx. **The Slack `SCHED_MODAL_ID` submit branch does NOT build a `notify_channel` ctx** (it posts to a DM directly via `self.slack.post_message`). So construct the ctx manually: start from `_slack_ctx(user_id)` for identity + the not-linked path, resolve email via `_email_for`, and set `notify_channel` to a closure that wraps `self.slack.post_message(target, msg)` where `target` is the channel/DM id from `view["private_metadata"]` (the panel stashes `channel_id` there, mirroring the App Builder Slack flow). Track the watcher in `self.router._background_tasks`. Then `asyncio.create_task(self.router.run_panel_outreach(...))` and return the same empty-dict/clear ACK the schedule submit returns. All primitives needed (`_slack_ctx`, `_email_for`, `open_dm`, `post_message`) already exist in `slack_interactions.py`.
 
 - [ ] **Step 4: Run to verify it passes.** Then full suite: `./.venv/Scripts/python.exe -m pytest -q`.
 
