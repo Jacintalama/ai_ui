@@ -329,11 +329,14 @@ Replace the `SCHED_NEW_ID` → text-modal behavior with `SCHED_NEW_ID` → **pic
   - For `custom_id.startswith(schedule_picker.PICK_PREFIX)`: `field, token = parse_pick_cid(custom_id)`. Update `self._pending_picks[token]` from the field + the interaction value (select value, or the trailing custom_id segment for kind/qdate buttons; resolve qdate today/tomorrow/nextmon to a `YYYY-MM-DD` using the current time). Re-render the appropriate card (`build_repeating_card`/`build_onetime_card`) via an UPDATE_MESSAGE. For `field == "typeit"` → return `{"type": MODAL, "data": build_schedule_modal()}`. For `field == "settask"` → return `{"type": MODAL, "data": schedule_picker.build_task_modal(token)}`.
   - Task-modal submit (`custom_id == aiuisched:pick:taskmodal:<token>`): read `what`; `picks = self._pending_picks.pop(token, {})`; `try: cron, run_once, label = picks_to_cron(picks, now=<now>)` `except PastTimeError: post "that time is already past"`. Then feed `(name=label-or-what, cron, prompt=what, run_once)` into the SAME downstream the text path uses — i.e. build a confirm card (`build_confirm_components`) storing `self._pending_schedules[token2] = {"name":..., "cron": cron, "prompt": what, "run_once": run_once}`, OR call `run_schedule_create(..., run_once=run_once)` directly if the existing flow does. **Read lines ~801-848 (`_pending_schedules`/confirm build) + `_handle_schedule_confirm` (~852-914) and reuse that exact path, only adding `run_once` to the stored pending dict and the final `run_schedule_create(..., run_once=...)` call.**
 
-- [ ] **Step 4: Run to verify it passes.** Then full suite green.
+- [ ] **Step 3b: Update the pre-existing test broken by the SCHED_NEW swap.**
+`webhook-handler/tests/test_schedule_interactions.py::test_new_button_opens_schedule_modal` currently asserts `SCHED_NEW_ID` returns `type==9` (MODAL) with `custom_id==SCHED_MODAL_ID`. After this task, `SCHED_NEW` returns the picker **kind card** instead. Re-point that test: assert `SCHED_NEW` now returns the picker card, and assert the **text modal still opens via the "⌨️ Type it instead" button** (`aiuisched:pick:typeit:<token>` → `type==9`, `SCHED_MODAL_ID`) so the fallback is regression-covered. (Read the test first; keep its intent — "the user can still reach the text modal".)
+
+- [ ] **Step 4: Run to verify it passes.** Then full suite green (the updated `test_new_button_opens_schedule_modal` must pass, not just be deleted).
 
 - [ ] **Step 5: Commit**
 ```bash
-git add webhook-handler/handlers/discord_commands.py webhook-handler/tests/test_schedule_picker_routing.py
+git add webhook-handler/handlers/discord_commands.py webhook-handler/tests/test_schedule_picker_routing.py webhook-handler/tests/test_schedule_interactions.py
 git commit -m "feat(schedules): Discord picker routing (kind->picks->task modal->create)"
 ```
 
@@ -356,11 +359,16 @@ Replace the free-text "When?" input in the Slack create modal with native picker
 
 - [ ] **Step 3: Implement.** Add the four picker blocks to `build_schedule_modal`. Add `slack_picks_from_view(view)` translating: Repeat select value (`one_time`→kind=once else kind=rep+freq), `timepicker` `"HH:MM"`→hour, weekday select→weekday, `datepicker` `"YYYY-MM-DD"`→date. In `slack_interactions.py` `view_submission` for `SCHED_MODAL_ID`: build `picks` via `slack_picks_from_view`, `picks_to_cron(picks, now=<now>)` (catch `PastTimeError` → respond with an error in the modal response), then the existing create call with `run_once`. Keep the edit modal (`SCHED_EDITMODAL_PREFIX`) on the text path unchanged for v1.
 
-- [ ] **Step 4: Run to verify it passes.** Full webhook-handler suite green.
+- [ ] **Step 3b: Update the pre-existing Slack tests broken by the modal/path swap.**
+  - `webhook-handler/tests/test_slack_schedule_panel.py::test_create_modal_shape` asserts the create modal has exactly 2 `plain_text_input` blocks → now it has the "what" input + picker blocks. Update it to assert the new shape (the "what" input + Repeat select + timepicker + weekday select + datepicker).
+  - `webhook-handler/tests/test_slack_schedule_interactions.py` — the `test_create_submission_*` cluster builds `view_submission` payloads with a free-text `when` field and patches `parse_when`. After this task the `SCHED_MODAL_ID` branch uses `slack_picks_from_view` → `picks_to_cron` (not `parse_when`), so those payloads/patches are stale. Rebuild them with picker-state `view.state.values` (reuse `sample_view_state(...)`) and assert creation via the picker path.
+  - **Do NOT touch** `tests/test_schedule_panel.py::test_build_schedule_modal_has_what_and_when_inputs` — that tests the **Discord** `app_builder_panel.build_schedule_modal` fallback, which this task does not change; it must stay green.
+
+- [ ] **Step 4: Run to verify it passes.** Full webhook-handler suite green (the updated Slack tests pass, not deleted).
 
 - [ ] **Step 5: Commit**
 ```bash
-git add webhook-handler/handlers/slack_schedule_panel.py webhook-handler/handlers/slack_interactions.py webhook-handler/tests/test_slack_schedule_picker.py
+git add webhook-handler/handlers/slack_schedule_panel.py webhook-handler/handlers/slack_interactions.py webhook-handler/tests/test_slack_schedule_picker.py webhook-handler/tests/test_slack_schedule_panel.py webhook-handler/tests/test_slack_schedule_interactions.py
 git commit -m "feat(schedules): Slack native date/time pickers in the create modal"
 ```
 
