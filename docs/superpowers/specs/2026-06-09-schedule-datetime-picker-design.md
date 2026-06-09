@@ -101,16 +101,16 @@ Discord modals hold only text inputs, and each dropdown emits its own interactio
 Route the new `aiuisched:pick:*` buttons/selects: render the next step (carrying state in custom_ids), and on the "Set the task" modal submit, decode the timing + read the task → call the existing schedule-create router method with `cron_expr` + `run_once`.
 
 ### 4.3 Slack — `slack_schedule_panel.py` + `slack_interactions.py`
-Add the Repeat static-select, native `timepicker`, weekday select, and native `datepicker` to the schedule modal; in `view_submission`, read those Block Kit values → `picks_to_cron` → create. (Slack `datepicker` returns `YYYY-MM-DD`, `timepicker` returns `HH:MM` — feed straight into the converter.)
+Add the Repeat static-select, native `timepicker`, weekday select, and native `datepicker` to the schedule modal; in `view_submission`, read those Block Kit values → `picks_to_cron` → create. (Slack `datepicker` returns `YYYY-MM-DD`, `timepicker` returns `HH:MM` — feed straight into the converter.) These pickers **replace** the free-text *"How often?"* input in the Slack create modal (no redundant text "when" field — Slack goes picker-only). The text fallback in 4.5 refers to **Discord's** existing text-modal path, which stays available.
 
 ### 4.4 Backend — run-once support (`mcp-servers/tasks`)
 - **Migration** `0NN_schedule_run_once.sql`: `ALTER TABLE tasks.schedules ADD COLUMN IF NOT EXISTS run_once BOOLEAN NOT NULL DEFAULT FALSE;` (idempotent; migrations run every boot).
 - **Model**: add `run_once` to the `Schedule` SQLAlchemy model.
 - **`scheduler._tick_once`**: in the pre-dispatch update for a firing row, if `sched.run_once` is True, also set `enabled=False` (fires exactly once, then off). No change to `should_fire`/`cron_matches_now`.
-- **Create route + client**: the schedule-create endpoint and `TasksClient.create_schedule` accept and persist `run_once` (default False — fully backward-compatible).
+- **Create route + client**: `CreateScheduleIn` gains `run_once: bool = False`; the route passes it into `s.add(Schedule(..., run_once=body.run_once))`; `TasksClient.create_schedule` sends it (default False — fully backward-compatible). v1 does **not** need `run_once` in `_serialize`/read-back — the schedule card already shows the date/time via `cron_to_human`; a distinct "one-time" badge is phase 2.
 
 ### 4.5 Keep the text fallback
-The existing free-text *"How often?"* modal path stays wired and unchanged, so power users (and the picker's "exact minute" gap) are covered.
+The existing free-text *"How often?"* modal path on **Discord** (`SCHED_MODAL_ID`) stays wired and unchanged, so power users (and the picker's "exact minute" gap) are covered. (Slack's create modal becomes picker-only per 4.3.)
 
 ## 5. Error handling
 - **Past one-time datetime**: `picks_to_cron` rejects it; the bot replies "That time is already past — pick a future time." No schedule is created.
