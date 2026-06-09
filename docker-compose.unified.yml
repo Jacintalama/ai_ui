@@ -273,6 +273,8 @@ services:
       # Schedule-result delivery → webhook-handler → user's Discord thread.
       - WEBHOOK_HANDLER_URL=${WEBHOOK_HANDLER_URL:-http://webhook-handler:8086}
       - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
+      # GitHub API — raises rate limit from 60 → 5000 req/hr for recruiting outreach agent.
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
     secrets:
       - agent_ssh_key
     volumes:
