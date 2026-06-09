@@ -11,12 +11,21 @@ from config import settings
 from handlers.commands import CommandRouter, CommandContext
 from handlers import connector_intent
 from handlers.schedule_parse import parse_when
+from handlers import schedule_picker
+from datetime import datetime, timedelta, timezone
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _valid_email(email: str) -> bool:
     return bool(_EMAIL_RE.match((email or "").strip()))
+
+
+def _manila_now() -> datetime:
+    """Current wall-clock time in Manila as a naive datetime. Manila is a fixed
+    UTC+8 with no DST, so a constant offset avoids depending on the IANA tz
+    database (tzdata) being present in the webhook-handler container."""
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
 
 
 def _needs_connect(needs: set[str], *, linked: set[str]) -> list[str]:
@@ -103,6 +112,9 @@ class DiscordCommandHandler:
         # on Confirm/Cancel. In-memory and per-process (matches the rest of the
         # Discord flow); abandoned entries are tiny and harmless.
         self._pending_schedules: dict[str, dict] = {}
+        # token -> accumulating picker selections (kind/freq/hour/weekday/date)
+        # for the click date/time picker; resolved to a schedule on task-modal submit.
+        self._pending_picks: dict[str, dict] = {}
 
     async def handle_interaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
@@ -261,7 +273,13 @@ class DiscordCommandHandler:
                 build_delete_confirm_components(slug), update=False)
         # --- Schedules (aiuisched:*) ---
         if is_sched_new(custom_id):
-            return {"type": MODAL, "data": build_schedule_modal()}
+            token = uuid.uuid4().hex[:16]
+            self._pending_picks[token] = {}
+            card = schedule_picker.build_kind_card(token)
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": card["content"], "components": card["components"], "flags": 64}}
+        if custom_id.startswith(schedule_picker.PICK_PREFIX):
+            return await self._handle_pick_component(payload, custom_id)
         if is_sched_list(custom_id):
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_schedule_list(ctx),
@@ -687,6 +705,8 @@ class DiscordCommandHandler:
             )
             asyncio.create_task(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if custom_id.startswith(schedule_picker.TASK_MODAL_PREFIX):
+            return await self._handle_pick_task_submit(payload, custom_id)
         if is_sched_modal(custom_id):
             return await self._handle_schedule_modal_submit(payload)
         if is_sched_editmodal(custom_id):
@@ -809,13 +829,23 @@ class DiscordCommandHandler:
             }}
         cron, human = parsed
         name = f"{human}: {what[:60]}"
+        return await self._offer_schedule_confirm(
+            payload, name=name, cron=cron, prompt=what, human=human, run_once=False)
+
+    async def _offer_schedule_confirm(
+        self, payload: dict[str, Any], *, name: str, cron: str, prompt: str,
+        human: str, run_once: bool = False,
+    ) -> dict[str, Any]:
+        """Park a resolved (name, cron, prompt, run_once) under a token, then show
+        either a Connect-your-account card (when the prompt needs Gmail/Drive and
+        the owner hasn't connected) or the Confirm card. Shared by the text-`when`
+        path and the date/time picker path."""
         token = uuid.uuid4().hex[:16]
-        self._pending_schedules[token] = {"name": name, "cron": cron, "prompt": what}
+        self._pending_schedules[token] = {
+            "name": name, "cron": cron, "prompt": prompt, "run_once": run_once}
         # Gate on connector intent: if the task needs Gmail/Drive and the owner
         # hasn't connected it, show Connect buttons instead of the confirm card.
-        # The schedule is parked under `token` until they connect + resume. Tasks
-        # with no Gmail/Drive intent skip the gate entirely (no email resolution).
-        needs = connector_intent.detect(what)
+        needs = connector_intent.detect(prompt)
         if needs & {"gmail", "drive"}:
             member = payload.get("member", {})
             user = member.get("user", payload.get("user", {}))
@@ -836,7 +866,7 @@ class DiscordCommandHandler:
                         "drive", owner, public_base=settings.gdrive_public_url)))
                 return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
                     "content": (
-                        f"📅 **{human}** — {what[:150]}\n"
+                        f"📅 **{human}** — {prompt[:150]}\n"
                         "This task needs access to your account. Connect below (link is valid "
                         "10 min), then hit **✅ I've connected — create it**."
                     ),
@@ -844,10 +874,72 @@ class DiscordCommandHandler:
                     "flags": 64,
                 }}
         return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
-            "content": f"📅 **{human}** — {what[:200]}\nLook right?",
+            "content": f"📅 **{human}** — {prompt[:200]}\nLook right?",
             "components": build_confirm_components(token),
             "flags": 64,
         }}
+
+    async def _handle_pick_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """A picker button/select click: accumulate the choice and re-render the
+        card. 'Set the task' opens the task modal; 'Type it instead' falls back to
+        the original text modal."""
+        try:
+            field, token = schedule_picker.parse_pick_cid(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        if field == "typeit":
+            return {"type": MODAL, "data": build_schedule_modal()}
+        if field == "settask":
+            return {"type": MODAL, "data": schedule_picker.build_task_modal(token)}
+        picks = self._pending_picks.get(token)
+        if picks is None:
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": "That setup expired — hit **➕ New schedule** to start over.",
+                "components": []}}
+        now = _manila_now()
+        if field == "kindrep":
+            picks.clear(); picks["kind"] = "rep"
+        elif field == "kindonce":
+            picks.clear(); picks["kind"] = "once"
+        elif field in ("qtoday", "qtomorrow", "qnextmon"):
+            picks["date"] = schedule_picker.quick_date_iso(field, now)
+        else:
+            values = (payload.get("data") or {}).get("values") or []
+            if values:
+                picks[field] = values[0]
+                if field == "freq":
+                    picks.pop("weekday", None)  # weekday is weekly-only
+        return self._render_pick_card(token, picks, now)
+
+    def _render_pick_card(self, token: str, picks: dict, now) -> dict[str, Any]:
+        if picks.get("kind") == "once":
+            card = schedule_picker.build_onetime_card(token, picks, now)
+        else:
+            card = schedule_picker.build_repeating_card(token, picks)
+        return {"type": UPDATE_MESSAGE, "data": {
+            "content": card["content"], "components": card["components"]}}
+
+    async def _handle_pick_task_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """The 'Set the task' modal submit: resolve the accumulated picks into a
+        cron + run_once, then hand to the shared confirm path."""
+        token = custom_id[len(schedule_picker.TASK_MODAL_PREFIX):]
+        data = payload.get("data", {})
+        what = self._extract_modal_value(data, schedule_picker.TASK_INPUT_ID)
+        picks = self._pending_picks.pop(token, None)
+        if not what or not picks:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "That setup expired — hit **➕ New schedule** to start over.",
+                "flags": 64}}
+        now = _manila_now()
+        try:
+            cron, run_once, label = schedule_picker.picks_to_cron(picks, now=now)
+        except schedule_picker.PastTimeError:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "⏰ That time is already past — pick a future time.",
+                "flags": 64}}
+        name = f"{label}: {what[:60]}"
+        return await self._offer_schedule_confirm(
+            payload, name=name, cron=cron, prompt=what, human=label, run_once=run_once)
 
     async def _handle_schedule_confirm(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """Confirm button: create the parked schedule in the background, delivering
@@ -914,6 +1006,7 @@ class DiscordCommandHandler:
             await self.router.run_schedule_create(
                 ctx, name=pending["name"], cron=pending["cron"],
                 prompt=pending["prompt"], delivery_channel_id=target,
+                run_once=pending.get("run_once", False),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("_create_pending_schedule failed user=%s: %s", user_id, exc)

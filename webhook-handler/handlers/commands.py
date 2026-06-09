@@ -1689,7 +1689,7 @@ class CommandRouter:
 
     async def run_schedule_create(
         self, ctx: CommandContext, *, name: str, cron: str, prompt: str,
-        delivery_channel_id: str | None = None,
+        delivery_channel_id: str | None = None, run_once: bool = False,
     ) -> None:
         """Confirm button → create the schedule for the user, delivering results
         to their private thread."""
@@ -1700,7 +1700,7 @@ class CommandRouter:
         try:
             await self._tasks_client.create_schedule(
                 email, name=name, cron=cron, prompt=prompt,
-                delivery_channel_id=delivery_channel_id,
+                delivery_channel_id=delivery_channel_id, run_once=run_once,
             )
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))

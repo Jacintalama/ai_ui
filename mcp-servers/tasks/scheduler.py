@@ -302,6 +302,15 @@ async def _finalize_run(sched: Schedule) -> None:
         await _deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))
 
 
+def fire_values(sched, now) -> dict:
+    """Pre-dispatch update values for a firing schedule. A one-time (`run_once`)
+    schedule also gets enabled=False so it fires exactly once, then stops."""
+    v = {"last_run_at": now, "last_run_status": "running"}
+    if getattr(sched, "run_once", False):
+        v["enabled"] = False
+    return v
+
+
 async def _tick_once() -> None:
     """One pass of the scheduler. Reads enabled schedules, marks due ones
     as last_run_at=now BEFORE dispatching (so a slow run doesn't get
@@ -333,8 +342,7 @@ async def _tick_once() -> None:
         async with session() as s:
             await s.execute(
                 update(Schedule).where(Schedule.id == sched.id).values(
-                    last_run_at=now,
-                    last_run_status="running",
+                    **fire_values(sched, now)
                 )
             )
             await s.commit()

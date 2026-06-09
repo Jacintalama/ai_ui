@@ -31,7 +31,28 @@ SCHED_WHAT_INPUT_ID = "sched_what_input"
 SCHED_WHEN_BLOCK_ID = "sched_when"
 SCHED_WHEN_INPUT_ID = "sched_when_input"
 
+# Native date/time picker block/action ids for the create modal.
+SCHED_REPEAT_BLOCK_ID = "sched_repeat"
+SCHED_REPEAT_ACTION_ID = "sched_repeat_input"
+SCHED_TIME_BLOCK_ID = "sched_time"
+SCHED_TIME_ACTION_ID = "sched_time_input"
+SCHED_WEEKDAY_BLOCK_ID = "sched_weekday"
+SCHED_WEEKDAY_ACTION_ID = "sched_weekday_input"
+SCHED_DATE_BLOCK_ID = "sched_date"
+SCHED_DATE_ACTION_ID = "sched_date_input"
+
+# value strings map 1:1 to schedule_picker picks (kind/freq), except one_time.
+REPEAT_OPTIONS = [
+    ("One time", "one_time"), ("Every day", "daily"), ("Weekdays", "weekdays"),
+    ("Every week", "weekly"), ("Every hour", "hourly"), ("Every 30 min", "every30"),
+]
+_SLACK_WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+
 _TITLE_MAX = 24  # Slack modal title limit
+
+
+def _opt(text: str, value: str) -> dict:
+    return {"text": {"type": "plain_text", "text": text}, "value": value}
 
 
 _EDIT_VALUE_PROMPT_MAX = 1500  # leave headroom under Slack's 2000-char value cap
@@ -149,8 +170,13 @@ def build_schedule_card(sched: dict) -> list[dict]:
 
 
 def build_schedule_modal() -> dict:
-    """Create-schedule modal view (callback_id == SCHED_MODAL_ID): a multiline
-    'what' input + a single-line 'when' input."""
+    """Create-schedule modal view (callback_id == SCHED_MODAL_ID): a 'what' input
+    plus native Repeat / time / weekday / date pickers. The picker values are
+    resolved by slack_picks_from_view -> schedule_picker.picks_to_cron. All picker
+    blocks are present; the converter uses only the ones relevant to the chosen
+    Repeat (weekday for weekly, date for one-time)."""
+    repeat_opts = [_opt(label, val) for label, val in REPEAT_OPTIONS]
+    weekday_opts = [_opt(d.capitalize(), d) for d in _SLACK_WEEKDAYS]
     return {
         "type": "modal",
         "callback_id": SCHED_MODAL_ID,
@@ -175,25 +201,93 @@ def build_schedule_modal() -> dict:
             },
             {
                 "type": "input",
-                "block_id": SCHED_WHEN_BLOCK_ID,
-                "label": {"type": "plain_text", "text": "When?"},
-                "hint": {
-                    "type": "plain_text",
-                    "text": "A cron expression or plain English both work.",
-                },
+                "block_id": SCHED_REPEAT_BLOCK_ID,
+                "label": {"type": "plain_text", "text": "Repeat"},
                 "element": {
-                    "type": "plain_text_input",
-                    "action_id": SCHED_WHEN_INPUT_ID,
-                    "multiline": False,
-                    "max_length": 100,
-                    "placeholder": {
-                        "type": "plain_text",
-                        "text": "0 9 * * *  /  every morning  /  every Monday 9am",
-                    },
+                    "type": "static_select",
+                    "action_id": SCHED_REPEAT_ACTION_ID,
+                    "initial_option": repeat_opts[1],  # Every day
+                    "options": repeat_opts,
+                },
+            },
+            {
+                "type": "input",
+                "block_id": SCHED_TIME_BLOCK_ID,
+                "label": {"type": "plain_text", "text": "Time (Manila)"},
+                "element": {
+                    "type": "timepicker",
+                    "action_id": SCHED_TIME_ACTION_ID,
+                    "initial_time": "09:00",
+                },
+            },
+            {
+                "type": "input",
+                "block_id": SCHED_WEEKDAY_BLOCK_ID,
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Day of week (for weekly)"},
+                "element": {
+                    "type": "static_select",
+                    "action_id": SCHED_WEEKDAY_ACTION_ID,
+                    "options": weekday_opts,
+                },
+            },
+            {
+                "type": "input",
+                "block_id": SCHED_DATE_BLOCK_ID,
+                "optional": True,
+                "label": {"type": "plain_text", "text": "Date (for one-time)"},
+                "element": {
+                    "type": "datepicker",
+                    "action_id": SCHED_DATE_ACTION_ID,
                 },
             },
         ],
     }
+
+
+def _selected_value(state: dict, block: str, action: str):
+    el = (state.get(block, {}) or {}).get(action, {}) or {}
+    opt = el.get("selected_option")
+    return opt.get("value") if opt else None
+
+
+def slack_picks_from_view(view: dict) -> dict:
+    """Map the create modal's Block Kit state into a schedule_picker picks dict."""
+    state = (view.get("state", {}) or {}).get("values", {}) or {}
+    repeat = _selected_value(state, SCHED_REPEAT_BLOCK_ID, SCHED_REPEAT_ACTION_ID) or "daily"
+    weekday = _selected_value(state, SCHED_WEEKDAY_BLOCK_ID, SCHED_WEEKDAY_ACTION_ID)
+    time_v = ((state.get(SCHED_TIME_BLOCK_ID, {}) or {}).get(
+        SCHED_TIME_ACTION_ID, {}) or {}).get("selected_time")
+    date_v = ((state.get(SCHED_DATE_BLOCK_ID, {}) or {}).get(
+        SCHED_DATE_ACTION_ID, {}) or {}).get("selected_date")
+    picks: dict = {}
+    if repeat == "one_time":
+        picks["kind"] = "once"
+        if date_v:
+            picks["date"] = date_v
+    else:
+        picks["kind"] = "rep"
+        picks["freq"] = repeat
+        if weekday:
+            picks["weekday"] = weekday
+    if time_v:
+        picks["hour"] = str(int(time_v.split(":")[0]))
+    return picks
+
+
+def sample_view_state(repeat: str, time: str = "09:00", weekday=None, date=None) -> dict:
+    """Test helper: a view.state.values dict shaped like Slack sends it."""
+    values: dict = {
+        SCHED_REPEAT_BLOCK_ID: {SCHED_REPEAT_ACTION_ID: {
+            "selected_option": {"value": repeat}}},
+        SCHED_TIME_BLOCK_ID: {SCHED_TIME_ACTION_ID: {"selected_time": time}},
+    }
+    if weekday:
+        values[SCHED_WEEKDAY_BLOCK_ID] = {SCHED_WEEKDAY_ACTION_ID: {
+            "selected_option": {"value": weekday}}}
+    if date:
+        values[SCHED_DATE_BLOCK_ID] = {SCHED_DATE_ACTION_ID: {"selected_date": date}}
+    return values
 
 
 def build_schedule_edit_modal(sched: dict) -> dict:

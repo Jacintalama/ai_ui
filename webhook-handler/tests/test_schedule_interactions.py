@@ -40,10 +40,22 @@ async def _drain():
 
 
 @pytest.mark.asyncio
-async def test_new_button_opens_schedule_modal():
+async def test_new_button_opens_picker_card():
+    # SCHED_NEW now opens the click date/time picker (kind card), not the text modal.
     resp = await _handler(MagicMock()).handle_interaction(_component(SCHED_NEW_ID))
-    assert resp["type"] == 9  # MODAL
-    assert resp["data"]["custom_id"] == SCHED_MODAL_ID
+    assert resp["type"] == 4  # ephemeral message carrying the picker kind card
+    ids = [c["custom_id"] for row in resp["data"]["components"]
+           for c in row["components"] if "custom_id" in c]
+    assert any("aiuisched:pick:kindrep:" in i for i in ids)
+    assert any("aiuisched:pick:kindonce:" in i for i in ids)
+
+
+@pytest.mark.asyncio
+async def test_type_it_instead_opens_text_modal():
+    # the picker's "⌨️ Type it instead" still reaches the original text modal.
+    resp = await _handler(MagicMock()).handle_interaction(
+        _component("aiuisched:pick:typeit:tok1"))
+    assert resp["type"] == 9 and resp["data"]["custom_id"] == SCHED_MODAL_ID
 
 
 @pytest.mark.asyncio
@@ -91,7 +103,7 @@ async def test_confirm_creates_schedule_with_thread_delivery(monkeypatch):
     monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=True))
     captured = {}
 
-    async def fake_create(ctx, *, name, cron, prompt, delivery_channel_id=None):
+    async def fake_create(ctx, *, name, cron, prompt, delivery_channel_id=None, run_once=False):
         captured.update(name=name, cron=cron, prompt=prompt,
                         delivery=delivery_channel_id, user=ctx.user_id)
     router = MagicMock()
@@ -188,7 +200,7 @@ async def test_modal_submit_gmail_unconnected_shows_connect_card(monkeypatch):
 async def test_connect_resume_creates_after_connecting(monkeypatch):
     captured = {}
 
-    async def fake_create(ctx, *, name, cron, prompt, delivery_channel_id=None):
+    async def fake_create(ctx, *, name, cron, prompt, delivery_channel_id=None, run_once=False):
         captured.update(cron=cron, prompt=prompt, delivery=delivery_channel_id)
     router = MagicMock()
     router.run_schedule_create = fake_create

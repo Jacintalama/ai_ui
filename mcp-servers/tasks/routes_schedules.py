@@ -58,6 +58,7 @@ class CreateScheduleIn(BaseModel):
     persona: str = ""
     prompt: str = Field(min_length=1)
     enabled: bool = True
+    run_once: bool = False
     delivery_channel_id: str | None = None
     delivery_platform: str = "discord"
 
@@ -115,6 +116,7 @@ async def create_schedule(
             persona=body.persona,
             prompt=body.prompt,
             enabled=body.enabled,
+            run_once=body.run_once,
             delivery_channel_id=body.delivery_channel_id,
             delivery_platform=body.delivery_platform,
         ))

@@ -86,7 +86,7 @@ class TasksClient:
     async def create_schedule(
         self, user_email: str, name: str, cron: str, prompt: str,
         tz: str = "Asia/Manila", delivery_channel_id: str | None = None,
-        delivery_platform: str = "discord",
+        delivery_platform: str = "discord", run_once: bool = False,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "name": name, "cron_expr": cron, "prompt": prompt, "tz": tz,
@@ -95,6 +95,10 @@ class TasksClient:
         # existing create test) stable for callers that don't deliver to Discord.
         if delivery_channel_id is not None:
             body["delivery_channel_id"] = delivery_channel_id
+        # Only include run_once when True so existing (repeating) create payloads
+        # stay byte-identical for callers that never set it.
+        if run_once:
+            body["run_once"] = True
         if delivery_platform:
             body["delivery_platform"] = delivery_platform
         resp = await self._request("POST", "/schedules", user_email, json=body)

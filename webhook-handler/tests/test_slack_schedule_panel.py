@@ -157,12 +157,13 @@ def _plain_text_input_blocks(view: dict) -> list[dict]:
 def test_create_modal_shape():
     view = build_schedule_modal()
     assert view["callback_id"] == SCHED_MODAL_ID
+    # one multiline 'what' input plus the native date/time pickers
     inputs = _plain_text_input_blocks(view)
-    assert len(inputs) == 2
-    # one multiline, one single-line
-    multilines = [b["element"].get("multiline", False) for b in inputs]
-    assert True in multilines
-    assert False in multilines
+    assert len(inputs) == 1 and inputs[0]["element"].get("multiline") is True
+    el_types = [b["element"]["type"] for b in view["blocks"] if b.get("type") == "input"]
+    assert "static_select" in el_types  # Repeat (+ weekday)
+    assert "timepicker" in el_types
+    assert "datepicker" in el_types
 
 
 def test_edit_modal_prefilled():
