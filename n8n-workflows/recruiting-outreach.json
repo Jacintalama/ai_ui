@@ -1,0 +1,142 @@
+{
+  "name": "recruiting-outreach",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recruiting-outreach",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "webhookId": "recruiting-outreach"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": { "__rl": true, "mode": "id", "value": "CONFIGURE_IN_UI" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Outreach" },
+        "options": {}
+      },
+      "name": "Sheets Read Existing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [440, 300],
+      "id": "a1b2c3d4-0002-0002-0002-000000000002",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Inputs:\n//   items[0]  = webhook body (job_title + candidates[])\n//   items[1+] = existing sheet rows (each has an 'email' field)\n\nconst allItems = $input.all();\n\n// Separate webhook payload from sheet rows\n// The webhook node is wired first, sheet read second — use $('Webhook') and $('Sheets Read Existing')\nconst webhookItem = $('Webhook').first().json.body || $('Webhook').first().json;\nconst existingRows = $('Sheets Read Existing').all().map(i => (i.json.email || '').toLowerCase().trim());\n\nconst jobTitle = webhookItem.job_title || '';\nconst candidates = webhookItem.candidates || [];\nconst date = new Date().toISOString().split('T')[0];\n\n// Dedupe: drop candidates whose email already appears in the sheet\nconst deduped = candidates.filter(c => {\n  if (!c.email) return true; // no-email candidates always pass through\n  return !existingRows.includes(c.email.toLowerCase().trim());\n});\n\n// Emit one item per candidate with status field\nreturn deduped.map(c => ({\n  json: {\n    date,\n    name: c.name || '',\n    github_url: c.github_url || '',\n    email: c.email || '',\n    subject: c.subject || '',\n    body: c.body || '',\n    status: c.email ? 'sent' : 'no_email',\n    job_title: jobTitle\n  }\n}));"
+      },
+      "name": "Dedupe and Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300],
+      "id": "a1b2c3d4-0003-0003-0003-000000000003"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "name": "Gmail Send",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [880, 180],
+      "id": "a1b2c3d4-0004-0004-0004-000000000004",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "mode": "id", "value": "CONFIGURE_IN_UI" },
+        "sheetName": { "__rl": true, "mode": "name", "value": "Outreach" },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "name": "Sheets Append",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1100, 300],
+      "id": "a1b2c3d4-0005-0005-0005-000000000005",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CONFIGURE_IN_UI",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, sent: $('Dedupe and Prepare').all().filter(i => i.json.status === 'sent').length, saved: $input.all().length, sheet_url: 'https://docs.google.com/spreadsheets/d/CONFIGURE_IN_UI' }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1320, 300],
+      "id": "a1b2c3d4-0006-0006-0006-000000000006"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          { "node": "Sheets Read Existing", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Sheets Read Existing": {
+      "main": [
+        [
+          { "node": "Dedupe and Prepare", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Dedupe and Prepare": {
+      "main": [
+        [
+          { "node": "Gmail Send", "type": "main", "index": 0 },
+          { "node": "Sheets Append", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Gmail Send": {
+      "main": [
+        [
+          { "node": "Sheets Append", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Sheets Append": {
+      "main": [
+        [
+          { "node": "Respond", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
