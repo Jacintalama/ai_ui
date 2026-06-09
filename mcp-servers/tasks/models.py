@@ -129,6 +129,9 @@ class Schedule(Base):
     persona = Column(Text, nullable=False, default="")
     prompt = Column(Text, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
+    # One-time schedules fire once on the matching minute, then the scheduler
+    # flips enabled=False. Repeating rows leave this False.
+    run_once = Column(Boolean, nullable=False, server_default="false", default=False)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_run_status = Column(Text, nullable=True)
     # Discord channel/thread id to post each run's result into (set when the
