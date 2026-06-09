@@ -63,6 +63,7 @@ from handlers.slack_schedule_panel import (
 )
 from handlers.schedule_parse import parse_when
 from handlers import connector_intent
+from handlers import slack_recruiting_panel as srp
 from clients import connectors
 from config import settings
 import uuid
@@ -334,6 +335,11 @@ class SlackInteractionsHandler:
                 self._do_connect_resume(user_id, token, response_url))
             self.router._background_tasks.add(task)
             task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        # ----- Recruiting outreach panel (aiuiout:*) -----
+        if action_id == srp.OUT_FIND_ACTION_ID:
+            await self.slack.open_modal(trigger_id, srp.build_outreach_view(channel_id))
             return {}
 
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
@@ -734,6 +740,45 @@ class SlackInteractionsHandler:
                     )
 
             task = asyncio.create_task(_edit())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        # ----- Recruiting outreach modal -----
+        if view.get("callback_id") == srp.OUT_MODAL_CALLBACK:
+            role, location, jobdesc, count = srp.outreach_fields_from_view(view)
+            target_channel = view.get("private_metadata") or ""
+
+            async def _start_outreach() -> None:
+                try:
+                    async def notify_channel(msg: str) -> None:
+                        await self.slack.post_message(channel=target_channel, text=msg)
+
+                    async def respond(msg: str) -> None:
+                        await self.slack.post_message(channel=target_channel, text=msg)
+
+                    ctx = CommandContext(
+                        user_id=user_id,
+                        user_name=user_name,
+                        channel_id=target_channel,
+                        raw_text="",
+                        subcommand="outreach",
+                        arguments="",
+                        platform="slack",
+                        respond=respond,
+                        metadata={},
+                        notify_channel=notify_channel,
+                    )
+                    await self.router.run_panel_outreach(
+                        ctx, role, location, jobdesc, count
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Slack outreach _start_outreach failed user=%s: %s",
+                        user_id, exc,
+                    )
+
+            task = asyncio.create_task(_start_outreach())
             self.router._background_tasks.add(task)
             task.add_done_callback(self.router._background_tasks.discard)
             return {}

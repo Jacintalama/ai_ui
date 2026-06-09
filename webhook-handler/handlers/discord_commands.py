@@ -70,6 +70,7 @@ from handlers.app_builder_panel import (
 )
 from handlers import cronjob_panel as cron
 from handlers import onboarding
+from handlers import recruiting_panel
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +324,10 @@ class DiscordCommandHandler:
 
         if is_panel_myapps(custom_id):
             return await self._handle_my_apps(payload)
+
+        # --- Recruiting outreach (aiuiout:*) ---
+        if recruiting_panel.is_out_find(custom_id):
+            return {"type": MODAL, "data": recruiting_panel.build_outreach_modal()}
 
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
@@ -646,6 +651,41 @@ class DiscordCommandHandler:
                 notify_channel_rich=notify_channel_rich if channel_id else None,
             )
             asyncio.create_task(self.router.run_panel_enhance(ctx, slug, change))
+            return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if recruiting_panel.is_out_modal(custom_id):
+            values = {c["custom_id"]: c.get("value", "")
+                      for row in data.get("components", [])
+                      for c in row.get("components", [])}
+            role, location, jobdesc, count = recruiting_panel.parse_outreach_modal(values)
+            interaction_token = payload.get("token", "")
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            channel_id = payload.get("channel_id", "")
+            notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+            async def respond(msg: str) -> None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=msg,
+                )
+
+            ctx = CommandContext(
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=channel_id,
+                raw_text="outreach find",
+                subcommand="outreach",
+                arguments="",
+                platform="discord",
+                respond=respond,
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
+                notify_channel=notify_channel if channel_id else None,
+                notify_channel_rich=notify_channel_rich if channel_id else None,
+            )
+            asyncio.create_task(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
         if is_sched_modal(custom_id):
             return await self._handle_schedule_modal_submit(payload)

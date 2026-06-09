@@ -224,6 +224,18 @@ class TasksClient:
         )
         return resp.json()
 
+    async def start_outreach(
+        self, user_email: str, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        resp = await self._request("POST", "/outreach", user_email, json=payload)
+        return resp.json()
+
+    async def get_outreach_status(
+        self, user_email: str, task_id: str,
+    ) -> dict[str, Any]:
+        resp = await self._request("GET", f"/outreach/{task_id}", user_email)
+        return resp.json()
+
     async def publish_app(self, user_email: str, slug: str) -> dict[str, Any]:
         resp = await self._request(
             "POST", f"/api/aiuibuilder/{slug}/publish", user_email,

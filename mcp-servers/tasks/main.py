@@ -23,6 +23,7 @@ from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
 from routes_templates import router as templates_router
 from routes_upload import router as upload_router
+from routes_outreach import router as outreach_router
 from routes_webhook import router as webhook_router
 
 logging.basicConfig(level=logging.INFO)
@@ -75,6 +76,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Tasks Service", version="0.1.0", lifespan=lifespan)
+app.include_router(outreach_router)  # bare /outreach — matches bot's TasksClient paths
 app.include_router(webhook_router)
 app.include_router(aiuibuilder_router)
 # Schedules MUST be registered before tasks_router (which has a catch-all
