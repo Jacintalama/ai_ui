@@ -269,7 +269,6 @@ services:
     # For local browser-only access, see docker-compose.local.yml.
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - N8N_WEBHOOK_BASE=${N8N_WEBHOOK_BASE:-http://n8n:5678}
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
       - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
       - CLAUDE_WORKSPACE=/workspace/ai_ui
