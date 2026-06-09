@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from handlers.schedule_parse import _DAY_NUM, _DAY_NAME, _fmt_time
 from handlers.app_builder_panel import (
-    ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT,
+    ACTION_ROW, SELECT_MENU, TEXT_INPUT,
     STYLE_PRIMARY, STYLE_SECONDARY, STYLE_SUCCESS, TEXT_PARAGRAPH, _button,
 )
 

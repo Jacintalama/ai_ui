@@ -42,6 +42,13 @@ def test_repeating_hourly_ready_no_time_select():
     assert sp.pick_cid("settask", TOKEN) in ids
 
 
+def test_repeating_every30_ready_no_time_select():
+    card = sp.build_repeating_card(TOKEN, {"kind": "rep", "freq": "every30"})
+    ids = _custom_ids(card)
+    assert sp.pick_cid("hour", TOKEN) not in ids
+    assert sp.pick_cid("settask", TOKEN) in ids
+
+
 def test_weekly_needs_weekday():
     not_ready = sp.build_repeating_card(TOKEN, {"kind": "rep", "freq": "weekly", "hour": "9"})
     ids = _custom_ids(not_ready)
@@ -77,7 +84,7 @@ def test_select_option_caps():
     ):
         for row in card["components"]:
             for c in row["components"]:
-                if c.get("type") == 3:  # SELECT_MENU
+                if c.get("type") == sp.SELECT_MENU:
                     assert 1 <= len(c["options"]) <= 25
 
 
