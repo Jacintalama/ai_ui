@@ -29,7 +29,9 @@ The agent calls the GitHub REST API to search for candidate profiles. Without a 
    ssh root@46.224.193.25 "cd /root/proxy-server && docker compose -f docker-compose.unified.yml up -d --no-deps tasks"
    ```
 
-The token is inherited by the Claude subprocess the tasks container spawns, so no further wiring is needed.
+The token is inherited by the Claude subprocess the tasks container spawns, so no further wiring is needed **on the default `local` agent backend**.
+
+> **If `AGENT_BACKEND=remote`:** the agent runs on a separate VM and only `AIUI_AGENT_EFFORT` / `IO_USER_JWT` are forwarded over SSH (`SendEnv`) — `GITHUB_TOKEN` is **not**. In that case also add `GITHUB_TOKEN=...` to the **agent VM's** `~/.env`, or the GitHub calls fall back to the unauthenticated 60 req/hr limit and will likely be throttled mid-run. On the default `local` backend (no `AGENT_BACKEND` override) this does not apply.
 
 ---
 
