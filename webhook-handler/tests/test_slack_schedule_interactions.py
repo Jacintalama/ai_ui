@@ -341,7 +341,7 @@ async def test_edit_submission_parseable_calls_update():
 def _resume_pending(handler, token="tok9"):
     handler._pending_schedules[token] = {
         "name": "n", "cron": "0 8 * * *", "prompt": "email me a quote",
-        "human": "every day at 8:00 AM", "dm": "D9",
+        "human": "every day at 8:00 AM", "dm": "D9", "run_once": True,
     }
 
 
@@ -410,6 +410,8 @@ async def test_connect_resume_creates_when_connected():
         await asyncio.sleep(0)  # drain while patch is active
     assert resp == {}
     router._tasks_client.create_schedule.assert_awaited_once()
+    # run_once parked in the pending dict propagates through the resume create.
+    assert router._tasks_client.create_schedule.call_args.kwargs.get("run_once") is True
     assert "tok9" not in handler._pending_schedules
     assert "Scheduled" in slack.post_to_response_url.call_args.args[1]
 
