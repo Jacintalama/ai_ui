@@ -25,6 +25,7 @@ from handlers.slack_schedule_panel import (
     SCHED_WHAT_INPUT_ID,
     SCHED_WHEN_BLOCK_ID,
     SCHED_WHEN_INPUT_ID,
+    sample_view_state,
 )
 
 
@@ -74,6 +75,7 @@ def _block_actions_payload(action_id: str, user_id: str = "U1",
 
 def _view_submission_payload(callback_id: str, what: str, when: str,
                              user_id: str = "U1") -> dict:
+    # Used by the EDIT modal tests (the edit modal keeps the text 'when' field).
     return {
         "type": "view_submission",
         "user": {"id": user_id, "username": "tester"},
@@ -84,6 +86,18 @@ def _view_submission_payload(callback_id: str, what: str, when: str,
                 SCHED_WHEN_BLOCK_ID: {SCHED_WHEN_INPUT_ID: {"value": when}},
             }},
         },
+    }
+
+
+def _picker_create_payload(what: str, *, repeat: str = "daily", time: str = "09:00",
+                           weekday=None, date=None, user_id: str = "U1") -> dict:
+    """Create-modal submit using the native date/time pickers (Task 6)."""
+    state = sample_view_state(repeat, time=time, weekday=weekday, date=date)
+    state[SCHED_WHAT_BLOCK_ID] = {SCHED_WHAT_INPUT_ID: {"value": what}}
+    return {
+        "type": "view_submission",
+        "user": {"id": user_id, "username": "tester"},
+        "view": {"callback_id": SCHED_MODAL_ID, "state": {"values": state}},
     }
 
 
@@ -229,28 +243,23 @@ async def test_sched_edit_prefix_opens_edit_modal():
 
 
 @pytest.mark.asyncio
-async def test_create_submission_parseable_creates_schedule():
+async def test_create_submission_picker_creates_schedule():
     router = _sched_router()
     handler, slack = _handler(router)
 
     # "emails" triggers the Gmail connector gate; simulate already-connected so
     # the create path runs (the gate itself is covered by its own tests).
     with patch(
-        "handlers.slack_interactions.parse_when",
-        return_value=("0 8 * * *", "every day at 8:00 AM"),
-    ), patch(
         "handlers.slack_interactions.connectors.is_connected",
         new=AsyncMock(return_value=True),
     ):
         resp = await handler.handle_interaction(
-            _view_submission_payload(
-                SCHED_MODAL_ID,
+            _picker_create_payload(
                 what="summarize my unread emails and list the top 3",
-                when="every morning at 8am",
+                repeat="daily", time="08:00",
             )
         )
-        # Drain the background task WHILE the patch is still active.
-        await asyncio.sleep(0)
+        await asyncio.sleep(0)  # drain the background task while the patch is active
     assert resp == {}  # empty 200 closes the modal
 
     router._tasks_client.create_schedule.assert_awaited_once()
@@ -259,7 +268,7 @@ async def test_create_submission_parseable_creates_schedule():
     assert kwargs["prompt"] == "summarize my unread emails and list the top 3"
     assert kwargs["delivery_platform"] == "slack"
     assert kwargs["delivery_channel_id"] == "D9"
-    # confirmation DM'd
+    assert kwargs.get("run_once") is False
     slack.post_message.assert_awaited()
 
 
@@ -269,17 +278,12 @@ async def test_create_submission_without_dm_does_not_create_schedule():
     handler, slack = _handler(router)
     slack.open_dm.return_value = None
 
-    with patch(
-        "handlers.slack_interactions.parse_when",
-        return_value=("0 8 * * *", "every day at 8:00 AM"),
-    ):
-        resp = await handler.handle_interaction(
-            _view_submission_payload(
-                SCHED_MODAL_ID,
-                what="summarize my unread emails and list the top 3",
-                when="every morning at 8am",
-            )
+    resp = await handler.handle_interaction(
+        _picker_create_payload(
+            what="summarize my unread emails and list the top 3",
+            repeat="daily", time="08:00",
         )
+    )
     assert resp == {}
     await asyncio.sleep(0)
 
@@ -288,22 +292,19 @@ async def test_create_submission_without_dm_does_not_create_schedule():
 
 
 @pytest.mark.asyncio
-async def test_create_submission_unparseable_returns_errors_and_no_create():
+async def test_create_submission_incomplete_picks_returns_errors_and_no_create():
     router = _sched_router()
     handler, slack = _handler(router)
 
-    with patch("handlers.slack_interactions.parse_when", return_value=None):
-        resp = await handler.handle_interaction(
-            _view_submission_payload(
-                SCHED_MODAL_ID,
-                what="do a thing",
-                when="gibberish nonsense",
-            )
-        )
+    # Weekly with no weekday selected -> picks_to_cron can't resolve -> a modal
+    # validation error pinned to a picker block, and nothing is created.
+    resp = await handler.handle_interaction(
+        _picker_create_payload(what="do a thing", repeat="weekly", time="09:00")
+    )
     await asyncio.sleep(0)
 
     assert resp.get("response_action") == "errors"
-    assert SCHED_WHEN_BLOCK_ID in resp.get("errors", {})
+    assert resp.get("errors")  # an error on a picker block
     router._tasks_client.create_schedule.assert_not_awaited()
 
 
@@ -349,17 +350,13 @@ async def test_create_unconnected_connector_shows_connect_card_no_create():
     router = _sched_router()
     handler, slack = _handler(router)
     with patch(
-        "handlers.slack_interactions.parse_when",
-        return_value=("0 8 * * *", "every day at 8:00 AM"),
-    ), patch(
         "handlers.slack_interactions.connectors.is_connected",
         new=AsyncMock(return_value=False),
     ):
         resp = await handler.handle_interaction(
-            _view_submission_payload(
-                SCHED_MODAL_ID,
+            _picker_create_payload(
                 what="send a quote to my email rambo@x.com",
-                when="every morning at 8am",
+                repeat="daily", time="08:00",
             )
         )
         await asyncio.sleep(0)  # drain while patch is active
@@ -384,17 +381,12 @@ async def test_create_no_connector_intent_creates_without_checking():
         return False
 
     with patch(
-        "handlers.slack_interactions.parse_when",
-        return_value=("0 8 * * *", "every day at 8:00 AM"),
-    ), patch(
         "handlers.slack_interactions.connectors.is_connected",
         new=_fake_is_connected,
     ):
         await handler.handle_interaction(
-            _view_submission_payload(
-                SCHED_MODAL_ID, what="give me a motivational quote",
-                when="every morning at 8am",
-            )
+            _picker_create_payload(what="give me a motivational quote",
+                                   repeat="daily", time="08:00")
         )
     await asyncio.sleep(0)
     router._tasks_client.create_schedule.assert_awaited_once()

@@ -56,12 +56,17 @@ from handlers.slack_schedule_panel import (
     build_schedule_modal,
     build_schedule_edit_modal,
     build_connect_blocks,
+    slack_picks_from_view,
     SCHED_WHAT_BLOCK_ID,
     SCHED_WHAT_INPUT_ID,
     SCHED_WHEN_BLOCK_ID,
     SCHED_WHEN_INPUT_ID,
+    SCHED_REPEAT_BLOCK_ID,
+    SCHED_DATE_BLOCK_ID,
 )
 from handlers.schedule_parse import parse_when
+from handlers import schedule_picker
+from datetime import datetime, timedelta, timezone
 from handlers import connector_intent
 from handlers import slack_recruiting_panel as srp
 from clients import connectors
@@ -387,6 +392,7 @@ class SlackInteractionsHandler:
                 prompt=pending["prompt"],
                 delivery_channel_id=pending["dm"],
                 delivery_platform="slack",
+                run_once=pending.get("run_once", False),
             )
             await self._resume_reply(
                 response_url, f"✅ Scheduled — runs {pending['human']}")
@@ -624,11 +630,17 @@ class SlackInteractionsHandler:
         # ----- Cron scheduler: create modal -----
         if callback_id == SCHED_MODAL_ID:
             what = self._sched_value(view, SCHED_WHAT_BLOCK_ID, SCHED_WHAT_INPUT_ID)
-            when = self._sched_value(view, SCHED_WHEN_BLOCK_ID, SCHED_WHEN_INPUT_ID)
-            parsed = parse_when(when)
-            if parsed is None:
-                return self._sched_when_error()
-            cron, human = parsed
+            picks = slack_picks_from_view(view)
+            now = (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
+            try:
+                cron, run_once, human = schedule_picker.picks_to_cron(picks, now=now)
+            except schedule_picker.PastTimeError:
+                return self._sched_pick_error(
+                    SCHED_DATE_BLOCK_ID, "That date/time is already past — pick a future one.")
+            except (KeyError, ValueError):
+                return self._sched_pick_error(
+                    SCHED_REPEAT_BLOCK_ID,
+                    "Please finish the schedule — pick a day for weekly, or a date for one-time.")
             name = self._sched_name_from_prompt(what)
 
             async def _create() -> None:
@@ -663,7 +675,7 @@ class SlackInteractionsHandler:
                             token = uuid.uuid4().hex[:16]
                             self._pending_schedules[token] = {
                                 "name": name, "cron": cron, "prompt": what,
-                                "human": human, "dm": dm,
+                                "human": human, "dm": dm, "run_once": run_once,
                             }
                             header = (
                                 f"📅 *{human}* — {what[:150]}\n"
@@ -685,6 +697,7 @@ class SlackInteractionsHandler:
                         prompt=what,
                         delivery_channel_id=dm,
                         delivery_platform="slack",
+                        run_once=run_once,
                     )
                     if dm:
                         await self.slack.post_message(
@@ -813,6 +826,11 @@ class SlackInteractionsHandler:
                     "'every morning at 8am'.",
             },
         }
+
+    @staticmethod
+    def _sched_pick_error(block_id: str, message: str) -> dict[str, Any]:
+        """Slack modal validation error on a picker block (no schedule created)."""
+        return {"response_action": "errors", "errors": {block_id: message}}
 
     # ------------------------------------------------------------------
     # D10 — Publish / Unpublish management handlers
