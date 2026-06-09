@@ -99,3 +99,33 @@ async def test_expired_token_is_friendly():
     resp = await h.handle_interaction(_btn(sp.pick_cid("freq", "missing")))
     assert resp["type"] == 7  # UPDATE_MESSAGE with a restart hint
     assert "start over" in resp["data"]["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_kindonce_renders_onetime_card():
+    h = _handler()
+    h._pending_picks["tk"] = {}
+    resp = await h.handle_interaction(_btn(sp.pick_cid("kindonce", "tk")))
+    assert resp["type"] == 7
+    assert h._pending_picks["tk"] == {"kind": "once"}
+    ids = [c["custom_id"] for row in resp["data"]["components"] for c in row["components"]]
+    assert any("qtoday" in i for i in ids)
+    assert sp.pick_cid("date", "tk") in ids
+
+
+@pytest.mark.asyncio
+async def test_quick_date_button_sets_date():
+    h = _handler()
+    h._pending_picks["tk"] = {"kind": "once"}
+    await h.handle_interaction(_btn(sp.pick_cid("qtomorrow", "tk")))
+    assert h._pending_picks["tk"].get("date")  # a YYYY-MM-DD was set
+
+
+@pytest.mark.asyncio
+async def test_one_time_future_parks_run_once_true():
+    h = _handler()
+    h._pending_picks["tk"] = {"kind": "once", "date": "2099-12-31", "hour": "9"}
+    resp = await h.handle_interaction(_task_submit(f"{sp.TASK_MODAL_PREFIX}tk", "ping me"))
+    assert resp["type"] == 4
+    pend = list(h._pending_schedules.values())[-1]
+    assert pend["run_once"] is True and pend["cron"] == "0 9 31 12 *"

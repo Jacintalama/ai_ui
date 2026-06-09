@@ -12,14 +12,20 @@ from handlers.commands import CommandRouter, CommandContext
 from handlers import connector_intent
 from handlers.schedule_parse import parse_when
 from handlers import schedule_picker
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _valid_email(email: str) -> bool:
     return bool(_EMAIL_RE.match((email or "").strip()))
+
+
+def _manila_now() -> datetime:
+    """Current wall-clock time in Manila as a naive datetime. Manila is a fixed
+    UTC+8 with no DST, so a constant offset avoids depending on the IANA tz
+    database (tzdata) being present in the webhook-handler container."""
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
 
 
 def _needs_connect(needs: set[str], *, linked: set[str]) -> list[str]:
@@ -890,7 +896,7 @@ class DiscordCommandHandler:
             return {"type": UPDATE_MESSAGE, "data": {
                 "content": "That setup expired — hit **➕ New schedule** to start over.",
                 "components": []}}
-        now = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None)
+        now = _manila_now()
         if field == "kindrep":
             picks.clear(); picks["kind"] = "rep"
         elif field == "kindonce":
@@ -924,7 +930,7 @@ class DiscordCommandHandler:
             return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
                 "content": "That setup expired — hit **➕ New schedule** to start over.",
                 "flags": 64}}
-        now = datetime.now(ZoneInfo("Asia/Manila")).replace(tzinfo=None)
+        now = _manila_now()
         try:
             cron, run_once, label = schedule_picker.picks_to_cron(picks, now=now)
         except schedule_picker.PastTimeError:
