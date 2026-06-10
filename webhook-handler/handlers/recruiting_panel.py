@@ -29,9 +29,9 @@ _MAX_COUNT = 25
 
 PANEL_CONTENT = (
     "\U0001f3af **Recruiting Outreach**\n"
-    "Find software engineers and email them a job in one click. Hit "
-    "**\U0001f50d Find Engineers**, describe the role, and I'll search GitHub, "
-    "email those I can reach, and save everyone to your shared sheet."
+    "Find software engineers, then review the list and choose who to email. Hit "
+    "**\U0001f50d Find Engineers**, describe the role, and I'll search GitHub and "
+    "show you everyone I find — you pick who gets a message."
 )
 
 
@@ -78,7 +78,7 @@ def build_outreach_modal() -> dict:
                 "e.g. Berlin"),
             _ti(OUT_JOBDESC_INPUT, "Job description", TEXT_PARAGRAPH, True, 4000,
                 "We're hiring a senior backend engineer to ..."),
-            _ti(OUT_COUNT_INPUT, "How many to email (max 25)", TEXT_SHORT, False, 3,
+            _ti(OUT_COUNT_INPUT, "How many to find (max 25)", TEXT_SHORT, False, 3,
                 "10"),
         ],
     }
