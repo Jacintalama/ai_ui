@@ -2175,22 +2175,28 @@ class CommandRouter:
         if not (jobdesc or "").strip():
             await ctx.respond("Please paste the job description so I know what to send.")
             return
+        manual = ctx.platform == "discord"
         try:
             result = await self._tasks_client.start_outreach(email, {
                 "role": role, "location": location, "jobdesc": jobdesc,
-                "count": count, "mode": "manual"})
+                "count": count, "mode": "manual" if manual else "auto"})
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
             return
         task_id = result["task_id"]
         where = f"{role}" + (f" · {location}" if location else "")
-        await ctx.respond(
-            f"\U0001f50e Searching GitHub for **{where}** … I'll post the list of "
-            "engineers here to review before anything is sent (usually a minute "
-            "or two).")
+        if manual:
+            await ctx.respond(
+                f"\U0001f50e Searching GitHub for **{where}** … I'll post the list "
+                "here to review when it's ready (usually a minute or two).")
+        else:
+            await ctx.respond(
+                f"\U0001f50e Searching GitHub for **{where}** … I'll post the results "
+                "in your thread when it's done (usually a minute or two).")
         if ctx.notify_channel is not None:
-            w = asyncio.create_task(
-                self._watch_outreach_review(ctx, email, task_id, role, location))
+            coro = (self._watch_outreach_review(ctx, email, task_id, role, location)
+                    if manual else self._watch_outreach(ctx, email, task_id))
+            w = asyncio.create_task(coro)
             self._background_tasks.add(w)
             w.add_done_callback(self._background_tasks.discard)
 
@@ -2321,6 +2327,19 @@ class CommandRouter:
         if not email:
             await self._respond_not_linked(ctx)
             return
+        from handlers.discord_commands import _valid_email
+        ev = (email_val or "").strip()
+        if ev and not _valid_email(ev):
+            # bounce invalid email without mutating the candidate
+            try:
+                st = await self._tasks_client.get_outreach_candidates(email, task_id)
+            except TasksAPIError:
+                return
+            if ctx.edit_message is not None:
+                msg = rr.build_review_message(task_id, st.get("candidates", []), role="", location="")
+                msg = {**msg, "content": f"⚠️ `{ev}` doesn't look like a valid email — not saved."}
+                await ctx.edit_message(msg)
+            return
         try:
             st = await self._tasks_client.patch_outreach_candidate(
                 email, task_id, cid,
@@ -2347,12 +2366,18 @@ class CommandRouter:
             await ctx.respond(self._format_build_error(e))
             return
         if st.get("status") == "sent":
-            sent_msg = rr.build_sent_message(
-                st.get("text", "Sent."), st.get("sheet_url", ""))
-            if ctx.edit_message is not None:
-                await ctx.edit_message(sent_msg)
+            await ctx.edit_message(rr.build_sent_message(st.get("text", "Sent."),
+                                                         st.get("sheet_url", "")))
             return
-        await ctx.respond(st.get("text") or "Pick at least one engineer first.")
+        # not sent (e.g. nothing selected / transient send error): keep the
+        # interactive overview intact and show the reason as a content line.
+        if ctx.edit_message is not None:
+            msg = rr.build_review_message(task_id, st.get("candidates", []),
+                                          role="", location="")
+            msg = {**msg, "content": "⚠️ " + (st.get("text") or "Pick at least one engineer first.")}
+            await ctx.edit_message(msg)
+        else:
+            await ctx.respond(st.get("text") or "Pick at least one engineer first.")
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""
