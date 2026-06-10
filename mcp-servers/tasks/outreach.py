@@ -112,3 +112,71 @@ def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = 
              f"Emailed {sent}.",
              f"Saved {saved} to your sheet."]
     return " ".join(parts)
+
+
+def build_review_candidates(candidates: list[Candidate]) -> list[dict]:
+    """Manual-review rows with stable ids. Selected defaults ON for emailable
+    candidates, OFF for no-email ones."""
+    rows = []
+    for i, c in enumerate(candidates):
+        email = (c.email or "").strip()
+        rows.append({
+            "id": f"c{i}", "name": c.name, "github_url": c.github_url,
+            "email": email, "subject": c.subject, "body": c.body,
+            "selected": bool(email),
+            "status": "draft" if email else "no_email",
+        })
+    return rows
+
+
+def apply_candidate_edit(candidates: list[dict], cid: str, *, email=None,
+                         subject=None, body=None, selected=None) -> list[dict]:
+    """Return a new list with row `cid` updated. Unknown cid -> unchanged.
+    Email drives status: an email makes it draft/selectable; no email forces
+    status=no_email and selected=False."""
+    out = []
+    for c in candidates:
+        if c["id"] != cid:
+            out.append(c)
+            continue
+        c = dict(c)
+        if email is not None:
+            c["email"] = email.strip()
+        if subject is not None:
+            c["subject"] = subject
+        if body is not None:
+            c["body"] = body
+        has_email = bool(c["email"])
+        c["status"] = "draft" if has_email else "no_email"
+        if not has_email:
+            c["selected"] = False
+        elif selected is not None:
+            c["selected"] = bool(selected)
+        out.append(c)
+    return out
+
+
+def set_selection(candidates: list[dict], selected_ids: list[str]) -> list[dict]:
+    """Overwrite selection with exactly `selected_ids` (only emailable rows can
+    end up selected). Mirrors a Discord multi-select reporting the full set."""
+    chosen = set(selected_ids)
+    out = []
+    for c in candidates:
+        c = dict(c)
+        c["selected"] = (c["id"] in chosen) and bool(c["email"])
+        out.append(c)
+    return out
+
+
+def sendable_candidates(candidates: list[dict]) -> list[Candidate]:
+    """Selected + has-email rows -> Candidate objects for n8n."""
+    return [Candidate(name=c["name"], github_url=c["github_url"], email=c["email"],
+                      subject=c["subject"], body=c["body"])
+            for c in candidates if c.get("selected") and (c.get("email") or "").strip()]
+
+
+def review_summary(candidates: list[dict]) -> dict:
+    emailable = sum(1 for c in candidates if (c.get("email") or "").strip())
+    selected = sum(1 for c in candidates
+                   if c.get("selected") and (c.get("email") or "").strip())
+    return {"total": len(candidates), "emailable": emailable, "selected": selected}
