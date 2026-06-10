@@ -25,6 +25,7 @@
       "name": "Sheets Read Existing",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
+      "alwaysOutputData": true,
       "position": [440, 300],
       "id": "a1b2c3d4-0002-0002-0002-000000000002",
       "credentials": {
@@ -154,7 +155,8 @@
     "Has Email": {
       "main": [
         [
-          { "node": "Gmail Send", "type": "main", "index": 0 }
+          { "node": "Gmail Send", "type": "main", "index": 0 },
+          { "node": "Sheets Append", "type": "main", "index": 0 }
         ],
         [
           { "node": "Sheets Append", "type": "main", "index": 0 }
@@ -163,9 +165,7 @@
     },
     "Gmail Send": {
       "main": [
-        [
-          { "node": "Sheets Append", "type": "main", "index": 0 }
-        ]
+        []
       ]
     },
     "Sheets Append": {
