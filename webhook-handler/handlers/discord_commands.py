@@ -80,6 +80,7 @@ from handlers.app_builder_panel import (
 from handlers import cronjob_panel as cron
 from handlers import onboarding
 from handlers import recruiting_panel
+from handlers import recruiting_review as rr
 
 logger = logging.getLogger(__name__)
 
@@ -347,6 +348,18 @@ class DiscordCommandHandler:
         if recruiting_panel.is_out_find(custom_id):
             return {"type": MODAL, "data": recruiting_panel.build_outreach_modal()}
 
+        if rr.is_out_send(custom_id):
+            return await self._handle_outreach_send(payload, custom_id)
+        if rr.is_out_refresh(custom_id):
+            return await self._handle_outreach_refresh(payload, custom_id)
+        if rr.is_out_sel(custom_id):
+            return await self._handle_outreach_select(payload, custom_id, data)
+        if rr.is_out_edit(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_outreach_edit_open(payload, custom_id, values[0])
+
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -401,6 +414,80 @@ class DiscordCommandHandler:
         )
         asyncio.create_task(self.router.run_panel_publish(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
+
+    def _out_ctx(self, payload: dict[str, Any]) -> CommandContext:
+        """Build a CommandContext for an outreach review component interaction.
+        Its ``edit_message``/``respond`` edit the component's own message in
+        place via the interaction token."""
+        token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def edit_message(msg: dict) -> None:
+            await self.discord.edit_original(
+                interaction_token=token, content=msg.get("content", ""),
+                embeds=msg.get("embeds", []), components=msg.get("components", []))
+
+        async def respond(text: str) -> None:
+            await self.discord.edit_original(interaction_token=token, content=text)
+
+        return CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="outreach",
+            subcommand="outreach", arguments="", platform="discord",
+            respond=respond, edit_message=edit_message,
+            metadata={"interaction_id": payload.get("id", ""), "interaction_token": token,
+                      "guild_id": payload.get("guild_id", "")})
+
+    async def _handle_outreach_select(
+        self, payload: dict[str, Any], custom_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Recipient multi-select changed → patch the selection, re-render in place."""
+        task_id = rr.task_id_from_sel(custom_id)
+        selected = data.get("values") or []
+        ctx = self._out_ctx(payload)
+        asyncio.create_task(self.router.run_outreach_select(ctx, task_id, selected, "", ""))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _handle_outreach_refresh(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Refresh button → re-fetch candidates (no patch), re-render in place."""
+        task_id = rr.task_id_from_refresh(custom_id)
+        ctx = self._out_ctx(payload)
+        asyncio.create_task(self.router.run_outreach_select(ctx, task_id, None, "", ""))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _handle_outreach_edit_open(
+        self, payload: dict[str, Any], custom_id: str, cid: str) -> dict[str, Any]:
+        """Edit dropdown picked a candidate → open a prefilled edit modal. Must
+        respond with the modal synchronously (Discord can't defer-then-modal)."""
+        task_id = rr.task_id_from_edit(custom_id)
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        try:
+            email = await self.router._resolve_email_auto(user.get("id", ""))
+            st = await self.router._tasks_client.get_outreach_candidates(email, task_id)
+        except Exception:  # noqa: BLE001
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        cand = next((c for c in st.get("candidates", []) if c.get("id") == cid), None)
+        if cand is None:
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        return {"type": MODAL, "data": rr.build_edit_modal(task_id, cand)}
+
+    async def _handle_outreach_editmodal(
+        self, payload: dict[str, Any], custom_id: str, values: dict[str, str]) -> dict[str, Any]:
+        """Edit modal submit → save the edited candidate, re-render in place."""
+        task_id, cid = rr.ids_from_editmodal(custom_id)
+        ctx = self._out_ctx(payload)
+        asyncio.create_task(self.router.run_outreach_edit_submit(
+            ctx, task_id, cid, values.get("email", ""), values.get("subject", ""),
+            values.get("body", ""), "", ""))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _handle_outreach_send(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Send button → email the selected candidates, lock the message in place."""
+        task_id = rr.task_id_from_send(custom_id)
+        ctx = self._out_ctx(payload)
+        asyncio.create_task(self.router.run_outreach_send(ctx, task_id))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_unpublish_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """An Unpublish button click → run_panel_unpublish in the background, ACK deferred."""
@@ -686,6 +773,12 @@ class DiscordCommandHandler:
                     interaction_token=interaction_token, content=msg,
                 )
 
+            async def notify_channel_msg(msg: dict) -> None:
+                await self.discord.post_channel_message(
+                    channel_id, content=msg.get("content", ""),
+                    embeds=msg.get("embeds"), components=msg.get("components"),
+                )
+
             ctx = CommandContext(
                 user_id=user.get("id", ""),
                 user_name=user.get("username", "unknown"),
@@ -702,9 +795,15 @@ class DiscordCommandHandler:
                 },
                 notify_channel=notify_channel if channel_id else None,
                 notify_channel_rich=notify_channel_rich if channel_id else None,
+                notify_channel_msg=notify_channel_msg if channel_id else None,
             )
             asyncio.create_task(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if rr.is_out_editmodal(custom_id):
+            values = {c["custom_id"]: c.get("value", "")
+                      for row in data.get("components", [])
+                      for c in row.get("components", [])}
+            return await self._handle_outreach_editmodal(payload, custom_id, values)
         if custom_id.startswith(schedule_picker.TASK_MODAL_PREFIX):
             return await self._handle_pick_task_submit(payload, custom_id)
         if is_sched_modal(custom_id):
