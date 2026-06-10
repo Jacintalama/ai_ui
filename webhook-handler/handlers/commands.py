@@ -62,6 +62,16 @@ class CommandContext:
     # components (the apps dropdown or a per-project menu). Set by the Discord
     # layer; None on other platforms.
     respond_components: Optional[Callable[[str, list], Awaitable[None]]] = None
+    # (msg_dict) -> post a full message dict (content/embeds/components) to the
+    # channel as a fresh bot-token message that outlives the interaction window.
+    # Used to land the outreach review overview. Set by the Discord layer; None
+    # on other platforms.
+    notify_channel_msg: Optional[Callable[[dict], Awaitable[None]]] = None
+    # (msg_dict) -> edit the interactive message in place (content/embeds/
+    # components). Used by the outreach select/edit/send handlers so the review
+    # overview updates without spawning a new message. Set by the Discord layer
+    # (Task 8 wires an UPDATE_MESSAGE closure); None on other platforms.
+    edit_message: Optional[Callable[[dict], Awaitable[None]]] = None
 
 
 class VoiceResponseCollector:
@@ -2167,17 +2177,20 @@ class CommandRouter:
             return
         try:
             result = await self._tasks_client.start_outreach(email, {
-                "role": role, "location": location, "jobdesc": jobdesc, "count": count})
+                "role": role, "location": location, "jobdesc": jobdesc,
+                "count": count, "mode": "manual"})
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
             return
         task_id = result["task_id"]
         where = f"{role}" + (f" · {location}" if location else "")
         await ctx.respond(
-            f"\U0001f50e Searching GitHub for **{where}** … I'll post the results "
-            "in your thread when it's done (usually a minute or two).")
+            f"\U0001f50e Searching GitHub for **{where}** … I'll post the list of "
+            "engineers here to review before anything is sent (usually a minute "
+            "or two).")
         if ctx.notify_channel is not None:
-            w = asyncio.create_task(self._watch_outreach(ctx, email, task_id))
+            w = asyncio.create_task(
+                self._watch_outreach_review(ctx, email, task_id, role, location))
             self._background_tasks.add(w)
             w.add_done_callback(self._background_tasks.discard)
 
@@ -2221,6 +2234,125 @@ class CommandRouter:
                               + (text or "Try a broader role or remove the location."))
                 return
         await _notify("Outreach is still running — check back shortly.")
+
+    async def _watch_outreach_review(
+        self, ctx: CommandContext, email: str, task_id: str,
+        role: str, location: str,
+    ) -> None:
+        """Discord manual mode: poll the find until it reaches ``review``, then
+        post the interactive overview (embed + select/edit/send components) to
+        the channel as a fresh bot-token message that outlives the interaction
+        window. Slack keeps the auto-send path via ``_watch_outreach``."""
+        from handlers import recruiting_review as rr
+        if ctx.notify_channel is None:
+            return
+
+        async def _notify_text(msg: str) -> None:
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_outreach_review notify failed task=%s: %s", task_id, exc)
+
+        async def _notify_msg(msg: dict) -> None:
+            try:
+                if ctx.notify_channel_msg is not None:
+                    await ctx.notify_channel_msg(msg)
+                else:
+                    # No rich poster wired — degrade to the embed's text summary
+                    # so the result still lands somewhere.
+                    embeds = msg.get("embeds") or []
+                    desc = embeds[0].get("description", "") if embeds else ""
+                    await ctx.notify_channel(desc or "Engineers ready to review.")
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_outreach_review rich notify failed task=%s: %s", task_id, exc)
+
+        for _ in range(OUTREACH_MAX_POLLS):
+            await asyncio.sleep(OUTREACH_POLL_SECONDS)
+            try:
+                st = await self._tasks_client.get_outreach_candidates(email, task_id)
+            except TasksAPIError as e:
+                logger.warning("watch_outreach_review status error (%s) task=%s", e.status, task_id)
+                continue
+            status = st.get("status")
+            if status == "running":
+                continue
+            if status == "review":
+                msg = rr.build_review_message(
+                    task_id, st.get("candidates", []), role=role, location=location)
+                await _notify_msg(msg)
+                return
+            await _notify_text((st.get("text") or "").strip() or "No engineers found.")
+            return
+        await _notify_text("Outreach search timed out — try again.")
+
+    async def run_outreach_select(
+        self, ctx: CommandContext, task_id: str,
+        selected_ids: Optional[list[str]], role: str = "", location: str = "",
+    ) -> None:
+        """Apply a recipient selection (``selected_ids``) or just refresh
+        (``selected_ids is None``), then re-render the overview in place."""
+        from handlers import recruiting_review as rr
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            if selected_ids is None:
+                st = await self._tasks_client.get_outreach_candidates(email, task_id)
+            else:
+                st = await self._tasks_client.patch_outreach_candidate(
+                    email, task_id, "_", {"selected_ids": selected_ids})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        msg = rr.build_review_message(
+            task_id, st.get("candidates", []), role=role, location=location)
+        if ctx.edit_message is not None:
+            await ctx.edit_message(msg)
+
+    async def run_outreach_edit_submit(
+        self, ctx: CommandContext, task_id: str, cid: str, email_val: str,
+        subject: str, body: str, role: str = "", location: str = "",
+    ) -> None:
+        """Save an edited candidate (email/subject/body) then re-render the
+        overview in place."""
+        from handlers import recruiting_review as rr
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            st = await self._tasks_client.patch_outreach_candidate(
+                email, task_id, cid,
+                {"email": email_val, "subject": subject, "body": body})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        msg = rr.build_review_message(
+            task_id, st.get("candidates", []), role=role, location=location)
+        if ctx.edit_message is not None:
+            await ctx.edit_message(msg)
+
+    async def run_outreach_send(self, ctx: CommandContext, task_id: str) -> None:
+        """Send to the selected candidates. On success, lock the message with
+        the sent summary; otherwise surface why nothing went out."""
+        from handlers import recruiting_review as rr
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            st = await self._tasks_client.send_outreach(email, task_id)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        if st.get("status") == "sent":
+            sent_msg = rr.build_sent_message(
+                st.get("text", "Sent."), st.get("sheet_url", ""))
+            if ctx.edit_message is not None:
+                await ctx.edit_message(sent_msg)
+            return
+        await ctx.respond(st.get("text") or "Pick at least one engineer first.")
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""
