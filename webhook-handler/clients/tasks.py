@@ -240,6 +240,22 @@ class TasksClient:
         resp = await self._request("GET", f"/outreach/{task_id}", user_email)
         return resp.json()
 
+    async def get_outreach_candidates(self, user_email: str, task_id: str) -> dict[str, Any]:
+        resp = await self._request("GET", f"/outreach/{task_id}/candidates", user_email)
+        return resp.json()
+
+    async def patch_outreach_candidate(
+        self, user_email: str, task_id: str, cid: str, payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        resp = await self._request(
+            "PATCH", f"/outreach/{task_id}/candidates/{cid}", user_email, json=payload,
+        )
+        return resp.json()
+
+    async def send_outreach(self, user_email: str, task_id: str) -> dict[str, Any]:
+        resp = await self._request("POST", f"/outreach/{task_id}/send", user_email, json={})
+        return resp.json()
+
     async def publish_app(self, user_email: str, slug: str) -> dict[str, Any]:
         resp = await self._request(
             "POST", f"/api/aiuibuilder/{slug}/publish", user_email,

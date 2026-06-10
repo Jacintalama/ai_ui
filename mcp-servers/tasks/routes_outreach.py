@@ -24,6 +24,7 @@ class OutreachRequest(BaseModel):
     location: str = ""
     jobdesc: str
     count: int = 10
+    mode: str = "auto"   # "auto" = find+send (Slack/legacy); "manual" = find+store
 
 
 class OutreachResponse(BaseModel):
@@ -37,6 +38,8 @@ class OutreachStatusResponse(BaseModel):
     saved: int = 0
     sheet_url: str = ""
     text: str = ""
+    candidates: list[dict] = []
+    job_title: str = ""
 
 
 async def _process_outreach_result(raw_log: str, *, job_title: str, count: int) -> dict:
@@ -65,6 +68,43 @@ async def _process_outreach_result(raw_log: str, *, job_title: str, count: int) 
             "text": outreach.format_outreach_summary(found, sent, saved, sheet_url)}
 
 
+def _process_outreach_find(raw_log: str, *, job_title: str, count: int) -> dict:
+    """Manual mode: parse candidates, DON'T send. Store a review state."""
+    outcome = parse_outcome(raw_log)
+    if outcome.kind == "failed":
+        return {"status": "failed", "found": 0, "text":
+                (outcome.payload or "The search failed.").strip()[:500]}
+    cand = outreach.extract_candidates(raw_log)
+    if not cand.candidates:
+        return {"status": "failed", "found": 0,
+                "text": "I couldn't find engineers matching that — try a broader role."}
+    batch = outreach.cap_and_dedupe(cand.candidates, count)
+    return {"status": "review", "phase": "review", "job_title": job_title,
+            "found": len(batch),
+            "candidates": outreach.build_review_candidates(batch)}
+
+
+async def _load_review(task_id, user) -> tuple[object, dict]:
+    """Return (item, data dict) for an OUTREACH task owned by user, else 404."""
+    async with session() as s:
+        item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
+    if item is None or item.assignee_email != user.email:
+        raise HTTPException(status_code=404, detail="not found")
+    try:
+        data = json.loads(item.result or "{}")
+    except ValueError:
+        data = {}
+    return item, data
+
+
+async def _save_candidates(task_id, data: dict, candidates: list[dict]) -> None:
+    data = {**data, "candidates": candidates}
+    async with session() as s:
+        await s.execute(update(TaskItem).where(TaskItem.id == task_id)
+                        .values(result=json.dumps(data)))
+        await s.commit()
+
+
 @router.post("/outreach", response_model=OutreachResponse, status_code=201)
 async def start_outreach(body: OutreachRequest, user: CurrentUser = Depends(current_user)):
     import asyncio
@@ -81,7 +121,8 @@ async def start_outreach(body: OutreachRequest, user: CurrentUser = Depends(curr
         await s.refresh(item); await s.refresh(execution)
         task_id, exec_id = item.id, execution.id
     asyncio.create_task(_run_outreach(task_id, exec_id, prompt,
-                                      job_title=body.role, count=body.count))
+                                      job_title=body.role, count=body.count,
+                                      mode=body.mode))
     return OutreachResponse(task_id=task_id)
 
 
@@ -100,15 +141,95 @@ async def get_outreach_status(task_id: uuid.UUID, user: CurrentUser = Depends(cu
     return OutreachStatusResponse(
         status=data.get("status", "failed"), found=data.get("found", 0),
         sent=data.get("sent", 0), saved=data.get("saved", 0),
-        sheet_url=data.get("sheet_url", ""), text=data.get("text", ""))
+        sheet_url=data.get("sheet_url", ""), text=data.get("text", ""),
+        candidates=data.get("candidates", []), job_title=data.get("job_title", ""))
 
 
-async def _run_outreach(task_id, execution_id, prompt, *, job_title: str, count: int):
+@router.get("/outreach/{task_id}/candidates", response_model=OutreachStatusResponse)
+async def get_outreach_candidates(task_id: uuid.UUID, user: CurrentUser = Depends(current_user)):
+    item, data = await _load_review(task_id, user)
+    if item.status == "running":
+        return OutreachStatusResponse(status="running")
+    return OutreachStatusResponse(
+        status=data.get("status", "failed"), found=data.get("found", 0),
+        text=data.get("text", ""), candidates=data.get("candidates", []),
+        job_title=data.get("job_title", ""))
+
+
+class CandidatePatch(BaseModel):
+    email: str | None = None
+    subject: str | None = None
+    body: str | None = None
+    selected: bool | None = None
+    selected_ids: list[str] | None = None   # set the whole selection at once
+
+
+@router.patch("/outreach/{task_id}/candidates/{cid}", response_model=OutreachStatusResponse)
+async def patch_outreach_candidate(task_id: uuid.UUID, cid: str, body: CandidatePatch,
+                                   user: CurrentUser = Depends(current_user)):
+    item, data = await _load_review(task_id, user)
+    candidates = data.get("candidates", [])
+    if body.selected_ids is not None:
+        candidates = outreach.set_selection(candidates, body.selected_ids)
+    else:
+        candidates = outreach.apply_candidate_edit(
+            candidates, cid, email=body.email, subject=body.subject,
+            body=body.body, selected=body.selected)
+    await _save_candidates(task_id, data, candidates)
+    return OutreachStatusResponse(status="review", candidates=candidates,
+                                  found=len(candidates), job_title=data.get("job_title", ""))
+
+
+@router.post("/outreach/{task_id}/send", response_model=OutreachStatusResponse)
+async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_user)):
+    item, data = await _load_review(task_id, user)
+    candidates = data.get("candidates", [])
+    batch = outreach.sendable_candidates(candidates)
+    if not batch:
+        return OutreachStatusResponse(status="review", candidates=candidates,
+                                      text="Pick at least one engineer with an email first.",
+                                      job_title=data.get("job_title", ""))
+    try:
+        res = await outreach.post_outreach_to_n8n(data.get("job_title", ""), batch)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("manual outreach send failed: %s", exc)
+        return OutreachStatusResponse(status="review", candidates=candidates,
+                                      text="Sending failed — try again.",
+                                      job_title=data.get("job_title", ""))
+    sent_emails = {c.email.strip().lower() for c in batch}
+    for c in candidates:
+        if (c.get("email") or "").strip().lower() in sent_emails:
+            c["status"] = "sent"
+            c["selected"] = False
+    new_data = {**data, "phase": "sent", "candidates": candidates,
+                "status": "completed",
+                "sent": int(res.get("sent", len(batch))),
+                "saved": int(res.get("saved", len(batch))),
+                "sheet_url": res.get("sheet_url", ""),
+                "text": outreach.format_outreach_summary(
+                    data.get("found", len(candidates)),
+                    int(res.get("sent", len(batch))),
+                    int(res.get("saved", len(batch))), res.get("sheet_url", ""))}
+    async with session() as s:
+        await s.execute(update(TaskItem).where(TaskItem.id == task_id)
+                        .values(result=json.dumps(new_data)))
+        await s.commit()
+    return OutreachStatusResponse(
+        status="sent", candidates=candidates, sent=new_data["sent"],
+        saved=new_data["saved"], sheet_url=new_data["sheet_url"], text=new_data["text"],
+        job_title=data.get("job_title", ""))
+
+
+async def _run_outreach(task_id, execution_id, prompt, *, job_title: str,
+                        count: int, mode: str = "auto"):
     from routes_execution import _stream_claude  # LOCAL import (keep here, not module-top)
     try:
         raw_log = await _stream_claude(prompt, execution_id, task_id)
-        summary = await _process_outreach_result(raw_log, job_title=job_title, count=count)
-        final_status = "completed" if summary["status"] == "completed" else "failed"
+        if mode == "manual":
+            summary = _process_outreach_find(raw_log, job_title=job_title, count=count)
+        else:
+            summary = await _process_outreach_result(raw_log, job_title=job_title, count=count)
+        final_status = "completed" if summary["status"] in ("completed", "review") else "failed"
         async with session() as s:
             await s.execute(update(TaskExecution).where(TaskExecution.id == execution_id)
                             .values(status="succeeded" if final_status == "completed" else "failed"))

@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock, MagicMock
 from handlers.commands import CommandRouter, CommandContext
 
 
-def _ctx(notify):
+def _ctx(notify, platform="discord"):
     # channel_id is a REQUIRED CommandContext field (no default).
     return CommandContext(
         user_id="100", user_name="alice", channel_id="c", raw_text="outreach",
-        subcommand="", arguments="", platform="discord", respond=AsyncMock(),
+        subcommand="", arguments="", platform=platform, respond=AsyncMock(),
         respond_components=AsyncMock(), notify_channel=notify,
     )
 
@@ -49,6 +49,33 @@ async def test_run_panel_outreach_starts_and_acks():
     await r.run_panel_outreach(ctx, "Python", "Berlin", "Hiring", 8)
     tc.start_outreach.assert_awaited_once()
     ctx.respond.assert_awaited()  # the "Searching GitHub…" ack
+
+
+@pytest.mark.asyncio
+async def test_run_panel_outreach_slack_stays_auto():
+    # Regression: run_panel_outreach is shared with Slack, which must keep the
+    # OLD auto-send behaviour (mode="auto"), not Discord's manual review flow.
+    tc = MagicMock()
+    tc.start_outreach = AsyncMock(return_value={"task_id": "abc"})
+    r = _router(tc)
+    ctx = _ctx(AsyncMock(), platform="slack")
+    await r.run_panel_outreach(ctx, "Python", "Berlin", "Hiring", 8)
+    tc.start_outreach.assert_awaited_once()
+    _email, payload = tc.start_outreach.await_args.args
+    assert payload["mode"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_run_panel_outreach_discord_is_manual():
+    # Discord uses the find→review→send flow (mode="manual").
+    tc = MagicMock()
+    tc.start_outreach = AsyncMock(return_value={"task_id": "abc"})
+    r = _router(tc)
+    ctx = _ctx(AsyncMock(), platform="discord")
+    await r.run_panel_outreach(ctx, "Python", "Berlin", "Hiring", 8)
+    tc.start_outreach.assert_awaited_once()
+    _email, payload = tc.start_outreach.await_args.args
+    assert payload["mode"] == "manual"
 
 
 @pytest.mark.asyncio
