@@ -84,6 +84,7 @@ class AudioOutputSource(discord.AudioSource):
         self._has_content = False
         self._empty_count = 0
         self._on_drained = on_drained
+        self._reads = 0  # diagnostic: proves the AudioPlayer thread is alive
 
     def feed(self, pcm_48k_stereo: bytes):
         with self._lock:
@@ -99,6 +100,7 @@ class AudioOutputSource(discord.AudioSource):
                     pass
 
     def read(self) -> bytes:
+        self._reads += 1
         try:
             return self._queue.get_nowait()
         except queue.Empty:
@@ -148,6 +150,10 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             self._loop = loop
             self._frame_count = 0
             self._agent_speaking = False
+            # Diagnostics: where do mic frames stop?
+            self._sink_writes = 0  # packets seen by sink (pre user-filter)
+            self._sink_rx = 0      # packets from real users (post-filter)
+            self._gated = 0        # dropped by the agent-speaking mute gate
             # Wire drain callback — unmute mic only after audio finishes playing
             self._audio_output._on_drained = self._on_playback_drained
 
@@ -180,11 +186,19 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             Mute while audio queue has content (agent is speaking).
             Unmute instantly when queue empties — no timer delay.
             """
+            self._sink_rx += 1
             cb = self._input_callback
             if cb is None:
                 return
             # Mute while agent audio is playing — prevents noise interruption
             if not self._audio_output._queue.empty() or self._audio_output._has_content:
+                self._gated += 1
+                if self._gated % 250 == 1:
+                    logger.info(
+                        "[ConvAI] mic GATED (%d drops) q=%d has_content=%s empty_count=%d",
+                        self._gated, self._audio_output._queue.qsize(),
+                        self._audio_output._has_content, self._audio_output._empty_count,
+                    )
                 return
             self._frame_count += 1
             if self._frame_count % 500 == 1:
@@ -209,6 +223,7 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             return False
 
         def write(self, user, data):
+            self._audio_interface._sink_writes += 1
             if user is None:
                 return
             if getattr(user, 'bot', False):
@@ -244,6 +259,7 @@ class ConversationalVoiceBot(discord.Client):
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 3
         self._watchdog_task = None
+        self._stats_task = None
         self._session_voice_channel = None
 
     async def on_ready(self):
@@ -285,6 +301,8 @@ class ConversationalVoiceBot(discord.Client):
                     lines.append(f"Listening: `{vc.is_listening()}`")
             if not self.voice_clients:
                 lines.append("Not in any voice channel")
+            stats = self._pipeline_stats()
+            lines.append("Pipeline: " + ", ".join(f"{k}=`{v}`" for k, v in stats.items()))
             await message.channel.send("\n".join(lines))
 
     async def _start_session(self, voice_channel, member):
@@ -340,7 +358,15 @@ class ConversationalVoiceBot(discord.Client):
                 self._watchdog_task.cancel()
             self._watchdog_task = asyncio.create_task(self._dave_watchdog())
 
-            logger.info(f"[ConvAI] Session started in {voice_channel.name}")
+            # Pipeline stats every 5s — shows which stage stalls when the bot goes deaf
+            if self._stats_task:
+                self._stats_task.cancel()
+            self._stats_task = asyncio.create_task(self._stats_reporter())
+
+            logger.info(
+                f"[ConvAI] Session started in {voice_channel.name} "
+                f"(encryption mode={getattr(vc, 'mode', '?')})"
+            )
             if self._text_channel:
                 await self._text_channel.send(
                     f"Joined **{voice_channel.name}** — AIUI voice assistant is active. "
@@ -373,6 +399,10 @@ class ConversationalVoiceBot(discord.Client):
         if self._watchdog_task and not self._watchdog_task.done():
             self._watchdog_task.cancel()
             self._watchdog_task = None
+
+        if self._stats_task and not self._stats_task.done():
+            self._stats_task.cancel()
+            self._stats_task = None
 
         # Disconnect from Discord FIRST (fast, prevents stuck bot in channel)
         for vc in self.voice_clients:
@@ -423,6 +453,59 @@ class ConversationalVoiceBot(discord.Client):
                 await self._text_channel.send(f"> {msg}")
             except Exception:
                 pass
+
+    def _pipeline_stats(self) -> dict:
+        """Snapshot of every stage of the mic pipeline (diagnostics)."""
+        ai = self._audio_interface
+        ao = self._audio_output
+        vc = self.voice_clients[0] if self.voice_clients else None
+        player = getattr(vc, '_player', None) if vc else None
+        return {
+            "sink_writes": ai._sink_writes if ai else -1,
+            "sink_rx": ai._sink_rx if ai else -1,
+            "gated": ai._gated if ai else -1,
+            "fed": ai._frame_count if ai else -1,
+            "reads": ao._reads if ao else -1,
+            "q": ao._queue.qsize() if ao else -1,
+            "has_content": ao._has_content if ao else None,
+            "connected": bool(vc and vc.is_connected()),
+            "listening": bool(vc and getattr(vc, 'is_listening', lambda: False)()),
+            "playing": bool(vc and vc.is_playing()),
+            "player_alive": bool(player and player.is_alive()),
+            "cb_set": bool(ai and ai._input_callback is not None),
+        }
+
+    async def _stats_reporter(self):
+        """Log per-5s deltas for each pipeline stage.
+
+        Reading the line when the bot is deaf:
+        - writes/rx +0 while user speaks -> Discord receive layer dead (voice-recv)
+        - rx grows but gated grows too   -> mute gate stuck closed
+        - fed grows but no transcripts   -> audio reaching ElevenLabs is garbage
+        - reads +0                       -> AudioPlayer thread stalled (gate can never reopen)
+        """
+        prev = {}
+        try:
+            while self._session_active:
+                await asyncio.sleep(5)
+                if not self._session_active:
+                    break
+                s = self._pipeline_stats()
+                deltas = {k: s[k] - prev.get(k, 0)
+                          for k in ("sink_writes", "sink_rx", "gated", "fed", "reads")}
+                prev = {k: s[k] for k in deltas}
+                logger.info(
+                    "[ConvAI] stats5s writes=+%d rx=+%d gated=+%d fed=+%d reads=+%d "
+                    "q=%d has_content=%s connected=%s listening=%s playing=%s player_alive=%s cb=%s",
+                    deltas["sink_writes"], deltas["sink_rx"], deltas["gated"],
+                    deltas["fed"], deltas["reads"], s["q"], s["has_content"],
+                    s["connected"], s["listening"], s["playing"],
+                    s["player_alive"], s["cb_set"],
+                )
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[ConvAI] Stats reporter error: {e}", exc_info=True)
 
     async def _wait_and_unmute(self):
         """Wait for audio to finish playing, then unmute mic.

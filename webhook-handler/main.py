@@ -40,6 +40,11 @@ logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
+# Cap the gateway/HTTP DEBUG firehose: it logs every websocket event (full
+# GUILD_CREATE payloads) and rotates the container log past useful diagnostics
+# in minutes. Voice-layer loggers stay at the root level on purpose.
+for _noisy in ("discord.gateway", "discord.client", "discord.http", "websockets"):
+    logging.getLogger(_noisy).setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global clients (initialized on startup)
