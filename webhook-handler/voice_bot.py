@@ -4,10 +4,14 @@ Auto-joins voice channels. Full duplex conversation via ElevenLabs agent.
 No typing needed — just speak.
 """
 import asyncio
-import audioop
 import logging
 import queue
 import threading
+
+try:
+    import audioop  # removed from stdlib in Python 3.13
+except ImportError:  # pragma: no cover - container runs 3.11
+    audioop = None
 
 import discord
 
@@ -38,7 +42,7 @@ _resample_state_out = None
 def resample_48k_stereo_to_16k_mono(pcm_48k_stereo: bytes) -> bytes:
     """Convert 48kHz stereo S16LE to 16kHz mono S16LE."""
     global _resample_state_in
-    if len(pcm_48k_stereo) < 4:
+    if audioop is None or len(pcm_48k_stereo) < 4:
         return b""
     try:
         mono_48k = audioop.tomono(pcm_48k_stereo, 2, 0.5, 0.5)
@@ -53,7 +57,7 @@ def resample_48k_stereo_to_16k_mono(pcm_48k_stereo: bytes) -> bytes:
 def resample_16k_mono_to_48k_stereo(pcm_16k_mono: bytes) -> bytes:
     """Convert 16kHz mono S16LE to 48kHz stereo S16LE."""
     global _resample_state_out
-    if len(pcm_16k_mono) < 2:
+    if audioop is None or len(pcm_16k_mono) < 2:
         return b""
     try:
         mono_48k, _resample_state_out = audioop.ratecv(
@@ -67,6 +71,7 @@ def resample_16k_mono_to_48k_stereo(pcm_16k_mono: bytes) -> bytes:
 
 DISCORD_FRAME_SIZE = 3840  # 20ms at 48kHz stereo 16-bit
 SILENCE_FRAME = b"\x00" * DISCORD_FRAME_SIZE
+DISCONNECT_TIMEOUT = 8.0  # graceful voice disconnect budget before force-drop
 
 
 class AudioOutputSource(discord.AudioSource):
@@ -273,7 +278,22 @@ class ConversationalVoiceBot(discord.Client):
 
         # User joined a voice channel
         if after.channel and not before.channel:
-            if not after.channel.guild.voice_client:
+            guild_vc = after.channel.guild.voice_client
+            if guild_vc and not self._session_active:
+                # Ghost from a previous wedged teardown ("Timed out waiting for
+                # voice disconnection confirmation") — it blocks every new
+                # session until force-dropped.
+                logger.warning("[ConvAI] Clearing ghost voice client before new session")
+                try:
+                    await guild_vc.disconnect(force=True)
+                except Exception:
+                    pass
+                try:
+                    guild_vc.cleanup()
+                except Exception:
+                    pass
+                guild_vc = None
+            if not guild_vc:
                 await self._start_session(after.channel, member)
 
         # User left a voice channel — check if channel is now empty
@@ -411,9 +431,19 @@ class ConversationalVoiceBot(discord.Client):
                     vc.stop_listening()
                 if vc.is_playing():
                     vc.stop()
-                await vc.disconnect()
+                await asyncio.wait_for(vc.disconnect(), timeout=DISCONNECT_TIMEOUT)
             except Exception as e:
-                logger.debug(f"[ConvAI] Disconnect error: {e}")
+                # A wedged voice handshake leaves a ghost client attached to
+                # the guild that blocks all future sessions — force-drop it.
+                logger.warning(f"[ConvAI] Graceful disconnect failed ({e!r}) — forcing")
+                try:
+                    await vc.disconnect(force=True)
+                except Exception:
+                    pass
+                try:
+                    vc.cleanup()
+                except Exception:
+                    pass
 
         # End ElevenLabs session with timeout (can hang)
         if conv:
@@ -548,8 +578,30 @@ class ConversationalVoiceBot(discord.Client):
             except Exception:
                 pass
 
+    def _watchdog_should_reconnect(self, elapsed: float) -> bool:
+        """Decide whether the session is deaf and needs a fresh connection.
+
+        Reconnect when no usable user transcript arrived for 25+ seconds while
+        a non-bot user is in the channel. Deliberately NOT gated on mic frame
+        counts: the worst failure mode delivers ZERO frames (voice receive
+        dead), and a single short utterance is only ~50-100 frames, so any
+        frame threshold keeps the watchdog inert exactly when it's needed
+        (observed live 2026-06-11: 4.5 min deaf session, watchdog never fired).
+        """
+        if not self._session_active or elapsed <= 25:
+            return False
+        ch = self._session_voice_channel
+        if not ch:
+            return False
+        try:
+            if not [m for m in ch.members if not m.bot]:
+                return False  # nobody to hear; channel-empty handler ends the session
+        except Exception:
+            return False
+        return True
+
     async def _dave_watchdog(self):
-        """Monitor DAVE audio quality. Auto-reconnect if no speech detected."""
+        """Self-heal deaf sessions: reconnect when no user speech is heard."""
         import time
         try:
             # Wait 15s after session start for greeting to finish
@@ -561,8 +613,7 @@ class ConversationalVoiceBot(discord.Client):
                     break
 
                 elapsed = time.monotonic() - self._last_user_transcript_time
-                # If 25+ seconds since last transcript and audio is flowing
-                if elapsed > 25 and self._audio_interface and self._audio_interface._frame_count > 100:
+                if self._watchdog_should_reconnect(elapsed):
                     if self._reconnect_attempts >= self._max_reconnect_attempts:
                         logger.warning("[ConvAI] DAVE: Max reconnect attempts reached, giving up")
                         if self._text_channel:
