@@ -1,0 +1,167 @@
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:root {
+  --bg: #faf7f2;
+  --surface: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --accent: #b08a3e;
+  --accent-deep: #8d6e2e;
+  --serif: "Cormorant Garamond", Georgia, serif;
+  --sans: "Inter", system-ui, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display { font-family: var(--serif); letter-spacing: -0.01em; }
+
+.reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 600ms ease-out, transform 600ms ease-out;
+}
+.reveal.is-visible { opacity: 1; transform: translateY(0); }
+
+.zoom-card { overflow: hidden; }
+.zoom-card img { transition: transform 600ms ease-out; }
+.zoom-card:hover img { transform: scale(1.04); }
+
+/* Carousel transitions */
+.carousel-slide {
+  transition: opacity 800ms ease-in-out;
+}
+
+/* Map placeholder */
+.map-placeholder {
+  background: linear-gradient(135deg, #ede4d3 0%, #d9c8a8 100%);
+  position: relative;
+  min-height: 320px;
+  border-radius: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Lightbox overlay (same pattern as photography) */
+.lightbox-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.95);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+  cursor: zoom-out;
+}
+.lightbox-overlay img {
+  max-width: 95vw;
+  max-height: 95vh;
+  cursor: default;
+}
+.lightbox-nav {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255,255,255,0.1);
+  color: white;
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: background 200ms;
+}
+.lightbox-nav:hover { background: rgba(255,255,255,0.2); }
+.lightbox-nav.prev { left: 24px; }
+.lightbox-nav.next { right: 24px; }
+
+/* Masonry */
+.masonry {
+  column-count: 2;
+  column-gap: 1rem;
+}
+@media (min-width: 768px) { .masonry { column-count: 3; } }
+.masonry > * {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+}
+
+/* Nav */
+nav a {
+  transition: color 200ms;
+}
+
+/* Stats card */
+.stat-card {
+  background: var(--surface);
+  border-radius: 1rem;
+  padding: 2rem;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+/* Amenity category heading */
+.amenity-category {
+  font-family: var(--serif);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.5rem;
+}
+
+/* Property card */
+.listing-card {
+  background: var(--surface);
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  transition: box-shadow 300ms;
+}
+.listing-card:hover {
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+
+/* Form inputs */
+input, select, textarea {
+  background: var(--bg);
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.875rem;
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 0.9375rem;
+  color: var(--text);
+  transition: border-color 200ms, box-shadow 200ms;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(176, 138, 62, 0.15);
+}
+
+/* Gold button */
+.btn-gold {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 9999px;
+  padding: 0.75rem 2rem;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  border: none;
+  cursor: pointer;
+  transition: background 200ms;
+}
+.btn-gold:hover { background: var(--accent-deep); }
+
+[x-cloak] { display: none !important; }

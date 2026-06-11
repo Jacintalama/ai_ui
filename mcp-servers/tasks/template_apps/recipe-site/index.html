@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Salt &amp; Pan — Recipes</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="appState()" x-init="init()" class="bg-[var(--bg)] text-[var(--text)] font-sans min-h-screen">
+
+  <!-- ===== HEADER ===== -->
+  <header
+    x-data="{ scrolled: false }"
+    x-init="window.addEventListener('scroll', () => { scrolled = window.scrollY > 32; }, { passive: true })"
+    :class="scrolled ? 'h-12 shadow-sm' : 'h-14 shadow-none'"
+    class="sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur transition-all duration-150 flex items-center px-4 sm:px-6 border-b border-[var(--border)]"
+  >
+    <a href="#" @click.prevent="setView('catalog')" class="flex items-center gap-2 font-semibold text-[var(--text)]">
+      <span class="inline-block w-6 h-6 rounded bg-[var(--accent)]" aria-hidden="true"></span>
+      <span class="display font-semibold">Salt &amp; Pan</span>
+    </a>
+    <nav class="ml-auto flex items-center gap-4 text-sm">
+      <button @click="setView('catalog')" class="hidden sm:inline-block text-[var(--text-muted)] hover:text-[var(--text)] transition">
+        Recipes
+      </button>
+      <button
+        @click="setView('catalog')"
+        class="hidden sm:inline-block text-[var(--text-muted)] hover:text-[var(--text)] transition"
+      >
+        Favorites
+        <span x-show="favorites.length > 0" x-text="`(${favorites.length})`" class="text-[var(--accent)]"></span>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-[var(--accent-soft)] border border-[var(--border)] flex items-center justify-center text-xs font-medium text-[var(--text)]" aria-hidden="true">U</div>
+    </nav>
+  </header>
+
+  <!-- ============================= CATALOG VIEW ============================= -->
+  <section x-show="view === 'catalog'" x-transition.duration.200ms class="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+
+    <div class="mb-6">
+      <h1 class="display text-3xl sm:text-4xl font-semibold text-[var(--text)] mb-1">What are you cooking?</h1>
+      <p class="text-[var(--text-muted)]">
+        <span x-text="filteredRecipes.length"></span> of <span x-text="recipes.length"></span> recipes
+      </p>
+    </div>
+
+    <!-- Filters row -->
+    <div class="flex flex-col sm:flex-row gap-4 mb-6">
+      <!-- Ingredient search -->
+      <input
+        type="search"
+        x-model="filters.ingredientSearch"
+        @input="applyFilters()"
+        placeholder="Search by ingredient or name..."
+        aria-label="Search recipes"
+        class="w-full sm:max-w-xs border border-[var(--border)] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--accent)] placeholder-[var(--text-muted)]"
+      />
+
+      <!-- Time bucket pills -->
+      <div class="flex flex-wrap gap-2 items-center">
+        <span class="text-xs text-[var(--text-muted)] self-center">Time:</span>
+        <template x-for="bucket in [['any','Any'],['&lt;15','Under 15 min'],['&lt;30','Under 30 min'],['&lt;60','Under 1 hr']]" :key="bucket[0]">
+          <button
+            @click="filters.timeBucket = bucket[0]; applyFilters()"
+            :class="filters.timeBucket === bucket[0] ? 'bg-[var(--accent)] text-white' : 'bg-[var(--accent-soft)] text-[var(--text-muted)] hover:text-[var(--text)]'"
+            class="px-3 py-1 rounded-full text-xs font-medium transition"
+            x-text="bucket[1]">
+          </button>
+        </template>
+      </div>
+
+      <!-- Difficulty pills -->
+      <div class="flex flex-wrap gap-2 items-center">
+        <span class="text-xs text-[var(--text-muted)] self-center">Difficulty:</span>
+        <template x-for="diff in [['any','Any'],['easy','Easy'],['medium','Medium']]" :key="diff[0]">
+          <button
+            @click="filters.difficulty = diff[0]; applyFilters()"
+            :class="filters.difficulty === diff[0] ? 'bg-[var(--accent)] text-white' : 'bg-[var(--accent-soft)] text-[var(--text-muted)] hover:text-[var(--text)]'"
+            class="px-3 py-1 rounded-full text-xs font-medium transition"
+            x-text="diff[1]">
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <!-- Diet filter pills -->
+    <div class="flex flex-wrap gap-2 mb-8">
+      <span class="text-xs text-[var(--text-muted)] self-center">Diet:</span>
+      <template x-for="diet in ['vegan','vegetarian','gluten-free','dairy-free']" :key="diet">
+        <button
+          @click="toggleDiet(diet)"
+          :class="isDietActive(diet) ? 'bg-[var(--accent)] text-white' : 'bg-[var(--accent-soft)] text-[var(--text-muted)] hover:text-[var(--text)] border border-[var(--border)]'"
+          class="px-3 py-1 rounded-full text-xs font-medium transition capitalize"
+          x-text="diet">
+        </button>
+      </template>
+    </div>
+
+    <!-- Empty state -->
+    <template x-if="filteredRecipes.length === 0">
+      <p class="text-center py-16 text-[var(--text-muted)]">No recipes match your filters. Try adjusting them.</p>
+    </template>
+
+    <!-- Recipe grid -->
+    <template x-if="filteredRecipes.length > 0">
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+        <template x-for="recipe in filteredRecipes" :key="recipe.id">
+          <div
+            class="recipe-card bg-white rounded-xl overflow-hidden border border-[var(--border)] cursor-pointer"
+            @click="openRecipe(recipe.id)"
+          >
+            <div class="relative aspect-video overflow-hidden bg-[var(--accent-soft)]">
+              <img
+                :src="recipe.thumb"
+                :alt="recipe.title"
+                width="400"
+                height="225"
+                loading="lazy"
+                class="w-full h-full object-cover"
+              />
+              <!-- Difficulty badge -->
+              <span
+                class="absolute top-2 left-2 text-xs px-2 py-0.5 rounded font-medium capitalize"
+                :class="recipe.difficulty === 'easy' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'"
+                x-text="recipe.difficulty">
+              </span>
+              <!-- Favorite toggle -->
+              <button
+                @click.stop="toggleFavorite(recipe.id)"
+                :aria-label="isFavorite(recipe.id) ? 'Remove from favorites' : 'Save to favorites'"
+                class="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/80 flex items-center justify-center text-sm hover:bg-white transition"
+              >
+                <span x-text="isFavorite(recipe.id) ? '&#9829;' : '&#9825;'" :class="isFavorite(recipe.id) ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'"></span>
+              </button>
+            </div>
+            <div class="p-4">
+              <h2 class="display font-semibold text-[var(--text)] leading-tight mb-1" x-text="recipe.title"></h2>
+              <p class="text-xs text-[var(--text-muted)] mb-2" x-text="recipe.minutes + ' min'"></p>
+              <p class="text-xs text-[var(--text-muted)] line-clamp-2 leading-relaxed" x-text="recipe.intro"></p>
+              <!-- Diet pills -->
+              <div class="flex flex-wrap gap-1 mt-3">
+                <template x-for="d in recipe.diet" :key="d">
+                  <span class="text-xs px-2 py-0.5 rounded-full bg-[var(--accent-soft)] text-[var(--text-muted)] capitalize" x-text="d"></span>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
+  </section>
+
+  <!-- ============================= RECIPE VIEW ============================= -->
+  <section x-show="view === 'recipe'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)] transition mb-6">
+      &larr; Back to recipes
+    </button>
+
+    <template x-if="selectedRecipe">
+      <div>
+        <!-- Hero image -->
+        <div class="rounded-2xl overflow-hidden aspect-video mb-6 bg-[var(--accent-soft)]">
+          <img
+            :src="selectedRecipe.hero"
+            :alt="selectedRecipe.title"
+            width="800"
+            height="450"
+            loading="eager"
+            class="w-full h-full object-cover"
+          />
+        </div>
+
+        <!-- Meta row -->
+        <div class="flex flex-wrap gap-2 mb-3">
+          <span class="text-xs px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] capitalize" x-text="selectedRecipe.difficulty"></span>
+          <span class="text-xs px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)]" x-text="selectedRecipe.minutes + ' min'"></span>
+          <template x-for="d in selectedRecipe.diet" :key="d">
+            <span class="text-xs px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-muted)] capitalize" x-text="d"></span>
+          </template>
+        </div>
+
+        <!-- Title + favorite -->
+        <div class="flex items-start justify-between gap-4 mb-3">
+          <h2 class="display text-3xl sm:text-4xl font-semibold text-[var(--text)] leading-tight" x-text="selectedRecipe.title"></h2>
+          <button
+            @click="toggleFavorite(selectedRecipe.id)"
+            :aria-label="isFavorite(selectedRecipe.id) ? 'Remove from favorites' : 'Save to favorites'"
+            class="shrink-0 mt-1 px-3 py-1.5 border rounded-lg text-sm transition"
+            :class="isFavorite(selectedRecipe.id) ? 'border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-soft)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]'"
+          >
+            <span x-text="isFavorite(selectedRecipe.id) ? 'Saved' : 'Save'"></span>
+          </button>
+        </div>
+
+        <p class="text-[var(--text-muted)] text-base leading-relaxed mb-8" x-text="selectedRecipe.intro"></p>
+
+        <!-- Two-column layout: ingredients + steps preview -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-8 mb-8">
+
+          <!-- Ingredients column -->
+          <div>
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="display text-xl font-semibold text-[var(--text)]">Ingredients</h2>
+              <!-- Servings slider -->
+              <div class="flex items-center gap-3">
+                <span class="text-sm text-[var(--text-muted)]">Serves</span>
+                <input
+                  type="range"
+                  min="1"
+                  max="8"
+                  x-model.number="servings"
+                  aria-label="Number of servings"
+                  class="w-28"
+                />
+                <span class="text-sm font-semibold text-[var(--accent)] w-4 text-center" x-text="servings"></span>
+              </div>
+            </div>
+
+            <ul class="space-y-2">
+              <template x-for="(ing, idx) in selectedRecipe.ingredients" :key="idx">
+                <li class="flex items-baseline gap-2 text-sm text-[var(--text)]">
+                  <span class="font-medium text-[var(--accent)] tabular-nums w-10 shrink-0 text-right" x-text="scaledQty(ing)"></span>
+                  <span class="text-[var(--text-muted)] shrink-0" x-text="ing.unit"></span>
+                  <span x-text="ing.name"></span>
+                </li>
+              </template>
+            </ul>
+          </div>
+
+          <!-- Steps preview column -->
+          <div>
+            <h2 class="display text-xl font-semibold text-[var(--text)] mb-4">Steps</h2>
+            <ol class="space-y-3">
+              <template x-for="(step, idx) in selectedRecipe.steps" :key="idx">
+                <li class="flex gap-3 text-sm text-[var(--text-muted)] leading-relaxed">
+                  <span class="shrink-0 w-5 h-5 rounded-full bg-[var(--accent-soft)] text-[var(--accent)] text-xs flex items-center justify-center font-semibold mt-0.5" x-text="idx + 1"></span>
+                  <span x-text="step"></span>
+                </li>
+              </template>
+            </ol>
+          </div>
+        </div>
+
+        <!-- Start cooking CTA -->
+        <div class="flex flex-col sm:flex-row gap-3">
+          <button
+            @click="startCookMode()"
+            class="bg-[var(--accent)] hover:opacity-90 text-white font-semibold rounded-lg px-8 py-3 transition text-base"
+          >
+            Start Cooking
+          </button>
+          <button
+            @click="back()"
+            class="border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] font-medium rounded-lg px-8 py-3 transition text-base"
+          >
+            Back to catalog
+          </button>
+        </div>
+
+      </div>
+    </template>
+
+  </section>
+
+  <!-- ============================= COOK MODE VIEW ============================= -->
+  <!-- Fullscreen overlay — x-cloak keeps it hidden until Alpine boots -->
+  <section
+    x-show="view === 'cook-mode'"
+    x-transition.duration.200ms
+    class="fixed inset-0 bg-[var(--bg)] z-40 flex flex-col items-center justify-center px-6 py-12 overflow-y-auto"
+    x-cloak
+  >
+    <!-- Exit button (top-right) -->
+    <button
+      @click="exitCookMode()"
+      class="absolute top-4 right-6 text-[var(--text-muted)] hover:text-[var(--text)] text-sm transition"
+    >
+      Exit
+    </button>
+
+    <!-- Recipe title bar -->
+    <p class="text-xs text-[var(--text-muted)] mb-1 tracking-wide uppercase" x-text="selectedRecipe?.title ?? ''"></p>
+
+    <!-- Step counter -->
+    <div class="text-sm text-[var(--text-muted)] mb-6" x-text="`Step ${stepIndex + 1} of ${selectedRecipe?.steps.length ?? 0}`"></div>
+
+    <!-- Step dots progress -->
+    <div class="flex gap-1.5 mb-8">
+      <template x-for="(step, idx) in (selectedRecipe?.steps ?? [])" :key="idx">
+        <span :class="idx === stepIndex ? 'step-dot active' : 'step-dot'" aria-hidden="true"></span>
+      </template>
+    </div>
+
+    <!-- Step text — large, centered, display font -->
+    <p
+      class="display text-2xl sm:text-3xl text-center max-w-2xl leading-relaxed text-[var(--text)]"
+      x-text="selectedRecipe?.steps[stepIndex] ?? ''"
+    ></p>
+
+    <!-- Timer -->
+    <div class="mt-10 flex gap-3 items-center">
+      <button
+        @click="startTimer(180)"
+        class="px-4 py-2 bg-[var(--accent-soft)] border border-[var(--border)] rounded-lg text-sm text-[var(--text)] hover:bg-[var(--border)] transition"
+      >
+        Start 3:00 timer
+      </button>
+      <div
+        class="text-2xl font-mono tabular-nums text-[var(--accent)]"
+        x-text="timerLabel()"
+        aria-live="polite"
+        aria-label="Timer"
+      ></div>
+    </div>
+
+    <!-- Step navigation -->
+    <div class="mt-10 flex gap-4">
+      <button
+        @click="prevStep()"
+        :disabled="stepIndex === 0"
+        :class="stepIndex === 0 ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[var(--bg-card)]'"
+        class="px-5 py-3 border border-[var(--border)] rounded-lg text-[var(--text)] transition"
+      >
+        Previous
+      </button>
+      <button
+        @click="nextStep()"
+        x-text="stepIndex === (selectedRecipe?.steps.length ?? 1) - 1 ? 'Finish' : 'Next step'"
+        class="px-5 py-3 bg-[var(--accent)] text-white rounded-lg font-semibold hover:opacity-90 transition"
+      ></button>
+    </div>
+
+    <!-- Keyboard hint -->
+    <p class="mt-8 text-xs text-[var(--text-muted)]">Screen will stay awake while cooking.</p>
+
+  </section>
+
+  <!-- ============================= COMPLETED VIEW ============================= -->
+  <section x-show="view === 'completed'" x-transition.duration.200ms class="max-w-xl mx-auto px-4 sm:px-6 py-16 text-center" x-cloak>
+
+    <!-- Success badge -->
+    <div class="inline-flex w-16 h-16 rounded-full bg-[var(--accent)] mb-6 items-center justify-center mx-auto">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8" aria-hidden="true">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+    </div>
+
+    <h2 class="display text-3xl sm:text-4xl font-semibold text-[var(--text)] mb-2">Recipe complete!</h2>
+    <p class="text-[var(--text-muted)] mb-2" x-text="selectedRecipe?.title ?? ''"></p>
+    <p class="text-[var(--text-muted)] text-sm mb-8">Enjoy your meal. Well done!</p>
+
+    <!-- Cooking history count -->
+    <p class="text-sm text-[var(--text-muted)] mb-8">
+      You have cooked <span class="font-semibold text-[var(--accent)]" x-text="cookingHistory.length"></span>
+      <span x-text="cookingHistory.length === 1 ? 'recipe' : 'recipes'"></span> so far.
+    </p>
+
+    <!-- Save to favorites prompt if not already saved -->
+    <template x-if="selectedRecipe && !isFavorite(selectedRecipe.id)">
+      <button
+        @click="toggleFavorite(selectedRecipe.id)"
+        class="mb-4 border border-[var(--accent)] text-[var(--accent)] px-6 py-2.5 rounded-lg font-medium hover:bg-[var(--accent-soft)] transition block w-full sm:w-auto mx-auto"
+      >
+        Save to favorites
+      </button>
+    </template>
+    <template x-if="selectedRecipe && isFavorite(selectedRecipe.id)">
+      <p class="mb-4 text-sm text-[var(--accent)] font-medium">Saved to favorites</p>
+    </template>
+
+    <!-- Action buttons -->
+    <div class="flex flex-col sm:flex-row justify-center gap-3 mt-4">
+      <button
+        @click="setView('catalog')"
+        class="bg-[var(--accent)] text-white px-8 py-3 rounded-lg font-semibold hover:opacity-90 transition"
+      >
+        Back to catalog
+      </button>
+      <button
+        @click="openRecipe(selectedRecipeId)"
+        class="border border-[var(--border)] text-[var(--text-muted)] px-8 py-3 rounded-lg font-semibold hover:text-[var(--text)] transition"
+      >
+        Cook again
+      </button>
+    </div>
+
+  </section>
+
+  <!-- ===== TOAST ===== -->
+  <div
+    x-show="toastMsg"
+    x-transition.opacity.duration.200ms
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded bg-black text-white text-sm shadow-lg"
+    role="status"
+    aria-live="polite"
+    x-text="toastMsg"
+  ></div>
+
+
+</body>
+</html>

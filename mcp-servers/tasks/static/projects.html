@@ -1464,7 +1464,14 @@
     }
 
     // Templates gallery (in-page modal).
-    const FEATURED_TEMPLATE_KEYS = new Set(["landing", "portfolio", "crud", "invoice", "dashboard"]);
+    const FEATURED_TEMPLATE_KEYS = new Set([
+      "landing", "portfolio", "crud", "invoice", "dashboard",
+      "agency", "restaurant", "photography", "event", "real-estate",
+      // Functional templates (2026-05-11)
+      "flight-booking", "food-delivery", "job-board", "movie-tickets", "recipe-site",
+    ]);
+    // Bump this whenever preview PNGs change to bust Cloudflare's cache.
+    const PREVIEW_VER = "5";
     const tgModal = document.getElementById("templates-modal");
     const tgGrid = document.getElementById("tg-grid");
     const tgFilterRow = document.getElementById("tg-filter-row");
@@ -1532,7 +1539,7 @@
         // and committed to the repo. Static images bypass every service-worker /
         // CORS / iframe-rendering issue. Re-run the generator after editing a
         // template (`python scripts/generate_template_previews.py`).
-        const previewUrl = "/api/template-preview/" + encodeURIComponent(t.key) + "/preview.png";
+        const previewUrl = "/api/template-preview/" + encodeURIComponent(t.key) + "/preview.png?v=" + PREVIEW_VER;
         const visual = `
           <div class="visual visual-img">
             <div class="placeholder fallback">

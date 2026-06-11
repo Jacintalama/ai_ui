@@ -1086,14 +1086,19 @@
         if (!(await isAdmin())) return;
         if (document.querySelector("[data-aiui-build-website]")) return;
 
-        // Find the <a>/<button> row whose label text is exactly "Workspace".
-        let workspaceRow = null;
-        const candidates = document.querySelectorAll("a, button, [role='link']");
-        for (const el of candidates) {
-          const txt = (el.textContent || "").trim();
-          if (txt !== "Workspace") continue;
-          workspaceRow = el;
-          break;
+        // Find Workspace row via its href first — survives the collapsed
+        // sidebar state (label text may be visually hidden, but href stays
+        // in the DOM). Fall back to the text-content scan for older Open
+        // WebUI versions where the route differs.
+        let workspaceRow = document.querySelector('a[href="/workspace"]');
+        if (!workspaceRow) {
+          const candidates = document.querySelectorAll("a, button, [role='link']");
+          for (const el of candidates) {
+            const txt = (el.textContent || "").trim();
+            if (txt !== "Workspace") continue;
+            workspaceRow = el;
+            break;
+          }
         }
         if (!workspaceRow || !workspaceRow.parentElement) return;
 
@@ -1140,7 +1145,7 @@
         });
         // Add an explicit clean tooltip in its place.
         entry.setAttribute("title", "App Builder — create and manage AI-built apps");
-        // Replace the "Workspace" text label with "Build Website" wherever
+        // Replace the "Workspace" text label with "App Builder" wherever
         // it appears inside the cloned subtree.
         (function rewriteLabel(node) {
           for (const child of Array.from(node.childNodes)) {
@@ -1154,6 +1159,21 @@
             }
           }
         })(entry);
+
+        // Swap the inherited Workspace icon for a code-bracket glyph so
+        // App Builder is visually distinct — including in the collapsed
+        // sidebar where only icons render.
+        const svg = entry.querySelector("svg");
+        if (svg) {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline>';
+        }
+
         // Capture-phase click so we beat Svelte's own handlers.
         entry.addEventListener("click", (ev) => {
           ev.preventDefault();

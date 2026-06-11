@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Roost — Food Delivery</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="appState()" x-init="init()" class="bg-[var(--bg)] text-[var(--text)] font-sans min-h-screen">
+
+  <!-- Header (compact, sticky) -->
+  <header
+    x-data="{ scrolled: false }"
+    x-init="window.addEventListener('scroll', () => { scrolled = window.scrollY > 32; }, { passive: true })"
+    :class="scrolled ? 'h-12 shadow-sm' : 'h-14 shadow-none'"
+    class="sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur transition-all duration-150 flex items-center px-4 sm:px-6 border-b border-stone-200"
+  >
+    <a href="#" @click.prevent="setView('restaurants')" class="flex items-center gap-2 font-semibold heading-font text-[var(--text)]">
+      <span class="inline-block w-6 h-6 rounded bg-[var(--accent)]"></span>
+      <span>Roost</span>
+    </a>
+
+    <nav class="ml-auto flex items-center gap-3 text-sm">
+      <button @click="setView('restaurants')" class="hidden sm:inline-block text-[var(--muted)] hover:text-[var(--text)] transition">Browse</button>
+      <!-- Cart button with badge -->
+      <button @click="setView('cart')" class="relative px-3 py-1.5 bg-[var(--accent)] text-white rounded text-sm font-medium hover:opacity-90 transition">
+        Cart
+        <span x-show="cartCount > 0"
+          class="absolute -top-1 -right-1 bg-black text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
+          x-text="cartCount"></span>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-stone-200 flex items-center justify-center text-xs font-medium">U</div>
+    </nav>
+  </header>
+
+  <!-- ===================== RESTAURANTS VIEW ===================== -->
+  <section x-show="view === 'restaurants'" x-transition.duration.200ms class="max-w-6xl mx-auto px-4 sm:px-6 py-10">
+
+    <h1 class="text-3xl sm:text-4xl font-bold heading-font mb-1">Order food delivery</h1>
+    <p class="text-[var(--muted)] mb-8">14 restaurants · Fast delivery to your door.</p>
+
+    <!-- Cuisine filter pills -->
+    <div class="flex flex-wrap gap-2 mb-5">
+      <button
+        @click="filters.cuisine = 'all'; applyFilters()"
+        :class="filters.cuisine === 'all' ? 'bg-[var(--accent)] text-white' : 'bg-[var(--accent-soft)] text-[var(--text)]'"
+        class="px-4 py-1.5 rounded-full text-sm font-medium transition">
+        All
+      </button>
+      <template x-for="c in cuisines" :key="c">
+        <button
+          @click="filters.cuisine = c; applyFilters()"
+          :class="filters.cuisine === c ? 'bg-[var(--accent)] text-white' : 'bg-[var(--accent-soft)] text-[var(--text)]'"
+          class="px-4 py-1.5 rounded-full text-sm font-medium transition"
+          x-text="c">
+        </button>
+      </template>
+    </div>
+
+    <!-- Filter row: rating + eta -->
+    <div class="flex flex-wrap gap-6 mb-8 p-4 bg-white rounded-xl border border-stone-100">
+      <div class="flex items-center gap-3">
+        <label for="minRating" class="text-xs text-[var(--muted)] whitespace-nowrap">Min rating</label>
+        <input id="minRating" type="range" min="0" max="5" step="0.1" x-model.number="filters.minRating" @input="applyFilters()"
+          class="w-28 accent-[var(--accent)]" />
+        <span class="text-sm font-medium w-8" x-text="filters.minRating.toFixed(1)"></span>
+      </div>
+      <div class="flex items-center gap-3">
+        <label for="maxEta" class="text-xs text-[var(--muted)] whitespace-nowrap">Max wait</label>
+        <input id="maxEta" type="range" min="10" max="60" step="5" x-model.number="filters.maxEta" @input="applyFilters()"
+          class="w-28 accent-[var(--accent)]" />
+        <span class="text-sm font-medium w-14" x-text="filters.maxEta + ' min'"></span>
+      </div>
+      <p class="text-xs text-[var(--muted)] self-center ml-auto">
+        Showing <span x-text="filteredRestaurants.length"></span> of <span x-text="restaurants.length"></span>
+      </p>
+    </div>
+
+    <!-- Restaurant grid -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+      <template x-for="r in filteredRestaurants" :key="r.id">
+        <article
+          @click="openMenu(r.id)"
+          class="bg-white rounded-xl overflow-hidden cursor-pointer border border-stone-100">
+          <img
+            :src="r.thumb"
+            :alt="r.name + ' restaurant'"
+            width="400" height="200"
+            loading="lazy"
+            class="w-full h-44 object-cover" />
+          <div class="p-4">
+            <div class="flex items-start justify-between gap-2">
+              <h2 class="font-semibold text-base leading-snug" x-text="r.name"></h2>
+              <span class="text-xs bg-[var(--accent-soft)] text-[var(--accent)] font-semibold px-2 py-0.5 rounded-full shrink-0"
+                x-text="r.cuisine"></span>
+            </div>
+            <p class="text-sm text-[var(--muted)] mt-1">
+              <span x-text="r.rating"></span> stars &middot; ~<span x-text="r.eta"></span> min &middot; $3.99 delivery
+            </p>
+          </div>
+        </article>
+      </template>
+
+      <template x-if="filteredRestaurants.length === 0">
+        <p class="col-span-full text-center py-16 text-[var(--muted)]">No restaurants match those filters. Try relaxing the rating or wait time.</p>
+      </template>
+    </div>
+  </section>
+
+  <!-- ===================== MENU VIEW ===================== -->
+  <section x-show="view === 'menu'" x-transition.duration.200ms class="max-w-5xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="back()" class="text-[var(--muted)] hover:text-[var(--text)] transition mb-6">← Back to restaurants</button>
+
+    <!-- Restaurant hero -->
+    <template x-if="activeRestaurant">
+      <div>
+        <div class="relative rounded-xl overflow-hidden mb-6">
+          <img
+            :src="activeRestaurant.hero"
+            :alt="activeRestaurant.name + ' hero image'"
+            width="800" height="300"
+            loading="eager"
+            class="w-full h-52 sm:h-72 object-cover" />
+          <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-5">
+            <div>
+              <h2 class="text-2xl sm:text-3xl font-bold text-white heading-font" x-text="activeRestaurant.name"></h2>
+              <p class="text-white/80 text-sm mt-1"
+                x-text="activeRestaurant.cuisine + ' · ' + activeRestaurant.rating + ' stars · ~' + activeRestaurant.eta + ' min'"></p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cart belongs to different restaurant warning -->
+        <template x-if="cart.restaurantId && cart.restaurantId !== activeRestaurantId">
+          <div class="mb-5 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+            Your cart has items from another restaurant. Adding items here will clear the current cart.
+          </div>
+        </template>
+
+        <!-- Skeleton while loading -->
+        <template x-if="isLoading">
+          <div class="space-y-3" aria-live="polite" aria-busy="true">
+            <div class="h-24 bg-stone-200 rounded-xl animate-pulse"></div>
+            <div class="h-24 bg-stone-200 rounded-xl animate-pulse"></div>
+            <div class="h-24 bg-stone-200 rounded-xl animate-pulse"></div>
+            <div class="h-24 bg-stone-200 rounded-xl animate-pulse"></div>
+          </div>
+        </template>
+
+        <!-- Menu items grid -->
+        <template x-if="!isLoading">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <template x-for="item in activeRestaurant.items" :key="item.id">
+              <article class="bg-white rounded-xl overflow-hidden border border-stone-100 flex gap-3 p-3 items-start">
+                <img
+                  :src="item.photo"
+                  :alt="item.name"
+                  width="80" height="80"
+                  loading="lazy"
+                  class="w-20 h-20 object-cover rounded-lg shrink-0" />
+                <div class="flex-1 min-w-0">
+                  <h3 class="font-semibold text-sm leading-snug" x-text="item.name"></h3>
+                  <p class="text-xs text-[var(--muted)] mt-0.5 line-clamp-2" x-text="item.description"></p>
+                  <div class="mt-2 flex items-center justify-between gap-2">
+                    <span class="font-semibold text-[var(--accent)]" x-text="'$' + item.price.toFixed(2)"></span>
+                    <!-- Stepper -->
+                    <div class="flex items-center gap-2">
+                      <button
+                        x-show="itemQty(item.id) > 0"
+                        @click="removeItem(item.id)"
+                        class="stepper-btn bg-[var(--accent-soft)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
+                        :aria-label="'Remove one ' + item.name">
+                        -
+                      </button>
+                      <span x-show="itemQty(item.id) > 0"
+                        class="w-5 text-center text-sm font-semibold"
+                        x-text="itemQty(item.id)"></span>
+                      <button
+                        @click="addItem(item.id)"
+                        class="stepper-btn bg-[var(--accent)] text-white hover:opacity-90"
+                        :aria-label="'Add one ' + item.name">
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </article>
+            </template>
+          </div>
+        </template>
+
+        <!-- Sticky bottom bar when cart has items -->
+        <div x-show="cartCount > 0"
+          class="fixed bottom-0 left-0 right-0 z-20 bg-white border-t border-stone-200 px-4 py-3 flex items-center justify-between sm:max-w-5xl sm:mx-auto sm:rounded-t-xl">
+          <span class="text-sm font-medium"><span x-text="cartCount"></span> item<span x-show="cartCount !== 1">s</span></span>
+          <button @click="setView('cart')"
+            class="bg-[var(--accent)] text-white px-5 py-2 rounded-lg font-semibold text-sm hover:opacity-90 transition">
+            View cart — $<span x-text="cartGrandTotal.toFixed(2)"></span>
+          </button>
+        </div>
+      </div>
+    </template>
+  </section>
+
+  <!-- ===================== CART VIEW ===================== -->
+  <section x-show="view === 'cart'" x-transition.duration.200ms class="max-w-3xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="back()" class="text-[var(--muted)] hover:text-[var(--text)] transition mb-6">← Back to menu</button>
+    <h2 class="text-2xl font-bold heading-font mb-6">Your cart</h2>
+
+    <template x-if="cart.items.length === 0">
+      <div class="text-center py-20">
+        <p class="text-[var(--muted)] text-lg mb-4">Your cart is empty.</p>
+        <button @click="setView('restaurants')"
+          class="bg-[var(--accent)] text-white px-6 py-2 rounded-lg font-semibold hover:opacity-90 transition">
+          Browse restaurants
+        </button>
+      </div>
+    </template>
+
+    <template x-if="cart.items.length > 0">
+      <div>
+        <!-- Restaurant name -->
+        <template x-if="cartRestaurant">
+          <p class="text-sm text-[var(--muted)] mb-4">
+            From <strong x-text="cartRestaurant.name"></strong>
+          </p>
+        </template>
+
+        <!-- Line items -->
+        <div class="space-y-3 mb-6">
+          <template x-if="cartRestaurant">
+            <div class="space-y-3">
+              <template x-for="line in cart.items" :key="line.itemId">
+                <div class="flex items-center gap-3 bg-white rounded-xl p-3 border border-stone-100">
+                  <template x-if="cartItem(line.itemId)">
+                    <img
+                      :src="cartItem(line.itemId).photo"
+                      :alt="cartItem(line.itemId).name"
+                      width="56" height="56"
+                      loading="lazy"
+                      class="w-14 h-14 object-cover rounded-lg shrink-0" />
+                  </template>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-medium text-sm leading-snug"
+                      x-text="cartItem(line.itemId)?.name ?? 'Item'"></p>
+                    <p class="text-sm text-[var(--accent)] font-semibold mt-0.5"
+                      x-text="'$' + ((cartItem(line.itemId)?.price ?? 0) * line.qty).toFixed(2)"></p>
+                  </div>
+                  <!-- Stepper in cart -->
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button
+                      @click="activeRestaurantId = cart.restaurantId; removeItem(line.itemId)"
+                      class="stepper-btn bg-[var(--accent-soft)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white"
+                      :aria-label="'Remove one from cart'">
+                      -
+                    </button>
+                    <span class="w-5 text-center text-sm font-semibold" x-text="line.qty"></span>
+                    <button
+                      @click="activeRestaurantId = cart.restaurantId; addItem(line.itemId)"
+                      class="stepper-btn bg-[var(--accent)] text-white hover:opacity-90"
+                      :aria-label="'Add one to cart'">
+                      +
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- Order summary -->
+        <div class="bg-white rounded-xl border border-stone-100 p-5 space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-[var(--muted)]">Subtotal</span>
+            <span x-text="'$' + cartTotal.toFixed(2)"></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--muted)]">Delivery fee</span>
+            <span x-text="'$' + cartDeliveryFee.toFixed(2)"></span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-[var(--muted)]">Tax (8%)</span>
+            <span x-text="'$' + cartTax.toFixed(2)"></span>
+          </div>
+          <div class="border-t border-stone-100 pt-2 flex justify-between font-semibold text-base">
+            <span>Total</span>
+            <span class="text-[var(--accent)]" x-text="'$' + cartGrandTotal.toFixed(2)"></span>
+          </div>
+        </div>
+
+        <div class="mt-5 flex gap-3">
+          <button @click="clearCart()"
+            class="px-4 py-2 text-sm text-[var(--muted)] hover:text-[var(--text)] border border-stone-200 rounded-lg transition">
+            Clear cart
+          </button>
+          <button @click="setView('checkout')"
+            class="flex-1 bg-[var(--accent)] text-white py-2.5 rounded-lg font-semibold hover:opacity-90 transition">
+            Place order
+          </button>
+        </div>
+      </div>
+    </template>
+  </section>
+
+  <!-- ===================== CHECKOUT VIEW ===================== -->
+  <section x-show="view === 'checkout'" x-transition.duration.200ms class="max-w-2xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="back()" class="text-[var(--muted)] hover:text-[var(--text)] transition mb-6">← Back to cart</button>
+    <h2 class="text-2xl font-bold heading-font mb-6">Checkout</h2>
+
+    <form @submit.prevent="placeOrder()" class="space-y-5">
+      <!-- Delivery address -->
+      <div class="bg-white rounded-xl border border-stone-100 p-5 space-y-4">
+        <h3 class="font-semibold text-base">Delivery address</h3>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-[var(--muted)]">Street address</span>
+          <input type="text" required x-model="address.line1" placeholder="123 Main St"
+            class="border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
+        </label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-[var(--muted)]">City</span>
+            <input type="text" required x-model="address.city" placeholder="San Francisco"
+              class="border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-[var(--muted)]">ZIP</span>
+            <input type="text" required x-model="address.zip" placeholder="94102"
+              class="border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
+          </label>
+        </div>
+      </div>
+
+      <!-- Payment -->
+      <div class="bg-white rounded-xl border border-stone-100 p-5 space-y-4">
+        <h3 class="font-semibold text-base">Payment</h3>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-[var(--muted)]">Card last 4 digits</span>
+          <input type="text" required x-model="card" placeholder="4242"
+            maxlength="4" pattern="\d{4}"
+            class="border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]" />
+        </label>
+      </div>
+
+      <!-- Order summary -->
+      <div class="bg-[var(--accent-soft)] rounded-xl p-4 flex items-center justify-between">
+        <div>
+          <p class="text-sm text-[var(--muted)]">Order total</p>
+          <p class="text-2xl font-bold text-[var(--text)]" x-text="'$' + cartGrandTotal.toFixed(2)"></p>
+        </div>
+        <button type="submit"
+          class="bg-[var(--accent)] text-white px-6 py-3 rounded-lg font-semibold hover:opacity-90 transition">
+          Confirm order
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ===================== CONFIRMATION VIEW ===================== -->
+  <section x-show="view === 'confirmation'" x-transition.duration.200ms class="max-w-2xl mx-auto px-4 sm:px-6 py-16 text-center" x-cloak>
+    <div class="inline-block w-16 h-16 rounded-full bg-[var(--accent)] mb-6 flex items-center justify-center mx-auto">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-8 h-8" aria-hidden="true">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+    </div>
+    <h2 class="text-3xl font-bold heading-font mb-2">On its way!</h2>
+    <p class="text-[var(--muted)] mb-8">Your order has been confirmed. Estimated delivery in 30-45 minutes.</p>
+
+    <!-- Decorative map placeholder -->
+    <div class="bg-white rounded-xl border border-stone-100 overflow-hidden mb-8" aria-hidden="true">
+      <svg viewBox="0 0 600 200" class="w-full" aria-hidden="true">
+        <rect width="600" height="200" fill="#f5f0e8"/>
+        <!-- Streets -->
+        <line x1="0" y1="100" x2="600" y2="100" stroke="#e7dfc8" stroke-width="8"/>
+        <line x1="300" y1="0" x2="300" y2="200" stroke="#e7dfc8" stroke-width="8"/>
+        <line x1="0" y1="60" x2="600" y2="60" stroke="#ede8db" stroke-width="4"/>
+        <line x1="0" y1="140" x2="600" y2="140" stroke="#ede8db" stroke-width="4"/>
+        <line x1="150" y1="0" x2="150" y2="200" stroke="#ede8db" stroke-width="4"/>
+        <line x1="450" y1="0" x2="450" y2="200" stroke="#ede8db" stroke-width="4"/>
+        <!-- Blocks -->
+        <rect x="20" y="20" width="110" height="30" rx="4" fill="#e0d8c8" opacity="0.7"/>
+        <rect x="20" y="70" width="110" height="20" rx="4" fill="#e0d8c8" opacity="0.7"/>
+        <rect x="320" y="20" width="110" height="30" rx="4" fill="#e0d8c8" opacity="0.7"/>
+        <rect x="460" y="70" width="110" height="30" rx="4" fill="#e0d8c8" opacity="0.7"/>
+        <rect x="320" y="150" width="110" height="30" rx="4" fill="#e0d8c8" opacity="0.7"/>
+        <!-- Destination pin -->
+        <circle cx="300" cy="100" r="14" fill="#ff8c42" opacity="0.95"/>
+        <circle cx="300" cy="100" r="6" fill="white"/>
+      </svg>
+      <p class="text-xs text-[var(--muted)] p-3">Delivery route preview (illustrative)</p>
+    </div>
+
+    <button @click="setView('restaurants')"
+      class="bg-[var(--accent)] text-white px-8 py-3 rounded-lg font-semibold text-base hover:opacity-90 transition">
+      Back to restaurants
+    </button>
+  </section>
+
+  <!-- Toast -->
+  <div
+    x-show="toastMsg"
+    x-transition.opacity.duration.200ms
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded bg-black text-white text-sm shadow-lg"
+    role="status"
+    aria-live="polite"
+    x-text="toastMsg"></div>
+
+
+</body>
+</html>

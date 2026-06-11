@@ -139,14 +139,7 @@
       overflow: hidden;
       border-bottom: 1px solid var(--border);
     }
-    .tcard .visual.has-image { background: #ffffff; }
-    .tcard .visual img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      object-position: top center;
-      display: block;
-    }
+    .tcard .visual.has-iframe { background: #ffffff; }
     .tcard .visual iframe {
       width: 200%;
       height: 200%;
@@ -268,7 +261,14 @@
   <script>
     // Featured templates have a pre-built reference app under
     // mcp-servers/tasks/template_apps/<key>/. We surface them first.
-    const FEATURED_KEYS = new Set(["landing", "portfolio", "crud", "invoice", "dashboard"]);
+    const FEATURED_KEYS = new Set([
+      "landing", "portfolio", "crud", "invoice", "dashboard",
+      "agency", "restaurant", "photography", "event", "real-estate",
+      // Functional templates (2026-05-11)
+      "flight-booking", "food-delivery", "job-board", "movie-tickets", "recipe-site",
+    ]);
+    // Bump this whenever preview assets change to bust Cloudflare's cache.
+    const PREVIEW_VER = "5";
 
     function authHeaders() {
       const h = { "Content-Type": "application/json" };
@@ -324,21 +324,9 @@
 
     function renderCard(t) {
       const isFeatured = FEATURED_KEYS.has(t.key);
-      // /tasks/template-apps/ is shadowed by Open WebUI's SPA fallback; use
-      // the /api/template-preview/ mount instead (same files, /api/* bypasses
-      // the SW per main.py's mount comment).
-      const previewUrl = isFeatured ? `/api/template-preview/${encodeURIComponent(t.key)}/index.html` : null;
-      // Use the static preview.png screenshot rather than a live iframe.
-      // DB-backed templates (crud/dashboard/invoice) need Supabase to render
-      // anything visible, and a sandboxed iframe can't initialize it — they'd
-      // appear blank. The PNG renders the same regardless of backend state.
-      // The ?v= query string is a cache-buster — bump it whenever the
-      // template_apps/<key>/preview.png files are regenerated, otherwise
-      // Cloudflare can serve stale blanks for hours.
-      const PREVIEW_VER = "2";
-      const previewImg = isFeatured ? `/api/template-preview/${encodeURIComponent(t.key)}/preview.png?v=${PREVIEW_VER}` : null;
-      const visual = previewImg
-        ? `<div class="visual has-image"><img src="${previewImg}" alt="${escapeHtml(t.label)} preview" loading="lazy" /></div>`
+      const previewUrl = isFeatured ? `/tasks/template-apps/${encodeURIComponent(t.key)}/index.html?v=${PREVIEW_VER}` : null;
+      const visual = isFeatured
+        ? `<div class="visual has-iframe"><iframe src="${previewUrl}" loading="lazy" sandbox="allow-scripts" title="${escapeHtml(t.label)} preview"></iframe></div>`
         : `<div class="visual"><div class="placeholder">${escapeHtml(t.label)}</div></div>`;
       const storageBadge = t.storage === "supabase"
         ? '<span class="badge storage-supabase">Database</span>'
@@ -368,7 +356,7 @@
       const useBtn = card.querySelector('[data-action="use"]');
       if (previewBtn) {
         previewBtn.addEventListener("click", () => {
-          window.open(`/api/template-preview/${encodeURIComponent(key)}/index.html`, "_blank", "noopener");
+          window.open(`/tasks/template-apps/${encodeURIComponent(key)}/index.html`, "_blank", "noopener");
         });
       }
       useBtn.addEventListener("click", () => {
