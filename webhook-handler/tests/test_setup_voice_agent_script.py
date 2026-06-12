@@ -55,3 +55,20 @@ def test_prompt_contains_flow_and_keeps_existing_capabilities():
     # the pre-existing capabilities must survive the prompt rewrite
     for cap in ("status:", "pr-review", "Default repository"):
         assert cap in p
+
+
+def test_asr_keywords_seed_names_the_model_cannot_know():
+    """ASR misspelled the spelled-out name live (2026-06-12: J-A-C-I-N-T ->
+    'Jasent'). The keywords field biases recognition toward proper nouns."""
+    kws = sva.ASR_KEYWORDS
+    for w in ("AIUI", "Jacint", "Alama"):
+        assert w in kws
+    assert len(kws) <= 20, "keep the list focused — too many keywords hurts ASR"
+
+
+def test_agent_patch_includes_prompt_tools_and_keywords():
+    payload = sva.build_agent_patch(["t1", "t2"])
+    agent = payload["conversation_config"]["agent"]["prompt"]
+    assert agent["prompt"] == sva.AGENT_PROMPT
+    assert agent["tool_ids"] == ["t1", "t2"]
+    assert payload["conversation_config"]["asr"]["keywords"] == sva.ASR_KEYWORDS

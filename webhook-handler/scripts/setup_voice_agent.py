@@ -65,6 +65,31 @@ IMPORTANT: Common voice commands users will say:
 Language instructions: Always respond in the same language the user is speaking. If the user switches languages, follow them. Do not default to English unless the user speaks English."""
 
 
+# Proper nouns the ASR model can't know — biases recognition so spelled-out
+# names stop coming back mangled (live 2026-06-12: J-A-C-I-N-T -> "Jasent").
+# Keep the list FOCUSED: too many keywords degrades general recognition.
+ASR_KEYWORDS = [
+    "AIUI",
+    "Jacint", "Jasen", "Alama",
+    "Lukas", "Herajt",
+    "Ralph", "Benitez",
+    "Clarenz", "Bacalla",
+]
+
+
+def build_agent_patch(tool_ids: list) -> dict:
+    """The single PATCH payload: prompt + tool ids + ASR keyword bias.
+    ElevenLabs deep-merges PATCHes, so untouched config (voice, turn
+    settings) survives."""
+    return {"conversation_config": {
+        "agent": {"prompt": {
+            "prompt": AGENT_PROMPT,
+            "tool_ids": tool_ids,
+        }},
+        "asr": {"keywords": ASR_KEYWORDS},
+    }}
+
+
 def _str_prop(description: str) -> dict:
     return {"type": "string", "description": description}
 
@@ -205,7 +230,11 @@ def main() -> int:
                   .get("agent", {}).get("prompt", {}))
     current_ids = prompt_cfg.get("tool_ids") or []
     prompt_changes = prompt_cfg.get("prompt") != AGENT_PROMPT
-    print(f"agent: {len(current_ids)} tool ids; prompt update needed: {prompt_changes}")
+    current_keywords = (agent.get("conversation_config", {})
+                        .get("asr", {}).get("keywords") or [])
+    keyword_changes = current_keywords != ASR_KEYWORDS
+    print(f"agent: {len(current_ids)} tool ids; prompt update needed: {prompt_changes}; "
+          f"keyword update needed: {keyword_changes}")
 
     if args.dry_run:
         print("dry-run: no changes written")
@@ -221,10 +250,7 @@ def main() -> int:
         new_ids.append(tool_id)
         print(f"updated tool {cfg['name']}")
 
-    payload = {"conversation_config": {"agent": {"prompt": {
-        "prompt": AGENT_PROMPT,
-        "tool_ids": merged_tool_ids(current_ids, new_ids),
-    }}}}
+    payload = build_agent_patch(merged_tool_ids(current_ids, new_ids))
     _req("PATCH", f"/v1/convai/agents/{agent_id}", key, payload)
 
     final = _req("GET", f"/v1/convai/agents/{agent_id}", key)
