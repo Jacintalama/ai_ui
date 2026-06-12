@@ -176,3 +176,71 @@ async def test_user_join_healthy_session_untouched(monkeypatch):
     )
     assert not live.force_disconnected and not live.cleaned_up
     assert started == []
+
+
+# ---------------------------------------------------------------------------
+# 4. Watchdog: never reconnect while the agent is speaking (mid-speech cutout)
+# ---------------------------------------------------------------------------
+
+def test_watchdog_waits_while_agent_audio_queued():
+    """A long agent reply must not be treated as user deafness."""
+    bot = _make_bot()
+    bot._session_active = True
+    bot._session_voice_channel = _channel(USER)
+    ao = vb.AudioOutputSource()
+    ao.feed(b"\x01" * vb.DISCORD_FRAME_SIZE)  # audio queued, not yet played
+    bot._audio_output = ao
+    assert bot._watchdog_should_reconnect(60.0) is False
+
+
+def test_watchdog_waits_while_playback_not_drained():
+    bot = _make_bot()
+    bot._session_active = True
+    bot._session_voice_channel = _channel(USER)
+    ao = vb.AudioOutputSource()
+    ao._has_content = True  # queue empty but drain grace not elapsed
+    bot._audio_output = ao
+    assert bot._watchdog_should_reconnect(60.0) is False
+
+
+def test_watchdog_fires_after_agent_audio_drained():
+    bot = _make_bot()
+    bot._session_active = True
+    bot._session_voice_channel = _channel(USER)
+    bot._audio_output = vb.AudioOutputSource()  # empty, drained
+    assert bot._watchdog_should_reconnect(26.0) is True
+
+
+def test_playback_drain_resets_activity_clock():
+    """The 25 s deafness countdown starts AFTER the agent finishes speaking.
+
+    The bot wires its activity stamp as AudioOutputSource(on_drained=...);
+    read() fires it after 30 consecutive empty reads following content.
+    """
+    bot = _make_bot()
+    bot._last_activity_time = 0.0
+    ao = vb.AudioOutputSource(on_drained=bot._mark_activity)
+    ao.feed(b"\x01" * vb.DISCORD_FRAME_SIZE)
+    while ao.read() != vb.SILENCE_FRAME:
+        pass
+    for _ in range(30):  # 30 consecutive empty reads triggers the drain hook
+        ao.read()
+    assert bot._last_activity_time > 0.0
+
+
+@pytest.mark.skipif(
+    not hasattr(vb, "DiscordAudioInterface"),
+    reason="voice deps (voice_recv/elevenlabs) not installed locally",
+)
+def test_audio_interface_chains_drain_hook():
+    """DiscordAudioInterface must CHAIN the bot's on_drained, not clobber it
+    (it historically overwrote audio_output._on_drained)."""
+    fired = []
+    ao = vb.AudioOutputSource(on_drained=lambda: fired.append(1))
+    vb.DiscordAudioInterface(ao, asyncio.new_event_loop())
+    ao.feed(b"\x01" * vb.DISCORD_FRAME_SIZE)
+    while ao.read() != vb.SILENCE_FRAME:
+        pass
+    for _ in range(30):
+        ao.read()
+    assert fired, "bot's drain hook must still fire through the interface"
