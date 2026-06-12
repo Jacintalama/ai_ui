@@ -140,3 +140,53 @@ async def test_voice_build_tasks_error_spoken(monkeypatch):
     result = await _router(tc).run_voice_build(_voice_ctx(captured), None, "a blog")
     assert result is None
     assert captured, "expected a spoken error"
+
+
+# ---------------------------------------------------------------------------
+# run_voice_build_status
+# ---------------------------------------------------------------------------
+
+async def _status_reply(status_payload, *, error=None):
+    captured = []
+    tc = MagicMock()
+    if error is not None:
+        tc.get_build_status = AsyncMock(side_effect=error)
+    else:
+        tc.get_build_status = AsyncMock(return_value=status_payload)
+    await _router(tc).run_voice_build_status(
+        _voice_ctx(captured), "o@x.com", "t9", slug="marios-1234")
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_build_status_running():
+    captured = await _status_reply({"status": "running"})
+    assert any("still building" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_build_status_completed_names_url():
+    captured = await _status_reply(
+        {"status": "completed", "preview_url": "https://x/preview-app/marios-1234/"})
+    joined = " ".join(captured).lower()
+    assert "ready" in joined and "marios-1234" in joined
+
+
+@pytest.mark.asyncio
+async def test_build_status_failed():
+    captured = await _status_reply({"status": "failed"})
+    assert any("failed" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_build_status_needs_input_includes_detail():
+    captured = await _status_reply(
+        {"status": "needs_input", "error": "Which city is the restaurant in?"})
+    joined = " ".join(captured)
+    assert "Which city" in joined
+
+
+@pytest.mark.asyncio
+async def test_build_status_api_error_spoken():
+    captured = await _status_reply(None, error=TasksAPIError(0, "down"))
+    assert any("try again" in m.lower() for m in captured)

@@ -1599,6 +1599,38 @@ class CommandRouter:
             template_label=template_label,
         )
 
+    async def run_voice_build_status(
+        self, ctx: CommandContext, email: str, task_id: str, slug: str = "",
+    ) -> None:
+        """Speak the state of a build. The voice layer picks the task_id
+        (explicit from the agent, else the remembered last voice build)."""
+        name = slug or "your app"
+        try:
+            st = await self._tasks_client.get_build_status(email, task_id)
+        except TasksAPIError:
+            await ctx.respond(
+                "I couldn't reach the builder to check — try again in a moment."
+            )
+            return
+        status = st.get("status")
+        if status == "completed":
+            url = (st.get("preview_url") or "").strip()
+            tail = f" The preview link is in the text channel: {url}" if url else ""
+            await ctx.respond(f"Good news — {name} is ready.{tail}")
+        elif status == "failed":
+            await ctx.respond(
+                f"The build for {name} failed. You can ask me to build it again."
+            )
+        elif status == "needs_input":
+            detail = (st.get("error") or "").strip()
+            tail = f" It needs to know: {detail}" if detail else ""
+            await ctx.respond(f"The build for {name} is paused.{tail}")
+        else:
+            await ctx.respond(
+                f"{name} is still building — I'll post the link in the text "
+                "channel the moment it's ready."
+            )
+
     async def run_panel_publish(self, ctx: CommandContext, slug: str) -> None:
         """App Builder channel entry for the Publish button. Resolves the
         caller's email and publishes their built app, then posts the live URL.
