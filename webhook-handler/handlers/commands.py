@@ -1512,18 +1512,20 @@ class CommandRouter:
     async def _start_build(
         self, ctx: CommandContext, email: str, template_key: str | None,
         description: str, *, template_label: str | None = None,
-    ) -> None:
+    ) -> dict | None:
         """Start a one-shot build and wire the result watcher.
 
-        Shared by the `/aiui aiuibuilder build` text path and the App Builder
-        channel button/modal path. `description` must be non-empty (callers
-        validate). `template_label`, when given, is named in the ack."""
+        Shared by the `/aiui aiuibuilder build` text path, the App Builder
+        channel button/modal path, and the voice flow. `description` must be
+        non-empty (callers validate). `template_label`, when given, is named
+        in the ack. Returns the tasks-service result ({"slug", "task_id"}) on
+        success, None on failure."""
         try:
             result = await self._tasks_client.start_build(
                 email, description, template_key=template_key)
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
-            return
+            return None
         slug = result["slug"]
         task_id = result["task_id"]
         tnote = f" (from the {template_label} template)" if template_label else ""
@@ -1535,6 +1537,7 @@ class CommandRouter:
             watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
             self._background_tasks.add(watcher)
             watcher.add_done_callback(self._background_tasks.discard)
+        return result
 
     async def run_panel_build(
         self, ctx: CommandContext, template_key: str | None, description: str,
@@ -1553,6 +1556,48 @@ class CommandRouter:
             await ctx.respond("Please describe the app you want to build.")
             return
         await self._start_build(ctx, email, template_key, description)
+
+    async def run_voice_build(
+        self, ctx: CommandContext, template_key: str | None, description: str,
+    ) -> dict | None:
+        """Voice entry: explicit template key (or None for blank) + spoken
+        description. Unknown keys are a spoken error, never a silent blank
+        build — the user explicitly picked a template. Returns
+        {"slug", "task_id"} on success so the voice layer can remember the
+        last build for the build_status tool."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await ctx.respond(
+                "Voice builds aren't linked to an account yet — the operator "
+                "needs to set VOICE_USER_EMAIL on the server."
+            )
+            return None
+        description = (description or "").strip()
+        if not description:
+            await ctx.respond("Please describe the app you want to build.")
+            return None
+        template_key = (template_key or "").strip().lower() or None
+        template_label = None
+        if template_key:
+            try:
+                catalog = await self._tasks_client.list_templates(email)
+            except TasksAPIError:
+                catalog = []
+            labels = {
+                t["key"]: t.get("label", t["key"])
+                for t in catalog if t.get("key")
+            }
+            if template_key not in labels:
+                await ctx.respond(
+                    f"I don't know a template called {template_key}. "
+                    "Ask me to list templates, or build without one."
+                )
+                return None
+            template_label = labels[template_key]
+        return await self._start_build(
+            ctx, email, template_key, description,
+            template_label=template_label,
+        )
 
     async def run_panel_publish(self, ctx: CommandContext, slug: str) -> None:
         """App Builder channel entry for the Publish button. Resolves the
