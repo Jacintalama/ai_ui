@@ -416,6 +416,7 @@ class ConversationalVoiceBot(discord.Client):
         self._session_active = False
         self._session_end_handled = False
         self._last_activity_time = 0.0
+        self._last_transcript_time = 0.0
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 3
         self._watchdog_task = None
@@ -544,6 +545,7 @@ class ConversationalVoiceBot(discord.Client):
             self._session_end_handled = False
             self._session_voice_channel = voice_channel
             self._last_activity_time = time.monotonic()
+            self._last_transcript_time = time.monotonic()
 
             # Start DAVE watchdog — auto-reconnect if no user speech detected
             if self._watchdog_task:
@@ -782,6 +784,7 @@ class ConversationalVoiceBot(discord.Client):
         if len(cleaned) < 2:
             return
         self._mark_activity()
+        self._last_transcript_time = time.monotonic()
         self._transcript_count += 1
         self._reconnect_attempts = 0  # Reset on successful speech
         logger.info(f"[ConvAI] User: {transcript}")
@@ -791,20 +794,23 @@ class ConversationalVoiceBot(discord.Client):
             except Exception:
                 pass
 
-    def _watchdog_should_reconnect(self, elapsed: float) -> bool:
+    def _watchdog_should_reconnect(
+        self, elapsed: float, transcript_elapsed: float | None = None,
+    ) -> bool:
         """Decide whether the session is deaf and needs a fresh connection.
 
-        Reconnect when no conversational activity (user transcript OR agent
-        playback finishing) for 25+ seconds while a non-bot user is in the
-        channel — but NEVER while agent audio is queued or playing: a long
-        reply is not deafness, and reconnecting would cut it mid-sentence.
-        Deliberately NOT gated on mic frame counts: the worst failure mode
-        delivers ZERO frames (voice receive dead), and a single short
-        utterance is only ~50-100 frames, so any frame threshold keeps the
-        watchdog inert exactly when it's needed (observed live 2026-06-11:
-        4.5 min deaf session, watchdog never fired).
+        `elapsed` measures since any conversational activity (user transcript
+        OR agent playback finishing); `transcript_elapsed` since the last real
+        user transcript. Storm deafness must use the TRANSCRIPT clock: the
+        agent's own 'are you still there?' prompts stamp activity on every
+        drain, which kept a storm-deaf session from ever reaching its trigger
+        (live 2026-06-12 11:56). Never fires while agent audio is queued or
+        playing, and deliberately NOT gated on mic frame counts (the worst
+        failure mode delivers ZERO frames).
         """
-        if not self._session_active or elapsed <= 12:
+        if transcript_elapsed is None:
+            transcript_elapsed = elapsed
+        if not self._session_active:
             return False
         ao = self._audio_output
         if ao is not None and (ao._has_content or not ao._queue.empty()):
@@ -822,10 +828,12 @@ class ConversationalVoiceBot(discord.Client):
                 and not vc.is_listening()):
             return True  # receive reader died — deaf regardless of history
         if self._zero_flood_active():
-            # Junk flood with nothing reaching ElevenLabs = deafness. A
-            # session that never produced a transcript reconnects after the
-            # initial 12s; mid-session deafness gets the standard 25s.
-            return self._transcript_count == 0 or elapsed > 25
+            # Storm dominating real audio = deafness. Deaf-from-start (no
+            # transcript ever) reconnects after 12s; mid-session after 25s —
+            # both on the transcript clock.
+            if self._transcript_count == 0:
+                return transcript_elapsed > 12
+            return transcript_elapsed > 25
         if self._transcript_count > 0:
             # Healthy session, user just quiet (e.g. waiting for a build) —
             # reconnect only as a long-stop fallback, never as a 25s re-greet
@@ -845,7 +853,8 @@ class ConversationalVoiceBot(discord.Client):
                     break
 
                 elapsed = time.monotonic() - self._last_activity_time
-                if self._watchdog_should_reconnect(elapsed):
+                transcript_elapsed = time.monotonic() - self._last_transcript_time
+                if self._watchdog_should_reconnect(elapsed, transcript_elapsed):
                     if self._reconnect_attempts >= self._max_reconnect_attempts:
                         logger.warning("[ConvAI] DAVE: Max reconnect attempts reached, giving up")
                         if self._text_channel:
@@ -904,6 +913,13 @@ def current_text_channel_id() -> str | None:
     bot = _active_bot
     ch = getattr(bot, "_text_channel", None) if bot is not None else None
     return str(ch.id) if ch is not None else None
+
+
+def current_guild_id() -> str | None:
+    """Id of the (single) guild the voice bot lives in, else None."""
+    bot = _active_bot
+    guilds = getattr(bot, "guilds", None) if bot is not None else None
+    return str(guilds[0].id) if guilds else None
 
 
 async def start_voice_bot(

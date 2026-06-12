@@ -26,7 +26,7 @@ from handlers.commands import CommandRouter, CommandContext, VoiceResponseCollec
 from handlers.slack_commands import SlackCommandHandler
 from handlers.slack_interactions import SlackInteractionsHandler
 from handlers.discord_commands import DiscordCommandHandler
-from voice_bot import start_voice_bot, current_text_channel_id
+from voice_bot import start_voice_bot, current_text_channel_id, current_guild_id
 from scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
     list_jobs, trigger_job, register_default_jobs,
@@ -521,22 +521,50 @@ async def discord_webhook(
 _last_voice_build: dict = {}
 
 
-async def _post_to_discord_channel(channel_id: str, content: str) -> None:
+async def _post_to_discord_channel(
+    channel_id: str, content: str, components: list | None = None,
+) -> None:
     """Plain bot-token channel message (same pattern as the alert forwarder)."""
     url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {
         "Authorization": f"Bot {settings.discord_bot_token}",
         "Content-Type": "application/json",
     }
+    payload: dict = {"content": content[:1990]}
+    if components:
+        payload["components"] = components
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, json={"content": content[:1990]}, headers=headers)
+        resp = await client.post(url, json=payload, headers=headers)
         resp.raise_for_status()
+
+
+def _voice_discord_id() -> str | None:
+    """Discord id of the voice user (reverse lookup of the email map)."""
+    email = (settings.voice_user_email or "").strip().lower()
+    if not email:
+        return None
+    for did, mapped in settings.discord_user_email_map.items():
+        if mapped == email:
+            return did
+    return None
+
+
+def _thread_link_components(guild_id: str, thread_id: str) -> list:
+    """A link button that jumps to the user's private App Builder thread."""
+    return [{
+        "type": 1,
+        "components": [{
+            "type": 2, "style": 5, "label": "Open my App Builder thread",
+            "url": f"https://discord.com/channels/{guild_id}/{thread_id}",
+        }],
+    }]
 
 
 def _voice_notify_channel():
     """notify_channel for voice-started builds. The target is resolved at
     NOTIFY time (builds finish minutes later): the active voice session's
-    text channel when one exists, else the alert channel."""
+    text channel when one exists, else the alert channel. Messages carry a
+    link button to the user's App Builder thread when resolvable."""
     if not settings.discord_bot_token:
         return None
 
@@ -545,7 +573,17 @@ def _voice_notify_channel():
         if not channel_id:
             logger.warning("voice notify dropped (no channel configured): %s", msg[:80])
             return
-        await _post_to_discord_channel(channel_id, msg)
+        components = None
+        try:
+            did = _voice_discord_id()
+            gid = current_guild_id()
+            if did and gid and command_router is not None:
+                tid = await command_router.get_user_builder_thread(did)
+                if tid:
+                    components = _thread_link_components(gid, str(tid))
+        except Exception as exc:  # noqa: BLE001 — button is best-effort
+            logger.debug(f"voice notify thread button skipped: {exc}")
+        await _post_to_discord_channel(channel_id, msg, components)
 
     return notify
 

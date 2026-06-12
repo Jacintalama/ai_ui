@@ -20,6 +20,7 @@ async def _noop_start_voice_bot(*args, **kwargs):
 
 _stub_voice_bot.start_voice_bot = _noop_start_voice_bot
 _stub_voice_bot.current_text_channel_id = lambda: None
+_stub_voice_bot.current_guild_id = lambda: None
 sys.modules.setdefault("voice_bot", _stub_voice_bot)
 for _mod in (
     "audioop",
@@ -134,3 +135,34 @@ async def test_bad_secret_rejected(voice_setup):
     from fastapi import HTTPException
     with pytest.raises(HTTPException):
         await main.voice_webhook("status", _Req({}), x_voice_secret="wrong")
+
+
+# ---------------------------------------------------------------------------
+# Build-ready thread button: the voice notify message carries a link button
+# that jumps to the user's private App Builder thread (user request
+# 2026-06-12: "a button ... proceed me to my thread app builder").
+# ---------------------------------------------------------------------------
+
+def test_thread_link_components_shape():
+    comps = main._thread_link_components("111", "222")
+    assert comps == [{
+        "type": 1,
+        "components": [{
+            "type": 2, "style": 5, "label": "Open my App Builder thread",
+            "url": "https://discord.com/channels/111/222",
+        }],
+    }]
+
+
+def test_voice_discord_id_reverse_maps_email(monkeypatch):
+    monkeypatch.setattr(settings, "voice_user_email", "o@x.com")
+    monkeypatch.setattr(settings, "_discord_map_cache", {"123": "o@x.com"},
+                        raising=False)
+    assert main._voice_discord_id() == "123"
+
+
+def test_voice_discord_id_none_when_unmapped(monkeypatch):
+    monkeypatch.setattr(settings, "voice_user_email", "nobody@x.com")
+    monkeypatch.setattr(settings, "_discord_map_cache", {"123": "o@x.com"},
+                        raising=False)
+    assert main._voice_discord_id() is None

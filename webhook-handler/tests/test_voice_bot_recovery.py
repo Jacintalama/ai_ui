@@ -318,6 +318,19 @@ def test_watchdog_detects_storm_with_garbage_trickle():
     assert bot._watchdog_should_reconnect(15.0) is False
 
 
+def test_watchdog_storm_uses_transcript_clock_not_activity():
+    """The agent's own 'are you still there?' prompts stamp activity on every
+    playback drain, so a storm-deaf session never reached the 25s trigger
+    (live 2026-06-12 11:56). During a storm the clock is the last TRANSCRIPT."""
+    bot = _deaf_bot()
+    bot._transcript_count = 1
+    bot._last_deltas = {"silent": 0, "flooded": 60000, "dup": 0, "fed": 300}
+    # agent prompted 8s ago (activity fresh) but nothing heard for 30s
+    assert bot._watchdog_should_reconnect(8.0, transcript_elapsed=30.0) is True
+    # and still respects the grace period right after a real transcript
+    assert bot._watchdog_should_reconnect(8.0, transcript_elapsed=15.0) is False
+
+
 def test_watchdog_lets_a_working_session_sit_quiet():
     """A user silently waiting (e.g. for a build) is NOT deafness: transcripts
     exist and there's no junk flood — only a 120s long-stop fallback applies
