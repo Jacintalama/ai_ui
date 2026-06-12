@@ -344,6 +344,45 @@ def test_watchdog_quiet_session_with_live_reader_stays(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 8. Text channel selection: transcripts/build links go where the user is
+#    looking — the text channel named like the voice channel (General ->
+#    #general), NOT whatever channel happens to be first in the guild
+#    (live 2026-06-12: everything landed in #app-builder).
+# ---------------------------------------------------------------------------
+
+_CAN_SEND = SimpleNamespace(send_messages=True)
+_NO_SEND = SimpleNamespace(send_messages=False)
+
+
+def _text_ch(name, perms=_CAN_SEND):
+    return SimpleNamespace(name=name, permissions_for=lambda me: perms)
+
+
+def _voice_ch(name, *text_channels):
+    guild = SimpleNamespace(text_channels=list(text_channels), me=SimpleNamespace())
+    return SimpleNamespace(name=name, guild=guild)
+
+
+def test_pick_text_channel_prefers_voice_channel_name():
+    app_builder = _text_ch("app-builder")
+    general = _text_ch("general")
+    vc = _voice_ch("General", app_builder, general)
+    assert _make_bot()._pick_text_channel(vc) is general
+
+
+def test_pick_text_channel_falls_back_to_first_sendable():
+    locked = _text_ch("general", perms=_NO_SEND)
+    app_builder = _text_ch("app-builder")
+    vc = _voice_ch("General", locked, app_builder)
+    assert _make_bot()._pick_text_channel(vc) is app_builder
+
+
+def test_pick_text_channel_none_when_nothing_sendable():
+    vc = _voice_ch("General", _text_ch("general", perms=_NO_SEND))
+    assert _make_bot()._pick_text_channel(vc) is None
+
+
+# ---------------------------------------------------------------------------
 # 7. Trailing-silence flush: ElevenLabs closes a user turn by hearing
 #    trailing SILENCE, but Discord stops sending packets the instant the
 #    user stops speaking — without the flush, every reply waits the full 7s

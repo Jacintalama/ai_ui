@@ -482,6 +482,22 @@ class ConversationalVoiceBot(discord.Client):
             lines.append("Pipeline: " + ", ".join(f"{k}=`{v}`" for k, v in stats.items()))
             await message.channel.send("\n".join(lines))
 
+    def _pick_text_channel(self, voice_channel):
+        """Transcripts and build links go where the user is looking: the text
+        channel named like the voice channel (General -> #general). Fallback:
+        the first channel the bot can post in (live 2026-06-12 that fallback
+        alone landed everything in #app-builder and confused the user)."""
+        me = voice_channel.guild.me
+        candidates = [ch for ch in voice_channel.guild.text_channels
+                      if ch.permissions_for(me).send_messages]
+        if not candidates:
+            return None
+        want = voice_channel.name.strip().lower().replace(" ", "-")
+        for ch in candidates:
+            if ch.name.strip().lower() == want:
+                return ch
+        return candidates[0]
+
     async def _start_session(self, voice_channel, member):
         if self._session_active:
             return
@@ -491,10 +507,7 @@ class ConversationalVoiceBot(discord.Client):
             return
 
         try:
-            for ch in voice_channel.guild.text_channels:
-                if ch.permissions_for(voice_channel.guild.me).send_messages:
-                    self._text_channel = ch
-                    break
+            self._text_channel = self._pick_text_channel(voice_channel)
 
             vc = await voice_channel.connect(cls=voice_recv.VoiceRecvClient)
 
