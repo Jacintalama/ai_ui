@@ -127,6 +127,9 @@ class Settings(BaseSettings):
     elevenlabs_voice_id: str = "pFZP5JQG7iQjIQuC4Bku"
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     elevenlabs_agent_id: str = ""
+    # Owner of voice-started App Builder builds (spoken flow has no per-user
+    # identity; single-operator by design).
+    voice_user_email: str = ""
 
     # Loki
     loki_url: str = "http://loki:3100"

@@ -1761,7 +1761,10 @@ class CommandRouter:
     async def _resolve_email_for_ctx(self, ctx: CommandContext) -> str | None:
         """Platform-aware email resolution for build/connector flows. Slack reads
         the caller's profile email via the Web API (needs the users:read.email
-        scope); Discord keeps the static-map + DB-link-store path unchanged."""
+        scope); voice uses the operator-set VOICE_USER_EMAIL (single identity);
+        Discord keeps the static-map + DB-link-store path unchanged."""
+        if ctx.platform == "voice":
+            return (settings.voice_user_email or "").strip().lower() or None
         if ctx.platform == "slack":
             if self._slack_client is None:
                 return None
