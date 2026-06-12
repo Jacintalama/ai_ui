@@ -8,6 +8,7 @@ import logging
 import queue
 import threading
 import time
+from collections import OrderedDict
 
 try:
     import audioop  # removed from stdlib in Python 3.13
@@ -127,6 +128,32 @@ class MicForwardLimiter:
         return True
 
 
+class RecentFrameDedup:
+    """Drops re-delivered mic frames.
+
+    The round-4 flood (live 2026-06-12) was byte-duplicates of REAL audio —
+    the receive lib replaying earlier packets at ~5,000/s. A plain rate cap
+    then forwards mostly duplicates and the user's fresh words never reach
+    ASR coherently. Keyed by RTP (ssrc, sequence, timestamp) when available,
+    else by the PCM bytes' hash; live audio frames are never byte-identical,
+    so fresh speech always passes."""
+
+    def __init__(self, window: int = 500):  # ~10 s of real frames
+        self._seen: OrderedDict = OrderedDict()
+        self._window = window
+        self.dropped = 0
+
+    def is_dup(self, key) -> bool:
+        if key in self._seen:
+            self._seen.move_to_end(key)
+            self.dropped += 1
+            return True
+        self._seen[key] = None
+        if len(self._seen) > self._window:
+            self._seen.popitem(last=False)
+        return False
+
+
 class AudioOutputSource(discord.AudioSource):
     """discord.py AudioSource that reads from a thread-safe queue.
 
@@ -225,6 +252,7 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             self._gated = 0        # dropped by the agent-speaking mute gate
             self._silent_drops = 0  # all-zero filler frames dropped on sight
             self._mic_limiter = MicForwardLimiter()
+            self._dedup = RecentFrameDedup()
             self._last_gate_log = 0.0
             self._last_flood_log = 0.0
             # Chain, don't clobber: the bot installs its activity stamp via
@@ -271,7 +299,7 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             self._audio_output.clear()
             logger.info("[ConvAI] User interrupted agent")
 
-        def feed_discord_audio(self, pcm_48k_stereo: bytes):
+        def feed_discord_audio(self, pcm_48k_stereo: bytes, dedup_key=None):
             """Called from audio sink thread with raw Discord PCM.
 
             Flood containment first (observed live 2026-06-12: voice-recv
@@ -283,11 +311,16 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             cb = self._input_callback
             if cb is None:
                 return
-            # 1) All-zero frames are library filler, never the mic — drop on sight.
+            # 1) Replayed frames carry nothing new — drop them so fresh
+            #    speech doesn't have to compete with the replay storm.
+            if self._dedup.is_dup(dedup_key if dedup_key is not None
+                                  else hash(pcm_48k_stereo)):
+                return
+            # 2) All-zero frames are library filler, never the mic — drop on sight.
             if is_silence(pcm_48k_stereo):
                 self._silent_drops += 1
                 return
-            # 2) Hard realtime cap on anything we'd forward.
+            # 3) Hard realtime cap on anything we'd forward.
             if not self._mic_limiter.allow():
                 now = time.monotonic()
                 if now - self._last_flood_log > 5.0:
@@ -297,7 +330,7 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
                         "dropped (voice-recv spinning?)", self._mic_limiter.dropped,
                     )
                 return
-            # 3) Mute while agent audio is playing — prevents noise interruption
+            # 4) Mute while agent audio is playing — prevents noise interruption
             if not self._audio_output._queue.empty() or self._audio_output._has_content:
                 self._gated += 1
                 now = time.monotonic()
@@ -339,7 +372,15 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
                 return
             pcm = data.pcm
             if pcm:
-                self._audio_interface.feed_discord_audio(pcm)
+                # RTP identity for replay detection; falls back to a PCM
+                # content hash inside feed_discord_audio when unavailable.
+                pkt = getattr(data, "packet", None)
+                seq = getattr(pkt, "sequence", None)
+                key = None
+                if seq is not None:
+                    key = (getattr(pkt, "ssrc", None), seq,
+                           getattr(pkt, "timestamp", None))
+                self._audio_interface.feed_discord_audio(pcm, dedup_key=key)
 
         def cleanup(self):
             pass
@@ -604,6 +645,7 @@ class ConversationalVoiceBot(discord.Client):
             "gated": ai._gated if ai else -1,
             "silent": ai._silent_drops if ai else -1,
             "flooded": ai._mic_limiter.dropped if ai else -1,
+            "dup": ai._dedup.dropped if ai else -1,
             "fed": ai._frame_count if ai else -1,
             "reads": ao._reads if ao else -1,
             "dropped": ao._dropped if ao else -1,
@@ -634,16 +676,16 @@ class ConversationalVoiceBot(discord.Client):
                 s = self._pipeline_stats()
                 deltas = {k: s[k] - prev.get(k, 0)
                           for k in ("sink_writes", "sink_rx", "gated", "silent",
-                                    "flooded", "fed", "reads", "dropped")}
+                                    "flooded", "dup", "fed", "reads", "dropped")}
                 prev = {k: s[k] for k in deltas}
                 logger.info(
                     "[ConvAI] stats5s writes=+%d rx=+%d gated=+%d silent=+%d "
-                    "flooded=+%d fed=+%d reads=+%d dropped=+%d q=%d "
+                    "flooded=+%d dup=+%d fed=+%d reads=+%d dropped=+%d q=%d "
                     "has_content=%s connected=%s listening=%s "
                     "playing=%s player_alive=%s cb=%s",
                     deltas["sink_writes"], deltas["sink_rx"], deltas["gated"],
-                    deltas["silent"], deltas["flooded"], deltas["fed"],
-                    deltas["reads"], deltas["dropped"], s["q"],
+                    deltas["silent"], deltas["flooded"], deltas["dup"],
+                    deltas["fed"], deltas["reads"], deltas["dropped"], s["q"],
                     s["has_content"], s["connected"], s["listening"],
                     s["playing"], s["player_alive"], s["cb_set"],
                 )
@@ -662,8 +704,8 @@ class ConversationalVoiceBot(discord.Client):
         """Latest stats window shows the receive path flooding junk with
         nothing reaching ElevenLabs — the deafness signature."""
         d = self._last_deltas or {}
-        return (d.get("silent", 0) + d.get("flooded", 0) > 2000
-                and d.get("fed", 0) == 0)
+        junk = d.get("silent", 0) + d.get("flooded", 0) + d.get("dup", 0)
+        return junk > 2000 and d.get("fed", 0) == 0
 
     async def _on_user_transcript(self, transcript: str):
         # Filter out noise transcripts ("...", empty, or very short)

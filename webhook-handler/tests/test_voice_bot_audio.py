@@ -135,3 +135,34 @@ def test_is_silence_detects_filler_frames():
     assert vb.is_silence(b"\x00" * vb.DISCORD_FRAME_SIZE) is True
     assert vb.is_silence(b"") is True
     assert vb.is_silence(DATA_FRAME) is False
+
+
+# ---------------------------------------------------------------------------
+# RecentFrameDedup — the round-4 flood was byte-duplicates of REAL audio
+# (replayed packets) at ~5,000/s; a plain rate cap then forwards mostly
+# duplicates and the user's fresh words never reach ASR coherently.
+# ---------------------------------------------------------------------------
+
+def test_dedup_passes_fresh_frames():
+    d = vb.RecentFrameDedup()
+    assert d.is_dup(("ssrc", 1, 100)) is False
+    assert d.is_dup(("ssrc", 2, 1060)) is False
+    assert d.dropped == 0
+
+
+def test_dedup_drops_replayed_frames():
+    d = vb.RecentFrameDedup()
+    key = ("ssrc", 7, 6720)
+    assert d.is_dup(key) is False
+    for _ in range(100):
+        assert d.is_dup(key) is True
+    assert d.dropped == 100
+
+
+def test_dedup_window_is_bounded():
+    d = vb.RecentFrameDedup(window=10)
+    for i in range(50):
+        d.is_dup(("s", i, i * 960))
+    # only the last 10 keys are remembered
+    assert d.is_dup(("s", 5, 5 * 960)) is False  # evicted long ago — fresh again
+    assert d.is_dup(("s", 49, 49 * 960)) is True  # still in window
