@@ -307,6 +307,42 @@ def test_watchdog_no_fast_path_without_zero_flood():
     assert bot._watchdog_should_reconnect(15.0) is False
 
 
+def test_watchdog_lets_a_working_session_sit_quiet():
+    """A user silently waiting (e.g. for a build) is NOT deafness: transcripts
+    exist and there's no junk flood — only a 120s long-stop fallback applies
+    (observed live 2026-06-12 10:06: re-greet while waiting for a build)."""
+    bot = _deaf_bot()
+    bot._transcript_count = 5
+    bot._last_deltas = {"silent": 0, "flooded": 0, "dup": 0, "fed": 0}
+    assert bot._watchdog_should_reconnect(29.0) is False
+    assert bot._watchdog_should_reconnect(119.0) is False
+    assert bot._watchdog_should_reconnect(121.0) is True
+
+
+def test_watchdog_reconnects_fast_when_reader_died(monkeypatch):
+    """is_listening()=False mid-session = the receive reader is gone (seen
+    after failed relistens) — reconnect promptly even with prior transcripts."""
+    bot = _deaf_bot()
+    bot._transcript_count = 5
+    bot._last_deltas = {}
+    dead_vc = SimpleNamespace(is_listening=lambda: False)
+    monkeypatch.setattr(
+        ConversationalVoiceBot, "voice_clients", property(lambda self: [dead_vc])
+    )
+    assert bot._watchdog_should_reconnect(13.0) is True
+
+
+def test_watchdog_quiet_session_with_live_reader_stays(monkeypatch):
+    bot = _deaf_bot()
+    bot._transcript_count = 5
+    bot._last_deltas = {}
+    live_vc = SimpleNamespace(is_listening=lambda: True)
+    monkeypatch.setattr(
+        ConversationalVoiceBot, "voice_clients", property(lambda self: [live_vc])
+    )
+    assert bot._watchdog_should_reconnect(29.0) is False
+
+
 # ---------------------------------------------------------------------------
 # 7. Trailing-silence flush: ElevenLabs closes a user turn by hearing
 #    trailing SILENCE, but Discord stops sending packets the instant the

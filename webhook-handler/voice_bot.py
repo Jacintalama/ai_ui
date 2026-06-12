@@ -789,15 +789,7 @@ class ConversationalVoiceBot(discord.Client):
         watchdog inert exactly when it's needed (observed live 2026-06-11:
         4.5 min deaf session, watchdog never fired).
         """
-        if not self._session_active:
-            return False
-        # A session that NEVER produced a transcript while the receive path
-        # floods junk is deaf from the start — reconnect fast (in-place listen
-        # restarts were tried live 2026-06-12 and made things worse; a fresh
-        # voice session is the only known cure).
-        threshold = 12 if (self._transcript_count == 0
-                           and self._zero_flood_active()) else 25
-        if elapsed <= threshold:
+        if not self._session_active or elapsed <= 12:
             return False
         ao = self._audio_output
         if ao is not None and (ao._has_content or not ao._queue.empty()):
@@ -810,7 +802,21 @@ class ConversationalVoiceBot(discord.Client):
                 return False  # nobody to hear; channel-empty handler ends the session
         except Exception:
             return False
-        return True
+        vc = self.voice_clients[0] if self.voice_clients else None
+        if (vc is not None and hasattr(vc, "is_listening")
+                and not vc.is_listening()):
+            return True  # receive reader died — deaf regardless of history
+        if self._zero_flood_active():
+            # Junk flood with nothing reaching ElevenLabs = deafness. A
+            # session that never produced a transcript reconnects after the
+            # initial 12s; mid-session deafness gets the standard 25s.
+            return self._transcript_count == 0 or elapsed > 25
+        if self._transcript_count > 0:
+            # Healthy session, user just quiet (e.g. waiting for a build) —
+            # reconnect only as a long-stop fallback, never as a 25s re-greet
+            # (observed live 2026-06-12 10:06).
+            return elapsed > 120
+        return elapsed > 25  # no transcripts yet, no flood signature
 
     async def _dave_watchdog(self):
         """Self-heal deaf sessions: reconnect when no user speech is heard."""
