@@ -352,6 +352,7 @@ class ConversationalVoiceBot(discord.Client):
         self._watchdog_task = None
         self._stats_task = None
         self._session_voice_channel = None
+        self._relisten_count = 0  # zero-flood listen restarts this session
 
     async def on_ready(self):
         logger.info(f"Conversational voice bot ready as {self.user}")
@@ -432,7 +433,8 @@ class ConversationalVoiceBot(discord.Client):
             _resample_state_in = None
             _resample_state_out = None
 
-            self._audio_output = AudioOutputSource(on_drained=self._mark_activity)
+            self._relisten_count = 0
+            self._audio_output = AudioOutputSource(on_drained=self._on_agent_turn_end)
             self._audio_interface = DiscordAudioInterface(
                 self._audio_output, asyncio.get_running_loop()
             )
@@ -624,6 +626,10 @@ class ConversationalVoiceBot(discord.Client):
                     s["has_content"], s["connected"], s["listening"],
                     s["playing"], s["player_alive"], s["cb_set"],
                 )
+                if self._should_restart_listening(deltas):
+                    vc = self.voice_clients[0] if self.voice_clients else None
+                    if vc is not None:
+                        await self._restart_listening(vc)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -633,6 +639,59 @@ class ConversationalVoiceBot(discord.Client):
         """Conversational activity stamp (user spoke OR agent finished speaking).
         Called from the AudioPlayer thread on drain — float assignment is atomic."""
         self._last_activity_time = time.monotonic()
+
+    def _on_agent_turn_end(self):
+        """AudioPlayer thread: agent playback drained. Stamp activity and
+        re-arm the receive reader: the decoder reliably degrades after our
+        own transmission (live 2026-06-12: dup speech -> garbage -> zeros),
+        so every user turn gets a fresh one — the 'first utterance always
+        works' behavior, applied to every exchange."""
+        self._mark_activity()
+        loop = getattr(self, "loop", None)
+        if isinstance(loop, asyncio.AbstractEventLoop) and self._session_active:
+            asyncio.run_coroutine_threadsafe(self._relisten_current(), loop)
+
+    async def _relisten_current(self):
+        vc = self.voice_clients[0] if self.voice_clients else None
+        if vc is not None and self._session_active:
+            await self._restart_listening(vc, preemptive=True)
+
+    def _should_restart_listening(self, deltas: dict) -> bool:
+        """Zero-flood deafness signature: the receive path delivers ONLY
+        zero/junk frames and nothing reaches ElevenLabs while the agent is
+        not speaking. Detected within one 5s stats window — far faster than
+        the 25s transcript watchdog. After 3 in-session restarts, escalate
+        to the watchdog (reader is unrecoverable)."""
+        if not self._session_active or self._relisten_count >= 3:
+            return False
+        return (
+            deltas.get("silent", 0) + deltas.get("flooded", 0) > 2000
+            and deltas.get("fed", 0) == 0
+            and deltas.get("gated", 0) == 0
+        )
+
+    async def _restart_listening(self, vc, preemptive: bool = False) -> None:
+        """In-place receive restart: kills the (possibly spinning) reader and
+        re-arms a fresh decoder WITHOUT tearing down the session — no
+        re-greeting, conversation context preserved."""
+        sink_cls = globals().get("PassthroughSink")
+        if sink_cls is None or self._audio_interface is None:
+            return
+        try:
+            if hasattr(vc, "stop_listening"):
+                vc.stop_listening()
+            await asyncio.sleep(0.2)
+            vc.listen(sink_cls(self._audio_interface))
+            if preemptive:
+                logger.info("[ConvAI] Re-armed voice receive after agent turn")
+            else:
+                self._relisten_count += 1
+                logger.warning(
+                    "[ConvAI] Restarted voice receive (zero-flood deafness) — "
+                    "relisten #%d", self._relisten_count,
+                )
+        except Exception as e:
+            logger.error(f"[ConvAI] Failed to restart listening: {e}", exc_info=True)
 
     async def _on_user_transcript(self, transcript: str):
         # Filter out noise transcripts ("...", empty, or very short)

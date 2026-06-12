@@ -266,3 +266,86 @@ def test_current_text_channel_id_returns_id(monkeypatch):
         SimpleNamespace(_text_channel=SimpleNamespace(id=42)),
     )
     assert vb.current_text_channel_id() == "42"
+
+
+# ---------------------------------------------------------------------------
+# 6. Zero-flood listen restart: when the receive decoder degrades to pure
+#    zeros (live 2026-06-12: silent=+31k/5s, fed=+0), restart the listener
+#    in place within one stats window instead of waiting 25s+ for the full
+#    session watchdog.
+# ---------------------------------------------------------------------------
+
+def _zero_flood():
+    return {"silent": 31000, "flooded": 0, "fed": 0, "gated": 0}
+
+
+def test_should_restart_listening_on_zero_flood():
+    bot = _make_bot()
+    bot._session_active = True
+    assert bot._should_restart_listening(_zero_flood()) is True
+
+
+def test_should_not_restart_when_audio_still_fed():
+    bot = _make_bot()
+    bot._session_active = True
+    assert bot._should_restart_listening(
+        {"silent": 31000, "flooded": 0, "fed": 50, "gated": 0}) is False
+
+
+def test_should_not_restart_while_agent_speaking():
+    bot = _make_bot()
+    bot._session_active = True
+    assert bot._should_restart_listening(
+        {"silent": 31000, "flooded": 0, "fed": 0, "gated": 400}) is False
+
+
+def test_should_not_restart_on_healthy_quiet_channel():
+    bot = _make_bot()
+    bot._session_active = True
+    assert bot._should_restart_listening(
+        {"silent": 30, "flooded": 0, "fed": 0, "gated": 0}) is False
+
+
+def test_should_not_restart_after_three_attempts():
+    """Escalation path: repeated relistens mean the reader is unrecoverable —
+    leave it to the DAVE session watchdog."""
+    bot = _make_bot()
+    bot._session_active = True
+    bot._relisten_count = 3
+    assert bot._should_restart_listening(_zero_flood()) is False
+
+
+async def test_restart_listening_rearms_fresh_sink(monkeypatch):
+    bot = _make_bot()
+    bot._audio_interface = SimpleNamespace()
+    calls = []
+
+    class FakeSink:
+        def __init__(self, iface):
+            calls.append(("sink", iface))
+
+    monkeypatch.setattr(vb, "PassthroughSink", FakeSink, raising=False)
+    vc = SimpleNamespace(
+        stop_listening=lambda: calls.append(("stop",)),
+        listen=lambda sink: calls.append(("listen", sink)),
+    )
+    await bot._restart_listening(vc)
+    assert ("stop",) in calls
+    assert any(c[0] == "listen" for c in calls)
+    assert bot._relisten_count == 1
+
+
+async def test_preemptive_restart_does_not_consume_relisten_budget(monkeypatch):
+    bot = _make_bot()
+    bot._audio_interface = SimpleNamespace()
+    monkeypatch.setattr(vb, "PassthroughSink", lambda iface: None, raising=False)
+    vc = SimpleNamespace(stop_listening=lambda: None, listen=lambda sink: None)
+    await bot._restart_listening(vc, preemptive=True)
+    assert bot._relisten_count == 0
+
+
+def test_agent_turn_end_marks_activity_without_loop():
+    bot = _make_bot()
+    bot._last_activity_time = 0.0
+    bot._on_agent_turn_end()  # no running loop attached — must not raise
+    assert bot._last_activity_time > 0.0
