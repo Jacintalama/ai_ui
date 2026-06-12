@@ -59,3 +59,47 @@ def test_pipeline_stats_expose_dropped():
     bot._audio_output = vb.AudioOutputSource()
     bot._audio_output._dropped = 7
     assert bot._pipeline_stats()["dropped"] == 7
+
+
+# ---------------------------------------------------------------------------
+# MicForwardLimiter — voice-recv flood containment (observed live 2026-06-12:
+# ~12,500 sink writes/s vs the 50/s a real mic produces; the per-packet
+# run_coroutine_threadsafe submissions saturated the event loop → delayed
+# replies and drowned ASR).
+# ---------------------------------------------------------------------------
+
+def test_mic_limiter_allows_realtime_rate():
+    t = [0.0]
+    lim = vb.MicForwardLimiter(clock=lambda: t[0])
+    allowed = 0
+    for i in range(150):  # 3 s of real mic frames at 50/s
+        t[0] = i * 0.02
+        if lim.allow():
+            allowed += 1
+    assert allowed == 150
+    assert lim.dropped == 0
+
+
+def test_mic_limiter_blocks_flood():
+    t = [0.0]
+    lim = vb.MicForwardLimiter(clock=lambda: t[0])
+    allowed = sum(1 for _ in range(10_000) if lim.allow())  # burst, same instant
+    assert allowed == vb.MIC_FORWARD_MAX_PER_SEC
+    assert lim.dropped == 10_000 - vb.MIC_FORWARD_MAX_PER_SEC
+
+
+def test_mic_limiter_recovers_after_flood_window():
+    t = [0.0]
+    lim = vb.MicForwardLimiter(clock=lambda: t[0])
+    for _ in range(500):
+        lim.allow()
+    t[0] = 1.1  # next window
+    assert lim.allow() is True
+
+
+def test_is_silence_detects_filler_frames():
+    """Discord only transmits while the user speaks, so all-zero frames are
+    library filler, never the mic — they must be droppable on sight."""
+    assert vb.is_silence(b"\x00" * vb.DISCORD_FRAME_SIZE) is True
+    assert vb.is_silence(b"") is True
+    assert vb.is_silence(DATA_FRAME) is False

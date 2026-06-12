@@ -78,6 +78,53 @@ DISCONNECT_TIMEOUT = 8.0  # graceful voice disconnect budget before force-drop
 # of it — overflow means audibly truncated speech. 4500 frames = 90 s
 # (~17 MB worst-case, transient).
 OUTPUT_QUEUE_FRAMES = 4500
+# A real mic is exactly 50 frames/s (20 ms each); discord-ext-voice-recv has
+# been seen spinning at >12,000 sink writes/s of filler (live 2026-06-12),
+# which saturates the event loop (delayed replies) and drowns ElevenLabs ASR.
+# Anything materially beyond realtime is garbage by definition.
+MIC_FORWARD_MAX_PER_SEC = 100
+
+
+def is_silence(pcm: bytes) -> bool:
+    """True for all-zero (or empty) PCM. Discord only transmits while the
+    user speaks, so silent frames are library filler, never the mic."""
+    if not pcm:
+        return True
+    if audioop is not None:
+        try:
+            return audioop.rms(pcm, 2) == 0
+        except Exception:
+            pass
+    return not pcm.strip(b"\x00")
+
+
+class MicForwardLimiter:
+    """Token bucket capping mic forwarding at realtime + headroom.
+
+    Protects the asyncio loop from the voice-recv flood: frames beyond
+    MIC_FORWARD_MAX_PER_SEC per 1 s window are dropped BEFORE the expensive
+    resample + run_coroutine_threadsafe submission.
+    """
+
+    def __init__(self, max_per_window: int = MIC_FORWARD_MAX_PER_SEC,
+                 window_seconds: float = 1.0, clock=time.monotonic):
+        self._max = max_per_window
+        self._window = window_seconds
+        self._clock = clock
+        self._window_start = None
+        self._count = 0
+        self.dropped = 0
+
+    def allow(self) -> bool:
+        now = self._clock()
+        if self._window_start is None or now - self._window_start >= self._window:
+            self._window_start = now
+            self._count = 0
+        if self._count >= self._max:
+            self.dropped += 1
+            return False
+        self._count += 1
+        return True
 
 
 class AudioOutputSource(discord.AudioSource):
@@ -171,6 +218,10 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             self._sink_writes = 0  # packets seen by sink (pre user-filter)
             self._sink_rx = 0      # packets from real users (post-filter)
             self._gated = 0        # dropped by the agent-speaking mute gate
+            self._silent_drops = 0  # all-zero filler frames dropped on sight
+            self._mic_limiter = MicForwardLimiter()
+            self._last_gate_log = 0.0
+            self._last_flood_log = 0.0
             # Chain, don't clobber: the bot installs its activity stamp via
             # AudioOutputSource(on_drained=...); keep it firing.
             self._chained_on_drained = self._audio_output._on_drained
@@ -205,17 +256,35 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
         def feed_discord_audio(self, pcm_48k_stereo: bytes):
             """Called from audio sink thread with raw Discord PCM.
 
-            Mute while audio queue has content (agent is speaking).
-            Unmute instantly when queue empties — no timer delay.
+            Flood containment first (observed live 2026-06-12: voice-recv
+            spinning at >12,000 writes/s vs the 50/s of a real mic — the
+            per-packet event loop submissions delayed replies and drowned
+            ASR), then the agent-speaking mute gate.
             """
             self._sink_rx += 1
             cb = self._input_callback
             if cb is None:
                 return
-            # Mute while agent audio is playing — prevents noise interruption
+            # 1) All-zero frames are library filler, never the mic — drop on sight.
+            if is_silence(pcm_48k_stereo):
+                self._silent_drops += 1
+                return
+            # 2) Hard realtime cap on anything we'd forward.
+            if not self._mic_limiter.allow():
+                now = time.monotonic()
+                if now - self._last_flood_log > 5.0:
+                    self._last_flood_log = now
+                    logger.warning(
+                        "[ConvAI] mic flood: %d non-silent frames beyond realtime "
+                        "dropped (voice-recv spinning?)", self._mic_limiter.dropped,
+                    )
+                return
+            # 3) Mute while agent audio is playing — prevents noise interruption
             if not self._audio_output._queue.empty() or self._audio_output._has_content:
                 self._gated += 1
-                if self._gated % 250 == 1:
+                now = time.monotonic()
+                if now - self._last_gate_log > 5.0:
+                    self._last_gate_log = now
                     logger.info(
                         "[ConvAI] mic GATED (%d drops) q=%d has_content=%s empty_count=%d",
                         self._gated, self._audio_output._queue.qsize(),
@@ -510,6 +579,8 @@ class ConversationalVoiceBot(discord.Client):
             "sink_writes": ai._sink_writes if ai else -1,
             "sink_rx": ai._sink_rx if ai else -1,
             "gated": ai._gated if ai else -1,
+            "silent": ai._silent_drops if ai else -1,
+            "flooded": ai._mic_limiter.dropped if ai else -1,
             "fed": ai._frame_count if ai else -1,
             "reads": ao._reads if ao else -1,
             "dropped": ao._dropped if ao else -1,
@@ -539,15 +610,17 @@ class ConversationalVoiceBot(discord.Client):
                     break
                 s = self._pipeline_stats()
                 deltas = {k: s[k] - prev.get(k, 0)
-                          for k in ("sink_writes", "sink_rx", "gated", "fed",
-                                    "reads", "dropped")}
+                          for k in ("sink_writes", "sink_rx", "gated", "silent",
+                                    "flooded", "fed", "reads", "dropped")}
                 prev = {k: s[k] for k in deltas}
                 logger.info(
-                    "[ConvAI] stats5s writes=+%d rx=+%d gated=+%d fed=+%d reads=+%d "
-                    "dropped=+%d q=%d has_content=%s connected=%s listening=%s "
+                    "[ConvAI] stats5s writes=+%d rx=+%d gated=+%d silent=+%d "
+                    "flooded=+%d fed=+%d reads=+%d dropped=+%d q=%d "
+                    "has_content=%s connected=%s listening=%s "
                     "playing=%s player_alive=%s cb=%s",
                     deltas["sink_writes"], deltas["sink_rx"], deltas["gated"],
-                    deltas["fed"], deltas["reads"], deltas["dropped"], s["q"],
+                    deltas["silent"], deltas["flooded"], deltas["fed"],
+                    deltas["reads"], deltas["dropped"], s["q"],
                     s["has_content"], s["connected"], s["listening"],
                     s["playing"], s["player_alive"], s["cb_set"],
                 )
