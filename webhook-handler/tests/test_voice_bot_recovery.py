@@ -11,6 +11,7 @@ Covers the three deaf-session defects observed live on 2026-06-11:
 """
 import asyncio
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -304,3 +305,66 @@ def test_watchdog_no_fast_path_without_zero_flood():
     bot._transcript_count = 0
     bot._last_deltas = {"silent": 30, "flooded": 0, "fed": 0}
     assert bot._watchdog_should_reconnect(15.0) is False
+
+
+# ---------------------------------------------------------------------------
+# 7. Trailing-silence flush: ElevenLabs closes a user turn by hearing
+#    trailing SILENCE, but Discord stops sending packets the instant the
+#    user stops speaking — without the flush, every reply waits the full 7s
+#    turn timeout ("why it took a while to answer", live 2026-06-12).
+# ---------------------------------------------------------------------------
+
+def _flusher_iface(cb, *, last_fwd, silence_sent=0):
+    return SimpleNamespace(
+        _input_callback=cb, _last_fwd=last_fwd, _silence_sent=silence_sent)
+
+
+async def test_flusher_sends_trailing_silence_after_speech_stops():
+    bot = _make_bot()
+    bot._session_active = True
+    sent = []
+
+    async def cb(chunk):
+        sent.append(chunk)
+
+    bot._audio_interface = _flusher_iface(cb, last_fwd=time.monotonic() - 1.0)
+    task = asyncio.create_task(bot._turn_end_flusher())
+    await asyncio.sleep(0.35)
+    bot._session_active = False
+    task.cancel()
+    assert len(sent) >= 5, "trailing silence must flow so the turn closes fast"
+    assert all(c == vb.SILENCE_CHUNK_16K for c in sent)
+
+
+async def test_flusher_caps_total_silence():
+    bot = _make_bot()
+    bot._session_active = True
+    sent = []
+
+    async def cb(chunk):
+        sent.append(chunk)
+
+    bot._audio_interface = _flusher_iface(
+        cb, last_fwd=time.monotonic() - 1.0,
+        silence_sent=vb.TRAILING_SILENCE_CHUNKS)
+    task = asyncio.create_task(bot._turn_end_flusher())
+    await asyncio.sleep(0.3)
+    bot._session_active = False
+    task.cancel()
+    assert sent == [], "silence stops after the cap — no infinite stream"
+
+
+async def test_flusher_idle_before_any_speech():
+    bot = _make_bot()
+    bot._session_active = True
+    sent = []
+
+    async def cb(chunk):
+        sent.append(chunk)
+
+    bot._audio_interface = _flusher_iface(cb, last_fwd=0.0)
+    task = asyncio.create_task(bot._turn_end_flusher())
+    await asyncio.sleep(0.3)
+    bot._session_active = False
+    task.cancel()
+    assert sent == []

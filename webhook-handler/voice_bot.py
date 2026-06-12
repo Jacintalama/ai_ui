@@ -84,6 +84,12 @@ OUTPUT_QUEUE_FRAMES = 4500
 # which saturates the event loop (delayed replies) and drowns ElevenLabs ASR.
 # Anything materially beyond realtime is garbage by definition.
 MIC_FORWARD_MAX_PER_SEC = 100
+# ElevenLabs closes a user turn by hearing trailing SILENCE in the stream,
+# but Discord stops sending packets the instant the user stops speaking —
+# without flushing synthetic silence, every reply waits the full 7s turn
+# timeout. 20 ms of 16 kHz mono s16le zeros per chunk; 1.5 s total per turn.
+SILENCE_CHUNK_16K = b"\x00" * 640
+TRAILING_SILENCE_CHUNKS = 75  # 75 x 20 ms = 1.5 s
 
 
 def is_silence(pcm: bytes) -> bool:
@@ -255,6 +261,8 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             self._dedup = RecentFrameDedup()
             self._last_gate_log = 0.0
             self._last_flood_log = 0.0
+            self._last_fwd = 0.0     # when a real frame last went to ElevenLabs
+            self._silence_sent = 0   # trailing-silence chunks since that frame
             # Chain, don't clobber: the bot installs its activity stamp via
             # AudioOutputSource(on_drained=...); keep it firing.
             self._chained_on_drained = self._audio_output._on_drained
@@ -347,6 +355,8 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
                 logger.info(f"[ConvAI] Feeding audio frame {self._frame_count}, {len(pcm_48k_stereo)}b")
             pcm_16k = resample_48k_stereo_to_16k_mono(pcm_48k_stereo)
             if pcm_16k:
+                self._last_fwd = time.monotonic()
+                self._silence_sent = 0
                 asyncio.run_coroutine_threadsafe(cb(pcm_16k), self._loop)
 
 
@@ -532,6 +542,11 @@ class ConversationalVoiceBot(discord.Client):
                 self._stats_task.cancel()
             self._stats_task = asyncio.create_task(self._stats_reporter())
 
+            # Trailing-silence flusher — closes user turns fast (no 7s wait)
+            if getattr(self, "_flush_task", None):
+                self._flush_task.cancel()
+            self._flush_task = asyncio.create_task(self._turn_end_flusher())
+
             logger.info(
                 f"[ConvAI] Session started in {voice_channel.name} "
                 f"(encryption mode={getattr(vc, 'mode', '?')})"
@@ -572,6 +587,11 @@ class ConversationalVoiceBot(discord.Client):
         if self._stats_task and not self._stats_task.done():
             self._stats_task.cancel()
             self._stats_task = None
+
+        flush_task = getattr(self, "_flush_task", None)
+        if flush_task and not flush_task.done():
+            flush_task.cancel()
+            self._flush_task = None
 
         # Disconnect from Discord FIRST (fast, prevents stuck bot in channel)
         for vc in self.voice_clients:
@@ -699,6 +719,40 @@ class ConversationalVoiceBot(discord.Client):
         """Conversational activity stamp (user spoke OR agent finished speaking).
         Called from the AudioPlayer thread on drain — float assignment is atomic."""
         self._last_activity_time = time.monotonic()
+
+    async def _turn_end_flusher(self):
+        """Send trailing silence to ElevenLabs when the user stops speaking.
+
+        Its VAD closes a turn on trailing silence; Discord stops sending
+        packets the instant speech ends, so without this every reply waits
+        the full 7s turn timeout. 0.1s of silence per tick, capped at 1.5s
+        per utterance; the counter resets whenever a real frame is forwarded.
+        """
+        try:
+            while self._session_active:
+                await asyncio.sleep(0.1)
+                ai = self._audio_interface
+                if ai is None:
+                    continue
+                cb = ai._input_callback
+                if cb is None or ai._last_fwd <= 0:
+                    continue
+                if time.monotonic() - ai._last_fwd <= 0.25:
+                    continue  # still speaking (or just stopped)
+                if ai._silence_sent >= TRAILING_SILENCE_CHUNKS:
+                    continue  # turn already flushed
+                for _ in range(5):  # 0.1 s of audio per tick — realtime pace
+                    if ai._silence_sent >= TRAILING_SILENCE_CHUNKS:
+                        break
+                    try:
+                        await cb(SILENCE_CHUNK_16K)
+                    except Exception:
+                        break
+                    ai._silence_sent += 1
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"[ConvAI] Turn-end flusher error: {e}", exc_info=True)
 
     def _zero_flood_active(self) -> bool:
         """Latest stats window shows the receive path flooding junk with
