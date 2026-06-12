@@ -24,13 +24,14 @@ DATA_FRAME = b"\x01" * vb.DISCORD_FRAME_SIZE
 
 
 def _drain_data_frames(src) -> int:
-    """Read until the queue is empty; count non-silence frames."""
+    """Read until the source reports end-of-stream; count data frames."""
     got = 0
     while True:
         frame = src.read()
-        if frame == vb.SILENCE_FRAME:
+        if frame == b"":
             return got
-        got += 1
+        if frame == DATA_FRAME:
+            got += 1
 
 
 def test_thirty_second_reply_plays_in_full():
@@ -39,6 +40,37 @@ def test_thirty_second_reply_plays_in_full():
     src.feed(DATA_FRAME * 1500)
     assert _drain_data_frames(src) == 1500
     assert src._dropped == 0
+
+
+def test_fresh_source_stops_player_immediately():
+    """No content yet -> read() returns b'' so the AudioPlayer exits: the bot
+    must NOT transmit a continuous silence stream between turns (continuous
+    transmission is the receive-death trigger observed live 2026-06-12)."""
+    src = vb.AudioOutputSource()
+    assert src.read() == b""
+
+
+def test_micro_gaps_are_bridged_with_silence():
+    """Mid-reply gaps (chunked TTS) must play silence, not stop the player."""
+    src = vb.AudioOutputSource()
+    src.feed(DATA_FRAME)
+    assert src.read() == DATA_FRAME
+    for _ in range(29):  # below the 30-read drain threshold
+        assert src.read() == vb.SILENCE_FRAME
+    src.feed(DATA_FRAME)  # next chunk arrives — playback continues
+    assert src.read() == DATA_FRAME
+
+
+def test_drained_source_ends_stream_and_fires_hook():
+    fired = []
+    src = vb.AudioOutputSource(on_drained=lambda: fired.append(1))
+    src.feed(DATA_FRAME)
+    assert src.read() == DATA_FRAME
+    reads = 0
+    while src.read() != b"":
+        reads += 1
+        assert reads < 100
+    assert fired == [1]
 
 
 def test_queue_capacity_is_at_least_ninety_seconds():

@@ -168,18 +168,22 @@ class AudioOutputSource(discord.AudioSource):
         try:
             return self._queue.get_nowait()
         except queue.Empty:
-            # Track when audio finishes playing (buffer drained after having content)
+            # Bridge micro-gaps between TTS chunks with silence, but END the
+            # stream (b"" stops the AudioPlayer) once a reply has drained —
+            # the bot must not transmit a continuous silence stream between
+            # turns (continuous transmission is the receive-death trigger
+            # observed live 2026-06-12). output() re-plays on the next reply.
             if self._has_content:
                 self._empty_count += 1
                 # 30 consecutive empty reads = ~600ms of silence after last audio
-                # Short enough for fast mic unmute, long enough to bridge
-                # micro-gaps between audio chunks from ElevenLabs
                 if self._empty_count >= 30:
                     self._has_content = False
                     self._empty_count = 0
                     if self._on_drained:
                         self._on_drained()
-            return SILENCE_FRAME
+                    return b""
+                return SILENCE_FRAME
+            return b""
 
     def clear(self):
         with self._lock:
@@ -212,6 +216,7 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
             self._input_callback = None
             self._audio_output = audio_output
             self._loop = loop
+            self._voice_client = None  # set by _start_session; play-on-demand
             self._frame_count = 0
             self._agent_speaking = False
             # Diagnostics: where do mic frames stop?
@@ -248,6 +253,19 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
         async def output(self, audio: bytes):
             pcm_48k = resample_16k_mono_to_48k_stereo(audio)
             self._audio_output.feed(pcm_48k)
+            # Play on demand: the player exits between turns (no continuous
+            # silence transmission), so start it whenever a reply arrives.
+            vc = self._voice_client
+            if vc is not None and not vc.is_playing():
+                try:
+                    vc.play(self._audio_output)
+                except Exception:
+                    # A dead-but-bound player can make play() raise — clear it.
+                    try:
+                        vc.stop()
+                        vc.play(self._audio_output)
+                    except Exception as e:
+                        logger.warning(f"[ConvAI] play-on-demand failed: {e}")
 
         async def interrupt(self):
             self._audio_output.clear()
@@ -352,7 +370,8 @@ class ConversationalVoiceBot(discord.Client):
         self._watchdog_task = None
         self._stats_task = None
         self._session_voice_channel = None
-        self._relisten_count = 0  # zero-flood listen restarts this session
+        self._transcript_count = 0  # usable transcripts this session
+        self._last_deltas: dict = {}  # latest stats5s deltas (deafness signature)
 
     async def on_ready(self):
         logger.info(f"Conversational voice bot ready as {self.user}")
@@ -433,13 +452,15 @@ class ConversationalVoiceBot(discord.Client):
             _resample_state_in = None
             _resample_state_out = None
 
-            self._relisten_count = 0
-            self._audio_output = AudioOutputSource(on_drained=self._on_agent_turn_end)
+            self._transcript_count = 0
+            self._last_deltas = {}
+            self._audio_output = AudioOutputSource(on_drained=self._mark_activity)
             self._audio_interface = DiscordAudioInterface(
                 self._audio_output, asyncio.get_running_loop()
             )
-
-            vc.play(self._audio_output)
+            # No vc.play() here: the player starts on demand when agent audio
+            # arrives and exits between turns (no continuous transmission).
+            self._audio_interface._voice_client = vc
 
             sink = PassthroughSink(self._audio_interface)
             vc.listen(sink)
@@ -626,10 +647,7 @@ class ConversationalVoiceBot(discord.Client):
                     s["has_content"], s["connected"], s["listening"],
                     s["playing"], s["player_alive"], s["cb_set"],
                 )
-                if self._should_restart_listening(deltas):
-                    vc = self.voice_clients[0] if self.voice_clients else None
-                    if vc is not None:
-                        await self._restart_listening(vc)
+                self._last_deltas = deltas
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -640,58 +658,12 @@ class ConversationalVoiceBot(discord.Client):
         Called from the AudioPlayer thread on drain — float assignment is atomic."""
         self._last_activity_time = time.monotonic()
 
-    def _on_agent_turn_end(self):
-        """AudioPlayer thread: agent playback drained. Stamp activity and
-        re-arm the receive reader: the decoder reliably degrades after our
-        own transmission (live 2026-06-12: dup speech -> garbage -> zeros),
-        so every user turn gets a fresh one — the 'first utterance always
-        works' behavior, applied to every exchange."""
-        self._mark_activity()
-        loop = getattr(self, "loop", None)
-        if isinstance(loop, asyncio.AbstractEventLoop) and self._session_active:
-            asyncio.run_coroutine_threadsafe(self._relisten_current(), loop)
-
-    async def _relisten_current(self):
-        vc = self.voice_clients[0] if self.voice_clients else None
-        if vc is not None and self._session_active:
-            await self._restart_listening(vc, preemptive=True)
-
-    def _should_restart_listening(self, deltas: dict) -> bool:
-        """Zero-flood deafness signature: the receive path delivers ONLY
-        zero/junk frames and nothing reaches ElevenLabs while the agent is
-        not speaking. Detected within one 5s stats window — far faster than
-        the 25s transcript watchdog. After 3 in-session restarts, escalate
-        to the watchdog (reader is unrecoverable)."""
-        if not self._session_active or self._relisten_count >= 3:
-            return False
-        return (
-            deltas.get("silent", 0) + deltas.get("flooded", 0) > 2000
-            and deltas.get("fed", 0) == 0
-            and deltas.get("gated", 0) == 0
-        )
-
-    async def _restart_listening(self, vc, preemptive: bool = False) -> None:
-        """In-place receive restart: kills the (possibly spinning) reader and
-        re-arms a fresh decoder WITHOUT tearing down the session — no
-        re-greeting, conversation context preserved."""
-        sink_cls = globals().get("PassthroughSink")
-        if sink_cls is None or self._audio_interface is None:
-            return
-        try:
-            if hasattr(vc, "stop_listening"):
-                vc.stop_listening()
-            await asyncio.sleep(0.2)
-            vc.listen(sink_cls(self._audio_interface))
-            if preemptive:
-                logger.info("[ConvAI] Re-armed voice receive after agent turn")
-            else:
-                self._relisten_count += 1
-                logger.warning(
-                    "[ConvAI] Restarted voice receive (zero-flood deafness) — "
-                    "relisten #%d", self._relisten_count,
-                )
-        except Exception as e:
-            logger.error(f"[ConvAI] Failed to restart listening: {e}", exc_info=True)
+    def _zero_flood_active(self) -> bool:
+        """Latest stats window shows the receive path flooding junk with
+        nothing reaching ElevenLabs — the deafness signature."""
+        d = self._last_deltas or {}
+        return (d.get("silent", 0) + d.get("flooded", 0) > 2000
+                and d.get("fed", 0) == 0)
 
     async def _on_user_transcript(self, transcript: str):
         # Filter out noise transcripts ("...", empty, or very short)
@@ -699,6 +671,7 @@ class ConversationalVoiceBot(discord.Client):
         if len(cleaned) < 2:
             return
         self._mark_activity()
+        self._transcript_count += 1
         self._reconnect_attempts = 0  # Reset on successful speech
         logger.info(f"[ConvAI] User: {transcript}")
         if self._text_channel:
@@ -720,7 +693,15 @@ class ConversationalVoiceBot(discord.Client):
         watchdog inert exactly when it's needed (observed live 2026-06-11:
         4.5 min deaf session, watchdog never fired).
         """
-        if not self._session_active or elapsed <= 25:
+        if not self._session_active:
+            return False
+        # A session that NEVER produced a transcript while the receive path
+        # floods junk is deaf from the start — reconnect fast (in-place listen
+        # restarts were tried live 2026-06-12 and made things worse; a fresh
+        # voice session is the only known cure).
+        threshold = 12 if (self._transcript_count == 0
+                           and self._zero_flood_active()) else 25
+        if elapsed <= threshold:
             return False
         ao = self._audio_output
         if ao is not None and (ao._has_content or not ao._queue.empty()):
@@ -738,11 +719,11 @@ class ConversationalVoiceBot(discord.Client):
     async def _dave_watchdog(self):
         """Self-heal deaf sessions: reconnect when no user speech is heard."""
         try:
-            # Wait 15s after session start for greeting to finish
-            await asyncio.sleep(15)
+            # Wait 10s after session start for the greeting to finish
+            await asyncio.sleep(10)
 
             while self._session_active:
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
                 if not self._session_active:
                     break
 
