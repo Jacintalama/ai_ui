@@ -26,7 +26,7 @@ from handlers.commands import CommandRouter, CommandContext, VoiceResponseCollec
 from handlers.slack_commands import SlackCommandHandler
 from handlers.slack_interactions import SlackInteractionsHandler
 from handlers.discord_commands import DiscordCommandHandler
-from voice_bot import start_voice_bot
+from voice_bot import start_voice_bot, current_text_channel_id
 from scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
     list_jobs, trigger_job, register_default_jobs,
@@ -516,36 +516,106 @@ async def discord_webhook(
     return JSONResponse(content=result, status_code=200)
 
 
+# Last voice-started build (single voice identity by design). Lets the agent's
+# build_status tool answer "is my build done?" even after a session reconnect.
+_last_voice_build: dict = {}
+
+
+async def _post_to_discord_channel(channel_id: str, content: str) -> None:
+    """Plain bot-token channel message (same pattern as the alert forwarder)."""
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    headers = {
+        "Authorization": f"Bot {settings.discord_bot_token}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(url, json={"content": content[:1990]}, headers=headers)
+        resp.raise_for_status()
+
+
+def _voice_notify_channel():
+    """notify_channel for voice-started builds. The target is resolved at
+    NOTIFY time (builds finish minutes later): the active voice session's
+    text channel when one exists, else the alert channel."""
+    if not settings.discord_bot_token:
+        return None
+
+    async def notify(msg: str) -> None:
+        channel_id = current_text_channel_id() or settings.discord_alert_channel_id
+        if not channel_id:
+            logger.warning("voice notify dropped (no channel configured): %s", msg[:80])
+            return
+        await _post_to_discord_channel(channel_id, msg)
+
+    return notify
+
+
 @app.post("/webhook/voice/{command}")
 async def voice_webhook(
     command: str,
     request: Request,
     x_voice_secret: str = Header(None, alias="X-Voice-Secret"),
 ):
-    """Handle tool calls from ElevenLabs voice agent."""
+    """Handle tool calls from ElevenLabs voice agent.
+
+    Three App Builder commands are special-cased (explicit body fields, build
+    memory); everything else is the generic command-router passthrough.
+    """
     if not settings.voice_webhook_secret or x_voice_secret != settings.voice_webhook_secret:
         raise HTTPException(status_code=401, detail="Invalid voice webhook secret")
 
     body = await request.json()
-    arguments = body.get("arguments", "")
-    if body.get("owner") and body.get("repo"):
-        arguments = f"{body['owner']}/{body['repo']} {arguments}".strip()
-
     collector = VoiceResponseCollector()
 
-    ctx = CommandContext(
-        user_id="voice-agent",
-        user_name="Voice User",
-        channel_id=body.get("channel_id", "voice"),
-        raw_text=f"{command} {arguments}".strip(),
-        subcommand=command,
-        arguments=arguments,
-        platform="voice",
-        respond=collector.respond,
-        metadata={"source": "elevenlabs"},
-    )
+    def _ctx(subcommand: str, arguments: str) -> CommandContext:
+        return CommandContext(
+            user_id="voice-agent",
+            user_name="Voice User",
+            channel_id=body.get("channel_id", "voice"),
+            raw_text=f"{subcommand} {arguments}".strip(),
+            subcommand=subcommand,
+            arguments=arguments,
+            platform="voice",
+            respond=collector.respond,
+            metadata={"source": "elevenlabs"},
+            notify_channel=_voice_notify_channel(),
+        )
 
-    await command_router.execute(ctx)
+    if command == "list_templates":
+        await command_router.execute(_ctx("aiuibuilder", "templates"))
+    elif command == "start_build":
+        result = await command_router.run_voice_build(
+            _ctx("aiuibuilder", "build"),
+            body.get("template_key"),
+            body.get("description") or "",
+        )
+        if result:
+            _last_voice_build.clear()
+            _last_voice_build.update({
+                "task_id": result.get("task_id", ""),
+                "slug": result.get("slug", ""),
+                "email": (settings.voice_user_email or "").strip().lower(),
+            })
+    elif command == "build_status":
+        task_id = (body.get("task_id") or "").strip() or _last_voice_build.get("task_id", "")
+        if not task_id:
+            await collector.respond(
+                "I haven't started any build for you yet — ask me to build "
+                "something first."
+            )
+        else:
+            await command_router.run_voice_build_status(
+                _ctx("aiuibuilder", "build-status"),
+                _last_voice_build.get("email")
+                or (settings.voice_user_email or "").strip().lower(),
+                task_id,
+                slug=_last_voice_build.get("slug", ""),
+            )
+    else:
+        arguments = body.get("arguments", "")
+        if body.get("owner") and body.get("repo"):
+            arguments = f"{body['owner']}/{body['repo']} {arguments}".strip()
+        await command_router.execute(_ctx(command, arguments))
 
     return {
         "spoken_summary": collector.spoken_summary,

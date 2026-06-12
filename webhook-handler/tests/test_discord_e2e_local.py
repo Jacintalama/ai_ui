@@ -53,6 +53,7 @@ async def _noop_start_voice_bot(*args, **kwargs):
 
 
 _stub_voice_bot.start_voice_bot = _noop_start_voice_bot
+_stub_voice_bot.current_text_channel_id = lambda: None
 sys.modules.setdefault("voice_bot", _stub_voice_bot)
 
 # Stub audioop and discord so transitive imports don't fail.
