@@ -664,6 +664,18 @@ class ConversationalVoiceBot(discord.Client):
             logger.error(f"[ConvAI] Watchdog error: {e}", exc_info=True)
 
 
+# The running bot instance (one per process). Lets the web layer (voice build
+# watcher) target the active session's text channel without holding the task.
+_active_bot = None
+
+
+def current_text_channel_id() -> str | None:
+    """Channel id of the active voice session's text channel, else None."""
+    bot = _active_bot
+    ch = getattr(bot, "_text_channel", None) if bot is not None else None
+    return str(ch.id) if ch is not None else None
+
+
 async def start_voice_bot(
     bot_token: str,
     elevenlabs_api_key: str,
@@ -679,6 +691,8 @@ async def start_voice_bot(
         elevenlabs_api_key=elevenlabs_api_key,
         agent_id=agent_id,
     )
+    global _active_bot
+    _active_bot = bot
     try:
         await bot.start(bot_token)
     except Exception as e:

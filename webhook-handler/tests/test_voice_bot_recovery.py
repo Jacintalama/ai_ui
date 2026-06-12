@@ -244,3 +244,25 @@ def test_audio_interface_chains_drain_hook():
     for _ in range(30):
         ao.read()
     assert fired, "bot's drain hook must still fire through the interface"
+
+
+# ---------------------------------------------------------------------------
+# 5. current_text_channel_id — voice build watcher posts here
+# ---------------------------------------------------------------------------
+
+def test_current_text_channel_id_none_without_bot(monkeypatch):
+    monkeypatch.setattr(vb, "_active_bot", None)
+    assert vb.current_text_channel_id() is None
+
+
+def test_current_text_channel_id_none_without_session_channel(monkeypatch):
+    monkeypatch.setattr(vb, "_active_bot", SimpleNamespace(_text_channel=None))
+    assert vb.current_text_channel_id() is None
+
+
+def test_current_text_channel_id_returns_id(monkeypatch):
+    monkeypatch.setattr(
+        vb, "_active_bot",
+        SimpleNamespace(_text_channel=SimpleNamespace(id=42)),
+    )
+    assert vb.current_text_channel_id() == "42"
