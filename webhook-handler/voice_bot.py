@@ -72,6 +72,11 @@ def resample_16k_mono_to_48k_stereo(pcm_16k_mono: bytes) -> bytes:
 DISCORD_FRAME_SIZE = 3840  # 20ms at 48kHz stereo 16-bit
 SILENCE_FRAME = b"\x00" * DISCORD_FRAME_SIZE
 DISCONNECT_TIMEOUT = 8.0  # graceful voice disconnect budget before force-drop
+# ElevenLabs streams TTS faster than realtime while the AudioPlayer drains at
+# exactly 50 fps, so the queue must hold a WHOLE long reply, not a few seconds
+# of it — overflow means audibly truncated speech. 4500 frames = 90 s
+# (~17 MB worst-case, transient).
+OUTPUT_QUEUE_FRAMES = 4500
 
 
 class AudioOutputSource(discord.AudioSource):
@@ -85,11 +90,12 @@ class AudioOutputSource(discord.AudioSource):
     def __init__(self, on_drained=None):
         self._lock = threading.Lock()
         self._buffer = bytearray()
-        self._queue = queue.Queue(maxsize=200)
+        self._queue = queue.Queue(maxsize=OUTPUT_QUEUE_FRAMES)
         self._has_content = False
         self._empty_count = 0
         self._on_drained = on_drained
         self._reads = 0  # diagnostic: proves the AudioPlayer thread is alive
+        self._dropped = 0  # frames lost to overflow == audibly cut speech
 
     def feed(self, pcm_48k_stereo: bytes):
         with self._lock:
@@ -102,7 +108,12 @@ class AudioOutputSource(discord.AudioSource):
                 try:
                     self._queue.put_nowait(frame)
                 except queue.Full:
-                    pass
+                    self._dropped += 1
+                    if self._dropped % 50 == 1:
+                        logger.warning(
+                            "[ConvAI] output queue FULL — dropped %d frames "
+                            "(agent speech is being cut)", self._dropped,
+                        )
 
     def read(self) -> bytes:
         self._reads += 1
@@ -496,6 +507,7 @@ class ConversationalVoiceBot(discord.Client):
             "gated": ai._gated if ai else -1,
             "fed": ai._frame_count if ai else -1,
             "reads": ao._reads if ao else -1,
+            "dropped": ao._dropped if ao else -1,
             "q": ao._queue.qsize() if ao else -1,
             "has_content": ao._has_content if ao else None,
             "connected": bool(vc and vc.is_connected()),
@@ -522,15 +534,17 @@ class ConversationalVoiceBot(discord.Client):
                     break
                 s = self._pipeline_stats()
                 deltas = {k: s[k] - prev.get(k, 0)
-                          for k in ("sink_writes", "sink_rx", "gated", "fed", "reads")}
+                          for k in ("sink_writes", "sink_rx", "gated", "fed",
+                                    "reads", "dropped")}
                 prev = {k: s[k] for k in deltas}
                 logger.info(
                     "[ConvAI] stats5s writes=+%d rx=+%d gated=+%d fed=+%d reads=+%d "
-                    "q=%d has_content=%s connected=%s listening=%s playing=%s player_alive=%s cb=%s",
+                    "dropped=+%d q=%d has_content=%s connected=%s listening=%s "
+                    "playing=%s player_alive=%s cb=%s",
                     deltas["sink_writes"], deltas["sink_rx"], deltas["gated"],
-                    deltas["fed"], deltas["reads"], s["q"], s["has_content"],
-                    s["connected"], s["listening"], s["playing"],
-                    s["player_alive"], s["cb_set"],
+                    deltas["fed"], deltas["reads"], deltas["dropped"], s["q"],
+                    s["has_content"], s["connected"], s["listening"],
+                    s["playing"], s["player_alive"], s["cb_set"],
                 )
         except asyncio.CancelledError:
             pass
