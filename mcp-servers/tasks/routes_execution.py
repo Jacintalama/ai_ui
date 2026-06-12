@@ -305,17 +305,7 @@ async def _run_execution(
             await s.execute(
                 update(TaskItem).where(TaskItem.id == task_id).values(**update_values)
             )
-            # Auto-add the creator as owner of this project (idempotent).
-            if slug:
-                await s.execute(
-                    text(
-                        "INSERT INTO tasks.project_members (slug, user_email, role, added_by) "
-                        "SELECT :slug, assignee_email, 'owner', assignee_email "
-                        "FROM tasks.items WHERE id = :task_id AND assignee_email IS NOT NULL "
-                        "ON CONFLICT (slug, user_email) DO NOTHING"
-                    ),
-                    {"slug": slug, "task_id": task_id},
-                )
+            await _grant_creator_membership(s, task_id, slug)
             await s.commit()
     except Exception as exc:
         logger.exception("Execution failed: %s", exc)
@@ -332,6 +322,33 @@ async def _run_execution(
             await s.commit()
     finally:
         _RUNNING.pop(task_id, None)
+
+
+async def _grant_creator_membership(s, task_id, parsed_slug) -> None:
+    """Auto-add the creator as owner of the built project (idempotent).
+
+    Uses the slug parsed from the execution OUTPUT when present, else the
+    slug bound at task creation. Ownership must not depend on the completion
+    prose mentioning ``apps/<slug>/`` — live 2026-06-12 a voice-built app
+    completed and previewed fine but never appeared in its creator's
+    "My apps" because the completion message omitted the path.
+    """
+    member_slug = parsed_slug
+    if not member_slug:
+        member_slug = (await s.execute(
+            select(TaskItem.built_app_slug).where(TaskItem.id == task_id)
+        )).scalar_one_or_none()
+    if not member_slug:
+        return
+    await s.execute(
+        text(
+            "INSERT INTO tasks.project_members (slug, user_email, role, added_by) "
+            "SELECT :slug, assignee_email, 'owner', assignee_email "
+            "FROM tasks.items WHERE id = :task_id AND assignee_email IS NOT NULL "
+            "ON CONFLICT (slug, user_email) DO NOTHING"
+        ),
+        {"slug": member_slug, "task_id": task_id},
+    )
 
 
 def _build_execute_prompt(
