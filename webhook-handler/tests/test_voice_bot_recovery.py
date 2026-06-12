@@ -307,6 +307,17 @@ def test_watchdog_no_fast_path_without_zero_flood():
     assert bot._watchdog_should_reconnect(15.0) is False
 
 
+def test_watchdog_detects_storm_with_garbage_trickle():
+    """Junk dominating real audio 20:1 is deafness even when a trickle is
+    still being fed (live 2026-06-12 10:56: 15k junk + 400 fed per window
+    read as healthy-quiet, leaving the user deaf for 120s)."""
+    bot = _deaf_bot()
+    bot._transcript_count = 1
+    bot._last_deltas = {"silent": 0, "flooded": 15000, "dup": 0, "fed": 400}
+    assert bot._watchdog_should_reconnect(26.0) is True
+    assert bot._watchdog_should_reconnect(15.0) is False
+
+
 def test_watchdog_lets_a_working_session_sit_quiet():
     """A user silently waiting (e.g. for a build) is NOT deafness: transcripts
     exist and there's no junk flood — only a 120s long-stop fallback applies

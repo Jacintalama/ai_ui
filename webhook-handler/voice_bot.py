@@ -768,11 +768,13 @@ class ConversationalVoiceBot(discord.Client):
             logger.error(f"[ConvAI] Turn-end flusher error: {e}", exc_info=True)
 
     def _zero_flood_active(self) -> bool:
-        """Latest stats window shows the receive path flooding junk with
-        nothing reaching ElevenLabs — the deafness signature."""
+        """Latest stats window shows the receive path storming junk — the
+        deafness signature. The storm DOMINATING real audio counts even when
+        a trickle still reaches ElevenLabs (live 2026-06-12 10:56: 15k junk
+        + 400 garbage-fed per window read as 'healthy quiet' for 120s)."""
         d = self._last_deltas or {}
         junk = d.get("silent", 0) + d.get("flooded", 0) + d.get("dup", 0)
-        return junk > 2000 and d.get("fed", 0) == 0
+        return junk > 2000 and d.get("fed", 0) < junk // 20
 
     async def _on_user_transcript(self, transcript: str):
         # Filter out noise transcripts ("...", empty, or very short)
