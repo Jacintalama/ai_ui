@@ -1,56 +1,58 @@
 # AI Video Generator — Design Spec
 
 **Date:** 2026-06-15
-**Status:** Draft for review
+**Status:** Draft for review (revised after adversarial spec review + live hardware verification)
 **Feature:** Third user-facing capability on the IO Platform, after App Builder and the Cron/Scheduler.
 
 ## 1. Summary
 
 Users upload screenshots of their app (or any images) plus a text prompt. The platform produces a short narrated explainer/demo video (MP4) by:
 
-1. Having Claude pick a fixed Remotion template and fill it in (script, captions, scene order, timing).
+1. Having Claude pick a fixed template and fill it in (script, captions, scene order, timing).
 2. Generating a voiceover with a free, self-hosted TTS engine (Piper).
-3. Rendering the video with Remotion on the existing agent VM.
-4. Delivering the finished MP4 back to the user with a capability-gated download link.
+3. Rendering the video with **ffmpeg** (slideshow filtergraph: Ken Burns + caption overlays + crossfades + muxed voiceover) on the existing build host.
+4. Delivering the finished MP4 back to the user via a capability-gated download link.
 
-This is **programmatic video assembly**, not AI video generation. No diffusion/text-to-video model is involved. Claude controls content (words, ordering, timing), never raw render code.
+This is **programmatic video assembly**, not AI video generation, and not browser-based rendering. No diffusion/text-to-video model and no headless Chromium are involved. Claude controls content (words, ordering, timing), never raw render code.
 
-## 2. Goals and non-goals
+## 2. Hardware reality (verified live 2026-06-15)
+
+There is **one** server: `ai-ui-dev` at `46.224.193.25`, a **Hetzner CAX11 — 2 vCPU / 4GB RAM / 40GB disk**. It runs ~30 containers, is at ~1.5GB available RAM and 94% disk, and **also hosts the app-build agent** as the `claude-agent` host user (`AGENT_BACKEND=remote`, `AGENT_HOST=172.22.0.1`, which is the Docker bridge gateway, i.e. the same physical host, not a separate VM).
+
+Decision (user): **do not add or resize hardware.** The feature must run on this existing box. Every design choice below follows from that hard constraint.
+
+Consequences accepted:
+- **ffmpeg, never Chromium/Remotion** (Chromium needs 8GB+; impossible here, and Remotion's multi-tenant license is also paid).
+- **Renders run on the host, not in the `tasks` container** (that container is capped at 256MB RAM).
+- **Renders and builds are mutually exclusive** (one heavy job at a time on the 4GB box).
+- **Pilot-scale**: tight caps on resolution, length, and per-user quota. Scales to a bigger/dedicated box later with no code change (same SSH+rsync pattern).
+
+## 3. Goals and non-goals
 
 ### Goals
 - Web-upload entry point for v1, reusing the existing "Upload your app" flow.
-- Template-driven video: a small set of fixed, hand-built Remotion templates.
-- Free, self-hosted voiceover (no per-character API cost).
-- A queue with a strict concurrency cap so renders never starve app builds.
-- Reuse existing platform patterns: filesystem + Postgres storage, SSH+rsync off-box compute, capability-token auth. No new external services, no object storage, no new cloud provider.
+- Template-driven video using ffmpeg filtergraphs.
+- Free, self-hosted voiceover (Piper).
+- Run safely on the existing 4GB box: one heavy job at a time, capped resolution/length, disk-safe.
+- Reuse existing patterns: filesystem + Postgres storage, SSH+rsync host compute, capability-token auth. No object storage, no new services, no new/larger hardware.
 
-### Non-goals (explicitly out of scope for v1)
-- AI text-to-video / image-to-video generation (Runway, Veo, Sora, etc.).
-- AI-written Remotion code executed per request (security and reliability risk).
-- Discord/Slack screenshot upload (those platforms have no attachment handlers today; web-only for v1).
-- Object storage (S3/R2/MinIO). The platform has none and we are not adding it.
-- A dedicated render VM (we reuse the existing agent VM; a dedicated box is a future, non-breaking option).
-- Per-frame / timeline editing UI, background music selection, multi-language voices (future toggles).
-
-## 3. Constraints that shaped this design
-
-Verified live and via codebase recon on 2026-06-15:
-
-- **Main VPS is maxed:** 2 CPU, 3.7GB RAM (~1.4GB free), disk 94% full (~2.5GB free), ~30 containers, no ffmpeg. Rendering cannot run on the orchestrator box.
-- **Reclaimable headroom exists:** ~7.9GB of stale Docker images can be pruned to relieve the disk pressure for small installs (e.g. Piper if it ran here).
-- **No object storage anywhere:** all storage is a Docker bind-mount volume at `/workspace/ai_ui/apps/<slug>/` plus the Postgres `tasks` schema.
-- **An off-box compute pattern already exists:** the `tasks` service rsyncs app files to a **dedicated Hetzner CAX21 agent VM** (ARM64, ~4 vCPU / ~8GB RAM, Node 20 + Python 3.11 + Claude Code CLI installed), runs the build over SSH, then rsyncs artifacts back. It has **no Chromium and no ffmpeg** today.
-- **User isolation** is enforced by `assignee_email` on `tasks.items`, the `tasks.project_members` table, and HMAC capability tokens (`X-Edit-Capability`, signed with `OAUTH_STATE_SECRET`).
+### Non-goals (v1)
+- AI text-to-video / image-to-video generation.
+- Remotion / React / headless-browser rendering (license cost + RAM infeasible here).
+- AI-authored render code executed per request.
+- Discord/Slack screenshot upload (web-only for v1).
+- Object storage (S3/R2). Rescaling or adding a render box.
+- Rich motion graphics, animated typography, background music (future).
 
 ## 4. User flow (v1, web)
 
-1. User opens the video tool in the web UI, selects an existing app (slug) or a fresh job, uploads screenshots, and types a prompt describing the video they want.
-2. The `tasks` service validates the upload, stores the screenshots, and creates a `video_jobs` row with status `queued`.
-3. A worker picks the job up (respecting the concurrency cap):
-   - **scripting:** Claude reads the prompt + screenshot list and returns a validated JSON plan (template, scene order, captions, narration script).
-   - **voicing:** Piper turns the narration script into `voice.mp3`.
-   - **rendering:** screenshots + `voice.mp3` + the plan JSON are rsynced to the agent VM, Remotion renders `out.mp4`, which is rsynced back.
-4. Job status moves to `done`; the user sees the video in the web UI and can download it via a capability-gated link. (Optional: a Discord/Slack DM notification, reusing the existing post-back pattern.)
+1. User opens the video tool in the web UI, picks an app (slug), uploads screenshots, and types a prompt.
+2. The `tasks` service authenticates the user (project member), validates the upload, stores the screenshots, and creates a `video_jobs` row with status `queued`.
+3. The in-process **video worker** advances the job through stages, acquiring the shared agent-VM lock before any heavy step:
+   - **scripting:** Claude returns a schema-validated plan (template, scene order, captions, narration). Referenced screenshots are verified to exist.
+   - **voicing:** Piper turns the narration into `voice.mp3` (on the host).
+   - **rendering:** screenshots + `voice.mp3` + plan are rsynced to the host; ffmpeg renders `out.mp4`; it is rsynced back.
+4. Job → `done`; the web UI (polling) shows the video and offers a capability-gated download. Optional: a Discord/Slack DM notification, reusing the existing post-back pattern.
 
 ## 5. Architecture
 
@@ -58,140 +60,134 @@ Verified live and via codebase recon on 2026-06-15:
 Web UI (upload screenshots + prompt)
    │
    ▼
-tasks service ──> Postgres tasks.video_jobs (job state)
-   │         └──> Redis (queue + concurrency cap)
+tasks service ── Postgres: tasks.video_jobs (state) + pg_advisory_lock (heavy-job mutex)
    │
+   ├─ video worker (in-process async task): orchestrates stages
    ├─ scripting: Claude → validated plan JSON  (cheap tokens)
-   ├─ voicing:   Piper (on agent VM) → voice.mp3  (free, light)
-   ├─ rsync inputs ──────────────────────────────┐
-   ▼                                              ▼
-agent VM (existing): Remotion render (Chromium + ffmpeg) → out.mp4
+   │
+   ├─ acquire shared lock (renders AND builds use it) ──────────────┐
+   ▼                                                                ▼
+ host (claude-agent @ 172.22.0.1, via SSH+rsync — same path as builds):
+     Piper → voice.mp3        ffmpeg slideshow render → out.mp4
    │
    └─ rsync out.mp4 back → /workspace/ai_ui/apps/<slug>/.video/<job_id>/out.mp4
-   │
+   │   release lock (in finally — always, even on failure/timeout)
    ▼
-Web UI download (capability-token gated)  [+ optional chat notification]
+Web UI download (video_dl capability-token gated)  [+ optional chat notification]
 ```
 
 ## 6. Components (each an isolated unit)
 
-### 6.1 Job + queue layer
-- **Where:** `tasks` service + Redis (both already running).
-- **Responsibility:** own the `video_jobs` lifecycle and enforce a global concurrency cap of 1 active render. Provide queue position to the UI.
-- **States:** `queued → scripting → voicing → rendering → done` and `failed` (terminal) from any stage.
-- **Interface:** create job, advance state, fetch status, list user jobs.
+### 6.1 Video worker + queue
+- **Where:** an in-process background async task inside the `tasks` service (no new service; no Redis — the tasks service talks to Postgres, not Redis, today).
+- **Queue + state:** `tasks.video_jobs` rows are the queue. The worker polls for the oldest `queued` job, or is signalled on insert. States: `queued → scripting → voicing → rendering → done` and `failed` (terminal).
+- **Heavy-job mutex:** a single **Postgres advisory lock** (`pg_advisory_lock`) guards all heavy work on the box. **Both renders and builds acquire it**, so a render and a build can never run at once. The worker also refuses to start a render if disk free is below a threshold (see 6.6).
+- **Concurrency:** exactly one heavy job (render or build) at a time. Surfaces queue position to the UI.
 
 ### 6.2 Upload endpoint
-- **Where:** new route in the `tasks` service, mirroring `routes_upload.py` and the enhance-endpoint attachment handling.
-- **Responsibility:** validate screenshots (allowlist `image/png|jpeg|webp`; per-file and per-job size caps; path safety via the existing `upload_validation.py` patterns) and write them to the job directory.
+- **Where:** new route in `tasks`, mirroring `routes_upload.py` + the enhance-endpoint attachment handling.
+- **Auth:** the caller must be a **project member** of `slug` (existing `project_members` / `X-User-Email` model), not `current_admin`. This is user-facing.
+- **Validation:** allowlist MIME `image/png|jpeg|webp`, verified by **magic-number / PIL `Image.verify()`** (not extension alone); **max dimensions** (e.g. 4096x4096) to stop image bombs; per-file cap (e.g. 10MB) and per-job total (e.g. 50MB) and max file count; filename sanitization via existing helpers.
 - **Storage target:** `/workspace/ai_ui/apps/<slug>/.video/<job_id>/screenshots/*.png`.
 
 ### 6.3 AI scripting
 - **Where:** `tasks` service, calling Claude.
-- **Responsibility:** turn (prompt + screenshot list + optional app metadata) into a **validated plan**. Output is structured JSON constrained by a schema. Invalid output is rejected and repaired, never executed as code.
-- **Contract (plan JSON):**
+- **Output (schema-validated plan):**
   ```json
   {
     "template_id": "product_demo",
     "title": "string",
     "scenes": [
-      {"screenshot": "screenshot-1.png", "caption": "string", "duration_s": 3.5, "transition": "fade"}
+      {"screenshot": "screenshot-1.png", "caption": "string", "duration_s": 3.5, "transition": "crossfade"}
     ],
     "narration_script": "full voiceover text",
-    "voice": "piper-default"
+    "resolution": "720p"
   }
   ```
-- **Validation:** `template_id` must be a known template; every `screenshot` must exist in the job; durations bounded; total length capped (e.g. ≤ 90s for v1).
+- **Validation:** `template_id` known; **every `screenshot` must exist on disk** for the job (reject hallucinated names); durations bounded; total length ≤ 60s (v1); resolution in {720p, 1080p}. Invalid output triggers one bounded repair retry, then fail. Plans are never executed as code.
 
 ### 6.4 TTS (Piper)
-- **Where:** installed on the agent VM (co-located with the render so all render inputs live in one place; keeps the maxed main VPS untouched).
-- **Responsibility:** `narration_script` → `voice.wav` → `voice.mp3` (ffmpeg). One default voice for v1.
-- **Future:** Kokoro-ONNX as an optional higher-quality "premium voice" toggle once stable.
+- **Where:** installed on the build host (co-located with the render). Pinned to a maintained distribution (prebuilt aarch64 binary or `OHF-Voice/piper1-gpl` at a fixed version; the original `rhasspy/piper` is archived). GPL is fine for self-hosted, no-distribution use; recorded in the provisioning script.
+- **Responsibility:** `narration_script` → `voice.wav` → `voice.mp3` (ffmpeg). One default voice for v1; deterministic (re-running on retry yields the same file, so voicing is idempotent).
 
-### 6.5 Remotion render
-- **Where:** a new Remotion project (e.g. `video-renderer/`) deployed onto the agent VM; executed via the existing SSH+rsync mechanism (extend `remote_executor.py` with a render path, or a sibling executor sharing its transport).
-- **Responsibility:** given screenshots + `voice.mp3` + plan JSON, render `out.mp4` with the chosen template, then rsync it back.
-- **Augmentation needed on the agent VM:** install Chromium (ARM64), ffmpeg, and the Remotion project + its npm deps via `scripts/provision_agent_vm.sh`.
-- **Execution:** separate timeout from builds (rendering can run several minutes; default e.g. 900s, configurable). Concurrency capped to 1 so a render does not contend with a build on the shared 8GB VM.
+### 6.5 ffmpeg render
+- **Where:** runs as `claude-agent` on the host, dispatched via the existing SSH+rsync mechanism (a render path added alongside `remote_executor.py`, or a `VideoRenderExecutor` sharing its transport).
+- **Engine:** raw ffmpeg filtergraph (no MoviePy frame-by-frame numpy pipeline, to keep RAM low). Per scene: `zoompan` (Ken Burns) on the screenshot scaled to the target resolution, with a caption. Scenes joined with `xfade` crossfades; the Piper `voice.mp3` muxed as the audio track.
+- **Captions:** pre-rendered to transparent PNG overlays with PIL using a **bundled font** (avoids ffmpeg `drawtext` font-config and escaping pitfalls, and guarantees correct typography on headless Linux). Font + `fontconfig` installed via the provisioning script.
+- **Artifact return:** rsync `out.mp4` back. The rsync-back sanity check must look for **`out.mp4`** (not `index.html`), so the render path parameterizes the expected artifact rather than reusing the build check verbatim.
+- **Resource caps:** ffmpeg `-threads` limited; 720p default (1080p optional); render-specific timeout (e.g. 600s) separate from build timeouts.
+- **Cleanup:** the remote workspace under `/agent/work/<job_id>/` is removed in a **`finally`** block on **every** outcome (success, failure, timeout) so failed jobs never leave another tenant's files behind. (The current build executor only cleans up on success; the render path must not copy that.)
 
-### 6.6 Templates
-- **Where:** inside the Remotion project as fixed, hand-built compositions.
-- **v1 set (small):** e.g. `product_demo` and `feature_walkthrough`. Each defines slots: title card, per-screenshot scenes with captions, a closing CTA, and a synced `<Audio>` voiceover track.
-- **Principle:** Claude selects and fills a template; it does not author template code.
+### 6.6 Storage, retention, disk safety
+- **Layout:** `/workspace/ai_ui/apps/<slug>/.video/<job_id>/{screenshots/, plan.json, voice.mp3, out.mp4}`.
+- **Cleanup:** delete `screenshots/` and `voice.mp3` once `out.mp4` is written. Whole job dir deleted after `RETENTION_DAYS_VIDEOS` (default **7**, given the 40GB disk), by a scheduled task reusing the existing scheduler.
+- **Disk guard:** the worker refuses to start a render (job stays `queued`, user told) if free disk is below a threshold (e.g. **2GB**). Phase 0 prunes ~8GB of stale Docker images to create headroom before launch.
 
 ### 6.7 Delivery
-- **Where:** `tasks` service (status + download), reusing the capability-token model (`edit_capability.py`) so the user downloads their own video without a web login. The web UI polls job status.
-- **Optional:** a Discord/Slack DM with the link, reusing the existing webhook-handler post-back used by cron/recruiting results.
+- **Download auth:** a new **`video_dl:` capability** bound to `(owner, slug, video_job_id)` — a small `video_capability` module mirroring `edit_capability.py` (the existing token binds `task_id`, which would be wrong/colliding for videos). Download route: `GET /api/projects/<slug>/videos/<job_id>/download`, gated by this capability + `project_members`.
+- **Status polling:** `GET /api/video-jobs/<job_id>` every ~2s from the web UI. Response: `{ id, status, queue_position, error, output_available, progress_pct? }`. 404 if not found/not authorized.
+- **Optional:** Discord/Slack DM with the link, reusing the webhook-handler post-back used by cron/recruiting.
 
 ## 7. Data model
 
-New table `tasks.video_jobs`:
+New table `tasks.video_jobs` (migration `021_video_jobs.sql` + `VideoJob` ORM model in `models.py`):
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | UUID PK | job id |
-| `slug` | TEXT | app slug the job belongs to |
+| `slug` | TEXT | app the job belongs to |
 | `user_email` | TEXT | owner (matches `assignee_email` model) |
 | `status` | TEXT | queued / scripting / voicing / rendering / done / failed |
-| `prompt` | TEXT | user's request |
-| `plan_json` | JSONB | validated plan from the scripting stage |
-| `error` | TEXT NULL | failure reason when `status = failed` |
-| `output_path` | TEXT NULL | path to `out.mp4` when done |
-| `created_at` | TIMESTAMPTZ | |
-| `updated_at` | TIMESTAMPTZ | |
+| `prompt` | TEXT | user request |
+| `plan_json` | JSONB | validated plan |
+| `error` | TEXT NULL | failure reason |
+| `output_path` | TEXT NULL | path to `out.mp4` |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
 
-Filesystem layout (per job):
-```
-/workspace/ai_ui/apps/<slug>/.video/<job_id>/
-    screenshots/*.png      ← uploaded inputs
-    plan.json              ← validated AI plan
-    voice.mp3              ← Piper output
-    out.mp4                ← rendered video
-```
+Access gated by `project_members` ACL + the `video_dl` capability.
 
-Access is gated by the same `project_members` ACL + capability-token checks already used for the Visual Editor.
+## 8. Orchestration, idempotency, failure handling
 
-## 8. Error handling
-
-- Any stage failure marks the job `failed` with a human-readable `error`, notifies the user, and stops the pipeline.
-- **Scripting:** invalid/unparseable plan JSON triggers a bounded repair retry, then fail.
-- **Voicing:** Piper failure fails the job with a clear message.
-- **Rendering:** render timeout or non-zero exit fails the job; rsync uses the existing retry pattern (2 attempts).
-- **Disk safety:** `.video/<job_id>/` directories are garbage-collected after delivery (and screenshots can be removed once `out.mp4` exists), to protect the main VPS disk. A retention policy (e.g. delete inputs after N days, keep `out.mp4` longer) is configurable.
+- **One worker owns all stages** for a job, in order. Each stage transition is persisted, so the worker is resumable and crash-safe.
+- **Idempotent stages (skip on retry):** if `plan.json` exists and validates, skip scripting; if `voice.mp3` exists, skip voicing; rendering is restarted from inputs (not resumed mid-encode).
+- **Per-stage timeouts:** scripting ~30s, voicing ~60s, rendering ~600s. A job stuck in `rendering` past timeout is marked `failed` (lock released in `finally`), never wedged forever.
+- **No partial resume across submissions:** a `failed` job requires re-submit; intermediate artifacts of a failed job are cleaned by retention.
+- **Retries:** scripting gets one bounded repair retry; rsync uses the existing 2-attempt retry.
 
 ## 9. Security
 
-- Reuse capability tokens (`X-Edit-Capability`, HMAC via `OAUTH_STATE_SECRET`) for download authorization; reuse `project_members` for access control.
-- Strict upload validation: image MIME allowlist, size caps, filename sanitization (existing `upload_validation.py`).
-- No AI-authored code is executed. Claude only emits a schema-validated content plan.
-- Piper and Remotion run on the agent VM as the unprivileged `claude-agent` user, consistent with the build sandbox.
-- No secrets in prompts or plan JSON.
+- **Tenant isolation on the shared host:** remote workspace cleaned in `finally` on all outcomes; renders and builds serialized by the shared lock; both run as the unprivileged `claude-agent`.
+- **Upload hardening:** magic-number/PIL validation, max dimensions (image-bomb guard), size + count caps, filename sanitization. Disk-threshold guard prevents fill-the-disk DoS.
+- **Download isolation:** `video_dl` capability bound to `video_job_id` + `project_members` check; one user cannot fetch another's `out.mp4`.
+- **Per-user rate limit:** max N videos/day per user (configurable, e.g. 10), to bound token spend and CPU.
+- **No injection:** user text (prompt, captions) never reaches a shell; captions are passed as data to PIL (overlay PNG), and ffmpeg is invoked with an argv list (no shell string). The plan is data, never code.
+- **No secrets** in prompts or plan JSON.
 
 ## 10. Resource and cost
 
-- **Main VPS:** untouched by rendering. Only lightweight orchestration (queue, job rows) runs here.
-- **Agent VM:** gains Chromium (~500MB) + ffmpeg (~100MB) + the Remotion project + Piper (~150MB). A single render uses an estimated 2 to 4GB RAM; the concurrency cap of 1 keeps it within the ~8GB box while builds may also run. Disk freed by pruning stale Docker images covers installs comfortably.
-- **Tokens:** scripting only (cents per video). **Voice:** free (Piper). **No new monthly infrastructure cost** (reuses the existing agent VM), matching the "use what we already have" constraint.
+- **No new hardware, no new services, no object storage.** Reuses the existing box + the build host pattern.
+- **RAM:** one heavy job at a time (lock). Raw ffmpeg 720p slideshow render peaks in the hundreds of MB, feasible on the 4GB box when no build is concurrent. Piper ~150MB, transient.
+- **Disk:** Phase 0 prunes ~8GB of stale images; per-job inputs deleted after `out.mp4`; 7-day retention; 2GB free-disk guard.
+- **Tokens:** scripting only (cents per video). **Voice:** free (Piper). **ffmpeg / Piper:** free (no license cost for this use).
+- **Latency tradeoff (documented):** a video waits behind any in-progress build and vice versa; acceptable at pilot volume.
 
 ## 11. Testing
 
-Mirror the platform's existing pytest conventions:
-- **Unit:** plan-JSON schema validation; queue state machine; template builder helpers (pure functions); upload validation.
-- **Integration:** end-to-end render of a fixture job (small screenshots + short script) producing a valid MP4 on the agent VM.
-- **Guards:** concurrency cap honored under two concurrent submissions; cleanup of `.video/<job_id>/` after delivery.
+Mirror the platform's pytest conventions:
+- **Unit:** plan-JSON schema + screenshot-existence validation; upload validation (magic number, dimensions, caps); the template → ffmpeg-argv builders (pure functions); queue state machine; the advisory-lock guard.
+- **Integration:** end-to-end render of a fixture (2-3 small screenshots + short script) producing a valid, playable MP4 on the host; cleanup-on-failure leaves no remote files; lock makes render+build mutually exclusive.
+- **Benchmark before shipping UX promises:** time a representative 30-60s 720p render on the actual CAX11 and set timeouts/queue messaging from measured numbers.
 
-## 12. Rollout phases (detail deferred to the implementation plan)
+## 12. Rollout phases (detail in the implementation plan)
 
-- **Phase 0 — Provision:** add Chromium + ffmpeg + Remotion project + Piper to the agent VM via `provision_agent_vm.sh`; prune stale Docker images.
-- **Phase 1 — Data + queue:** `video_jobs` migration, Redis queue, state machine, concurrency cap.
-- **Phase 2 — Upload + scripting:** upload endpoint + storage; Claude scripting with schema validation.
-- **Phase 3 — Voice + render:** Piper integration; Remotion render path over SSH+rsync; one template end to end.
-- **Phase 4 — Web UI + delivery:** upload/preview/download UI; capability-gated download; optional chat notification.
-- **Phase 5 — Hardening:** tests, cleanup/retention, second template, deploy via the documented flow.
+- **Phase 0 — Host prep:** prune stale Docker images (reclaim disk); install ffmpeg + fontconfig + a bundled font + Piper on the host via the provisioning script; verify ffmpeg can render a trivial fixture as `claude-agent`.
+- **Phase 1 — Data + queue + lock:** `021_video_jobs.sql`, `VideoJob` model, the in-process worker, the shared `pg_advisory_lock` mutex (wire builds onto it too), disk guard.
+- **Phase 2 — Upload + scripting:** member-auth upload endpoint with hardened validation; Claude scripting with schema + screenshot-existence checks.
+- **Phase 3 — Voice + render:** Piper integration; ffmpeg slideshow render path over SSH+rsync with `finally` cleanup; one template end to end.
+- **Phase 4 — Web UI + delivery:** upload/preview/poll UI; `video_dl` capability + download route; optional chat notification.
+- **Phase 5 — Hardening:** retention/cleanup scheduled task; per-user rate limit; second template; tests + benchmark; deploy via the documented flow.
 
 ## 13. Future (non-breaking) extensions
 
-- Kokoro-ONNX premium voice toggle.
-- Discord/Slack screenshot upload (new attachment handling in webhook-handler).
-- Background music; additional templates; longer videos.
-- Move rendering to a dedicated render VM if volume grows (identical SSH+rsync pattern, so no architectural change).
+- Move rendering to a rescaled box or a dedicated render box if volume grows (identical SSH+rsync pattern; no code change).
+- Kokoro-ONNX premium voice; Discord/Slack upload; more templates; 1080p default; background music.
