@@ -39,7 +39,9 @@
 
 **Modify:**
 - `mcp-servers/tasks/main.py` — import + `include_router(video_router)`; start `video_worker_loop` in `lifespan`
-- `mcp-servers/tasks/requirements.txt` — add `anthropic`, `Pillow`
+- `mcp-servers/tasks/requirements.txt` — add `anthropic>=0.69.0`, `Pillow>=10.0.0`
+- `mcp-servers/tasks/routes_execution.py` — build launch acquires the shared `heavy_job` lock (true mutual exclusion with renders)
+- `mcp-servers/tasks/tests/conftest.py` — add `tasks.video_jobs` to the test TRUNCATE list
 - `scripts/provision_agent_vm.sh` — install ffmpeg, fontconfig, fonts, Piper on the host
 - `mcp-servers/tasks/config.py` (or env) — `VIDEO_ENABLED`, `VIDEO_MIN_FREE_RAM_MB`, `VIDEO_MIN_FREE_DISK_MB`, `VIDEO_MAX_PER_USER_PER_DAY`, `VIDEO_RETENTION_DAYS`, `ANTHROPIC_API_KEY`
 
@@ -200,12 +202,16 @@ class VideoJob(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 ```
 
-- [ ] **Step 5: Run tests + a real migration check, then commit**
+- [ ] **Step 5: Add `tasks.video_jobs` to the test truncation list**
+
+In `tests/conftest.py`, append `tasks.video_jobs` to the `TRUNCATE ... CASCADE` statement in the `db_session` fixture, so tests stay isolated.
+
+- [ ] **Step 6: Run tests + a real migration check, then commit**
 
 Run: `pytest tests/test_video_models.py -v` (PASS).
 Run (test DB): start the app against a test DB and confirm `tasks.video_jobs` exists (`\d tasks.video_jobs`).
 ```bash
-git add migrations/021_video_jobs.sql video_models.py tests/test_video_models.py
+git add migrations/021_video_jobs.sql video_models.py tests/test_video_models.py tests/conftest.py
 git commit -m "feat(video): add video_jobs table and model"
 ```
 
@@ -213,7 +219,7 @@ git commit -m "feat(video): add video_jobs table and model"
 
 **Files:** Create `mcp-servers/tasks/heavy_lock.py`, `mcp-servers/tasks/tests/test_heavy_lock.py`
 
-Design: one Postgres advisory lock keyed `hashtext('heavy_job')`. Renders acquire it with `pg_try_advisory_lock` (non-blocking). Builds are **not modified**; instead the render worker also does a read-only check for any `tasks.items` row in `status='running'` (an in-flight build) and yields if present. Guards read `/proc/meminfo` and `shutil.disk_usage`.
+Design: one Postgres advisory lock keyed `hashtext('heavy_job')` that **both renders and builds acquire**, so a render and a build can never run at once (this is what actually prevents the OOM that would hit existing features). Renders try it non-blocking via `pg_try_advisory_lock` and defer if it is held; the existing build launch path is wired onto the same lock in **Task 1.4**. The render worker also keeps a read-only `build_in_flight` check (belt-and-suspenders for a build that began before the worker woke). Guards read `/proc/meminfo` and `shutil.disk_usage`.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -387,6 +393,32 @@ git add video_worker.py tests/test_video_worker.py main.py
 git commit -m "feat(video): worker loop skeleton, kill switch, lifespan wiring"
 ```
 
+### Task 1.4: Wire the existing build path onto the shared heavy-job lock
+
+**Files:** Modify `mcp-servers/tasks/routes_execution.py` (and `routes_aiuibuilder.py` if it launches builds directly); Create `tests/test_build_heavy_lock.py`
+
+This is the change that makes the "won't affect existing features" guarantee real: a build must not run while a render holds the box, and vice versa. It is a minimal, additive change to the build launch path: acquire the shared `heavy_job` lock right before the heavy build subprocess, release after. The existing per-slug build locks stay exactly as they are.
+
+> ⚠️ Touches existing build code. Confirm with the user before starting this task. Run the full existing build test suite after.
+
+- [ ] **Step 1: Write the failing test** — assert that while the `heavy_job` advisory lock is held by another session, the build launch path waits/defers rather than starting its subprocess (mock the subprocess; assert it is not invoked until the lock frees).
+
+- [ ] **Step 2: Run to verify it fails.**
+
+- [ ] **Step 3: Implement** — around the build's heavy subprocess launch, acquire `pg_advisory_lock(hashtext('heavy_job'))` (blocking, with a sane wait) using the `heavy_lock` helpers, and release it when the build finishes. Do NOT change build ordering or semantics otherwise. Keep the existing per-slug lock.
+
+- [ ] **Step 4: Run the FULL existing build test suite to confirm builds still pass unchanged**
+
+Run: `pytest tests/ -k "build or execution or aiuibuilder" -v`
+Expected: all green (no regression in existing build behavior).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add routes_execution.py tests/test_build_heavy_lock.py
+git commit -m "feat(video): builds acquire shared heavy-job lock (render/build mutual exclusion)"
+```
+
 ---
 
 ## Phase 2: Upload + AI scripting
@@ -546,7 +578,7 @@ async def upload(slug: str = Form(...), prompt: str = Form(..., min_length=1, ma
     return {"id": str(job_id), "status": "queued"}
 ```
 
-- [ ] **Step 4: Register the router in `main.py`** (`app.include_router(video_router)`), run tests (PASS).
+- [ ] **Step 4: Register the router in `main.py`** with `app.include_router(video_router)` placed after `app.include_router(tasks_router)` (no conflict with the `/api/tasks/{task_id}` catch-all since the prefix is `/api/video-jobs`). Run tests (PASS).
 
 - [ ] **Step 5: Commit**
 
@@ -653,7 +685,7 @@ async def generate_plan(prompt: str, screenshots: list[str]) -> dict:
     return plan
 ```
 
-- [ ] **Step 4: Run tests (PASS). Add `anthropic` + `Pillow` to requirements.txt.**
+- [ ] **Step 4: Run tests (PASS). Add pinned deps to `requirements.txt`** (alphabetical): `anthropic>=0.69.0` and `Pillow>=10.0.0`. Note: `claude-opus-4-8` and the `output_config.format` structured-output API are current and correct per the Claude API reference; do not substitute an older model id. Ensure `ANTHROPIC_API_KEY` is set in the tasks service env.
 
 - [ ] **Step 5: Commit**
 
@@ -693,7 +725,7 @@ Mirrors `RemoteExecutor`'s `_SSH_OPTS`/`_RSYNC_SSH`/`_push_state`/`_rsync_back`/
 
 - [ ] **Step 2: Run to verify fail.**
 
-- [ ] **Step 3: Implement** `async def render(self, slug, job_id, plan) -> str` returning the local `out.mp4` path. Remote commands: `mkdir -p /agent/work/<job_id>`; rsync `.video/<job_id>/` up; run `/opt/piper/piper -m .../amy.onnx -f voice.wav` then `ffmpeg ... out.mp4` (script built by `video_render`); rsync `out.mp4` back to `apps/<slug>/.video/<job_id>/out.mp4`; `finally: _cleanup_remote`. Use a render timeout (`asyncio.timeout`, default 600s).
+- [ ] **Step 3: Implement** `async def render(self, slug, job_id, plan) -> str` returning the local `out.mp4` path. Remote commands: `mkdir -p /agent/work/<job_id>`; rsync `.video/<job_id>/` up; run `/opt/piper/piper -m .../amy.onnx -f voice.wav` then `ffmpeg ... out.mp4` (script built by `video_render`); rsync `out.mp4` back to `apps/<slug>/.video/<job_id>/out.mp4`; `finally: _cleanup_remote`. Use a render timeout (Python 3.11+: `import asyncio` then `async with asyncio.timeout(600):`, default 600s).
 
 - [ ] **Step 4: Run tests (PASS). Step 5: Commit.**
 
