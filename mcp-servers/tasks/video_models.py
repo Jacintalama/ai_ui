@@ -2,7 +2,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, Text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from models import Base  # reuse the shared DeclarativeBase
@@ -33,10 +41,18 @@ class VideoJobVersion(Base):
     """A saved version of a video job's plan + rendered output."""
 
     __tablename__ = "video_job_versions"
-    __table_args__ = {"schema": "tasks"}
+    __table_args__ = (
+        UniqueConstraint("job_id", "version_no"),
+        Index("video_job_versions_job_idx", "job_id", "version_no"),
+        {"schema": "tasks"},
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    job_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.video_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     version_no = Column(Integer, nullable=False)
     plan_json = Column(JSONB, nullable=False)
     summary = Column(Text, nullable=True)

@@ -7,7 +7,7 @@ than a freshly-constructed instance.
 """
 import uuid
 
-from video_models import VideoJob
+from video_models import VideoJob, VideoJobVersion
 
 
 def test_videojob_defaults():
@@ -38,7 +38,6 @@ def test_videojob_column_nullability():
 
 
 def test_video_job_version_model_columns():
-    from video_models import VideoJobVersion
     cols = set(VideoJobVersion.__table__.columns.keys())
     assert cols == {"id", "job_id", "version_no", "plan_json", "summary",
                     "output_path", "created_at"}
@@ -46,6 +45,15 @@ def test_video_job_version_model_columns():
 
 
 def test_video_job_has_refine_columns():
-    from video_models import VideoJob
     cols = set(VideoJob.__table__.columns.keys())
     assert {"conversation", "current_version_no", "pending_summary"} <= cols
+    assert VideoJob.__table__.c.conversation.nullable is False
+
+
+def test_video_job_version_nullability():
+    cols = VideoJobVersion.__table__.c
+    assert cols.job_id.nullable is False
+    assert cols.version_no.nullable is False
+    assert cols.plan_json.nullable is False
+    assert cols.summary.nullable is True
+    assert cols.output_path.nullable is True
