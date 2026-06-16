@@ -114,6 +114,14 @@ async def test_refine_proposal_persists_conversation(db_session, tmp_path, monke
     assert convo[-1]["plan"] == PLAN
 
 
+async def test_refine_503_when_disabled(monkeypatch):
+    monkeypatch.setenv("VIDEO_ENABLED", "false")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(f"/api/video-jobs/{uuid.uuid4()}/refine",
+                         json={"message": "x"}, headers=HEAD)
+    assert r.status_code == 503
+
+
 # --- Task 4.2: POST /{job_id}/apply ---
 
 

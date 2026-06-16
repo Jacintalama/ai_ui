@@ -24,6 +24,7 @@ no-DB check, so it runs before the role lookup (keeping with "cheap, no-DB
 first"); both it and the rate limit run before any file is written, so a
 flooding user is rejected before any disk is consumed.
 """
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -53,6 +54,8 @@ from video_refine import (
 from video_validation import ScreenshotRejected, validate_screenshot
 
 router = APIRouter(prefix="/api/video-jobs")
+
+logger = logging.getLogger("routes_video")
 
 MAX_FILES = 12
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -298,6 +301,8 @@ async def refine(
     if not _video_enabled():
         raise HTTPException(503, "Video generation is disabled")
     jid = _coerce_job_id(job_id)
+    # Short session: load + authorize + snapshot what we need, then release the
+    # pooled connection BEFORE the slow external Claude call (avoid pool starvation).
     async with session() as s:
         job = (
             await s.execute(select(VideoJob).where(VideoJob.id == jid))
@@ -305,25 +310,33 @@ async def refine(
         if job is None:
             raise HTTPException(404, "Video job not found")
         await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
-        shots = _list_screenshots(job.slug, str(jid))
+        slug = job.slug
+        plan_json = job.plan_json or {}
         convo = list(job.conversation or [])
-        convo = append_turn(convo, "user", "message", body.message)
-        try:
-            result = await refine_plan(job.plan_json or {}, shots, convo, body.message)
-        except RefineUnavailable:
-            raise HTTPException(503, "Refinement is unavailable (no API key)")
-        if result["action"] == "propose":
-            convo = append_turn(
-                convo,
-                "assistant",
-                "proposal",
-                result["message"],
-                plan=result["plan"],
-                applied=False,
-            )
-            convo = keep_only_latest_proposal_plan(convo)
-        else:
-            convo = append_turn(convo, "assistant", "question", result["message"])
+    shots = _list_screenshots(slug, str(jid))
+    convo = append_turn(convo, "user", "message", body.message)
+    try:
+        result = await refine_plan(plan_json, shots, convo, body.message)
+    except RefineUnavailable:
+        raise HTTPException(503, "Refinement is unavailable (no API key)")
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 - transport/parse failure: surface a clean retryable error
+        logger.exception("refine_plan failed for video job %s", jid)
+        raise HTTPException(502, "Refinement failed, please try again")
+    if result["action"] == "propose":
+        convo = append_turn(
+            convo,
+            "assistant",
+            "proposal",
+            result["message"],
+            plan=result["plan"],
+            applied=False,
+        )
+        convo = keep_only_latest_proposal_plan(convo)
+    else:
+        convo = append_turn(convo, "assistant", "question", result["message"])
+    async with session() as s:
         await s.execute(
             update(VideoJob).where(VideoJob.id == jid).values(conversation=convo)
         )
