@@ -1079,9 +1079,9 @@
   // glyph, and drive navigation from a capture-phase click handler.
   //
   // Three entries are injected, in this order under Workspace:
-  //   1. App Builder       -> /tasks/app-builder        (unchanged behavior)
-  //   2. Video Generation  -> /tasks/static/video.html
-  //   3. Cron Jobs         -> /tasks/static/cron.html
+  //   1. App Builder       -> /Aiuibuilder
+  //   2. Video Generation  -> /video-generator
+  //   3. Cron Jobs         -> /cron-jobs
   //
   // Each entry is guarded by its own unique data-attribute so SPA re-renders
   // never double-inject it. The App Builder entry keeps its original marker
@@ -1094,7 +1094,7 @@
         attr: "data-aiui-build-website",
         label: "App Builder",
         title: "App Builder — create and manage AI-built apps",
-        href: "/tasks/app-builder",
+        href: "/Aiuibuilder",
         // code-bracket "</>" glyph (unchanged from the original App Builder)
         setIcon: (svg) => {
           svg.setAttribute("viewBox", "0 0 24 24");
@@ -1110,7 +1110,7 @@
         attr: "data-aiui-video-gen",
         label: "Video Generation",
         title: "Video Generation: turn screenshots into a narrated video",
-        href: "/tasks/static/video.html",
+        href: "/video-generator",
         // film / clapperboard glyph (the 🎬 equivalent)
         setIcon: (svg) => {
           svg.setAttribute("viewBox", "0 0 24 24");
@@ -1126,7 +1126,7 @@
         attr: "data-aiui-cron-jobs",
         label: "Cron Jobs",
         title: "Cron Jobs: schedule recurring AI tasks",
-        href: "/tasks/static/cron.html",
+        href: "/cron-jobs",
         // clock glyph (the ⏰ equivalent)
         setIcon: (svg) => {
           svg.setAttribute("viewBox", "0 0 24 24");
