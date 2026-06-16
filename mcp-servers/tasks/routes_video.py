@@ -5,18 +5,28 @@ Accepts multipart/form-data with:
   - prompt (str): what the narrated slideshow should show (1-2000 chars)
   - files (list of UploadFile): 1-12 screenshot images
 
-Guard order is chosen so the cheap, no-DB checks and auth happen before any
-database round-trip:
-  1. current_admin (FastAPI dependency)  -> 401 if no gateway identity headers
-  2. _validate_slug                       -> 400 on an unsafe slug
-  3. file-count cap                       -> 400 if 0 or > MAX_FILES files
-  4. _require_role(..., "editor")         -> 403 unless the user can edit the slug
-  5. per-file size cap + validate_screenshot -> 413 / 400 on reject
-Only after every file is read and validated do we write to disk and insert the
-queued VideoJob row.
+Guard order is chosen so the cheapest checks fire first and no disk write or
+DB round-trip happens for a request we are going to reject:
+  1. VIDEO_ENABLED kill switch            -> 503 if the feature is turned off
+  2. current_admin (FastAPI dependency)   -> 401 if no gateway identity headers
+  3. _validate_slug                        -> 400 on an unsafe slug
+  4. file-count cap                        -> 400 if 0 or > MAX_FILES files
+  5. free-disk guard                       -> 507 if the box is low on storage
+  6. _require_role(..., "editor")          -> 403 unless the user can edit the slug
+  7. per-file size cap + validate_screenshot -> 413 / 400 on reject
+  8. per-user daily rate limit (DB COUNT)  -> 429 over VIDEO_MAX_PER_USER_PER_DAY
+Only after every guard passes do we write the screenshots to disk and insert
+the queued VideoJob row.
+
+The kill switch is checked first (before auth) so a dark deploy with
+VIDEO_ENABLED=false refuses uploads entirely. The free-disk guard is a cheap,
+no-DB check, so it runs before the role lookup (keeping with "cheap, no-DB
+first"); both it and the rate limit run before any file is written, so a
+flooding user is rejected before any disk is consumed.
 """
 import os
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -25,6 +35,7 @@ from sqlalchemy import and_, func, select
 
 from auth import AdminUser, current_admin
 from db import session
+from heavy_lock import enough_free_disk
 from models import TaskItem  # for slug ownership via _require_role
 from routes_projects import _require_role, _validate_slug
 from video_capability import verify_video_capability
@@ -54,9 +65,20 @@ async def upload(
     files: list[UploadFile] = File(default_factory=list),
     user: AdminUser = Depends(current_admin),
 ) -> dict:
+    # 1. Kill switch FIRST: a dark deploy with VIDEO_ENABLED=false refuses
+    # uploads entirely, before any auth-role, disk, or DB work.
+    if os.environ.get("VIDEO_ENABLED", "true").strip().lower() != "true":
+        raise HTTPException(503, "Video generation is disabled")
     _validate_slug(slug)
     if not files or len(files) > MAX_FILES:
         raise HTTPException(400, f"1-{MAX_FILES} screenshots required")
+    # Disk guard (cheap, no-DB): reject a batch we have no room to store + render
+    # before the role DB round-trip, before reading bytes into memory, and well
+    # before any disk write.
+    if not enough_free_disk(
+        str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
+    ):
+        raise HTTPException(507, "Insufficient storage; try again later")
     async with session() as s:
         await _require_role(s, slug, user.email, "editor", is_admin=user.is_admin)
     total, raw = 0, []
@@ -72,6 +94,23 @@ async def upload(
         except ScreenshotRejected as e:
             raise HTTPException(400, str(e))
         raw.append(body)
+    # Per-user daily rate limit: reject a flooding user before any disk write.
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    async with session() as s:
+        used = (
+            await s.execute(
+                select(func.count())
+                .select_from(VideoJob)
+                .where(
+                    and_(
+                        VideoJob.user_email == user.email,
+                        VideoJob.created_at >= cutoff,
+                    )
+                )
+            )
+        ).scalar() or 0
+        if used >= int(os.environ.get("VIDEO_MAX_PER_USER_PER_DAY", "10")):
+            raise HTTPException(429, "Daily video limit reached")
     job_id = uuid.uuid4()
     shots = _apps_dir() / slug / ".video" / str(job_id) / "screenshots"
     shots.mkdir(parents=True, exist_ok=True)
