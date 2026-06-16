@@ -45,7 +45,8 @@ def test_prune_inputs_keeps_out_mp4(tmp_path):
 
     prune_inputs(str(job))
 
-    assert not (job / "screenshots").exists()
+    # Screenshots are kept now (re-render / add-scene reuses them).
+    assert (job / "screenshots").exists()
     assert not (job / "captions").exists()
     assert not (job / "voice.wav").exists()
     assert not (job / "voice.mp3").exists()
@@ -53,6 +54,22 @@ def test_prune_inputs_keeps_out_mp4(tmp_path):
     # The finished render survives, byte-for-byte.
     assert (job / "out.mp4").exists()
     assert (job / "out.mp4").read_bytes() == b"video"
+
+
+def test_prune_inputs_keeps_screenshots(tmp_path):
+    from video_cleanup import prune_inputs
+    d = tmp_path
+    (d / "screenshots").mkdir(); (d / "screenshots" / "screenshot-1.png").write_bytes(b"x")
+    (d / "captions").mkdir(); (d / "captions" / "scene-1.png").write_bytes(b"x")
+    (d / "narration.txt").write_text("n")
+    (d / "voice.mp3").write_bytes(b"v")
+    (d / "out.mp4").write_bytes(b"m")
+    prune_inputs(str(d))
+    assert (d / "screenshots").exists()
+    assert (d / "out.mp4").exists()
+    assert not (d / "captions").exists()
+    assert not (d / "narration.txt").exists()
+    assert not (d / "voice.mp3").exists()
 
 
 def test_prune_inputs_missing_entries_is_best_effort(tmp_path):

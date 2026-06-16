@@ -35,7 +35,8 @@ APPS_DIR = os.environ.get("APPS_DIR") or os.path.join(
     os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps")
 
 # Intermediate render inputs to drop once out.mp4 exists (out.mp4 is kept).
-_PRUNE_ENTRIES = ("screenshots", "voice.wav", "voice.mp3", "captions", "narration.txt")
+# Screenshots are deliberately KEPT so re-render / add-scene still has its inputs.
+_PRUNE_ENTRIES = ("voice.wav", "voice.mp3", "captions", "narration.txt")
 
 
 def expired(now: datetime, created_at: datetime, days: int) -> bool:
