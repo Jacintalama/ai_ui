@@ -13,7 +13,7 @@ import asyncio
 import logging
 import os
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from db import session
 from heavy_lock import (
@@ -22,7 +22,9 @@ from heavy_lock import (
     enough_free_ram,
     try_heavy_lock,
 )
+from video_executor import VideoRenderExecutor
 from video_models import VideoJob
+from video_plan import generate_plan
 
 logger = logging.getLogger("video_worker")
 MIN_RAM_MB = int(os.environ.get("VIDEO_MIN_FREE_RAM_MB", "1200"))
@@ -71,5 +73,71 @@ async def _tick_once() -> None:
 
 
 async def _process_job(job_id) -> None:
-    # Filled in Phase 3 (scripting -> voicing -> rendering -> done/failed).
-    raise NotImplementedError
+    """Run one job end-to-end: script (in-container) -> render (host) -> done.
+
+    Stages and idempotency:
+      * scripting — skipped if ``plan_json`` is already persisted (a prior tick
+        may have crashed after scripting), otherwise enumerate the on-disk
+        screenshots, ask the model for a plan, and persist it.
+      * rendering — ``VideoRenderExecutor.render`` does the heavy host work; the
+        voiceover (Piper) happens *inside* that step, so there is no separate
+        worker 'voicing' stage (the enum value stays valid but unused here).
+      * done — record ``output_path``.
+
+    Any stage exception is recorded as ``status='failed'`` + ``error`` and
+    swallowed (logged via ``logger.exception``) so the worker tick survives.
+    """
+    try:
+        async with session() as s:
+            job = (await s.execute(
+                select(VideoJob).where(VideoJob.id == job_id)
+            )).scalar_one_or_none()
+            if job is None:
+                return
+            slug, prompt, plan = job.slug, job.prompt, job.plan_json
+
+        # Stage 1: scripting (idempotent — reuse an existing plan).
+        if not plan:
+            async with session() as s:
+                await s.execute(
+                    update(VideoJob).where(VideoJob.id == job_id)
+                    .values(status="scripting")
+                )
+                await s.commit()
+            shots_dir = os.path.join(APPS_DIR, slug, ".video", str(job_id), "screenshots")
+            screenshots = sorted(os.listdir(shots_dir)) if os.path.isdir(shots_dir) else []
+            plan = await generate_plan(prompt, screenshots)
+            async with session() as s:
+                await s.execute(
+                    update(VideoJob).where(VideoJob.id == job_id)
+                    .values(plan_json=plan)
+                )
+                await s.commit()
+
+        # Stage 2: rendering (the executor's host step does voice + ffmpeg).
+        async with session() as s:
+            await s.execute(
+                update(VideoJob).where(VideoJob.id == job_id)
+                .values(status="rendering")
+            )
+            await s.commit()
+        out = await VideoRenderExecutor().render(slug, str(job_id), plan)
+
+        # Stage 3: done.
+        async with session() as s:
+            await s.execute(
+                update(VideoJob).where(VideoJob.id == job_id)
+                .values(status="done", output_path=out)
+            )
+            await s.commit()
+    except Exception as exc:
+        logger.exception("video job %s failed", job_id)
+        try:
+            async with session() as s:
+                await s.execute(
+                    update(VideoJob).where(VideoJob.id == job_id)
+                    .values(status="failed", error=str(exc)[:2000])
+                )
+                await s.commit()
+        except Exception:
+            logger.exception("could not record failure for video job %s", job_id)
