@@ -65,7 +65,7 @@ async def db_session():
             "TRUNCATE tasks.items, tasks.executions, "
             "tasks.published_apps, tasks.project_members, "
             "tasks.project_supabase, tasks.chat_history, "
-            "tasks.video_jobs CASCADE"
+            "tasks.video_job_versions, tasks.video_jobs CASCADE"
         ))
     async with maker() as s:
         yield s
