@@ -99,3 +99,41 @@ def mark_proposal_applied(conversation: list[dict], proposal: dict) -> list[dict
             t = {**t, "applied": True}
         out.append(t)
     return out
+
+
+def _call_model(system: str, messages: list[dict]) -> dict:
+    """Blocking Anthropic structured-output call. Mirrors video_plan.generate_plan.
+    Isolated so tests can monkeypatch it. Returns the parsed JSON object."""
+    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
+    resp = client.messages.create(
+        model=REFINE_MODEL,
+        max_tokens=2048,
+        system=system,
+        output_config={"format": {"type": "json_schema", "schema": REFINE_SCHEMA}},
+        messages=messages,
+    )
+    text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
+    return json.loads(text)
+
+
+async def refine_plan(current_plan: dict, screenshots: list[str],
+                      conversation: list[dict], message: str) -> dict:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RefineUnavailable("ANTHROPIC_API_KEY not configured")
+    system = build_system_prompt(current_plan, screenshots)
+    messages = build_messages(conversation, message)
+    raw = await asyncio.to_thread(_call_model, system, messages)
+
+    if raw.get("action") == "propose":
+        plan = raw.get("plan")
+        try:
+            validate_plan(plan, screenshots)
+        except Exception as exc:  # noqa: BLE001 - any failure downgrades to a re-ask
+            return {"action": "ask",
+                    "message": f"I could not build a valid change ({exc}). "
+                               "Can you rephrase?"}
+        return {"action": "propose",
+                "message": raw.get("message") or "Here is the change.",
+                "plan": plan}
+    return {"action": "ask",
+            "message": raw.get("message") or "Could you clarify what to change?"}

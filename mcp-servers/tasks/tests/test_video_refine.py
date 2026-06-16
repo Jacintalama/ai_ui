@@ -42,3 +42,35 @@ def test_latest_pending_proposal_and_mark_applied():
     assert p["content"] == "new"
     out = mark_proposal_applied(convo, p)
     assert latest_pending_proposal(out) is None
+
+import video_refine
+
+async def test_refine_returns_question(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.setattr(video_refine, "_call_model",
+                        lambda system, messages: {"action": "ask", "message": "Which scene?"})
+    out = await video_refine.refine_plan(PLAN, ["screenshot-1.png"], [], "make it better")
+    assert out == {"action": "ask", "message": "Which scene?"}
+
+async def test_refine_returns_validated_proposal(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    good = {"action": "propose", "message": "shorter scene 1", "plan": PLAN}
+    monkeypatch.setattr(video_refine, "_call_model", lambda s, m: good)
+    out = await video_refine.refine_plan(PLAN, ["screenshot-1.png"], [], "shorten")
+    assert out["action"] == "propose" and out["plan"] == PLAN
+
+async def test_refine_downgrades_invalid_plan_to_ask(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    bad = {"action": "propose", "message": "x",
+           "plan": {"template_id": "product_demo", "title": "t",
+                    "scenes": [{"screenshot": "MISSING.png", "caption": "c",
+                                "duration_s": 3, "transition": "cut"}],
+                    "narration_script": "n"}}
+    monkeypatch.setattr(video_refine, "_call_model", lambda s, m: bad)
+    out = await video_refine.refine_plan(PLAN, ["screenshot-1.png"], [], "add missing")
+    assert out["action"] == "ask"
+
+async def test_refine_requires_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(video_refine.RefineUnavailable):
+        await video_refine.refine_plan(PLAN, ["screenshot-1.png"], [], "hi")
