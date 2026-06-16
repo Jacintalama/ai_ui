@@ -286,6 +286,8 @@ services:
       - WEBHOOK_HANDLER_URL=${WEBHOOK_HANDLER_URL:-http://webhook-handler:8086}
       - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
       - OAUTH_STATE_SECRET=${OAUTH_STATE_SECRET:-}
+      # Video generator kill switch (default OFF; enable per-recreate via shell env)
+      - VIDEO_ENABLED=${VIDEO_ENABLED:-false}
     volumes:
       - ./:/workspace/ai_ui
       - /etc/proxy-server/agent_ssh_key:/run/secrets/agent_ssh_key:ro
