@@ -12,6 +12,7 @@ gated by a `VIDEO_ENABLED` kill switch (default-on).
 import asyncio
 import logging
 import os
+import shutil
 
 from sqlalchemy import select, update
 
@@ -25,6 +26,7 @@ from heavy_lock import (
 from video_executor import VideoRenderExecutor
 from video_models import VideoJob
 from video_plan import generate_plan
+from video_versions import next_version_no, record_version
 
 logger = logging.getLogger("video_worker")
 MIN_RAM_MB = int(os.environ.get("VIDEO_MIN_FREE_RAM_MB", "1200"))
@@ -94,7 +96,7 @@ async def _process_job(job_id) -> None:
             )).scalar_one_or_none()
             if job is None:
                 return
-            slug, prompt, plan = job.slug, job.prompt, job.plan_json
+            slug, prompt, plan, pending_summary = job.slug, job.prompt, job.plan_json, job.pending_summary
 
         # Stage 1: scripting (idempotent — reuse an existing plan).
         if not plan:
@@ -123,11 +125,20 @@ async def _process_job(job_id) -> None:
             await s.commit()
         out = await VideoRenderExecutor().render(slug, str(job_id), plan)
 
-        # Stage 3: done.
+        # Stage 3: snapshot this render as a version, then mark done.
         async with session() as s:
+            version_no = await next_version_no(s, job_id)
+            job_dir = os.path.join(APPS_DIR, slug, ".video", str(job_id))
+            versioned = os.path.join(job_dir, f"out-v{version_no}.mp4")
+            try:
+                shutil.copy2(out, versioned)
+            except OSError:
+                versioned = out  # fall back to the single out.mp4 if the copy fails
+            await record_version(s, job_id, version_no, plan, pending_summary, versioned)
             await s.execute(
-                update(VideoJob).where(VideoJob.id == job_id)
-                .values(status="done", output_path=out)
+                update(VideoJob).where(VideoJob.id == job_id).values(
+                    status="done", output_path=versioned,
+                    current_version_no=version_no, pending_summary=None)
             )
             await s.commit()
     except Exception as exc:
