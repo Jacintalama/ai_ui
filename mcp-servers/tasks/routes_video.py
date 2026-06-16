@@ -455,3 +455,49 @@ async def add_screenshots(
     for i, body in enumerate(raw, 1):
         (shots_dir / f"screenshot-{existing_count + i}.png").write_bytes(body)
     return {"screenshots": _list_screenshots(slug, str(jid))}
+
+
+@router.get("/{job_id}/versions")
+async def versions(job_id: str, user: AdminUser = Depends(current_admin)):
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin:
+            await _require_role(s, job.slug, user.email, "viewer")
+        vs = await list_versions(s, jid)
+        return {"versions": [{
+            "version_no": v.version_no, "summary": v.summary,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+            "current": v.version_no == job.current_version_no,
+            "available": bool(v.output_path and os.path.exists(v.output_path)),
+        } for v in vs]}
+
+
+@router.post("/{job_id}/revert")
+async def revert(job_id: str, body: RevertRequest, user: AdminUser = Depends(current_admin)):
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
+        v = await find_version(s, jid, body.version_no)
+        if v is None:
+            raise HTTPException(404, "Version not found")
+        convo = append_turn(job.conversation or [], "assistant", "note",
+                            f"Reverted to v{v.version_no}.")
+        if v.output_path and os.path.exists(v.output_path):
+            await s.execute(update(VideoJob).where(VideoJob.id == jid).values(
+                plan_json=v.plan_json, output_path=v.output_path,
+                current_version_no=v.version_no, conversation=convo))
+            await s.commit()
+            return {"status": "reverted", "output_available": True}
+        await s.execute(update(VideoJob).where(VideoJob.id == jid).values(
+            plan_json=v.plan_json, status="queued", conversation=convo,
+            pending_summary=f"Revert to v{v.version_no}"))
+        await s.commit()
+        return {"status": "queued", "output_available": False}

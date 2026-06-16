@@ -22,7 +22,7 @@ os.environ.setdefault("AIUI_FERNET_KEY", Fernet.generate_key().decode())
 
 from main import app  # noqa: E402
 from models import TaskItem  # noqa: E402
-from video_models import VideoJob  # noqa: E402
+from video_models import VideoJob, VideoJobVersion  # noqa: E402
 
 HEAD = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 
@@ -283,3 +283,146 @@ async def test_screenshots_adds_files(db_session, tmp_path, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["screenshots"] == ["screenshot-1.png", "screenshot-2.png"]
+
+
+# --- Task 4.4: GET /{job_id}/versions + POST /{job_id}/revert ---
+
+
+async def test_revert_no_auth_401():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{uuid.uuid4()}/revert", json={"version_no": 1}
+        )
+    assert r.status_code == 401
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_versions_lists_with_current_and_available(db_session, tmp_path):
+    """Both version rows come back; `current` marks the job's current version
+    and `available` reflects whether the version's output file exists on disk."""
+    job_id = uuid.uuid4()
+    v1_out = tmp_path / "v1.mp4"
+    v1_out.write_bytes(b"v1")
+    db_session.add(
+        VideoJob(
+            id=job_id,
+            slug="alpha",
+            user_email="ralph@aiui.com",
+            prompt="p",
+            status="done",
+            plan_json=PLAN,
+            output_path=str(v1_out),
+            current_version_no=2,
+        )
+    )
+    db_session.add(
+        VideoJobVersion(
+            id=uuid.uuid4(), job_id=job_id, version_no=1,
+            plan_json=PLAN, summary="first", output_path=str(v1_out),
+        )
+    )
+    db_session.add(
+        VideoJobVersion(
+            id=uuid.uuid4(), job_id=job_id, version_no=2,
+            plan_json=PLAN, summary="second",
+            output_path=str(tmp_path / "missing.mp4"),
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/video-jobs/{job_id}/versions", headers=HEAD)
+    assert r.status_code == 200
+    vs = r.json()["versions"]
+    assert [v["version_no"] for v in vs] == [1, 2]
+    assert vs[0]["available"] is True
+    assert vs[1]["available"] is False
+    assert vs[0]["current"] is False
+    assert vs[1]["current"] is True
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_revert_to_available_version(db_session, tmp_path):
+    """Reverting to a version whose file exists swaps the job to that version
+    without re-rendering."""
+    job_id = uuid.uuid4()
+    v1_out = tmp_path / "v1.mp4"
+    v1_out.write_bytes(b"v1")
+    db_session.add(
+        VideoJob(
+            id=job_id, slug="alpha", user_email="ralph@aiui.com",
+            prompt="p", status="done", plan_json={}, output_path="x",
+            current_version_no=2, conversation=[],
+        )
+    )
+    db_session.add(
+        VideoJobVersion(
+            id=uuid.uuid4(), job_id=job_id, version_no=1,
+            plan_json=PLAN, summary="first", output_path=str(v1_out),
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{job_id}/revert", json={"version_no": 1}, headers=HEAD
+        )
+    assert r.status_code == 200
+    assert r.json() == {"status": "reverted", "output_available": True}
+    db_session.expire_all()
+    job = (
+        await db_session.execute(select(VideoJob).where(VideoJob.id == job_id))
+    ).scalar_one()
+    assert job.current_version_no == 1
+    assert job.output_path == str(v1_out)
+    assert job.plan_json == PLAN
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_revert_to_missing_file_requeues(db_session, tmp_path):
+    """Reverting to a version whose file is gone re-queues a render."""
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id, slug="alpha", user_email="ralph@aiui.com",
+            prompt="p", status="done", plan_json={}, output_path="x",
+            current_version_no=2, conversation=[],
+        )
+    )
+    db_session.add(
+        VideoJobVersion(
+            id=uuid.uuid4(), job_id=job_id, version_no=1,
+            plan_json=PLAN, summary="first",
+            output_path=str(tmp_path / "gone.mp4"),
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{job_id}/revert", json={"version_no": 1}, headers=HEAD
+        )
+    assert r.status_code == 200
+    assert r.json() == {"status": "queued", "output_available": False}
+    db_session.expire_all()
+    job = (
+        await db_session.execute(select(VideoJob).where(VideoJob.id == job_id))
+    ).scalar_one()
+    assert job.status == "queued"
+    assert job.plan_json == PLAN
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_revert_unknown_version_404(db_session):
+    """Reverting to a version that does not exist is a 404."""
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id, slug="alpha", user_email="ralph@aiui.com",
+            prompt="p", status="done", plan_json={}, output_path="x",
+            conversation=[],
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{job_id}/revert", json={"version_no": 99}, headers=HEAD
+        )
+    assert r.status_code == 404
