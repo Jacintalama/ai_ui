@@ -52,6 +52,7 @@ from video_refine import (
     refine_plan,
 )
 from video_validation import ScreenshotRejected, validate_screenshot
+from video_versions import find_version, list_versions
 
 router = APIRouter(prefix="/api/video-jobs")
 
@@ -393,3 +394,64 @@ async def apply(
         )
         await s.commit()
     return {"status": "queued"}
+
+
+@router.post("/{job_id}/screenshots")
+async def add_screenshots(
+    job_id: str,
+    files: list[UploadFile] = File(default_factory=list),
+    user: AdminUser = Depends(current_admin),
+) -> dict:
+    """Add more screenshots to an existing job (used mid-chat to give the
+    refiner new material). Mirrors the upload endpoint's validation.
+
+    Auth: current_admin (-> 401) then 'editor' on the job's project (-> 403).
+    Guard order: kill switch (503), missing job (404), editor role, free-disk
+    (507), then per-file size (413), cumulative-with-existing total (413),
+    file-count cap (400), and per-file content validation (400). New files
+    continue the screenshot-N numbering after the existing highest.
+    """
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (
+            await s.execute(select(VideoJob).where(VideoJob.id == jid))
+        ).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
+        slug = job.slug
+    if not enough_free_disk(
+        str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
+    ):
+        raise HTTPException(507, "Insufficient storage; try again later")
+    shots_dir = _apps_dir() / slug / ".video" / str(jid) / "screenshots"
+    existing = _list_screenshots(slug, str(jid))
+    existing_count = len(existing)
+    if not files or existing_count + len(files) > MAX_FILES:
+        raise HTTPException(400, f"max {MAX_FILES} screenshots per job")
+    # The cumulative cap counts what is already on disk, so a series of small
+    # adds cannot smuggle past MAX_TOTAL_BYTES one batch at a time.
+    total = sum(
+        (shots_dir / name).stat().st_size
+        for name in existing
+        if (shots_dir / name).is_file()
+    )
+    raw = []
+    for f in files:
+        body = await f.read(MAX_FILE_BYTES + 1)
+        if len(body) > MAX_FILE_BYTES:
+            raise HTTPException(413, f"{f.filename}: max 10 MB")
+        total += len(body)
+        if total > MAX_TOTAL_BYTES:
+            raise HTTPException(413, "batch too large")
+        try:
+            validate_screenshot(f.filename or "x.png", body)
+        except ScreenshotRejected as e:
+            raise HTTPException(400, str(e))
+        raw.append(body)
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    for i, body in enumerate(raw, 1):
+        (shots_dir / f"screenshot-{existing_count + i}.png").write_bytes(body)
+    return {"screenshots": _list_screenshots(slug, str(jid))}

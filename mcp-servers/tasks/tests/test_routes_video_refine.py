@@ -5,12 +5,14 @@ check and a VideoJob row), so they are skipped offline and run at deploy/CI wher
 DATABASE_URL points at a real database. The no-auth tests fire before any DB call
 (current_admin raises 401 during dependency resolution), so they run locally.
 """
+import io
 import os
 import uuid
 
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
+from PIL import Image
 from sqlalchemy import select
 
 # main's import chain (crypto_utils) requires AIUI_FERNET_KEY at import time.
@@ -219,3 +221,65 @@ async def test_apply_queues_render(db_session, tmp_path, monkeypatch):
     assert job.pending_summary == "shorter"
     prop = [t for t in (job.conversation or []) if t.get("kind") == "proposal"][0]
     assert prop["applied"] is True
+
+
+# --- Task 4.3: POST /{job_id}/screenshots (add images mid-chat) ---
+
+
+def _png() -> bytes:
+    b = io.BytesIO()
+    Image.new("RGB", (80, 80), "red").save(b, "PNG")
+    return b.getvalue()
+
+
+async def test_screenshots_no_auth_401():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{uuid.uuid4()}/screenshots",
+            files=[("files", ("a.png", _png(), "image/png"))],
+        )
+    assert r.status_code == 401
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_screenshots_adds_files(db_session, tmp_path, monkeypatch):
+    """A member can add a screenshot to an existing job; the returned list
+    continues the screenshot-N numbering after the existing highest."""
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+    job_id = uuid.uuid4()
+    shots = tmp_path / "alpha" / ".video" / str(job_id) / "screenshots"
+    shots.mkdir(parents=True)
+    (shots / "screenshot-1.png").write_bytes(_png())
+    db_session.add(
+        TaskItem(
+            meeting_id=uuid.uuid4(),
+            action_type="BUILD",
+            assignee_name="R",
+            assignee_email="ralph@aiui.com",
+            description="x",
+            priority="IMPORTANT",
+            status="completed",
+            built_app_slug="alpha",
+        )
+    )
+    db_session.add(
+        VideoJob(
+            id=job_id,
+            slug="alpha",
+            user_email="ralph@aiui.com",
+            prompt="p",
+            status="done",
+            plan_json=PLAN,
+            output_path="x",
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{job_id}/screenshots",
+            files=[("files", ("b.png", _png(), "image/png"))],
+            headers=HEAD,
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["screenshots"] == ["screenshot-1.png", "screenshot-2.png"]
