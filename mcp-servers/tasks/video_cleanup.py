@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +38,9 @@ APPS_DIR = os.environ.get("APPS_DIR") or os.path.join(
 # Intermediate render inputs to drop once out.mp4 exists (out.mp4 is kept).
 # Screenshots are deliberately KEPT so re-render / add-scene still has its inputs.
 _PRUNE_ENTRIES = ("voice.wav", "voice.mp3", "captions", "narration.txt")
+
+MAX_VERSIONS = int(os.environ.get("VIDEO_MAX_VERSIONS", "5"))
+_VER_RE = re.compile(r"^out-v(\d+)\.mp4$")
 
 
 def expired(now: datetime, created_at: datetime, days: int) -> bool:
@@ -74,6 +78,25 @@ def prune_inputs(job_dir: str) -> None:
             logger.exception("prune_inputs: could not remove %s", path)
 
 
+def cap_version_files(job_dir: str, max_versions: int, keep: set[str]) -> None:
+    """Keep the newest `max_versions` out-v*.mp4 files plus any in `keep`.
+    PURE filesystem op; best-effort (errors logged, never raised)."""
+    try:
+        files = [(int(m.group(1)), name)
+                 for name in os.listdir(job_dir)
+                 if (m := _VER_RE.match(name))]
+    except OSError:
+        return
+    files.sort(reverse=True)
+    survivors = {name for _, name in files[:max_versions]} | set(keep)
+    for _, name in files:
+        if name not in survivors:
+            try:
+                os.remove(os.path.join(job_dir, name))
+            except OSError:
+                logger.exception("cap_version_files: could not remove %s", name)
+
+
 def _job_dir(slug: str, job_id: str) -> str:
     """``apps/<slug>/.video/<job_id>/`` — where the worker renders this job."""
     return os.path.join(APPS_DIR, slug, ".video", job_id)
@@ -108,6 +131,8 @@ async def _sweep_once() -> None:
         job_dir = _job_dir(job.slug, str(job.id))
         if os.path.exists(os.path.join(job_dir, "out.mp4")):
             prune_inputs(job_dir)
+            keep = {os.path.basename(job.output_path)} if job.output_path else set()
+            cap_version_files(job_dir, MAX_VERSIONS, keep)
 
     # (b) Expire old jobs: remove the whole job dir, then delete the rows.
     async with session() as s:

@@ -72,6 +72,16 @@ def test_prune_inputs_keeps_screenshots(tmp_path):
     assert not (d / "voice.mp3").exists()
 
 
+def test_cap_version_files_keeps_newest_and_protected(tmp_path):
+    from video_cleanup import cap_version_files
+    for n in range(1, 8):
+        (tmp_path / f"out-v{n}.mp4").write_bytes(b"x")
+    cap_version_files(str(tmp_path), 5, {"out-v2.mp4"})
+    remaining = sorted(p.name for p in tmp_path.glob("out-v*.mp4"))
+    assert remaining == ["out-v2.mp4", "out-v3.mp4", "out-v4.mp4",
+                         "out-v5.mp4", "out-v6.mp4", "out-v7.mp4"]
+
+
 def test_prune_inputs_missing_entries_is_best_effort(tmp_path):
     # A job dir holding only out.mp4 must prune cleanly (no missing-file error).
     job = tmp_path / ".video" / "job-empty"
