@@ -20,6 +20,7 @@ from claude_executor import (
     parse_plan, parse_test_outcome,
 )
 from db import session
+from heavy_lock import heavy_lock
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
 from schemas import PlanReviewRequest, TaskOut
 
@@ -106,25 +107,35 @@ async def _stream_claude(
             )
             await s.commit()
 
-    try:
-        async for chunk in executor.run(
-            prompt, slug=slug, execution_id=str(execution_id),
-            user_jwt=user_jwt, schedule_id=schedule_id,
-        ):
-            full_log.append(chunk)
-            async with session() as s:
-                await s.execute(
-                    update(TaskExecution)
-                    .where(TaskExecution.id == execution_id)
-                    .values(log=TaskExecution.log + chunk)
-                )
-                await s.commit()
-    finally:
-        # Clear the executor handle but keep the rest of the entry — the
-        # outer _run_execution finally block pops the whole entry.
-        cur = _RUNNING.get(task_id)
-        if cur is not None and cur.get("executor") is executor:
-            cur.pop("executor", None)
+    # Render/build mutual exclusion on the shared box: hold the global
+    # `heavy_job` advisory lock for exactly the span of the agent
+    # subprocess/SSH run. BLOCKING acquire so a build queues behind an
+    # in-flight video render instead of failing (the render worker takes the
+    # same lock non-blocking and defers). A dedicated session scopes the lock
+    # to this heavy section only; heavy_lock's own try/finally guarantees the
+    # lock is released on every outcome (success, failure, timeout,
+    # cancellation). The per-slug build lock taken in the request handler is
+    # independent and left untouched.
+    async with session() as lock_s, heavy_lock(lock_s):
+        try:
+            async for chunk in executor.run(
+                prompt, slug=slug, execution_id=str(execution_id),
+                user_jwt=user_jwt, schedule_id=schedule_id,
+            ):
+                full_log.append(chunk)
+                async with session() as s:
+                    await s.execute(
+                        update(TaskExecution)
+                        .where(TaskExecution.id == execution_id)
+                        .values(log=TaskExecution.log + chunk)
+                    )
+                    await s.commit()
+        finally:
+            # Clear the executor handle but keep the rest of the entry — the
+            # outer _run_execution finally block pops the whole entry.
+            cur = _RUNNING.get(task_id)
+            if cur is not None and cur.get("executor") is executor:
+                cur.pop("executor", None)
 
     return "".join(full_log)
 

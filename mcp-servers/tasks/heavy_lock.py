@@ -57,3 +57,23 @@ async def try_heavy_lock(s):
         if got:
             await s.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": _LOCK_KEY})
             await s.commit()
+
+
+@asynccontextmanager
+async def heavy_lock(s):
+    """Blocking session-level advisory lock on the shared ``heavy_job`` key.
+
+    Unlike :func:`try_heavy_lock` (non-blocking, used by the video render worker
+    so it can defer when the box is busy), this WAITS until the lock is free and
+    then holds it for the duration of the ``with`` block. App builds use this so
+    a build queues behind an in-flight render instead of failing, and by the
+    same single global lock a render cannot start while a build holds it. Pass a
+    dedicated session so the lock's lifetime is exactly this block; the finally
+    always releases it (success, failure, timeout, or cancellation).
+    """
+    await s.execute(text("SELECT pg_advisory_lock(hashtext(:k))"), {"k": _LOCK_KEY})
+    try:
+        yield
+    finally:
+        await s.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": _LOCK_KEY})
+        await s.commit()
