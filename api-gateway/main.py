@@ -428,6 +428,10 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/api/tasks"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
         backend_path = full_path
+    # /api/video-jobs/* → Tasks service (video refine jobs API)
+    elif full_path.startswith("/api/video-jobs"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
     # /api/projects/* → Tasks service (per-project membership)
     elif full_path.startswith("/api/projects"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
