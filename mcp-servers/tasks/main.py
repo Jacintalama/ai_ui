@@ -80,6 +80,13 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("video_worker_loop NOT started: %s", exc)
 
+    try:
+        from video_cleanup import video_cleanup_loop
+        asyncio.create_task(video_cleanup_loop())
+        logger.info("video_cleanup_loop scheduled")
+    except Exception as exc:
+        logger.warning("video_cleanup_loop NOT started: %s", exc)
+
     yield
 
 
