@@ -23,7 +23,7 @@ The video generator lives in `mcp-servers/tasks` and is deployed live on prod (`
 - **Worker (`video_worker.py`):** polls oldest `status='queued'` every 10s, gated by `VIDEO_ENABLED` + disk/RAM guards + `heavy_lock` (renders and app builds are mutually exclusive on the 3.8GB box). `_process_job` runs scripting -> rendering -> done, and **skips scripting when `plan_json` is already present** (`if not plan:`). This skip is the re-render hook.
 - **Render (`video_render.py` + `video_executor.py`):** captions are baked to PNGs (Pillow), narration synthesized by Piper (single hardcoded voice `en_US-amy-medium.onnx`), one ffmpeg invocation over SSH to the build host produces `out.mp4`.
 - **Cleanup (`video_cleanup.py`):** `prune_inputs` deletes `screenshots/`, `captions/`, `narration.txt`, `voice.*` within ~1 hour of a successful render (hourly sweep); whole job dir + DB row deleted after `VIDEO_RETENTION_DAYS` (default 7). **The 1-hour screenshot prune is the central blocker for re-render and must change.**
-- **Auth (`auth.py`):** the api-gateway validates the Open WebUI JWT and injects trusted `X-User-Email` / `X-User-Admin` headers (client copies stripped). `current_admin` reads those; `routes_projects._require_role(s, slug, email, role)` checks project membership (`viewer`/`editor`/`owner`). `video_capability.py` mints/verifies a least-privilege `video_dl:` HMAC token (currently used only in tests).
+- **Auth (`auth.py`):** the api-gateway validates the Open WebUI JWT and injects trusted `X-User-Email` / `X-User-Admin` headers (client copies stripped). `current_admin` reads those; `routes_projects._require_role(s, slug, email, role)` checks project membership (`viewer`/`editor`/`owner`). `video_capability.py` mints/verifies a least-privilege `video_dl:` HMAC token (`verify_video_capability` is already wired into the production `download` endpoint; only `mint_video_capability` is test-only so far).
 - **Reusable chat pattern:** `routes_tasks.py chat()` (Haiku, `httpx`, clarify-first, `BUILD_SUGGESTION:` sentinel) and the `preview.html` chat pane (`renderChatBubble`, `submitChat`, `authHeaders` + `credentials:'include'`).
 - **Gateway gap:** `api-gateway/main.py` and the repo `Caddyfile` do NOT route `/api/video-jobs/*` to the tasks service (it works live via the host systemd Caddy). A parity branch must be added and verified on the VPS.
 
@@ -68,7 +68,7 @@ ALTER TABLE tasks.video_jobs
   ADD COLUMN current_version_no INT;
 ```
 
-- `conversation`: ordered list of turns `{role:'user'|'assistant', kind:'message'|'question'|'proposal'|'note', content, version_no?}`. The full proposed `plan` is stored only on the **most recent** proposal turn (`{kind:'proposal', plan:{...}}`); older proposals keep just their `summary` to bound the column size.
+- `conversation`: ordered list of turns `{role:'user'|'assistant', kind:'message'|'question'|'proposal'|'note', content, version_no?, plan?, applied?}`. The full proposed `plan` is stored only on the **most recent** proposal turn (`{kind:'proposal', plan:{...}, applied:false}`); older proposals keep just their `summary` (their `plan` is stripped) to bound the column size. `apply` finds the most recent proposal turn with `applied:false`, renders it, and flips it to `applied:true`.
 - `current_version_no`: the version currently shown (and the base for the next edit).
 
 The existing `status` CHECK is unchanged; re-renders reuse `queued`/`rendering`/`done`/`failed`. The ORM `VideoJob` gains matching columns; a new ORM `VideoJobVersion` maps the table.
@@ -93,14 +93,14 @@ All new endpoints sit in `routes_video.py` under `/api/video-jobs`. Auth mirrors
 - `messages` carries the recent conversation (capped to the last 40 turns) plus the new user message; the system prompt embeds the current plan JSON and the available screenshot filenames.
 - `REFINE_SCHEMA = {type:'object', properties:{action:{enum:['ask','propose']}, message:{type:'string'}, plan: PLAN_SCHEMA}, required:['action','message'], additionalProperties:false}`.
 - System prompt rules: you are editing an existing narrated screenshot slideshow; only reference screenshots in the provided list; keep total duration <= 60s; change only what the user asked; set `action='ask'` with a brief question only when the request is genuinely ambiguous, otherwise `action='propose'` with a one-line `message` summary and a complete revised `plan`.
-- On `action='propose'`, the caller runs the existing `validate_plan(plan, screenshots)`. If it raises, the refiner result is downgraded to `{action:'ask', message:"I could not build a valid change (<reason>). Can you rephrase?"}` so the user never sees a 500 and no bad plan reaches the worker.
+- On `action='propose'`, the caller runs the existing `validate_plan(plan, screenshots)`. Because `REFINE_SCHEMA` marks `plan` optional, a `propose` with a missing or partial plan is possible, so the caller treats both a missing/empty plan and ANY exception from `validate_plan` (not only `PlanInvalid`, e.g. an `AttributeError` from a `None` plan) as a downgrade to `{action:'ask', message:"I could not build a valid change (<reason>). Can you rephrase?"}`. The user never sees a 500 and no bad plan reaches the worker.
 
 ## Worker changes (`video_worker.py`)
 
 After a successful render (initial or refine), before marking `done`:
 1. Compute `version_no = COALESCE(MAX(version_no), 0) + 1` for the job.
 2. Copy the rendered `out.mp4` to `out-v{version_no}.mp4` in the job dir.
-3. Insert a `video_job_versions` row (`plan_json` = the plan just rendered; `summary` from the applied proposal note, NULL for v1; `output_path` = the versioned file).
+3. Insert a `video_job_versions` row (`plan_json` = the plan just rendered; `summary` from the applied proposal's summary, NULL for the initial v1, or the revert note text when the render was triggered by a revert-to-pruned-version; `output_path` = the versioned file).
 4. Set `video_jobs.output_path` to the versioned file and `current_version_no = version_no`.
 
 The "skip scripting if `plan_json` present" branch already routes refine re-renders straight to rendering; no scripting change is needed.
