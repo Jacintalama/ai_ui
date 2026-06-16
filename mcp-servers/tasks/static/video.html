@@ -544,6 +544,7 @@
     let hasVideo = false;
     let pollTimer = null;
     let refining = false;
+    let pollFailures = 0;
 
     const WELCOME_HTML =
       '<div class="chat-welcome">' +
@@ -818,8 +819,28 @@
       let data;
       try {
         data = await fetchJob(id);
+        pollFailures = 0;
       } catch (err) {
-        // transient: keep retrying until done/failed
+        pollFailures++;
+        const m = (err && err.message) ? err.message : String(err);
+        // A 4xx other than 429 means the job/session is gone (404 deleted job,
+        // 401/403 dropped session) and retrying will never recover. A few
+        // consecutive transient failures (>= 3) we also stop retrying.
+        const clientError = /\b4\d\d\b/.test(m) && !/\b429\b/.test(m);
+        if (clientError || pollFailures >= 3) {
+          stopPolling();
+          playerOverlay.hidden = true;
+          setPill("failed");
+          const msg = clientError
+            ? "This video session is no longer available. Start a new video."
+            : "Lost connection to the video service. Please reload the page.";
+          // Surface it the same way a failed render is shown.
+          if (!hasVideo) { showPlaceholder("error", msg); }
+          playerError.textContent = msg;
+          playerError.hidden = false;
+          return;
+        }
+        // transient blip under the threshold: keep retrying until done/failed
         pollTimer = setTimeout(() => pollOnce(id, opts), POLL_MS);
         return;
       }
@@ -1006,6 +1027,9 @@
         renderErrorBubble(e.message || "Could not load this job.");
         return;
       }
+      // Project chip in the topbar now that we know the slug (deep-link case).
+      projectName.textContent = data.slug || "";
+      projectName.hidden = !projectName.textContent;
       currentVersionNo = data.current_version_no != null ? data.current_version_no : null;
       const lastProposal = replayConversation(data.conversation || []);
       if (data.pending && lastProposal) attachApplyButton(lastProposal);
@@ -1103,19 +1127,18 @@
 
     newVideoBtn.addEventListener("click", newVideo);
 
-    sendBtn.addEventListener("click", () => {
+    // Shared send action for both the Send button and the Enter key.
+    function sendCurrent() {
       const text = chatInput.value.trim();
       if (!text) return;
       chatInput.value = "";
       submitChat(text);
-    });
+    }
+    sendBtn.addEventListener("click", () => sendCurrent());
     chatInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !chatInput.disabled) {
         e.preventDefault();
-        const text = chatInput.value.trim();
-        if (!text) return;
-        chatInput.value = "";
-        submitChat(text);
+        sendCurrent();
       }
     });
 
