@@ -35,3 +35,17 @@ def test_videojob_column_nullability():
     assert cols.plan_json.nullable is True
     assert cols.error.nullable is True
     assert cols.output_path.nullable is True
+
+
+def test_video_job_version_model_columns():
+    from video_models import VideoJobVersion
+    cols = set(VideoJobVersion.__table__.columns.keys())
+    assert cols == {"id", "job_id", "version_no", "plan_json", "summary",
+                    "output_path", "created_at"}
+    assert VideoJobVersion.__table__.schema == "tasks"
+
+
+def test_video_job_has_refine_columns():
+    from video_models import VideoJob
+    cols = set(VideoJob.__table__.columns.keys())
+    assert {"conversation", "current_version_no", "pending_summary"} <= cols
