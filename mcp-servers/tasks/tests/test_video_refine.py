@@ -74,3 +74,18 @@ async def test_refine_requires_api_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(video_refine.RefineUnavailable):
         await video_refine.refine_plan(PLAN, ["screenshot-1.png"], [], "hi")
+
+def test_build_messages_starts_with_user_after_truncation():
+    # 41 alternating turns: slicing to the last 40 starts on an assistant turn.
+    convo = [{"role": "user" if i % 2 == 0 else "assistant",
+              "kind": "message", "content": str(i)} for i in range(41)]
+    msgs = build_messages(convo, "newest")
+    assert msgs[0]["role"] == "user"
+    assert msgs[-1]["content"] == "newest"
+
+def test_append_turn_is_pure():
+    convo = [{"role": "user", "kind": "message", "content": "a"}]
+    out = append_turn(convo, "assistant", "note", "b", version_no=2)
+    assert len(convo) == 1  # original list unchanged
+    assert out[-1] == {"role": "assistant", "kind": "note",
+                       "content": "b", "version_no": 2}

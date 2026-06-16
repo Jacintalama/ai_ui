@@ -21,7 +21,7 @@ REFINE_SCHEMA = {
     "additionalProperties": False,
     "required": ["action", "message"],
     "properties": {
-        "action": {"enum": ["ask", "propose"]},
+        "action": {"type": "string", "enum": ["ask", "propose"]},
         "message": {"type": "string"},
         "plan": PLAN_SCHEMA,
     },
@@ -54,8 +54,14 @@ def build_system_prompt(current_plan: dict, screenshots: list[str]) -> str:
 
 
 def build_messages(conversation: list[dict], message: str) -> list[dict]:
+    recent = conversation[-MAX_HISTORY_TURNS:]
+    # The Messages API requires the first message to be from the user; a slice
+    # of a long history can start on an assistant turn, so drop leading
+    # non-user turns.
+    while recent and recent[0].get("role") != "user":
+        recent = recent[1:]
     msgs: list[dict] = []
-    for turn in conversation[-MAX_HISTORY_TURNS:]:
+    for turn in recent:
         role = "user" if turn.get("role") == "user" else "assistant"
         msgs.append({"role": role, "content": str(turn.get("content", ""))})
     if not msgs or msgs[-1]["content"] != message:
@@ -122,6 +128,8 @@ async def refine_plan(current_plan: dict, screenshots: list[str],
         raise RefineUnavailable("ANTHROPIC_API_KEY not configured")
     system = build_system_prompt(current_plan, screenshots)
     messages = build_messages(conversation, message)
+    # Transport/JSON-decode errors from _call_model intentionally propagate
+    # (only invalid plans downgrade to an ask) so the caller surfaces real failures.
     raw = await asyncio.to_thread(_call_model, system, messages)
 
     if raw.get("action") == "propose":
