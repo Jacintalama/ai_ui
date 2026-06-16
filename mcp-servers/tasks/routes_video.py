@@ -333,3 +333,50 @@ async def refine(
         "message": result["message"],
         "can_apply": result["action"] == "propose",
     }
+
+
+@router.post("/{job_id}/apply")
+async def apply(
+    job_id: str,
+    user: AdminUser = Depends(current_admin),
+) -> dict:
+    """Apply the latest pending proposal: swap in its plan and re-queue a render.
+
+    Auth: current_admin (-> 401) then 'editor' on the project (-> 403). Returns
+    409 if there is nothing pending to apply, 422 if the proposed plan is no
+    longer valid against the screenshots currently on disk.
+    """
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (
+            await s.execute(select(VideoJob).where(VideoJob.id == jid))
+        ).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
+        prop = latest_pending_proposal(job.conversation or [])
+        if prop is None:
+            raise HTTPException(409, "No pending change to apply")
+        shots = _list_screenshots(job.slug, str(jid))
+        try:
+            validate_plan(prop["plan"], shots)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(422, f"Proposed change is no longer valid: {exc}")
+        convo = mark_proposal_applied(job.conversation or [], prop)
+        convo = append_turn(
+            convo, "assistant", "note", "Applying. Re-rendering your video."
+        )
+        await s.execute(
+            update(VideoJob)
+            .where(VideoJob.id == jid)
+            .values(
+                plan_json=prop["plan"],
+                status="queued",
+                conversation=convo,
+                pending_summary=prop["content"],
+            )
+        )
+        await s.commit()
+    return {"status": "queued"}
