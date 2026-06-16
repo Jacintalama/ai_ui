@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Generator</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" crossorigin="use-credentials">
+  <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
+  <style>
+    :root[data-theme="dark"] {
+      --bg:           #0a0a0b;
+      --surface:      #111113;
+      --surface-2:    #17171a;
+      --surface-3:    #1e1e22;
+      --border:       #24242a;
+      --border-2:     #2e2e36;
+      --text:         #ededee;
+      --text-2:       #b8b8c0;
+      --muted:        #74747e;
+      --accent:       #7c8cff;
+      --accent-2:     #5d6cff;
+      --accent-soft:  #1e2140;
+      --success:      #22c55e;
+      --success-soft: #0d2a1a;
+      --warning:      #f59e0b;
+      --warning-soft: #2a1f08;
+      --danger:       #f87171;
+      --danger-soft:  #2a1414;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+    }
+    :root {
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-2); }
+    button { font-family: inherit; color: inherit; cursor: pointer; }
+    button:disabled, .btn:disabled { cursor: not-allowed; opacity: 0.6; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar .brand { display: flex; align-items: center; gap: 12px; }
+    .topbar .brand-logo {
+      width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .topbar .brand-logo img { width: 34px; height: 34px; display: block; }
+    .topbar .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+    .topbar .brand-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .topbar .brand-subtitle { font-size: 11px; color: var(--muted); }
+    .topbar .back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: var(--radius);
+      color: var(--text-2); font-size: 13px; transition: background 0.15s;
+    }
+    .topbar .back:hover { background: var(--surface-2); color: var(--text); }
+
+    .container { max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; }
+    .header-row { margin-bottom: 24px; }
+    .header-row h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+    .header-row .sub { color: var(--text-2); font-size: 13px; margin-top: 6px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .card + .card { margin-top: 20px; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+    .field:last-child { margin-bottom: 0; }
+    .form-label {
+      font-size: 12px; font-weight: 500; color: var(--text-2);
+      letter-spacing: 0.02em; text-transform: uppercase;
+    }
+    .form-input, .form-textarea, .form-file {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-textarea:focus, .form-file:focus { border-color: var(--accent); }
+    .form-textarea { resize: vertical; min-height: 110px; font-family: var(--font-ui); }
+    .form-file { padding: 8px 12px; cursor: pointer; }
+    .form-hint { font-size: 11px; color: var(--muted); }
+
+    .btn {
+      padding: 10px 16px;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--accent); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0b; }
+    .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
+
+    .file-summary { font-size: 12px; color: var(--text-2); margin-top: 8px; }
+    .file-summary ul { list-style: none; margin: 6px 0 0; padding: 0; }
+    .file-summary li {
+      display: flex; justify-content: space-between; gap: 10px;
+      padding: 4px 0; border-bottom: 1px solid var(--border);
+    }
+    .file-summary li:last-child { border-bottom: none; }
+    .file-summary .size { color: var(--muted); flex-shrink: 0; font-size: 11px; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500; border: 1px solid var(--border);
+      background: var(--surface-2); color: var(--text-2);
+      text-transform: capitalize;
+    }
+    .badge.running  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
+    .badge.queued   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
+    .badge.done     { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
+    .badge.failed   { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+
+    .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; display: inline-block;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .status-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .status-meta { color: var(--text-2); font-size: 13px; }
+    .video-preview { width: 100%; margin-top: 16px; border-radius: var(--radius); background: #000; display: block; }
+    .result-actions { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
+    .error.box {
+      background: var(--danger-soft);
+      border: 1px solid rgba(248,113,113,0.35);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-logo"><img src="/static/favicon.svg" alt="" crossorigin="use-credentials"></span>
+      <span class="brand-text">
+        <span class="brand-title">Video Generator</span>
+        <span class="brand-subtitle">Screenshots to narrated video</span>
+      </span>
+    </div>
+    <a class="back" href="/tasks">&larr; Back to projects</a>
+  </header>
+
+  <main class="container">
+    <div class="header-row">
+      <h2>Generate a video</h2>
+      <div class="sub">Pick a project, upload 1&ndash;12 screenshots, describe what the narrated slideshow should show.</div>
+    </div>
+
+    <!-- Upload form -->
+    <section class="card" id="form-card">
+      <form id="video-form" autocomplete="off">
+        <div class="field">
+          <label class="form-label" for="slug">Project slug</label>
+          <input class="form-input" id="slug" name="slug" list="slug-list" placeholder="my-project" required>
+          <datalist id="slug-list"></datalist>
+          <span class="form-hint">Enter or pick a project you can edit.</span>
+        </div>
+
+        <div class="field">
+          <label class="form-label" for="files">Screenshots</label>
+          <input class="form-file" id="files" name="files" type="file" accept="image/*" multiple required>
+          <span class="form-hint">1&ndash;12 images, max 10&nbsp;MB each, 50&nbsp;MB total.</span>
+          <div class="file-summary" id="file-summary" hidden></div>
+        </div>
+
+        <div class="field">
+          <label class="form-label" for="prompt">Prompt</label>
+          <textarea class="form-textarea" id="prompt" name="prompt" maxlength="2000"
+            placeholder="Walk through the dashboard, highlight the new charts, end on the export button."
+            required></textarea>
+          <span class="form-hint">Up to 2000 characters.</span>
+        </div>
+
+        <div class="error box" id="form-error" hidden></div>
+
+        <div class="field" style="margin-top: 4px;">
+          <button class="btn primary" type="submit" id="submit-btn">Generate video</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Job status / result -->
+    <section class="card" id="job-card" hidden>
+      <div class="status-row">
+        <span class="badge" id="job-badge"><span class="spinner"></span><span id="job-status-text">queued</span></span>
+        <span class="status-meta" id="job-meta"></span>
+      </div>
+      <div class="error" id="job-error" hidden></div>
+      <video class="video-preview" id="job-video" controls hidden></video>
+      <div class="result-actions" id="job-actions" hidden>
+        <a class="btn primary" id="download-link" download>Download MP4</a>
+        <button class="btn" type="button" id="new-job-btn">Start another</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // --- Auth helpers (mirrors static/projects.html) ---
+    // JSON requests: gateway identity travels via the session cookie
+    // (credentials: "include"); an optional Bearer token is attached when one
+    // is stored locally. The gateway injects X-User-Email from that identity.
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+    // For multipart/FormData uploads: omit Content-Type so the browser sets it
+    // automatically with the correct boundary.
+    function multipartAuthHeaders() {
+      const h = {};
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    const MAX_FILES = 12;
+    const MAX_FILE_BYTES = 10 * 1024 * 1024;
+    const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+    const POLL_MS = 2000;
+
+    const form = document.getElementById("video-form");
+    const slugInput = document.getElementById("slug");
+    const slugList = document.getElementById("slug-list");
+    const filesInput = document.getElementById("files");
+    const fileSummary = document.getElementById("file-summary");
+    const promptInput = document.getElementById("prompt");
+    const submitBtn = document.getElementById("submit-btn");
+    const formError = document.getElementById("form-error");
+
+    const jobCard = document.getElementById("job-card");
+    const jobBadge = document.getElementById("job-badge");
+    const jobStatusText = document.getElementById("job-status-text");
+    const jobMeta = document.getElementById("job-meta");
+    const jobError = document.getElementById("job-error");
+    const jobVideo = document.getElementById("job-video");
+    const jobActions = document.getElementById("job-actions");
+    const downloadLink = document.getElementById("download-link");
+    const newJobBtn = document.getElementById("new-job-btn");
+
+    let pollTimer = null;
+
+    function fmtBytes(n) {
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+      return (n / (1024 * 1024)).toFixed(1) + " MB";
+    }
+
+    function showFormError(msg) {
+      formError.textContent = msg;
+      formError.hidden = false;
+    }
+    function clearFormError() {
+      formError.textContent = "";
+      formError.hidden = true;
+    }
+
+    // Optional, fail-soft: populate the slug datalist from the projects list.
+    async function loadProjects() {
+      try {
+        const r = await fetch("/api/projects", {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) return;
+        const rows = await r.json();
+        if (!Array.isArray(rows)) return;
+        slugList.innerHTML = "";
+        for (const p of rows) {
+          if (!p || !p.slug) continue;
+          const opt = document.createElement("option");
+          opt.value = p.slug;
+          if (p.name && p.name !== p.slug) opt.label = p.name;
+          slugList.appendChild(opt);
+        }
+      } catch (e) {
+        // Listing is a convenience only; the slug input still works by hand.
+        console.warn("[video] could not load project list", e);
+      }
+    }
+
+    // Render the chosen-file summary and return a client-side validation result.
+    function summarizeFiles() {
+      const files = Array.from(filesInput.files || []);
+      if (files.length === 0) {
+        fileSummary.hidden = true;
+        fileSummary.innerHTML = "";
+        return { ok: false, reason: "Choose at least one screenshot." };
+      }
+      let total = 0;
+      const items = [];
+      let reason = "";
+      for (const f of files) {
+        total += f.size;
+        if (f.size > MAX_FILE_BYTES) reason = `${f.name} is over 10 MB.`;
+        items.push(`<li><span>${f.name}</span><span class="size">${fmtBytes(f.size)}</span></li>`);
+      }
+      fileSummary.innerHTML =
+        `<strong>${files.length}</strong> file(s), ${fmtBytes(total)} total<ul>${items.join("")}</ul>`;
+      fileSummary.hidden = false;
+      if (files.length > MAX_FILES) reason = reason || `Too many files (max ${MAX_FILES}).`;
+      if (total > MAX_TOTAL_BYTES) reason = reason || "Total size is over 50 MB.";
+      return { ok: !reason, reason };
+    }
+
+    filesInput.addEventListener("change", () => {
+      clearFormError();
+      const res = summarizeFiles();
+      if (!res.ok && res.reason) showFormError(res.reason);
+    });
+
+    function setBadge(status) {
+      const known = ["queued", "running", "done", "failed"];
+      const cls = known.includes(status) ? status : "running";
+      jobBadge.className = "badge " + cls;
+      const spinning = status !== "done" && status !== "failed";
+      jobBadge.innerHTML =
+        (spinning ? '<span class="spinner"></span>' : "") +
+        `<span id="job-status-text">${status}</span>`;
+    }
+
+    function stopPolling() {
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    }
+
+    function resetForNewJob() {
+      stopPolling();
+      jobCard.hidden = true;
+      jobError.hidden = true;
+      jobError.textContent = "";
+      jobVideo.hidden = true;
+      jobVideo.removeAttribute("src");
+      jobActions.hidden = true;
+      jobMeta.textContent = "";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Generate video";
+    }
+
+    newJobBtn.addEventListener("click", () => {
+      resetForNewJob();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+
+    async function pollJob(id) {
+      let data;
+      try {
+        const r = await fetch(`/api/video-jobs/${encodeURIComponent(id)}`, {
+          headers: authHeaders(),
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!r.ok) {
+          const txt = await r.text();
+          throw new Error(`status check failed (${r.status}): ${txt.slice(0, 200)}`);
+        }
+        data = await r.json();
+      } catch (err) {
+        jobMeta.textContent = "";
+        jobError.textContent = err.message;
+        jobError.hidden = false;
+        // Keep retrying transient network/status errors until done/failed.
+        pollTimer = setTimeout(() => pollJob(id), POLL_MS);
+        return;
+      }
+
+      setBadge(data.status);
+
+      if (data.status === "queued") {
+        const pos = Number(data.queue_position || 0);
+        jobMeta.textContent = pos > 0 ? `Queue position: ${pos}` : "Next up in the queue.";
+      } else if (data.status === "running") {
+        jobMeta.textContent = "Rendering your video…";
+      } else {
+        jobMeta.textContent = "";
+      }
+
+      if (data.status === "failed") {
+        stopPolling();
+        jobError.textContent = data.error || "The render failed. Please try again.";
+        jobError.hidden = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Generate video";
+        return;
+      }
+
+      if (data.status === "done") {
+        stopPolling();
+        jobError.hidden = true;
+        if (data.output_available) {
+          const dlUrl = `/api/video-jobs/${encodeURIComponent(id)}/download`;
+          downloadLink.href = dlUrl;
+          jobVideo.src = dlUrl;
+          jobVideo.hidden = false;
+          jobActions.hidden = false;
+        } else {
+          jobMeta.textContent = "Render finished but no output is available.";
+        }
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Generate video";
+        return;
+      }
+
+      // Still queued/running -> keep polling.
+      pollTimer = setTimeout(() => pollJob(id), POLL_MS);
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearFormError();
+
+      const slug = slugInput.value.trim();
+      const prompt = promptInput.value.trim();
+      if (!slug) return showFormError("A project slug is required.");
+      if (!prompt) return showFormError("A prompt is required.");
+
+      const res = summarizeFiles();
+      if (!res.ok) return showFormError(res.reason || "Choose 1–12 screenshots.");
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Uploading…";
+
+      const fd = new FormData();
+      fd.append("slug", slug);
+      fd.append("prompt", prompt);
+      for (const f of filesInput.files) fd.append("files", f, f.name);
+
+      let data;
+      try {
+        const resp = await fetch("/api/video-jobs/upload", {
+          method: "POST",
+          headers: multipartAuthHeaders(),
+          credentials: "include",
+          body: fd,
+        });
+        if (resp.status !== 201) {
+          const txt = await resp.text();
+          throw new Error(`Upload failed (${resp.status}): ${txt.slice(0, 300)}`);
+        }
+        data = await resp.json();
+      } catch (err) {
+        showFormError(err.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Generate video";
+        return;
+      }
+
+      // Job accepted — switch to the status view and start polling.
+      submitBtn.textContent = "Rendering…";
+      jobCard.hidden = false;
+      jobError.hidden = true;
+      jobVideo.hidden = true;
+      jobActions.hidden = true;
+      setBadge(data.status || "queued");
+      jobMeta.textContent = "Job queued.";
+      jobCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      pollJob(data.id);
+    });
+
+    loadProjects();
+  </script>
+</body>
+</html>
