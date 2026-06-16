@@ -26,6 +26,7 @@ flooding user is rejected before any disk is consumed.
 """
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -88,6 +89,16 @@ def _list_screenshots(slug: str, job_id: str) -> list[str]:
     if not shots_dir.is_dir():
         return []
     return sorted(p.name for p in shots_dir.iterdir() if p.is_file())
+
+
+def _next_screenshot_index(existing: list[str]) -> int:
+    """Next screenshot number = max existing 'screenshot-N.png' suffix + 1 (1 if none)."""
+    nums = [
+        int(m.group(1))
+        for name in existing
+        if (m := re.match(r"screenshot-(\d+)\.", name))
+    ]
+    return (max(nums) + 1) if nums else 1
 
 
 class RefineRequest(BaseModel):
@@ -426,9 +437,10 @@ async def add_screenshots(
 
     Auth: current_admin (-> 401) then 'editor' on the job's project (-> 403).
     Guard order: kill switch (503), missing job (404), editor role, free-disk
-    (507), then per-file size (413), cumulative-with-existing total (413),
-    file-count cap (400), and per-file content validation (400). New files
-    continue the screenshot-N numbering after the existing highest.
+    (507), file-count cap of existing+new <= MAX_FILES (400, checked before any
+    file bytes are read), then per-file size (413), cumulative-with-existing
+    total (413), and per-file content validation (400). New files continue the
+    screenshot-N numbering after the existing highest.
     """
     if not _video_enabled():
         raise HTTPException(503, "Video generation is disabled")
@@ -448,6 +460,7 @@ async def add_screenshots(
     shots_dir = _apps_dir() / slug / ".video" / str(jid) / "screenshots"
     existing = _list_screenshots(slug, str(jid))
     existing_count = len(existing)
+    start = _next_screenshot_index(existing)
     if not files or existing_count + len(files) > MAX_FILES:
         raise HTTPException(400, f"max {MAX_FILES} screenshots per job")
     # The cumulative cap counts what is already on disk, so a series of small
@@ -471,52 +484,83 @@ async def add_screenshots(
             raise HTTPException(400, str(e))
         raw.append(body)
     shots_dir.mkdir(parents=True, exist_ok=True)
-    for i, body in enumerate(raw, 1):
-        (shots_dir / f"screenshot-{existing_count + i}.png").write_bytes(body)
+    for i, body in enumerate(raw):
+        (shots_dir / f"screenshot-{start + i}.png").write_bytes(body)
     return {"screenshots": _list_screenshots(slug, str(jid))}
 
 
 @router.get("/{job_id}/versions")
-async def versions(job_id: str, user: AdminUser = Depends(current_admin)):
+async def versions(job_id: str, user: AdminUser = Depends(current_admin)) -> dict:
+    """List saved render versions for a job (newest state via current/available flags)."""
     jid = _coerce_job_id(job_id)
     async with session() as s:
-        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        job = (
+            await s.execute(select(VideoJob).where(VideoJob.id == jid))
+        ).scalar_one_or_none()
         if job is None:
             raise HTTPException(404, "Video job not found")
         if not user.is_admin:
             await _require_role(s, job.slug, user.email, "viewer")
         vs = await list_versions(s, jid)
-        return {"versions": [{
-            "version_no": v.version_no, "summary": v.summary,
-            "created_at": v.created_at.isoformat() if v.created_at else None,
-            "current": v.version_no == job.current_version_no,
-            "available": bool(v.output_path and os.path.exists(v.output_path)),
-        } for v in vs]}
+        return {
+            "versions": [
+                {
+                    "version_no": v.version_no,
+                    "summary": v.summary,
+                    "created_at": v.created_at.isoformat() if v.created_at else None,
+                    "current": v.version_no == job.current_version_no,
+                    "available": bool(v.output_path and os.path.exists(v.output_path)),
+                }
+                for v in vs
+            ]
+        }
 
 
 @router.post("/{job_id}/revert")
-async def revert(job_id: str, body: RevertRequest, user: AdminUser = Depends(current_admin)):
+async def revert(
+    job_id: str,
+    body: RevertRequest,
+    user: AdminUser = Depends(current_admin),
+) -> dict:
+    """Revert a job to an earlier version: instant if its file exists, else re-render."""
     if not _video_enabled():
         raise HTTPException(503, "Video generation is disabled")
     jid = _coerce_job_id(job_id)
     async with session() as s:
-        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        job = (
+            await s.execute(select(VideoJob).where(VideoJob.id == jid))
+        ).scalar_one_or_none()
         if job is None:
             raise HTTPException(404, "Video job not found")
         await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
         v = await find_version(s, jid, body.version_no)
         if v is None:
             raise HTTPException(404, "Version not found")
-        convo = append_turn(job.conversation or [], "assistant", "note",
-                            f"Reverted to v{v.version_no}.")
+        convo = append_turn(
+            job.conversation or [], "assistant", "note", f"Reverted to v{v.version_no}."
+        )
         if v.output_path and os.path.exists(v.output_path):
-            await s.execute(update(VideoJob).where(VideoJob.id == jid).values(
-                plan_json=v.plan_json, output_path=v.output_path,
-                current_version_no=v.version_no, conversation=convo))
+            await s.execute(
+                update(VideoJob)
+                .where(VideoJob.id == jid)
+                .values(
+                    plan_json=v.plan_json,
+                    output_path=v.output_path,
+                    current_version_no=v.version_no,
+                    conversation=convo,
+                )
+            )
             await s.commit()
             return {"status": "reverted", "output_available": True}
-        await s.execute(update(VideoJob).where(VideoJob.id == jid).values(
-            plan_json=v.plan_json, status="queued", conversation=convo,
-            pending_summary=f"Revert to v{v.version_no}"))
+        await s.execute(
+            update(VideoJob)
+            .where(VideoJob.id == jid)
+            .values(
+                plan_json=v.plan_json,
+                status="queued",
+                conversation=convo,
+                pending_summary=f"Revert to v{v.version_no}",
+            )
+        )
         await s.commit()
         return {"status": "queued", "output_available": False}
