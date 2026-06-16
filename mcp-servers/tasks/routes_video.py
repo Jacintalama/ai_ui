@@ -31,7 +31,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, func, select
+from pydantic import BaseModel, Field
+from sqlalchemy import and_, func, select, update
 
 from auth import AdminUser, current_admin
 from db import session
@@ -40,6 +41,15 @@ from models import TaskItem  # for slug ownership via _require_role
 from routes_projects import _require_role, _validate_slug
 from video_capability import verify_video_capability
 from video_models import VideoJob
+from video_plan import validate_plan
+from video_refine import (
+    RefineUnavailable,
+    append_turn,
+    keep_only_latest_proposal_plan,
+    latest_pending_proposal,
+    mark_proposal_applied,
+    refine_plan,
+)
 from video_validation import ScreenshotRejected, validate_screenshot
 
 router = APIRouter(prefix="/api/video-jobs")
@@ -56,6 +66,32 @@ def _apps_dir() -> Path:
             os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps"
         )
     )
+
+
+def _video_enabled() -> bool:
+    """The VIDEO_ENABLED kill switch (defaults on). A dark deploy with
+    VIDEO_ENABLED=false refuses all video operations."""
+    return os.environ.get("VIDEO_ENABLED", "true").strip().lower() == "true"
+
+
+def _list_screenshots(slug: str, job_id: str) -> list[str]:
+    """Sorted screenshot filenames for a job ([] if the directory is missing).
+
+    Mirrors the upload endpoint's on-disk layout:
+    <APPS_DIR>/<slug>/.video/<job_id>/screenshots/screenshot-N.png
+    """
+    shots_dir = _apps_dir() / slug / ".video" / job_id / "screenshots"
+    if not shots_dir.is_dir():
+        return []
+    return sorted(p.name for p in shots_dir.iterdir() if p.is_file())
+
+
+class RefineRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+
+
+class RevertRequest(BaseModel):
+    version_no: int
 
 
 @router.post("/upload", status_code=201)
@@ -244,3 +280,56 @@ async def download(job_id: str, request: Request) -> FileResponse:
     return FileResponse(
         output_path, media_type="video/mp4", filename=f"{job_id}.mp4"
     )
+
+
+@router.post("/{job_id}/refine")
+async def refine(
+    job_id: str,
+    body: RefineRequest,
+    user: AdminUser = Depends(current_admin),
+) -> dict:
+    """Chat-refine a job's plan: returns either a clarifying question or a
+    proposed (un-applied) plan, persisting the conversation either way.
+
+    Auth: a logged-in admin gateway identity (current_admin -> 401), then at
+    least 'editor' on the job's project (403). The proposal is recorded as a
+    pending turn; POST /apply renders it.
+    """
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (
+            await s.execute(select(VideoJob).where(VideoJob.id == jid))
+        ).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
+        shots = _list_screenshots(job.slug, str(jid))
+        convo = list(job.conversation or [])
+        convo = append_turn(convo, "user", "message", body.message)
+        try:
+            result = await refine_plan(job.plan_json or {}, shots, convo, body.message)
+        except RefineUnavailable:
+            raise HTTPException(503, "Refinement is unavailable (no API key)")
+        if result["action"] == "propose":
+            convo = append_turn(
+                convo,
+                "assistant",
+                "proposal",
+                result["message"],
+                plan=result["plan"],
+                applied=False,
+            )
+            convo = keep_only_latest_proposal_plan(convo)
+        else:
+            convo = append_turn(convo, "assistant", "question", result["message"])
+        await s.execute(
+            update(VideoJob).where(VideoJob.id == jid).values(conversation=convo)
+        )
+        await s.commit()
+    return {
+        "action": result["action"],
+        "message": result["message"],
+        "can_apply": result["action"] == "propose",
+    }
