@@ -84,7 +84,12 @@
     }
     .topbar .back:hover { background: var(--surface-2); color: var(--text); }
 
-    .container { max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; }
+    .container { max-width: 1180px; margin: 0 auto; padding: 32px 24px 64px; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+    .col-right { display: flex; flex-direction: column; gap: 20px; }
+    .col-right .card + .card { margin-top: 0; }
+    #example-card video { width: 100%; }
+    @media (max-width: 920px) { .layout { grid-template-columns: 1fr; } }
     .header-row { margin-bottom: 24px; }
     .header-row h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
     .header-row .sub { color: var(--text-2); font-size: 13px; margin-top: 6px; }
@@ -202,16 +207,20 @@
 
     <!-- Example output. The demo file is added separately; if it 404s the
          <video> simply won't play, which degrades gracefully. -->
-    <section class="card" id="example-card">
+    <div class="layout">
+      <div class="col-left">
+      <section class="card" id="example-card">
       <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 6px;">Example: what you can generate</h3>
       <div class="sub" style="color: var(--text-2); font-size: 13px; margin-bottom: 14px;">
         A short narrated slideshow built from a handful of screenshots.
       </div>
-      <video controls preload="metadata" style="max-width:100%;border-radius:8px;" src="/tasks/static/demo-video.mp4"></video>
+      <video controls preload="metadata" style="max-width:100%;border-radius:8px;" poster="/tasks/static/demo-poster.jpg?v=1" src="/tasks/static/demo-video.mp4?v=tut1"></video>
     </section>
 
     <!-- Upload form -->
-    <section class="card" id="form-card">
+    </div>
+      <div class="col-right">
+      <section class="card" id="form-card">
       <form id="video-form" autocomplete="off">
         <div class="field">
           <label class="form-label" for="slug">Project slug</label>
@@ -256,6 +265,8 @@
         <button class="btn" type="button" id="new-job-btn">Start another</button>
       </div>
     </section>
+      </div>
+      </div>
   </main>
 
   <script>
