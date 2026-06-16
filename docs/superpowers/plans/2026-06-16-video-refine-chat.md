@@ -592,7 +592,7 @@ git commit -m "feat(video): refine_plan (ask/propose with validated downgrade)"
 
 ## Phase 4: Routes (`routes_video.py`)
 
-> Read `routes_video.py` first to reuse its exact imports and helpers: `current_admin`/`AdminUser` (from `auth`), `_require_role` + `_validate_slug` (from `routes_projects`), `_coerce_job_id`, `session`, `VideoJob`, the `MAX_FILES`/`MAX_FILE_BYTES`/`MAX_TOTAL_BYTES` constants, `enough_free_disk`, `validate_screenshot`/`ScreenshotRejected`, and `_screenshots_dir`-style path building. Define a module helper `_video_enabled()` mirroring the upload kill-switch (503 when `VIDEO_ENABLED != 'true'`). Add Pydantic request models `RefineRequest{message: str}` (1..2000) and `RevertRequest{version_no: int}`.
+> Read `routes_video.py` first to reuse its exact imports and helpers: `current_admin`/`AdminUser` (from `auth`), `_require_role` + `_validate_slug` (from `routes_projects`), `_coerce_job_id`, `session`, `VideoJob`, the `MAX_FILES`/`MAX_FILE_BYTES`/`MAX_TOTAL_BYTES` constants, `enough_free_disk`, `validate_screenshot`/`ScreenshotRejected`, and `_screenshots_dir`-style path building. Define a module helper `_video_enabled()` mirroring the upload kill-switch (503 when `VIDEO_ENABLED != 'true'`). Add Pydantic request models `RefineRequest{message: str}` (1..2000) and `RevertRequest{version_no: int}`. **Import note:** `routes_video.py` currently imports `from sqlalchemy import and_, func, select`; add `update` to that line, since every new mutating endpoint uses `update(VideoJob)...`.
 
 ### Task 4.1: `POST /{job_id}/refine`
 
