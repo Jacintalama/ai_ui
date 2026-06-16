@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cron Jobs / Schedules</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" crossorigin="use-credentials">
+  <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
+  <style>
+    /* Palette + component system mirrored from static/projects.html and
+       static/video.html so this page is visually consistent with the rest
+       of the Tasks UI. */
+    :root[data-theme="dark"] {
+      --bg:           #0a0a0b;
+      --surface:      #111113;
+      --surface-2:    #17171a;
+      --surface-3:    #1e1e22;
+      --border:       #24242a;
+      --border-2:     #2e2e36;
+      --text:         #ededee;
+      --text-2:       #b8b8c0;
+      --muted:        #74747e;
+      --accent:       #7c8cff;
+      --accent-2:     #5d6cff;
+      --accent-soft:  #1e2140;
+      --success:      #22c55e;
+      --success-soft: #0d2a1a;
+      --warning:      #f59e0b;
+      --warning-soft: #2a1f08;
+      --danger:       #f87171;
+      --danger-soft:  #2a1414;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+    }
+    :root {
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+      --font-mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", "Menlo", Consolas, monospace;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-2); }
+    button { font-family: inherit; color: inherit; cursor: pointer; }
+    button:disabled, .btn:disabled { cursor: not-allowed; opacity: 0.6; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar .brand { display: flex; align-items: center; gap: 12px; }
+    .topbar .brand-logo {
+      width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .topbar .brand-logo img { width: 34px; height: 34px; display: block; }
+    .topbar .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+    .topbar .brand-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .topbar .brand-subtitle { font-size: 11px; color: var(--muted); }
+    .topbar .back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: var(--radius);
+      color: var(--text-2); font-size: 13px; transition: background 0.15s;
+    }
+    .topbar .back:hover { background: var(--surface-2); color: var(--text); }
+
+    .container { max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; }
+    .header-row { margin-bottom: 24px; }
+    .header-row h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+    .header-row .sub { color: var(--text-2); font-size: 13px; margin-top: 6px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .card + .card { margin-top: 20px; }
+    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+    .field:last-child { margin-bottom: 0; }
+    .form-label {
+      font-size: 12px; font-weight: 500; color: var(--text-2);
+      letter-spacing: 0.02em; text-transform: uppercase;
+    }
+    .form-input, .form-textarea {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-textarea:focus { border-color: var(--accent); }
+    .form-input.mono { font-family: var(--font-mono); }
+    .form-textarea { resize: vertical; min-height: 90px; font-family: var(--font-ui); }
+    .form-hint { font-size: 11px; color: var(--muted); }
+
+    .btn {
+      padding: 10px 16px;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--accent); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0b; }
+    .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
+    .btn.sm { padding: 6px 12px; font-size: 12px; }
+    .btn.danger { color: var(--danger); border-color: rgba(248,113,113,0.35); }
+    .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500; border: 1px solid var(--border);
+      background: var(--surface-2); color: var(--text-2);
+      text-transform: capitalize;
+    }
+    .badge.enabled  { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
+    .badge.disabled { background: var(--surface-2); color: var(--muted); border-color: var(--border-2); }
+    .badge.running  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
+    .badge.queued   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
+    .badge.done     { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
+    .badge.failed   { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+
+    .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; display: inline-block;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Schedule list */
+    .sched-list { display: flex; flex-direction: column; gap: 14px; }
+    .sched-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+    }
+    .sched-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .sched-name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+    .sched-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .sched-cron {
+      display: inline-block; margin-top: 10px;
+      font-family: var(--font-mono); font-size: 13px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 8px; color: var(--text-2);
+    }
+    .sched-meta { color: var(--text-2); font-size: 12px; margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .sched-prompt { color: var(--muted); font-size: 12px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
+    .sched-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+
+    .delivery-note {
+      font-size: 12px; color: var(--muted);
+      margin-top: 6px;
+    }
+    .loading { display: flex; align-items: center; gap: 10px; color: var(--text-2); padding: 24px 0; }
+    .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+    .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
+    .error.box {
+      background: var(--danger-soft);
+      border: 1px solid rgba(248,113,113,0.35);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+    }
+
+    /* Toast (mirrors projects.html) */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%);
+      background: var(--success-soft); color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.35);
+      padding: 10px 18px; border-radius: var(--radius-lg);
+      font-size: 13px; z-index: 200; box-shadow: var(--shadow-md);
+    }
+    .toast.error { background: var(--danger-soft); color: var(--danger); border-color: rgba(248, 113, 113, 0.35); }
+
+    /* Confirm modal (mirrors projects.html confirm overlay) */
+    .confirm-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+    }
+    .confirm-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 22px;
+      max-width: 420px; width: 100%; box-shadow: var(--shadow-md);
+    }
+    .confirm-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+    .confirm-body { color: var(--text-2); font-size: 13px; margin-bottom: 18px; }
+    .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  </style>
+</head>
+<body>
+  <!-- Shared confirm modal (replaces native browser confirm dialogs). -->
+  <div class="confirm-overlay" id="confirm-overlay" hidden>
+    <div class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h3 class="confirm-title" id="confirm-title">Are you sure?</h3>
+      <div class="confirm-body" id="confirm-body"></div>
+      <div class="confirm-actions">
+        <button type="button" class="btn" id="confirm-cancel">Cancel</button>
+        <button type="button" class="btn danger" id="confirm-ok">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-logo"><img src="/static/favicon.svg" alt="" crossorigin="use-credentials"></span>
+      <span class="brand-text">
+        <span class="brand-title">Cron Jobs</span>
+        <span class="brand-subtitle">Scheduled AI tasks</span>
+      </span>
+    </div>
+    <a class="back" href="/tasks">&larr; Back to projects</a>
+  </header>
+
+  <main class="container">
+    <div class="header-row">
+      <h2>Cron Jobs / Schedules</h2>
+      <div class="sub">Run a prompt on a recurring schedule.</div>
+      <div class="delivery-note">Schedule results are delivered to your linked Discord/Slack.</div>
+    </div>
+
+    <!-- New schedule form -->
+    <section class="card" id="form-card">
+      <div class="card-title">New schedule</div>
+      <form id="sched-form" autocomplete="off">
+        <div class="field">
+          <label class="form-label" for="name">Name</label>
+          <input class="form-input" id="name" name="name" placeholder="Weekday morning digest" required>
+        </div>
+
+        <div class="field">
+          <label class="form-label" for="cron_expr">Cron expression</label>
+          <input class="form-input mono" id="cron_expr" name="cron_expr" placeholder="0 9 * * 1-5" required>
+          <span class="form-hint">Standard 5-field cron, e.g. <code>0 9 * * 1-5</code> (9:00am, Mon to Fri).</span>
+        </div>
+
+        <div class="field">
+          <label class="form-label" for="prompt">Prompt</label>
+          <textarea class="form-textarea" id="prompt" name="prompt" maxlength="4000"
+            placeholder="Summarize my unread email and post the highlights." required></textarea>
+          <span class="form-hint">What the scheduled run should do. Up to 4000 characters.</span>
+        </div>
+
+        <div class="error box" id="form-error" hidden></div>
+
+        <div class="field" style="margin-top: 4px;">
+          <button class="btn primary" type="submit" id="create-btn">Create schedule</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- Schedule list -->
+    <section style="margin-top: 28px;">
+      <div class="header-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <h2 style="font-size:18px;">Your schedules</h2>
+        <button class="btn sm" type="button" id="refresh-btn">Refresh</button>
+      </div>
+      <div class="error box" id="list-error" hidden></div>
+      <div id="list-region">
+        <div class="loading"><span class="spinner"></span> Loading your schedules&hellip;</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // --- Auth helpers (mirrors static/projects.html & static/video.html) ---
+    // JSON requests: gateway identity travels via the session cookie
+    // (credentials: "include"); an optional Bearer token is attached when one
+    // is stored locally. The gateway injects the user's identity from that and
+    // scopes the schedules API to the caller's own schedules.
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    const SCHED_API = "/api/tasks/schedules";
+
+    const listRegion = document.getElementById("list-region");
+    const listError = document.getElementById("list-error");
+    const form = document.getElementById("sched-form");
+    const nameInput = document.getElementById("name");
+    const cronInput = document.getElementById("cron_expr");
+    const promptInput = document.getElementById("prompt");
+    const createBtn = document.getElementById("create-btn");
+    const formError = document.getElementById("form-error");
+    const refreshBtn = document.getElementById("refresh-btn");
+
+    // Browser timezone, sent as the optional `tz` so schedules fire in the
+    // user's local time rather than server UTC. Harmless if the API ignores it.
+    let BROWSER_TZ = "";
+    try { BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { /* older browsers */ }
+
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    function relativeTime(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return "just now";
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function showToast(msg, isError) {
+      const t = document.createElement("div");
+      t.className = "toast" + (isError ? " error" : "");
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    }
+
+    function showFormError(msg) { formError.textContent = msg; formError.hidden = false; }
+    function clearFormError() { formError.textContent = ""; formError.hidden = true; }
+    function showListError(msg) { listError.textContent = msg; listError.hidden = false; }
+    function clearListError() { listError.textContent = ""; listError.hidden = true; }
+
+    // --- Styled confirm dialog (Promise-based; mirrors projects.html) ---
+    const confirmOverlay = document.getElementById("confirm-overlay");
+    const confirmTitle = document.getElementById("confirm-title");
+    const confirmBody = document.getElementById("confirm-body");
+    const confirmOk = document.getElementById("confirm-ok");
+    const confirmCancel = document.getElementById("confirm-cancel");
+    let _confirmResolve = null;
+    function confirmDialog(message, title) {
+      confirmTitle.textContent = title || "Are you sure?";
+      confirmBody.textContent = message || "";
+      confirmOverlay.hidden = false;
+      return new Promise((resolve) => { _confirmResolve = resolve; });
+    }
+    function _closeConfirm(result) {
+      confirmOverlay.hidden = true;
+      if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+    }
+    confirmOk.addEventListener("click", () => _closeConfirm(true));
+    confirmCancel.addEventListener("click", () => _closeConfirm(false));
+    confirmOverlay.addEventListener("click", (e) => { if (e.target === confirmOverlay) _closeConfirm(false); });
+
+    // Map a last-run status string to a badge class.
+    function runStatusClass(status) {
+      const s = (status || "").toLowerCase();
+      if (["success", "ok", "done", "completed"].includes(s)) return "done";
+      if (["failed", "error", "errored"].includes(s)) return "failed";
+      if (["running", "in_progress"].includes(s)) return "running";
+      if (["queued", "pending"].includes(s)) return "queued";
+      return "";
+    }
+
+    // Render one schedule card. Returns an HTMLElement.
+    function renderCard(s) {
+      const card = document.createElement("div");
+      card.className = "sched-card";
+      card.dataset.id = s.id;
+
+      const enabled = !!s.enabled;
+      const enabledBadge = enabled
+        ? '<span class="badge enabled">Enabled</span>'
+        : '<span class="badge disabled">Disabled</span>';
+      const onceBadge = s.run_once ? '<span class="badge">Run once</span>' : "";
+
+      let lastRun = "";
+      if (s.last_run_at || s.last_run_status) {
+        const cls = runStatusClass(s.last_run_status);
+        const label = s.last_run_status ? escapeHtml(String(s.last_run_status)) : "ran";
+        const when = relativeTime(s.last_run_at);
+        lastRun =
+          `<span class="badge ${cls}">${label}</span>` +
+          (when ? `<span>last run ${escapeHtml(when)}</span>` : "");
+      } else {
+        lastRun = '<span class="muted">No runs yet</span>';
+      }
+
+      const tz = s.tz ? ` · <span title="timezone">${escapeHtml(String(s.tz))}</span>` : "";
+      const prompt = s.prompt
+        ? `<div class="sched-prompt">${escapeHtml(String(s.prompt))}</div>`
+        : "";
+
+      card.innerHTML =
+        `<div class="sched-head">
+           <span class="sched-name">${escapeHtml(String(s.name || "(unnamed)"))}</span>
+           <span class="sched-badges">${enabledBadge}${onceBadge}</span>
+         </div>
+         <span class="sched-cron">${escapeHtml(String(s.cron_expr || ""))}</span>${tz}
+         <div class="sched-meta">${lastRun}</div>
+         ${prompt}
+         <div class="sched-actions">
+           <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>
+           <button class="btn sm" type="button" data-act="run">Run now</button>
+           <button class="btn sm danger" type="button" data-act="delete">Delete</button>
+         </div>`;
+
+      const toggleBtn = card.querySelector('[data-act="toggle"]');
+      const runBtn = card.querySelector('[data-act="run"]');
+      const delBtn = card.querySelector('[data-act="delete"]');
+      toggleBtn.addEventListener("click", () => toggleSchedule(s, card));
+      runBtn.addEventListener("click", () => runSchedule(s, card));
+      delBtn.addEventListener("click", () => deleteSchedule(s, card));
+      return card;
+    }
+
+    function setCardBusy(card, busy) {
+      card.querySelectorAll("button").forEach((b) => { b.disabled = busy; });
+    }
+
+    async function loadSchedules() {
+      clearListError();
+      let rows;
+      try {
+        const r = await fetch(SCHED_API, { headers: authHeaders(), credentials: "include", cache: "no-store" });
+        if (!r.ok) {
+          const txt = await r.text();
+          throw new Error(`Could not load schedules (${r.status}): ${txt.slice(0, 200)}`);
+        }
+        rows = await r.json();
+      } catch (err) {
+        listRegion.innerHTML = "";
+        showListError(err.message);
+        return;
+      }
+      if (!Array.isArray(rows)) rows = [];
+      listRegion.innerHTML = "";
+      if (rows.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No schedules yet. Create one above.";
+        listRegion.appendChild(empty);
+        return;
+      }
+      const wrap = document.createElement("div");
+      wrap.className = "sched-list";
+      for (const s of rows) wrap.appendChild(renderCard(s));
+      listRegion.appendChild(wrap);
+    }
+
+    async function toggleSchedule(s, card) {
+      const action = s.enabled ? "disable" : "enable";
+      setCardBusy(card, true);
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}/${action}`, {
+          method: "POST", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) throw new Error(`${action} failed (${r.status})`);
+        showToast(`Schedule ${action}d.`);
+      } catch (err) {
+        showToast(err.message, true);
+        setCardBusy(card, false);
+      }
+      await loadSchedules();
+    }
+
+    async function runSchedule(s, card) {
+      setCardBusy(card, true);
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}/run-now`, {
+          method: "POST", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) throw new Error(`Run now failed (${r.status})`);
+        showToast("Run triggered. Results go to your linked Discord/Slack.");
+      } catch (err) {
+        showToast(err.message, true);
+      }
+      setCardBusy(card, false);
+      await loadSchedules();
+    }
+
+    async function deleteSchedule(s, card) {
+      const ok = await confirmDialog(
+        `Delete the schedule "${s.name || s.id}"? This cannot be undone.`,
+        "Delete schedule"
+      );
+      if (!ok) return;
+      setCardBusy(card, true);
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}`, {
+          method: "DELETE", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+        showToast("Schedule deleted.");
+      } catch (err) {
+        showToast(err.message, true);
+        setCardBusy(card, false);
+      }
+      await loadSchedules();
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearFormError();
+      const name = nameInput.value.trim();
+      const cron_expr = cronInput.value.trim();
+      const prompt = promptInput.value.trim();
+      if (!name) return showFormError("A name is required.");
+      if (!cron_expr) return showFormError("A cron expression is required.");
+      if (!prompt) return showFormError("A prompt is required.");
+
+      createBtn.disabled = true;
+      const prevText = createBtn.textContent;
+      createBtn.textContent = "Creating…";
+
+      const body = { name, cron_expr, prompt };
+      if (BROWSER_TZ) body.tz = BROWSER_TZ;
+
+      try {
+        const r = await fetch(SCHED_API, {
+          method: "POST", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify(body),
+        });
+        if (r.status !== 201) {
+          const txt = await r.text();
+          throw new Error(`Create failed (${r.status}): ${txt.slice(0, 300)}`);
+        }
+        form.reset();
+        showToast("Schedule created.");
+      } catch (err) {
+        showFormError(err.message);
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = prevText;
+      }
+      await loadSchedules();
+    });
+
+    refreshBtn.addEventListener("click", () => loadSchedules());
+
+    loadSchedules();
+  </script>
+</body>
+</html>

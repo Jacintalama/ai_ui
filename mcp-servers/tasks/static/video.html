@@ -200,6 +200,16 @@
       <div class="sub">Pick a project, upload 1&ndash;12 screenshots, describe what the narrated slideshow should show.</div>
     </div>
 
+    <!-- Example output. The demo file is added separately; if it 404s the
+         <video> simply won't play, which degrades gracefully. -->
+    <section class="card" id="example-card">
+      <h3 style="font-size: 15px; font-weight: 600; margin-bottom: 6px;">Example: what you can generate</h3>
+      <div class="sub" style="color: var(--text-2); font-size: 13px; margin-bottom: 14px;">
+        A short narrated slideshow built from a handful of screenshots.
+      </div>
+      <video controls preload="metadata" style="max-width:100%;border-radius:8px;" src="/tasks/static/demo-video.mp4"></video>
+    </section>
+
     <!-- Upload form -->
     <section class="card" id="form-card">
       <form id="video-form" autocomplete="off">

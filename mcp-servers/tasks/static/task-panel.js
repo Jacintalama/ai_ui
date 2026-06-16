@@ -1073,10 +1073,132 @@
 
   injectIntegrationsMenuEntry();
 
-  // Inject a "Build Website" entry into the left sidebar, right below
-  // the "Workspace" item. Clicking it opens /tasks/static/projects.html
-  // which lists all of the user's AI-built apps.
+  // Inject extra entries into the left sidebar, right below the "Workspace"
+  // item. We clone the Workspace nav row (so the new entries inherit Open
+  // WebUI's exact Tailwind classes + layout), relabel them, swap the icon
+  // glyph, and drive navigation from a capture-phase click handler.
+  //
+  // Three entries are injected, in this order under Workspace:
+  //   1. App Builder       -> /tasks/app-builder        (unchanged behavior)
+  //   2. Video Generation  -> /tasks/static/video.html
+  //   3. Cron Jobs         -> /tasks/static/cron.html
+  //
+  // Each entry is guarded by its own unique data-attribute so SPA re-renders
+  // never double-inject it. The App Builder entry keeps its original marker
+  // (data-aiui-build-website), title, label, "</>" glyph and target so its
+  // behavior is preserved exactly.
   function injectSidebarBuildWebsiteEntry() {
+    // Config for each injected nav entry, in display order under "Workspace".
+    const NAV_ENTRIES = [
+      {
+        attr: "data-aiui-build-website",
+        label: "App Builder",
+        title: "App Builder — create and manage AI-built apps",
+        href: "/tasks/app-builder",
+        // code-bracket "</>" glyph (unchanged from the original App Builder)
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline>';
+        },
+      },
+      {
+        attr: "data-aiui-video-gen",
+        label: "Video Generation",
+        title: "Video Generation: turn screenshots into a narrated video",
+        href: "/tasks/static/video.html",
+        // film / clapperboard glyph (the 🎬 equivalent)
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line>';
+        },
+      },
+      {
+        attr: "data-aiui-cron-jobs",
+        label: "Cron Jobs",
+        title: "Cron Jobs: schedule recurring AI tasks",
+        href: "/tasks/static/cron.html",
+        // clock glyph (the ⏰ equivalent)
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>';
+        },
+      },
+    ];
+
+    // Build a sidebar nav entry by deep-cloning the Workspace row wrapper.
+    // Mirrors the original App Builder cloning logic exactly, parameterized
+    // by `cfg` (label / title / target href / icon).
+    function buildEntry(rowWrapper, cfg) {
+      // Clone deep so we inherit icon + Tailwind classes pixel-perfect.
+      const entry = rowWrapper.cloneNode(true);
+      entry.setAttribute(cfg.attr, "1");
+      // Force the clone to take its own row even if Tailwind classes
+      // (flex-1, grow, basis-*) would otherwise let it share width.
+      entry.style.width = "100%";
+      entry.style.flexBasis = "100%";
+      entry.style.minWidth = "0";
+      // Strip href/data-sveltekit-preload on the clone and any nested
+      // anchors so our click handler drives the navigation. Also strip
+      // tooltip-triggering attributes (Open WebUI uses tippy and the cloned
+      // row inherits a "mouseover" tooltip we don't want).
+      function _stripTooltipAttrs(el) {
+        ["title", "data-tippy-content", "data-tooltip", "aria-label",
+         "aria-labelledby", "aria-describedby"].forEach((a) => el.removeAttribute(a));
+      }
+      entry.removeAttribute("href");
+      _stripTooltipAttrs(entry);
+      entry.querySelectorAll("*").forEach((el) => {
+        _stripTooltipAttrs(el);
+        if (el.tagName.toLowerCase() === "a") {
+          el.removeAttribute("data-sveltekit-preload-data");
+          el.removeAttribute("data-sveltekit-preload-code");
+        }
+      });
+      // Add an explicit clean tooltip in its place.
+      entry.setAttribute("title", cfg.title);
+      // Replace the "Workspace" text label with our label wherever it
+      // appears inside the cloned subtree.
+      (function rewriteLabel(node) {
+        for (const child of Array.from(node.childNodes)) {
+          if (child.nodeType === 3) {
+            const t = child.nodeValue;
+            if (t && t.includes("Workspace")) {
+              child.nodeValue = t.replace("Workspace", cfg.label);
+            }
+          } else if (child.nodeType === 1) {
+            rewriteLabel(child);
+          }
+        }
+      })(entry);
+      // Swap the inherited Workspace icon for a distinct glyph so each entry
+      // is visually distinguishable — including in the collapsed sidebar
+      // where only icons render.
+      const svg = entry.querySelector("svg");
+      if (svg && typeof cfg.setIcon === "function") cfg.setIcon(svg);
+      // Capture-phase click so we beat Svelte's own handlers.
+      entry.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        window.location.href = cfg.href;
+      }, true);
+      return entry;
+    }
+
     let pending = false;
     const observer = new MutationObserver(() => {
       if (pending) return;
@@ -1084,7 +1206,8 @@
       requestAnimationFrame(async () => {
         pending = false;
         if (!(await isAdmin())) return;
-        if (document.querySelector("[data-aiui-build-website]")) return;
+        // Skip the expensive DOM work once every entry is already present.
+        if (NAV_ENTRIES.every((cfg) => document.querySelector("[" + cfg.attr + "]"))) return;
 
         // Find Workspace row via its href first — survives the collapsed
         // sidebar state (label text may be visually hidden, but href stays
@@ -1118,71 +1241,20 @@
           rowWrapper = rowWrapper.parentElement;
         }
 
-        // Clone deep so we inherit icon + Tailwind classes pixel-perfect.
-        const entry = rowWrapper.cloneNode(true);
-        entry.dataset.aiuiBuildWebsite = "1";
-        // Force the clone to take its own row even if Tailwind classes
-        // (flex-1, grow, basis-*) would otherwise let it share width.
-        entry.style.width = "100%";
-        entry.style.flexBasis = "100%";
-        entry.style.minWidth = "0";
-        // Strip href/data-sveltekit-preload on the clone and any nested
-        // anchors so our click handler drives the navigation.
-        // Also strip tooltip-triggering attributes (Open WebUI uses tippy
-        // and the cloned row inherits a "mouseover" tooltip we don't want).
-        function _stripTooltipAttrs(el) {
-          ["title", "data-tippy-content", "data-tooltip", "aria-label",
-           "aria-labelledby", "aria-describedby"].forEach((a) => el.removeAttribute(a));
+        // Insert each missing entry in order, each one right after the
+        // previous (Workspace -> App Builder -> Video Generation -> Cron
+        // Jobs). `anchor` advances to whichever configured entry currently
+        // sits last, so partially-injected states still produce the right
+        // order without duplicating anything.
+        let anchor = rowWrapper;
+        for (const cfg of NAV_ENTRIES) {
+          const existing = document.querySelector("[" + cfg.attr + "]");
+          if (existing) { anchor = existing; continue; }
+          const entry = buildEntry(rowWrapper, cfg);
+          anchor.parentElement.insertBefore(entry, anchor.nextSibling);
+          anchor = entry;
+          console.log("[AIUI tasks] sidebar entry injected: " + cfg.label + " (wrapper=" + rowWrapper.tagName + ")");
         }
-        entry.removeAttribute("href");
-        _stripTooltipAttrs(entry);
-        entry.querySelectorAll("*").forEach((el) => {
-          _stripTooltipAttrs(el);
-          if (el.tagName.toLowerCase() === "a") {
-            el.removeAttribute("data-sveltekit-preload-data");
-            el.removeAttribute("data-sveltekit-preload-code");
-          }
-        });
-        // Add an explicit clean tooltip in its place.
-        entry.setAttribute("title", "App Builder — create and manage AI-built apps");
-        // Replace the "Workspace" text label with "App Builder" wherever
-        // it appears inside the cloned subtree.
-        (function rewriteLabel(node) {
-          for (const child of Array.from(node.childNodes)) {
-            if (child.nodeType === 3) {
-              const t = child.nodeValue;
-              if (t && t.includes("Workspace")) {
-                child.nodeValue = t.replace("Workspace", "App Builder");
-              }
-            } else if (child.nodeType === 1) {
-              rewriteLabel(child);
-            }
-          }
-        })(entry);
-
-        // Swap the inherited Workspace icon for a code-bracket glyph so
-        // App Builder is visually distinct — including in the collapsed
-        // sidebar where only icons render.
-        const svg = entry.querySelector("svg");
-        if (svg) {
-          svg.setAttribute("viewBox", "0 0 24 24");
-          svg.setAttribute("fill", "none");
-          svg.setAttribute("stroke", "currentColor");
-          svg.setAttribute("stroke-width", "2");
-          svg.setAttribute("stroke-linecap", "round");
-          svg.setAttribute("stroke-linejoin", "round");
-          svg.innerHTML = '<polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline>';
-        }
-
-        // Capture-phase click so we beat Svelte's own handlers.
-        entry.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          window.location.href = "/tasks/app-builder";
-        }, true);
-        // Insert right after the Workspace row wrapper.
-        rowWrapper.parentElement.insertBefore(entry, rowWrapper.nextSibling);
-        console.log("[AIUI tasks] sidebar 'Build Website' entry injected (wrapper=" + rowWrapper.tagName + ")");
       });
     });
     observer.observe(document.body, { childList: true, subtree: true });
