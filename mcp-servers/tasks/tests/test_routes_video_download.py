@@ -21,7 +21,7 @@ os.environ.setdefault("OAUTH_STATE_SECRET", "test-secret-for-video-dl")
 
 from main import app  # noqa: E402
 from video_capability import mint_video_capability  # noqa: E402
-from video_models import VideoJob  # noqa: E402
+from video_models import VideoJob, VideoJobVersion  # noqa: E402
 
 HEAD = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 
@@ -133,3 +133,52 @@ async def test_download_other_job_capability_rejected(db_session, tmp_path):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get(f"/api/video-jobs/{job_id}/download?cap={other}")
     assert r.status_code == 403
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_download_versioned_serves_that_version(db_session, tmp_path):
+    """?version=N streams that version's recorded output file, not the job's
+    current output_path."""
+    cur = tmp_path / "out.mp4"
+    cur.write_bytes(b"\x00\x00\x00\x18ftypmp42current")
+    v1 = tmp_path / "v1.mp4"
+    v1.write_bytes(b"\x00\x00\x00\x18ftypmp42v1-bytes")
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id, slug="alpha", user_email="ralph@aiui.com",
+            prompt="x", status="done", output_path=str(cur),
+        )
+    )
+    db_session.add(
+        VideoJobVersion(
+            id=uuid.uuid4(), job_id=job_id, version_no=1,
+            plan_json={}, summary="first", output_path=str(v1),
+        )
+    )
+    await db_session.commit()
+    cap = mint_video_capability("ralph@aiui.com", "alpha", str(job_id))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/video-jobs/{job_id}/download?cap={cap}&version=1")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("video/mp4")
+    assert r.content == b"\x00\x00\x00\x18ftypmp42v1-bytes"
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_download_unknown_version_404(db_session, tmp_path):
+    """?version=N for a version that does not exist is a 404."""
+    cur = tmp_path / "out.mp4"
+    cur.write_bytes(b"fake")
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id, slug="alpha", user_email="ralph@aiui.com",
+            prompt="x", status="done", output_path=str(cur),
+        )
+    )
+    await db_session.commit()
+    cap = mint_video_capability("ralph@aiui.com", "alpha", str(job_id))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/video-jobs/{job_id}/download?cap={cap}&version=7")
+    assert r.status_code == 404

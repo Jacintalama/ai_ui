@@ -82,3 +82,45 @@ async def test_status_unknown_job_404(db_session):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get(f"/api/video-jobs/{uuid.uuid4()}", headers=HEAD)
     assert r.status_code == 404
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_status_exposes_conversation_versions_and_pending(db_session):
+    """The status payload surfaces conversation, current_version_no, and a
+    `pending` flag derived from the latest un-applied proposal."""
+    job_id = uuid.uuid4()
+    convo = [
+        {"role": "user", "kind": "message", "content": "shorten"},
+        {
+            "role": "assistant",
+            "kind": "proposal",
+            "content": "shorter",
+            "plan": {
+                "template_id": "product_demo",
+                "title": "t",
+                "scenes": [],
+                "narration_script": "x",
+            },
+            "applied": False,
+        },
+    ]
+    db_session.add(
+        VideoJob(
+            id=job_id,
+            slug="alpha",
+            user_email="ralph@aiui.com",
+            prompt="show the dashboard",
+            status="done",
+            output_path="x",
+            conversation=convo,
+            current_version_no=3,
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/video-jobs/{job_id}", headers=HEAD)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["current_version_no"] == 3
+    assert body["pending"] is True
+    assert body["conversation"] == convo

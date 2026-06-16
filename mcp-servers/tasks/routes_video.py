@@ -226,11 +226,16 @@ async def job_status(
             "queue_position": queue_position,
             "error": job.error,
             "output_available": output_available,
+            "conversation": job.conversation or [],
+            "current_version_no": job.current_version_no,
+            "pending": latest_pending_proposal(job.conversation or []) is not None,
         }
 
 
 @router.get("/{job_id}/download")
-async def download(job_id: str, request: Request) -> FileResponse:
+async def download(
+    job_id: str, request: Request, version: int | None = None
+) -> FileResponse:
     """Stream the rendered `out.mp4` for a finished job.
 
     Two authorization paths, capability FIRST so the no-login deep link works:
@@ -240,6 +245,10 @@ async def download(job_id: str, request: Request) -> FileResponse:
       2. Otherwise, a logged-in member with at least 'viewer' on the project.
     If neither authorizes -> 403. We resolve auth before any DB round-trip so an
     unauthorized caller is rejected without a database hit.
+
+    The optional `?version=N` query param streams a specific recorded version's
+    output instead of the job's current `output_path` (404 if that version does
+    not exist or its file is missing). Auth is identical either way.
     """
     cap_raw = (
         request.headers.get("x-video-capability")
@@ -274,13 +283,23 @@ async def download(job_id: str, request: Request) -> FileResponse:
             )
         else:
             raise HTTPException(status_code=403, detail="Not authorized to download")
-        if (
-            job.status != "done"
-            or not job.output_path
-            or not os.path.exists(job.output_path)
-        ):
-            raise HTTPException(status_code=404, detail="Video not ready")
-        output_path = job.output_path
+        if version is not None:
+            # Serve a specific recorded version's file (the same open session
+            # resolves it). The job's current render status is irrelevant here.
+            v = await find_version(s, jid, version)
+            if v is None:
+                raise HTTPException(status_code=404, detail="Version not found")
+            if not v.output_path or not os.path.exists(v.output_path):
+                raise HTTPException(status_code=404, detail="Video not ready")
+            output_path = v.output_path
+        else:
+            if (
+                job.status != "done"
+                or not job.output_path
+                or not os.path.exists(job.output_path)
+            ):
+                raise HTTPException(status_code=404, detail="Video not ready")
+            output_path = job.output_path
     return FileResponse(
         output_path, media_type="video/mp4", filename=f"{job_id}.mp4"
     )
