@@ -233,6 +233,7 @@ async def job_status(
         output_available = job.status == "done" and job.output_path is not None
         return {
             "id": str(job.id),
+            "slug": job.slug,
             "status": job.status,
             "queue_position": queue_position,
             "error": job.error,
@@ -240,6 +241,7 @@ async def job_status(
             "conversation": job.conversation or [],
             "current_version_no": job.current_version_no,
             "pending": latest_pending_proposal(job.conversation or []) is not None,
+            "plan": job.plan_json,
         }
 
 

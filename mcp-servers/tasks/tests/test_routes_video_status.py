@@ -53,8 +53,15 @@ async def test_status_requires_auth():
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
 async def test_status_returns_shape(db_session):
-    """DB happy path: an admin gets the full status shape for a queued job."""
+    """DB happy path: an admin gets the full status shape for a queued job,
+    including the project slug and the render plan the studio scene strip reads."""
     job_id = uuid.uuid4()
+    plan = {
+        "template_id": "product_demo",
+        "title": "t",
+        "scenes": [{"caption": "intro"}],
+        "narration_script": "x",
+    }
     db_session.add(
         VideoJob(
             id=job_id,
@@ -62,6 +69,7 @@ async def test_status_returns_shape(db_session):
             user_email="ralph@aiui.com",
             prompt="show the dashboard",
             status="queued",
+            plan_json=plan,
         )
     )
     await db_session.commit()
@@ -74,6 +82,8 @@ async def test_status_returns_shape(db_session):
     assert body["queue_position"] == 0
     assert body["error"] is None
     assert body["output_available"] is False
+    assert body["slug"] == "alpha"
+    assert body["plan"] == plan
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
