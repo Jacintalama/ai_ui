@@ -136,3 +136,49 @@ async def test_status_exposes_conversation_versions_and_pending(db_session):
     assert body["current_version_no"] == 3
     assert body["pending"] is True
     assert body["conversation"] == convo
+
+
+# --- Per-creator ownership (non-admin): own video OK, others' video 403. ---
+OWNER = {"X-User-Email": "owner@x.com", "X-User-Admin": "false"}
+OTHER = {"X-User-Email": "other@x.com", "X-User-Admin": "false"}
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_status_non_admin_owner_allowed(db_session):
+    """A non-admin user can read the status of a video they own (200)."""
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id,
+            slug="alpha",
+            user_email="owner@x.com",
+            prompt="p",
+            title="mine",
+            status="queued",
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/video-jobs/{job_id}", headers=OWNER)
+    assert r.status_code == 200
+    assert r.json()["id"] == str(job_id)
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_status_non_admin_non_owner_forbidden(db_session):
+    """A non-admin user cannot read another user's video (403)."""
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id,
+            slug="alpha",
+            user_email="owner@x.com",
+            prompt="p",
+            title="mine",
+            status="queued",
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/video-jobs/{job_id}", headers=OTHER)
+    assert r.status_code == 403

@@ -28,18 +28,24 @@ def current_admin(request: Request) -> AdminUser:
 @dataclass(frozen=True)
 class CurrentUser:
     email: str
+    is_admin: bool = False
 
 
 def current_user(request: Request) -> CurrentUser:
     """FastAPI dep — like current_admin but no admin gate.
 
-    Used by list-my-* endpoints that any authenticated user should reach.
-    Email is lowercased to match the canonical form used in DB rows.
+    Used by list-my-* endpoints that any authenticated user should reach, and
+    by per-creator-owned resources (e.g. video jobs) that pair the email with
+    `is_admin` so an admin can act on anyone's row while a regular user is
+    confined to their own. Email is lowercased to match the canonical form used
+    in DB rows; `is_admin` reflects the gateway's X-User-Admin header (defaults
+    to False, so no header means a non-admin principal).
     """
     email = request.headers.get("x-user-email", "").strip().lower()
     if not email:
         raise HTTPException(status_code=401, detail="Missing X-User-Email")
-    return CurrentUser(email=email)
+    is_admin = request.headers.get("x-user-admin", "").strip().lower() == "true"
+    return CurrentUser(email=email, is_admin=is_admin)
 
 
 def current_admin_or_capability(task_id: UUID, request: Request) -> AdminUser:
