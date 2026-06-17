@@ -132,6 +132,7 @@ def clamp_plan(plan: dict) -> dict:
     # Last resort: more scenes than can fit even at the per-scene floor. Such a
     # plan is infeasible and validate_plan will still reject it, but clamp_plan
     # must never return a total above the hard cap, so scale below the floor.
+    # This branch intentionally trades the 0.5s floor for the <=60 cap, so validate_plan then rejects the (infeasible) plan on its per-scene duration check.
     total = _total()
     if total > MAX_TOTAL_SECONDS and total > 0:
         scale = MAX_TOTAL_SECONDS / total

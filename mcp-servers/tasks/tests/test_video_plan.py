@@ -167,6 +167,25 @@ def test_validate_plan_accepts_scene_narration():
     validate_plan(p, available=["screenshot-1.png"])  # must not raise
 
 
+def test_clamp_plan_trim_loop_keeps_floor():
+    from video_plan import clamp_plan
+    # Feasible mixed plan: 4x15s + 40x0.5s = 80s total, every scene individually
+    # valid. Proportional scaling floor-bumps the tiny scenes, pushing the total
+    # back over the cap, so the trim loop must shave the longest scenes down.
+    scenes = [
+        {"screenshot": f"big-{i}.png", "caption": "c", "duration_s": 15, "transition": "cut"}
+        for i in range(4)
+    ] + [
+        {"screenshot": f"small-{i}.png", "caption": "c", "duration_s": 0.5, "transition": "cut"}
+        for i in range(40)
+    ]
+    out = clamp_plan(
+        {"template_id": "product_demo", "title": "t", "scenes": scenes, "narration_script": "n"}
+    )
+    assert sum(s["duration_s"] for s in out["scenes"]) <= 60
+    assert min(s["duration_s"] for s in out["scenes"]) >= 0.5
+
+
 def test_clamp_plan_floor_bumped_total_capped():
     from video_plan import MAX_TOTAL_SECONDS, clamp_plan
     scenes = [
