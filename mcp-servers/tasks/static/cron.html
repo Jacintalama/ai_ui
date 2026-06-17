@@ -174,6 +174,12 @@
       background: var(--surface-2); border: 1px solid var(--border-2);
       border-radius: var(--radius-sm); padding: 1px 5px; color: var(--text-2);
     }
+    .form-note {
+      font-size: 11.5px; color: var(--text-2); line-height: 1.45;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-left: 2px solid var(--accent);
+      border-radius: var(--radius); padding: 9px 11px;
+    }
 
     /* Live cron preview (under the cron-expression input) */
     .cron-preview {
@@ -324,6 +330,24 @@
     }
     .sched-tz svg { width: 13px; height: 13px; opacity: 0.8; }
 
+    /* Delivery destination chip: where each schedule's result is posted. */
+    .sched-dest {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 9px;
+    }
+    .sched-dest svg { width: 13px; height: 13px; flex-shrink: 0; }
+    .sched-dest.discord {
+      background: rgba(88,101,242,0.13); color: #aab4ff;
+      border-color: rgba(88,101,242,0.38);
+    }
+    .sched-dest.slack {
+      background: rgba(46,182,125,0.13); color: #54cd94;
+      border-color: rgba(46,182,125,0.34);
+    }
+    .sched-dest.none { color: var(--muted); border-style: dashed; }
+
     .sched-meta { color: var(--text-2); font-size: 12px; margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .sched-prompt {
       color: var(--text-2); font-size: 12px; margin-top: 12px;
@@ -428,7 +452,7 @@
       </div>
       <div>
         <h1>Cron Jobs / Schedules</h1>
-        <div class="lead">Run a prompt on a recurring schedule. Define it once with standard cron, and your AI task fires automatically, on time, every time.</div>
+        <div class="lead">Run a prompt on a recurring schedule. Pick how often it should run, and your AI task fires automatically, on time, every time.</div>
         <div class="delivery-note">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 5h16v12H7l-3 3z"></path>
@@ -455,15 +479,63 @@
             </div>
 
             <div class="field">
-              <label class="form-label" for="cron_expr">Cron expression</label>
-              <input class="form-input mono" id="cron_expr" name="cron_expr" placeholder="0 9 * * 1-5" required>
+              <label class="form-label" for="freq">How often</label>
+              <select class="form-input" id="freq" name="freq">
+                <option value="daily">Every day</option>
+                <option value="weekday">Every weekday (Mon to Fri)</option>
+                <option value="weekend">Every weekend</option>
+                <option value="weekly">Weekly on a day</option>
+                <option value="monthly">Every month on a day</option>
+                <option value="hourly">Every hour</option>
+                <option value="everyn">Every N minutes</option>
+                <option value="custom">Custom (advanced)</option>
+              </select>
+            </div>
+
+            <div class="field" id="row-time">
+              <label class="form-label" for="time">Time</label>
+              <input class="form-input" id="time" name="time" type="time" value="09:00">
+              <span class="form-hint" id="time-hint">When it should run each time.</span>
+            </div>
+
+            <div class="field" id="row-dow" hidden>
+              <label class="form-label" for="dow">Day of week</label>
+              <select class="form-input" id="dow" name="dow">
+                <option value="0">Sunday</option>
+                <option value="1" selected>Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </div>
+
+            <div class="field" id="row-dom" hidden>
+              <label class="form-label" for="dom">Day of month</label>
+              <input class="form-input" id="dom" name="dom" type="number" min="1" max="31" value="1">
+              <span class="form-hint">A number from 1 to 31.</span>
+            </div>
+
+            <div class="field" id="row-everyn" hidden>
+              <label class="form-label" for="every-n">Every how many minutes</label>
+              <input class="form-input" id="every-n" name="every-n" type="number" min="1" max="59" value="15">
+              <span class="form-hint">A number from 1 to 59.</span>
+            </div>
+
+            <div class="field">
               <div class="cron-preview" id="cron-preview">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path>
                 </svg>
                 <span class="cron-preview-text" id="cron-preview-text"></span>
               </div>
-              <span class="form-hint">Standard 5-field cron, e.g. <code>0 9 * * 1-5</code> (9:00am, Mon to Fri).</span>
+            </div>
+
+            <div class="field" id="row-advanced" hidden>
+              <label class="form-label" for="cron_expr">Cron expression (advanced)</label>
+              <input class="form-input mono" id="cron_expr" name="cron_expr" placeholder="0 9 * * 1-5">
+              <span class="form-hint">Standard 5-field cron, e.g. <code>0 9 * * 1-5</code> (9:00am, Mon to Fri). The plain-English preview above always reflects what will run.</span>
             </div>
 
             <div class="field">
@@ -474,6 +546,10 @@
             </div>
 
             <div class="error box" id="form-error" hidden></div>
+
+            <div class="field">
+              <p class="form-note">Heads up: schedules you create here on the web are not linked to a Discord or Slack destination yet. Delivery is set when a schedule is created from Discord or Slack.</p>
+            </div>
 
             <div class="field" style="margin-top: 4px;">
               <button class="btn primary block" type="submit" id="create-btn">Create schedule</button>
@@ -531,6 +607,20 @@
     const schedCount = document.getElementById("sched-count");
     const cronPreview = document.getElementById("cron-preview");
     const cronPreviewText = document.getElementById("cron-preview-text");
+    // Friendly schedule-picker controls (CV2). These generate the cron string
+    // client-side; the raw #cron_expr input stays the canonical value the form
+    // submits, and is revealed only under "Custom (advanced)".
+    const freqSelect = document.getElementById("freq");
+    const timeInput = document.getElementById("time");
+    const dowSelect = document.getElementById("dow");
+    const domInput = document.getElementById("dom");
+    const everyNInput = document.getElementById("every-n");
+    const timeHint = document.getElementById("time-hint");
+    const rowTime = document.getElementById("row-time");
+    const rowDow = document.getElementById("row-dow");
+    const rowDom = document.getElementById("row-dom");
+    const rowEveryN = document.getElementById("row-everyn");
+    const rowAdvanced = document.getElementById("row-advanced");
 
     // Inline SVG glyphs (no external assets). Static markup only -- never mixed
     // with user-controlled text, which is always set via textContent / escaped.
@@ -542,6 +632,12 @@
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
     const ICON_GLOBE =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.6 2.9 2.6 15.1 0 18M12 3c-2.6 2.9-2.6 15.1 0 18"></path></svg>';
+    // Platform glyphs for the delivery-destination chip (CV3). Brand marks are
+    // filled (not stroked); static markup, never mixed with server text.
+    const ICON_DISCORD =
+      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189z"></path></svg>';
+    const ICON_SLACK =
+      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.685 8.834a2.528 2.528 0 0 1-2.521 2.521 2.528 2.528 0 0 1-2.521-2.521V2.522A2.528 2.528 0 0 1 15.164 0a2.528 2.528 0 0 1 2.521 2.522v6.312zM15.164 18.956a2.528 2.528 0 0 1 2.521 2.522A2.528 2.528 0 0 1 15.164 24a2.528 2.528 0 0 1-2.521-2.522v-2.522h2.521zM15.164 17.685a2.528 2.528 0 0 1-2.521-2.52 2.528 2.528 0 0 1 2.521-2.521h6.313A2.528 2.528 0 0 1 24 15.165a2.528 2.528 0 0 1-2.523 2.52h-6.313z"></path></svg>';
 
     // Browser timezone, sent as the optional `tz` so schedules fire in the
     // user's local time rather than server UTC. Harmless if the API ignores it.
@@ -731,7 +827,7 @@
       const v = cronInput.value.trim();
       if (!v) {
         cronPreview.classList.remove("active", "fallback");
-        cronPreviewText.textContent = "Enter a cron expression to see a plain-English preview.";
+        cronPreviewText.textContent = "Pick how often this should run to see a plain-English preview.";
         return;
       }
       const human = describeCron(v);
@@ -743,6 +839,63 @@
         cronPreview.classList.add("active", "fallback");
         cronPreviewText.textContent = "Custom schedule: " + v;
       }
+    }
+
+    // --- Friendly schedule picker (CV2): build the cron string from the
+    // plain-English controls so users never have to know cron syntax. ---
+    // Read the <input type="time"> as { h, min }, falling back to 9:00.
+    function parseTimeParts() {
+      const m = (timeInput.value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+      let h = m ? parseInt(m[1], 10) : 9;
+      let min = m ? parseInt(m[2], 10) : 0;
+      if (isNaN(h) || h < 0 || h > 23) h = 9;
+      if (isNaN(min) || min < 0 || min > 59) min = 0;
+      return { h, min };
+    }
+
+    // Generate a 5-field cron string from the current friendly selections.
+    // Returns "" when the selection is incomplete/invalid (e.g. a bad day
+    // number) so the caller can surface a clear error instead of garbage.
+    function buildCronFromFriendly() {
+      const { h, min } = parseTimeParts();
+      switch (freqSelect.value) {
+        case "daily":   return min + " " + h + " * * *";
+        case "weekday": return min + " " + h + " * * 1-5";
+        case "weekend": return min + " " + h + " * * 0,6";
+        case "weekly":  return min + " " + h + " * * " + dowSelect.value;
+        case "monthly": {
+          const dom = parseInt(domInput.value, 10);
+          if (isNaN(dom) || dom < 1 || dom > 31) return "";
+          return min + " " + h + " " + dom + " * *";
+        }
+        case "hourly":  return min + " * * * *";
+        case "everyn": {
+          const n = parseInt(everyNInput.value, 10);
+          if (isNaN(n) || n < 1 || n > 59) return "";
+          return "*/" + n + " * * * *";
+        }
+        default: return "";  // "custom" uses the raw cron input directly
+      }
+    }
+
+    // Show only the sub-fields relevant to the chosen frequency, keep the raw
+    // cron input (the canonical value) in sync, and refresh the live preview.
+    function syncFriendly() {
+      const freq = freqSelect.value;
+      const custom = freq === "custom";
+      const usesTime = ["daily", "weekday", "weekend", "weekly", "monthly", "hourly"].includes(freq);
+      rowTime.hidden = !usesTime;
+      rowDow.hidden = freq !== "weekly";
+      rowDom.hidden = freq !== "monthly";
+      rowEveryN.hidden = freq !== "everyn";
+      rowAdvanced.hidden = !custom;
+      if (timeHint) {
+        timeHint.textContent = freq === "hourly"
+          ? "Only the minutes are used: it runs at this minute past every hour."
+          : "When it should run each time.";
+      }
+      if (!custom) cronInput.value = buildCronFromFriendly();
+      updateCronPreview();
     }
 
     // --- Styled confirm dialog (Promise-based; mirrors projects.html) ---
@@ -812,6 +965,19 @@
       const human = describeCron(s.cron_expr);
       const humanRow = human ? `<div class="sched-human">${ICON_REPEAT}<span class="human-text"></span></div>` : "";
 
+      // Delivery destination (CV3): platform glyph + name, or a muted "no
+      // delivery" chip when the schedule isn't linked to Discord/Slack (e.g.
+      // created here on the web). Server values are written via textContent.
+      const destPlat = String(s.delivery_platform || "").toLowerCase();
+      const hasDest = s.delivery_channel_id != null && String(s.delivery_channel_id).trim() !== "";
+      let destClass = "none", destGlyph = "", destText = "No delivery (created on web)";
+      if (hasDest) {
+        if (destPlat === "discord") { destClass = "discord"; destGlyph = ICON_DISCORD; destText = "Delivered to Discord"; }
+        else if (destPlat === "slack") { destClass = "slack"; destGlyph = ICON_SLACK; destText = "Delivered to Slack"; }
+        else { destClass = ""; destGlyph = ICON_REPEAT; destText = "Delivered to " + (destPlat ? destPlat.charAt(0).toUpperCase() + destPlat.slice(1) : "a linked channel"); }
+      }
+      const destChip = `<span class="sched-dest ${destClass}" title="delivery destination">${destGlyph}<span class="dest-text"></span></span>`;
+
       card.innerHTML =
         `<div class="sched-head">
            <div class="sched-id">
@@ -826,6 +992,7 @@
          <div class="sched-chips">
            <span class="sched-cron"><span class="label">cron</span>${escapeHtml(String(s.cron_expr || ""))}</span>
            ${tz}
+           ${destChip}
          </div>
          <div class="sched-meta">${lastRun}</div>
          ${prompt}
@@ -837,6 +1004,8 @@
 
       // Human-readable text rendered via textContent (no XSS via cron fallback).
       if (human) card.querySelector(".human-text").textContent = human;
+      // Destination label rendered via textContent (platform value is escaped).
+      card.querySelector(".dest-text").textContent = destText;
 
       const toggleBtn = card.querySelector('[data-act="toggle"]');
       const runBtn = card.querySelector('[data-act="run"]');
@@ -853,7 +1022,7 @@
       wrap.innerHTML =
         `<div class="empty-icon">${ICON_CAL}</div>
          <div class="empty-title">No schedules yet</div>
-         <div class="empty-hint">Create your first recurring task with the form on the left. Try <strong>0 9 * * 1-5</strong> for a weekday 9:00&nbsp;AM digest.</div>`;
+         <div class="empty-hint">Create your first recurring task with the form on the left. Just pick how often it should run and a time, no cron knowledge needed.</div>`;
       return wrap;
     }
 
@@ -950,10 +1119,14 @@
       e.preventDefault();
       clearFormError();
       const name = nameInput.value.trim();
+      // In friendly mode, keep the canonical cron field current before reading.
+      if (freqSelect.value !== "custom") cronInput.value = buildCronFromFriendly();
       const cron_expr = cronInput.value.trim();
       const prompt = promptInput.value.trim();
       if (!name) return showFormError("A name is required.");
-      if (!cron_expr) return showFormError("A cron expression is required.");
+      if (!cron_expr) return showFormError(freqSelect.value === "custom"
+        ? "A cron expression is required."
+        : "Please complete the schedule options above.");
       if (!prompt) return showFormError("A prompt is required.");
 
       createBtn.disabled = true;
@@ -973,7 +1146,7 @@
           throw new Error(`Create failed (${r.status}): ${txt.slice(0, 300)}`);
         }
         form.reset();
-        updateCronPreview();
+        syncFriendly();
         showToast("Schedule created.");
       } catch (err) {
         showFormError(err.message);
@@ -985,9 +1158,14 @@
     });
 
     cronInput.addEventListener("input", updateCronPreview);
+    freqSelect.addEventListener("change", syncFriendly);
+    timeInput.addEventListener("input", syncFriendly);
+    dowSelect.addEventListener("change", syncFriendly);
+    domInput.addEventListener("input", syncFriendly);
+    everyNInput.addEventListener("input", syncFriendly);
     refreshBtn.addEventListener("click", () => loadSchedules());
 
-    updateCronPreview();
+    syncFriendly();
     loadSchedules();
   </script>
 </body>
