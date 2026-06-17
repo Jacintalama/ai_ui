@@ -12,8 +12,9 @@ Pipeline shape per scene, all driven by the validated plan
   * each scene's screenshot is a looped still image input
     (``-loop 1 -t <duration_s>``),
   * each scene's pre-rendered caption PNG is a second looped image input,
-  * the filtergraph scales+pads the screenshot to the target resolution,
-    applies a gentle Ken Burns ``zoompan``, then ``overlay``s the caption,
+  * per scene the filtergraph letterboxes the screenshot (blur-fill or cover),
+    applies a smooth Ken Burns ``zoompan``, an optional color grade, then
+    ``overlay``s an alpha-faded caption (every stage style-driven),
   * consecutive scenes are joined with an ``xfade`` whose type is mapped from
     the earlier scene's ``transition`` (see :data:`XFADE`), otherwise a plain
     ``concat`` (hard cut),
@@ -21,8 +22,9 @@ Pipeline shape per scene, all driven by the validated plan
   * encoded with libx264/veryfast/yuv420p at ``-threads 1`` (low RAM) and
     ``-r 30`` to ``<workdir>/out.mp4``.
 
-Template style (caption look + crossfade length) comes from
-``templates_video`` and only parameterizes appearance, never the graph shape.
+Visual style (letterbox, motion, grade, caption look, crossfade length) comes
+from ``templates_video`` via :func:`get_style_config`. For now the style is the
+documented ``clean_product_demo`` fallback; Task U6 wires the real job style.
 """
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ from typing import Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
-from templates_video import CaptionStyle, get_style
+from templates_video import CaptionStyle, StyleConfig, get_style_config
 
 # Target pixel dimensions per plan ``resolution``. Default to 720p when the
 # plan omits it or uses an unrecognized value.
@@ -59,7 +61,7 @@ def resolution_size(plan: dict) -> tuple[int, int]:
 
 
 # --------------------------------------------------------------------------- #
-# Path helpers (always POSIX — the render runs on a Linux host)
+# Path helpers (always POSIX, the render runs on a Linux host)
 # --------------------------------------------------------------------------- #
 def _screenshot_path(workdir: str, screenshot: str) -> str:
     return f"{workdir}/screenshots/{screenshot}"
@@ -141,33 +143,51 @@ def _wrap_text(
     return lines
 
 
+# Title-safe inset (fraction of the frame height) kept clear on every edge so
+# captions never crowd the broadcast-unsafe margins.
+TITLE_SAFE_RATIO = 0.055
+
+
+def _draw_rounded_band(draw, box, radius, fill) -> None:
+    """Draw a rounded backing band, degrading to a square one on old Pillow."""
+    try:
+        draw.rounded_rectangle(box, radius=radius, fill=fill)
+    except AttributeError:  # Pillow < 8.2 has no rounded_rectangle
+        draw.rectangle(box, fill=fill)
+
+
 def render_caption_png(
     text: str,
     size: tuple[int, int],
-    out_path,
+    caption_style: CaptionStyle,
+    out_path=None,
     *,
     font_path: str = DEFAULT_FONT_PATH,
-    font_size_ratio: float = 0.045,
-    position: str = "bottom",
-    band_color: tuple[int, int, int] = (0, 0, 0),
-    band_opacity: float = 0.55,
-    text_color: tuple[int, int, int] = (255, 255, 255),
-    margin_ratio: float = 0.045,
-) -> str:
-    """Draw ``text`` onto a transparent RGBA PNG of ``size`` and save it.
+) -> Image.Image | str:
+    """Render ``text`` as a styled, transparent RGBA caption overlay.
 
-    The text is word-wrapped, drawn over a semi-transparent backing band for
-    legibility, and aligned to ``position`` ("bottom" | "center" | "top").
-    Returns the saved path. Produces a valid PNG with an alpha channel.
+    The look is driven entirely by ``caption_style`` (a :class:`CaptionStyle`):
+
+      * ``font_size_ratio`` sizes the font relative to the frame height,
+      * ``position`` aligns the text block ("bottom" | "center" | "top") inside
+        the title-safe area,
+      * a rounded "glass" band (``band_color`` at ``band_opacity``) sits behind
+        the text, unless ``band_opacity`` is 0, in which case the text rides
+        bare on its drop shadow (used by bold, bandless social styles),
+      * every line gets a soft drop-shadow pass first for legibility.
+
+    When ``out_path`` is given the PNG is written there and the path string is
+    returned; otherwise the in-memory :class:`PIL.Image.Image` is returned (the
+    offline unit tests use this form). Always RGBA with a real alpha channel.
     """
     width, height = int(size[0]), int(size[1])
     image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    font_px = max(12, int(round(height * font_size_ratio)))
+    font_px = max(12, int(round(height * float(caption_style.font_size_ratio))))
     font = _load_font(font_path, font_px)
 
-    margin = int(round(height * margin_ratio))
+    margin = int(round(height * TITLE_SAFE_RATIO))
     max_text_width = max(1, width - 2 * margin)
     lines = _wrap_text(draw, text, font, max_text_width)
 
@@ -175,6 +195,7 @@ def render_caption_png(
     line_gap = int(round(line_h * 0.25))
     block_h = len(lines) * line_h + (len(lines) - 1) * line_gap
 
+    position = caption_style.position
     if position == "top":
         block_top = margin
     elif position == "center":
@@ -182,34 +203,48 @@ def render_caption_png(
     else:  # "bottom" (default)
         block_top = max(margin, height - margin - block_h)
 
-    # Semi-transparent full-width backing band behind the text block.
-    band_pad = int(round(height * 0.02))
-    band_alpha = max(0, min(255, int(round(255 * band_opacity))))
-    band_top = max(0, block_top - band_pad)
-    band_bottom = min(height, block_top + block_h + band_pad)
-    draw.rectangle(
-        [0, band_top, width, band_bottom],
-        fill=(band_color[0], band_color[1], band_color[2], band_alpha),
-    )
+    # Rounded "glass" backing band hugging the text block (skipped when the
+    # style asks for no band, e.g. bold social captions).
+    band_opacity = float(caption_style.band_opacity)
+    if band_opacity > 0:
+        widest = max((_text_width(draw, ln, font) for ln in lines), default=0)
+        pad_x = int(round(font_px * 0.6))
+        pad_y = int(round(font_px * 0.35))
+        band_w = min(width - 2 * margin, int(widest) + 2 * pad_x)
+        band_left = max(margin, (width - band_w) // 2)
+        band_right = min(width - margin, band_left + band_w)
+        band_top = max(0, block_top - pad_y)
+        band_bottom = min(height, block_top + block_h + pad_y)
+        band_alpha = max(0, min(255, int(round(255 * band_opacity))))
+        radius = max(8, int(round(font_px * 0.4)))
+        bc = caption_style.band_color
+        _draw_rounded_band(
+            draw,
+            [band_left, band_top, band_right, band_bottom],
+            radius,
+            (bc[0], bc[1], bc[2], band_alpha),
+        )
 
-    # Centered text lines, fully opaque, drawn on top of the band.
+    # Drop-shadow pass, then the bright text on top, centered per line.
+    shadow_off = max(1, int(round(font_px * 0.06)))
+    shadow_fill = (0, 0, 0, 170)
+    text_fill = (255, 255, 255, 255)
     y = block_top
     for line in lines:
         line_w = _text_width(draw, line, font)
         x = max(0, (width - line_w) / 2)
-        draw.text(
-            (x, y),
-            line,
-            font=font,
-            fill=(text_color[0], text_color[1], text_color[2], 255),
-        )
+        draw.text((x + shadow_off, y + shadow_off), line, font=font, fill=shadow_fill)
+        draw.text((x, y), line, font=font, fill=text_fill)
         y += line_h + line_gap
+
+    if out_path is None:
+        return image
 
     out_str = str(out_path)
     parent = os.path.dirname(out_str)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    image.save(out_path, format="PNG")
+    image.save(out_str, format="PNG")
     return out_str
 
 
@@ -217,26 +252,28 @@ def render_all_captions(
     plan: dict,
     workdir: str,
     size: tuple[int, int],
+    style_config: StyleConfig | None = None,
     *,
     font_path: str = DEFAULT_FONT_PATH,
 ) -> list[str]:
-    """Render one caption PNG per scene using the plan's template style.
+    """Render one caption PNG per scene using the render's :class:`StyleConfig`.
 
     Used by the executor (Task 3.2) to materialize ``captions/scene-<i>.png``
-    before invoking ffmpeg. Returns the list of written paths.
+    before invoking ffmpeg. ``style_config`` defaults to the plan's resolved
+    style (``get_style_config(plan.get("style"))``, which falls back to
+    ``clean_product_demo``); Task U6 threads the real job style through here.
+    Returns the list of written paths.
     """
-    style = get_style(plan.get("template_id"))
+    if style_config is None:
+        style_config = get_style_config(plan.get("style"))
     paths = caption_paths(plan, workdir)
     for scene, out_path in zip(plan["scenes"], paths):
         render_caption_png(
             scene["caption"],
             size,
+            style_config.caption,
             out_path,
             font_path=font_path,
-            font_size_ratio=style.font_size_ratio,
-            position=style.position,
-            band_color=style.band_color,
-            band_opacity=style.band_opacity,
         )
     return paths
 
@@ -252,30 +289,114 @@ def _fmt_num(value: float) -> str:
     return repr(round(f, 4))
 
 
-def _scale_pad_filter(width: int, height: int) -> str:
-    """Scale to fit then pad to exactly ``width x height`` (letterbox-safe)."""
-    return (
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
-    )
+def _letterbox_stmts(index: int, width: int, height: int, letterbox: str) -> list[str]:
+    """1.6 letterbox: turn screenshot input ``[{index}:v]`` into ``[base{index}]``.
 
-
-def _zoompan_filter(width: int, height: int, frames: int, fps: int = FPS) -> str:
-    """A gentle Ken Burns push-in over ``frames`` output frames."""
-    return (
-        f"zoompan=z='min(zoom+0.0015,1.08)':d={frames}:"
-        f"s={width}x{height}:fps={fps}"
-    )
-
-
-def _overlay_filter() -> str:
-    """Overlay the (full-frame) caption PNG at the origin, in yuv420p.
-
-    The caption PNG already carries the text at the right position, so the
-    overlay is always at 0:0. Normalizing to yuv420p here keeps every scene
-    stream format-compatible for xfade/concat downstream.
+    * ``blurfill``: the shot is contained over a screen-filling, blurred copy of
+      itself, so empty bars are filled instead of black.
+    * ``cinema239``: like blurfill, but the shot is contained inside a centered
+      2.39:1 cinematic band over the blurred fill.
+    * ``none`` (and any unknown value): the shot is scaled to cover and
+      center-cropped to the exact frame (no bars at all).
     """
-    return "overlay=0:0:format=auto,format=yuv420p"
+    src = f"[{index}:v]"
+    base = f"base{index}"
+    if letterbox in ("blurfill", "cinema239"):
+        if letterbox == "cinema239":
+            fg_h = int(round(width / 2.39))
+            fg_scale = (
+                f"scale={width}:{fg_h}:force_original_aspect_ratio=decrease,setsar=1"
+            )
+        else:
+            fg_scale = (
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,setsar=1"
+            )
+        return [
+            f"{src}split=2[fg{index}][bgsrc{index}]",
+            (
+                f"[bgsrc{index}]scale={width}:{height}:"
+                f"force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},boxblur=20:1[bg{index}b]"
+            ),
+            f"[fg{index}]{fg_scale}[fg{index}c]",
+            (
+                f"[bg{index}b][fg{index}c]overlay=(W-w)/2:(H-h)/2,"
+                f"format=yuv420p[{base}]"
+            ),
+        ]
+    # "none" / unknown: scale to cover, then crop to the exact frame.
+    return [
+        (
+            f"{src}scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1[{base}]"
+        )
+    ]
+
+
+def _kenburns_stmts(
+    index: int,
+    width: int,
+    height: int,
+    frames: int,
+    motion: str,
+    fps: int = FPS,
+) -> list[str]:
+    """1.5 Ken Burns: turn ``[base{index}]`` into ``[mot{index}]``.
+
+    ``eased`` alternates a smooth cosine push-in (even scenes) and pull-out (odd
+    scenes); ``gentle`` is a slow cosine push-in (up to 1.06x); ``minimal`` does
+    no zoom and just aliases ``[base{index}]`` to ``[mot{index}]``. Zoom paths
+    supersample to ``2*W`` first so the ``zoompan`` stays jitter-free.
+    """
+    base = f"[base{index}]"
+    out = f"[mot{index}]"
+    ss = width * 2
+    if motion == "eased":
+        if index % 2 == 0:  # push in
+            zoom = f"1+0.16*(1-cos(PI*on/{frames}))/2"
+        else:  # pull out
+            zoom = f"1.16-0.16*(1-cos(PI*on/{frames}))/2"
+    elif motion == "gentle":
+        zoom = f"1+0.06*(1-cos(PI*on/{frames}))/2"
+    else:  # "minimal" / unknown -> no motion, alias base straight through
+        return [f"{base}null{out}"]
+    return [
+        (
+            f"{base}scale={ss}:-2,zoompan=z='{zoom}':"
+            f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:s={width}x{height}:fps={fps}{out}"
+        )
+    ]
+
+
+def _grade_stmts(index: int, grade: str) -> list[str]:
+    """1.8 color grade: turn ``[mot{index}]`` into ``[grad{index}]``.
+
+    Applies ``grade`` (an ffmpeg filter chain) when non-empty; otherwise aliases
+    ``[mot{index}]`` straight through so the label chain stays connected.
+    """
+    src = f"[mot{index}]"
+    out = f"[grad{index}]"
+    if grade:
+        return [f"{src}{grade}{out}"]
+    return [f"{src}null{out}"]
+
+
+def _caption_fade_stmt(index: int, scene_count: int, duration_s: float) -> str:
+    """1.9 animated caption: alpha fade-in/out on caption input ``[{n+index}:v]``.
+
+    Fade lengths scale with the scene (``min(0.3, dur/3)``) so a short scene's
+    fade-in and fade-out can never overlap. Produces ``[cap{index}]``.
+    """
+    caption_input = scene_count + index  # caption inputs follow all screenshots
+    dur = float(duration_s)
+    fade = min(0.3, dur / 3.0)
+    st_out = round(dur - fade, 3)
+    return (
+        f"[{caption_input}:v]format=rgba,"
+        f"fade=t=in:st=0:d={_fmt_num(fade)}:alpha=1,"
+        f"fade=t=out:st={_fmt_num(st_out)}:d={_fmt_num(fade)}:alpha=1[cap{index}]"
+    )
 
 
 def _scene_filter_stmts(
@@ -284,17 +405,32 @@ def _scene_filter_stmts(
     duration_s: float,
     width: int,
     height: int,
+    style: StyleConfig,
     fps: int = FPS,
 ) -> list[str]:
-    """Filter statements turning screenshot input ``index`` + its caption input
-    into a finished ``[v{index}]`` scene stream."""
+    """Build the multi-statement subgraph for scene ``index``.
+
+    A scene is no longer one comma chain: blurfill is multi-node, so each stage
+    owns a distinct label and they wire together in sequence::
+
+        [{index}:v]    -> letterbox (1.6)    -> [base{index}]
+        [base{index}]  -> Ken Burns (1.5)    -> [mot{index}]
+        [mot{index}]   -> color grade (1.8)  -> [grad{index}]
+        [{n+index}:v]  -> caption fade (1.9) -> [cap{index}]
+        [grad{index}][cap{index}]overlay=0:0,format=yuv420p -> [v{index}]
+
+    The finished ``[v{index}]`` stream feeds the unchanged ``_chain_stmts``.
+    """
     frames = max(1, int(round(float(duration_s) * fps)))
-    caption_input = scene_count + index  # caption inputs follow all screenshots
-    return [
-        f"[{index}:v]{_scale_pad_filter(width, height)},"
-        f"{_zoompan_filter(width, height, frames, fps)}[bg{index}]",
-        f"[bg{index}][{caption_input}:v]{_overlay_filter()}[v{index}]",
-    ]
+    stmts: list[str] = []
+    stmts += _letterbox_stmts(index, width, height, style.letterbox)
+    stmts += _kenburns_stmts(index, width, height, frames, style.motion, fps)
+    stmts += _grade_stmts(index, style.grade)
+    stmts.append(_caption_fade_stmt(index, scene_count, duration_s))
+    stmts.append(
+        f"[grad{index}][cap{index}]overlay=0:0,format=yuv420p[v{index}]"
+    )
+    return stmts
 
 
 # Logical scene transitions -> ffmpeg ``xfade`` transition names. Anything not
@@ -364,12 +500,15 @@ def build_filtergraph(
     scenes: Sequence[dict],
     width: int,
     height: int,
-    style: CaptionStyle,
+    style: StyleConfig,
     fps: int = FPS,
 ) -> tuple[str, str]:
     """Build the full ``-filter_complex`` string and return ``(graph, vlabel)``.
 
-    Pure and unit-testable: no ffmpeg, no disk access.
+    Pure and unit-testable: no ffmpeg, no disk access. Each per-scene subgraph
+    is style-driven (letterbox/motion/grade/caption from ``style``); the
+    scene-to-scene transition chain uses the embedded ``style.caption`` for its
+    crossfade timing.
     """
     if not scenes:
         raise ValueError("cannot build a filtergraph with no scenes")
@@ -378,10 +517,10 @@ def build_filtergraph(
     stmts: list[str] = []
     for i, scene in enumerate(scenes):
         stmts.extend(
-            _scene_filter_stmts(i, n, scene["duration_s"], width, height, fps)
+            _scene_filter_stmts(i, n, scene["duration_s"], width, height, style, fps)
         )
 
-    chain, final_label = _chain_stmts(scenes, style)
+    chain, final_label = _chain_stmts(scenes, style.caption)
     stmts.extend(chain)
     return ";".join(stmts), final_label
 
@@ -398,7 +537,7 @@ def build_render_script(plan: dict, workdir: str) -> list[str]:
         raise ValueError("plan has no scenes")
 
     width, height = resolution_size(plan)
-    style = get_style(plan.get("template_id"))
+    style = get_style_config(plan.get("style"))
     n = len(scenes)
 
     argv: list[str] = ["ffmpeg", "-y"]
