@@ -1,6 +1,6 @@
-"""Tests for the admin-only screenshot upload endpoint (POST /api/video-jobs/upload).
+"""Tests for the screenshot upload endpoint (POST /api/video-jobs/upload).
 
-Video generation is admins-only and per-creator: the caller supplies a title and
+Video generation is per-creator and open to any logged-in user: the caller supplies a title and
 the slug is generated internally (vid-<job_id8>). The happy-path test needs a
 real Postgres (it inserts a VideoJob row), so it is skipped offline and runs at
 deploy/CI where DATABASE_URL points at a real database. The offline tests below
@@ -43,8 +43,9 @@ def _png() -> bytes:
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
 async def test_upload_creates_queued_job(db_session, tmp_path, monkeypatch):
-    """DB happy path: an admin upload stores screenshots and queues a job owned
-    by its creator, with the user-typed title and an auto-generated vid- slug."""
+    """DB happy path: any logged-in user creates their own (per-creator) video —
+    the upload stores screenshots and queues a job owned by its creator, with the
+    user-typed title and an auto-generated vid- slug."""
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(

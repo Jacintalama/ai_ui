@@ -1033,6 +1033,22 @@
       currentVersionNo = data.current_version_no != null ? data.current_version_no : null;
       const lastProposal = replayConversation(data.conversation || []);
       if (data.pending && lastProposal) attachApplyButton(lastProposal);
+      // A just-created job (or a reload while the first render is still running)
+      // has no conversation yet, so the chat rail would otherwise be blank.
+      // Show one "Generating..." assistant bubble. Guarded on an empty
+      // conversation so polling reloads never stack duplicates.
+      const convoEmpty = !(Array.isArray(data.conversation) && data.conversation.length);
+      if (convoEmpty && IN_PROGRESS.includes(data.status)) {
+        const shots = Number(
+          data.screenshot_count != null ? data.screenshot_count
+            : Array.isArray(data.screenshots) ? data.screenshots.length : NaN
+        );
+        const msg = Number.isFinite(shots) && shots > 0
+          ? "Generating your video from " + shots + " screenshot" + (shots === 1 ? "" : "s")
+            + ". I will tell you when it is ready, then you can ask for changes."
+          : "Generating your video. I will tell you when it is ready, then you can ask for changes.";
+        renderChatBubble("ai", msg);
+      }
       setPill(data.status);
       renderScenes(data);
       loadVersions();
@@ -1049,8 +1065,10 @@
       }
     }
 
-    // --- Reset to the create state (New video) ---
-    function newVideo() {
+    // --- Reset to the create state. Shared by the "New video" button and the
+    // URL router. Deliberately does NOT touch history; the caller decides
+    // whether a new history entry is pushed. ---
+    function resetToCreate() {
       stopPolling();
       currentJobId = null;
       currentVersionNo = null;
@@ -1071,8 +1089,26 @@
       projectName.textContent = "";
       resetChatWelcome();
       setState("create");
+    }
+
+    // "New video" button: reset and push a clean URL so Back returns to the job.
+    function newVideo() {
+      resetToCreate();
       history.pushState({}, "", location.pathname);
       window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // Route purely from the current URL. Used by init() and by popstate
+    // (Back/Forward), so it must NOT push history itself. Stops the previous
+    // poll loop before switching views to avoid double-polling.
+    function renderFromUrl() {
+      stopPolling();
+      const jobParam = new URLSearchParams(location.search).get("job");
+      if (jobParam) {
+        openExistingJob(jobParam);
+      } else {
+        resetToCreate();
+      }
     }
 
     // --- File summary / validation (create form) ---
@@ -1106,6 +1142,8 @@
     });
 
     newVideoBtn.addEventListener("click", newVideo);
+    // Keep the view in sync with Back/Forward navigation.
+    window.addEventListener("popstate", renderFromUrl);
 
     // Shared send action for both the Send button and the Enter key.
     function sendCurrent() {
@@ -1174,14 +1212,7 @@
 
     // --- Boot ---
     (function init() {
-      const params = new URLSearchParams(location.search);
-      const jobParam = params.get("job");
-      if (jobParam) {
-        openExistingJob(jobParam);
-      } else {
-        resetChatWelcome();
-        setState("create");
-      }
+      renderFromUrl();
     })();
   </script>
 </body>
