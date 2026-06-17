@@ -57,3 +57,12 @@ def test_video_job_version_nullability():
     assert cols.plan_json.nullable is False
     assert cols.summary.nullable is True
     assert cols.output_path.nullable is True
+
+
+def test_video_job_has_style_voice_columns():
+    cols = set(VideoJob.__table__.columns.keys())
+    assert {"style", "voice"} <= cols
+    # style is required (NOT NULL) with a default; voice is optional.
+    assert VideoJob.__table__.c.style.nullable is False
+    assert VideoJob.__table__.c.style.default.arg == "clean_product_demo"
+    assert VideoJob.__table__.c.voice.nullable is True

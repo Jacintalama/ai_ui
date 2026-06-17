@@ -36,6 +36,8 @@ class VideoJob(Base):
     conversation = Column(JSONB, nullable=False, default=list)
     current_version_no = Column(Integer, nullable=True)
     pending_summary = Column(Text, nullable=True)
+    style = Column(Text, nullable=False, default="clean_product_demo")
+    voice = Column(Text, nullable=True)
 
 
 class VideoJobVersion(Base):
