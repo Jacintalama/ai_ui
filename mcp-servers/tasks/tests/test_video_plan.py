@@ -106,3 +106,29 @@ async def test_generate_plan_parses_and_validates(monkeypatch):
     sent = fake.messages.calls[0]
     assert sent["model"] == "claude-opus-4-8"
     assert sent["output_config"]["format"]["type"] == "json_schema"
+
+
+def test_clamp_plan_clamps_per_scene_duration():
+    from video_plan import clamp_plan
+    p = {"template_id": "product_demo", "title": "t",
+         "scenes": [{"screenshot": "a.png", "caption": "c", "duration_s": 25, "transition": "cut"},
+                    {"screenshot": "b.png", "caption": "c", "duration_s": 0.1, "transition": "cut"}],
+         "narration_script": "n"}
+    out = clamp_plan(p)
+    assert out["scenes"][0]["duration_s"] == 15      # clamped down from 25
+    assert out["scenes"][1]["duration_s"] == 0.5     # clamped up from 0.1
+
+
+def test_clamp_plan_scales_total_over_cap():
+    from video_plan import clamp_plan
+    scenes = [{"screenshot": f"{i}.png", "caption": "c", "duration_s": 15, "transition": "cut"} for i in range(6)]
+    out = clamp_plan({"template_id": "product_demo", "title": "t", "scenes": scenes, "narration_script": "n"})
+    assert sum(s["duration_s"] for s in out["scenes"]) <= 60 + 0.01
+
+
+def test_clamp_plan_lets_overlong_single_scene_pass_validation():
+    from video_plan import clamp_plan
+    p = {"template_id": "product_demo", "title": "t",
+         "scenes": [{"screenshot": "shot.png", "caption": "c", "duration_s": 30, "transition": "cut"}],
+         "narration_script": "n"}
+    validate_plan(clamp_plan(p), ["shot.png"])  # must not raise

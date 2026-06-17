@@ -11,6 +11,10 @@ import anthropic
 
 TEMPLATES = {"product_demo", "feature_walkthrough"}
 MAX_TOTAL_SECONDS = 60
+# Per-scene duration bounds (seconds). These mirror the inline limits that
+# validate_plan enforces; clamp_plan uses them to coerce model output into range.
+MIN_SCENE_SECONDS = 0.5
+MAX_SCENE_SECONDS = 15.0
 
 
 class PlanInvalid(Exception):
@@ -62,6 +66,47 @@ def validate_plan(plan: dict, available: list[str]) -> None:
         raise PlanInvalid(f"video too long ({total}s > {MAX_TOTAL_SECONDS}s)")
 
 
+def clamp_plan(plan: dict) -> dict:
+    """Coerce scene durations into the range validate_plan enforces.
+
+    The model occasionally returns an over-long scene (e.g. one screenshot +
+    a long narration) or a total over the cap, which would make validate_plan
+    reject the plan and fail the render. This clamps each scene's duration into
+    [MIN_SCENE_SECONDS, MAX_SCENE_SECONDS] and, if the total still exceeds
+    MAX_TOTAL_SECONDS, scales every scene down proportionally (re-clamping to
+    the per-scene minimum). Mutates and returns the same plan dict for chaining.
+
+    Defensive: if ``plan`` is not a dict or has no ``scenes`` list it is
+    returned unchanged so validate_plan still performs the real rejection.
+    """
+    if not isinstance(plan, dict):
+        return plan
+    scenes = plan.get("scenes")
+    if not isinstance(scenes, list):
+        return plan
+
+    for sc in scenes:
+        if not isinstance(sc, dict):
+            continue
+        try:
+            dur = float(sc.get("duration_s"))
+        except (TypeError, ValueError):
+            dur = 3.0
+        if dur != dur:  # NaN guard
+            dur = 3.0
+        sc["duration_s"] = max(MIN_SCENE_SECONDS, min(MAX_SCENE_SECONDS, dur))
+
+    sized = [sc for sc in scenes if isinstance(sc, dict) and "duration_s" in sc]
+    total = sum(float(sc["duration_s"]) for sc in sized)
+    if total > MAX_TOTAL_SECONDS and total > 0:
+        scale = MAX_TOTAL_SECONDS / total
+        for sc in sized:
+            scaled = max(MIN_SCENE_SECONDS, float(sc["duration_s"]) * scale)
+            sc["duration_s"] = round(scaled, 2)
+
+    return plan
+
+
 async def generate_plan(prompt: str, screenshots: list[str]) -> dict:
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     sys = (
@@ -80,5 +125,6 @@ async def generate_plan(prompt: str, screenshots: list[str]) -> dict:
     )
     text = next(b.text for b in msg.content if b.type == "text")
     plan = json.loads(text)
+    clamp_plan(plan)
     validate_plan(plan, screenshots)
     return plan

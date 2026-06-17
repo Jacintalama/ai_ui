@@ -11,7 +11,7 @@ import os
 
 import anthropic
 
-from video_plan import PLAN_SCHEMA, validate_plan
+from video_plan import PLAN_SCHEMA, clamp_plan, validate_plan
 
 REFINE_MODEL = "claude-opus-4-8"
 MAX_HISTORY_TURNS = 40
@@ -133,7 +133,7 @@ async def refine_plan(current_plan: dict, screenshots: list[str],
     raw = await asyncio.to_thread(_call_model, system, messages)
 
     if raw.get("action") == "propose":
-        plan = raw.get("plan")
+        plan = clamp_plan(raw.get("plan"))
         try:
             validate_plan(plan, screenshots)
         except Exception as exc:  # noqa: BLE001 - any failure downgrades to a re-ask
