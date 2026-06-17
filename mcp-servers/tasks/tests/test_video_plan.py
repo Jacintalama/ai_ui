@@ -132,3 +132,48 @@ def test_clamp_plan_lets_overlong_single_scene_pass_validation():
          "scenes": [{"screenshot": "shot.png", "caption": "c", "duration_s": 30, "transition": "cut"}],
          "narration_script": "n"}
     validate_plan(clamp_plan(p), ["shot.png"])  # must not raise
+
+
+def test_scene_schema_has_narration_property():
+    from video_plan import PLAN_SCHEMA
+    scene_props = PLAN_SCHEMA["properties"]["scenes"]["items"]["properties"]
+    assert scene_props["narration"] == {"type": "string"}
+    # Back-compat: per-scene narration is optional, never required.
+    required = PLAN_SCHEMA["properties"]["scenes"]["items"].get("required", [])
+    assert "narration" not in required
+
+
+def test_scene_transition_enum_widened():
+    from video_plan import PLAN_SCHEMA
+    enum = PLAN_SCHEMA["properties"]["scenes"]["items"]["properties"]["transition"]["enum"]
+    assert set(enum) == {"cut", "crossfade", "dissolve", "next", "section"}
+
+
+def test_validate_plan_accepts_scene_narration():
+    p = {
+        "template_id": "product_demo",
+        "title": "t",
+        "scenes": [
+            {
+                "screenshot": "screenshot-1.png",
+                "caption": "c",
+                "duration_s": 3.0,
+                "transition": "dissolve",
+                "narration": "spoken line for this scene",
+            }
+        ],
+        "narration_script": "hi",
+    }
+    validate_plan(p, available=["screenshot-1.png"])  # must not raise
+
+
+def test_clamp_plan_floor_bumped_total_capped():
+    from video_plan import MAX_TOTAL_SECONDS, clamp_plan
+    scenes = [
+        {"screenshot": f"{i}.png", "caption": "c", "duration_s": 0.1, "transition": "cut"}
+        for i in range(200)
+    ]
+    out = clamp_plan(
+        {"template_id": "product_demo", "title": "t", "scenes": scenes, "narration_script": "n"}
+    )
+    assert sum(s["duration_s"] for s in out["scenes"]) <= MAX_TOTAL_SECONDS

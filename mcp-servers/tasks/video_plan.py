@@ -35,8 +35,12 @@ PLAN_SCHEMA = {
                 "properties": {
                     "screenshot": {"type": "string"},
                     "caption": {"type": "string"},
+                    "narration": {"type": "string"},
                     "duration_s": {"type": "number"},
-                    "transition": {"type": "string", "enum": ["crossfade", "cut"]},
+                    "transition": {
+                        "type": "string",
+                        "enum": ["crossfade", "cut", "dissolve", "next", "section"],
+                    },
                 },
                 "required": ["screenshot", "caption", "duration_s", "transition"],
             },
@@ -103,6 +107,36 @@ def clamp_plan(plan: dict) -> dict:
         for sc in sized:
             scaled = max(MIN_SCENE_SECONDS, float(sc["duration_s"]) * scale)
             sc["duration_s"] = round(scaled, 2)
+
+    # Proportional scaling re-clamps any shrunk scene back up to the per-scene
+    # floor, so the total can land back over the cap (e.g. many tiny scenes
+    # that all floor-bump to MIN_SCENE_SECONDS). Trim the longest scene by the
+    # overflow, never below the floor, until the total fits or every scene is
+    # already at the floor.
+    def _total() -> float:
+        return sum(float(sc["duration_s"]) for sc in sized)
+
+    for _ in range(len(sized) + 1):
+        overflow = _total() - MAX_TOTAL_SECONDS
+        if overflow <= 0:
+            break
+        longest = max(sized, key=lambda sc: float(sc["duration_s"]))
+        headroom = float(longest["duration_s"]) - MIN_SCENE_SECONDS
+        if headroom <= 0:
+            break  # every scene already at the per-scene floor
+        new_dur = round(float(longest["duration_s"]) - min(overflow, headroom), 2)
+        if new_dur >= float(longest["duration_s"]):
+            break  # rounding stalled progress; avoid an infinite loop
+        longest["duration_s"] = new_dur
+
+    # Last resort: more scenes than can fit even at the per-scene floor. Such a
+    # plan is infeasible and validate_plan will still reject it, but clamp_plan
+    # must never return a total above the hard cap, so scale below the floor.
+    total = _total()
+    if total > MAX_TOTAL_SECONDS and total > 0:
+        scale = MAX_TOTAL_SECONDS / total
+        for sc in sized:
+            sc["duration_s"] = round(float(sc["duration_s"]) * scale, 2)
 
     return plan
 
