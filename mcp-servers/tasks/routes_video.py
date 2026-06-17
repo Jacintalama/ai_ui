@@ -184,6 +184,34 @@ async def upload(
     return {"id": str(job_id), "status": "queued"}
 
 
+@router.get("")
+async def list_jobs(user: CurrentUser = Depends(current_user)) -> dict:
+    """List the calling user's own video jobs, newest first.
+
+    Auth: any logged-in gateway identity (`current_user` -> 401 with no identity
+    headers). Each user sees only their own videos (filtered by user_email).
+
+    Only the columns needed for a "my videos" landing page are selected so the
+    query stays robust even when the deployed database lacks newer columns.
+    `output_available` is true only when an output file path is recorded.
+    """
+    async with session() as s:
+        rows = (await s.execute(
+            select(VideoJob.id, VideoJob.title, VideoJob.status, VideoJob.created_at,
+                   VideoJob.current_version_no, VideoJob.output_path)
+            .where(VideoJob.user_email == user.email)
+            .order_by(VideoJob.created_at.desc())
+        )).all()
+    return {"videos": [{
+        "id": str(r.id),
+        "title": r.title,
+        "status": r.status,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "current_version_no": r.current_version_no,
+        "output_available": bool(r.output_path),
+    } for r in rows]}
+
+
 def _coerce_job_id(job_id: str) -> uuid.UUID:
     """Parse a path job_id into a UUID, treating a malformed id as a missing
     job (404) rather than letting it bubble up as a 500."""
