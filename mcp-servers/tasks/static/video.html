@@ -90,6 +90,7 @@
       display: inline-flex; align-items: center; gap: 6px;
       padding: 6px 12px; border-radius: var(--radius);
       color: var(--text-2); font-size: 13px; transition: background 0.15s;
+      border: none; background: transparent;
     }
     .topbar .back:hover { background: var(--surface-2); color: var(--text); }
 
@@ -342,15 +343,54 @@
     .toast[data-kind="warn"]    { border-left-color: var(--warning); }
     .toast.fading { opacity: 0; transition: opacity 0.25s; }
 
-    /* State toggling: show create-only / studio-only blocks by body state */
-    body[data-state="create"] [data-show="studio"] { display: none !important; }
-    body[data-state="studio"] [data-show="create"] { display: none !important; }
+    /* State toggling: show create / studio / list blocks by body state */
+    body[data-state="create"] [data-show="studio"],
+    body[data-state="create"] [data-show="list"] { display: none !important; }
+    body[data-state="studio"] [data-show="create"],
+    body[data-state="studio"] [data-show="list"] { display: none !important; }
+    body[data-state="list"] [data-show="create"],
+    body[data-state="list"] [data-show="studio"] { display: none !important; }
     /* Create state: chat rail is hidden, so collapse the grid to a single
        centered column instead of leaving an empty right-hand panel. */
     body[data-state="create"] .studio { display: block; max-width: 720px; }
+    /* List state: full-width landing grid, no right-hand rail. */
+    body[data-state="list"] .studio { display: block; max-width: 1100px; }
+
+    /* List state: "Your videos" landing */
+    .list-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; margin-bottom: 20px;
+    }
+    .list-title { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .video-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      display: flex; flex-direction: column; gap: 14px;
+      min-height: 112px;
+      cursor: pointer; text-align: left;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .video-card:hover { background: var(--surface-2); border-color: var(--accent); }
+    .video-card .vc-title {
+      font-size: 14px; font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .video-card .vc-meta {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; margin-top: auto;
+    }
+    .video-card .vc-date { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+    .list-empty { color: var(--muted); font-size: 13px; }
   </style>
 </head>
-<body data-state="create">
+<body data-state="list">
   <header class="topbar">
     <div class="brand">
       <span class="brand-logo"><img src="/static/favicon.svg" alt="" crossorigin="use-credentials"></span>
@@ -363,13 +403,24 @@
       <span class="project-name" id="project-name" hidden></span>
       <span class="badge" id="status-pill" hidden></span>
       <button class="btn sm" type="button" id="new-video-btn" hidden>New video</button>
-      <a class="back" href="/tasks">&larr; Projects</a>
+      <button class="back" type="button" id="projects-btn">&larr; Projects</button>
     </div>
   </header>
 
   <main class="studio">
-    <!-- LEFT: create form (create state) or player + scenes + versions (studio state) -->
+    <!-- LEFT: list landing (list state), create form (create state), or
+         player + scenes + versions (studio state) -->
     <div class="studio-main">
+
+      <!-- LIST STATE: "Your videos" landing -->
+      <section data-show="list" id="list-section">
+        <div class="list-head">
+          <div class="list-title">Your videos</div>
+          <button class="btn primary sm" type="button" id="list-new-btn">New video</button>
+        </div>
+        <div class="video-grid" id="video-grid"></div>
+        <div class="list-empty" id="list-empty" hidden></div>
+      </section>
 
       <!-- CREATE STATE: upload form -->
       <section class="card" data-show="create">
@@ -518,6 +569,11 @@
     const projectName = document.getElementById("project-name");
     const statusPill = document.getElementById("status-pill");
     const newVideoBtn = document.getElementById("new-video-btn");
+    const projectsBtn = document.getElementById("projects-btn");
+
+    const listNewBtn = document.getElementById("list-new-btn");
+    const videoGrid = document.getElementById("video-grid");
+    const listEmpty = document.getElementById("list-empty");
 
     const playerVideo = document.getElementById("player-video");
     const playerPlaceholder = document.getElementById("player-placeholder");
@@ -561,6 +617,12 @@
     }
     function humanStatus(s) {
       return HUMAN[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Working");
+    }
+    function fmtDate(s) {
+      if (!s) return "";
+      const d = new Date(s);
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
     }
     function escapeHtml(s) {
       return String(s == null ? "" : s)
@@ -1091,23 +1153,114 @@
       setState("create");
     }
 
-    // "New video" button: reset and push a clean URL so Back returns to the job.
+    // "New video" button: reset to the create form and mark the URL with
+    // ?new=1 so Back returns here and a reload re-opens the form (instead of
+    // the list landing).
     function newVideo() {
       resetToCreate();
-      history.pushState({}, "", location.pathname);
+      history.pushState({}, "", "?new=1");
       window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // --- "Your videos" list landing ---
+    // Build a status pill element via DOM (no innerHTML of server strings),
+    // reusing the existing .badge styling.
+    function statusBadge(status) {
+      const cls = status === "done" ? "done"
+        : status === "failed" ? "failed"
+        : status === "queued" ? "queued" : "running";
+      const badge = document.createElement("span");
+      badge.className = "badge " + cls;
+      if (status !== "done" && status !== "failed") {
+        const sp = document.createElement("span");
+        sp.className = "spinner";
+        badge.appendChild(sp);
+      }
+      const label = document.createElement("span");
+      label.textContent = humanStatus(status);
+      badge.appendChild(label);
+      return badge;
+    }
+
+    // Navigate to a job's studio view, pushing ?job=<id> so Back/reload work.
+    function openJob(id) {
+      history.pushState({}, "", "?job=" + encodeURIComponent(id));
+      openExistingJob(id);
+    }
+
+    async function fetchVideoList() {
+      const r = await fetch(API, {
+        headers: authHeaders(), credentials: "include", cache: "no-store",
+      });
+      if (!r.ok) throw new Error("list failed (" + r.status + ")");
+      const data = await r.json();
+      return Array.isArray(data.videos) ? data.videos : [];
+    }
+
+    function renderVideoList(videos) {
+      videoGrid.innerHTML = "";
+      for (const v of videos) {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "video-card";
+        card.addEventListener("click", () => openJob(v.id));
+
+        const title = document.createElement("div");
+        title.className = "vc-title";
+        title.textContent = v.title || "Untitled";
+        card.appendChild(title);
+
+        const meta = document.createElement("div");
+        meta.className = "vc-meta";
+        meta.appendChild(statusBadge(v.status));
+        const date = document.createElement("span");
+        date.className = "vc-date";
+        date.textContent = fmtDate(v.created_at);
+        meta.appendChild(date);
+        card.appendChild(meta);
+
+        videoGrid.appendChild(card);
+      }
+    }
+
+    // Show the list landing. Fetch the caller's videos: with >=1 video render
+    // the grid (list state); with 0 videos -- or a failed fetch -- fall back to
+    // the create form so brand-new users still land on it.
+    async function showList() {
+      stopPolling();
+      let videos;
+      try {
+        videos = await fetchVideoList();
+      } catch (e) {
+        console.warn("[video] could not load video list", e);
+        resetToCreate();
+        return;
+      }
+      if (!videos.length) {
+        resetToCreate();
+        return;
+      }
+      renderVideoList(videos);
+      listEmpty.hidden = true;
+      setState("list");
+      window.scrollTo({ top: 0 });
     }
 
     // Route purely from the current URL. Used by init() and by popstate
     // (Back/Forward), so it must NOT push history itself. Stops the previous
     // poll loop before switching views to avoid double-polling.
+    //   ?job=<id> -> studio ; ?new=1 -> create form ; otherwise -> list
+    //   (which fetches and falls back to create when the caller has no videos).
     function renderFromUrl() {
       stopPolling();
-      const jobParam = new URLSearchParams(location.search).get("job");
+      const params = new URLSearchParams(location.search);
+      const jobParam = params.get("job");
       if (jobParam) {
         openExistingJob(jobParam);
-      } else {
+      } else if (params.has("new")) {
         resetToCreate();
+      } else {
+        showList();
       }
     }
 
@@ -1142,6 +1295,13 @@
     });
 
     newVideoBtn.addEventListener("click", newVideo);
+    listNewBtn.addEventListener("click", newVideo);
+    // "Projects" returns to the list landing: clear ?job/?new and re-route
+    // (which re-fetches the list, or shows the create form when it is empty).
+    projectsBtn.addEventListener("click", () => {
+      history.pushState({}, "", location.pathname);
+      renderFromUrl();
+    });
     // Keep the view in sync with Back/Forward navigation.
     window.addEventListener("popstate", renderFromUrl);
 
