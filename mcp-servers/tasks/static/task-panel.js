@@ -1108,6 +1108,8 @@
       },
       {
         attr: "data-aiui-video-gen",
+        // Visible to ALL signed-in users, not just admins.
+        allUsers: true,
         label: "Video Generation",
         title: "Video Generation: turn screenshots into a narrated video",
         href: "/video-generator",
@@ -1205,9 +1207,15 @@
       pending = true;
       requestAnimationFrame(async () => {
         pending = false;
-        if (!(await isAdmin())) return;
-        // Skip the expensive DOM work once every entry is already present.
-        if (NAV_ENTRIES.every((cfg) => document.querySelector("[" + cfg.attr + "]"))) return;
+        // Don't early-return for non-admins: entries flagged allUsers must
+        // still inject. Admin-only entries are gated individually below.
+        // Fail-soft: if admin can't be determined isAdmin() is false, so
+        // allUsers entries still show and admin-only entries stay hidden.
+        const admin = await isAdmin();
+        const visibleEntries = NAV_ENTRIES.filter((cfg) => cfg.allUsers || admin);
+        if (!visibleEntries.length) return;
+        // Skip the expensive DOM work once every visible entry is present.
+        if (visibleEntries.every((cfg) => document.querySelector("[" + cfg.attr + "]"))) return;
 
         // Find Workspace row via its href first — survives the collapsed
         // sidebar state (label text may be visually hidden, but href stays
@@ -1250,6 +1258,8 @@
         for (const cfg of NAV_ENTRIES) {
           const existing = document.querySelector("[" + cfg.attr + "]");
           if (existing) { anchor = existing; continue; }
+          // Inject only entries this user may see (allUsers, or admin).
+          if (!(cfg.allUsers || admin)) continue;
           const entry = buildEntry(rowWrapper, cfg);
           anchor.parentElement.insertBefore(entry, anchor.nextSibling);
           anchor = entry;
