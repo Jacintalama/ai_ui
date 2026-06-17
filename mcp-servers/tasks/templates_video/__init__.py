@@ -38,4 +38,21 @@ def get_style(template_id: str | None) -> CaptionStyle:
     return STYLES.get(template_id or "", STYLES[DEFAULT_TEMPLATE])
 
 
-__all__ = ["CaptionStyle", "STYLES", "DEFAULT_TEMPLATE", "get_style"]
+# Richer visual-style registry layered on top of ``CaptionStyle``. Imported
+# after ``CaptionStyle`` is defined above so ``style_config``'s
+# ``from . import CaptionStyle`` resolves without a circular-import error.
+from .style_config import (  # noqa: E402
+    StyleConfig,
+    STYLE_CONFIGS,
+    get_style_config,
+)
+
+__all__ = [
+    "CaptionStyle",
+    "STYLES",
+    "DEFAULT_TEMPLATE",
+    "get_style",
+    "StyleConfig",
+    "STYLE_CONFIGS",
+    "get_style_config",
+]
