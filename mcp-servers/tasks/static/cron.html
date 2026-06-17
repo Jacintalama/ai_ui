@@ -960,10 +960,12 @@
         ? `<div class="sched-prompt">${escapeHtml(String(s.prompt))}</div>`
         : "";
 
-      // Plain-English description (only when confidently parsed; the mono chip
-      // below always shows the raw expression as the source of truth).
-      const human = describeCron(s.cron_expr);
-      const humanRow = human ? `<div class="sched-human">${ICON_REPEAT}<span class="human-text"></span></div>` : "";
+      // Friendly schedule line (the card's primary info). Use the plain-English
+      // description when the expression parses confidently; otherwise fall back
+      // to the raw cron text so the card is never left without schedule info.
+      // Rendered via textContent below (the raw fallback is never trusted HTML).
+      const scheduleText = describeCron(s.cron_expr) || String(s.cron_expr || "");
+      const humanRow = `<div class="sched-human">${ICON_REPEAT}<span class="human-text"></span></div>`;
 
       // Delivery destination (CV3): platform glyph + name, or a muted "no
       // delivery" chip when the schedule isn't linked to Discord/Slack (e.g.
@@ -990,7 +992,6 @@
            <span class="sched-badges">${enabledBadge}${onceBadge}</span>
          </div>
          <div class="sched-chips">
-           <span class="sched-cron"><span class="label">cron</span>${escapeHtml(String(s.cron_expr || ""))}</span>
            ${tz}
            ${destChip}
          </div>
@@ -1002,8 +1003,9 @@
            <button class="btn sm danger" type="button" data-act="delete">Delete</button>
          </div>`;
 
-      // Human-readable text rendered via textContent (no XSS via cron fallback).
-      if (human) card.querySelector(".human-text").textContent = human;
+      // Schedule line rendered via textContent so the raw-cron fallback can
+      // never inject markup (no XSS even for an odd / unparseable expression).
+      card.querySelector(".human-text").textContent = scheduleText;
       // Destination label rendered via textContent (platform value is escaped).
       card.querySelector(".dest-text").textContent = destText;
 
