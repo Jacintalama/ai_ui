@@ -169,6 +169,60 @@
     .file-summary li:last-child { border-bottom: none; }
     .file-summary .size { color: var(--muted); flex-shrink: 0; font-size: 11px; }
 
+    /* Internal back link (create + studio states) */
+    .back-link {
+      align-self: flex-start;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 10px; margin-bottom: 14px;
+      border: 1px solid transparent; border-radius: var(--radius);
+      background: transparent; color: var(--text-2); font-size: 13px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .back-link:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-2); }
+
+    /* Numbered image manager (create state) */
+    .uploader-head { display: flex; align-items: center; gap: 12px; }
+    .uploader-count { font-size: 12px; font-weight: 600; color: var(--text-2); }
+    .shot-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+    .shot-grid:empty { margin-top: 0; }
+    .shot-empty { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .shot-card {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 8px 10px;
+    }
+    .shot-card .num {
+      flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 600; color: var(--accent);
+      background: var(--accent-soft); border: 1px solid rgba(124,140,255,0.25);
+    }
+    .shot-card .thumb {
+      flex: 0 0 auto; width: 56px; height: 40px; border-radius: var(--radius-sm);
+      object-fit: cover; background: var(--surface-3); border: 1px solid var(--border);
+    }
+    .shot-card .name {
+      flex: 1 1 auto; min-width: 0;
+      padding: 6px 8px; background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); color: var(--text);
+      font-family: inherit; font-size: 12px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .shot-card .name:focus { border-color: var(--accent); }
+    .shot-card .shot-size { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+    .shot-card .ctrls { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+    .shot-card .ctrl {
+      width: 28px; height: 28px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--text-2);
+      font-size: 14px; line-height: 1;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .shot-card .ctrl:hover:not(:disabled) { background: var(--surface-3); color: var(--text); border-color: var(--accent); }
+    .shot-card .ctrl:disabled { opacity: 0.4; cursor: not-allowed; }
+    .shot-card .ctrl.del:hover:not(:disabled) { color: var(--danger); border-color: rgba(248,113,113,0.5); }
+
     /* Status badge / pill */
     .badge {
       display: inline-flex; align-items: center; gap: 6px;
@@ -350,6 +404,9 @@
     body[data-state="studio"] [data-show="list"] { display: none !important; }
     body[data-state="list"] [data-show="create"],
     body[data-state="list"] [data-show="studio"] { display: none !important; }
+    /* Internal "Your videos" back link: visible on create + studio, hidden on
+       the list landing (which is itself the destination). */
+    body[data-state="list"] [data-show="back"] { display: none !important; }
     /* Create state: chat rail is hidden, so collapse the grid to a single
        centered column instead of leaving an empty right-hand panel. */
     body[data-state="create"] .studio { display: block; max-width: 720px; }
@@ -403,7 +460,7 @@
       <span class="project-name" id="project-name" hidden></span>
       <span class="badge" id="status-pill" hidden></span>
       <button class="btn sm" type="button" id="new-video-btn" hidden>New video</button>
-      <button class="back" type="button" id="projects-btn">&larr; Projects</button>
+      <a class="back" id="back-to-chat" href="/" title="Back to chat">&larr; Back to chat</a>
     </div>
   </header>
 
@@ -411,6 +468,10 @@
     <!-- LEFT: list landing (list state), create form (create state), or
          player + scenes + versions (studio state) -->
     <div class="studio-main">
+
+      <!-- Internal back: returns to the "Your videos" list. Shown on create
+           and studio states, hidden on the list landing itself. -->
+      <button class="back-link" data-show="back" type="button" id="back-to-list">&larr; Your videos</button>
 
       <!-- LIST STATE: "Your videos" landing -->
       <section data-show="list" id="list-section">
@@ -433,10 +494,18 @@
           </div>
 
           <div class="field">
-            <label class="form-label" for="files">Screenshots</label>
-            <input class="form-file" id="files" name="files" type="file" accept="image/*" multiple required>
-            <span class="form-hint">1 to 12 images, max 10&nbsp;MB each, 50&nbsp;MB total.</span>
-            <div class="file-summary" id="file-summary" hidden></div>
+            <label class="form-label">Screenshots</label>
+            <div class="uploader-head">
+              <button class="btn sm" type="button" id="add-shots-btn">+ Add screenshots</button>
+              <span class="uploader-count" id="shot-count">0 / 12</span>
+            </div>
+            <!-- Hidden native input only carries the File objects; the visible
+                 manager below owns the order, names and validation. -->
+            <input id="files" name="files" type="file" accept="image/*" multiple hidden>
+            <span class="form-hint">1 to 12 images, max 10&nbsp;MB each, 50&nbsp;MB total. The order below is the sequence the AI narrates (first to last); use the arrows to reorder.</span>
+            <div class="shot-grid" id="shot-grid"></div>
+            <div class="shot-empty" id="shot-empty">No screenshots yet. Click "Add screenshots" to begin.</div>
+            <div class="error" id="shot-error" hidden></div>
           </div>
 
           <div class="field">
@@ -561,7 +630,11 @@
     const form = document.getElementById("video-form");
     const titleInput = document.getElementById("title");
     const filesInput = document.getElementById("files");
-    const fileSummary = document.getElementById("file-summary");
+    const addShotsBtn = document.getElementById("add-shots-btn");
+    const shotGrid = document.getElementById("shot-grid");
+    const shotCount = document.getElementById("shot-count");
+    const shotEmpty = document.getElementById("shot-empty");
+    const shotError = document.getElementById("shot-error");
     const promptInput = document.getElementById("prompt");
     const submitBtn = document.getElementById("submit-btn");
     const formError = document.getElementById("form-error");
@@ -569,7 +642,7 @@
     const projectName = document.getElementById("project-name");
     const statusPill = document.getElementById("status-pill");
     const newVideoBtn = document.getElementById("new-video-btn");
-    const projectsBtn = document.getElementById("projects-btn");
+    const backToList = document.getElementById("back-to-list");
 
     const listNewBtn = document.getElementById("list-new-btn");
     const videoGrid = document.getElementById("video-grid");
@@ -601,6 +674,10 @@
     let pollTimer = null;
     let refining = false;
     let pollFailures = 0;
+    // Ordered list of screenshots staged in the create form. Each entry:
+    // { file: File, name: string (display label), url: string (object URL) }.
+    // The array order IS the sequence sent to the backend on submit.
+    let shots = [];
 
     const WELCOME_HTML =
       '<div class="chat-welcome">' +
@@ -1138,7 +1215,7 @@
       refining = false;
       // form
       form.reset();
-      fileSummary.hidden = true; fileSummary.innerHTML = "";
+      clearShots();
       clearFormError();
       submitBtn.disabled = false; submitBtn.textContent = "Generate video";
       // player + side panels
@@ -1264,44 +1341,151 @@
       }
     }
 
-    // --- File summary / validation (create form) ---
-    function summarizeFiles() {
-      const files = Array.from(filesInput.files || []);
-      if (files.length === 0) {
-        fileSummary.hidden = true; fileSummary.innerHTML = "";
-        return { ok: false, reason: "Choose at least one screenshot." };
-      }
-      let total = 0;
-      const items = [];
-      let reason = "";
-      for (const f of files) {
+    // --- Image manager (create form) ---------------------------------------
+    // A custom, ordered uploader replaces the native multi-file input. The
+    // user adds, renames, reorders and deletes screenshots; the array order is
+    // the sequence the backend stores (screenshot-1 = first card). The rename
+    // label is a UI/organization aid only -- the backend names files by order.
+    function showShotError(msg) { shotError.textContent = msg; shotError.hidden = false; }
+    function clearShotError() { shotError.textContent = ""; shotError.hidden = true; }
+    function shotsTotalBytes() { return shots.reduce((n, s) => n + s.file.size, 0); }
+
+    function isImageFile(f) {
+      if (f.type && f.type.indexOf("image/") === 0) return true;
+      return /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)$/i.test(f.name || "");
+    }
+
+    // Append selected files to the ordered list (never replaces existing ones).
+    function addFiles(fileList) {
+      clearShotError();
+      const incoming = Array.from(fileList || []);
+      if (!incoming.length) return;
+      let total = shotsTotalBytes();
+      let added = 0;
+      const errors = [];
+      for (const f of incoming) {
+        if (!isImageFile(f)) { errors.push('"' + f.name + '" is not an image.'); continue; }
+        if (f.size > MAX_FILE_BYTES) { errors.push('"' + f.name + '" is over 10 MB.'); continue; }
+        if (shots.length >= MAX_FILES) { errors.push("You can add at most " + MAX_FILES + " images."); break; }
+        if (total + f.size > MAX_TOTAL_BYTES) { errors.push("Adding more would exceed 50 MB total."); break; }
+        shots.push({ file: f, name: f.name, url: URL.createObjectURL(f) });
         total += f.size;
-        if (f.size > MAX_FILE_BYTES) reason = f.name + " is over 10 MB.";
-        items.push("<li><span>" + escapeHtml(f.name) + "</span><span class=\"size\">" + fmtBytes(f.size) + "</span></li>");
+        added++;
       }
-      fileSummary.innerHTML =
-        "<strong>" + files.length + "</strong> file(s), " + fmtBytes(total) + " total<ul>" + items.join("") + "</ul>";
-      fileSummary.hidden = false;
-      if (files.length > MAX_FILES) reason = reason || ("Too many files (max " + MAX_FILES + ").");
-      if (total > MAX_TOTAL_BYTES) reason = reason || "Total size is over 50 MB.";
-      return { ok: !reason, reason };
+      renderShots();
+      if (added) clearFormError();
+      if (errors.length) showShotError(errors.join(" "));
+    }
+
+    function moveShot(index, dir) {
+      const j = index + dir;
+      if (j < 0 || j >= shots.length) return;
+      const tmp = shots[index]; shots[index] = shots[j]; shots[j] = tmp;
+      renderShots();
+    }
+
+    function removeShot(index) {
+      const s = shots[index];
+      if (s && s.url) URL.revokeObjectURL(s.url);
+      shots.splice(index, 1);
+      clearShotError();
+      renderShots();
+    }
+
+    // Revoke every object URL and empty the list (reset / successful submit).
+    function clearShots() {
+      for (const s of shots) { if (s.url) URL.revokeObjectURL(s.url); }
+      shots = [];
+      clearShotError();
+      renderShots();
+    }
+
+    // Rebuild the grid from the ordered list. Filenames/labels go in via
+    // textContent or an input .value (never raw innerHTML) so they cannot
+    // inject markup; the only innerHTML used is for static arrow glyphs.
+    function renderShots() {
+      shotGrid.innerHTML = "";
+      shots.forEach((s, i) => {
+        const card = document.createElement("div");
+        card.className = "shot-card";
+
+        const num = document.createElement("span");
+        num.className = "num";
+        num.textContent = String(i + 1);
+        card.appendChild(num);
+
+        const thumb = document.createElement("img");
+        thumb.className = "thumb";
+        thumb.alt = "";
+        thumb.loading = "lazy";
+        thumb.src = s.url;
+        card.appendChild(thumb);
+
+        const name = document.createElement("input");
+        name.type = "text";
+        name.className = "name";
+        name.value = s.name;
+        name.maxLength = 120;
+        name.setAttribute("aria-label", "Label for screenshot " + (i + 1));
+        name.addEventListener("input", () => { s.name = name.value; });
+        card.appendChild(name);
+
+        const size = document.createElement("span");
+        size.className = "shot-size";
+        size.textContent = fmtBytes(s.file.size);
+        card.appendChild(size);
+
+        const ctrls = document.createElement("div");
+        ctrls.className = "ctrls";
+
+        const up = document.createElement("button");
+        up.type = "button"; up.className = "ctrl up";
+        up.innerHTML = "&uarr;";
+        up.title = "Move up"; up.setAttribute("aria-label", "Move up");
+        up.disabled = i === 0;
+        up.addEventListener("click", () => moveShot(i, -1));
+        ctrls.appendChild(up);
+
+        const down = document.createElement("button");
+        down.type = "button"; down.className = "ctrl down";
+        down.innerHTML = "&darr;";
+        down.title = "Move down"; down.setAttribute("aria-label", "Move down");
+        down.disabled = i === shots.length - 1;
+        down.addEventListener("click", () => moveShot(i, 1));
+        ctrls.appendChild(down);
+
+        const del = document.createElement("button");
+        del.type = "button"; del.className = "ctrl del";
+        del.innerHTML = "&times;";
+        del.title = "Remove"; del.setAttribute("aria-label", "Remove screenshot " + (i + 1));
+        del.addEventListener("click", () => removeShot(i));
+        ctrls.appendChild(del);
+
+        card.appendChild(ctrls);
+        shotGrid.appendChild(card);
+      });
+      shotCount.textContent = shots.length + " / " + MAX_FILES;
+      shotEmpty.hidden = shots.length > 0;
     }
 
     // --- Wire events ---
+    addShotsBtn.addEventListener("click", () => filesInput.click());
     filesInput.addEventListener("change", () => {
-      clearFormError();
-      const res = summarizeFiles();
-      if (!res.ok && res.reason) showFormError(res.reason);
+      addFiles(filesInput.files);
+      filesInput.value = ""; // we keep our own File refs; allow re-picking same files
     });
 
     newVideoBtn.addEventListener("click", newVideo);
     listNewBtn.addEventListener("click", newVideo);
-    // "Projects" returns to the list landing: clear ?job/?new and re-route
-    // (which re-fetches the list, or shows the create form when it is empty).
-    projectsBtn.addEventListener("click", () => {
+    // Internal "Your videos" back link returns to the list landing: clear
+    // ?job/?new and re-route (re-fetches the list, or shows the create form
+    // when the caller has no videos). The topbar "Back to chat" is a plain
+    // <a href="/"> that leaves the studio entirely.
+    function goToList() {
       history.pushState({}, "", location.pathname);
       renderFromUrl();
-    });
+    }
+    backToList.addEventListener("click", goToList);
     // Keep the view in sync with Back/Forward navigation.
     window.addEventListener("popstate", renderFromUrl);
 
@@ -1333,8 +1517,9 @@
       const prompt = promptInput.value.trim();
       if (!title) return showFormError("A title is required.");
       if (!prompt) return showFormError("A prompt is required.");
-      const res = summarizeFiles();
-      if (!res.ok) return showFormError(res.reason || "Choose 1 to 12 screenshots.");
+      if (!shots.length) return showFormError("Add at least one screenshot.");
+      if (shots.length > MAX_FILES) return showFormError("You can add at most " + MAX_FILES + " images.");
+      if (shotsTotalBytes() > MAX_TOTAL_BYTES) return showFormError("Total size is over 50 MB.");
 
       submitBtn.disabled = true;
       submitBtn.textContent = "Uploading...";
@@ -1342,7 +1527,8 @@
       const fd = new FormData();
       fd.append("title", title);
       fd.append("prompt", prompt);
-      for (const f of filesInput.files) fd.append("files", f, f.name);
+      // Append in the CURRENT DISPLAYED ORDER so screenshot-1 = the first card.
+      for (const s of shots) fd.append("files", s.file, s.file.name);
 
       let data;
       try {
@@ -1366,6 +1552,7 @@
       // the studio render + polling path is not duplicated.
       submitBtn.disabled = false;
       submitBtn.textContent = "Generate video";
+      clearShots(); // free object URLs now the upload succeeded
       history.pushState({}, "", "?job=" + encodeURIComponent(data.id));
       openExistingJob(data.id);
     });
