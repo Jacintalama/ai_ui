@@ -68,6 +68,7 @@ async def test_status_returns_shape(db_session):
             slug="alpha",
             user_email="ralph@aiui.com",
             prompt="show the dashboard",
+            title="My demo",
             status="queued",
             plan_json=plan,
         )
@@ -83,6 +84,7 @@ async def test_status_returns_shape(db_session):
     assert body["error"] is None
     assert body["output_available"] is False
     assert body["slug"] == "alpha"
+    assert body["title"] == "My demo"
     assert body["plan"] == plan
 
 

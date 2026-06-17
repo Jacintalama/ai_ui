@@ -1,9 +1,9 @@
 """Tests for the chat-refine endpoints (POST /api/video-jobs/{id}/refine, /apply).
 
-The DB tests need a real Postgres (they insert a TaskItem for the slug-ownership
-check and a VideoJob row), so they are skipped offline and run at deploy/CI where
-DATABASE_URL points at a real database. The no-auth tests fire before any DB call
-(current_admin raises 401 during dependency resolution), so they run locally.
+The DB tests need a real Postgres (they insert a VideoJob row), so they are
+skipped offline and run at deploy/CI where DATABASE_URL points at a real
+database. The no-auth tests fire before any DB call (current_admin raises 401
+during dependency resolution), so they run locally.
 """
 import io
 import os
@@ -21,7 +21,6 @@ from sqlalchemy import select
 os.environ.setdefault("AIUI_FERNET_KEY", Fernet.generate_key().decode())
 
 from main import app  # noqa: E402
-from models import TaskItem  # noqa: E402
 from video_models import VideoJob, VideoJobVersion  # noqa: E402
 
 HEAD = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
@@ -69,18 +68,6 @@ async def test_refine_proposal_persists_conversation(db_session, tmp_path, monke
     shots = tmp_path / "alpha" / ".video" / str(job_id) / "screenshots"
     shots.mkdir(parents=True)
     (shots / "screenshot-1.png").write_bytes(b"x")
-    db_session.add(
-        TaskItem(
-            meeting_id=uuid.uuid4(),
-            action_type="BUILD",
-            assignee_name="R",
-            assignee_email="ralph@aiui.com",
-            description="x",
-            priority="IMPORTANT",
-            status="completed",
-            built_app_slug="alpha",
-        )
-    )
     db_session.add(
         VideoJob(
             id=job_id,
@@ -138,18 +125,6 @@ async def test_apply_409_when_nothing_pending(db_session, tmp_path, monkeypatch)
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
     job_id = uuid.uuid4()
     db_session.add(
-        TaskItem(
-            meeting_id=uuid.uuid4(),
-            action_type="BUILD",
-            assignee_name="R",
-            assignee_email="ralph@aiui.com",
-            description="x",
-            priority="IMPORTANT",
-            status="completed",
-            built_app_slug="alpha",
-        )
-    )
-    db_session.add(
         VideoJob(
             id=job_id,
             slug="alpha",
@@ -183,18 +158,6 @@ async def test_apply_queues_render(db_session, tmp_path, monkeypatch):
             "applied": False,
         }
     ]
-    db_session.add(
-        TaskItem(
-            meeting_id=uuid.uuid4(),
-            action_type="BUILD",
-            assignee_name="R",
-            assignee_email="ralph@aiui.com",
-            description="x",
-            priority="IMPORTANT",
-            status="completed",
-            built_app_slug="alpha",
-        )
-    )
     db_session.add(
         VideoJob(
             id=job_id,
@@ -250,18 +213,6 @@ async def test_screenshots_adds_files(db_session, tmp_path, monkeypatch):
     shots = tmp_path / "alpha" / ".video" / str(job_id) / "screenshots"
     shots.mkdir(parents=True)
     (shots / "screenshot-1.png").write_bytes(_png())
-    db_session.add(
-        TaskItem(
-            meeting_id=uuid.uuid4(),
-            action_type="BUILD",
-            assignee_name="R",
-            assignee_email="ralph@aiui.com",
-            description="x",
-            priority="IMPORTANT",
-            status="completed",
-            built_app_slug="alpha",
-        )
-    )
     db_session.add(
         VideoJob(
             id=job_id,

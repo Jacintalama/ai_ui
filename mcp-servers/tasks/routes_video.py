@@ -1,7 +1,12 @@
-"""POST /api/video-jobs/upload — member-auth screenshot upload for video jobs.
+"""POST /api/video-jobs/upload — admin-only screenshot upload for video jobs.
+
+Video generation is an admins-only feature: there is no project to be a member
+of. Each video is owned by its creator (user_email) and identified by its job
+id URL. The caller supplies a free-text title; the slug is generated internally
+(vid-<job_id8>) only to lay out the on-disk screenshot directory.
 
 Accepts multipart/form-data with:
-  - slug (str): the project the screenshots belong to (path-injection guarded)
+  - title (str): a user-typed name for the video (1-200 chars)
   - prompt (str): what the narrated slideshow should show (1-2000 chars)
   - files (list of UploadFile): 1-12 screenshot images
 
@@ -9,20 +14,18 @@ Guard order is chosen so the cheapest checks fire first and no disk write or
 DB round-trip happens for a request we are going to reject:
   1. VIDEO_ENABLED kill switch            -> 503 if the feature is turned off
   2. current_admin (FastAPI dependency)   -> 401 if no gateway identity headers
-  3. _validate_slug                        -> 400 on an unsafe slug
-  4. file-count cap                        -> 400 if 0 or > MAX_FILES files
-  5. free-disk guard                       -> 507 if the box is low on storage
-  6. _require_role(..., "editor")          -> 403 unless the user can edit the slug
-  7. per-file size cap + validate_screenshot -> 413 / 400 on reject
-  8. per-user daily rate limit (DB COUNT)  -> 429 over VIDEO_MAX_PER_USER_PER_DAY
+  3. file-count cap                        -> 400 if 0 or > MAX_FILES files
+  4. free-disk guard                       -> 507 if the box is low on storage
+  5. per-file size cap + validate_screenshot -> 413 / 400 on reject
+  6. per-user daily rate limit (DB COUNT)  -> 429 over VIDEO_MAX_PER_USER_PER_DAY
 Only after every guard passes do we write the screenshots to disk and insert
 the queued VideoJob row.
 
 The kill switch is checked first (before auth) so a dark deploy with
 VIDEO_ENABLED=false refuses uploads entirely. The free-disk guard is a cheap,
-no-DB check, so it runs before the role lookup (keeping with "cheap, no-DB
-first"); both it and the rate limit run before any file is written, so a
-flooding user is rejected before any disk is consumed.
+no-DB check, so it runs before any file is read; both it and the rate limit run
+before any file is written, so a flooding user is rejected before any disk is
+consumed.
 """
 import logging
 import os
@@ -39,8 +42,6 @@ from sqlalchemy import and_, func, select, update
 from auth import AdminUser, current_admin
 from db import session
 from heavy_lock import enough_free_disk
-from models import TaskItem  # for slug ownership via _require_role
-from routes_projects import _require_role, _validate_slug
 from video_capability import verify_video_capability
 from video_models import VideoJob
 from video_plan import validate_plan
@@ -111,27 +112,28 @@ class RevertRequest(BaseModel):
 
 @router.post("/upload", status_code=201)
 async def upload(
-    slug: str = Form(...),
+    title: str = Form(..., min_length=1, max_length=200),
     prompt: str = Form(..., min_length=1, max_length=2000),
     files: list[UploadFile] = File(default_factory=list),
     user: AdminUser = Depends(current_admin),
 ) -> dict:
     # 1. Kill switch FIRST: a dark deploy with VIDEO_ENABLED=false refuses
-    # uploads entirely, before any auth-role, disk, or DB work.
+    # uploads entirely, before any auth, disk, or DB work.
     if os.environ.get("VIDEO_ENABLED", "true").strip().lower() != "true":
         raise HTTPException(503, "Video generation is disabled")
-    _validate_slug(slug)
     if not files or len(files) > MAX_FILES:
         raise HTTPException(400, f"1-{MAX_FILES} screenshots required")
     # Disk guard (cheap, no-DB): reject a batch we have no room to store + render
-    # before the role DB round-trip, before reading bytes into memory, and well
-    # before any disk write.
+    # before reading bytes into memory, and well before any disk write.
     if not enough_free_disk(
         str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
     ):
         raise HTTPException(507, "Insufficient storage; try again later")
-    async with session() as s:
-        await _require_role(s, slug, user.email, "editor", is_admin=user.is_admin)
+    # The video is owned by its creator (user_email) and identified by job_id.
+    # There is no user-supplied project slug anymore; generate one internally
+    # only to lay out the on-disk screenshot directory.
+    job_id = uuid.uuid4()
+    slug = f"vid-{job_id.hex[:8]}"
     total, raw = 0, []
     for f in files:
         body = await f.read(MAX_FILE_BYTES + 1)
@@ -162,7 +164,6 @@ async def upload(
         ).scalar() or 0
         if used >= int(os.environ.get("VIDEO_MAX_PER_USER_PER_DAY", "10")):
             raise HTTPException(429, "Daily video limit reached")
-    job_id = uuid.uuid4()
     shots = _apps_dir() / slug / ".video" / str(job_id) / "screenshots"
     shots.mkdir(parents=True, exist_ok=True)
     for i, body in enumerate(raw, 1):
@@ -174,6 +175,7 @@ async def upload(
                 slug=slug,
                 user_email=user.email,
                 prompt=prompt,
+                title=title,
                 status="queued",
             )
         )
@@ -198,8 +200,8 @@ async def job_status(
     """Poll one video job's status.
 
     Auth: a logged-in admin gateway identity (`current_admin` -> 401 with no
-    identity headers). Admins see any job; otherwise the caller must be at least
-    a 'viewer' on the job's project (403 if not a member).
+    identity headers). Video generation is admins-only, so the admin gate is the
+    only authorization needed.
 
     `queue_position` is the number of still-queued jobs created before this one
     (0 once the job leaves the queue). `output_available` is true only when the
@@ -210,12 +212,6 @@ async def job_status(
         job = await s.get(VideoJob, jid)
         if job is None:
             raise HTTPException(status_code=404, detail="Video job not found")
-        if user.is_admin:
-            pass
-        else:
-            await _require_role(
-                s, job.slug, user.email, "viewer", is_admin=user.is_admin
-            )
         queue_position = 0
         if job.status == "queued":
             queue_position = (
@@ -234,6 +230,7 @@ async def job_status(
         return {
             "id": str(job.id),
             "slug": job.slug,
+            "title": job.title,
             "status": job.status,
             "queue_position": queue_position,
             "error": job.error,
@@ -255,7 +252,7 @@ async def download(
       1. A valid `video_dl` capability (header `X-Video-Capability` or `?cap=`)
          bound to THIS exact slug + job_id. This path is resolved WITHOUT
          `current_admin`, so it works behind the gateway's `X-User-Admin: false`.
-      2. Otherwise, a logged-in member with at least 'viewer' on the project.
+      2. Otherwise, a logged-in admin (gateway header `X-User-Admin: true`).
     If neither authorizes -> 403. We resolve auth before any DB round-trip so an
     unauthorized caller is rejected without a database hit.
 
@@ -287,13 +284,11 @@ async def download(
         job = await s.get(VideoJob, jid)
         if job is None:
             raise HTTPException(status_code=404, detail="Video job not found")
-        # A capability authorizes only its exact slug + job; otherwise a member.
+        # A capability authorizes only its exact slug + job; otherwise an admin.
         if cap_matches_job and cap_data.get("slug") == job.slug:
             pass
-        elif member_email:
-            await _require_role(
-                s, job.slug, member_email, "viewer", is_admin=member_is_admin
-            )
+        elif member_is_admin:
+            pass
         else:
             raise HTTPException(status_code=403, detail="Not authorized to download")
         if version is not None:
@@ -327,9 +322,8 @@ async def refine(
     """Chat-refine a job's plan: returns either a clarifying question or a
     proposed (un-applied) plan, persisting the conversation either way.
 
-    Auth: a logged-in admin gateway identity (current_admin -> 401), then at
-    least 'editor' on the job's project (403). The proposal is recorded as a
-    pending turn; POST /apply renders it.
+    Auth: a logged-in admin gateway identity (current_admin -> 401). The
+    proposal is recorded as a pending turn; POST /apply renders it.
     """
     if not _video_enabled():
         raise HTTPException(503, "Video generation is disabled")
@@ -342,7 +336,6 @@ async def refine(
         ).scalar_one_or_none()
         if job is None:
             raise HTTPException(404, "Video job not found")
-        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
         slug = job.slug
         plan_json = job.plan_json or {}
         convo = list(job.conversation or [])
@@ -388,9 +381,9 @@ async def apply(
 ) -> dict:
     """Apply the latest pending proposal: swap in its plan and re-queue a render.
 
-    Auth: current_admin (-> 401) then 'editor' on the project (-> 403). Returns
-    409 if there is nothing pending to apply, 422 if the proposed plan is no
-    longer valid against the screenshots currently on disk.
+    Auth: current_admin (-> 401). Returns 409 if there is nothing pending to
+    apply, 422 if the proposed plan is no longer valid against the screenshots
+    currently on disk.
     """
     if not _video_enabled():
         raise HTTPException(503, "Video generation is disabled")
@@ -401,7 +394,6 @@ async def apply(
         ).scalar_one_or_none()
         if job is None:
             raise HTTPException(404, "Video job not found")
-        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
         prop = latest_pending_proposal(job.conversation or [])
         if prop is None:
             raise HTTPException(409, "No pending change to apply")
@@ -437,12 +429,11 @@ async def add_screenshots(
     """Add more screenshots to an existing job (used mid-chat to give the
     refiner new material). Mirrors the upload endpoint's validation.
 
-    Auth: current_admin (-> 401) then 'editor' on the job's project (-> 403).
-    Guard order: kill switch (503), missing job (404), editor role, free-disk
-    (507), file-count cap of existing+new <= MAX_FILES (400, checked before any
-    file bytes are read), then per-file size (413), cumulative-with-existing
-    total (413), and per-file content validation (400). New files continue the
-    screenshot-N numbering after the existing highest.
+    Auth: current_admin (-> 401). Guard order: kill switch (503), missing job
+    (404), free-disk (507), file-count cap of existing+new <= MAX_FILES (400,
+    checked before any file bytes are read), then per-file size (413),
+    cumulative-with-existing total (413), and per-file content validation (400).
+    New files continue the screenshot-N numbering after the existing highest.
     """
     if not _video_enabled():
         raise HTTPException(503, "Video generation is disabled")
@@ -453,7 +444,6 @@ async def add_screenshots(
         ).scalar_one_or_none()
         if job is None:
             raise HTTPException(404, "Video job not found")
-        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
         slug = job.slug
     if not enough_free_disk(
         str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
@@ -501,8 +491,6 @@ async def versions(job_id: str, user: AdminUser = Depends(current_admin)) -> dic
         ).scalar_one_or_none()
         if job is None:
             raise HTTPException(404, "Video job not found")
-        if not user.is_admin:
-            await _require_role(s, job.slug, user.email, "viewer")
         vs = await list_versions(s, jid)
         return {
             "versions": [
@@ -534,7 +522,6 @@ async def revert(
         ).scalar_one_or_none()
         if job is None:
             raise HTTPException(404, "Video job not found")
-        await _require_role(s, job.slug, user.email, "editor", is_admin=user.is_admin)
         v = await find_version(s, jid, body.version_no)
         if v is None:
             raise HTTPException(404, "Version not found")

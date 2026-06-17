@@ -27,6 +27,7 @@ class VideoJob(Base):
     user_email = Column(Text, nullable=False)
     status = Column(Text, nullable=False, default="queued")
     prompt = Column(Text, nullable=False)
+    title = Column(Text, nullable=True)
     plan_json = Column(JSONB, nullable=True)
     error = Column(Text, nullable=True)
     output_path = Column(Text, nullable=True)

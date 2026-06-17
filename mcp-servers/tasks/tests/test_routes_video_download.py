@@ -182,3 +182,54 @@ async def test_download_unknown_version_404(db_session, tmp_path):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get(f"/api/video-jobs/{job_id}/download?cap={cap}&version=7")
     assert r.status_code == 404
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_download_admin_member_authorized(db_session, tmp_path):
+    """The member path: a logged-in admin (X-User-Admin: true) with NO capability
+    can download a finished job. Video generation is admins-only, so the admin
+    header is the authorization (no project role)."""
+    out = tmp_path / "out.mp4"
+    out.write_bytes(b"\x00\x00\x00\x18ftypmp42fake-mp4-bytes")
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id,
+            slug="alpha",
+            user_email="ralph@aiui.com",
+            prompt="show the dashboard",
+            status="done",
+            output_path=str(out),
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/video-jobs/{job_id}/download", headers=HEAD)
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("video/mp4")
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_download_non_admin_member_rejected(db_session, tmp_path):
+    """A logged-in NON-admin (X-User-Admin: false) with no capability is rejected
+    with 403: the member path now requires the admin header, not a project role."""
+    out = tmp_path / "out.mp4"
+    out.write_bytes(b"\x00\x00\x00\x18ftypmp42fake-mp4-bytes")
+    job_id = uuid.uuid4()
+    db_session.add(
+        VideoJob(
+            id=job_id,
+            slug="alpha",
+            user_email="ralph@aiui.com",
+            prompt="show the dashboard",
+            status="done",
+            output_path=str(out),
+        )
+    )
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(
+            f"/api/video-jobs/{job_id}/download",
+            headers={"X-User-Email": "notadmin@aiui.com", "X-User-Admin": "false"},
+        )
+    assert r.status_code == 403
