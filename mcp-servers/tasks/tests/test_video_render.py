@@ -5,6 +5,8 @@ at deploy time, so these tests verify the *structure* of the produced ffmpeg
 argv (not an actual encode). Caption-PNG generation uses Pillow and IS exercised
 for real here.
 """
+import re
+
 from PIL import Image
 
 from templates_video import get_style
@@ -106,3 +108,68 @@ def test_unknown_template_falls_back_to_product_demo():
     plan = _plan(template_id="totally-unknown")
     argv = build_render_script(plan, WORKDIR)  # must not raise
     assert any(arg.endswith("out.mp4") for arg in argv)
+
+
+# --------------------------------------------------------------------------- #
+# Expanded xfade transition palette (Task 1.4)
+# --------------------------------------------------------------------------- #
+def _graph(plan: dict) -> str:
+    """Extract the ``-filter_complex`` graph string from a built argv."""
+    argv = build_render_script(plan, WORKDIR)
+    return argv[argv.index("-filter_complex") + 1]
+
+
+def _two_scene_plan(transition: str, d0: float = 3.0, d1: float = 2.5) -> dict:
+    """A minimal 2-scene plan whose single boundary uses ``transition``."""
+    return _plan(
+        scenes=[
+            {
+                "screenshot": "a.png",
+                "caption": "Scene A caption",
+                "duration_s": d0,
+                "transition": transition,
+            },
+            {
+                "screenshot": "b.png",
+                "caption": "Scene B caption",
+                "duration_s": d1,
+                "transition": "cut",
+            },
+        ]
+    )
+
+
+def test_dissolve_boundary_emits_xfade_dissolve():
+    graph = _graph(_two_scene_plan("dissolve"))
+    assert "xfade=transition=dissolve" in graph
+
+
+def test_next_boundary_emits_xfade_smoothleft():
+    graph = _graph(_two_scene_plan("next"))
+    assert "xfade=transition=smoothleft" in graph
+
+
+def test_section_boundary_emits_fadeblack_clamped():
+    # The 0.7s base fadeblack dip must clamp below the smaller adjacent scene:
+    # a 0.5s neighbor floors the dip at 0.9 * 0.5 == 0.45.
+    graph = _graph(_two_scene_plan("section", d0=3.0, d1=0.5))
+    match = re.search(r"xfade=transition=fadeblack:duration=([0-9.]+)", graph)
+    assert match is not None
+    duration = float(match.group(1))
+    assert duration <= 0.45
+    assert duration < 0.5  # strictly below the smaller adjacent scene
+
+
+def test_cut_boundary_emits_concat():
+    graph = _graph(_two_scene_plan("cut"))
+    assert "concat=n=2:v=1:a=0" in graph
+    assert "xfade=" not in graph
+
+
+def test_crossfade_offset_math_unchanged():
+    # Pre-change behavior for the default 3-scene plan: the 0->1 crossfade uses
+    # the product_demo fade (0.5s) at offset 3.0 - 0.5 == 2.5, and the 1->2
+    # boundary stays a hard concat.
+    graph = _graph(_plan())
+    assert "xfade=transition=fade:duration=0.5:offset=2.5" in graph
+    assert "concat=n=2:v=1:a=0" in graph

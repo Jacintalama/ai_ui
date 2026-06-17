@@ -14,9 +14,9 @@ Pipeline shape per scene, all driven by the validated plan
   * each scene's pre-rendered caption PNG is a second looped image input,
   * the filtergraph scales+pads the screenshot to the target resolution,
     applies a gentle Ken Burns ``zoompan``, then ``overlay``s the caption,
-  * consecutive scenes are joined with ``xfade=transition=fade`` when the
-    earlier scene's ``transition == "crossfade"``, otherwise a plain ``concat``
-    (hard cut),
+  * consecutive scenes are joined with an ``xfade`` whose type is mapped from
+    the earlier scene's ``transition`` (see :data:`XFADE`), otherwise a plain
+    ``concat`` (hard cut),
   * ``voice.mp3`` is the final input, mapped as audio with ``-shortest``,
   * encoded with libx264/veryfast/yuv420p at ``-threads 1`` (low RAM) and
     ``-r 30`` to ``<workdir>/out.mp4``.
@@ -297,15 +297,34 @@ def _scene_filter_stmts(
     ]
 
 
+# Logical scene transitions -> ffmpeg ``xfade`` transition names. Anything not
+# in this map (notably ``cut``) falls back to a hard-cut ``concat``.
+XFADE: dict[str, str] = {
+    "crossfade": "fade",
+    "dissolve": "dissolve",
+    "next": "smoothleft",
+    "section": "fadeblack",
+}
+
+# ``section`` boundaries get a longer "to black and back" dip than the
+# template's normal crossfade. Still clamped to the adjacent scenes below.
+SECTION_FADE: float = 0.7
+
+
 def _chain_stmts(
     scenes: Sequence[dict],
     style: CaptionStyle,
 ) -> tuple[list[str], str]:
     """Fold the per-scene ``[v{i}]`` streams into one final video label.
 
-    Boundary i->i+1 uses scene ``i``'s ``transition``: ``crossfade`` emits an
-    ``xfade=transition=fade`` (with an accumulating ``offset``), anything else
-    emits a hard-cut ``concat``. Returns ``(statements, final_label)``.
+    Boundary i->i+1 uses scene ``i``'s ``transition``. Transitions in
+    :data:`XFADE` emit an ``xfade`` of the mapped type (with an accumulating
+    ``offset``); anything else (e.g. ``cut``) emits a hard-cut ``concat``.
+
+    Every xfade dip is clamped to ``0.9 * min(prev_scene, cur_scene)`` so a
+    fade can never exceed the shorter of its two adjacent scenes (a 0.7s
+    ``section`` dip is invalid against a 0.5s scene, for example). Returns
+    ``(statements, final_label)``.
     """
     stmts: list[str] = []
     final_label = "[v0]"
@@ -316,12 +335,20 @@ def _chain_stmts(
         prev_transition = scenes[i - 1].get("transition", "cut")
         nxt = f"[v{i}]"
         out = f"[x{i}]"
+        prev_dur = float(scenes[i - 1]["duration_s"])
         scene_dur = float(scenes[i]["duration_s"])
-        if prev_transition == "crossfade":
-            fade = float(style.fade_duration)
+        xfade_type = XFADE.get(prev_transition)
+        if xfade_type is not None:
+            base_fade = (
+                SECTION_FADE
+                if prev_transition == "section"
+                else float(style.fade_duration)
+            )
+            # Clamp the dip below the shorter adjacent scene so it stays valid.
+            fade = min(base_fade, 0.9 * min(prev_dur, scene_dur))
             offset = max(0.0, round(acc_duration - fade, 4))
             stmts.append(
-                f"{final_label}{nxt}xfade=transition=fade:"
+                f"{final_label}{nxt}xfade=transition={xfade_type}:"
                 f"duration={_fmt_num(fade)}:offset={_fmt_num(offset)}{out}"
             )
             acc_duration = acc_duration + scene_dur - fade
