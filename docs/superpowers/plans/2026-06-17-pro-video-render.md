@@ -20,6 +20,7 @@
 - Migrations re-run every startup (db.py), so migration 024 MUST be idempotent (`ADD COLUMN IF NOT EXISTS`).
 - PEP8 + type hints. No `print`. **No em-dashes.** Commit per task; **no AI attribution / Co-Authored-By**; never `--no-verify`. Never touch `.env` or `templates.py`.
 - Deploy (per phase) = `docker cp` changed files into the `tasks` container + `docker restart tasks` (preserves `VIDEO_ENABLED`), per the established pattern; host asset installs (voices/music) are separate steps.
+- **Input-ordering invariant (read before touching any ffmpeg input list):** inputs are appended in a FIXED order so the hardcoded caption index `[{n+i}:v]` stays valid: screenshots `0..n-1`, captions `n..2n-1`, then voice, then (Phase 1) the intro/outro lavfi `color` inputs + card-PNG inputs, then (Phase 2) the `-stream_loop -1 -i bed` music input. ALL new inputs are appended at the HIGHEST indices; voice/music/card input indices are computed dynamically and are NEVER hardcoded ahead of captions. This explicitly OVERRIDES the spec's phrase about adding the music bed "earlier in the argv": the bed goes AFTER voice.
 
 ## File structure
 
@@ -97,10 +98,11 @@ ALTER TABLE tasks.video_jobs
   ADD COLUMN IF NOT EXISTS style TEXT NOT NULL DEFAULT 'clean_product_demo',
   ADD COLUMN IF NOT EXISTS voice TEXT;
 ```
-- [ ] **Step 2: Failing test** — `VideoJob` has `style`/`voice` columns (offline `__table__.columns`).
+- [ ] **Step 2: Failing test** — assert `VideoJob` has `style`/`voice` columns using the OFFLINE pattern already in `test_video_models.py` (`__table__.columns` assertions, with NO `_HAVE_DB` gate and no live DB).
 - [ ] **Step 3: Implement** — add `style = Column(Text, nullable=False, default="clean_product_demo")` and `voice = Column(Text, nullable=True)` to `VideoJob`.
 - [ ] **Step 4: Run -> pass.**
 - [ ] **Step 5: Commit** `feat(video): style/voice columns on video_jobs (migration 024)`.
+- [ ] **Note (carry to Task 2.1):** `voice` has NO DB default (NULL). Task 2.1's voice resolution must therefore treat NULL (not only an unknown id) as the default voice, otherwise existing and Phase-1 rows with `voice IS NULL` never render.
 
 ### Task 1.4: Transitions palette (`_chain_stmts`)
 
@@ -108,7 +110,7 @@ ALTER TABLE tasks.video_jobs
 
 - [ ] **Step 1: Failing tests**: a `dissolve` scene emits `xfade=transition=dissolve`; `next` -> `smoothleft`; `section` -> `fadeblack` with a fade clamped `< min(adjacent durations)`; `cut` emits `concat`; the accumulating `offset`/`acc_duration` math is unchanged for the existing cases.
 - [ ] **Step 2: Run -> fail.**
-- [ ] **Step 3: Implement** the `XFADE` map + `fade = min(fade, 0.9*min(prev_dur, cur_dur))` clamp, per the spec snippet; keep offset math verbatim. Add a startup feature-detect helper (`ffmpeg -h filter=xfade`) that downgrades unavailable names to `fade`; unit-test the mapping with the detector stubbed.
+- [ ] **Step 3: Implement** the `XFADE` map + `fade = min(fade, 0.9*min(prev_dur, cur_dur))` clamp, per the spec snippet; keep offset math verbatim. Do NOT add a container-side feature-detect: ffmpeg is HOST-only (the tasks Dockerfile installs no ffmpeg), so a container-side startup `ffmpeg -h filter=xfade` always fails and would wrongly downgrade every transition to `fade`. Assume a modern ffmpeg on the host (`smoothleft`/`fadeblack`/`dissolve` have shipped for years). If a guard is ever wanted, it must run on the HOST, not in the container. Unit-test the `XFADE` mapping directly (no detector).
 - [ ] **Step 4: Run -> pass.**
 - [ ] **Step 5: Commit** `feat(video): expanded xfade transition palette`.
 
@@ -160,10 +162,12 @@ ALTER TABLE tasks.video_jobs
 
 ### Task 1.10: Intro + outro cards (single invocation)
 
-**Files:** Create `video_cards.py`; Modify `video_render.py` (`build_filtergraph`/`build_render_script`); Test `tests/test_video_cards.py`, `tests/test_video_render.py`
+**Files:** Create `video_cards.py`; Modify `video_render.py` (`build_filtergraph`/`build_render_script`), `video_executor.py` (call `render_cards` in the in-container prep); Test `tests/test_video_cards.py`, `tests/test_video_render.py`, `tests/test_video_executor.py`
 
 - [ ] **Step 1: Failing tests**: (a) `video_cards.render_title_card_png(title, size, style.cards)` and `render_outro_card_png(cta, size, style.cards)` produce valid PNGs with the title/CTA text drawn (Pillow, injection-safe — text with `:'"\\` does not break); (b) `build_render_script` adds lavfi color inputs for intro+outro and xfade-stitches them as the first/last segments of the chain (assert the chain references the intro/outro labels), and the total adds ~intro+outro seconds.
 - [ ] **Step 2-4:** implement Pillow card renderers + lavfi color inputs (`-f lavfi -i color=...`) overlaid with the card PNG, xfade-stitched onto the body in one invocation; title from `plan.title`, CTA = the site URL.
+- [ ] **Step 4b: Write the card PNGs to disk (executor prep).** Add `render_cards(plan, workdir, size, style)` to `video_cards.py`: it writes the intro title card + outro CTA card PNGs into the render workdir. It is CALLED in the executor's in-container prep step (alongside `render_all_captions`, before `_render_remote`), so the lavfi card-overlay inputs reference REAL files on disk. `build_render_script` is PURE (it writes nothing), so the executor must do the writing. Add an offline test that the card PNGs are produced AND that `build_render_script` references their paths.
+- [ ] **Input-ordering invariant (Phase 1):** ffmpeg inputs are appended in a FIXED order so the hardcoded caption index `[{n+i}:v]` stays valid: screenshots `0..n-1`, captions `n..2n-1`, then voice, then the intro/outro lavfi `color` inputs + card-PNG inputs. ALL new inputs are appended at the HIGHEST indices; the voice and card input indices are computed dynamically and are NEVER hardcoded ahead of captions.
 - [ ] **Step 5: Commit** `feat(video): intro title card + outro CTA card`.
 
 ### Task 1.11: Delivery-grade encode tail
@@ -176,10 +180,11 @@ ALTER TABLE tasks.video_jobs
 
 ### Task 1.12: Wire job `style` into the render + create form (Style dropdown)
 
-**Files:** Modify `video_render.py` (`build_render_script`/`render_all_captions` to key off the passed style id), `video_worker.py` (pass `job.style`), `routes_video.py` (upload `style` field + allowlist), `static/video.html` (Style dropdown); Test `tests/test_routes_video_*`, `tests/test_video_render.py`
+**Files:** Modify `video_render.py` (`build_render_script`/`render_all_captions` to key off the passed style id), `video_executor.py` (`render` accepts + threads `style` into both builders), `video_worker.py` (pass `job.style`), `routes_video.py` (upload `style` field + allowlist), `static/video.html` (Style dropdown); Test `tests/test_routes_video_*`, `tests/test_video_render.py`, `tests/test_video_executor.py`
 
 - [ ] **Step 1: Failing tests**: `build_render_script(plan, workdir, style="cinematic")` selects the cinematic StyleConfig (visual config independent of `template_id`); upload rejects an unknown `style` with 400; offline form test that the Style `<select>` exists with the 3 options.
 - [ ] **Step 2-4:** thread `style` from the job -> worker -> `build_render_script`/`render_all_captions` (replace the `get_style(plan["template_id"])` styling call with `get_style_config(style)`); add `style` Form field (allowlist) on upload; add the Style dropdown to `video.html` (default clean_product_demo) and send it in the FormData.
+- [ ] **Step 4b: Thread `style` through `video_executor.py` (Phase-1 BLOCKING).** `VideoRenderExecutor.render(slug, job_id, plan)` gains a `style` parameter. `render()` passes `style` to `render_all_captions(...)` AND threads it through `_render_remote` into `build_render_script(plan, workdir, style)`. `video_worker.py` passes `job.style` into `render()`. Without this seam the user's `style` never reaches either builder (captions or filtergraph), so all of Phase 1 silently no-ops on the default style.
 - [ ] **Step 5: Commit** `feat(video): user-selected style drives the render + Style dropdown`.
 
 ### Task 1.13: Phase 1 deploy + benchmark (runbook, not TDD)
@@ -199,6 +204,7 @@ ALTER TABLE tasks.video_jobs
 
 - [ ] **Step 1: Failing test** (offline, mock subprocess/ffprobe): given a plan with per-scene `narration`, `_voice` builds one Piper call per scene to the chosen voice model (resolved via an allowlist dict, never user path), then ffprobes each clip; returns a list of per-scene spoken lengths + concatenates the clips to `voice.wav`. Unknown voice id -> falls back to default.
 - [ ] **Step 2-4:** implement per-scene synth + ffprobe + concat; voice allowlist `{id: model_path}`.
+- [ ] **Note (prep ordering):** the per-scene narration text must be materialized as per-scene files during the in-container prep step and rsynced to the host BEFORE the host `_voice` step runs, so host Piper can read them.
 - [ ] **Step 5: Commit** `feat(video): per-scene voice synthesis + measured durations`.
 
 ### Task 2.2: Controller marshalling — durations follow audio + cap/atempo
@@ -207,6 +213,7 @@ ALTER TABLE tasks.video_jobs
 
 - [ ] **Step 1: Failing tests**: after voice synth, each `scene.duration_s = max(MIN_SCENE_SECONDS, spoken_len + 0.4)`, re-clamped; if total spoken > 60s a global `atempo` factor (<=1.2) is applied; the filtergraph `-t` and caption `st` timings match the updated durations. (Mock the per-scene lengths.)
 - [ ] **Step 2-4:** reorder `render` to voice-first; update plan durations from measured lengths; compute atempo; rebuild script.
+- [ ] **Note (reorder ordering):** the "voice-first" reorder happens BEFORE `_render_remote` in `render()` (synth + measure + re-clamp durations first, then build the script), so the filtergraph `-t`/caption `st` timings are built from the measured lengths.
 - [ ] **Step 5: Commit** `feat(video): scene durations follow the spoken audio (no mid-sentence cuts)`.
 
 ### Task 2.3: Loudnorm voice pre-pass
@@ -222,6 +229,7 @@ ALTER TABLE tasks.video_jobs
 
 - [ ] **Step 1: Failing test**: when a style has music, the filtergraph emits the `asplit`/`volume`/`afade`/`sidechaincompress`/`amix=...:normalize=0[aout]` chain and the encode maps `[aout]`; with music disabled it maps the voice directly.
 - [ ] **Step 2-4:** implement the ducked-music chain (level from StyleConfig); add the music input + `-map [aout]`; bundle 3 CC0 tracks + LICENSE; gate behind a flag.
+- [ ] **Input-ordering invariant (Phase 2):** the `-stream_loop -1 -i bed` music input is appended AFTER voice (and after the Phase-1 card inputs), at the HIGHEST input index; its index is computed dynamically. This OVERRIDES the spec's phrase about adding the bed "earlier in the argv": the bed goes AFTER voice so the hardcoded caption index `[{n+i}:v]` stays valid.
 - [ ] **Step 5: Commit** `feat(video): per-style ducked music bed`.
 
 ### Task 2.5: Voice dropdown + host voice install
