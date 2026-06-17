@@ -31,6 +31,7 @@
       --danger-soft:  #2a1414;
       --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
       --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+      --shadow-lg:    0 14px 40px rgba(0,0,0,0.55);
     }
     :root {
       --radius-sm: 4px;
@@ -43,7 +44,11 @@
     [hidden] { display: none !important; }
     html, body { height: 100%; }
     body {
-      background: var(--bg);
+      background:
+        radial-gradient(900px 480px at 88% -8%, rgba(124,140,255,0.10), transparent 60%),
+        radial-gradient(720px 420px at -6% 4%, rgba(93,108,255,0.07), transparent 55%),
+        var(--bg);
+      background-attachment: fixed;
       color: var(--text);
       font-family: var(--font-ui);
       font-size: 14px;
@@ -55,6 +60,7 @@
     a:hover { color: var(--accent-2); }
     button { font-family: inherit; color: inherit; cursor: pointer; }
     button:disabled, .btn:disabled { cursor: not-allowed; opacity: 0.6; }
+    .muted { color: var(--muted); }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -65,7 +71,9 @@
       align-items: center;
       justify-content: space-between;
       padding: 0 24px;
-      background: var(--surface);
+      background: rgba(17,17,19,0.82);
+      backdrop-filter: saturate(140%) blur(10px);
+      -webkit-backdrop-filter: saturate(140%) blur(10px);
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
@@ -84,24 +92,57 @@
     .topbar .back {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 6px 12px; border-radius: var(--radius);
-      color: var(--text-2); font-size: 13px; transition: background 0.15s;
+      color: var(--text-2); font-size: 13px; transition: background 0.15s, color 0.15s;
     }
     .topbar .back:hover { background: var(--surface-2); color: var(--text); }
 
-    .container { max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; }
-    .header-row { margin-bottom: 24px; }
-    .header-row h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
-    .header-row .sub { color: var(--text-2); font-size: 13px; margin-top: 6px; }
+    .container { max-width: 1080px; margin: 0 auto; padding: 32px 24px 72px; }
+
+    /* Page header */
+    .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 28px; }
+    .page-head .head-icon {
+      flex-shrink: 0;
+      width: 46px; height: 46px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(150deg, var(--accent), var(--accent-2));
+      color: #0a0a0b;
+      box-shadow: 0 6px 18px rgba(124,140,255,0.30);
+    }
+    .page-head .head-icon svg { width: 24px; height: 24px; }
+    .page-head h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.025em; }
+    .page-head .lead { color: var(--text-2); font-size: 13.5px; margin-top: 5px; max-width: 64ch; }
+    .page-head .delivery-note {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--muted); margin-top: 9px;
+    }
+    .page-head .delivery-note svg { width: 13px; height: 13px; opacity: 0.85; }
+
+    /* Two-column responsive layout */
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+      gap: 28px;
+      align-items: start;
+    }
+    .col-form { position: sticky; top: 88px; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; gap: 24px; }
+      .col-form { position: static; }
+    }
 
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
-      padding: 24px;
+      padding: 22px;
       box-shadow: var(--shadow-sm);
     }
-    .card + .card { margin-top: 20px; }
-    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+    .card-title {
+      font-size: 15px; font-weight: 600; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 9px;
+    }
+    .card-title svg { width: 16px; height: 16px; color: var(--accent); }
 
     .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
     .field:last-child { margin-bottom: 0; }
@@ -119,12 +160,44 @@
       font-family: inherit;
       font-size: 13px;
       outline: none;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
-    .form-input:focus, .form-textarea:focus { border-color: var(--accent); }
-    .form-input.mono { font-family: var(--font-mono); }
-    .form-textarea { resize: vertical; min-height: 90px; font-family: var(--font-ui); }
+    .form-input:focus, .form-textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(124,140,255,0.16);
+    }
+    .form-input.mono { font-family: var(--font-mono); letter-spacing: 0.02em; }
+    .form-textarea { resize: vertical; min-height: 92px; font-family: var(--font-ui); }
     .form-hint { font-size: 11px; color: var(--muted); }
+    .form-hint code {
+      font-family: var(--font-mono); font-size: 10.5px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); padding: 1px 5px; color: var(--text-2);
+    }
+
+    /* Live cron preview (under the cron-expression input) */
+    .cron-preview {
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 8px; padding: 9px 12px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border-2);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12.5px;
+      transition: border-color 0.18s, background 0.18s, color 0.18s;
+    }
+    .cron-preview svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .cron-preview .cron-preview-text { color: inherit; }
+    .cron-preview.active {
+      border-color: rgba(124,140,255,0.35);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .cron-preview.active.fallback {
+      border-color: rgba(245,158,11,0.30);
+      background: var(--warning-soft);
+      color: var(--warning);
+    }
 
     .btn {
       padding: 10px 16px;
@@ -134,16 +207,20 @@
       color: var(--text);
       font-size: 13px;
       font-weight: 500;
-      transition: background 0.15s, border-color 0.15s;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
       text-align: center;
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 8px;
     }
     .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--accent); }
-    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0b; }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn svg { width: 14px; height: 14px; }
+    .btn.block { width: 100%; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0b; font-weight: 600; }
     .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
-    .btn.sm { padding: 6px 12px; font-size: 12px; }
+    .btn.sm { padding: 6px 11px; font-size: 12px; }
     .btn.danger { color: var(--danger); border-color: rgba(248,113,113,0.35); }
     .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 
@@ -154,6 +231,7 @@
       background: var(--surface-2); color: var(--text-2);
       text-transform: capitalize;
     }
+    .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
     .badge.enabled  { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
     .badge.disabled { background: var(--surface-2); color: var(--muted); border-color: var(--border-2); }
     .badge.running  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
@@ -170,6 +248,18 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Schedule list */
+    .section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-bottom: 16px;
+    }
+    .section-head .section-title { display: flex; align-items: center; gap: 9px; }
+    .section-head h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+    .section-head .count {
+      font-size: 12px; font-weight: 600; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: 999px; padding: 2px 9px; min-width: 24px; text-align: center;
+    }
+
     .sched-list { display: flex; flex-direction: column; gap: 14px; }
     .sched-card {
       background: var(--surface);
@@ -177,26 +267,98 @@
       border-radius: var(--radius-lg);
       padding: 18px 20px;
       box-shadow: var(--shadow-sm);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
     }
-    .sched-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .sched-name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
-    .sched-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .sched-cron {
-      display: inline-block; margin-top: 10px;
-      font-family: var(--font-mono); font-size: 13px;
-      background: var(--surface-2); border: 1px solid var(--border-2);
-      border-radius: var(--radius); padding: 4px 8px; color: var(--text-2);
+    .sched-card::before {
+      content: "";
+      position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+      background: linear-gradient(var(--accent), var(--accent-2));
+      opacity: 0; transition: opacity 0.18s ease;
     }
-    .sched-meta { color: var(--text-2); font-size: 12px; margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .sched-prompt { color: var(--muted); font-size: 12px; margin-top: 8px; white-space: pre-wrap; word-break: break-word; }
-    .sched-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .sched-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-2);
+      box-shadow: var(--shadow-md);
+    }
+    .sched-card:hover::before { opacity: 0.9; }
 
-    .delivery-note {
-      font-size: 12px; color: var(--muted);
-      margin-top: 6px;
+    .sched-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .sched-id { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+    .sched-icon {
+      flex-shrink: 0;
+      width: 38px; height: 38px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: var(--radius);
+      background: var(--accent-soft);
+      border: 1px solid rgba(124,140,255,0.22);
+      color: var(--accent);
     }
-    .loading { display: flex; align-items: center; gap: 10px; color: var(--text-2); padding: 24px 0; }
-    .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+    .sched-icon svg { width: 19px; height: 19px; }
+    .sched-titles { min-width: 0; }
+    .sched-name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; word-break: break-word; }
+    .sched-human {
+      font-size: 12.5px; color: var(--text-2); margin-top: 3px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sched-human svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--accent); opacity: 0.9; }
+    .sched-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+
+    .sched-chips { display: flex; align-items: center; gap: 8px; margin-top: 13px; flex-wrap: wrap; }
+    .sched-cron {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: var(--font-mono); font-size: 12.5px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 9px; color: var(--text-2);
+    }
+    .sched-cron .label {
+      font-family: var(--font-ui); font-size: 9.5px; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+    }
+    .sched-tz {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 9px;
+    }
+    .sched-tz svg { width: 13px; height: 13px; opacity: 0.8; }
+
+    .sched-meta { color: var(--text-2); font-size: 12px; margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .sched-prompt {
+      color: var(--text-2); font-size: 12px; margin-top: 12px;
+      white-space: pre-wrap; word-break: break-word;
+      padding: 10px 12px; background: var(--surface-2);
+      border: 1px solid var(--border); border-left: 2px solid var(--border-2);
+      border-radius: var(--radius);
+    }
+    .sched-actions {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px;
+      padding-top: 14px; border-top: 1px solid var(--border);
+    }
+
+    .loading { display: flex; align-items: center; gap: 10px; color: var(--text-2); padding: 28px 0; }
+
+    /* Polished empty state */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      padding: 48px 24px;
+      border: 1px dashed var(--border-2);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(180deg, var(--surface), var(--surface-2));
+    }
+    .empty-state .empty-icon {
+      width: 56px; height: 56px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 14px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(124,140,255,0.22);
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+    .empty-state .empty-icon svg { width: 27px; height: 27px; }
+    .empty-state .empty-title { font-size: 15px; font-weight: 600; color: var(--text); }
+    .empty-state .empty-hint { font-size: 13px; color: var(--muted); margin-top: 6px; max-width: 38ch; }
 
     .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
     .error.box {
@@ -226,7 +388,7 @@
     .confirm-card {
       background: var(--surface); border: 1px solid var(--border);
       border-radius: var(--radius-lg); padding: 22px;
-      max-width: 420px; width: 100%; box-shadow: var(--shadow-md);
+      max-width: 420px; width: 100%; box-shadow: var(--shadow-lg);
     }
     .confirm-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
     .confirm-body { color: var(--text-2); font-size: 13px; margin-bottom: 18px; }
@@ -258,53 +420,88 @@
   </header>
 
   <main class="container">
-    <div class="header-row">
-      <h2>Cron Jobs / Schedules</h2>
-      <div class="sub">Run a prompt on a recurring schedule.</div>
-      <div class="delivery-note">Schedule results are delivered to your linked Discord/Slack.</div>
+    <div class="page-head">
+      <div class="head-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path>
+        </svg>
+      </div>
+      <div>
+        <h1>Cron Jobs / Schedules</h1>
+        <div class="lead">Run a prompt on a recurring schedule. Define it once with standard cron, and your AI task fires automatically, on time, every time.</div>
+        <div class="delivery-note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 5h16v12H7l-3 3z"></path>
+          </svg>
+          Results are delivered to your linked Discord / Slack.
+        </div>
+      </div>
     </div>
 
-    <!-- New schedule form -->
-    <section class="card" id="form-card">
-      <div class="card-title">New schedule</div>
-      <form id="sched-form" autocomplete="off">
-        <div class="field">
-          <label class="form-label" for="name">Name</label>
-          <input class="form-input" id="name" name="name" placeholder="Weekday morning digest" required>
-        </div>
+    <div class="layout">
+      <!-- New schedule form (sticky on wide screens) -->
+      <div class="col-form">
+        <section class="card" id="form-card">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+            New schedule
+          </div>
+          <form id="sched-form" autocomplete="off">
+            <div class="field">
+              <label class="form-label" for="name">Name</label>
+              <input class="form-input" id="name" name="name" placeholder="Weekday morning digest" required>
+            </div>
 
-        <div class="field">
-          <label class="form-label" for="cron_expr">Cron expression</label>
-          <input class="form-input mono" id="cron_expr" name="cron_expr" placeholder="0 9 * * 1-5" required>
-          <span class="form-hint">Standard 5-field cron, e.g. <code>0 9 * * 1-5</code> (9:00am, Mon to Fri).</span>
-        </div>
+            <div class="field">
+              <label class="form-label" for="cron_expr">Cron expression</label>
+              <input class="form-input mono" id="cron_expr" name="cron_expr" placeholder="0 9 * * 1-5" required>
+              <div class="cron-preview" id="cron-preview">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path>
+                </svg>
+                <span class="cron-preview-text" id="cron-preview-text"></span>
+              </div>
+              <span class="form-hint">Standard 5-field cron, e.g. <code>0 9 * * 1-5</code> (9:00am, Mon to Fri).</span>
+            </div>
 
-        <div class="field">
-          <label class="form-label" for="prompt">Prompt</label>
-          <textarea class="form-textarea" id="prompt" name="prompt" maxlength="4000"
-            placeholder="Summarize my unread email and post the highlights." required></textarea>
-          <span class="form-hint">What the scheduled run should do. Up to 4000 characters.</span>
-        </div>
+            <div class="field">
+              <label class="form-label" for="prompt">Prompt</label>
+              <textarea class="form-textarea" id="prompt" name="prompt" maxlength="4000"
+                placeholder="Summarize my unread email and post the highlights."  required></textarea>
+              <span class="form-hint">What the scheduled run should do. Up to 4000 characters.</span>
+            </div>
 
-        <div class="error box" id="form-error" hidden></div>
+            <div class="error box" id="form-error" hidden></div>
 
-        <div class="field" style="margin-top: 4px;">
-          <button class="btn primary" type="submit" id="create-btn">Create schedule</button>
-        </div>
-      </form>
-    </section>
-
-    <!-- Schedule list -->
-    <section style="margin-top: 28px;">
-      <div class="header-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-        <h2 style="font-size:18px;">Your schedules</h2>
-        <button class="btn sm" type="button" id="refresh-btn">Refresh</button>
+            <div class="field" style="margin-top: 4px;">
+              <button class="btn primary block" type="submit" id="create-btn">Create schedule</button>
+            </div>
+          </form>
+        </section>
       </div>
-      <div class="error box" id="list-error" hidden></div>
-      <div id="list-region">
-        <div class="loading"><span class="spinner"></span> Loading your schedules&hellip;</div>
+
+      <!-- Schedule list -->
+      <div class="col-list">
+        <div class="section-head">
+          <div class="section-title">
+            <h2>Your schedules</h2>
+            <span class="count" id="sched-count" hidden>0</span>
+          </div>
+          <button class="btn sm" type="button" id="refresh-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v4h-4"></path>
+            </svg>
+            Refresh
+          </button>
+        </div>
+        <div class="error box" id="list-error" hidden></div>
+        <div id="list-region">
+          <div class="loading"><span class="spinner"></span> Loading your schedules&hellip;</div>
+        </div>
       </div>
-    </section>
+    </div>
   </main>
 
   <script>
@@ -331,6 +528,20 @@
     const createBtn = document.getElementById("create-btn");
     const formError = document.getElementById("form-error");
     const refreshBtn = document.getElementById("refresh-btn");
+    const schedCount = document.getElementById("sched-count");
+    const cronPreview = document.getElementById("cron-preview");
+    const cronPreviewText = document.getElementById("cron-preview-text");
+
+    // Inline SVG glyphs (no external assets). Static markup only -- never mixed
+    // with user-controlled text, which is always set via textContent / escaped.
+    const ICON_CLOCK =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path></svg>';
+    const ICON_CAL =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg>';
+    const ICON_REPEAT =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
+    const ICON_GLOBE =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.6 2.9 2.6 15.1 0 18M12 3c-2.6 2.9-2.6 15.1 0 18"></path></svg>';
 
     // Browser timezone, sent as the optional `tz` so schedules fire in the
     // user's local time rather than server UTC. Harmless if the API ignores it.
@@ -342,6 +553,153 @@
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
       }[c]));
     }
+
+    // --- Human-readable cron description (built-in, no library) ---
+    // Covers the common 5-field patterns; returns null when it can't confidently
+    // describe an expression so callers can fall back to the raw text.
+    const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const MONTHS = ["", "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November", "December"];
+    const DOW_ALIAS = { sun: "0", mon: "1", tue: "2", wed: "3", thu: "4", fri: "5", sat: "6" };
+    const MON_ALIAS = { jan: "1", feb: "2", mar: "3", apr: "4", may: "5", jun: "6",
+                        jul: "7", aug: "8", sep: "9", oct: "10", nov: "11", dec: "12" };
+    const CRON_MACROS = {
+      "@hourly":   "Every hour, on the hour",
+      "@daily":    "Every day at 12:00 AM",
+      "@midnight": "Every day at 12:00 AM",
+      "@weekly":   "Every Sunday at 12:00 AM",
+      "@monthly":  "On the 1st of every month at 12:00 AM",
+      "@yearly":   "On January 1st at 12:00 AM",
+      "@annually": "On January 1st at 12:00 AM",
+    };
+    const isNum = (s) => /^\d+$/.test(s);
+
+    function ordinal(n) {
+      const v = n % 100;
+      if (v >= 11 && v <= 13) return n + "th";
+      switch (n % 10) {
+        case 1: return n + "st";
+        case 2: return n + "nd";
+        case 3: return n + "rd";
+        default: return n + "th";
+      }
+    }
+
+    function fmtTime(h, m) {
+      h = parseInt(h, 10); m = parseInt(m, 10);
+      if (isNaN(h) || isNaN(m) || h > 23 || m > 59) return null;
+      const ampm = h < 12 ? "AM" : "PM";
+      let hr = h % 12; if (hr === 0) hr = 12;
+      return hr + ":" + String(m).padStart(2, "0") + " " + ampm;
+    }
+
+    function dayName(n) { return DOW_FULL[((n % 7) + 7) % 7]; }
+
+    // Describe a day-of-week field (already alias-normalized to numbers).
+    function describeDow(dow) {
+      if (dow === "1-5") return "Every weekday";
+      if (dow === "0,6" || dow === "6,0" || dow === "0,7" || dow === "6-7" || dow === "6,7") return "Every weekend";
+      if (isNum(dow)) return "Every " + dayName(parseInt(dow, 10));
+      const rng = dow.match(/^(\d+)-(\d+)$/);
+      if (rng) {
+        const a = parseInt(rng[1], 10), b = parseInt(rng[2], 10);
+        if (a === 1 && b === 5) return "Every weekday";
+        return "Every " + dayName(a) + " to " + dayName(b);
+      }
+      if (/^\d+(,\d+)+$/.test(dow)) {
+        const days = dow.split(",").map((x) => dayName(parseInt(x, 10)));
+        if (days.length === 2) return "Every " + days[0] + " and " + days[1];
+        return "Every " + days.slice(0, -1).join(", ") + " and " + days[days.length - 1];
+      }
+      return null;
+    }
+
+    function monthName(mon) {
+      if (isNum(mon)) { const m = parseInt(mon, 10); if (m >= 1 && m <= 12) return MONTHS[m]; }
+      return null;
+    }
+
+    // Build the "which days" clause from dom / mon / dow fields. Returns null
+    // for ambiguous combinations so the caller falls back to the raw expression.
+    function dayClause(dom, mon, dow) {
+      const domAny = dom === "*", monAny = mon === "*", dowAny = dow === "*";
+      if (domAny && dowAny) {
+        if (monAny) return "Every day";
+        const mc = monthName(mon);
+        return mc ? "Every day in " + mc : null;
+      }
+      if (domAny && !dowAny) {
+        if (!monAny) return null;
+        return describeDow(dow);
+      }
+      if (!domAny && dowAny) {
+        const every = dom.match(/^\*\/(\d+)$/);
+        if (every) {
+          const n = parseInt(every[1], 10);
+          if (!monAny) return null;
+          return n === 1 ? "Every day" : "Every " + n + " days";
+        }
+        if (isNum(dom)) {
+          const dnum = parseInt(dom, 10);
+          if (dnum < 1 || dnum > 31) return null;
+          if (monAny) return "On the " + ordinal(dnum) + " of every month";
+          const mc = monthName(mon);
+          return mc ? "On " + mc + " " + ordinal(dnum) : null;
+        }
+        return null;
+      }
+      // Both dom and dow constrained -> cron treats this as an OR; too ambiguous
+      // to phrase reliably, so fall back to the raw expression.
+      return null;
+    }
+
+    // Returns a human-readable description, or null if it can't parse the cron.
+    function describeCron(raw) {
+      if (raw == null) return null;
+      let expr = String(raw).trim().toLowerCase().replace(/\s+/g, " ");
+      if (!expr) return null;
+      if (CRON_MACROS[expr]) return CRON_MACROS[expr];
+
+      const p = expr.split(" ");
+      if (p.length !== 5) return null;
+      let [min, hr, dom, mon, dow] = p;
+
+      // Normalize 3-letter day/month aliases to numbers.
+      dow = dow.replace(/[a-z]{3}/g, (m) => (DOW_ALIAS[m] != null ? DOW_ALIAS[m] : m));
+      mon = mon.replace(/[a-z]{3}/g, (m) => (MON_ALIAS[m] != null ? MON_ALIAS[m] : m));
+
+      // Sub-hour and hourly frequencies (only when the rest is unconstrained).
+      const allDays = dom === "*" && mon === "*" && dow === "*";
+      if (min === "*" && hr === "*" && allDays) return "Every minute";
+      const minEvery = min.match(/^\*\/(\d+)$/);
+      if (minEvery && hr === "*" && allDays) {
+        const n = parseInt(minEvery[1], 10);
+        return n <= 1 ? "Every minute" : "Every " + n + " minutes";
+      }
+      const hrEvery = hr.match(/^\*\/(\d+)$/);
+      if (isNum(min) && hrEvery && allDays) {
+        const n = parseInt(hrEvery[1], 10);
+        const past = parseInt(min, 10) ? " at " + parseInt(min, 10) + " minutes past" : "";
+        return n <= 1 ? "Every hour" + past : "Every " + n + " hours" + past;
+      }
+      if (isNum(min) && hr === "*" && allDays) {
+        const m = parseInt(min, 10);
+        if (m > 59) return null;
+        return m === 0 ? "Every hour, on the hour"
+                       : "Every hour at " + m + (m === 1 ? " minute past" : " minutes past");
+      }
+
+      // Daily-at-a-time patterns require a concrete minute + hour.
+      if (!isNum(min) || !isNum(hr)) return null;
+      const time = fmtTime(hr, min);
+      if (!time) return null;
+      const days = dayClause(dom, mon, dow);
+      if (days === null) return null;
+      return days + " at " + time;
+    }
+
+    // Human text for display, falling back to the raw expression when unparsed.
+    function humanizeCron(raw) { return describeCron(raw) || String(raw || ""); }
 
     function relativeTime(iso) {
       if (!iso) return "";
@@ -367,6 +725,25 @@
     function clearFormError() { formError.textContent = ""; formError.hidden = true; }
     function showListError(msg) { listError.textContent = msg; listError.hidden = false; }
     function clearListError() { listError.textContent = ""; listError.hidden = true; }
+
+    // --- Live cron preview under the cron-expression input ---
+    function updateCronPreview() {
+      const v = cronInput.value.trim();
+      if (!v) {
+        cronPreview.classList.remove("active", "fallback");
+        cronPreviewText.textContent = "Enter a cron expression to see a plain-English preview.";
+        return;
+      }
+      const human = describeCron(v);
+      if (human) {
+        cronPreview.classList.add("active");
+        cronPreview.classList.remove("fallback");
+        cronPreviewText.textContent = human;
+      } else {
+        cronPreview.classList.add("active", "fallback");
+        cronPreviewText.textContent = "Custom schedule: " + v;
+      }
+    }
 
     // --- Styled confirm dialog (Promise-based; mirrors projects.html) ---
     const confirmOverlay = document.getElementById("confirm-overlay");
@@ -407,8 +784,8 @@
 
       const enabled = !!s.enabled;
       const enabledBadge = enabled
-        ? '<span class="badge enabled">Enabled</span>'
-        : '<span class="badge disabled">Disabled</span>';
+        ? '<span class="badge enabled"><span class="dot"></span>Enabled</span>'
+        : '<span class="badge disabled"><span class="dot"></span>Disabled</span>';
       const onceBadge = s.run_once ? '<span class="badge">Run once</span>' : "";
 
       let lastRun = "";
@@ -423,17 +800,33 @@
         lastRun = '<span class="muted">No runs yet</span>';
       }
 
-      const tz = s.tz ? ` · <span title="timezone">${escapeHtml(String(s.tz))}</span>` : "";
+      const tz = s.tz
+        ? `<span class="sched-tz" title="timezone">${ICON_GLOBE}${escapeHtml(String(s.tz))}</span>`
+        : "";
       const prompt = s.prompt
         ? `<div class="sched-prompt">${escapeHtml(String(s.prompt))}</div>`
         : "";
 
+      // Plain-English description (only when confidently parsed; the mono chip
+      // below always shows the raw expression as the source of truth).
+      const human = describeCron(s.cron_expr);
+      const humanRow = human ? `<div class="sched-human">${ICON_REPEAT}<span class="human-text"></span></div>` : "";
+
       card.innerHTML =
         `<div class="sched-head">
-           <span class="sched-name">${escapeHtml(String(s.name || "(unnamed)"))}</span>
+           <div class="sched-id">
+             <span class="sched-icon">${ICON_CLOCK}</span>
+             <div class="sched-titles">
+               <div class="sched-name">${escapeHtml(String(s.name || "(unnamed)"))}</div>
+               ${humanRow}
+             </div>
+           </div>
            <span class="sched-badges">${enabledBadge}${onceBadge}</span>
          </div>
-         <span class="sched-cron">${escapeHtml(String(s.cron_expr || ""))}</span>${tz}
+         <div class="sched-chips">
+           <span class="sched-cron"><span class="label">cron</span>${escapeHtml(String(s.cron_expr || ""))}</span>
+           ${tz}
+         </div>
          <div class="sched-meta">${lastRun}</div>
          ${prompt}
          <div class="sched-actions">
@@ -441,6 +834,9 @@
            <button class="btn sm" type="button" data-act="run">Run now</button>
            <button class="btn sm danger" type="button" data-act="delete">Delete</button>
          </div>`;
+
+      // Human-readable text rendered via textContent (no XSS via cron fallback).
+      if (human) card.querySelector(".human-text").textContent = human;
 
       const toggleBtn = card.querySelector('[data-act="toggle"]');
       const runBtn = card.querySelector('[data-act="run"]');
@@ -451,8 +847,23 @@
       return card;
     }
 
+    function renderEmptyState() {
+      const wrap = document.createElement("div");
+      wrap.className = "empty-state";
+      wrap.innerHTML =
+        `<div class="empty-icon">${ICON_CAL}</div>
+         <div class="empty-title">No schedules yet</div>
+         <div class="empty-hint">Create your first recurring task with the form on the left. Try <strong>0 9 * * 1-5</strong> for a weekday 9:00&nbsp;AM digest.</div>`;
+      return wrap;
+    }
+
     function setCardBusy(card, busy) {
       card.querySelectorAll("button").forEach((b) => { b.disabled = busy; });
+    }
+
+    function updateCount(n) {
+      if (n > 0) { schedCount.textContent = String(n); schedCount.hidden = false; }
+      else { schedCount.hidden = true; }
     }
 
     async function loadSchedules() {
@@ -467,16 +878,15 @@
         rows = await r.json();
       } catch (err) {
         listRegion.innerHTML = "";
+        updateCount(0);
         showListError(err.message);
         return;
       }
       if (!Array.isArray(rows)) rows = [];
       listRegion.innerHTML = "";
+      updateCount(rows.length);
       if (rows.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "No schedules yet. Create one above.";
-        listRegion.appendChild(empty);
+        listRegion.appendChild(renderEmptyState());
         return;
       }
       const wrap = document.createElement("div");
@@ -563,6 +973,7 @@
           throw new Error(`Create failed (${r.status}): ${txt.slice(0, 300)}`);
         }
         form.reset();
+        updateCronPreview();
         showToast("Schedule created.");
       } catch (err) {
         showFormError(err.message);
@@ -573,8 +984,10 @@
       await loadSchedules();
     });
 
+    cronInput.addEventListener("input", updateCronPreview);
     refreshBtn.addEventListener("click", () => loadSchedules());
 
+    updateCronPreview();
     loadSchedules();
   </script>
 </body>
