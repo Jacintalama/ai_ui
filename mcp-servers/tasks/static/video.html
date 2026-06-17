@@ -345,6 +345,9 @@
     /* State toggling: show create-only / studio-only blocks by body state */
     body[data-state="create"] [data-show="studio"] { display: none !important; }
     body[data-state="studio"] [data-show="create"] { display: none !important; }
+    /* Create state: chat rail is hidden, so collapse the grid to a single
+       centered column instead of leaving an empty right-hand panel. */
+    body[data-state="create"] .studio { display: block; max-width: 720px; }
   </style>
 </head>
 <body data-state="create">
@@ -371,13 +374,11 @@
       <!-- CREATE STATE: upload form -->
       <section class="card" data-show="create">
         <div class="card-title">Generate a video</div>
-        <div class="card-sub">Pick a project, upload 1 to 12 screenshots, describe the narrated slideshow you want.</div>
+        <div class="card-sub">Name your video, upload 1 to 12 screenshots, describe the narrated slideshow you want.</div>
         <form id="video-form" autocomplete="off">
           <div class="field">
-            <label class="form-label" for="slug">Project slug</label>
-            <input class="form-input" id="slug" name="slug" list="slug-list" placeholder="my-project" required>
-            <datalist id="slug-list"></datalist>
-            <span class="form-hint">Enter or pick a project you can edit.</span>
+            <label class="form-label" for="title">Title</label>
+            <input class="form-input" id="title" name="title" maxlength="200" placeholder="Name your video, e.g. Dashboard walkthrough" required>
           </div>
 
           <div class="field">
@@ -444,8 +445,8 @@
       </section>
     </div>
 
-    <!-- RIGHT: refine chat rail (shown in both states) -->
-    <aside class="card studio-rail">
+    <!-- RIGHT: refine chat rail (studio state only) -->
+    <aside class="card studio-rail" data-show="studio">
       <div class="rail-head">
         <div class="rail-title">Refine</div>
         <div class="rail-sub">Ask for changes in plain language</div>
@@ -507,8 +508,7 @@
 
     // --- Element refs ---
     const form = document.getElementById("video-form");
-    const slugInput = document.getElementById("slug");
-    const slugList = document.getElementById("slug-list");
+    const titleInput = document.getElementById("title");
     const filesInput = document.getElementById("files");
     const fileSummary = document.getElementById("file-summary");
     const promptInput = document.getElementById("prompt");
@@ -1027,8 +1027,8 @@
         renderErrorBubble(e.message || "Could not load this job.");
         return;
       }
-      // Project chip in the topbar now that we know the slug (deep-link case).
-      projectName.textContent = data.slug || "";
+      // Title chip in the topbar now that we know it (deep-link case).
+      projectName.textContent = data.title || "";
       projectName.hidden = !projectName.textContent;
       currentVersionNo = data.current_version_no != null ? data.current_version_no : null;
       const lastProposal = replayConversation(data.conversation || []);
@@ -1071,7 +1071,7 @@
       projectName.textContent = "";
       resetChatWelcome();
       setState("create");
-      history.replaceState(null, "", location.pathname);
+      history.pushState({}, "", location.pathname);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
@@ -1096,26 +1096,6 @@
       if (files.length > MAX_FILES) reason = reason || ("Too many files (max " + MAX_FILES + ").");
       if (total > MAX_TOTAL_BYTES) reason = reason || "Total size is over 50 MB.";
       return { ok: !reason, reason };
-    }
-
-    // Optional, fail-soft: populate the slug datalist from the projects list.
-    async function loadProjects() {
-      try {
-        const r = await fetch("/api/projects", { headers: authHeaders(), credentials: "include" });
-        if (!r.ok) return;
-        const rows = await r.json();
-        if (!Array.isArray(rows)) return;
-        slugList.innerHTML = "";
-        for (const p of rows) {
-          if (!p || !p.slug) continue;
-          const opt = document.createElement("option");
-          opt.value = p.slug;
-          if (p.name && p.name !== p.slug) opt.label = p.name;
-          slugList.appendChild(opt);
-        }
-      } catch (e) {
-        console.warn("[video] could not load project list", e);
-      }
     }
 
     // --- Wire events ---
@@ -1151,9 +1131,9 @@
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       clearFormError();
-      const slug = slugInput.value.trim();
+      const title = titleInput.value.trim();
       const prompt = promptInput.value.trim();
-      if (!slug) return showFormError("A project slug is required.");
+      if (!title) return showFormError("A title is required.");
       if (!prompt) return showFormError("A prompt is required.");
       const res = summarizeFiles();
       if (!res.ok) return showFormError(res.reason || "Choose 1 to 12 screenshots.");
@@ -1162,7 +1142,7 @@
       submitBtn.textContent = "Uploading...";
 
       const fd = new FormData();
-      fd.append("slug", slug);
+      fd.append("title", title);
       fd.append("prompt", prompt);
       for (const f of filesInput.files) fd.append("files", f, f.name);
 
@@ -1183,31 +1163,17 @@
         return;
       }
 
-      // Job accepted -> switch to the studio and start polling.
+      // Job accepted -> navigate to its per-job page and open the studio
+      // exactly as a deep link (?job=<id>) would. Reuses openExistingJob so
+      // the studio render + polling path is not duplicated.
       submitBtn.disabled = false;
       submitBtn.textContent = "Generate video";
-      currentJobId = data.id;
-      currentVersionNo = null;
-      hasVideo = false;
-      projectName.textContent = slug;
-      history.replaceState(null, "", "?job=" + encodeURIComponent(data.id));
-      clearChat();
-      renderChatBubble("ai", "Generating your video from " + filesInput.files.length
-        + " screenshot(s). I will tell you when it is ready, then you can ask for changes.");
-      setState("studio");
-      setPill(data.status || "queued");
-      showPlaceholder("rendering", humanStatus(data.status || "queued"));
-      startPolling(data.id, {
-        mode: "initial",
-        onSettle: (ok) => {
-          if (ok) renderChatBubble("ai", "Your video is ready. Tell me what you would like to change.");
-        },
-      });
+      history.pushState({}, "", "?job=" + encodeURIComponent(data.id));
+      openExistingJob(data.id);
     });
 
     // --- Boot ---
     (function init() {
-      loadProjects();
       const params = new URLSearchParams(location.search);
       const jobParam = params.get("job");
       if (jobParam) {
