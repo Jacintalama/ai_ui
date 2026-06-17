@@ -8,9 +8,9 @@ describe a whole visual treatment for a render.
 
 Three styles are registered:
 
-* ``cinematic`` — graded, letterboxed, eased motion, ambient bed.
-* ``snappy_social`` — punchy grade, bold large captions, minimal motion.
-* ``clean_product_demo`` — no grade, blur-fill pillarbox, gentle motion. This
+* ``cinematic``: graded, letterboxed, eased motion, ambient bed.
+* ``snappy_social``: punchy grade, bold large captions, minimal motion.
+* ``clean_product_demo``: no grade, blur-fill pillarbox, gentle motion. This
   is the documented fallback for any unknown style id.
 """
 from __future__ import annotations
