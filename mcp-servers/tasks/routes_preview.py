@@ -1,4 +1,5 @@
 """Preview API: file tree, file content, app runner."""
+import asyncio
 import os
 from pathlib import Path
 from uuid import UUID
@@ -26,6 +27,23 @@ def _should_include_path(parts: tuple[str, ...]) -> bool:
     return not any(p in _SKIP_DIRS for p in parts)
 
 
+def _walk_app_files(app_dir: Path) -> list[dict]:
+    """List user-facing files under apps/<slug>/, PRUNING skip-dirs during the
+    walk so we never descend into node_modules (tens of thousands of files —
+    a memory/CPU spike on the 3.8GB host). Synchronous and blocking; call via
+    asyncio.to_thread so it doesn't stall the event loop. Paths are posix."""
+    out: list[dict] = []
+    for root, dirs, names in os.walk(app_dir):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]  # prune before descending
+        for name in names:
+            full = Path(root) / name
+            rel = full.relative_to(app_dir)
+            if _should_include_path(rel.parts):
+                out.append({"path": rel.as_posix(), "size": full.stat().st_size})
+    out.sort(key=lambda f: f["path"])
+    return out
+
+
 async def _get_build_task(task_id: UUID) -> TaskItem:
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -42,14 +60,7 @@ async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin_or_c
     app_dir = Path(WORKSPACE) / "apps" / item.built_app_slug
     if not app_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"App directory not found: apps/{item.built_app_slug}")
-    files = []
-    for p in sorted(app_dir.rglob("*")):
-        rel_parts = p.relative_to(app_dir).parts
-        if p.is_file() and _should_include_path(rel_parts):
-            files.append({
-                "path": str(p.relative_to(app_dir)),
-                "size": p.stat().st_size,
-            })
+    files = await asyncio.to_thread(_walk_app_files, app_dir)
     return {"slug": item.built_app_slug, "files": files}
 
 

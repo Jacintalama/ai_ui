@@ -27,3 +27,23 @@ def test_filter_keeps_user_dotfiles():
     """The user's own .gitignore / .env are NOT internal — keep them visible."""
     assert _should_include_path((".gitignore",)) is True
     assert _should_include_path((".env.example",)) is True
+
+
+def test_walk_app_files_prunes_skip_dirs(tmp_path):
+    """The file walk must PRUNE node_modules/.attachments (not just filter the
+    results), so it never descends into a huge node_modules tree on the small
+    host. Output is posix-pathed and sorted. (audit 2026-06-15.)"""
+    from routes_preview import _walk_app_files
+
+    app = tmp_path / "app"
+    (app / "src").mkdir(parents=True)
+    (app / "node_modules" / "react").mkdir(parents=True)
+    (app / ".attachments").mkdir(parents=True)
+    (app / "index.html").write_text("<html>")
+    (app / "src" / "main.js").write_text("hi")
+    (app / "node_modules" / "react" / "index.js").write_text("x" * 1000)
+    (app / ".attachments" / "img.png").write_text("p")
+
+    files = _walk_app_files(app)
+    assert [f["path"] for f in files] == ["index.html", "src/main.js"]
+    assert all(isinstance(f["size"], int) for f in files)
