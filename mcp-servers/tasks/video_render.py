@@ -450,8 +450,11 @@ def _scene_filter_stmts(
     stmts += _kenburns_stmts(index, width, height, frames, style.motion, fps)
     stmts += _grade_stmts(index, style.grade)
     stmts.append(_caption_fade_stmt(index, scene_count, duration_s))
+    # settb=AVTB pins every scene to the microsecond timebase that ``concat``
+    # forces on its output, so a hard ``cut`` (concat) never leaves the chain in
+    # a timebase that a following ``xfade`` (or the card bookends) would reject.
     stmts.append(
-        f"[grad{index}][cap{index}]overlay=0:0,format=yuv420p[v{index}]"
+        f"[grad{index}][cap{index}]overlay=0:0,format=yuv420p,settb=AVTB[v{index}]"
     )
     return stmts
 
@@ -573,16 +576,22 @@ def _card_bookend_stmts(
     Returns ``(statements, final_label)``.
     """
     fade_out_start = _fmt_num(round(CARD_DURATION - 0.6, 4))
+    # xfade rejects inputs whose timebases differ. The lavfi ``color`` card
+    # canvases are 1/30, but the body is pinned to the microsecond AVTB (every
+    # ``[v{i}]`` is settb=AVTB and ``concat`` forces AVTB too), so the cards must
+    # match it. settb=AVTB here, plus on each scene, keeps the whole graph on one
+    # timebase so the bookend (and post-cut) xfades never hit a mismatch.
     intro_stmt = (
         f"[{intro_color_idx}:v][{intro_png_idx}:v]overlay=0:0,"
         f"fade=t=in:st=0:d=0.4,"
-        f"fade=t=out:st={fade_out_start}:d=0.5,format=yuv420p[intro]"
+        f"fade=t=out:st={fade_out_start}:d=0.5,format=yuv420p,settb=AVTB[intro]"
     )
     outro_stmt = (
         f"[{outro_color_idx}:v][{outro_png_idx}:v]overlay=0:0,"
         f"fade=t=in:st=0:d=0.4,"
-        f"fade=t=out:st={fade_out_start}:d=0.5,format=yuv420p[outro]"
+        f"fade=t=out:st={fade_out_start}:d=0.5,format=yuv420p,settb=AVTB[outro]"
     )
+    body_tb_stmt = f"{body_label}settb=AVTB[btb]"
     # The intro contributes only (CARD_DURATION - CARD_FADE) to the head xfade
     # output, so [ihead] is (CARD_DURATION - CARD_FADE) + body_duration long.
     # Each xfade is placed at (first-input length - CARD_FADE) so the second
@@ -590,14 +599,14 @@ def _card_bookend_stmts(
     head_offset = _fmt_num(round(CARD_DURATION - CARD_FADE, 4))
     tail_offset = _fmt_num(round(CARD_DURATION + body_duration - 2 * CARD_FADE, 4))
     head_stmt = (
-        f"[intro]{body_label}xfade=transition=fade:"
+        f"[intro][btb]xfade=transition=fade:"
         f"duration={_fmt_num(CARD_FADE)}:offset={head_offset}[ihead]"
     )
     tail_stmt = (
         f"[ihead][outro]xfade=transition=fade:"
         f"duration={_fmt_num(CARD_FADE)}:offset={tail_offset}[vout]"
     )
-    return [intro_stmt, outro_stmt, head_stmt, tail_stmt], "[vout]"
+    return [intro_stmt, outro_stmt, body_tb_stmt, head_stmt, tail_stmt], "[vout]"
 
 
 def build_render_script(

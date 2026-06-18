@@ -286,7 +286,7 @@ def test_scene_subgraph_label_chain_connects_to_v_output():
     for label in ("[base0]", "[mot0]", "[grad0]", "[cap0]"):
         assert label in joined
     assert "[2:v]format=rgba" in joined  # caption input for scene 0 is index n+0
-    assert "[grad0][cap0]overlay=0:0,format=yuv420p[v0]" in joined
+    assert "[grad0][cap0]overlay=0:0,format=yuv420p,settb=AVTB[v0]" in joined
     assert joined.rstrip().endswith("[v0]")
 
 
@@ -491,11 +491,28 @@ def test_filtergraph_fully_connected_cut_body():
     _assert_fully_connected(graph)
 
 
+def test_timebase_normalized_so_cut_plus_cards_dont_mismatch():
+    # ffmpeg's concat (a hard cut) forces a microsecond timebase on its output;
+    # the lavfi color cards are 1/30. Without a shared timebase the bookend (and
+    # post-cut) xfades fail at render time with "timebase do not match". Pin
+    # every scene + card to AVTB so they always agree. (Caught only on real
+    # ffmpeg, hence this string guard.)
+    graph = _graph(_two_scene_plan("cut"))
+    # every scene output is normalized
+    assert "format=yuv420p,settb=AVTB[v0]" in graph
+    assert "format=yuv420p,settb=AVTB[v1]" in graph
+    # both cards are normalized to the same timebase
+    assert "format=yuv420p,settb=AVTB[intro]" in graph
+    assert "format=yuv420p,settb=AVTB[outro]" in graph
+
+
 def test_filtergraph_fully_connected_single_scene():
     graph = _graph(_single_scene_plan())
     _assert_fully_connected(graph)
-    # The single scene seeds [v0]; the intro bookends straight onto it.
-    assert "[intro][v0]xfade" in graph
+    # The single scene seeds [v0], which is timebase-normalized to [btb] before
+    # the intro bookends onto it.
+    assert "[v0]settb=AVTB[btb]" in graph
+    assert "[intro][btb]xfade" in graph
 
 
 def test_explicit_style_overrides_plan_independent_of_template():
