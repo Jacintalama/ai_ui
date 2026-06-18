@@ -45,6 +45,16 @@ def test_first_attachment_none_when_absent():
     assert DiscordCommandHandler._first_attachment({"resolved": {}}) is None
 
 
+def test_parse_options_picks_string_arg_ignoring_attachment_order():
+    """The args STRING must be read by TYPE, not position — a type-11 file
+    option can arrive first and its value is a snowflake id, not the text."""
+    opts = [{"type": 1, "name": "aiuibuilder", "options": [
+        {"name": "file", "type": 11, "value": "991234567890"},
+        {"name": "args", "type": 3, "value": "build a cafe site"},
+    ]}]
+    assert DiscordCommandHandler._parse_options(opts) == ("aiuibuilder", "build a cafe site")
+
+
 async def test_start_build_forwards_attachment_fields():
     from clients.tasks import TasksClient
     captured = {}

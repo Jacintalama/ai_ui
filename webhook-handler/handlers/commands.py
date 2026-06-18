@@ -1540,9 +1540,25 @@ class CommandRouter:
         if not att or not att.get("url"):
             return None, None
         import httpx
+        from urllib.parse import urlparse
         from document_extract import classify_document, extract_text
         max_bytes = 5 * 1024 * 1024
-        try:
+        # Pre-reject by declared size before downloading anything.
+        if att.get("size") and att["size"] > max_bytes:
+            logger.info("attachment too large (declared), skipping: %s", att.get("filename"))
+            return None, None
+        # The url is Ed25519-verified interaction data, but allowlist the
+        # Discord CDN host as defense-in-depth against SSRF.
+        parsed = urlparse(att["url"] or "")
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (
+            host == "cdn.discordapp.com"
+            or host.endswith(".discordapp.com") or host.endswith(".discordapp.net")
+        ):
+            logger.warning("attachment url host not allowed: %s", host)
+            return None, None
+
+        async def _download() -> bytes | None:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 async with client.stream("GET", att["url"]) as r:
                     r.raise_for_status()
@@ -1551,19 +1567,26 @@ class CommandRouter:
                     async for chunk in r.aiter_bytes():
                         total += len(chunk)
                         if total > max_bytes:
-                            logger.info("attachment too large, skipping: %s",
+                            logger.info("attachment exceeded cap mid-stream: %s",
                                         att.get("filename"))
-                            return None, None
+                            return None
                         chunks.append(chunk)
-            data = b"".join(chunks)
+            return b"".join(chunks)
+
+        try:
+            data = await asyncio.wait_for(_download(), timeout=30)
         except Exception as e:
             logger.warning("attachment download failed: %s", e)
+            return None, None
+        if not data:
             return None, None
         kind = classify_document(att.get("content_type"), data[:8], att.get("filename"))
         if kind is None:
             return None, None
         try:
-            text = extract_text(data, kind)
+            # CPU-bound parse off the event loop — the voice pipeline shares
+            # this process and its timing is sensitive.
+            text = await asyncio.to_thread(extract_text, data, kind)
         except Exception as e:
             logger.warning("attachment extraction failed: %s", e)
             return None, None

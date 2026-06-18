@@ -146,7 +146,9 @@ def test_extract_empty_docx_is_graceful():
 
 def test_extract_truncates_oversized_text():
     out = extract_text(b"x" * (MAX_DOC_CHARS + 5000), "text")
-    assert len(out) <= MAX_DOC_CHARS + 64
+    # Must NOT exceed the cap — the truncation marker has to fit WITHIN it, or
+    # downstream attachment_text fields (max_length=20000) 422 on big docs.
+    assert len(out) <= MAX_DOC_CHARS
     assert "truncated" in out.lower()
 
 

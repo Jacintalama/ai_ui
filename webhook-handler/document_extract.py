@@ -83,7 +83,8 @@ def extract_text(data: bytes, kind: str, max_chars: int = MAX_DOC_CHARS) -> str:
     if not text:
         return ""
     if len(text) > max_chars:
-        text = text[:max_chars].rstrip() + "\n[... truncated]"
+        marker = "\n[... truncated]"
+        text = text[: max(0, max_chars - len(marker))].rstrip() + marker
     return text
 
 

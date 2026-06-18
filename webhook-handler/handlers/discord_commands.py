@@ -1542,10 +1542,14 @@ class DiscordCommandHandler:
         if first.get("type") == 1:
             subcommand = first.get("name", "status")
             sub_options = first.get("options", [])
-            if sub_options:
-                arguments = sub_options[0].get("value", "")
-            else:
-                arguments = ""
+            # Take the first STRING option by TYPE, not position — a type-11
+            # ATTACHMENT option (the build/enhance file) may arrive in any order,
+            # and its value is a snowflake id, not the command text.
+            arguments = ""
+            for o in sub_options:
+                if o.get("type", 3) == 3:  # STRING
+                    arguments = o.get("value", "")
+                    break
             return (subcommand, arguments)
 
         # Direct string option (type 3)

@@ -39,6 +39,16 @@ def test_attachment_block_frames_untrusted_and_includes_text():
     assert "untrusted" in b.lower()
 
 
+def test_request_accepts_max_size_extracted_text():
+    """The extractor's truncated output must fit the attachment_text field cap
+    (20k) — otherwise a large PDF 422s the build/enhance."""
+    from document_extract import extract_text, MAX_DOC_CHARS
+    big = extract_text(b"x" * (MAX_DOC_CHARS + 5000), "text")
+    assert len(big) <= 20000
+    BuildRequest(description="x", attachment_text=big)        # must not raise
+    EnhanceRequest(prompt="x", attachment_text=big)           # must not raise
+
+
 def test_attachment_block_empty_when_no_text():
     assert _attachment_block("x.pdf", "") == ""
     assert _attachment_block("x.pdf", None) == ""
