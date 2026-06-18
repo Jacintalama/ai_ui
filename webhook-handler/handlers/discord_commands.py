@@ -116,6 +116,26 @@ class DiscordCommandHandler:
         # token -> accumulating picker selections (kind/freq/hour/weekday/date)
         # for the click date/time picker; resolved to a schedule on task-modal submit.
         self._pending_picks: dict[str, dict] = {}
+        # Strong refs to fire-and-forget background tasks so they can't be
+        # garbage-collected mid-flight; cleared by the done-callback.
+        self._bg_tasks: set = set()
+
+    def _spawn(self, coro) -> "asyncio.Task":
+        """Launch a background task, keep a strong reference, and log any
+        exception (a bare create_task drops the ref and swallows failures, so
+        a button/modal/slash action could silently vanish)."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._on_bg_task_done)
+        return task
+
+    def _on_bg_task_done(self, task: "asyncio.Task") -> None:
+        self._bg_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Discord background task failed: %r", exc, exc_info=exc)
 
     async def handle_interaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
@@ -202,7 +222,7 @@ class DiscordCommandHandler:
         )
 
         # Fire-and-forget: process in background, edit deferred response
-        asyncio.create_task(self.router.execute(ctx))
+        self._spawn(self.router.execute(ctx))
 
         # Immediate ACK — tells Discord we'll follow up (type 5 = DEFERRED)
         return {"type": DEFERRED_CHANNEL_MESSAGE}
@@ -412,7 +432,7 @@ class DiscordCommandHandler:
             },
             on_published=on_published,
         )
-        asyncio.create_task(self.router.run_panel_publish(ctx, slug))
+        self._spawn(self.router.run_panel_publish(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
     def _out_ctx(self, payload: dict[str, Any]) -> CommandContext:
@@ -445,14 +465,14 @@ class DiscordCommandHandler:
         task_id = rr.task_id_from_sel(custom_id)
         selected = data.get("values") or []
         ctx = self._out_ctx(payload)
-        asyncio.create_task(self.router.run_outreach_select(ctx, task_id, selected, "", ""))
+        self._spawn(self.router.run_outreach_select(ctx, task_id, selected, "", ""))
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_outreach_refresh(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """Refresh button → re-fetch candidates (no patch), re-render in place."""
         task_id = rr.task_id_from_refresh(custom_id)
         ctx = self._out_ctx(payload)
-        asyncio.create_task(self.router.run_outreach_select(ctx, task_id, None, "", ""))
+        self._spawn(self.router.run_outreach_select(ctx, task_id, None, "", ""))
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_outreach_edit_open(
@@ -477,7 +497,7 @@ class DiscordCommandHandler:
         """Edit modal submit → save the edited candidate, re-render in place."""
         task_id, cid = rr.ids_from_editmodal(custom_id)
         ctx = self._out_ctx(payload)
-        asyncio.create_task(self.router.run_outreach_edit_submit(
+        self._spawn(self.router.run_outreach_edit_submit(
             ctx, task_id, cid, values.get("email", ""), values.get("subject", ""),
             values.get("body", ""), "", ""))
         return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -486,7 +506,7 @@ class DiscordCommandHandler:
         """Send button → email the selected candidates, lock the message in place."""
         task_id = rr.task_id_from_send(custom_id)
         ctx = self._out_ctx(payload)
-        asyncio.create_task(self.router.run_outreach_send(ctx, task_id))
+        self._spawn(self.router.run_outreach_send(ctx, task_id))
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_unpublish_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
@@ -520,7 +540,7 @@ class DiscordCommandHandler:
                 "guild_id": payload.get("guild_id", ""),
             },
         )
-        asyncio.create_task(self.router.run_panel_unpublish(ctx, slug))
+        self._spawn(self.router.run_panel_unpublish(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
     async def _handle_delete_confirm_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
@@ -554,7 +574,7 @@ class DiscordCommandHandler:
                 "guild_id": payload.get("guild_id", ""),
             },
         )
-        asyncio.create_task(self.router.run_panel_delete(ctx, slug))
+        self._spawn(self.router.run_panel_delete(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
     async def _handle_app_select_component(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -709,7 +729,7 @@ class DiscordCommandHandler:
                 "guild_id": payload.get("guild_id", ""),
             },
         )
-        asyncio.create_task(run(ctx))
+        self._spawn(run(ctx))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -755,7 +775,7 @@ class DiscordCommandHandler:
                 notify_channel=notify_channel if channel_id else None,
                 notify_channel_rich=notify_channel_rich if channel_id else None,
             )
-            asyncio.create_task(self.router.run_panel_enhance(ctx, slug, change))
+            self._spawn(self.router.run_panel_enhance(ctx, slug, change))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
         if recruiting_panel.is_out_modal(custom_id):
             values = {c["custom_id"]: c.get("value", "")
@@ -797,7 +817,7 @@ class DiscordCommandHandler:
                 notify_channel_rich=notify_channel_rich if channel_id else None,
                 notify_channel_msg=notify_channel_msg if channel_id else None,
             )
-            asyncio.create_task(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
+            self._spawn(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
         if rr.is_out_editmodal(custom_id):
             values = {c["custom_id"]: c.get("value", "")
@@ -839,7 +859,7 @@ class DiscordCommandHandler:
             subcommand="cronjob", arguments="", platform="discord",
             respond=respond,
         )
-        asyncio.create_task(
+        self._spawn(
             self.router.run_cron_create(ctx, cron_expr=cron_expr, name=name, prompt=prompt))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": EPHEMERAL}}
 
@@ -906,7 +926,7 @@ class DiscordCommandHandler:
             except Exception as exc:  # noqa: BLE001
                 logger.error("_open_and_build failed user=%s: %s", user_id, exc)
 
-        asyncio.create_task(_open_and_build())
+        self._spawn(_open_and_build())
         # Ephemeral deferred ACK (flags=64) — only the clicking user sees it.
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
@@ -1048,7 +1068,7 @@ class DiscordCommandHandler:
         except ValueError:
             token = ""
         interaction_token = payload.get("token", "")
-        asyncio.create_task(
+        self._spawn(
             self._create_pending_schedule(payload, token, interaction_token)
         )
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
@@ -1158,7 +1178,7 @@ class DiscordCommandHandler:
                 except Exception:  # noqa: BLE001
                     logger.exception("failed to deliver connect-resume error follow-up")
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _get_or_make_thread(
@@ -1234,7 +1254,7 @@ class DiscordCommandHandler:
                     content="Couldn't open the builder — please try again.",
                 )
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_my_apps(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1297,7 +1317,7 @@ class DiscordCommandHandler:
                     content="Couldn't open your apps — please try again.",
                 )
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_sched_open(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1342,7 +1362,7 @@ class DiscordCommandHandler:
                     content="Couldn't open your schedules — please try again.",
                 )
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     def _handle_link_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1382,7 +1402,7 @@ class DiscordCommandHandler:
                     content="Couldn't send your request — please try again.",
                 )
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_link_decision(
@@ -1417,7 +1437,7 @@ class DiscordCommandHandler:
             except Exception as exc:  # noqa: BLE001
                 logger.error("link decision failed id=%s: %s", discord_id, exc)
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_sched_edit_open(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
@@ -1471,7 +1491,7 @@ class DiscordCommandHandler:
                       "interaction_token": interaction_token,
                       "guild_id": payload.get("guild_id", "")},
         )
-        asyncio.create_task(self.router.run_schedule_edit(
+        self._spawn(self.router.run_schedule_edit(
             ctx, schedule_id, name=name, cron=cron, prompt=what))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 

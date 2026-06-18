@@ -166,3 +166,27 @@ def test_voice_discord_id_none_when_unmapped(monkeypatch):
     monkeypatch.setattr(settings, "_discord_map_cache", {"123": "o@x.com"},
                         raising=False)
     assert main._voice_discord_id() is None
+
+
+# ---------------------------------------------------------------------------
+# Voice bot background task must not die silently. start_voice_bot is launched
+# fire-and-forget in lifespan; if it raises early (e.g. ElevenLabs quota), the
+# old code only retrieved the exception during shutdown — so a crash left no
+# log. A done-callback surfaces it. (audit 2026-06-15.)
+# ---------------------------------------------------------------------------
+
+async def test_voice_bot_exit_callback_logs_error(caplog):
+    import asyncio
+    import logging
+
+    async def boom():
+        raise RuntimeError("voice died")
+
+    t = asyncio.create_task(boom())
+    try:
+        await t
+    except RuntimeError:
+        pass
+    with caplog.at_level(logging.ERROR):
+        main._log_voice_bot_exit(t)
+    assert "voice died" in caplog.text

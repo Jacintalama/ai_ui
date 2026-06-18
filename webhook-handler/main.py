@@ -48,6 +48,19 @@ for _noisy in ("discord.gateway", "discord.client", "discord.http", "websockets"
     logging.getLogger(_noisy).setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+def _log_voice_bot_exit(task: "asyncio.Task") -> None:
+    """Done-callback for the voice bot task so an early crash (e.g. ElevenLabs
+    quota) is logged instead of dying silently until shutdown retrieves it."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Voice bot task exited with error: %r", exc, exc_info=exc)
+    else:
+        logger.warning("Voice bot task exited unexpectedly without an error")
+
+
 # Global clients (initialized on startup)
 openwebui_client: Optional[OpenWebUIClient] = None
 github_client: Optional[GitHubClient] = None
@@ -213,6 +226,7 @@ async def lifespan(app: FastAPI):
             elevenlabs_api_key=settings.elevenlabs_api_key,
             agent_id=settings.elevenlabs_agent_id,
         ))
+        voice_bot_task.add_done_callback(_log_voice_bot_exit)
         logger.info("Voice bot starting as background task")
     else:
         logger.info("Voice bot disabled (no DISCORD_BOT_TOKEN or ELEVENLABS_API_KEY)")
