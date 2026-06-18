@@ -1737,6 +1737,11 @@
       width: 40px; height: 40px;
       object-fit: cover; border-radius: 4px; flex: 0 0 auto;
     }
+    .attachment-chip .thumb-file {
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface-2); color: var(--muted);
+      font-size: 10px; font-weight: 600; letter-spacing: .03em;
+    }
     .attachment-chip .meta {
       display: flex; flex-direction: column; gap: 0; min-width: 0;
     }
@@ -1891,6 +1896,18 @@
       border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
       object-fit: cover;
       display: block;
+    }
+    .chat-bubble.user .chat-attachments .chat-attachment-file {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+      background: var(--surface-2);
+      font-size: 12px;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .chat-bubble.user .chat-attachments + .chat-text:empty { display: none; }
     .chat-bubble.user .chat-selection {
@@ -2862,7 +2879,7 @@
                 </button>
               </div>
               <input type="file" id="attach-input" multiple
-                     accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                     accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt,.md,.csv" hidden>
             </div>
             <button type="button" class="btn btn-ghost chat-toolbar-btn" id="picker-toggle"
                     aria-pressed="false" title="Click an element in the preview to scope your prompt">
@@ -5951,7 +5968,23 @@
   });
 
   // ── Attachment chips: file-input + paste + drag-drop, with validation ──
-  const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  // Mirror the server (document_extract.classify_document): images, plus
+  // PDF/Word/text accepted by MIME OR filename extension (browsers often
+  // report empty/odd MIME for .md/.csv).
+  const ALLOWED_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  const ALLOWED_DOC_MIME = new Set([
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain", "text/markdown", "text/csv", "text/x-markdown", "application/json",
+  ]);
+  const ALLOWED_DOC_EXT = [".pdf", ".docx", ".txt", ".md", ".markdown", ".csv", ".log", ".text", ".json"];
+  function isImageFile(f) { return ALLOWED_IMAGE_MIME.has((f.type || "").toLowerCase()); }
+  function isAcceptedFile(f) {
+    const t = (f.type || "").toLowerCase();
+    if (ALLOWED_IMAGE_MIME.has(t) || ALLOWED_DOC_MIME.has(t) || t.startsWith("text/")) return true;
+    const name = (f.name || "").toLowerCase();
+    return ALLOWED_DOC_EXT.some(ext => name.endsWith(ext));
+  }
   const MAX_FILE_BYTES = 5 * 1024 * 1024;
   const MAX_FILES = 5;
 
@@ -5973,11 +6006,18 @@
       const chip = document.createElement("div");
       chip.className = "attachment-chip";
 
-      const img = document.createElement("img");
-      img.className = "thumb";
-      img.src = a.previewUrl;
-      img.alt = "";
-      chip.appendChild(img);
+      if (a.isImage && a.previewUrl) {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = a.previewUrl;
+        img.alt = "";
+        chip.appendChild(img);
+      } else {
+        const icon = document.createElement("div");
+        icon.className = "thumb thumb-file";
+        icon.textContent = ((a.file.name.split(".").pop() || "FILE").toUpperCase()).slice(0, 4);
+        chip.appendChild(icon);
+      }
 
       const meta = document.createElement("div");
       meta.className = "meta";
@@ -6023,7 +6063,7 @@
     let rejectedSizeSampleName = null; // first oversized file's name for the toast
 
     for (const f of fileList) {
-      if (!ALLOWED_MIME.has(f.type)) {
+      if (!isAcceptedFile(f)) {
         rejectedMime++;
         continue;
       }
@@ -6036,18 +6076,20 @@
         rejectedCount = true;
         break;
       }
+      const isImage = isImageFile(f);
       pendingAttachments.push({
         id: "att_" + Math.random().toString(36).slice(2, 10),
         file: f,
-        previewUrl: URL.createObjectURL(f),
+        isImage,
+        previewUrl: isImage ? URL.createObjectURL(f) : null,
       });
     }
 
     if (rejectedMime > 0) {
       toast(
         rejectedMime === 1
-          ? "Only PNG / JPEG / WebP / GIF images are supported."
-          : rejectedMime + " files skipped (only PNG / JPEG / WebP / GIF images are supported).",
+          ? "Unsupported file. Use an image (PNG/JPEG/WebP/GIF), PDF, Word (.docx), or text (.txt/.md/.csv)."
+          : rejectedMime + " files skipped (use images, PDF, Word, or text files).",
         "error",
         4000
       );
@@ -6080,12 +6122,13 @@
     $attachInput.value = ""; // allow same-file reselect
   });
 
-  // Paste image into textarea
+  // Paste image/document into textarea (addFiles validates the type; pasted
+  // plain text is kind "string", not "file", so normal text paste is untouched)
   $promptTa.addEventListener("paste", (e) => {
     if (!e.clipboardData) return;
     const files = [];
     for (const item of e.clipboardData.items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
+      if (item.kind === "file") {
         const f = item.getAsFile();
         if (f) files.push(f);
       }
@@ -6542,10 +6585,18 @@
         const row = document.createElement("div");
         row.className = "chat-attachments";
         for (const a of atts) {
-          const img = document.createElement("img");
-          img.src = a.previewUrl;
-          img.alt = (a.file && a.file.name) || "attachment";
-          row.appendChild(img);
+          if (a.isImage && a.previewUrl) {
+            const img = document.createElement("img");
+            img.src = a.previewUrl;
+            img.alt = (a.file && a.file.name) || "attachment";
+            row.appendChild(img);
+          } else {
+            // Non-image (PDF/Word/text): show the filename, not a broken <img>.
+            const f = document.createElement("span");
+            f.className = "chat-attachment-file";
+            f.textContent = (a.file && a.file.name) || "file";
+            row.appendChild(f);
+          }
         }
         body.appendChild(row);
       }

@@ -71,7 +71,7 @@ def test_build_enhance_prompt_no_attachments_omits_stanza():
         has_db_uri=False,
         user_email="r@x.com",
     )
-    assert "Attached images" not in out
+    assert "Attached files" not in out
 
 
 def test_build_enhance_prompt_with_attachments_includes_stanza():
@@ -89,8 +89,9 @@ def test_build_enhance_prompt_with_attachments_includes_stanza():
             "apps/meeting-notes/.attachments/abc-123/mockup.jpg",
         ],
     )
-    assert "Attached images" in out
+    assert "Attached files" in out
     assert "Read them with your Read tool" in out
+    assert "untrusted" in out.lower()  # prompt-injection framing
     assert "apps/meeting-notes/.attachments/abc-123/shot.png" in out
     assert "apps/meeting-notes/.attachments/abc-123/mockup.jpg" in out
 
