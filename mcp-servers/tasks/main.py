@@ -24,6 +24,7 @@ from routes_tasks import router as tasks_router
 from routes_templates import router as templates_router
 from routes_upload import router as upload_router
 from routes_outreach import router as outreach_router
+from routes_video import router as video_router
 from routes_webhook import router as webhook_router
 
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +73,20 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("schedule_tick_loop NOT started: %s", exc)
 
+    try:
+        from video_worker import video_worker_loop
+        asyncio.create_task(video_worker_loop())
+        logger.info("video_worker_loop scheduled")
+    except Exception as exc:
+        logger.warning("video_worker_loop NOT started: %s", exc)
+
+    try:
+        from video_cleanup import video_cleanup_loop
+        asyncio.create_task(video_cleanup_loop())
+        logger.info("video_cleanup_loop scheduled")
+    except Exception as exc:
+        logger.warning("video_cleanup_loop NOT started: %s", exc)
+
     yield
 
 
@@ -88,6 +103,7 @@ app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Sec
 app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(discord_links_router)  # /discord-links — system path (X-Internal-Secret)
 app.include_router(tasks_router)
+app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload
 app.include_router(execution_router)
 app.include_router(cron_router)
 app.include_router(preview_router)

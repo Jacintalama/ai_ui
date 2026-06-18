@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cron Jobs / Schedules</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" crossorigin="use-credentials">
+  <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
+  <style>
+    /* Palette + component system mirrored from static/projects.html and
+       static/video.html so this page is visually consistent with the rest
+       of the Tasks UI. */
+    :root[data-theme="dark"] {
+      --bg:           #0a0a0b;
+      --surface:      #111113;
+      --surface-2:    #17171a;
+      --surface-3:    #1e1e22;
+      --border:       #24242a;
+      --border-2:     #2e2e36;
+      --text:         #ededee;
+      --text-2:       #b8b8c0;
+      --muted:        #74747e;
+      --accent:       #7c8cff;
+      --accent-2:     #5d6cff;
+      --accent-soft:  #1e2140;
+      --success:      #22c55e;
+      --success-soft: #0d2a1a;
+      --warning:      #f59e0b;
+      --warning-soft: #2a1f08;
+      --danger:       #f87171;
+      --danger-soft:  #2a1414;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+      --shadow-lg:    0 14px 40px rgba(0,0,0,0.55);
+    }
+    :root {
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+      --font-mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", "Menlo", Consolas, monospace;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body {
+      background:
+        radial-gradient(900px 480px at 88% -8%, rgba(124,140,255,0.10), transparent 60%),
+        radial-gradient(720px 420px at -6% 4%, rgba(93,108,255,0.07), transparent 55%),
+        var(--bg);
+      background-attachment: fixed;
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-2); }
+    button { font-family: inherit; color: inherit; cursor: pointer; }
+    button:disabled, .btn:disabled { cursor: not-allowed; opacity: 0.6; }
+    .muted { color: var(--muted); }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: rgba(17,17,19,0.82);
+      backdrop-filter: saturate(140%) blur(10px);
+      -webkit-backdrop-filter: saturate(140%) blur(10px);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .topbar .brand { display: flex; align-items: center; gap: 12px; }
+    .topbar .brand-logo {
+      width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .topbar .brand-logo img { width: 34px; height: 34px; display: block; }
+    .topbar .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+    .topbar .brand-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .topbar .brand-subtitle { font-size: 11px; color: var(--muted); }
+    .topbar .back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: var(--radius);
+      color: var(--text-2); font-size: 13px; transition: background 0.15s, color 0.15s;
+    }
+    .topbar .back:hover { background: var(--surface-2); color: var(--text); }
+
+    .container { max-width: 1080px; margin: 0 auto; padding: 32px 24px 72px; }
+
+    /* Page header */
+    .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 28px; }
+    .page-head .head-icon {
+      flex-shrink: 0;
+      width: 46px; height: 46px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(150deg, var(--accent), var(--accent-2));
+      color: #0a0a0b;
+      box-shadow: 0 6px 18px rgba(124,140,255,0.30);
+    }
+    .page-head .head-icon svg { width: 24px; height: 24px; }
+    .page-head h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.025em; }
+    .page-head .lead { color: var(--text-2); font-size: 13.5px; margin-top: 5px; max-width: 64ch; }
+    .page-head .delivery-note {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--muted); margin-top: 9px;
+    }
+    .page-head .delivery-note svg { width: 13px; height: 13px; opacity: 0.85; }
+
+    /* Two-column responsive layout */
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+      gap: 28px;
+      align-items: start;
+    }
+    .col-form { position: sticky; top: 88px; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; gap: 24px; }
+      .col-form { position: static; }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 22px;
+      box-shadow: var(--shadow-sm);
+    }
+    .card-title {
+      font-size: 15px; font-weight: 600; margin-bottom: 16px;
+      display: flex; align-items: center; gap: 9px;
+    }
+    .card-title svg { width: 16px; height: 16px; color: var(--accent); }
+
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+    .field:last-child { margin-bottom: 0; }
+    .form-label {
+      font-size: 12px; font-weight: 500; color: var(--text-2);
+      letter-spacing: 0.02em; text-transform: uppercase;
+    }
+    .form-input, .form-textarea {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .form-input:focus, .form-textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(124,140,255,0.16);
+    }
+    .form-input.mono { font-family: var(--font-mono); letter-spacing: 0.02em; }
+    .form-textarea { resize: vertical; min-height: 92px; font-family: var(--font-ui); }
+    .form-hint { font-size: 11px; color: var(--muted); }
+    .form-hint code {
+      font-family: var(--font-mono); font-size: 10.5px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); padding: 1px 5px; color: var(--text-2);
+    }
+    .form-note {
+      font-size: 11.5px; color: var(--text-2); line-height: 1.45;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-left: 2px solid var(--accent);
+      border-radius: var(--radius); padding: 9px 11px;
+    }
+
+    /* Live cron preview (under the cron-expression input) */
+    .cron-preview {
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 8px; padding: 9px 12px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border-2);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12.5px;
+      transition: border-color 0.18s, background 0.18s, color 0.18s;
+    }
+    .cron-preview svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .cron-preview .cron-preview-text { color: inherit; }
+    .cron-preview.active {
+      border-color: rgba(124,140,255,0.35);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .cron-preview.active.fallback {
+      border-color: rgba(245,158,11,0.30);
+      background: var(--warning-soft);
+      color: var(--warning);
+    }
+
+    .btn {
+      padding: 10px 16px;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--accent); }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn svg { width: 14px; height: 14px; }
+    .btn.block { width: 100%; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0b; font-weight: 600; }
+    .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
+    .btn.sm { padding: 6px 11px; font-size: 12px; }
+    .btn.danger { color: var(--danger); border-color: rgba(248,113,113,0.35); }
+    .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500; border: 1px solid var(--border);
+      background: var(--surface-2); color: var(--text-2);
+      text-transform: capitalize;
+    }
+    .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .badge.enabled  { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
+    .badge.disabled { background: var(--surface-2); color: var(--muted); border-color: var(--border-2); }
+    .badge.running  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
+    .badge.queued   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
+    .badge.done     { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
+    .badge.failed   { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+
+    .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; display: inline-block;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Schedule list */
+    .section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-bottom: 16px;
+    }
+    .section-head .section-title { display: flex; align-items: center; gap: 9px; }
+    .section-head h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+    .section-head .count {
+      font-size: 12px; font-weight: 600; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: 999px; padding: 2px 9px; min-width: 24px; text-align: center;
+    }
+
+    .sched-list { display: flex; flex-direction: column; gap: 14px; }
+    .sched-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+      box-shadow: var(--shadow-sm);
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+    .sched-card::before {
+      content: "";
+      position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+      background: linear-gradient(var(--accent), var(--accent-2));
+      opacity: 0; transition: opacity 0.18s ease;
+    }
+    .sched-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-2);
+      box-shadow: var(--shadow-md);
+    }
+    .sched-card:hover::before { opacity: 0.9; }
+
+    .sched-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .sched-id { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+    .sched-icon {
+      flex-shrink: 0;
+      width: 38px; height: 38px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: var(--radius);
+      background: var(--accent-soft);
+      border: 1px solid rgba(124,140,255,0.22);
+      color: var(--accent);
+    }
+    .sched-icon svg { width: 19px; height: 19px; }
+    .sched-titles { min-width: 0; }
+    .sched-name { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; word-break: break-word; }
+    .sched-human {
+      font-size: 12.5px; color: var(--text-2); margin-top: 3px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sched-human svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--accent); opacity: 0.9; }
+    .sched-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+
+    .sched-chips { display: flex; align-items: center; gap: 8px; margin-top: 13px; flex-wrap: wrap; }
+    .sched-cron {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-family: var(--font-mono); font-size: 12.5px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 9px; color: var(--text-2);
+    }
+    .sched-cron .label {
+      font-family: var(--font-ui); font-size: 9.5px; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+    }
+    .sched-tz {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 9px;
+    }
+    .sched-tz svg { width: 13px; height: 13px; opacity: 0.8; }
+
+    /* Delivery destination chip: where each schedule's result is posted. */
+    .sched-dest {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 9px;
+    }
+    .sched-dest svg { width: 13px; height: 13px; flex-shrink: 0; }
+    .sched-dest.discord {
+      background: rgba(88,101,242,0.13); color: #aab4ff;
+      border-color: rgba(88,101,242,0.38);
+    }
+    .sched-dest.slack {
+      background: rgba(46,182,125,0.13); color: #54cd94;
+      border-color: rgba(46,182,125,0.34);
+    }
+    .sched-dest.none { color: var(--muted); border-style: dashed; }
+
+    .sched-meta { color: var(--text-2); font-size: 12px; margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .sched-prompt {
+      color: var(--text-2); font-size: 12px; margin-top: 12px;
+      white-space: pre-wrap; word-break: break-word;
+      padding: 10px 12px; background: var(--surface-2);
+      border: 1px solid var(--border); border-left: 2px solid var(--border-2);
+      border-radius: var(--radius);
+    }
+    .sched-actions {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px;
+      padding-top: 14px; border-top: 1px solid var(--border);
+    }
+
+    .loading { display: flex; align-items: center; gap: 10px; color: var(--text-2); padding: 28px 0; }
+
+    /* Polished empty state */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; text-align: center;
+      padding: 48px 24px;
+      border: 1px dashed var(--border-2);
+      border-radius: var(--radius-lg);
+      background: linear-gradient(180deg, var(--surface), var(--surface-2));
+    }
+    .empty-state .empty-icon {
+      width: 56px; height: 56px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 14px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(124,140,255,0.22);
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+    .empty-state .empty-icon svg { width: 27px; height: 27px; }
+    .empty-state .empty-title { font-size: 15px; font-weight: 600; color: var(--text); }
+    .empty-state .empty-hint { font-size: 13px; color: var(--muted); margin-top: 6px; max-width: 38ch; }
+
+    .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
+    .error.box {
+      background: var(--danger-soft);
+      border: 1px solid rgba(248,113,113,0.35);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+    }
+
+    /* Toast (mirrors projects.html) */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%);
+      background: var(--success-soft); color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.35);
+      padding: 10px 18px; border-radius: var(--radius-lg);
+      font-size: 13px; z-index: 200; box-shadow: var(--shadow-md);
+    }
+    .toast.error { background: var(--danger-soft); color: var(--danger); border-color: rgba(248, 113, 113, 0.35); }
+
+    /* Confirm modal (mirrors projects.html confirm overlay) */
+    .confirm-overlay {
+      position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+    }
+    .confirm-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 22px;
+      max-width: 420px; width: 100%; box-shadow: var(--shadow-lg);
+    }
+    .confirm-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+    .confirm-body { color: var(--text-2); font-size: 13px; margin-bottom: 18px; }
+    .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+  </style>
+</head>
+<body>
+  <!-- Shared confirm modal (replaces native browser confirm dialogs). -->
+  <div class="confirm-overlay" id="confirm-overlay" hidden>
+    <div class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h3 class="confirm-title" id="confirm-title">Are you sure?</h3>
+      <div class="confirm-body" id="confirm-body"></div>
+      <div class="confirm-actions">
+        <button type="button" class="btn" id="confirm-cancel">Cancel</button>
+        <button type="button" class="btn danger" id="confirm-ok">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-logo"><img src="/static/favicon.svg" alt="" crossorigin="use-credentials"></span>
+      <span class="brand-text">
+        <span class="brand-title">Cron Jobs</span>
+        <span class="brand-subtitle">Scheduled AI tasks</span>
+      </span>
+    </div>
+    <a class="back" href="/">&larr; Back to app</a>
+  </header>
+
+  <main class="container">
+    <div class="page-head">
+      <div class="head-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path>
+        </svg>
+      </div>
+      <div>
+        <h1>Cron Jobs / Schedules</h1>
+        <div class="lead">Run a prompt on a recurring schedule. Pick how often it should run, and your AI task fires automatically, on time, every time.</div>
+        <div class="delivery-note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 5h16v12H7l-3 3z"></path>
+          </svg>
+          Results are delivered to your linked Discord / Slack.
+        </div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- New schedule form (sticky on wide screens) -->
+      <div class="col-form">
+        <section class="card" id="form-card">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+            New schedule
+          </div>
+          <form id="sched-form" autocomplete="off">
+            <div class="field">
+              <label class="form-label" for="name">Name</label>
+              <input class="form-input" id="name" name="name" placeholder="Weekday morning digest" required>
+            </div>
+
+            <div class="field">
+              <label class="form-label" for="freq">How often</label>
+              <select class="form-input" id="freq" name="freq">
+                <option value="daily">Every day</option>
+                <option value="weekday">Every weekday (Mon to Fri)</option>
+                <option value="weekend">Every weekend</option>
+                <option value="weekly">Weekly on a day</option>
+                <option value="monthly">Every month on a day</option>
+                <option value="hourly">Every hour</option>
+                <option value="everyn">Every N minutes</option>
+                <option value="custom">Custom (advanced)</option>
+              </select>
+            </div>
+
+            <div class="field" id="row-time">
+              <label class="form-label" for="time">Time</label>
+              <input class="form-input" id="time" name="time" type="time" value="09:00">
+              <span class="form-hint" id="time-hint">When it should run each time.</span>
+            </div>
+
+            <div class="field" id="row-dow" hidden>
+              <label class="form-label" for="dow">Day of week</label>
+              <select class="form-input" id="dow" name="dow">
+                <option value="0">Sunday</option>
+                <option value="1" selected>Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </div>
+
+            <div class="field" id="row-dom" hidden>
+              <label class="form-label" for="dom">Day of month</label>
+              <input class="form-input" id="dom" name="dom" type="number" min="1" max="31" value="1">
+              <span class="form-hint">A number from 1 to 31.</span>
+            </div>
+
+            <div class="field" id="row-everyn" hidden>
+              <label class="form-label" for="every-n">Every how many minutes</label>
+              <input class="form-input" id="every-n" name="every-n" type="number" min="1" max="59" value="15">
+              <span class="form-hint">A number from 1 to 59.</span>
+            </div>
+
+            <div class="field">
+              <div class="cron-preview" id="cron-preview">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path>
+                </svg>
+                <span class="cron-preview-text" id="cron-preview-text"></span>
+              </div>
+            </div>
+
+            <div class="field" id="row-advanced" hidden>
+              <label class="form-label" for="cron_expr">Cron expression (advanced)</label>
+              <input class="form-input mono" id="cron_expr" name="cron_expr" placeholder="0 9 * * 1-5">
+              <span class="form-hint">Standard 5-field cron, e.g. <code>0 9 * * 1-5</code> (9:00am, Mon to Fri). The plain-English preview above always reflects what will run.</span>
+            </div>
+
+            <div class="field">
+              <label class="form-label" for="prompt">Prompt</label>
+              <textarea class="form-textarea" id="prompt" name="prompt" maxlength="4000"
+                placeholder="Summarize my unread email and post the highlights."  required></textarea>
+              <span class="form-hint">What the scheduled run should do. Up to 4000 characters.</span>
+            </div>
+
+            <div class="error box" id="form-error" hidden></div>
+
+            <div class="field">
+              <p class="form-note">Heads up: schedules you create here on the web are not linked to a Discord or Slack destination yet. Delivery is set when a schedule is created from Discord or Slack.</p>
+            </div>
+
+            <div class="field" style="margin-top: 4px;">
+              <button class="btn primary block" type="submit" id="create-btn">Create schedule</button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <!-- Schedule list -->
+      <div class="col-list">
+        <div class="section-head">
+          <div class="section-title">
+            <h2>Your schedules</h2>
+            <span class="count" id="sched-count" hidden>0</span>
+          </div>
+          <button class="btn sm" type="button" id="refresh-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v4h-4"></path>
+            </svg>
+            Refresh
+          </button>
+        </div>
+        <div class="error box" id="list-error" hidden></div>
+        <div id="list-region">
+          <div class="loading"><span class="spinner"></span> Loading your schedules&hellip;</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // --- Auth helpers (mirrors static/projects.html & static/video.html) ---
+    // JSON requests: gateway identity travels via the session cookie
+    // (credentials: "include"); an optional Bearer token is attached when one
+    // is stored locally. The gateway injects the user's identity from that and
+    // scopes the schedules API to the caller's own schedules.
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    const SCHED_API = "/api/tasks/schedules";
+
+    const listRegion = document.getElementById("list-region");
+    const listError = document.getElementById("list-error");
+    const form = document.getElementById("sched-form");
+    const nameInput = document.getElementById("name");
+    const cronInput = document.getElementById("cron_expr");
+    const promptInput = document.getElementById("prompt");
+    const createBtn = document.getElementById("create-btn");
+    const formError = document.getElementById("form-error");
+    const refreshBtn = document.getElementById("refresh-btn");
+    const schedCount = document.getElementById("sched-count");
+    const cronPreview = document.getElementById("cron-preview");
+    const cronPreviewText = document.getElementById("cron-preview-text");
+    // Friendly schedule-picker controls (CV2). These generate the cron string
+    // client-side; the raw #cron_expr input stays the canonical value the form
+    // submits, and is revealed only under "Custom (advanced)".
+    const freqSelect = document.getElementById("freq");
+    const timeInput = document.getElementById("time");
+    const dowSelect = document.getElementById("dow");
+    const domInput = document.getElementById("dom");
+    const everyNInput = document.getElementById("every-n");
+    const timeHint = document.getElementById("time-hint");
+    const rowTime = document.getElementById("row-time");
+    const rowDow = document.getElementById("row-dow");
+    const rowDom = document.getElementById("row-dom");
+    const rowEveryN = document.getElementById("row-everyn");
+    const rowAdvanced = document.getElementById("row-advanced");
+
+    // Inline SVG glyphs (no external assets). Static markup only -- never mixed
+    // with user-controlled text, which is always set via textContent / escaped.
+    const ICON_CLOCK =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path></svg>';
+    const ICON_CAL =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg>';
+    const ICON_REPEAT =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
+    const ICON_GLOBE =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.6 2.9 2.6 15.1 0 18M12 3c-2.6 2.9-2.6 15.1 0 18"></path></svg>';
+    // Platform glyphs for the delivery-destination chip (CV3). Brand marks are
+    // filled (not stroked); static markup, never mixed with server text.
+    const ICON_DISCORD =
+      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189z"></path></svg>';
+    const ICON_SLACK =
+      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.685 8.834a2.528 2.528 0 0 1-2.521 2.521 2.528 2.528 0 0 1-2.521-2.521V2.522A2.528 2.528 0 0 1 15.164 0a2.528 2.528 0 0 1 2.521 2.522v6.312zM15.164 18.956a2.528 2.528 0 0 1 2.521 2.522A2.528 2.528 0 0 1 15.164 24a2.528 2.528 0 0 1-2.521-2.522v-2.522h2.521zM15.164 17.685a2.528 2.528 0 0 1-2.521-2.52 2.528 2.528 0 0 1 2.521-2.521h6.313A2.528 2.528 0 0 1 24 15.165a2.528 2.528 0 0 1-2.523 2.52h-6.313z"></path></svg>';
+
+    // Browser timezone, sent as the optional `tz` so schedules fire in the
+    // user's local time rather than server UTC. Harmless if the API ignores it.
+    let BROWSER_TZ = "";
+    try { BROWSER_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) { /* older browsers */ }
+
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, (c) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    // --- Human-readable cron description (built-in, no library) ---
+    // Covers the common 5-field patterns; returns null when it can't confidently
+    // describe an expression so callers can fall back to the raw text.
+    const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const MONTHS = ["", "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November", "December"];
+    const DOW_ALIAS = { sun: "0", mon: "1", tue: "2", wed: "3", thu: "4", fri: "5", sat: "6" };
+    const MON_ALIAS = { jan: "1", feb: "2", mar: "3", apr: "4", may: "5", jun: "6",
+                        jul: "7", aug: "8", sep: "9", oct: "10", nov: "11", dec: "12" };
+    const CRON_MACROS = {
+      "@hourly":   "Every hour, on the hour",
+      "@daily":    "Every day at 12:00 AM",
+      "@midnight": "Every day at 12:00 AM",
+      "@weekly":   "Every Sunday at 12:00 AM",
+      "@monthly":  "On the 1st of every month at 12:00 AM",
+      "@yearly":   "On January 1st at 12:00 AM",
+      "@annually": "On January 1st at 12:00 AM",
+    };
+    const isNum = (s) => /^\d+$/.test(s);
+
+    function ordinal(n) {
+      const v = n % 100;
+      if (v >= 11 && v <= 13) return n + "th";
+      switch (n % 10) {
+        case 1: return n + "st";
+        case 2: return n + "nd";
+        case 3: return n + "rd";
+        default: return n + "th";
+      }
+    }
+
+    function fmtTime(h, m) {
+      h = parseInt(h, 10); m = parseInt(m, 10);
+      if (isNaN(h) || isNaN(m) || h > 23 || m > 59) return null;
+      const ampm = h < 12 ? "AM" : "PM";
+      let hr = h % 12; if (hr === 0) hr = 12;
+      return hr + ":" + String(m).padStart(2, "0") + " " + ampm;
+    }
+
+    function dayName(n) { return DOW_FULL[((n % 7) + 7) % 7]; }
+
+    // Describe a day-of-week field (already alias-normalized to numbers).
+    function describeDow(dow) {
+      if (dow === "1-5") return "Every weekday";
+      if (dow === "0,6" || dow === "6,0" || dow === "0,7" || dow === "6-7" || dow === "6,7") return "Every weekend";
+      if (isNum(dow)) return "Every " + dayName(parseInt(dow, 10));
+      const rng = dow.match(/^(\d+)-(\d+)$/);
+      if (rng) {
+        const a = parseInt(rng[1], 10), b = parseInt(rng[2], 10);
+        if (a === 1 && b === 5) return "Every weekday";
+        return "Every " + dayName(a) + " to " + dayName(b);
+      }
+      if (/^\d+(,\d+)+$/.test(dow)) {
+        const days = dow.split(",").map((x) => dayName(parseInt(x, 10)));
+        if (days.length === 2) return "Every " + days[0] + " and " + days[1];
+        return "Every " + days.slice(0, -1).join(", ") + " and " + days[days.length - 1];
+      }
+      return null;
+    }
+
+    function monthName(mon) {
+      if (isNum(mon)) { const m = parseInt(mon, 10); if (m >= 1 && m <= 12) return MONTHS[m]; }
+      return null;
+    }
+
+    // Build the "which days" clause from dom / mon / dow fields. Returns null
+    // for ambiguous combinations so the caller falls back to the raw expression.
+    function dayClause(dom, mon, dow) {
+      const domAny = dom === "*", monAny = mon === "*", dowAny = dow === "*";
+      if (domAny && dowAny) {
+        if (monAny) return "Every day";
+        const mc = monthName(mon);
+        return mc ? "Every day in " + mc : null;
+      }
+      if (domAny && !dowAny) {
+        if (!monAny) return null;
+        return describeDow(dow);
+      }
+      if (!domAny && dowAny) {
+        const every = dom.match(/^\*\/(\d+)$/);
+        if (every) {
+          const n = parseInt(every[1], 10);
+          if (!monAny) return null;
+          return n === 1 ? "Every day" : "Every " + n + " days";
+        }
+        if (isNum(dom)) {
+          const dnum = parseInt(dom, 10);
+          if (dnum < 1 || dnum > 31) return null;
+          if (monAny) return "On the " + ordinal(dnum) + " of every month";
+          const mc = monthName(mon);
+          return mc ? "On " + mc + " " + ordinal(dnum) : null;
+        }
+        return null;
+      }
+      // Both dom and dow constrained -> cron treats this as an OR; too ambiguous
+      // to phrase reliably, so fall back to the raw expression.
+      return null;
+    }
+
+    // Returns a human-readable description, or null if it can't parse the cron.
+    function describeCron(raw) {
+      if (raw == null) return null;
+      let expr = String(raw).trim().toLowerCase().replace(/\s+/g, " ");
+      if (!expr) return null;
+      if (CRON_MACROS[expr]) return CRON_MACROS[expr];
+
+      const p = expr.split(" ");
+      if (p.length !== 5) return null;
+      let [min, hr, dom, mon, dow] = p;
+
+      // Normalize 3-letter day/month aliases to numbers.
+      dow = dow.replace(/[a-z]{3}/g, (m) => (DOW_ALIAS[m] != null ? DOW_ALIAS[m] : m));
+      mon = mon.replace(/[a-z]{3}/g, (m) => (MON_ALIAS[m] != null ? MON_ALIAS[m] : m));
+
+      // Sub-hour and hourly frequencies (only when the rest is unconstrained).
+      const allDays = dom === "*" && mon === "*" && dow === "*";
+      if (min === "*" && hr === "*" && allDays) return "Every minute";
+      const minEvery = min.match(/^\*\/(\d+)$/);
+      if (minEvery && hr === "*" && allDays) {
+        const n = parseInt(minEvery[1], 10);
+        return n <= 1 ? "Every minute" : "Every " + n + " minutes";
+      }
+      const hrEvery = hr.match(/^\*\/(\d+)$/);
+      if (isNum(min) && hrEvery && allDays) {
+        const n = parseInt(hrEvery[1], 10);
+        const past = parseInt(min, 10) ? " at " + parseInt(min, 10) + " minutes past" : "";
+        return n <= 1 ? "Every hour" + past : "Every " + n + " hours" + past;
+      }
+      if (isNum(min) && hr === "*" && allDays) {
+        const m = parseInt(min, 10);
+        if (m > 59) return null;
+        return m === 0 ? "Every hour, on the hour"
+                       : "Every hour at " + m + (m === 1 ? " minute past" : " minutes past");
+      }
+
+      // Daily-at-a-time patterns require a concrete minute + hour.
+      if (!isNum(min) || !isNum(hr)) return null;
+      const time = fmtTime(hr, min);
+      if (!time) return null;
+      const days = dayClause(dom, mon, dow);
+      if (days === null) return null;
+      return days + " at " + time;
+    }
+
+    // Human text for display, falling back to the raw expression when unparsed.
+    function humanizeCron(raw) { return describeCron(raw) || String(raw || ""); }
+
+    function relativeTime(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return "";
+      const diff = (Date.now() - d.getTime()) / 1000;
+      if (diff < 60) return "just now";
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function showToast(msg, isError) {
+      const t = document.createElement("div");
+      t.className = "toast" + (isError ? " error" : "");
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 4000);
+    }
+
+    function showFormError(msg) { formError.textContent = msg; formError.hidden = false; }
+    function clearFormError() { formError.textContent = ""; formError.hidden = true; }
+    function showListError(msg) { listError.textContent = msg; listError.hidden = false; }
+    function clearListError() { listError.textContent = ""; listError.hidden = true; }
+
+    // --- Live cron preview under the cron-expression input ---
+    function updateCronPreview() {
+      const v = cronInput.value.trim();
+      if (!v) {
+        cronPreview.classList.remove("active", "fallback");
+        cronPreviewText.textContent = "Pick how often this should run to see a plain-English preview.";
+        return;
+      }
+      const human = describeCron(v);
+      if (human) {
+        cronPreview.classList.add("active");
+        cronPreview.classList.remove("fallback");
+        cronPreviewText.textContent = human;
+      } else {
+        cronPreview.classList.add("active", "fallback");
+        cronPreviewText.textContent = "Custom schedule: " + v;
+      }
+    }
+
+    // --- Friendly schedule picker (CV2): build the cron string from the
+    // plain-English controls so users never have to know cron syntax. ---
+    // Read the <input type="time"> as { h, min }, falling back to 9:00.
+    function parseTimeParts() {
+      const m = (timeInput.value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+      let h = m ? parseInt(m[1], 10) : 9;
+      let min = m ? parseInt(m[2], 10) : 0;
+      if (isNaN(h) || h < 0 || h > 23) h = 9;
+      if (isNaN(min) || min < 0 || min > 59) min = 0;
+      return { h, min };
+    }
+
+    // Generate a 5-field cron string from the current friendly selections.
+    // Returns "" when the selection is incomplete/invalid (e.g. a bad day
+    // number) so the caller can surface a clear error instead of garbage.
+    function buildCronFromFriendly() {
+      const { h, min } = parseTimeParts();
+      switch (freqSelect.value) {
+        case "daily":   return min + " " + h + " * * *";
+        case "weekday": return min + " " + h + " * * 1-5";
+        case "weekend": return min + " " + h + " * * 0,6";
+        case "weekly":  return min + " " + h + " * * " + dowSelect.value;
+        case "monthly": {
+          const dom = parseInt(domInput.value, 10);
+          if (isNaN(dom) || dom < 1 || dom > 31) return "";
+          return min + " " + h + " " + dom + " * *";
+        }
+        case "hourly":  return min + " * * * *";
+        case "everyn": {
+          const n = parseInt(everyNInput.value, 10);
+          if (isNaN(n) || n < 1 || n > 59) return "";
+          return "*/" + n + " * * * *";
+        }
+        default: return "";  // "custom" uses the raw cron input directly
+      }
+    }
+
+    // Show only the sub-fields relevant to the chosen frequency, keep the raw
+    // cron input (the canonical value) in sync, and refresh the live preview.
+    function syncFriendly() {
+      const freq = freqSelect.value;
+      const custom = freq === "custom";
+      const usesTime = ["daily", "weekday", "weekend", "weekly", "monthly", "hourly"].includes(freq);
+      rowTime.hidden = !usesTime;
+      rowDow.hidden = freq !== "weekly";
+      rowDom.hidden = freq !== "monthly";
+      rowEveryN.hidden = freq !== "everyn";
+      rowAdvanced.hidden = !custom;
+      if (timeHint) {
+        timeHint.textContent = freq === "hourly"
+          ? "Only the minutes are used: it runs at this minute past every hour."
+          : "When it should run each time.";
+      }
+      if (!custom) cronInput.value = buildCronFromFriendly();
+      updateCronPreview();
+    }
+
+    // --- Styled confirm dialog (Promise-based; mirrors projects.html) ---
+    const confirmOverlay = document.getElementById("confirm-overlay");
+    const confirmTitle = document.getElementById("confirm-title");
+    const confirmBody = document.getElementById("confirm-body");
+    const confirmOk = document.getElementById("confirm-ok");
+    const confirmCancel = document.getElementById("confirm-cancel");
+    let _confirmResolve = null;
+    function confirmDialog(message, title) {
+      confirmTitle.textContent = title || "Are you sure?";
+      confirmBody.textContent = message || "";
+      confirmOverlay.hidden = false;
+      return new Promise((resolve) => { _confirmResolve = resolve; });
+    }
+    function _closeConfirm(result) {
+      confirmOverlay.hidden = true;
+      if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+    }
+    confirmOk.addEventListener("click", () => _closeConfirm(true));
+    confirmCancel.addEventListener("click", () => _closeConfirm(false));
+    confirmOverlay.addEventListener("click", (e) => { if (e.target === confirmOverlay) _closeConfirm(false); });
+
+    // Map a last-run status string to a badge class.
+    function runStatusClass(status) {
+      const s = (status || "").toLowerCase();
+      if (["success", "ok", "done", "completed"].includes(s)) return "done";
+      if (["failed", "error", "errored"].includes(s)) return "failed";
+      if (["running", "in_progress"].includes(s)) return "running";
+      if (["queued", "pending"].includes(s)) return "queued";
+      return "";
+    }
+
+    // Render one schedule card. Returns an HTMLElement.
+    function renderCard(s) {
+      const card = document.createElement("div");
+      card.className = "sched-card";
+      card.dataset.id = s.id;
+
+      const enabled = !!s.enabled;
+      const enabledBadge = enabled
+        ? '<span class="badge enabled"><span class="dot"></span>Enabled</span>'
+        : '<span class="badge disabled"><span class="dot"></span>Disabled</span>';
+      const onceBadge = s.run_once ? '<span class="badge">Run once</span>' : "";
+
+      let lastRun = "";
+      if (s.last_run_at || s.last_run_status) {
+        const cls = runStatusClass(s.last_run_status);
+        const label = s.last_run_status ? escapeHtml(String(s.last_run_status)) : "ran";
+        const when = relativeTime(s.last_run_at);
+        lastRun =
+          `<span class="badge ${cls}">${label}</span>` +
+          (when ? `<span>last run ${escapeHtml(when)}</span>` : "");
+      } else {
+        lastRun = '<span class="muted">No runs yet</span>';
+      }
+
+      const tz = s.tz
+        ? `<span class="sched-tz" title="timezone">${ICON_GLOBE}${escapeHtml(String(s.tz))}</span>`
+        : "";
+      const prompt = s.prompt
+        ? `<div class="sched-prompt">${escapeHtml(String(s.prompt))}</div>`
+        : "";
+
+      // Friendly schedule line (the card's primary info). Use the plain-English
+      // description when the expression parses confidently; otherwise fall back
+      // to the raw cron text so the card is never left without schedule info.
+      // Rendered via textContent below (the raw fallback is never trusted HTML).
+      const scheduleText = describeCron(s.cron_expr) || String(s.cron_expr || "");
+      const humanRow = `<div class="sched-human">${ICON_REPEAT}<span class="human-text"></span></div>`;
+
+      // Delivery destination (CV3): platform glyph + name, or a muted "no
+      // delivery" chip when the schedule isn't linked to Discord/Slack (e.g.
+      // created here on the web). Server values are written via textContent.
+      const destPlat = String(s.delivery_platform || "").toLowerCase();
+      const hasDest = s.delivery_channel_id != null && String(s.delivery_channel_id).trim() !== "";
+      let destClass = "none", destGlyph = "", destText = "No delivery (created on web)";
+      if (hasDest) {
+        if (destPlat === "discord") { destClass = "discord"; destGlyph = ICON_DISCORD; destText = "Delivered to Discord"; }
+        else if (destPlat === "slack") { destClass = "slack"; destGlyph = ICON_SLACK; destText = "Delivered to Slack"; }
+        else { destClass = ""; destGlyph = ICON_REPEAT; destText = "Delivered to " + (destPlat ? destPlat.charAt(0).toUpperCase() + destPlat.slice(1) : "a linked channel"); }
+      }
+      const destChip = `<span class="sched-dest ${destClass}" title="delivery destination">${destGlyph}<span class="dest-text"></span></span>`;
+
+      card.innerHTML =
+        `<div class="sched-head">
+           <div class="sched-id">
+             <span class="sched-icon">${ICON_CLOCK}</span>
+             <div class="sched-titles">
+               <div class="sched-name">${escapeHtml(String(s.name || "(unnamed)"))}</div>
+               ${humanRow}
+             </div>
+           </div>
+           <span class="sched-badges">${enabledBadge}${onceBadge}</span>
+         </div>
+         <div class="sched-chips">
+           ${tz}
+           ${destChip}
+         </div>
+         <div class="sched-meta">${lastRun}</div>
+         ${prompt}
+         <div class="sched-actions">
+           <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>
+           <button class="btn sm" type="button" data-act="run">Run now</button>
+           <button class="btn sm danger" type="button" data-act="delete">Delete</button>
+         </div>`;
+
+      // Schedule line rendered via textContent so the raw-cron fallback can
+      // never inject markup (no XSS even for an odd / unparseable expression).
+      card.querySelector(".human-text").textContent = scheduleText;
+      // Destination label rendered via textContent (platform value is escaped).
+      card.querySelector(".dest-text").textContent = destText;
+
+      const toggleBtn = card.querySelector('[data-act="toggle"]');
+      const runBtn = card.querySelector('[data-act="run"]');
+      const delBtn = card.querySelector('[data-act="delete"]');
+      toggleBtn.addEventListener("click", () => toggleSchedule(s, card));
+      runBtn.addEventListener("click", () => runSchedule(s, card));
+      delBtn.addEventListener("click", () => deleteSchedule(s, card));
+      return card;
+    }
+
+    function renderEmptyState() {
+      const wrap = document.createElement("div");
+      wrap.className = "empty-state";
+      wrap.innerHTML =
+        `<div class="empty-icon">${ICON_CAL}</div>
+         <div class="empty-title">No schedules yet</div>
+         <div class="empty-hint">Create your first recurring task with the form on the left. Just pick how often it should run and a time, no cron knowledge needed.</div>`;
+      return wrap;
+    }
+
+    function setCardBusy(card, busy) {
+      card.querySelectorAll("button").forEach((b) => { b.disabled = busy; });
+    }
+
+    function updateCount(n) {
+      if (n > 0) { schedCount.textContent = String(n); schedCount.hidden = false; }
+      else { schedCount.hidden = true; }
+    }
+
+    async function loadSchedules() {
+      clearListError();
+      let rows;
+      try {
+        const r = await fetch(SCHED_API, { headers: authHeaders(), credentials: "include", cache: "no-store" });
+        if (!r.ok) {
+          const txt = await r.text();
+          throw new Error(`Could not load schedules (${r.status}): ${txt.slice(0, 200)}`);
+        }
+        rows = await r.json();
+      } catch (err) {
+        listRegion.innerHTML = "";
+        updateCount(0);
+        showListError(err.message);
+        return;
+      }
+      if (!Array.isArray(rows)) rows = [];
+      listRegion.innerHTML = "";
+      updateCount(rows.length);
+      if (rows.length === 0) {
+        listRegion.appendChild(renderEmptyState());
+        return;
+      }
+      const wrap = document.createElement("div");
+      wrap.className = "sched-list";
+      for (const s of rows) wrap.appendChild(renderCard(s));
+      listRegion.appendChild(wrap);
+    }
+
+    async function toggleSchedule(s, card) {
+      const action = s.enabled ? "disable" : "enable";
+      setCardBusy(card, true);
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}/${action}`, {
+          method: "POST", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) throw new Error(`${action} failed (${r.status})`);
+        showToast(`Schedule ${action}d.`);
+      } catch (err) {
+        showToast(err.message, true);
+        setCardBusy(card, false);
+      }
+      await loadSchedules();
+    }
+
+    async function runSchedule(s, card) {
+      setCardBusy(card, true);
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}/run-now`, {
+          method: "POST", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) throw new Error(`Run now failed (${r.status})`);
+        showToast("Run triggered. Results go to your linked Discord/Slack.");
+      } catch (err) {
+        showToast(err.message, true);
+      }
+      setCardBusy(card, false);
+      await loadSchedules();
+    }
+
+    async function deleteSchedule(s, card) {
+      const ok = await confirmDialog(
+        `Delete the schedule "${s.name || s.id}"? This cannot be undone.`,
+        "Delete schedule"
+      );
+      if (!ok) return;
+      setCardBusy(card, true);
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}`, {
+          method: "DELETE", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+        showToast("Schedule deleted.");
+      } catch (err) {
+        showToast(err.message, true);
+        setCardBusy(card, false);
+      }
+      await loadSchedules();
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearFormError();
+      const name = nameInput.value.trim();
+      // In friendly mode, keep the canonical cron field current before reading.
+      if (freqSelect.value !== "custom") cronInput.value = buildCronFromFriendly();
+      const cron_expr = cronInput.value.trim();
+      const prompt = promptInput.value.trim();
+      if (!name) return showFormError("A name is required.");
+      if (!cron_expr) return showFormError(freqSelect.value === "custom"
+        ? "A cron expression is required."
+        : "Please complete the schedule options above.");
+      if (!prompt) return showFormError("A prompt is required.");
+
+      createBtn.disabled = true;
+      const prevText = createBtn.textContent;
+      createBtn.textContent = "Creating…";
+
+      const body = { name, cron_expr, prompt };
+      if (BROWSER_TZ) body.tz = BROWSER_TZ;
+
+      try {
+        const r = await fetch(SCHED_API, {
+          method: "POST", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify(body),
+        });
+        if (r.status !== 201) {
+          const txt = await r.text();
+          throw new Error(`Create failed (${r.status}): ${txt.slice(0, 300)}`);
+        }
+        form.reset();
+        syncFriendly();
+        showToast("Schedule created.");
+      } catch (err) {
+        showFormError(err.message);
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = prevText;
+      }
+      await loadSchedules();
+    });
+
+    cronInput.addEventListener("input", updateCronPreview);
+    freqSelect.addEventListener("change", syncFriendly);
+    timeInput.addEventListener("input", syncFriendly);
+    dowSelect.addEventListener("change", syncFriendly);
+    domInput.addEventListener("input", syncFriendly);
+    everyNInput.addEventListener("input", syncFriendly);
+    refreshBtn.addEventListener("click", () => loadSchedules());
+
+    syncFriendly();
+    loadSchedules();
+  </script>
+</body>
+</html>

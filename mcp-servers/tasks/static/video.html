@@ -1,0 +1,1751 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Studio</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" crossorigin="use-credentials">
+  <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
+  <style>
+    :root[data-theme="dark"] {
+      --bg:           #0a0a0b;
+      --surface:      #111113;
+      --surface-2:    #17171a;
+      --surface-3:    #1e1e22;
+      --border:       #24242a;
+      --border-2:     #2e2e36;
+      --text:         #ededee;
+      --text-2:       #b8b8c0;
+      --muted:        #74747e;
+      --accent:       #7c8cff;
+      --accent-2:     #5d6cff;
+      --accent-soft:  #1e2140;
+      --success:      #22c55e;
+      --success-soft: #0d2a1a;
+      --warning:      #f59e0b;
+      --warning-soft: #2a1f08;
+      --danger:       #f87171;
+      --danger-soft:  #2a1414;
+      --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
+    }
+    :root {
+      --radius-sm: 4px;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-2); }
+    button { font-family: inherit; color: inherit; cursor: pointer; }
+    button:disabled, .btn:disabled { cursor: not-allowed; opacity: 0.6; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* Topbar */
+    .topbar {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      gap: 16px;
+    }
+    .topbar .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .topbar .brand-logo {
+      width: 34px; height: 34px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .topbar .brand-logo img { width: 34px; height: 34px; display: block; }
+    .topbar .brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+    .topbar .brand-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .topbar .brand-subtitle { font-size: 11px; color: var(--muted); }
+    .topbar-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .topbar .project-name {
+      font-size: 13px; color: var(--text-2); font-weight: 500;
+      max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--surface-2);
+    }
+    .topbar .back {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: var(--radius);
+      color: var(--text-2); font-size: 13px; transition: background 0.15s;
+      border: none; background: transparent;
+    }
+    .topbar .back:hover { background: var(--surface-2); color: var(--text); }
+
+    /* Studio split layout */
+    .studio {
+      max-width: 1240px; margin: 0 auto; padding: 24px 24px 48px;
+      display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+      gap: 22px; align-items: start;
+    }
+    @media (max-width: 920px) { .studio { grid-template-columns: 1fr; } }
+    .studio-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+
+    /* Cards / form components (reused from the original page) */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      box-shadow: var(--shadow-sm);
+    }
+    .card-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .card-sub { color: var(--text-2); font-size: 13px; margin-bottom: 16px; }
+    .section-label {
+      font-size: 12px; font-weight: 500; color: var(--text-2);
+      letter-spacing: 0.02em; text-transform: uppercase; margin-bottom: 10px;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+    .field:last-child { margin-bottom: 0; }
+    .form-label {
+      font-size: 12px; font-weight: 500; color: var(--text-2);
+      letter-spacing: 0.02em; text-transform: uppercase;
+    }
+    .form-input, .form-textarea, .form-file {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus, .form-textarea:focus, .form-file:focus { border-color: var(--accent); }
+    .form-textarea { resize: vertical; min-height: 110px; font-family: var(--font-ui); }
+    .form-file { padding: 8px 12px; cursor: pointer; }
+    .form-hint { font-size: 11px; color: var(--muted); }
+
+    /* Voice picker: a grid of selectable voices each with an audio preview. */
+    .voice-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    @media (max-width: 560px) { .voice-list { grid-template-columns: 1fr; } }
+    .voice-loading { color: var(--muted); font-size: 13px; padding: 6px 2px; }
+    .voice-opt {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; border: 1px solid var(--border);
+      border-radius: var(--radius); background: var(--surface-2);
+      cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    }
+    .voice-opt:hover { border-color: var(--border-2); }
+    .voice-opt.selected { border-color: var(--accent); background: var(--accent-soft); }
+    .voice-opt .vo-play {
+      width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
+      display: grid; place-items: center; cursor: pointer;
+      border: 1px solid var(--border-2); background: var(--surface-3);
+      color: var(--text-2); font-size: 12px; line-height: 1;
+    }
+    .voice-opt .vo-play:hover { color: var(--text); border-color: var(--accent); }
+    .voice-opt .vo-play.playing { color: var(--accent); border-color: var(--accent); }
+    .voice-opt .vo-meta { display: flex; flex-direction: column; min-width: 0; }
+    .voice-opt .vo-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .voice-opt .vo-tag { font-size: 11px; color: var(--muted); }
+    .voice-opt .vo-check {
+      margin-left: auto; width: 16px; height: 16px; flex-shrink: 0;
+      border-radius: 50%; border: 1px solid var(--border-2);
+    }
+    .voice-opt.selected .vo-check {
+      border-color: var(--accent);
+      background: radial-gradient(circle at center, var(--accent) 0 5px, transparent 5px);
+    }
+
+    .btn {
+      padding: 10px 16px;
+      border: 1px solid var(--border-2);
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s, border-color 0.15s;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--accent); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0b; }
+    .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
+    .btn.sm { padding: 7px 12px; font-size: 12px; }
+
+    .file-summary { font-size: 12px; color: var(--text-2); margin-top: 8px; }
+    .file-summary ul { list-style: none; margin: 6px 0 0; padding: 0; }
+    .file-summary li {
+      display: flex; justify-content: space-between; gap: 10px;
+      padding: 4px 0; border-bottom: 1px solid var(--border);
+    }
+    .file-summary li:last-child { border-bottom: none; }
+    .file-summary .size { color: var(--muted); flex-shrink: 0; font-size: 11px; }
+
+    /* Internal back link (create + studio states) */
+    .back-link {
+      align-self: flex-start;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 10px; margin-bottom: 14px;
+      border: 1px solid transparent; border-radius: var(--radius);
+      background: transparent; color: var(--text-2); font-size: 13px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .back-link:hover { background: var(--surface-2); color: var(--text); border-color: var(--border-2); }
+
+    /* Numbered image manager (create state) */
+    .uploader-head { display: flex; align-items: center; gap: 12px; }
+    .uploader-count { font-size: 12px; font-weight: 600; color: var(--text-2); }
+    .shot-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+    .shot-grid:empty { margin-top: 0; }
+    .shot-empty { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .shot-card {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 8px 10px;
+    }
+    .shot-card .num {
+      flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 600; color: var(--accent);
+      background: var(--accent-soft); border: 1px solid rgba(124,140,255,0.25);
+    }
+    .shot-card .thumb {
+      flex: 0 0 auto; width: 56px; height: 40px; border-radius: var(--radius-sm);
+      object-fit: cover; background: var(--surface-3); border: 1px solid var(--border);
+    }
+    .shot-card .name {
+      flex: 1 1 auto; min-width: 0;
+      padding: 6px 8px; background: var(--surface); border: 1px solid var(--border-2);
+      border-radius: var(--radius-sm); color: var(--text);
+      font-family: inherit; font-size: 12px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .shot-card .name:focus { border-color: var(--accent); }
+    .shot-card .shot-size { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+    .shot-card .ctrls { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+    .shot-card .ctrl {
+      width: 28px; height: 28px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+      background: var(--surface); color: var(--text-2);
+      font-size: 14px; line-height: 1;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .shot-card .ctrl:hover:not(:disabled) { background: var(--surface-3); color: var(--text); border-color: var(--accent); }
+    .shot-card .ctrl:disabled { opacity: 0.4; cursor: not-allowed; }
+    .shot-card .ctrl.del:hover:not(:disabled) { color: var(--danger); border-color: rgba(248,113,113,0.5); }
+
+    /* Status badge / pill */
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500; border: 1px solid var(--border);
+      background: var(--surface-2); color: var(--text-2);
+    }
+    .badge.running  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
+    .badge.queued   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
+    .badge.done     { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
+    .badge.failed   { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+
+    .spinner {
+      width: 12px; height: 12px;
+      border: 2px solid currentColor; border-top-color: transparent;
+      border-radius: 50%; display: inline-block;
+      animation: spin 0.7s linear infinite;
+    }
+    .spinner.big { width: 26px; height: 26px; border-width: 3px; color: var(--accent); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Example / onboarding video (create state) */
+    .example-card { padding: 18px; }
+    .example-card video { width: 100%; border-radius: var(--radius); display: block; background: #000; }
+
+    /* Create state: two-column studio (form left, example + how-to right). */
+    .create-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      gap: 22px; align-items: start;
+    }
+    .create-grid .example-card { position: sticky; top: 84px; }
+    @media (max-width: 920px) {
+      .create-grid { grid-template-columns: 1fr; }
+      .create-grid .example-card { position: static; }
+    }
+    ol.how-steps {
+      margin: 16px 0 0; padding-left: 20px;
+      color: var(--text-2); font-size: 13px; line-height: 1.7;
+    }
+    .how-steps li { margin-bottom: 4px; }
+    .how-steps b { color: var(--text); font-weight: 600; }
+
+    /* Video player + placeholder */
+    .player-wrap {
+      position: relative; width: 100%; aspect-ratio: 16 / 9;
+      background: #000; border-radius: var(--radius-lg); overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .player-video { width: 100%; height: 100%; display: block; background: #000; }
+    .player-placeholder {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 12px; text-align: center; padding: 24px;
+      background: var(--surface-2); color: var(--muted);
+    }
+    .player-placeholder .ph-icon {
+      width: 48px; height: 48px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; background: var(--surface-3); color: var(--text-2);
+      border: 1px solid var(--border-2);
+    }
+    .player-placeholder .ph-icon.error { color: var(--danger); border-color: rgba(248,113,113,0.4); }
+    .player-placeholder .ph-text { font-size: 13px; color: var(--text-2); max-width: 320px; }
+    .player-overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      background: rgba(10,10,11,0.6); color: var(--text); font-size: 13px;
+    }
+
+    .player-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+    /* Scene strip */
+    .scene-strip {
+      display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px;
+    }
+    .scene-cell {
+      flex: 0 0 auto; width: 160px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 8px;
+    }
+    .scene-cell .idx {
+      width: 22px; height: 22px; border-radius: 6px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 600; color: var(--accent);
+      background: var(--accent-soft); border: 1px solid rgba(124,140,255,0.25);
+    }
+    .scene-cell .cap {
+      font-size: 12px; color: var(--text-2); line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+
+    /* Version bar */
+    .version-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .version-chip {
+      padding: 5px 11px; border-radius: 999px;
+      border: 1px solid var(--border-2); background: var(--surface-2);
+      color: var(--text-2); font-size: 12px; font-weight: 500;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .version-chip.current { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+    .version-chip.current .cur { font-size: 10px; opacity: 0.85; text-transform: uppercase; letter-spacing: 0.03em; }
+    .version-chip.clickable { cursor: pointer; }
+    .version-chip.clickable:hover { border-color: var(--accent); color: var(--text); background: var(--surface-3); }
+    .version-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Refine chat rail */
+    .studio-rail {
+      display: flex; flex-direction: column;
+      height: calc(100vh - 112px); min-height: 480px;
+      position: sticky; top: 88px; padding: 0; overflow: hidden;
+    }
+    @media (max-width: 920px) {
+      .studio-rail { position: static; height: auto; min-height: 420px; }
+    }
+    .rail-head { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+    .rail-title { font-size: 14px; font-weight: 600; }
+    .rail-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .chat-log { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; }
+
+    .chat-welcome {
+      margin: auto; text-align: center; color: var(--muted);
+      display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px;
+    }
+    .chat-welcome .cw-spark { font-size: 22px; color: var(--accent); }
+    .chat-welcome .cw-text { color: var(--text-2); font-size: 13.5px; max-width: 260px; line-height: 1.5; }
+    .chat-welcome .cw-hint { font-size: 12px; max-width: 260px; line-height: 1.5; }
+
+    .chat-bubble { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-bottom: 12px; }
+    .chat-bubble.user { align-items: flex-end; }
+    .chat-bubble.user .body {
+      background: var(--accent-soft);
+      border: 1px solid rgba(124,140,255,0.3);
+      border-radius: 14px 14px 4px 14px;
+      padding: 8px 12px; color: var(--text);
+      white-space: pre-wrap; max-width: 86%; line-height: 1.5;
+    }
+    .chat-bubble.ai .body, .chat-bubble.proposal .body {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 14px 14px 14px 4px;
+      padding: 10px 12px; color: var(--text); line-height: 1.55; max-width: 94%;
+    }
+    .chat-bubble.proposal .body { border-color: rgba(124,140,255,0.35); }
+    .chat-bubble.thinking .body::after { content: "thinking..."; color: var(--muted); font-style: italic; }
+    .chat-bubble.failed .body { background: var(--danger-soft); color: var(--danger); border-color: rgba(248,113,113,0.4); }
+    .chat-bubble .markdown p { margin: 0 0 6px 0; }
+    .chat-bubble .markdown p:last-child { margin-bottom: 0; }
+    .chat-bubble .markdown strong { color: var(--text); font-weight: 600; }
+    .chat-bubble .markdown code {
+      background: var(--surface-3); padding: 1px 5px; border-radius: 3px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--accent);
+    }
+    .chat-bubble .markdown ul { margin: 4px 0; padding-left: 18px; }
+    .chat-bubble .markdown li { margin: 2px 0; color: var(--text-2); }
+    .apply-row { margin-top: 10px; }
+
+    /* Composer */
+    .composer { border-top: 1px solid var(--border); padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .composer .chat-input { min-height: 0; }
+    .composer-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .icon-btn {
+      width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border-2); border-radius: var(--radius);
+      background: var(--surface-2); color: var(--text-2); transition: background 0.15s, color 0.15s;
+    }
+    .icon-btn:hover:not(:disabled) { background: var(--surface-3); color: var(--text); border-color: var(--accent); }
+    .icon-btn svg { width: 16px; height: 16px; }
+
+    /* Error box */
+    .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
+    .error.box {
+      background: var(--danger-soft);
+      border: 1px solid rgba(248,113,113,0.35);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+    }
+
+    /* Toasts */
+    .toasts { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
+    .toast {
+      background: var(--surface-3); border: 1px solid var(--border-2);
+      border-left: 3px solid var(--accent); border-radius: var(--radius);
+      padding: 10px 14px; font-size: 13px; color: var(--text);
+      box-shadow: var(--shadow-md); max-width: 340px;
+    }
+    .toast[data-kind="success"] { border-left-color: var(--success); }
+    .toast[data-kind="error"]   { border-left-color: var(--danger); }
+    .toast[data-kind="info"]    { border-left-color: var(--accent); }
+    .toast[data-kind="warn"]    { border-left-color: var(--warning); }
+    .toast.fading { opacity: 0; transition: opacity 0.25s; }
+
+    /* State toggling: show create / studio / list blocks by body state */
+    body[data-state="create"] [data-show="studio"],
+    body[data-state="create"] [data-show="list"] { display: none !important; }
+    body[data-state="studio"] [data-show="create"],
+    body[data-state="studio"] [data-show="list"] { display: none !important; }
+    body[data-state="list"] [data-show="create"],
+    body[data-state="list"] [data-show="studio"] { display: none !important; }
+    /* Internal "Your videos" back link: visible on create + studio, hidden on
+       the list landing (which is itself the destination). */
+    body[data-state="list"] [data-show="back"] { display: none !important; }
+    /* Create state: chat rail is hidden, so collapse the grid to a single
+       centered column instead of leaving an empty right-hand panel. */
+    body[data-state="create"] .studio { display: block; max-width: 1280px; }
+    /* List state: full-width landing grid, no right-hand rail. */
+    body[data-state="list"] .studio { display: block; max-width: 1100px; }
+
+    /* List state: "Your videos" landing */
+    .list-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; margin-bottom: 20px;
+    }
+    .list-title { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+    .video-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      display: flex; flex-direction: column; gap: 14px;
+      min-height: 112px;
+      cursor: pointer; text-align: left;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .video-card:hover { background: var(--surface-2); border-color: var(--accent); }
+    .video-card .vc-title {
+      font-size: 14px; font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .video-card .vc-meta {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; margin-top: auto;
+    }
+    .video-card .vc-date { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+    .list-empty { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body data-state="list">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-logo"><img src="/static/favicon.svg" alt="" crossorigin="use-credentials"></span>
+      <span class="brand-text">
+        <span class="brand-title">Video Studio</span>
+        <span class="brand-subtitle">Screenshots to narrated video</span>
+      </span>
+    </div>
+    <div class="topbar-right">
+      <span class="project-name" id="project-name" hidden></span>
+      <span class="badge" id="status-pill" hidden></span>
+      <button class="btn sm" type="button" id="new-video-btn" hidden>New video</button>
+      <a class="back" id="back-to-chat" href="/" title="Back to chat">&larr; Back to chat</a>
+    </div>
+  </header>
+
+  <main class="studio">
+    <!-- LEFT: list landing (list state), create form (create state), or
+         player + scenes + versions (studio state) -->
+    <div class="studio-main">
+
+      <!-- Internal back: returns to the "Your videos" list. Shown on create
+           and studio states, hidden on the list landing itself. -->
+      <button class="back-link" data-show="back" type="button" id="back-to-list">&larr; Your videos</button>
+
+      <!-- LIST STATE: "Your videos" landing -->
+      <section data-show="list" id="list-section">
+        <div class="list-head">
+          <div class="list-title">Your videos</div>
+          <button class="btn primary sm" type="button" id="list-new-btn">New video</button>
+        </div>
+        <div class="video-grid" id="video-grid"></div>
+        <div class="list-empty" id="list-empty" hidden></div>
+      </section>
+
+      <!-- CREATE STATE: upload form -->
+      <div class="create-grid" data-show="create">
+      <section class="card create-form-card" data-show="create">
+        <div class="card-title">Generate a video</div>
+        <div class="card-sub">Name your video, upload 1 to 12 screenshots, describe the narrated slideshow you want.</div>
+        <form id="video-form" autocomplete="off">
+          <div class="field">
+            <label class="form-label" for="title">Title</label>
+            <input class="form-input" id="title" name="title" maxlength="200" placeholder="Name your video, e.g. Dashboard walkthrough" required>
+          </div>
+
+          <div class="field">
+            <label class="form-label" for="style">Style</label>
+            <select class="form-input" id="style" name="style">
+              <option value="clean_product_demo" selected>Clean product demo (recommended)</option>
+              <option value="cinematic">Cinematic</option>
+              <option value="snappy_social">Snappy social</option>
+            </select>
+            <span class="form-hint">The visual look: motion, transitions, captions, color grade and intro/outro cards.</span>
+          </div>
+
+          <div class="field">
+            <label class="form-label">Voice</label>
+            <div class="voice-list" id="voice-list" role="radiogroup" aria-label="Narration voice">
+              <div class="voice-loading">Loading voices...</div>
+            </div>
+            <span class="form-hint">The narration voice. Press play to hear a sample.</span>
+          </div>
+
+          <div class="field">
+            <label class="form-label">Screenshots</label>
+            <div class="uploader-head">
+              <button class="btn sm" type="button" id="add-shots-btn">+ Add screenshots</button>
+              <span class="uploader-count" id="shot-count">0 / 12</span>
+            </div>
+            <!-- Hidden native input only carries the File objects; the visible
+                 manager below owns the order, names and validation. -->
+            <input id="files" name="files" type="file" accept="image/*" multiple hidden>
+            <span class="form-hint">1 to 12 images, max 10&nbsp;MB each, 50&nbsp;MB total. The order below is the sequence the AI narrates (first to last); use the arrows to reorder.</span>
+            <div class="shot-grid" id="shot-grid"></div>
+            <div class="shot-empty" id="shot-empty">No screenshots yet. Click "Add screenshots" to begin.</div>
+            <div class="error" id="shot-error" hidden></div>
+          </div>
+
+          <div class="field">
+            <label class="form-label" for="prompt">Prompt</label>
+            <textarea class="form-textarea" id="prompt" name="prompt" maxlength="2000"
+              placeholder="Walk through the dashboard, highlight the new charts, end on the export button."
+              required></textarea>
+            <span class="form-hint">Up to 2000 characters.</span>
+          </div>
+
+          <div class="error box" id="form-error" hidden></div>
+
+          <div class="field" style="margin-top: 4px;">
+            <button class="btn primary" type="submit" id="submit-btn">Generate video</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- CREATE STATE: compact example / onboarding video.
+           The demo file is served separately; if it 404s the <video> simply
+           won't play, which degrades gracefully. -->
+      <section class="card example-card" data-show="create">
+        <div class="section-label">Example output</div>
+        <video controls preload="metadata" playsinline
+               poster="/tasks/static/demo-poster.jpg?v=1"
+               src="/tasks/static/demo-video.mp4?v=tut2"></video>
+        <div class="section-label" style="margin-top:18px;">How it works</div>
+        <ol class="how-steps">
+          <li><b>Name</b> your video.</li>
+          <li>Pick a <b>style</b> and a <b>voice</b> (press play to hear each).</li>
+          <li><b>Add screenshots</b> in the order you want narrated.</li>
+          <li><b>Describe</b> the walkthrough you want.</li>
+          <li>Hit <b>Generate</b> and we render a narrated video.</li>
+        </ol>
+      </section>
+      </div>
+
+      <!-- STUDIO STATE: player -->
+      <div data-show="studio">
+        <div class="player-wrap">
+          <video class="player-video" id="player-video" controls playsinline preload="metadata" hidden></video>
+          <div class="player-placeholder" id="player-placeholder">
+            <span class="ph-icon">&#9658;</span>
+            <div class="ph-text">Your video will appear here.</div>
+          </div>
+          <div class="player-overlay" id="player-overlay" hidden></div>
+        </div>
+        <div class="error box" id="player-error" hidden style="margin-top: 14px;"></div>
+      </div>
+
+      <!-- STUDIO STATE: download + scenes + versions -->
+      <section class="card" data-show="studio" id="player-actions-card" hidden>
+        <div class="player-actions">
+          <a class="btn primary sm" id="download-link" download>Download MP4</a>
+        </div>
+      </section>
+
+      <section class="card" data-show="studio" id="scene-section" hidden>
+        <div class="section-label">Scenes</div>
+        <div class="scene-strip" id="scene-strip"></div>
+      </section>
+
+      <section class="card" data-show="studio" id="version-section" hidden>
+        <div class="section-label">Versions</div>
+        <div class="version-bar" id="version-bar"></div>
+      </section>
+    </div>
+
+    <!-- RIGHT: refine chat rail (studio state only) -->
+    <aside class="card studio-rail" data-show="studio">
+      <div class="rail-head">
+        <div class="rail-title">Refine</div>
+        <div class="rail-sub">Ask for changes in plain language</div>
+      </div>
+      <div class="chat-log" id="chat-log"></div>
+      <div class="composer">
+        <textarea class="form-textarea chat-input" id="chat-input" rows="2" maxlength="2000"
+                  placeholder="Generate a video first, then ask for changes."></textarea>
+        <div class="composer-row">
+          <button class="icon-btn" type="button" id="attach-btn" title="Add screenshots" aria-label="Add screenshots">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <button class="btn primary" type="button" id="send-btn">Send</button>
+        </div>
+        <input type="file" id="shot-input" accept="image/*" multiple hidden>
+      </div>
+    </aside>
+  </main>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script>
+    // --- Auth helpers (mirrors static/projects.html) ---
+    // JSON requests: gateway identity travels via the session cookie
+    // (credentials: "include"); an optional Bearer token is attached when one
+    // is stored locally. The gateway injects X-User-Email from that identity.
+    function authHeaders() {
+      const h = { "Content-Type": "application/json" };
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+    // For multipart/FormData uploads: omit Content-Type so the browser sets it
+    // automatically with the correct boundary.
+    function multipartAuthHeaders() {
+      const h = {};
+      const token = localStorage.getItem("token");
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+
+    const MAX_FILES = 12;
+    const MAX_FILE_BYTES = 10 * 1024 * 1024;
+    const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
+    const POLL_MS = 2000;
+    const IN_PROGRESS = ["queued", "scripting", "voicing", "rendering"];
+    const HUMAN = {
+      queued: "Queued",
+      scripting: "Writing the script",
+      voicing: "Generating the voiceover",
+      rendering: "Rendering the video",
+      done: "Ready",
+      failed: "Failed",
+    };
+
+    const API = "/api/video-jobs";
+
+    // --- Element refs ---
+    const form = document.getElementById("video-form");
+    const titleInput = document.getElementById("title");
+    const filesInput = document.getElementById("files");
+    const addShotsBtn = document.getElementById("add-shots-btn");
+    const shotGrid = document.getElementById("shot-grid");
+    const shotCount = document.getElementById("shot-count");
+    const shotEmpty = document.getElementById("shot-empty");
+    const shotError = document.getElementById("shot-error");
+    const promptInput = document.getElementById("prompt");
+    const styleSelect = document.getElementById("style");
+    const voiceList = document.getElementById("voice-list");
+    let selectedVoice = null;   // chosen voice id, set once voices load
+    let defaultVoiceId = "amy"; // updated from the catalog's default flag on load
+    let voiceAudio = null;      // single shared <Audio> for previews
+    const submitBtn = document.getElementById("submit-btn");
+    const formError = document.getElementById("form-error");
+
+    const projectName = document.getElementById("project-name");
+    const statusPill = document.getElementById("status-pill");
+    const newVideoBtn = document.getElementById("new-video-btn");
+    const backToList = document.getElementById("back-to-list");
+
+    const listNewBtn = document.getElementById("list-new-btn");
+    const videoGrid = document.getElementById("video-grid");
+    const listEmpty = document.getElementById("list-empty");
+
+    const playerVideo = document.getElementById("player-video");
+    const playerPlaceholder = document.getElementById("player-placeholder");
+    const playerOverlay = document.getElementById("player-overlay");
+    const playerError = document.getElementById("player-error");
+    const playerActionsCard = document.getElementById("player-actions-card");
+    const downloadLink = document.getElementById("download-link");
+
+    const sceneSection = document.getElementById("scene-section");
+    const sceneStrip = document.getElementById("scene-strip");
+    const versionSection = document.getElementById("version-section");
+    const versionBar = document.getElementById("version-bar");
+
+    const chatLog = document.getElementById("chat-log");
+    const chatInput = document.getElementById("chat-input");
+    const sendBtn = document.getElementById("send-btn");
+    const attachBtn = document.getElementById("attach-btn");
+    const shotInput = document.getElementById("shot-input");
+    const toasts = document.getElementById("toasts");
+
+    // --- Mutable state ---
+    let currentJobId = null;
+    let currentVersionNo = null;
+    let hasVideo = false;
+    let pollTimer = null;
+    let refining = false;
+    let pollFailures = 0;
+    // Ordered list of screenshots staged in the create form. Each entry:
+    // { file: File, name: string (display label), url: string (object URL) }.
+    // The array order IS the sequence sent to the backend on submit.
+    let shots = [];
+
+    const WELCOME_HTML =
+      '<div class="chat-welcome">' +
+      '<div class="cw-spark">&#10022;</div>' +
+      '<div class="cw-text">Generate a video, then tell me what to change.</div>' +
+      '<div class="cw-hint">For example, "make scene 2 shorter" or "use a calmer voice".</div>' +
+      '</div>';
+
+    // --- Small helpers ---
+    function fmtBytes(n) {
+      if (n < 1024) return n + " B";
+      if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+      return (n / (1024 * 1024)).toFixed(1) + " MB";
+    }
+    function humanStatus(s) {
+      return HUMAN[s] || (s ? s.charAt(0).toUpperCase() + s.slice(1) : "Working");
+    }
+    function fmtDate(s) {
+      if (!s) return "";
+      const d = new Date(s);
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+    function escapeHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    // Minimal, safe markdown: escape first, then inline bold/code, then
+    // paragraphs and simple bullet lists.
+    function renderMarkdown(text) {
+      const esc = escapeHtml(text);
+      const inline = (s) => s
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      const blocks = esc.split(/\n{2,}/);
+      return blocks.map((b) => {
+        const lines = b.split("\n").filter((l) => l.trim() !== "");
+        if (lines.length && lines.every((l) => /^\s*[-*]\s+/.test(l))) {
+          return "<ul>" + lines.map((l) => "<li>" + inline(l.replace(/^\s*[-*]\s+/, "")) + "</li>").join("") + "</ul>";
+        }
+        return "<p>" + inline(b.split("\n").join("<br>")) + "</p>";
+      }).join("");
+    }
+
+    function toast(msg, kind = "info", ms = 3500) {
+      const el = document.createElement("div");
+      el.className = "toast";
+      el.dataset.kind = kind;
+      el.textContent = msg;
+      toasts.appendChild(el);
+      setTimeout(() => {
+        el.classList.add("fading");
+        setTimeout(() => el.remove(), 250);
+      }, ms);
+    }
+
+    function showFormError(msg) { formError.textContent = msg; formError.hidden = false; }
+    function clearFormError() { formError.textContent = ""; formError.hidden = true; }
+
+    // --- State switching ---
+    function setState(s) {
+      document.body.dataset.state = s;
+      const studio = s === "studio";
+      newVideoBtn.hidden = !studio;
+      statusPill.hidden = !studio;
+      projectName.hidden = !(studio && projectName.textContent);
+      setComposerEnabled(studio && !refining);
+      chatInput.placeholder = studio
+        ? "Tell me what to change..."
+        : "Generate a video first, then ask for changes.";
+    }
+    function setComposerEnabled(on) {
+      chatInput.disabled = !on;
+      sendBtn.disabled = !on;
+      attachBtn.disabled = !on;
+    }
+
+    // --- Status pill ---
+    function setPill(status) {
+      const cls = status === "done" ? "done"
+        : status === "failed" ? "failed"
+        : status === "queued" ? "queued" : "running";
+      statusPill.className = "badge " + cls;
+      const spinning = status !== "done" && status !== "failed";
+      statusPill.innerHTML =
+        (spinning ? '<span class="spinner"></span>' : "") +
+        "<span>" + escapeHtml(humanStatus(status)) + "</span>";
+      statusPill.hidden = false;
+    }
+
+    // --- Player ---
+    function videoUrl(id, versionNo) {
+      const p = new URLSearchParams();
+      if (versionNo != null) p.set("version", versionNo);
+      // cache-bust so the swap actually reloads after a re-render
+      p.set("t", Date.now().toString(36) + Math.random().toString(36).slice(2, 7));
+      return API + "/" + encodeURIComponent(id) + "/download?" + p.toString();
+    }
+    function showVideo(versionNo) {
+      if (!currentJobId) return;
+      playerVideo.src = videoUrl(currentJobId, versionNo);
+      playerVideo.load();
+      playerVideo.hidden = false;
+      playerPlaceholder.hidden = true;
+      playerOverlay.hidden = true;
+      playerError.hidden = true;
+      hasVideo = true;
+      // download link points at the current version (no cache-bust for a clean file)
+      downloadLink.href = API + "/" + encodeURIComponent(currentJobId) + "/download"
+        + (versionNo != null ? "?version=" + versionNo : "");
+      playerActionsCard.hidden = false;
+    }
+    function showPlaceholder(kind, msg) {
+      playerVideo.hidden = true;
+      playerOverlay.hidden = true;
+      let icon = '<span class="ph-icon">&#9658;</span>';
+      if (kind === "rendering") icon = '<span class="spinner big"></span>';
+      else if (kind === "error") icon = '<span class="ph-icon error">!</span>';
+      playerPlaceholder.innerHTML = icon + '<div class="ph-text">' + escapeHtml(msg || "") + "</div>";
+      playerPlaceholder.hidden = false;
+    }
+    function showOverlay(msg) {
+      // Used while re-rendering when a previous video is still on screen.
+      if (hasVideo) {
+        playerOverlay.innerHTML = '<span class="spinner"></span><span>' + escapeHtml(msg) + "</span>";
+        playerOverlay.hidden = false;
+      } else {
+        showPlaceholder("rendering", msg);
+      }
+    }
+
+    // --- Scenes (built from the plan if the status response carries one;
+    // degrades to hidden when no scene data is available). ---
+    function renderScenes(data) {
+      const scenes = (data && data.plan && Array.isArray(data.plan.scenes)) ? data.plan.scenes
+        : (data && Array.isArray(data.scenes)) ? data.scenes : null;
+      if (!scenes || !scenes.length) { sceneSection.hidden = true; sceneStrip.innerHTML = ""; return; }
+      sceneStrip.innerHTML = "";
+      scenes.forEach((sc, i) => {
+        const cell = document.createElement("div");
+        cell.className = "scene-cell";
+        const idx = document.createElement("span");
+        idx.className = "idx";
+        idx.textContent = String(i + 1);
+        const cap = document.createElement("div");
+        cap.className = "cap";
+        cap.textContent = sc.caption || sc.text || ("Scene " + (i + 1));
+        cell.appendChild(idx);
+        cell.appendChild(cap);
+        sceneStrip.appendChild(cell);
+      });
+      sceneSection.hidden = false;
+    }
+
+    // --- Versions ---
+    async function loadVersions() {
+      if (!currentJobId) return;
+      try {
+        const r = await fetch(API + "/" + encodeURIComponent(currentJobId) + "/versions", {
+          headers: authHeaders(), credentials: "include", cache: "no-store",
+        });
+        if (!r.ok) { versionSection.hidden = true; return; }
+        const data = await r.json();
+        renderVersions(Array.isArray(data.versions) ? data.versions : []);
+      } catch (e) {
+        console.warn("[video] could not load versions", e);
+      }
+    }
+    function renderVersions(versions) {
+      versionBar.innerHTML = "";
+      if (!versions.length) { versionSection.hidden = true; return; }
+      versionSection.hidden = false;
+      for (const v of versions) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "version-chip" + (v.current ? " current" : "");
+        chip.appendChild(document.createTextNode("v" + v.version_no));
+        if (v.current) {
+          const cur = document.createElement("span");
+          cur.className = "cur";
+          cur.textContent = "current";
+          chip.appendChild(cur);
+        }
+        if (v.summary) chip.title = v.summary;
+        if (!v.current && v.available) {
+          chip.classList.add("clickable");
+          chip.addEventListener("click", () => onRevert(v.version_no));
+        } else if (!v.current && !v.available) {
+          chip.disabled = true;
+          chip.title = (v.summary ? v.summary + " " : "") + "(not available)";
+        }
+        versionBar.appendChild(chip);
+      }
+    }
+
+    // --- Chat bubbles (mirrors preview.html UX) ---
+    function renderChatBubble(kind, content) {
+      const welcome = chatLog.querySelector(".chat-welcome");
+      if (welcome) welcome.remove();
+      const el = document.createElement("div");
+      el.className = "chat-bubble " + kind;
+      const body = document.createElement("div");
+      body.className = "body";
+      if (kind === "user") {
+        body.textContent = content || "";
+      } else {
+        const md = document.createElement("div");
+        md.className = "markdown";
+        if (content) md.innerHTML = renderMarkdown(content);
+        else el.classList.add("thinking");
+        body.appendChild(md);
+      }
+      el.appendChild(body);
+      chatLog.appendChild(el);
+      chatLog.scrollTop = chatLog.scrollHeight;
+      return el;
+    }
+    function renderErrorBubble(msg) {
+      const el = renderChatBubble("ai", null);
+      el.classList.remove("thinking");
+      el.classList.add("failed");
+      el.querySelector(".markdown").innerHTML = renderMarkdown(msg || "Something went wrong.");
+      return el;
+    }
+    function attachApplyButton(bubbleEl) {
+      if (!bubbleEl || bubbleEl.querySelector(".apply-row")) return;
+      bubbleEl.classList.add("proposal");
+      const row = document.createElement("div");
+      row.className = "apply-row";
+      const btn = document.createElement("button");
+      btn.className = "btn primary sm apply-btn";
+      btn.type = "button";
+      btn.textContent = "Apply this change";
+      btn.addEventListener("click", () => onApply());
+      row.appendChild(btn);
+      bubbleEl.querySelector(".body").appendChild(row);
+    }
+    function removeApplyButtons() {
+      document.querySelectorAll(".apply-row").forEach((r) => r.remove());
+    }
+    function clearChat() { chatLog.innerHTML = ""; }
+    function resetChatWelcome() { chatLog.innerHTML = WELCOME_HTML; }
+
+    function replayConversation(convo) {
+      clearChat();
+      let lastProposal = null;
+      for (const t of (convo || [])) {
+        if (t.role === "user") {
+          renderChatBubble("user", t.content || "");
+        } else {
+          const b = renderChatBubble("ai", t.content || "");
+          if (t.kind === "proposal") { b.classList.add("proposal"); lastProposal = b; }
+        }
+      }
+      return lastProposal;
+    }
+
+    // --- Polling ---
+    function stopPolling() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } }
+
+    async function fetchJob(id) {
+      const r = await fetch(API + "/" + encodeURIComponent(id), {
+        headers: authHeaders(), credentials: "include", cache: "no-store",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error("status check failed (" + r.status + "): " + txt.slice(0, 200));
+      }
+      return r.json();
+    }
+
+    // opts: { mode: "initial" | "rerender", onSettle(ok, data) }
+    function startPolling(id, opts) {
+      stopPolling();
+      pollOnce(id, opts || {});
+    }
+    async function pollOnce(id, opts) {
+      let data;
+      try {
+        data = await fetchJob(id);
+        pollFailures = 0;
+      } catch (err) {
+        pollFailures++;
+        const m = (err && err.message) ? err.message : String(err);
+        // A 4xx other than 429 means the job/session is gone (404 deleted job,
+        // 401/403 dropped session) and retrying will never recover. A few
+        // consecutive transient failures (>= 3) we also stop retrying.
+        const clientError = /\b4\d\d\b/.test(m) && !/\b429\b/.test(m);
+        if (clientError || pollFailures >= 3) {
+          stopPolling();
+          playerOverlay.hidden = true;
+          setPill("failed");
+          const msg = clientError
+            ? "This video session is no longer available. Start a new video."
+            : "Lost connection to the video service. Please reload the page.";
+          // Surface it the same way a failed render is shown.
+          if (!hasVideo) { showPlaceholder("error", msg); }
+          playerError.textContent = msg;
+          playerError.hidden = false;
+          return;
+        }
+        // transient blip under the threshold: keep retrying until done/failed
+        pollTimer = setTimeout(() => pollOnce(id, opts), POLL_MS);
+        return;
+      }
+      setPill(data.status);
+      if (IN_PROGRESS.includes(data.status)) {
+        if (opts.mode === "rerender" && hasVideo) showOverlay(humanStatus(data.status));
+        else showPlaceholder("rendering", humanStatus(data.status));
+        pollTimer = setTimeout(() => pollOnce(id, opts), POLL_MS);
+        return;
+      }
+      // Terminal
+      stopPolling();
+      playerOverlay.hidden = true;
+      if (data.status === "failed") {
+        // Keep the last good video on a failed re-render.
+        const msg = data.error || "The render failed. Please try again.";
+        if (!hasVideo) { showPlaceholder("error", msg); }
+        playerError.textContent = msg;
+        playerError.hidden = false;
+        if (typeof opts.onSettle === "function") opts.onSettle(false, data);
+        return;
+      }
+      // done
+      playerError.hidden = true;
+      currentVersionNo = data.current_version_no != null ? data.current_version_no : currentVersionNo;
+      renderScenes(data);
+      if (data.output_available) showVideo(null);
+      else if (!hasVideo) showPlaceholder("empty", "Render finished but no output is available.");
+      await loadVersions();
+      if (typeof opts.onSettle === "function") opts.onSettle(true, data);
+    }
+
+    // --- Refine chat send ---
+    function setRefining(on) {
+      refining = on;
+      setComposerEnabled(!on && document.body.dataset.state === "studio");
+    }
+    async function submitChat(text) {
+      if (!currentJobId || !text) return;
+      renderChatBubble("user", text);
+      const aiBubble = renderChatBubble("ai", null); // thinking
+      setRefining(true);
+      try {
+        const r = await fetch(API + "/" + encodeURIComponent(currentJobId) + "/refine", {
+          method: "POST", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify({ message: text }),
+        });
+        aiBubble.classList.remove("thinking");
+        if (!r.ok) {
+          const txt = await r.text();
+          aiBubble.classList.add("failed");
+          aiBubble.querySelector(".markdown").innerHTML =
+            renderMarkdown("Refine failed (" + r.status + "): " + txt.slice(0, 200));
+          return;
+        }
+        const data = await r.json();
+        aiBubble.querySelector(".markdown").innerHTML = renderMarkdown(data.message || "");
+        if (data.can_apply) {
+          // Only one proposal is applicable at a time; drop any stale buttons.
+          removeApplyButtons();
+          attachApplyButton(aiBubble);
+        }
+      } catch (e) {
+        aiBubble.classList.remove("thinking");
+        aiBubble.classList.add("failed");
+        aiBubble.querySelector(".markdown").innerHTML =
+          renderMarkdown("Refine failed: " + (e.message || String(e)));
+      } finally {
+        setRefining(false);
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+    }
+
+    // --- Apply a pending proposal ---
+    async function onApply() {
+      if (!currentJobId) return;
+      removeApplyButtons();
+      renderChatBubble("ai", "Applying this change. Re-rendering your video.");
+      try {
+        const r = await fetch(API + "/" + encodeURIComponent(currentJobId) + "/apply", {
+          method: "POST", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) {
+          const txt = await r.text();
+          renderErrorBubble("Apply failed (" + r.status + "): " + txt.slice(0, 200));
+          return;
+        }
+        setPill("queued");
+        showOverlay(humanStatus("queued"));
+        startPolling(currentJobId, {
+          mode: "rerender",
+          onSettle: (ok, data) => {
+            if (ok) {
+              const v = data && data.current_version_no;
+              renderChatBubble("ai", "Done. Your video is updated" + (v ? " (now v" + v + ")." : "."));
+            } else {
+              renderChatBubble("ai", "The re-render failed. Your previous video is unchanged.");
+            }
+          },
+        });
+      } catch (e) {
+        renderErrorBubble("Apply failed: " + (e.message || String(e)));
+      }
+    }
+
+    // --- Revert to a version ---
+    async function onRevert(versionNo) {
+      if (!currentJobId) return;
+      try {
+        const r = await fetch(API + "/" + encodeURIComponent(currentJobId) + "/revert", {
+          method: "POST", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify({ version_no: versionNo }),
+        });
+        if (!r.ok) {
+          const txt = await r.text();
+          toast("Revert failed: " + txt.slice(0, 160), "error");
+          return;
+        }
+        const data = await r.json();
+        if (data.status === "reverted") {
+          currentVersionNo = versionNo;
+          showVideo(null);
+          await loadVersions();
+          renderChatBubble("ai", "Reverted to v" + versionNo + ".");
+          toast("Reverted to v" + versionNo, "success");
+        } else {
+          // queued -> re-render
+          renderChatBubble("ai", "Reverting to v" + versionNo + ". Re-rendering your video.");
+          setPill("queued");
+          showOverlay(humanStatus("queued"));
+          startPolling(currentJobId, {
+            mode: "rerender",
+            onSettle: (ok) => { if (ok) renderChatBubble("ai", "Reverted to v" + versionNo + "."); },
+          });
+        }
+      } catch (e) {
+        toast("Revert failed: " + (e.message || String(e)), "error");
+      }
+    }
+
+    // --- Add screenshots (paperclip) ---
+    async function addScreenshots(fileList) {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+      if (!currentJobId) { toast("Generate a video first.", "warn"); return; }
+      if (files.length > MAX_FILES) { toast("Up to " + MAX_FILES + " images at a time.", "error"); return; }
+      let total = 0;
+      for (const f of files) {
+        total += f.size;
+        if (f.size > MAX_FILE_BYTES) { toast(f.name + " is over 10 MB.", "error"); return; }
+      }
+      if (total > MAX_TOTAL_BYTES) { toast("Total size is over 50 MB.", "error"); return; }
+      const fd = new FormData();
+      for (const f of files) fd.append("files", f, f.name);
+      try {
+        const r = await fetch(API + "/" + encodeURIComponent(currentJobId) + "/screenshots", {
+          method: "POST", headers: multipartAuthHeaders(), credentials: "include", body: fd,
+        });
+        if (!r.ok) {
+          const txt = await r.text();
+          toast("Upload failed: " + txt.slice(0, 160), "error");
+          return;
+        }
+        await r.json();
+        toast(files.length + " screenshot(s) added.", "success", 4500);
+        renderChatBubble("ai", "Added " + files.length + " screenshot(s). Tell me where to use "
+          + (files.length > 1 ? "them" : "it") + " and I will update the plan.");
+      } catch (e) {
+        toast("Upload failed: " + (e.message || String(e)), "error");
+      }
+    }
+
+    // --- Open an existing job in studio state (deep link / reload) ---
+    async function openExistingJob(id) {
+      currentJobId = id;
+      setState("studio");
+      clearChat();
+      showPlaceholder("rendering", "Loading...");
+      let data;
+      try {
+        data = await fetchJob(id);
+      } catch (e) {
+        showPlaceholder("error", "Could not load this video job.");
+        renderErrorBubble(e.message || "Could not load this job.");
+        return;
+      }
+      // Title chip in the topbar now that we know it (deep-link case).
+      projectName.textContent = data.title || "";
+      projectName.hidden = !projectName.textContent;
+      currentVersionNo = data.current_version_no != null ? data.current_version_no : null;
+      const lastProposal = replayConversation(data.conversation || []);
+      if (data.pending && lastProposal) attachApplyButton(lastProposal);
+      // A just-created job (or a reload while the first render is still running)
+      // has no conversation yet, so the chat rail would otherwise be blank.
+      // Show one "Generating..." assistant bubble. Guarded on an empty
+      // conversation so polling reloads never stack duplicates.
+      const convoEmpty = !(Array.isArray(data.conversation) && data.conversation.length);
+      if (convoEmpty && IN_PROGRESS.includes(data.status)) {
+        const shots = Number(
+          data.screenshot_count != null ? data.screenshot_count
+            : Array.isArray(data.screenshots) ? data.screenshots.length : NaN
+        );
+        const msg = Number.isFinite(shots) && shots > 0
+          ? "Generating your video from " + shots + " screenshot" + (shots === 1 ? "" : "s")
+            + ". I will tell you when it is ready, then you can ask for changes."
+          : "Generating your video. I will tell you when it is ready, then you can ask for changes.";
+        renderChatBubble("ai", msg);
+      }
+      setPill(data.status);
+      renderScenes(data);
+      loadVersions();
+      if (data.status === "done") {
+        if (data.output_available) showVideo(null);
+        else showPlaceholder("empty", "Render finished but no output is available.");
+      } else if (data.status === "failed") {
+        showPlaceholder("error", data.error || "The render failed.");
+        playerError.textContent = data.error || "The render failed.";
+        playerError.hidden = false;
+      } else {
+        showPlaceholder("rendering", humanStatus(data.status));
+        startPolling(id, { mode: "initial" });
+      }
+    }
+
+    // --- Reset to the create state. Shared by the "New video" button and the
+    // URL router. Deliberately does NOT touch history; the caller decides
+    // whether a new history entry is pushed. ---
+    function resetToCreate() {
+      stopPolling();
+      currentJobId = null;
+      currentVersionNo = null;
+      hasVideo = false;
+      refining = false;
+      // form
+      form.reset();
+      clearShots();
+      clearFormError();
+      submitBtn.disabled = false; submitBtn.textContent = "Generate video";
+      // player + side panels
+      playerVideo.removeAttribute("src"); playerVideo.hidden = true;
+      playerOverlay.hidden = true; playerError.hidden = true;
+      playerActionsCard.hidden = true;
+      sceneSection.hidden = true; sceneStrip.innerHTML = "";
+      versionSection.hidden = true; versionBar.innerHTML = "";
+      showPlaceholder("empty", "Your video will appear here.");
+      projectName.textContent = "";
+      resetChatWelcome();
+      setState("create");
+    }
+
+    // "New video" button: reset to the create form and mark the URL with
+    // ?new=1 so Back returns here and a reload re-opens the form (instead of
+    // the list landing).
+    function newVideo() {
+      stopVoicePreview();
+      resetToCreate();
+      history.pushState({}, "", "?new=1");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    // --- "Your videos" list landing ---
+    // Build a status pill element via DOM (no innerHTML of server strings),
+    // reusing the existing .badge styling.
+    function statusBadge(status) {
+      const cls = status === "done" ? "done"
+        : status === "failed" ? "failed"
+        : status === "queued" ? "queued" : "running";
+      const badge = document.createElement("span");
+      badge.className = "badge " + cls;
+      if (status !== "done" && status !== "failed") {
+        const sp = document.createElement("span");
+        sp.className = "spinner";
+        badge.appendChild(sp);
+      }
+      const label = document.createElement("span");
+      label.textContent = humanStatus(status);
+      badge.appendChild(label);
+      return badge;
+    }
+
+    // Navigate to a job's studio view, pushing ?job=<id> so Back/reload work.
+    function openJob(id) {
+      history.pushState({}, "", "?job=" + encodeURIComponent(id));
+      openExistingJob(id);
+    }
+
+    async function fetchVideoList() {
+      const r = await fetch(API, {
+        headers: authHeaders(), credentials: "include", cache: "no-store",
+      });
+      if (!r.ok) throw new Error("list failed (" + r.status + ")");
+      const data = await r.json();
+      return Array.isArray(data.videos) ? data.videos : [];
+    }
+
+    function renderVideoList(videos) {
+      videoGrid.innerHTML = "";
+      for (const v of videos) {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "video-card";
+        card.addEventListener("click", () => openJob(v.id));
+
+        const title = document.createElement("div");
+        title.className = "vc-title";
+        title.textContent = v.title || "Untitled";
+        card.appendChild(title);
+
+        const meta = document.createElement("div");
+        meta.className = "vc-meta";
+        meta.appendChild(statusBadge(v.status));
+        const date = document.createElement("span");
+        date.className = "vc-date";
+        date.textContent = fmtDate(v.created_at);
+        meta.appendChild(date);
+        card.appendChild(meta);
+
+        videoGrid.appendChild(card);
+      }
+    }
+
+    // Show the list landing. Fetch the caller's videos: with >=1 video render
+    // the grid (list state); with 0 videos -- or a failed fetch -- fall back to
+    // the create form so brand-new users still land on it.
+    async function showList() {
+      stopPolling();
+      let videos;
+      try {
+        videos = await fetchVideoList();
+      } catch (e) {
+        console.warn("[video] could not load video list", e);
+        resetToCreate();
+        return;
+      }
+      if (!videos.length) {
+        resetToCreate();
+        return;
+      }
+      renderVideoList(videos);
+      listEmpty.hidden = true;
+      setState("list");
+      window.scrollTo({ top: 0 });
+    }
+
+    // Route purely from the current URL. Used by init() and by popstate
+    // (Back/Forward), so it must NOT push history itself. Stops the previous
+    // poll loop before switching views to avoid double-polling.
+    //   ?job=<id> -> studio ; ?new=1 -> create form ; otherwise -> list
+    //   (which fetches and falls back to create when the caller has no videos).
+    function renderFromUrl() {
+      stopPolling();
+      const params = new URLSearchParams(location.search);
+      const jobParam = params.get("job");
+      if (jobParam) {
+        openExistingJob(jobParam);
+      } else if (params.has("new")) {
+        resetToCreate();
+      } else {
+        showList();
+      }
+    }
+
+    // --- Image manager (create form) ---------------------------------------
+    // A custom, ordered uploader replaces the native multi-file input. The
+    // user adds, renames, reorders and deletes screenshots; the array order is
+    // the sequence the backend stores (screenshot-1 = first card). The rename
+    // label is a UI/organization aid only -- the backend names files by order.
+    function showShotError(msg) { shotError.textContent = msg; shotError.hidden = false; }
+    function clearShotError() { shotError.textContent = ""; shotError.hidden = true; }
+    function shotsTotalBytes() { return shots.reduce((n, s) => n + s.file.size, 0); }
+
+    function isImageFile(f) {
+      if (f.type && f.type.indexOf("image/") === 0) return true;
+      return /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)$/i.test(f.name || "");
+    }
+
+    // Append selected files to the ordered list (never replaces existing ones).
+    function addFiles(fileList) {
+      clearShotError();
+      const incoming = Array.from(fileList || []);
+      if (!incoming.length) return;
+      let total = shotsTotalBytes();
+      let added = 0;
+      const errors = [];
+      for (const f of incoming) {
+        if (!isImageFile(f)) { errors.push('"' + f.name + '" is not an image.'); continue; }
+        if (f.size > MAX_FILE_BYTES) { errors.push('"' + f.name + '" is over 10 MB.'); continue; }
+        if (shots.length >= MAX_FILES) { errors.push("You can add at most " + MAX_FILES + " images."); break; }
+        if (total + f.size > MAX_TOTAL_BYTES) { errors.push("Adding more would exceed 50 MB total."); break; }
+        shots.push({ file: f, name: f.name, url: URL.createObjectURL(f) });
+        total += f.size;
+        added++;
+      }
+      renderShots();
+      if (added) clearFormError();
+      if (errors.length) showShotError(errors.join(" "));
+    }
+
+    function moveShot(index, dir) {
+      const j = index + dir;
+      if (j < 0 || j >= shots.length) return;
+      const tmp = shots[index]; shots[index] = shots[j]; shots[j] = tmp;
+      renderShots();
+    }
+
+    function removeShot(index) {
+      const s = shots[index];
+      if (s && s.url) URL.revokeObjectURL(s.url);
+      shots.splice(index, 1);
+      clearShotError();
+      renderShots();
+    }
+
+    // Revoke every object URL and empty the list (reset / successful submit).
+    function clearShots() {
+      for (const s of shots) { if (s.url) URL.revokeObjectURL(s.url); }
+      shots = [];
+      clearShotError();
+      renderShots();
+    }
+
+    // Rebuild the grid from the ordered list. Filenames/labels go in via
+    // textContent or an input .value (never raw innerHTML) so they cannot
+    // inject markup; the only innerHTML used is for static arrow glyphs.
+    function renderShots() {
+      shotGrid.innerHTML = "";
+      shots.forEach((s, i) => {
+        const card = document.createElement("div");
+        card.className = "shot-card";
+
+        const num = document.createElement("span");
+        num.className = "num";
+        num.textContent = String(i + 1);
+        card.appendChild(num);
+
+        const thumb = document.createElement("img");
+        thumb.className = "thumb";
+        thumb.alt = "";
+        thumb.loading = "lazy";
+        thumb.src = s.url;
+        card.appendChild(thumb);
+
+        const name = document.createElement("input");
+        name.type = "text";
+        name.className = "name";
+        name.value = s.name;
+        name.maxLength = 120;
+        name.setAttribute("aria-label", "Label for screenshot " + (i + 1));
+        name.addEventListener("input", () => { s.name = name.value; });
+        card.appendChild(name);
+
+        const size = document.createElement("span");
+        size.className = "shot-size";
+        size.textContent = fmtBytes(s.file.size);
+        card.appendChild(size);
+
+        const ctrls = document.createElement("div");
+        ctrls.className = "ctrls";
+
+        const up = document.createElement("button");
+        up.type = "button"; up.className = "ctrl up";
+        up.innerHTML = "&uarr;";
+        up.title = "Move up"; up.setAttribute("aria-label", "Move up");
+        up.disabled = i === 0;
+        up.addEventListener("click", () => moveShot(i, -1));
+        ctrls.appendChild(up);
+
+        const down = document.createElement("button");
+        down.type = "button"; down.className = "ctrl down";
+        down.innerHTML = "&darr;";
+        down.title = "Move down"; down.setAttribute("aria-label", "Move down");
+        down.disabled = i === shots.length - 1;
+        down.addEventListener("click", () => moveShot(i, 1));
+        ctrls.appendChild(down);
+
+        const del = document.createElement("button");
+        del.type = "button"; del.className = "ctrl del";
+        del.innerHTML = "&times;";
+        del.title = "Remove"; del.setAttribute("aria-label", "Remove screenshot " + (i + 1));
+        del.addEventListener("click", () => removeShot(i));
+        ctrls.appendChild(del);
+
+        card.appendChild(ctrls);
+        shotGrid.appendChild(card);
+      });
+      shotCount.textContent = shots.length + " / " + MAX_FILES;
+      shotEmpty.hidden = shots.length > 0;
+    }
+
+    // --- Wire events ---
+    addShotsBtn.addEventListener("click", () => filesInput.click());
+    filesInput.addEventListener("change", () => {
+      addFiles(filesInput.files);
+      filesInput.value = ""; // we keep our own File refs; allow re-picking same files
+    });
+
+    newVideoBtn.addEventListener("click", newVideo);
+    listNewBtn.addEventListener("click", newVideo);
+    // Internal "Your videos" back link returns to the list landing: clear
+    // ?job/?new and re-route (re-fetches the list, or shows the create form
+    // when the caller has no videos). The topbar "Back to chat" is a plain
+    // <a href="/"> that leaves the studio entirely.
+    function goToList() {
+      stopVoicePreview();
+      history.pushState({}, "", location.pathname);
+      renderFromUrl();
+    }
+    backToList.addEventListener("click", goToList);
+    // Keep the view in sync with Back/Forward navigation.
+    window.addEventListener("popstate", renderFromUrl);
+
+    // Shared send action for both the Send button and the Enter key.
+    function sendCurrent() {
+      const text = chatInput.value.trim();
+      if (!text) return;
+      chatInput.value = "";
+      submitChat(text);
+    }
+    sendBtn.addEventListener("click", () => sendCurrent());
+    chatInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !chatInput.disabled) {
+        e.preventDefault();
+        sendCurrent();
+      }
+    });
+
+    attachBtn.addEventListener("click", () => { if (!attachBtn.disabled) shotInput.click(); });
+    shotInput.addEventListener("change", () => {
+      if (shotInput.files && shotInput.files.length) addScreenshots(shotInput.files);
+      shotInput.value = ""; // allow re-selecting the same files
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearFormError();
+      const title = titleInput.value.trim();
+      const prompt = promptInput.value.trim();
+      if (!title) return showFormError("A title is required.");
+      if (!prompt) return showFormError("A prompt is required.");
+      if (!shots.length) return showFormError("Add at least one screenshot.");
+      if (shots.length > MAX_FILES) return showFormError("You can add at most " + MAX_FILES + " images.");
+      if (shotsTotalBytes() > MAX_TOTAL_BYTES) return showFormError("Total size is over 50 MB.");
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Uploading...";
+
+      const fd = new FormData();
+      fd.append("title", title);
+      fd.append("prompt", prompt);
+      fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
+      fd.append("voice", selectedVoice || defaultVoiceId);
+      stopVoicePreview();
+      // Append in the CURRENT DISPLAYED ORDER so screenshot-1 = the first card.
+      for (const s of shots) fd.append("files", s.file, s.file.name);
+
+      let data;
+      try {
+        const resp = await fetch(API + "/upload", {
+          method: "POST", headers: multipartAuthHeaders(), credentials: "include", body: fd,
+        });
+        if (resp.status !== 201) {
+          const txt = await resp.text();
+          throw new Error("Upload failed (" + resp.status + "): " + txt.slice(0, 300));
+        }
+        data = await resp.json();
+      } catch (err) {
+        showFormError(err.message);
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Generate video";
+        return;
+      }
+
+      // Job accepted -> navigate to its per-job page and open the studio
+      // exactly as a deep link (?job=<id>) would. Reuses openExistingJob so
+      // the studio render + polling path is not duplicated.
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Generate video";
+      clearShots(); // free object URLs now the upload succeeded
+      history.pushState({}, "", "?job=" + encodeURIComponent(data.id));
+      openExistingJob(data.id);
+    });
+
+    // --- Boot ---
+    // --- Voice picker: load the catalog, render selectable cards w/ previews --
+    function setSelectedVoice(id) {
+      selectedVoice = id;
+      voiceList.querySelectorAll(".voice-opt").forEach((el) => {
+        const on = el.dataset.voice === id;
+        el.classList.toggle("selected", on);
+        el.setAttribute("aria-checked", on ? "true" : "false");
+      });
+    }
+
+    function stopVoicePreview() {
+      if (voiceAudio) { voiceAudio.pause(); voiceAudio.currentTime = 0; }
+      voiceList.querySelectorAll(".vo-play.playing").forEach((b) => {
+        b.classList.remove("playing");
+        b.textContent = "▶"; // play triangle
+      });
+    }
+
+    function playVoicePreview(url, btn) {
+      const wasPlaying = btn.classList.contains("playing");
+      stopVoicePreview();
+      if (wasPlaying) return; // second click = toggle off
+      if (!voiceAudio) voiceAudio = new Audio();
+      voiceAudio.src = url;
+      voiceAudio.onended = stopVoicePreview;
+      voiceAudio.play().then(() => {
+        btn.classList.add("playing");
+        btn.textContent = "⏸"; // pause glyph while playing
+      }).catch(() => stopVoicePreview());
+    }
+
+    async function loadVoices() {
+      if (!voiceList) return;
+      try {
+        const res = await fetch(API + "/voices", { credentials: "same-origin" });
+        if (!res.ok) throw new Error("voices " + res.status);
+        const data = await res.json();
+        const voices = (data && data.voices) || [];
+        if (!voices.length) throw new Error("no voices");
+        voiceList.innerHTML = "";
+        voices.forEach((v) => {
+          const opt = document.createElement("div");
+          opt.className = "voice-opt";
+          opt.dataset.voice = v.id;
+          opt.setAttribute("role", "radio");
+          opt.setAttribute("tabindex", "0");
+          opt.setAttribute("aria-checked", "false");
+
+          const play = document.createElement("button");
+          play.type = "button";
+          play.className = "vo-play";
+          play.textContent = "▶";
+          play.setAttribute("aria-label", "Play " + v.label + " voice sample");
+          play.addEventListener("click", (e) => {
+            e.stopPropagation();
+            setSelectedVoice(v.id); // auditioning a voice also picks it
+            playVoicePreview(v.sample_url, play);
+          });
+
+          const meta = document.createElement("div");
+          meta.className = "vo-meta";
+          const name = document.createElement("div");
+          name.className = "vo-name";
+          name.textContent = v.label;
+          const tag = document.createElement("div");
+          tag.className = "vo-tag";
+          tag.textContent = v.accent + " " + v.gender + (v.default ? " (default)" : "");
+          meta.appendChild(name);
+          meta.appendChild(tag);
+
+          const check = document.createElement("div");
+          check.className = "vo-check";
+
+          opt.appendChild(play);
+          opt.appendChild(meta);
+          opt.appendChild(check);
+          opt.addEventListener("click", () => setSelectedVoice(v.id));
+          opt.addEventListener("keydown", (e) => {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              setSelectedVoice(v.id);
+            }
+          });
+          voiceList.appendChild(opt);
+        });
+        const def = voices.find((v) => v.default) || voices[0];
+        defaultVoiceId = (data && data.default) || def.id;
+        setSelectedVoice(def.id);
+      } catch (e) {
+        // Degrade gracefully: the render falls back to the default voice anyway.
+        selectedVoice = defaultVoiceId;
+        voiceList.innerHTML =
+          '<div class="voice-loading">Could not load voice previews. The default voice will be used.</div>';
+      }
+    }
+
+    (function init() {
+      renderFromUrl();
+      loadVoices();
+    })();
+  </script>
+</body>
+</html>

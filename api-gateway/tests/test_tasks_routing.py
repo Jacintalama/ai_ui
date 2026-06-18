@@ -18,6 +18,7 @@ def _client_capturing(monkeypatch):
     async def fake_forward(request, backend_url, backend_path, extra_headers):
         captured["url"] = backend_url
         captured["path"] = backend_path
+        captured["extra_headers"] = extra_headers
         return Response(content=b"ok", status_code=200)
 
     monkeypatch.setattr(main, "forward_request", fake_forward)
@@ -72,3 +73,26 @@ def test_api_tasks_still_routes_to_tasks_service(monkeypatch):
     r = client.get("/api/tasks/whatever")
     assert r.status_code == 200
     assert "tasks" in captured["url"]
+
+
+def test_api_video_jobs_routes_to_tasks_service_with_gateway_headers(monkeypatch):
+    """Parity with /api/tasks: /api/video-jobs/* reaches the tasks upstream and
+    carries the gateway-injected identity headers, not client-forged ones."""
+    client, captured = _client_capturing(monkeypatch)
+    # Client forges an identity header; the gateway must not trust it.
+    r = client.get(
+        "/api/video-jobs/abc123/status",
+        headers={"X-User-Email": "attacker@evil.com"},
+    )
+    assert r.status_code == 200
+    # Routed to the tasks service, not Open WebUI.
+    assert "tasks" in captured["url"]
+    assert "open-webui" not in captured["url"]
+    # Path forwarded intact.
+    assert captured["path"] == "/api/video-jobs/abc123/status"
+    # Gateway injects its own trusted identity headers...
+    assert captured["extra_headers"]["X-Gateway-Validated"] == "true"
+    assert "X-User-Email" in captured["extra_headers"]
+    # ...and the forged client claim never becomes the trusted identity
+    # (no valid JWT here, so the gateway's X-User-Email is empty).
+    assert captured["extra_headers"]["X-User-Email"] != "attacker@evil.com"
