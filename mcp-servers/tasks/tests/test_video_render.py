@@ -286,7 +286,7 @@ def test_scene_subgraph_label_chain_connects_to_v_output():
     for label in ("[base0]", "[mot0]", "[grad0]", "[cap0]"):
         assert label in joined
     assert "[2:v]format=rgba" in joined  # caption input for scene 0 is index n+0
-    assert "[grad0][cap0]overlay=0:0,format=yuv420p,settb=AVTB[v0]" in joined
+    assert "[grad0][cap0]overlay=0:0,format=yuv420p,fps=30,settb=AVTB[v0]" in joined
     assert joined.rstrip().endswith("[v0]")
 
 
@@ -499,11 +499,11 @@ def test_timebase_normalized_so_cut_plus_cards_dont_mismatch():
     # ffmpeg, hence this string guard.)
     graph = _graph(_two_scene_plan("cut"))
     # every scene output is normalized
-    assert "format=yuv420p,settb=AVTB[v0]" in graph
-    assert "format=yuv420p,settb=AVTB[v1]" in graph
+    assert "format=yuv420p,fps=30,settb=AVTB[v0]" in graph
+    assert "format=yuv420p,fps=30,settb=AVTB[v1]" in graph
     # both cards are normalized to the same timebase
-    assert "format=yuv420p,settb=AVTB[intro]" in graph
-    assert "format=yuv420p,settb=AVTB[outro]" in graph
+    assert "format=yuv420p,fps=30,settb=AVTB[intro]" in graph
+    assert "format=yuv420p,fps=30,settb=AVTB[outro]" in graph
 
 
 def test_filtergraph_fully_connected_single_scene():
