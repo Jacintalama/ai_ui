@@ -46,7 +46,7 @@ PLAN_SCHEMA = {
             },
         },
         "narration_script": {"type": "string"},
-        "resolution": {"type": "string", "enum": ["720p", "1080p"]},
+        "resolution": {"type": "string", "enum": ["720p"]},
     },
     "required": ["template_id", "title", "scenes", "narration_script"],
 }
@@ -85,6 +85,12 @@ def clamp_plan(plan: dict) -> dict:
     """
     if not isinstance(plan, dict):
         return plan
+    # Cap resolution to 720p. The ~3.8GB render box OOMs on 1080p (the eased
+    # 2x-supersample motion + color grade peak at the full box), while every
+    # style renders comfortably at 720p (benchmarked). Coerce here so old or
+    # refined plans that still carry 1080p can never reach the renderer.
+    if plan.get("resolution") != "720p":
+        plan["resolution"] = "720p"
     scenes = plan.get("scenes")
     if not isinstance(scenes, list):
         return plan

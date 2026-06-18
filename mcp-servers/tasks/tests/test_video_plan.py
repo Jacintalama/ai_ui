@@ -101,7 +101,8 @@ async def test_generate_plan_parses_and_validates(monkeypatch):
 
     result = await generate_plan("make a demo", ["screenshot-1.png"])
 
-    assert result == canned
+    # clamp_plan normalizes the resolution to the box-safe 720p.
+    assert result == {**canned, "resolution": "720p"}
     # Confirm the call uses the current model id and structured-output API.
     sent = fake.messages.calls[0]
     assert sent["model"] == "claude-opus-4-8"
@@ -117,6 +118,21 @@ def test_clamp_plan_clamps_per_scene_duration():
     out = clamp_plan(p)
     assert out["scenes"][0]["duration_s"] == 15      # clamped down from 25
     assert out["scenes"][1]["duration_s"] == 0.5     # clamped up from 0.1
+
+
+def test_clamp_plan_caps_resolution_to_720p():
+    from video_plan import PLAN_SCHEMA, clamp_plan
+    # 1080p OOMs the render box, so it must never reach the renderer.
+    p = {"template_id": "product_demo", "title": "t", "resolution": "1080p",
+         "scenes": [{"screenshot": "a.png", "caption": "c", "duration_s": 3,
+                     "transition": "cut"}],
+         "narration_script": "n"}
+    assert clamp_plan(p)["resolution"] == "720p"
+    # A plan with no resolution is normalized to 720p too.
+    p2 = dict(p); p2.pop("resolution")
+    assert clamp_plan(p2)["resolution"] == "720p"
+    # The model can only emit 720p (schema enum narrowed).
+    assert PLAN_SCHEMA["properties"]["resolution"]["enum"] == ["720p"]
 
 
 def test_clamp_plan_scales_total_over_cap():
