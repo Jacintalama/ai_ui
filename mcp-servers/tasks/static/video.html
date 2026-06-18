@@ -280,6 +280,24 @@
     .example-card { padding: 18px; }
     .example-card video { width: 100%; border-radius: var(--radius); display: block; background: #000; }
 
+    /* Create state: two-column studio (form left, example + how-to right). */
+    .create-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+      gap: 22px; align-items: start;
+    }
+    .create-grid .example-card { position: sticky; top: 84px; }
+    @media (max-width: 920px) {
+      .create-grid { grid-template-columns: 1fr; }
+      .create-grid .example-card { position: static; }
+    }
+    ol.how-steps {
+      margin: 16px 0 0; padding-left: 20px;
+      color: var(--text-2); font-size: 13px; line-height: 1.7;
+    }
+    .how-steps li { margin-bottom: 4px; }
+    .how-steps b { color: var(--text); font-weight: 600; }
+
     /* Video player + placeholder */
     .player-wrap {
       position: relative; width: 100%; aspect-ratio: 16 / 9;
@@ -441,7 +459,7 @@
     body[data-state="list"] [data-show="back"] { display: none !important; }
     /* Create state: chat rail is hidden, so collapse the grid to a single
        centered column instead of leaving an empty right-hand panel. */
-    body[data-state="create"] .studio { display: block; max-width: 720px; }
+    body[data-state="create"] .studio { display: block; max-width: 1280px; }
     /* List state: full-width landing grid, no right-hand rail. */
     body[data-state="list"] .studio { display: block; max-width: 1100px; }
 
@@ -516,7 +534,8 @@
       </section>
 
       <!-- CREATE STATE: upload form -->
-      <section class="card" data-show="create">
+      <div class="create-grid" data-show="create">
+      <section class="card create-form-card" data-show="create">
         <div class="card-title">Generate a video</div>
         <div class="card-sub">Name your video, upload 1 to 12 screenshots, describe the narrated slideshow you want.</div>
         <form id="video-form" autocomplete="off">
@@ -582,7 +601,16 @@
         <video controls preload="metadata" playsinline
                poster="/tasks/static/demo-poster.jpg?v=1"
                src="/tasks/static/demo-video.mp4?v=tut2"></video>
+        <div class="section-label" style="margin-top:18px;">How it works</div>
+        <ol class="how-steps">
+          <li><b>Name</b> your video.</li>
+          <li>Pick a <b>style</b> and a <b>voice</b> (press play to hear each).</li>
+          <li><b>Add screenshots</b> in the order you want narrated.</li>
+          <li><b>Describe</b> the walkthrough you want.</li>
+          <li>Hit <b>Generate</b> and we render a narrated video.</li>
+        </ol>
       </section>
+      </div>
 
       <!-- STUDIO STATE: player -->
       <div data-show="studio">
