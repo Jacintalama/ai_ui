@@ -16,6 +16,8 @@ from templates_video import (
     get_style_config,
 )
 from video_render import (
+    CARD_DURATION,
+    CARD_FADE,
     RESOLUTIONS,
     _intro_card_path,
     _outro_card_path,
@@ -25,6 +27,7 @@ from video_render import (
     build_render_script,
     caption_paths,
     render_caption_png,
+    resolution_size,
 )
 
 WORKDIR = "/srv/.video/job-123"
@@ -494,3 +497,44 @@ def test_filtergraph_fully_connected_single_scene():
     _assert_fully_connected(graph)
     # The single scene seeds [v0]; the intro bookends straight onto it.
     assert "[intro][v0]xfade" in graph
+
+
+def test_card_xfade_offsets_keep_both_cards_visible():
+    # Each xfade must be placed at (first-input length - CARD_FADE) so the
+    # second segment fully follows. This guards the tail offset, which the
+    # topology-only connectivity check cannot catch: too large an offset pushes
+    # the crossfade past [ihead]'s EOF and the outro card silently drops out.
+    for plan in (
+        _two_scene_plan("crossfade"),
+        _two_scene_plan("cut"),
+        _single_scene_plan(),
+    ):
+        w, h = resolution_size(plan)
+        style = get_style_config(plan.get("style"))
+        _, _, body_dur = build_filtergraph(plan["scenes"], w, h, style)
+        graph = _graph(plan)
+
+        # Head: [intro] (CARD_DURATION long) crossfades into the body.
+        head = re.search(
+            r"\[intro\]\[[^\]]+\]xfade=transition=fade:"
+            r"duration=([0-9.]+):offset=([0-9.]+)\[ihead\]",
+            graph,
+        )
+        assert head is not None
+        h_dur, h_off = float(head.group(1)), float(head.group(2))
+        assert abs(h_off - (CARD_DURATION - h_dur)) < 1e-6
+
+        # [ihead] length after the head crossfade overlap.
+        ihead_len = (CARD_DURATION - CARD_FADE) + body_dur
+
+        # Tail: [ihead] crossfades into [outro]. The window must fit inside
+        # [ihead] and be placed at (len - duration) so the outro fully follows.
+        tail = re.search(
+            r"\[ihead\]\[outro\]xfade=transition=fade:"
+            r"duration=([0-9.]+):offset=([0-9.]+)\[vout\]",
+            graph,
+        )
+        assert tail is not None
+        t_dur, t_off = float(tail.group(1)), float(tail.group(2))
+        assert t_off + t_dur <= ihead_len + 1e-6, "outro window past [ihead] EOF"
+        assert abs(t_off - (ihead_len - t_dur)) < 1e-6

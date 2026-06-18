@@ -580,8 +580,12 @@ def _card_bookend_stmts(
         f"fade=t=in:st=0:d=0.4,"
         f"fade=t=out:st={fade_out_start}:d=0.5,format=yuv420p[outro]"
     )
+    # The intro contributes only (CARD_DURATION - CARD_FADE) to the head xfade
+    # output, so [ihead] is (CARD_DURATION - CARD_FADE) + body_duration long.
+    # Each xfade is placed at (first-input length - CARD_FADE) so the second
+    # card fully follows, hence the tail subtracts CARD_FADE twice.
     head_offset = _fmt_num(round(CARD_DURATION - CARD_FADE, 4))
-    tail_offset = _fmt_num(round(CARD_DURATION + body_duration - CARD_FADE, 4))
+    tail_offset = _fmt_num(round(CARD_DURATION + body_duration - 2 * CARD_FADE, 4))
     head_stmt = (
         f"[intro]{body_label}xfade=transition=fade:"
         f"duration={_fmt_num(CARD_FADE)}:offset={head_offset}[ihead]"
