@@ -43,6 +43,7 @@ from sqlalchemy import and_, func, select, update
 from auth import CurrentUser, current_user
 from db import session
 from templates_video.style_config import STYLE_CONFIGS
+from video_voices import DEFAULT_VOICE_ID, is_valid_voice, voice_catalog
 from heavy_lock import enough_free_disk
 from video_capability import verify_video_capability
 from video_models import VideoJob
@@ -117,6 +118,7 @@ async def upload(
     title: str = Form(..., min_length=1, max_length=200),
     prompt: str = Form(..., min_length=1, max_length=2000),
     style: str = Form("clean_product_demo", max_length=50),
+    voice: str = Form(DEFAULT_VOICE_ID, max_length=50),
     files: list[UploadFile] = File(default_factory=list),
     user: CurrentUser = Depends(current_user),
 ) -> dict:
@@ -130,6 +132,10 @@ async def upload(
     # reach the render as an unknown id (and never an ffmpeg/file path).
     if style not in STYLE_CONFIGS:
         raise HTTPException(400, f"Unknown style: {style}")
+    # Voice is allowlist-validated so it can only ever select a known Piper
+    # model, never a user-supplied path.
+    if not is_valid_voice(voice):
+        raise HTTPException(400, f"Unknown voice: {voice}")
     # Disk guard (cheap, no-DB): reject a batch we have no room to store + render
     # before reading bytes into memory, and well before any disk write.
     if not enough_free_disk(
@@ -184,6 +190,7 @@ async def upload(
                 prompt=prompt,
                 title=title,
                 style=style,
+                voice=voice,
                 status="queued",
             )
         )
@@ -217,6 +224,15 @@ async def list_jobs(user: CurrentUser = Depends(current_user)) -> dict:
         "current_version_no": r.current_version_no,
         "output_available": bool(r.output_path),
     } for r in rows]}
+
+
+# Registered BEFORE "/{job_id}" so the literal "voices" path is not captured as
+# a job id. No auth: it is a static, non-sensitive catalog (the preview clips
+# are public static files) used by the create-form picker.
+@router.get("/voices")
+async def voices() -> dict:
+    """The selectable narration voices for the create-form picker."""
+    return {"voices": voice_catalog(), "default": DEFAULT_VOICE_ID}
 
 
 def _coerce_job_id(job_id: str) -> uuid.UUID:

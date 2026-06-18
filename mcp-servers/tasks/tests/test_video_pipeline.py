@@ -46,6 +46,7 @@ def _fake_job(plan_json=None):
         plan_json=plan_json,
         pending_summary=None,
         style="clean_product_demo",
+        voice="amy",
         status="queued",
         error=None,
         output_path=None,

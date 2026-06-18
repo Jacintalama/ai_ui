@@ -98,6 +98,7 @@ async def _process_job(job_id) -> None:
                 return
             slug, prompt, plan, pending_summary = job.slug, job.prompt, job.plan_json, job.pending_summary
             style = job.style
+            voice = job.voice
 
         # Stage 1: scripting (idempotent — reuse an existing plan).
         if not plan:
@@ -124,7 +125,7 @@ async def _process_job(job_id) -> None:
                 .values(status="rendering")
             )
             await s.commit()
-        out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style)
+        out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
 
         # Stage 3: snapshot this render as a version, then mark done.
         async with session() as s:

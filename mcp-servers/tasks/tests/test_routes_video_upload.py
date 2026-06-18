@@ -66,8 +66,9 @@ async def test_upload_creates_queued_job(db_session, tmp_path, monkeypatch):
     assert job.title == "My demo"
     assert job.slug.startswith("vid-")
     assert job.user_email == "ralph@aiui.com"
-    # No style sent -> the default StyleConfig id is stored.
+    # No style/voice sent -> defaults are stored.
     assert job.style == "clean_product_demo"
+    assert job.voice == "amy"
 
 
 # --- Offline guards (no DB): these fire before/around the DB calls. ---
@@ -111,6 +112,42 @@ def test_video_form_has_style_select():
     for value in ("clean_product_demo", "cinematic", "snappy_social"):
         assert f'value="{value}"' in html
     assert 'value="clean_product_demo" selected' in html
+
+
+async def test_upload_unknown_voice_returns_400():
+    """An unknown voice id is rejected by the allowlist guard (400) before any
+    DB call, even with valid auth, title and a screenshot."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/api/video-jobs/upload",
+            data={"title": "demo", "prompt": "show it", "voice": "darth-vader"},
+            files=[("files", ("a.png", _png(), "image/png"))],
+            headers=HEAD,
+        )
+    assert r.status_code == 400
+
+
+async def test_voices_endpoint_lists_catalog():
+    """GET /api/video-jobs/voices returns the picker catalog (no server paths)."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get("/api/video-jobs/voices")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["default"] == "amy"
+    assert [v["id"] for v in body["voices"]] == [
+        "amy", "ryan", "lessac", "joe", "alan", "alba"]
+    assert all("/opt/piper" not in str(v) for v in body["voices"])
+    assert all(v["sample_url"].startswith("/tasks/static/voices/") for v in body["voices"])
+
+
+def test_video_form_has_voice_picker():
+    """The create form has the voice picker container + wiring."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(here, "static", "video.html"), encoding="utf-8") as fh:
+        html = fh.read()
+    assert 'id="voice-list"' in html
+    assert "loadVoices" in html
+    assert 'fd.append("voice"' in html
 
 
 async def test_upload_no_auth_returns_401():

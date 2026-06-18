@@ -154,6 +154,35 @@ async def test_style_is_injected_into_plan_for_every_builder(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_render_uses_selected_voice_model(monkeypatch):
+    """The chosen voice id must resolve to its allowlisted Piper model in the
+    on-host synthesis command; an unknown/None voice falls back to the default."""
+    async def run(voice):
+        calls = []
+
+        async def fake_spawn(*args, **kwargs):
+            calls.append(args)
+            return _fake_proc(0)
+
+        monkeypatch.setattr("os.path.exists", lambda _p: True)
+        with patch("video_executor.render_all_captions", lambda *a, **k: []), \
+             patch("video_executor.render_cards", lambda *a, **k: None), \
+             patch("video_executor.build_render_script",
+                   lambda *a, **k: ["ffmpeg", "-y", "wd/out.mp4"]), \
+             patch("video_executor.open", mock_open(), create=True), \
+             patch("asyncio.create_subprocess_exec",
+                   AsyncMock(side_effect=fake_spawn)):
+            ex = VideoRenderExecutor()
+            await ex.render("myapp", "job-1", _plan(), voice=voice)
+        voice_call = next(c for c in calls if _classify(c) == "voice")
+        return " ".join(str(a) for a in voice_call)
+
+    assert "en_GB-alan-medium.onnx" in await run("alan")
+    assert "en_US-amy-medium.onnx" in await run(None)        # default
+    assert "en_US-amy-medium.onnx" in await run("bogus")     # unknown -> default
+
+
+@pytest.mark.asyncio
 async def test_cleanup_runs_on_failure(monkeypatch):
     calls = []
 

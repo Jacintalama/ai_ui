@@ -141,6 +141,38 @@
     .form-file { padding: 8px 12px; cursor: pointer; }
     .form-hint { font-size: 11px; color: var(--muted); }
 
+    /* Voice picker: a grid of selectable voices each with an audio preview. */
+    .voice-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    @media (max-width: 560px) { .voice-list { grid-template-columns: 1fr; } }
+    .voice-loading { color: var(--muted); font-size: 13px; padding: 6px 2px; }
+    .voice-opt {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; border: 1px solid var(--border);
+      border-radius: var(--radius); background: var(--surface-2);
+      cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    }
+    .voice-opt:hover { border-color: var(--border-2); }
+    .voice-opt.selected { border-color: var(--accent); background: var(--accent-soft); }
+    .voice-opt .vo-play {
+      width: 30px; height: 30px; flex-shrink: 0; border-radius: 50%;
+      display: grid; place-items: center; cursor: pointer;
+      border: 1px solid var(--border-2); background: var(--surface-3);
+      color: var(--text-2); font-size: 12px; line-height: 1;
+    }
+    .voice-opt .vo-play:hover { color: var(--text); border-color: var(--accent); }
+    .voice-opt .vo-play.playing { color: var(--accent); border-color: var(--accent); }
+    .voice-opt .vo-meta { display: flex; flex-direction: column; min-width: 0; }
+    .voice-opt .vo-name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .voice-opt .vo-tag { font-size: 11px; color: var(--muted); }
+    .voice-opt .vo-check {
+      margin-left: auto; width: 16px; height: 16px; flex-shrink: 0;
+      border-radius: 50%; border: 1px solid var(--border-2);
+    }
+    .voice-opt.selected .vo-check {
+      border-color: var(--accent);
+      background: radial-gradient(circle at center, var(--accent) 0 5px, transparent 5px);
+    }
+
     .btn {
       padding: 10px 16px;
       border: 1px solid var(--border-2);
@@ -504,6 +536,14 @@
           </div>
 
           <div class="field">
+            <label class="form-label">Voice</label>
+            <div class="voice-list" id="voice-list" role="radiogroup" aria-label="Narration voice">
+              <div class="voice-loading">Loading voices...</div>
+            </div>
+            <span class="form-hint">The narration voice. Press play to hear a sample.</span>
+          </div>
+
+          <div class="field">
             <label class="form-label">Screenshots</label>
             <div class="uploader-head">
               <button class="btn sm" type="button" id="add-shots-btn">+ Add screenshots</button>
@@ -647,6 +687,9 @@
     const shotError = document.getElementById("shot-error");
     const promptInput = document.getElementById("prompt");
     const styleSelect = document.getElementById("style");
+    const voiceList = document.getElementById("voice-list");
+    let selectedVoice = null;   // chosen voice id, set once voices load
+    let voiceAudio = null;      // single shared <Audio> for previews
     const submitBtn = document.getElementById("submit-btn");
     const formError = document.getElementById("form-error");
 
@@ -1539,6 +1582,8 @@
       fd.append("title", title);
       fd.append("prompt", prompt);
       fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
+      fd.append("voice", selectedVoice || "amy");
+      stopVoicePreview();
       // Append in the CURRENT DISPLAYED ORDER so screenshot-1 = the first card.
       for (const s of shots) fd.append("files", s.file, s.file.name);
 
@@ -1570,8 +1615,103 @@
     });
 
     // --- Boot ---
+    // --- Voice picker: load the catalog, render selectable cards w/ previews --
+    function setSelectedVoice(id) {
+      selectedVoice = id;
+      voiceList.querySelectorAll(".voice-opt").forEach((el) => {
+        const on = el.dataset.voice === id;
+        el.classList.toggle("selected", on);
+        el.setAttribute("aria-checked", on ? "true" : "false");
+      });
+    }
+
+    function stopVoicePreview() {
+      if (voiceAudio) { voiceAudio.pause(); voiceAudio.currentTime = 0; }
+      voiceList.querySelectorAll(".vo-play.playing").forEach((b) => {
+        b.classList.remove("playing");
+        b.textContent = "▶"; // play triangle
+      });
+    }
+
+    function playVoicePreview(url, btn) {
+      const wasPlaying = btn.classList.contains("playing");
+      stopVoicePreview();
+      if (wasPlaying) return; // second click = toggle off
+      if (!voiceAudio) voiceAudio = new Audio();
+      voiceAudio.src = url;
+      voiceAudio.onended = stopVoicePreview;
+      voiceAudio.play().then(() => {
+        btn.classList.add("playing");
+        btn.textContent = "⏸"; // pause glyph while playing
+      }).catch(() => stopVoicePreview());
+    }
+
+    async function loadVoices() {
+      if (!voiceList) return;
+      try {
+        const res = await fetch(API + "/voices", { credentials: "same-origin" });
+        if (!res.ok) throw new Error("voices " + res.status);
+        const data = await res.json();
+        const voices = (data && data.voices) || [];
+        if (!voices.length) throw new Error("no voices");
+        voiceList.innerHTML = "";
+        voices.forEach((v) => {
+          const opt = document.createElement("div");
+          opt.className = "voice-opt";
+          opt.dataset.voice = v.id;
+          opt.setAttribute("role", "radio");
+          opt.setAttribute("tabindex", "0");
+          opt.setAttribute("aria-checked", "false");
+
+          const play = document.createElement("button");
+          play.type = "button";
+          play.className = "vo-play";
+          play.textContent = "▶";
+          play.setAttribute("aria-label", "Play " + v.label + " voice sample");
+          play.addEventListener("click", (e) => {
+            e.stopPropagation();
+            playVoicePreview(v.sample_url, play);
+          });
+
+          const meta = document.createElement("div");
+          meta.className = "vo-meta";
+          const name = document.createElement("div");
+          name.className = "vo-name";
+          name.textContent = v.label;
+          const tag = document.createElement("div");
+          tag.className = "vo-tag";
+          tag.textContent = v.accent + " " + v.gender + (v.default ? " (default)" : "");
+          meta.appendChild(name);
+          meta.appendChild(tag);
+
+          const check = document.createElement("div");
+          check.className = "vo-check";
+
+          opt.appendChild(play);
+          opt.appendChild(meta);
+          opt.appendChild(check);
+          opt.addEventListener("click", () => setSelectedVoice(v.id));
+          opt.addEventListener("keydown", (e) => {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              setSelectedVoice(v.id);
+            }
+          });
+          voiceList.appendChild(opt);
+        });
+        const def = voices.find((v) => v.default) || voices[0];
+        setSelectedVoice(def.id);
+      } catch (e) {
+        // Degrade gracefully: the render falls back to the default voice anyway.
+        selectedVoice = "amy";
+        voiceList.innerHTML =
+          '<div class="voice-loading">Could not load voice previews. The default voice will be used.</div>';
+      }
+    }
+
     (function init() {
       renderFromUrl();
+      loadVoices();
     })();
   </script>
 </body>

@@ -33,10 +33,12 @@ import shlex
 from claude_executor import CLAUDE_WORKSPACE
 from video_cards import render_cards
 from video_render import build_render_script, render_all_captions, resolution_size
+from video_voices import resolve_model
 
 # Piper voice model installed on the host by scripts/provision_agent_vm.sh.
 _PIPER_BIN = "/opt/piper/piper"
-_PIPER_VOICE = "/opt/piper/voices/en_US-amy-medium.onnx"
+# The voice model is resolved per job from the allowlist in video_voices
+# (resolve_model), never hardcoded; an unknown/None voice falls back to default.
 
 
 def _apps_base() -> str:
@@ -67,7 +69,8 @@ class VideoRenderExecutor:
     # ------- public API ----------------------------------------------
 
     async def render(
-        self, slug: str, job_id: str, plan: dict, style: str | None = None
+        self, slug: str, job_id: str, plan: dict,
+        style: str | None = None, voice: str | None = None,
     ) -> str:
         """Render ``plan``'s MP4 on the host and return the LOCAL out.mp4 path.
 
@@ -103,7 +106,7 @@ class VideoRenderExecutor:
 
             # 3. Voice on the host: Piper (fed narration.txt) -> voice.wav,
             #    then ffmpeg -> voice.mp3.
-            await self._voice(host, user, key, remote_workdir)
+            await self._voice(host, user, key, remote_workdir, voice)
 
             # 4. Render on the host (ffmpeg), bounded by a render timeout.
             try:
@@ -165,7 +168,8 @@ class VideoRenderExecutor:
             raise RuntimeError(f"push rsync exit {rc}: {err[:200]}")
 
     async def _voice(
-        self, host: str, user: str, key: str, remote_workdir: str
+        self, host: str, user: str, key: str, remote_workdir: str,
+        voice: str | None = None,
     ) -> None:
         # Piper reads the narration from the rsynced file (stdin redirect),
         # NOT a shell-interpolated string — no user text crosses the shell.
@@ -173,9 +177,10 @@ class VideoRenderExecutor:
         wav = f"{remote_workdir}/voice.wav"
         mp3 = f"{remote_workdir}/voice.mp3"
         narration = f"{remote_workdir}/narration.txt"
+        model = resolve_model(voice)  # allowlisted path; never user input
         remote_cmd = (
             f"{shlex.quote(_PIPER_BIN)} "
-            f"-m {shlex.quote(_PIPER_VOICE)} "
+            f"-m {shlex.quote(model)} "
             f"-f {shlex.quote(wav)} "
             f"< {shlex.quote(narration)} "
             f"&& ffmpeg -y -i {shlex.quote(wav)} {shlex.quote(mp3)}"
