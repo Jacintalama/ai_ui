@@ -689,6 +689,7 @@
     const styleSelect = document.getElementById("style");
     const voiceList = document.getElementById("voice-list");
     let selectedVoice = null;   // chosen voice id, set once voices load
+    let defaultVoiceId = "amy"; // updated from the catalog's default flag on load
     let voiceAudio = null;      // single shared <Audio> for previews
     const submitBtn = document.getElementById("submit-btn");
     const formError = document.getElementById("form-error");
@@ -1288,6 +1289,7 @@
     // ?new=1 so Back returns here and a reload re-opens the form (instead of
     // the list landing).
     function newVideo() {
+      stopVoicePreview();
       resetToCreate();
       history.pushState({}, "", "?new=1");
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1536,6 +1538,7 @@
     // when the caller has no videos). The topbar "Back to chat" is a plain
     // <a href="/"> that leaves the studio entirely.
     function goToList() {
+      stopVoicePreview();
       history.pushState({}, "", location.pathname);
       renderFromUrl();
     }
@@ -1582,7 +1585,7 @@
       fd.append("title", title);
       fd.append("prompt", prompt);
       fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
-      fd.append("voice", selectedVoice || "amy");
+      fd.append("voice", selectedVoice || defaultVoiceId);
       stopVoicePreview();
       // Append in the CURRENT DISPLAYED ORDER so screenshot-1 = the first card.
       for (const s of shots) fd.append("files", s.file, s.file.name);
@@ -1670,6 +1673,7 @@
           play.setAttribute("aria-label", "Play " + v.label + " voice sample");
           play.addEventListener("click", (e) => {
             e.stopPropagation();
+            setSelectedVoice(v.id); // auditioning a voice also picks it
             playVoicePreview(v.sample_url, play);
           });
 
@@ -1700,10 +1704,11 @@
           voiceList.appendChild(opt);
         });
         const def = voices.find((v) => v.default) || voices[0];
+        defaultVoiceId = (data && data.default) || def.id;
         setSelectedVoice(def.id);
       } catch (e) {
         // Degrade gracefully: the render falls back to the default voice anyway.
-        selectedVoice = "amy";
+        selectedVoice = defaultVoiceId;
         voiceList.innerHTML =
           '<div class="voice-loading">Could not load voice previews. The default voice will be used.</div>';
       }

@@ -57,6 +57,25 @@ def test_all_models_under_voices_dir():
         assert v.model.endswith(".onnx")
 
 
+def test_sample_text_matches_generator_script():
+    # The committed clips were rendered from SAMPLE_TEXT by gen_voice_previews.sh.
+    # If the constant and the script's TXT drift, the previews silently stop
+    # matching the documented sample line. Keep them in lockstep.
+    import re
+
+    from video_voices import SAMPLE_TEXT
+
+    tasks_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.normpath(
+        os.path.join(tasks_dir, "..", "..", "scripts", "gen_voice_previews.sh")
+    )
+    with open(script, encoding="utf-8") as fh:
+        text = fh.read()
+    m = re.search(r'TXT="([^"]*)"', text)
+    assert m is not None, "TXT=... not found in gen_voice_previews.sh"
+    assert m.group(1) == SAMPLE_TEXT
+
+
 def test_preview_clip_committed_for_every_voice():
     # A committed static/voices/<id>.mp3 must back every catalog voice so the
     # picker's preview never 404s. Guards drift between the allowlist + clips.
