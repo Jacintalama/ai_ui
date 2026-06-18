@@ -17,7 +17,10 @@ from templates_video import (
 )
 from video_render import (
     RESOLUTIONS,
+    _intro_card_path,
+    _outro_card_path,
     _scene_filter_stmts,
+    _voice_path,
     build_filtergraph,
     build_render_script,
     caption_paths,
@@ -170,8 +173,10 @@ def test_section_boundary_emits_fadeblack_clamped():
 
 def test_cut_boundary_emits_concat():
     graph = _graph(_two_scene_plan("cut"))
+    # The cut boundary is a hard concat; the only xfades are the intro/outro
+    # card bookends (always crossfaded onto the body).
     assert "concat=n=2:v=1:a=0" in graph
-    assert "xfade=" not in graph
+    assert graph.count("xfade=transition=fade") == 2
 
 
 def test_crossfade_offset_math_unchanged():
@@ -362,11 +367,130 @@ def test_build_render_script_default_style_smoke():
 def test_build_filtergraph_with_explicit_cinematic_style():
     style = get_style_config("cinematic")
     scenes = _plan()["scenes"]
-    graph, vlabel = build_filtergraph(scenes, 1280, 720, style)
+    graph, vlabel, total = build_filtergraph(scenes, 1280, 720, style)
     assert isinstance(vlabel, str) and vlabel
+    assert total > 0
     for label in ("[v0]", "[v1]", "[v2]"):
         assert label in graph
     # cinematic letterbox is cinema239 -> blurred-fill split subgraph present.
     assert "split=2" in graph
     # cinematic grade chain is present (eq from its StyleConfig).
     assert "eq=contrast=1.06" in graph
+
+
+# --------------------------------------------------------------------------- #
+# 1.10 intro/outro cards: extra inputs, bookend stitching, silent cards, and a
+# fully-connected filtergraph across xfade / cut / single-scene bodies.
+# --------------------------------------------------------------------------- #
+def _single_scene_plan() -> dict:
+    return _plan(
+        scenes=[
+            {
+                "screenshot": "only.png",
+                "caption": "The only scene",
+                "duration_s": 4.0,
+                "transition": "crossfade",
+            }
+        ]
+    )
+
+
+def test_card_inputs_appended_after_voice():
+    argv = build_render_script(_plan(), WORKDIR)
+    joined = " ".join(argv)
+    # Two lavfi color canvases for the cards.
+    assert joined.count("-f lavfi") == 2
+    assert "color=c=" in joined
+    # The card PNG paths are referenced as looped inputs.
+    assert _intro_card_path(WORKDIR) in argv
+    assert _outro_card_path(WORKDIR) in argv
+    # The new inputs come AFTER the voice input so [{n+i}:v] caption indices
+    # (which depend on input order) stay valid.
+    voice_pos = argv.index(_voice_path(WORKDIR))
+    lavfi_pos = argv.index("lavfi")
+    intro_png_pos = argv.index(_intro_card_path(WORKDIR))
+    assert voice_pos < lavfi_pos
+    assert voice_pos < intro_png_pos
+
+
+def test_filtergraph_bookends_cards_and_maps_vout():
+    argv = build_render_script(_plan(), WORKDIR)
+    graph = argv[argv.index("-filter_complex") + 1]
+    # The intro/outro card subgraphs exist...
+    assert "[intro]" in graph
+    assert "[outro]" in graph
+    # ...and are stitched as head and tail of the xfade chain.
+    assert "[ihead]" in graph
+    assert graph.rstrip().endswith("[aud]")  # audio branch is last
+    assert "[vout]" in graph
+    # The mapped video stream is the bookended output.
+    assert argv[argv.index("-map") + 1] == "[vout]"
+
+
+def test_voice_delayed_and_no_shortest():
+    argv = build_render_script(_plan(), WORKDIR)
+    graph = argv[argv.index("-filter_complex") + 1]
+    # The narration is delayed by the 3s intro so the cards are silent.
+    assert "adelay=3000:all=1[aud]" in graph
+    # Audio is mapped from the delayed branch, not the raw voice input.
+    assert "[aud]" in argv
+    # -shortest must be gone, or it would truncate the trailing silent outro.
+    assert "-shortest" not in argv
+
+
+def _label_io(graph: str):
+    """Return ``(produced_labels, consumed_labels)`` for a filter_complex.
+
+    Each ``;``-separated statement consumes the run of ``[label]`` at its start
+    and produces the run at its end (ffmpeg filterchain syntax). Input pads like
+    ``0:v`` / ``5:a`` are consumed but never produced.
+    """
+    label_re = re.compile(r"\[([^\]]+)\]")
+    produced: list[str] = []
+    consumed: list[str] = []
+    for stmt in graph.split(";"):
+        stmt = stmt.strip()
+        if not stmt:
+            continue
+        lead = re.match(r"^((?:\[[^\]]+\])+)", stmt)
+        trail = re.search(r"((?:\[[^\]]+\])+)$", stmt)
+        if lead:
+            consumed += label_re.findall(lead.group(1))
+        if trail:
+            produced += label_re.findall(trail.group(1))
+    return produced, consumed
+
+
+def _assert_fully_connected(graph: str):
+    produced, consumed = _label_io(graph)
+    # No label is produced by two statements.
+    assert len(produced) == len(set(produced)), (
+        f"duplicate label producer in: {sorted(produced)}"
+    )
+    input_pad = re.compile(r"^\d+:[va]$")
+    produced_set = set(produced)
+    # Every consumed label is produced upstream or is an ffmpeg input pad.
+    for c in consumed:
+        assert c in produced_set or input_pad.match(c), f"undefined label [{c}]"
+    # Every produced label is consumed, except the two mapped outputs.
+    for p in produced_set:
+        if p in ("vout", "aud"):
+            continue
+        assert p in consumed, f"orphan label [{p}]"
+
+
+def test_filtergraph_fully_connected_xfade_body():
+    graph = _graph(_two_scene_plan("crossfade"))
+    _assert_fully_connected(graph)
+
+
+def test_filtergraph_fully_connected_cut_body():
+    graph = _graph(_two_scene_plan("cut"))
+    _assert_fully_connected(graph)
+
+
+def test_filtergraph_fully_connected_single_scene():
+    graph = _graph(_single_scene_plan())
+    _assert_fully_connected(graph)
+    # The single scene seeds [v0]; the intro bookends straight onto it.
+    assert "[intro][v0]xfade" in graph

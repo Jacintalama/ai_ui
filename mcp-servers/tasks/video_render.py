@@ -18,7 +18,8 @@ Pipeline shape per scene, all driven by the validated plan
   * consecutive scenes are joined with an ``xfade`` whose type is mapped from
     the earlier scene's ``transition`` (see :data:`XFADE`), otherwise a plain
     ``concat`` (hard cut),
-  * ``voice.mp3`` is the final input, mapped as audio with ``-shortest``,
+  * ``voice.mp3`` is mapped as audio, delayed by the intro card so the cards
+    stay silent (no ``-shortest``: the video chain bounds the output length),
   * encoded with libx264/veryfast/yuv420p at ``-threads 1`` (low RAM) and
     ``-r 30`` to ``<workdir>/out.mp4``.
 
@@ -51,6 +52,11 @@ FPS = 30
 OUTPUT_NAME = "out.mp4"
 VOICE_NAME = "voice.mp3"
 
+# Intro/outro card timing (seconds). Cards are ADDITIONAL to the 60s scene cap,
+# so a finished video runs CARD_DURATION + body (<= 60s) + CARD_DURATION.
+CARD_DURATION = 3.0
+CARD_FADE = 0.5
+
 
 # --------------------------------------------------------------------------- #
 # Resolution
@@ -73,6 +79,14 @@ def _caption_path(workdir: str, index: int) -> str:
 
 def _voice_path(workdir: str) -> str:
     return f"{workdir}/{VOICE_NAME}"
+
+
+def _intro_card_path(workdir: str) -> str:
+    return f"{workdir}/intro.png"
+
+
+def _outro_card_path(workdir: str) -> str:
+    return f"{workdir}/outro.png"
 
 
 def _out_path(workdir: str) -> str:
@@ -289,6 +303,12 @@ def _fmt_num(value: float) -> str:
     return repr(round(f, 4))
 
 
+def _hex_color(rgb: Sequence[int]) -> str:
+    """Format an ``(r, g, b)`` tuple as ffmpeg's ``0xRRGGBB`` color syntax."""
+    r, g, b = (max(0, min(255, int(c))) for c in rgb)
+    return f"0x{r:02X}{g:02X}{b:02X}"
+
+
 def _letterbox_stmts(index: int, width: int, height: int, letterbox: str) -> list[str]:
     """1.6 letterbox: turn screenshot input ``[{index}:v]`` into ``[base{index}]``.
 
@@ -450,7 +470,7 @@ SECTION_FADE: float = 0.7
 def _chain_stmts(
     scenes: Sequence[dict],
     style: CaptionStyle,
-) -> tuple[list[str], str]:
+) -> tuple[list[str], str, float]:
     """Fold the per-scene ``[v{i}]`` streams into one final video label.
 
     Boundary i->i+1 uses scene ``i``'s ``transition``. Transitions in
@@ -460,7 +480,9 @@ def _chain_stmts(
     Every xfade dip is clamped to ``0.9 * min(prev_scene, cur_scene)`` so a
     fade can never exceed the shorter of its two adjacent scenes (a 0.7s
     ``section`` dip is invalid against a 0.5s scene, for example). Returns
-    ``(statements, final_label)``.
+    ``(statements, final_label, accumulated_duration)`` where the accumulated
+    duration is the body length after xfade overlaps are subtracted (used to
+    offset the trailing outro card).
     """
     stmts: list[str] = []
     final_label = "[v0]"
@@ -493,7 +515,7 @@ def _chain_stmts(
             acc_duration = acc_duration + scene_dur
         final_label = out
 
-    return stmts, final_label
+    return stmts, final_label, acc_duration
 
 
 def build_filtergraph(
@@ -502,8 +524,13 @@ def build_filtergraph(
     height: int,
     style: StyleConfig,
     fps: int = FPS,
-) -> tuple[str, str]:
-    """Build the full ``-filter_complex`` string and return ``(graph, vlabel)``.
+) -> tuple[str, str, float]:
+    """Build the body ``-filter_complex`` string for the scenes.
+
+    Returns ``(graph, vlabel, total_duration)``: the joined per-scene subgraph +
+    transition chain, the final video label, and the body duration after xfade
+    overlaps (the intro/outro cards are stitched on separately by
+    :func:`build_render_script`).
 
     Pure and unit-testable: no ffmpeg, no disk access. Each per-scene subgraph
     is style-driven (letterbox/motion/grade/caption from ``style``); the
@@ -520,9 +547,50 @@ def build_filtergraph(
             _scene_filter_stmts(i, n, scene["duration_s"], width, height, style, fps)
         )
 
-    chain, final_label = _chain_stmts(scenes, style.caption)
+    chain, final_label, total_duration = _chain_stmts(scenes, style.caption)
     stmts.extend(chain)
-    return ";".join(stmts), final_label
+    return ";".join(stmts), final_label, total_duration
+
+
+def _card_bookend_stmts(
+    body_label: str,
+    body_duration: float,
+    intro_color_idx: int,
+    outro_color_idx: int,
+    intro_png_idx: int,
+    outro_png_idx: int,
+) -> tuple[list[str], str]:
+    """Stitch the intro/outro cards onto the body as xfade bookends.
+
+    Each card overlays its Pillow-rendered PNG onto a solid lavfi color canvas,
+    fades in and out, and ends in the same pixel format as the body ``[v{i}]``
+    streams so ``xfade`` accepts it. The intro crossfades into the body at the
+    head and the body crossfades into the outro at the tail, both with an
+    accumulating offset, so the cards are ADDITIONAL to the body duration.
+    Returns ``(statements, final_label)``.
+    """
+    fade_out_start = _fmt_num(round(CARD_DURATION - 0.6, 4))
+    intro_stmt = (
+        f"[{intro_color_idx}:v][{intro_png_idx}:v]overlay=0:0,"
+        f"fade=t=in:st=0:d=0.4,"
+        f"fade=t=out:st={fade_out_start}:d=0.5,format=yuv420p[intro]"
+    )
+    outro_stmt = (
+        f"[{outro_color_idx}:v][{outro_png_idx}:v]overlay=0:0,"
+        f"fade=t=in:st=0:d=0.4,"
+        f"fade=t=out:st={fade_out_start}:d=0.5,format=yuv420p[outro]"
+    )
+    head_offset = _fmt_num(round(CARD_DURATION - CARD_FADE, 4))
+    tail_offset = _fmt_num(round(CARD_DURATION + body_duration - CARD_FADE, 4))
+    head_stmt = (
+        f"[intro]{body_label}xfade=transition=fade:"
+        f"duration={_fmt_num(CARD_FADE)}:offset={head_offset}[ihead]"
+    )
+    tail_stmt = (
+        f"[ihead][outro]xfade=transition=fade:"
+        f"duration={_fmt_num(CARD_FADE)}:offset={tail_offset}[vout]"
+    )
+    return [intro_stmt, outro_stmt, head_stmt, tail_stmt], "[vout]"
 
 
 def build_render_script(plan: dict, workdir: str) -> list[str]:
@@ -560,20 +628,61 @@ def build_render_script(plan: dict, workdir: str) -> list[str]:
 
     # Input 2n: the narration track.
     argv += ["-i", _voice_path(workdir)]
-
-    filtergraph, video_label = build_filtergraph(scenes, width, height, style)
     voice_index = 2 * n
+
+    # Inputs 2n+1..2n+4 (the HIGHEST indices, appended last so the hardcoded
+    # caption index [{n+i}:v] stays valid): two lavfi color canvases for the
+    # intro/outro cards, then the two Pillow-rendered card PNGs overlaid on
+    # them. The cards are stitched onto the body as xfade bookends below.
+    intro_color_idx = voice_index + 1
+    outro_color_idx = voice_index + 2
+    intro_png_idx = voice_index + 3
+    outro_png_idx = voice_index + 4
+    card_bg = _hex_color(style.cards.get("bg_color", (0, 0, 0)))
+    card_size = f"{width}x{height}"
+    card_dur = _fmt_num(CARD_DURATION)
+    argv += [
+        "-f", "lavfi",
+        "-t", card_dur,
+        "-i", f"color=c={card_bg}:s={card_size}:r={FPS}",
+        "-f", "lavfi",
+        "-t", card_dur,
+        "-i", f"color=c={card_bg}:s={card_size}:r={FPS}",
+        "-loop", "1",
+        "-t", card_dur,
+        "-i", _intro_card_path(workdir),
+        "-loop", "1",
+        "-t", card_dur,
+        "-i", _outro_card_path(workdir),
+    ]
+
+    body_graph, body_label, body_duration = build_filtergraph(
+        scenes, width, height, style
+    )
+    card_stmts, video_label = _card_bookend_stmts(
+        body_label,
+        body_duration,
+        intro_color_idx,
+        outro_color_idx,
+        intro_png_idx,
+        outro_png_idx,
+    )
+    # Delay the single narration track by the intro so the cards stay silent:
+    # the intro plays before any narration and the narration ends before the
+    # outro. ``-shortest`` is intentionally omitted: the deterministic video
+    # chain bounds the output length, and the trailing outro is silent.
+    audio_stmt = f"[{voice_index}:a]adelay={int(CARD_DURATION * 1000)}:all=1[aud]"
+    filtergraph = ";".join([body_graph, *card_stmts, audio_stmt])
 
     argv += [
         "-filter_complex", filtergraph,
         "-map", video_label,
-        "-map", f"{voice_index}:a",
+        "-map", "[aud]",
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-pix_fmt", "yuv420p",
         "-threads", "1",
         "-r", str(FPS),
-        "-shortest",
         _out_path(workdir),
     ]
     return argv

@@ -2,8 +2,8 @@
 
 Fully offline: ``asyncio.create_subprocess_exec`` is mocked so no ssh / rsync /
 piper / ffmpeg ever runs and no remote host is contacted. ``render_all_captions``
-(Pillow) and the narration-file write are patched, and ``os.path.exists`` is
-stubbed, so no real disk is touched either.
++ ``render_cards`` (Pillow) and the narration-file write are patched, and
+``os.path.exists`` is stubbed, so no real disk is touched either.
 
 These mirror ``test_remote_executor.py``: a fake spawn records every argv and
 returns a MagicMock process with ``wait()``/``stderr.read()`` coroutines.
@@ -81,13 +81,23 @@ async def test_render_runs_steps_in_order_and_returns_path(monkeypatch):
         calls.append(args)
         return _fake_proc(0)
 
+    rc_mock = MagicMock()
     monkeypatch.setattr("os.path.exists", lambda _p: True)
     with patch("video_executor.render_all_captions", lambda *a, **k: []), \
+         patch("video_executor.render_cards", rc_mock), \
          patch("video_executor.open", mock_open(), create=True), \
          patch("asyncio.create_subprocess_exec",
                AsyncMock(side_effect=fake_spawn)):
         ex = VideoRenderExecutor()
         out_path = await ex.render("myapp", "job-1", _plan())
+
+    # Intro/outro cards are rendered in the in-container prep with the plan,
+    # the job's local workdir, and the resolved 720p size.
+    rc_mock.assert_called_once()
+    card_args = rc_mock.call_args.args
+    assert card_args[0]["title"] == "Demo"
+    assert "job-1" in card_args[1]
+    assert card_args[2] == (1280, 720)
 
     kinds = [_classify(c) for c in calls]
     # Every heavy step happened.
@@ -120,6 +130,7 @@ async def test_cleanup_runs_on_failure(monkeypatch):
 
     monkeypatch.setattr("os.path.exists", lambda _p: True)
     with patch("video_executor.render_all_captions", lambda *a, **k: []), \
+         patch("video_executor.render_cards", lambda *a, **k: None), \
          patch("video_executor.open", mock_open(), create=True), \
          patch("asyncio.create_subprocess_exec",
                AsyncMock(side_effect=fake_spawn)):
@@ -149,6 +160,7 @@ async def test_artifact_check_is_out_mp4(monkeypatch):
 
     monkeypatch.setattr("os.path.exists", fake_exists)
     with patch("video_executor.render_all_captions", lambda *a, **k: []), \
+         patch("video_executor.render_cards", lambda *a, **k: None), \
          patch("video_executor.open", mock_open(), create=True), \
          patch("asyncio.create_subprocess_exec",
                AsyncMock(side_effect=fake_spawn)):

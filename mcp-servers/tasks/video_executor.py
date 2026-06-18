@@ -31,6 +31,7 @@ import os
 import shlex
 
 from claude_executor import CLAUDE_WORKSPACE
+from video_cards import render_cards
 from video_render import build_render_script, render_all_captions, resolution_size
 
 # Piper voice model installed on the host by scripts/provision_agent_vm.sh.
@@ -78,9 +79,11 @@ class VideoRenderExecutor:
         local_workdir = os.path.join(_apps_base(), slug, ".video", str(job_id))
         remote_workdir = f"/agent/work/{job_id}"
 
-        # 1. In-container prep: caption PNGs (Pillow) + narration text file.
+        # 1. In-container prep: caption PNGs + intro/outro cards (Pillow) +
+        #    narration text file.
         size = resolution_size(plan)
         render_all_captions(plan, local_workdir, size)
+        render_cards(plan, local_workdir, size)
         narration_path = os.path.join(local_workdir, "narration.txt")
         with open(narration_path, "w", encoding="utf-8") as f:
             f.write(plan.get("narration_script") or "")
