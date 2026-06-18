@@ -18,6 +18,9 @@ davey>=0.1.4
 # voice_bot.py and deaf sessions self-heal via the watchdog).
 discord-ext-voice-recv @ git+https://github.com/vocolboy/discord-ext-voice-recv.git@main
 elevenlabs>=2.39.0
+# App Builder attachment reading (Discord): PDF + Word(.docx) text extraction.
+pypdf>=5.0,<8.0
+defusedxml>=0.7,<1.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 respx>=0.20.0

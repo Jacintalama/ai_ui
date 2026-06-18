@@ -72,6 +72,10 @@ class CommandContext:
     # overview updates without spawning a new message. Set by the Discord layer
     # (Task 8 wires an UPDATE_MESSAGE closure); None on other platforms.
     edit_message: Optional[Callable[[dict], Awaitable[None]]] = None
+    # Uploaded file metadata from a Discord slash-command attachment option:
+    # {"url", "filename", "content_type", "size"}. Set by the Discord layer when
+    # the user attaches a file to a build/enhance; None otherwise.
+    attachment: Optional[dict] = None
 
 
 class VoiceResponseCollector:
@@ -1443,6 +1447,22 @@ class CommandRouter:
             )
             return
 
+        if action == "enhance":
+            # Slash enhance: `aiuibuilder enhance <slug> <change>` (+ optional
+            # file attachment). The panel/modal flow can't carry a file, so this
+            # is the only Discord path that reads a document into an enhance.
+            sub = (remainder or "").strip().split(None, 1)
+            slug = (sub[0] if sub else "").strip().strip('"')
+            change = sub[1].strip().strip('"').strip() if len(sub) > 1 else ""
+            if not slug or not change:
+                await ctx.respond(
+                    "Usage: `aiuibuilder enhance <slug> <what to change>` — "
+                    "attach a PDF/Word/text file to feed it a document."
+                )
+                return
+            await self.run_panel_enhance(ctx, slug, change)
+            return
+
         try:
             rest = shlex.split(remainder) if remainder else []
         except ValueError:
@@ -1509,6 +1529,46 @@ class CommandRouter:
             else:
                 await ctx.respond(f"Tasks API error ({e.status}).")
 
+    async def _attachment_text_for_ctx(
+        self, ctx: CommandContext
+    ) -> tuple[str | None, str | None]:
+        """Download + extract text from ctx.attachment (PDF/Word/text) so a
+        Discord build/enhance can read an attached document. Best-effort:
+        returns (None, None) when there's no attachment or it can't be read
+        (oversized, unsupported, corrupt) — the build still proceeds on text."""
+        att = getattr(ctx, "attachment", None)
+        if not att or not att.get("url"):
+            return None, None
+        import httpx
+        from document_extract import classify_document, extract_text
+        max_bytes = 5 * 1024 * 1024
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                async with client.stream("GET", att["url"]) as r:
+                    r.raise_for_status()
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in r.aiter_bytes():
+                        total += len(chunk)
+                        if total > max_bytes:
+                            logger.info("attachment too large, skipping: %s",
+                                        att.get("filename"))
+                            return None, None
+                        chunks.append(chunk)
+            data = b"".join(chunks)
+        except Exception as e:
+            logger.warning("attachment download failed: %s", e)
+            return None, None
+        kind = classify_document(att.get("content_type"), data[:8], att.get("filename"))
+        if kind is None:
+            return None, None
+        try:
+            text = extract_text(data, kind)
+        except Exception as e:
+            logger.warning("attachment extraction failed: %s", e)
+            return None, None
+        return (text or None), att.get("filename")
+
     async def _start_build(
         self, ctx: CommandContext, email: str, template_key: str | None,
         description: str, *, template_label: str | None = None,
@@ -1520,9 +1580,12 @@ class CommandRouter:
         non-empty (callers validate). `template_label`, when given, is named
         in the ack. Returns the tasks-service result ({"slug", "task_id"}) on
         success, None on failure."""
+        att_text, att_name = await self._attachment_text_for_ctx(ctx)
+        extra = ({"attachment_text": att_text, "attachment_name": att_name}
+                 if att_text else {})
         try:
             result = await self._tasks_client.start_build(
-                email, description, template_key=template_key)
+                email, description, template_key=template_key, **extra)
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
             return None
@@ -1665,8 +1728,11 @@ class CommandRouter:
         if not prompt:
             await ctx.respond("Tell me what to change.")
             return
+        att_text, att_name = await self._attachment_text_for_ctx(ctx)
+        extra = ({"attachment_text": att_text, "attachment_name": att_name}
+                 if att_text else {})
         try:
-            result = await self._tasks_client.enhance_app(email, slug, prompt)
+            result = await self._tasks_client.enhance_app(email, slug, prompt, **extra)
         except TasksAPIError as e:
             await ctx.respond(self._format_enhance_error(e))
             return

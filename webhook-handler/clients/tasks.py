@@ -209,10 +209,16 @@ class TasksClient:
     async def start_build(
         self, user_email: str, description: str, name: str | None = None,
         template_key: str | None = None,
+        attachment_text: str | None = None, attachment_name: str | None = None,
     ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "description": description, "name": name, "template_key": template_key,
+        }
+        if attachment_text is not None:  # omit when absent → unchanged for plain builds
+            body["attachment_text"] = attachment_text
+            body["attachment_name"] = attachment_name
         resp = await self._request(
-            "POST", "/api/aiuibuilder/build", user_email,
-            json={"description": description, "name": name, "template_key": template_key},
+            "POST", "/api/aiuibuilder/build", user_email, json=body,
         )
         return resp.json()
 
@@ -270,9 +276,15 @@ class TasksClient:
         await self._request("DELETE", f"/api/aiuibuilder/{slug}/app", user_email)
         return True
 
-    async def enhance_app(self, user_email: str, slug: str, prompt: str) -> dict[str, Any]:
+    async def enhance_app(
+        self, user_email: str, slug: str, prompt: str,
+        attachment_text: str | None = None, attachment_name: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"prompt": prompt}
+        if attachment_text is not None:
+            body["attachment_text"] = attachment_text
+            body["attachment_name"] = attachment_name
         resp = await self._request(
-            "POST", f"/api/aiuibuilder/{slug}/enhance", user_email,
-            json={"prompt": prompt},
+            "POST", f"/api/aiuibuilder/{slug}/enhance", user_email, json=body,
         )
         return resp.json()

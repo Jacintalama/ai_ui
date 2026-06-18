@@ -19,6 +19,7 @@ import httpx
 # Discord option types
 SUB_COMMAND = 1
 STRING = 3
+ATTACHMENT = 11
 
 # All 20 /aiui subcommands. Each is one Discord SUB_COMMAND.
 SUBCOMMANDS = [
@@ -41,8 +42,21 @@ SUBCOMMANDS = [
     ("deps",        "Dependency report",                         [("repo",      "owner/repo",             False)]),
     ("license",     "License compliance",                        [("repo",      "owner/repo",             False)]),
     ("cronjob",     "Manage scheduled prompts",                  [("args",      'e.g. list | create "0 8 * * *" "summarize emails" | delete <id>', True)]),
-    ("aiuibuilder", "Manage App Builder projects",               [("args",      "e.g. list | status <slug> | open <slug>", True)]),
+    ("aiuibuilder", "Manage App Builder projects",               [
+        ("args", "e.g. build <desc> | enhance <slug> <change> | list | status <slug>", True),
+        # Optional file (PDF/Word/text) read into the build/enhance. Listed AFTER
+        # args (required-before-optional, and so the parser still reads args first).
+        ("file", "Optional PDF / Word / text file to read into the build", False, ATTACHMENT),
+    ]),
 ]
+
+
+def _build_option(opt: tuple) -> dict:
+    """An option tuple is (name, description, required[, type]); type defaults
+    to STRING so existing 3-tuples are unchanged."""
+    opt_name, opt_desc, req = opt[0], opt[1], opt[2]
+    opt_type = opt[3] if len(opt) > 3 else STRING
+    return {"name": opt_name, "description": opt_desc, "type": opt_type, "required": req}
 
 
 def build_command_payload() -> dict:
@@ -54,10 +68,7 @@ def build_command_payload() -> dict:
                 "name": name,
                 "description": desc,
                 "type": SUB_COMMAND,
-                "options": [
-                    {"name": opt_name, "description": opt_desc, "type": STRING, "required": req}
-                    for opt_name, opt_desc, req in opts
-                ],
+                "options": [_build_option(o) for o in opts],
             }
             for name, desc, opts in SUBCOMMANDS
         ],

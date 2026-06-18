@@ -186,6 +186,7 @@ class DiscordCommandHandler:
         # Discord sends options as: [{"name": "ask", "options": [{"name": "question", "value": "..."}]}]
         # or for simple text: [{"name": "ask", "value": "..."}]
         subcommand, arguments = self._parse_options(options)
+        attachment = self._first_attachment(data)
 
         logger.info(f"Discord command from {user_name}: {subcommand} {arguments[:80]}")
 
@@ -219,6 +220,7 @@ class DiscordCommandHandler:
             },
             notify_channel=notify_channel if channel_id else None,
             notify_channel_rich=notify_channel_rich if channel_id else None,
+            attachment=attachment,
         )
 
         # Fire-and-forget: process in background, edit deferred response
@@ -1504,6 +1506,21 @@ class DiscordCommandHandler:
                 if comp.get("custom_id") == input_custom_id:
                     return (comp.get("value") or "").strip()
         return ""
+
+    @staticmethod
+    def _first_attachment(data: dict) -> dict | None:
+        """Pull the first resolved slash-command attachment (Discord option
+        type 11) as {url, filename, content_type, size}, or None. The
+        aiuibuilder subcommand has at most one file option, so first wins."""
+        atts = (data.get("resolved") or {}).get("attachments") or {}
+        for a in atts.values():
+            return {
+                "url": a.get("url"),
+                "filename": a.get("filename"),
+                "content_type": a.get("content_type"),
+                "size": a.get("size"),
+            }
+        return None
 
     @staticmethod
     def _parse_options(options: list[dict]) -> tuple[str, str]:
