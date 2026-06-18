@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 
-from url_guard import assert_safe_url, UnsafeURLError
+from url_guard import safe_get, UnsafeURLError
 
 logger = logging.getLogger(__name__)
 
@@ -106,14 +106,13 @@ async def _brave_search(query: str, count: int) -> list[SearchResult]:
 
 async def _scrape_url(url: str) -> WebScrapeResponse:
     """Fetch a URL, strip boilerplate, and return markdown content."""
-    # SSRF guard: reject private/loopback/link-local/metadata targets before fetch.
-    try:
-        assert_safe_url(url)
-    except UnsafeURLError as exc:
-        raise HTTPException(status_code=400, detail=f"Unsafe URL: {exc}")
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+    # SSRF guard: reject private/loopback/link-local/metadata targets — and
+    # re-validate every redirect hop (follow_redirects=True would have let a
+    # public URL redirect into the internal network).
+    async with httpx.AsyncClient(timeout=20.0) as client:
         try:
-            resp = await client.get(
+            resp = await safe_get(
+                client,
                 url,
                 headers={
                     "User-Agent": (
@@ -124,6 +123,8 @@ async def _scrape_url(url: str) -> WebScrapeResponse:
                 },
             )
             resp.raise_for_status()
+        except UnsafeURLError as exc:
+            raise HTTPException(status_code=400, detail=f"Unsafe URL: {exc}")
         except httpx.HTTPStatusError as exc:
             raise HTTPException(
                 status_code=exc.response.status_code,

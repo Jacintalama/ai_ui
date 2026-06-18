@@ -32,3 +32,23 @@ def assert_safe_url(url: str) -> None:
         ip = info[4][0]
         if _ip_is_blocked(ip):
             raise UnsafeURLError(f"blocked internal/loopback address: {ip}")
+
+
+async def safe_get(client, url: str, *, headers=None, max_redirects: int = 5):
+    """GET `url` following redirects MANUALLY, re-validating every hop.
+
+    httpx's follow_redirects=True only validated the first URL, so a public URL
+    that 30x-redirects to an internal address bypassed assert_safe_url(). Here
+    each hop's target is checked before it is fetched. The client MUST be
+    created without follow_redirects (the default) so we control every hop.
+    """
+    current = url
+    for _ in range(max_redirects + 1):
+        assert_safe_url(current)
+        resp = await client.get(current, headers=headers, follow_redirects=False)
+        location = resp.headers.get("location")
+        if resp.is_redirect and location:
+            current = str(resp.url.join(location))  # resolve relative redirects
+            continue
+        return resp
+    raise UnsafeURLError("too many redirects")

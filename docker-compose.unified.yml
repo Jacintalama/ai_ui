@@ -66,7 +66,10 @@ services:
     build: ./api-gateway
     container_name: api-gateway
     ports:
-      - "8085:8080"
+      # localhost-only: Caddy/Cloudflare is the only public path. Publishing to
+      # 0.0.0.0 bypasses UFW (Docker inserts iptables rules ahead of it) and
+      # exposes the JWT perimeter directly on the host IP.
+      - "127.0.0.1:8085:8080"
     restart: unless-stopped
     environment:
       # JWT validation (same key as Open WebUI)
@@ -107,7 +110,8 @@ services:
     container_name: webhook-handler
     restart: unless-stopped
     ports:
-      - "8086:8086"
+      # localhost-only: fully proxied by Caddy at /webhook/* over the Docker network.
+      - "127.0.0.1:8086:8086"
     environment:
       - PORT=8086
       - DEBUG=${DEBUG:-false}
@@ -362,10 +366,15 @@ services:
     container_name: n8n
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      # localhost-only: reachable via Caddy /n8n/* over the Docker network.
+      # 0.0.0.0 published n8n (a code-execution engine) straight to the public
+      # host IP past UFW — and N8N_PASSWORD is empty in prod (see below).
+      - "127.0.0.1:5678:5678"
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      # REQUIRED: set N8N_PASSWORD in .env. The empty default leaves n8n
+      # unauthenticated to anything that can reach it (now localhost + Caddy).
       - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-}
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678

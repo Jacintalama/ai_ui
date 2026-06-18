@@ -1,5 +1,6 @@
 """Webhook Handler Service - Main FastAPI Application."""
 import asyncio
+import hmac
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -265,15 +266,17 @@ async def github_webhook(
     # Get raw body for signature verification
     body = await request.body()
 
-    # Verify signature if secret is configured
-    if settings.github_webhook_secret:
-        if not x_hub_signature_256:
-            logger.warning(f"Missing signature for delivery {x_github_delivery}")
-            raise HTTPException(status_code=401, detail="Missing signature")
-
-        if not verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
-            logger.warning(f"Invalid signature for delivery {x_github_delivery}")
-            raise HTTPException(status_code=401, detail="Invalid signature")
+    # Fail closed: never process an unverified webhook. A missing secret is a
+    # server misconfiguration, not a reason to skip verification.
+    if not settings.github_webhook_secret:
+        logger.error("GitHub webhook secret not configured — refusing unverified webhook")
+        raise HTTPException(status_code=503, detail="GitHub signature verification not configured")
+    if not x_hub_signature_256:
+        logger.warning(f"Missing signature for delivery {x_github_delivery}")
+        raise HTTPException(status_code=401, detail="Missing signature")
+    if not verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
+        logger.warning(f"Invalid signature for delivery {x_github_delivery}")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
     # Parse JSON payload
     try:
@@ -373,15 +376,18 @@ async def slack_webhook(
 
     body = await request.body()
 
-    # Verify signature if signing secret is configured
-    if settings.slack_signing_secret:
-        if not verify_slack_signature(
-            body=body,
-            timestamp=x_slack_request_timestamp or "",
-            signature=x_slack_signature or "",
-            signing_secret=settings.slack_signing_secret
-        ):
-            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    # Fail closed: the integration is active (slack_handler set), so a missing
+    # signing secret is a misconfiguration — reject rather than skip.
+    if not settings.slack_signing_secret:
+        logger.error("Slack signing secret not configured — refusing unverified request")
+        raise HTTPException(status_code=503, detail="Slack signature verification not configured")
+    if not verify_slack_signature(
+        body=body,
+        timestamp=x_slack_request_timestamp or "",
+        signature=x_slack_signature or "",
+        signing_secret=settings.slack_signing_secret
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
 
     try:
         payload = await request.json()
@@ -419,15 +425,17 @@ async def slack_commands_webhook(
 
     body = await request.body()
 
-    # Verify Slack signature
-    if settings.slack_signing_secret:
-        if not verify_slack_signature(
-            body=body,
-            timestamp=x_slack_request_timestamp or "",
-            signature=x_slack_signature or "",
-            signing_secret=settings.slack_signing_secret,
-        ):
-            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    # Fail closed: reject when the signing secret is missing.
+    if not settings.slack_signing_secret:
+        logger.error("Slack signing secret not configured — refusing unverified command")
+        raise HTTPException(status_code=503, detail="Slack signature verification not configured")
+    if not verify_slack_signature(
+        body=body,
+        timestamp=x_slack_request_timestamp or "",
+        signature=x_slack_signature or "",
+        signing_secret=settings.slack_signing_secret,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
 
     form_data = dict(await request.form())
     logger.info(f"Slack slash command: {form_data.get('command')} {form_data.get('text', '')}")
@@ -454,15 +462,17 @@ async def slack_interactions_webhook(
 
     body = await request.body()
 
-    # Verify Slack signature
-    if settings.slack_signing_secret:
-        if not verify_slack_signature(
-            body=body,
-            timestamp=x_slack_request_timestamp or "",
-            signature=x_slack_signature or "",
-            signing_secret=settings.slack_signing_secret,
-        ):
-            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    # Fail closed: reject when the signing secret is missing.
+    if not settings.slack_signing_secret:
+        logger.error("Slack signing secret not configured — refusing unverified interaction")
+        raise HTTPException(status_code=503, detail="Slack signature verification not configured")
+    if not verify_slack_signature(
+        body=body,
+        timestamp=x_slack_request_timestamp or "",
+        signature=x_slack_signature or "",
+        signing_secret=settings.slack_signing_secret,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
 
     form_data = dict(await request.form())
     import json
@@ -599,7 +609,8 @@ async def voice_webhook(
     Three App Builder commands are special-cased (explicit body fields, build
     memory); everything else is the generic command-router passthrough.
     """
-    if not settings.voice_webhook_secret or x_voice_secret != settings.voice_webhook_secret:
+    if (not settings.voice_webhook_secret or not x_voice_secret
+            or not hmac.compare_digest(x_voice_secret, settings.voice_webhook_secret)):
         raise HTTPException(status_code=401, detail="Invalid voice webhook secret")
 
     body = await request.json()
