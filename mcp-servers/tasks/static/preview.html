@@ -1883,13 +1883,15 @@
       color: var(--muted);
       font-style: italic;
     }
-    .chat-bubble.user .chat-attachments {
+    .chat-bubble.user .chat-attachments,
+    .enhance-bubble.user .chat-attachments {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
       margin-bottom: 8px;
     }
-    .chat-bubble.user .chat-attachments img {
+    .chat-bubble.user .chat-attachments img,
+    .enhance-bubble.user .chat-attachments img {
       max-width: 220px;
       max-height: 180px;
       border-radius: 8px;
@@ -1897,7 +1899,8 @@
       object-fit: cover;
       display: block;
     }
-    .chat-bubble.user .chat-attachments .chat-attachment-file {
+    .chat-bubble.user .chat-attachments .chat-attachment-file,
+    .enhance-bubble.user .chat-attachments .chat-attachment-file {
       display: inline-block;
       padding: 4px 10px;
       border-radius: 8px;
@@ -6356,6 +6359,28 @@
     if (kind === "user") {
       el.innerHTML = '<div class="body">' + selChip + '<div class="user-text"></div></div>';
       el.querySelector(".user-text").textContent = content || "";
+      // Show attached files (images + PDF/Word/text) so the bubble reflects
+      // what was actually sent, not just the typed text.
+      const atts = opts.attachments || [];
+      if (atts.length) {
+        const bodyEl = el.querySelector(".body");
+        const row = document.createElement("div");
+        row.className = "chat-attachments";
+        for (const a of atts) {
+          if (a.isImage && a.previewUrl) {
+            const img = document.createElement("img");
+            img.src = a.previewUrl;
+            img.alt = (a.file && a.file.name) || "attachment";
+            row.appendChild(img);
+          } else {
+            const f = document.createElement("span");
+            f.className = "chat-attachment-file";
+            f.textContent = (a.file && a.file.name) || "file";
+            row.appendChild(f);
+          }
+        }
+        bodyEl.insertBefore(row, bodyEl.querySelector(".user-text"));
+      }
     } else {
       el.innerHTML =
         '<div class="body">' +
@@ -6800,7 +6825,11 @@
     // Snapshot selection up front so a chip change mid-flight (or the
     // finally{} clear) doesn't lose the indicator on either bubble.
     const selectionForThisBuild = pendingSelection;
-    renderBubble("user", text, { selection: selectionForThisBuild });
+    const attachmentsForThisBuild = pendingAttachments.slice();
+    renderBubble("user", text, {
+      selection: selectionForThisBuild,
+      attachments: attachmentsForThisBuild,
+    });
     const aiBubble = renderBubble("ai", "", {
       taskId: "pending",
       selection: selectionForThisBuild,
@@ -6810,7 +6839,7 @@
       const fd = new FormData();
       fd.append("source_task_id", taskId);
       fd.append("prompt", text);
-      for (const a of pendingAttachments) {
+      for (const a of attachmentsForThisBuild) {
         fd.append("files", a.file, a.file.name);
       }
       if (selectionForThisBuild) {
