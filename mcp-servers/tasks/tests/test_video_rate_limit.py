@@ -60,7 +60,7 @@ async def test_upload_disabled_returns_503(monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(
             "/api/video-jobs/upload",
-            data={"slug": "alpha", "prompt": "show the dashboard"},
+            data={"title": "alpha", "prompt": "show the dashboard"},
             files=[("files", ("a.png", _png(), "image/png"))],
             headers=HEAD,
         )
@@ -79,7 +79,7 @@ async def test_upload_low_disk_returns_507(monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(
             "/api/video-jobs/upload",
-            data={"slug": "alpha", "prompt": "show the dashboard"},
+            data={"title": "alpha", "prompt": "show the dashboard"},
             files=[("files", ("a.png", _png(), "image/png"))],
             headers=HEAD,
         )
@@ -112,7 +112,7 @@ async def test_rate_limit_returns_429(db_session, tmp_path, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(
             "/api/video-jobs/upload",
-            data={"slug": "alpha", "prompt": "show the dashboard"},
+            data={"title": "alpha", "prompt": "show the dashboard"},
             files=[("files", ("a.png", _png(), "image/png"))],
             headers=HEAD,
         )
