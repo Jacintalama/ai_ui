@@ -619,6 +619,10 @@ def build_render_script(
         raise ValueError("plan has no scenes")
 
     width, height = resolution_size(plan)
+    # In production the executor injects the job style into the plan, so the
+    # remote call resolves via plan["style"] (the explicit `style` kwarg is a
+    # test seam). Keep this fallback: dropping it would desync the remote
+    # ffmpeg builder from the captions/cards, which read plan["style"].
     chosen_style = style if style is not None else plan.get("style")
     style_cfg = get_style_config(chosen_style)
     n = len(scenes)

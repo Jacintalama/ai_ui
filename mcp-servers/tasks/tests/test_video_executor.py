@@ -119,6 +119,41 @@ async def test_render_runs_steps_in_order_and_returns_path(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_style_is_injected_into_plan_for_every_builder(monkeypatch):
+    """The job's style must reach the caption renderer, the cards, AND the
+    remote ffmpeg builder as one and the same plan["style"]. This is the exact
+    captions-vs-ffmpeg desync the design is most exposed to, so lock it: render
+    with an explicit style and assert all three consumers see it."""
+    captured = {}
+
+    async def fake_spawn(*args, **kwargs):
+        return _fake_proc(0)
+
+    caps_mock = MagicMock(return_value=[])
+    cards_mock = MagicMock(return_value=None)
+
+    def fake_build(plan, workdir, *a, **k):
+        captured["remote_plan"] = plan
+        return ["ffmpeg", "-y", f"{workdir}/out.mp4"]
+
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+    with patch("video_executor.render_all_captions", caps_mock), \
+         patch("video_executor.render_cards", cards_mock), \
+         patch("video_executor.build_render_script", fake_build), \
+         patch("video_executor.open", mock_open(), create=True), \
+         patch("asyncio.create_subprocess_exec",
+               AsyncMock(side_effect=fake_spawn)):
+        ex = VideoRenderExecutor()
+        await ex.render("myapp", "job-1", _plan(), style="cinematic")
+
+    # The remote ffmpeg builder receives the injected style via plan["style"]...
+    assert captured["remote_plan"]["style"] == "cinematic"
+    # ...and so do the in-container caption + card renderers.
+    assert caps_mock.call_args.args[0]["style"] == "cinematic"
+    assert cards_mock.call_args.args[0]["style"] == "cinematic"
+
+
+@pytest.mark.asyncio
 async def test_cleanup_runs_on_failure(monkeypatch):
     calls = []
 
