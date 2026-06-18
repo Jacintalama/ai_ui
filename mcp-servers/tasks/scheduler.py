@@ -286,20 +286,37 @@ async def _deliver_result(
 
 
 async def _finalize_run(sched: Schedule) -> None:
-    """Background coroutine: run, record last_run_status, deliver to Discord."""
-    status, result = await _run_scheduled_task(sched)
-    async with session() as s:
-        await s.execute(
-            update(Schedule).where(Schedule.id == sched.id).values(
-                last_run_status=status,
+    """Background coroutine: run, record last_run_status, deliver to Discord.
+
+    Dispatched detached via create_task, so guard everything: an unhandled
+    raise would vanish into the discarded task and leave the schedule stuck
+    on the pre-dispatch last_run_status='running' (audit 2026-06-15)."""
+    try:
+        status, result = await _run_scheduled_task(sched)
+        async with session() as s:
+            await s.execute(
+                update(Schedule).where(Schedule.id == sched.id).values(
+                    last_run_status=status,
+                )
             )
-        )
-        await s.commit()
-    # Deliver the run's result into the user's Discord thread, if configured.
-    delivery_channel = getattr(sched, "delivery_channel_id", None)
-    if delivery_channel:
-        platform = getattr(sched, "delivery_platform", "discord") or "discord"
-        await _deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))
+            await s.commit()
+        # Deliver the run's result into the user's Discord thread, if configured.
+        delivery_channel = getattr(sched, "delivery_channel_id", None)
+        if delivery_channel:
+            platform = getattr(sched, "delivery_platform", "discord") or "discord"
+            await _deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("schedule run %s failed: %s", sched.id, scrub(str(exc)), exc_info=True)
+        try:
+            async with session() as s:
+                await s.execute(
+                    update(Schedule).where(Schedule.id == sched.id).values(
+                        last_run_status="failed",
+                    )
+                )
+                await s.commit()
+        except Exception:  # noqa: BLE001
+            logger.error("could not mark schedule %s failed", sched.id, exc_info=True)
 
 
 def fire_values(sched, now) -> dict:

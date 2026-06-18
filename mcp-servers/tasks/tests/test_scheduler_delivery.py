@@ -71,3 +71,57 @@ def test_deliverable_result_falls_back_to_stored_when_no_transcript():
 
     assert scheduler._deliverable_result("", "stored payload") == "stored payload"
     assert scheduler._deliverable_result("", "") == ""
+
+
+class _CapturingSession:
+    """Async-CM fake that records the bound params of each execute()."""
+
+    def __init__(self, captured):
+        self.captured = captured
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, stmt):
+        try:
+            self.captured.append(stmt.compile().params)
+        except Exception:
+            self.captured.append({})
+        return None
+
+    async def commit(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_finalize_run_marks_failed_instead_of_dying_silently(monkeypatch, caplog):
+    """_finalize_run runs detached via create_task. A raise in the run/update
+    used to vanish into the discarded task, leaving the schedule stuck
+    'running'. It must catch, log, and write last_run_status='failed'.
+    (audit 2026-06-15.)"""
+    import logging
+    from types import SimpleNamespace
+    import scheduler
+
+    captured = []
+    monkeypatch.setattr(scheduler, "session", lambda: _CapturingSession(captured))
+
+    async def boom(_sched):
+        raise RuntimeError("agent unreachable")
+
+    monkeypatch.setattr(scheduler, "_run_scheduled_task", boom)
+    sched = SimpleNamespace(
+        id="11111111-1111-1111-1111-111111111111", name="daily digest",
+        delivery_channel_id=None, delivery_platform=None,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await scheduler._finalize_run(sched)  # must NOT raise
+
+    assert any(p.get("last_run_status") == "failed" for p in captured), (
+        "a failed run must be recorded as last_run_status='failed'")
+    assert any("fail" in r.message.lower() for r in caplog.records), (
+        "the failure must be logged, not swallowed")

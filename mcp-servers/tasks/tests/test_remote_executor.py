@@ -356,6 +356,24 @@ async def test_stream_scrubs_credentials_in_output(monkeypatch):
     assert "COMPLETED: build done" in out
 
 
+def test_ssh_opts_bound_connection_and_transfer():
+    """Every ssh/rsync transport call must inherit connect + keepalive bounds.
+
+    Only _ssh_ok set ConnectTimeout; _push_state/_rsync_back/_cleanup_remote/
+    _fetch_memory/_push_memory could hang forever on a wedged agent VM and
+    wedge the build worker (audit 2026-06-15). ConnectTimeout caps the connect
+    phase; ServerAlive* drops a mid-transfer stall.
+    """
+    opts = " ".join(RemoteExecutor._SSH_OPTS)
+    assert "ConnectTimeout=" in opts
+    assert "ServerAliveInterval=" in opts
+    assert "ServerAliveCountMax=" in opts
+    rsync_ssh = RemoteExecutor._RSYNC_SSH
+    assert "ConnectTimeout=" in rsync_ssh
+    assert "ServerAliveInterval=" in rsync_ssh
+    assert "ServerAliveCountMax=" in rsync_ssh
+
+
 def test_truncate_keeps_newest_memory_sections():
     head = "# Memory\n"
     section = "## 2026-05-{day:02d} entry\nbody{day}\n"
