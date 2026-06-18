@@ -21,6 +21,43 @@ class PlanInvalid(Exception):
     pass
 
 
+# Engine-appropriate "skills" for the narrated screenshot-slideshow generator
+# (ffmpeg + Piper, NOT Remotion). Baked into the generate AND refine prompts so
+# every video follows them. Mirrors the App Builder's build_rules() pattern of
+# injecting domain guidance into the system prompt.
+VIDEO_BEST_PRACTICES = (
+    "NARRATED-SLIDESHOW BEST PRACTICES — follow these for every plan:\n"
+    "- Structure: open with a strong HOOK scene (what it is / why care), then a "
+    "logical arc (context -> key features or benefits -> a short wrap-up/CTA). "
+    "Group related screenshots; you need NOT use every screenshot — pick the ones "
+    "that best tell the story.\n"
+    "- Narration: conversational and benefit-led, ONE idea per scene, ~1-2 short "
+    "sentences. Don't read the UI verbatim or list every element — say why it "
+    "matters. Active voice. A scene's narration must be speakable within its "
+    "duration (~2.5 words/second), so size duration_s to the narration (and "
+    "vice-versa).\n"
+    "- Captions: SHORT on-screen labels (<= ~6 words), punchy, COMPLEMENTING the "
+    "narration rather than repeating it. Sentence fragments, not paragraphs.\n"
+    "- Pacing: most scenes 2.5-5s — long enough to read the caption and hear the "
+    "narration, short enough to stay snappy; avoid a run of sub-2s scenes. Keep "
+    "the whole video tight (well under 60s; 20-45s is ideal).\n"
+    "- Transitions: use 'crossfade'/'dissolve' between related scenes for flow, "
+    "'cut' for a deliberate snap, 'section' to mark a new topic — don't overuse "
+    "any one.\n"
+    "- Reference ONLY the provided screenshot filenames, exactly as given."
+)
+
+
+def build_plan_system_prompt() -> str:
+    """System prompt for initial plan generation (testable, skill-injected)."""
+    return (
+        "You produce a JSON plan for a short narrated slideshow video built from the "
+        "given screenshots. Use ONLY the provided screenshot filenames. Keep total "
+        f"duration under {MAX_TOTAL_SECONDS}s. Templates: {sorted(TEMPLATES)}.\n\n"
+        + VIDEO_BEST_PRACTICES
+    )
+
+
 PLAN_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -150,11 +187,7 @@ def clamp_plan(plan: dict) -> dict:
 
 async def generate_plan(prompt: str, screenshots: list[str]) -> dict:
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
-    sys = (
-        "You produce a JSON plan for a short narrated slideshow video built from the "
-        "given screenshots. Use ONLY the provided screenshot filenames. Keep total "
-        f"duration under {MAX_TOTAL_SECONDS}s. Templates: {sorted(TEMPLATES)}."
-    )
+    sys = build_plan_system_prompt()
     msg = client.messages.create(
         model="claude-opus-4-8",
         max_tokens=2048,

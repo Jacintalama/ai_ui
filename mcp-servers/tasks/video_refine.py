@@ -11,7 +11,7 @@ import os
 
 import anthropic
 
-from video_plan import PLAN_SCHEMA, clamp_plan, validate_plan
+from video_plan import PLAN_SCHEMA, VIDEO_BEST_PRACTICES, clamp_plan, validate_plan
 
 REFINE_MODEL = "claude-opus-4-8"
 MAX_HISTORY_TURNS = 40
@@ -47,7 +47,10 @@ def build_system_prompt(current_plan: dict, screenshots: list[str]) -> str:
         "brief clarifying question and omit 'plan'.\n"
         "- Otherwise set action='propose', put a one-line summary of the "
         "change in 'message', and return a COMPLETE revised 'plan' that "
-        "conforms to the schema.\n\n"
+        "conforms to the schema.\n"
+        "- When you (re)write scenes, narration, captions, pacing or "
+        "transitions, apply the best practices below.\n\n"
+        + VIDEO_BEST_PRACTICES + "\n\n"
         f"Available screenshots: {json.dumps(screenshots)}\n"
         f"Current plan: {json.dumps(current_plan)}"
     )
