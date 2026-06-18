@@ -420,6 +420,7 @@ class ConversationalVoiceBot(discord.Client):
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 3
         self._watchdog_task = None
+        self._reconnect_task = None
         self._stats_task = None
         self._session_voice_channel = None
         self._transcript_count = 0  # usable transcripts this session
@@ -879,28 +880,41 @@ class ConversationalVoiceBot(discord.Client):
                         except Exception:
                             pass
 
-                    # Save channel ref before cleanup
-                    voice_channel = self._session_voice_channel
-                    text_channel = self._text_channel
-
-                    # Clean up current session
-                    await self._cleanup()
-
-                    # Small delay for Discord to process disconnect
-                    await asyncio.sleep(3)
-
-                    # Reconnect if user is still in the channel
-                    if voice_channel:
-                        non_bot = [m for m in voice_channel.members if not m.bot]
-                        if non_bot:
-                            self._text_channel = text_channel
-                            await self._start_session(voice_channel, non_bot[0])
-                    break  # New session starts its own watchdog
+                    # Reconnect runs in a SEPARATE task. _cleanup() cancels
+                    # self._watchdog_task — which IS this task — so doing the
+                    # cleanup+restart inline self-cancels: the CancelledError
+                    # aborts before _start_session and orphans the ElevenLabs
+                    # session. Hand the restart to its own task and break.
+                    self._reconnect_task = asyncio.create_task(
+                        self._reconnect_session(
+                            self._session_voice_channel, self._text_channel
+                        )
+                    )
+                    break
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"[ConvAI] Watchdog error: {e}", exc_info=True)
+
+    async def _reconnect_session(self, voice_channel, text_channel):
+        """Tear down the wedged session and start a fresh one.
+
+        Runs OUTSIDE the watchdog task so _cleanup()'s watchdog-cancel can't
+        abort the restart. A new session starts its own watchdog.
+        """
+        try:
+            await self._cleanup()
+            await asyncio.sleep(3)  # let Discord process the disconnect
+            if voice_channel:
+                non_bot = [m for m in voice_channel.members if not m.bot]
+                if non_bot:
+                    self._text_channel = text_channel
+                    await self._start_session(voice_channel, non_bot[0])
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.error(f"[ConvAI] Reconnect failed: {e}", exc_info=True)
 
 
 # The running bot instance (one per process). Lets the web layer (voice build

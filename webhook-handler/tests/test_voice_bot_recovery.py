@@ -368,6 +368,57 @@ def test_watchdog_quiet_session_with_live_reader_stays(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# 6b. Watchdog reconnect must ACTUALLY restart the session.
+#    The watchdog runs as self._watchdog_task; the reconnect used to call
+#    _cleanup() inline, but _cleanup() cancels self._watchdog_task — i.e. the
+#    task it is running inside. The resulting CancelledError aborted the
+#    reconnect before _start_session ran (and skipped conv.end_session(),
+#    leaking an ElevenLabs session per attempt). The session stayed deaf and
+#    only a manual rejoin recovered it. (audit 2026-06-15, verified in code.)
+# ---------------------------------------------------------------------------
+
+async def test_watchdog_reconnect_invokes_start_session(monkeypatch):
+    bot = _make_bot()
+    bot._session_active = True
+    bot._session_voice_channel = _channel(USER, BOT_MEMBER)
+    bot._text_channel = None
+
+    # The deafness heuristic is covered elsewhere — force the decision here and
+    # make the watchdog's internal sleeps instant (but still yield, so a
+    # self-cancel would still be delivered, faithfully reproducing the bug).
+    monkeypatch.setattr(bot, "_watchdog_should_reconnect", lambda *a, **k: True)
+    _orig_sleep = asyncio.sleep
+
+    async def _fast_sleep(*_a, **_k):
+        await _orig_sleep(0)
+
+    monkeypatch.setattr(vb.asyncio, "sleep", _fast_sleep)
+
+    started = []
+
+    async def fake_start(channel, member):
+        started.append((channel, member))
+        bot._session_active = False
+
+    monkeypatch.setattr(bot, "_start_session", fake_start)
+
+    # Run the watchdog exactly as _start_session does: as self._watchdog_task.
+    task = asyncio.create_task(bot._dave_watchdog())
+    bot._watchdog_task = task
+    for _ in range(50):  # bounded pump: lets a separately-spawned reconnect run
+        await _orig_sleep(0)
+        if started:
+            break
+    if not task.done():
+        task.cancel()
+
+    assert started == [(bot._session_voice_channel, USER)], (
+        "watchdog-triggered reconnect must call _start_session "
+        "(it self-cancelled before reaching it)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 8. Text channel selection: transcripts/build links go where the user is
 #    looking — the text channel named like the voice channel (General ->
 #    #general), NOT whatever channel happens to be first in the guild
