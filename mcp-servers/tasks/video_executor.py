@@ -66,12 +66,19 @@ class VideoRenderExecutor:
 
     # ------- public API ----------------------------------------------
 
-    async def render(self, slug: str, job_id: str, plan: dict) -> str:
+    async def render(
+        self, slug: str, job_id: str, plan: dict, style: str | None = None
+    ) -> str:
         """Render ``plan``'s MP4 on the host and return the LOCAL out.mp4 path.
 
-        Raises ``RuntimeError`` on any transport/render failure. The remote
-        workdir is always cleaned up in the ``finally`` block.
+        ``style`` is the job's selected style id; when given it is injected into
+        the plan so the caption renderer, the intro/outro cards, and the remote
+        ffmpeg builder all resolve the same StyleConfig. Raises ``RuntimeError``
+        on any transport/render failure. The remote workdir is always cleaned up
+        in the ``finally`` block.
         """
+        if style is not None:
+            plan = {**plan, "style": style}
         host = os.environ["AGENT_HOST"]
         user = os.environ.get("AGENT_USER", "claude-agent")
         key = os.environ["AGENT_SSH_KEY_PATH"]

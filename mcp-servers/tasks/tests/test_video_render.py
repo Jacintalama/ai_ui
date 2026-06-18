@@ -86,8 +86,7 @@ def test_argv_references_every_screenshot_and_voice():
 
     # Audio + low-RAM encode flags.
     assert any("voice.mp3" in arg for arg in argv)
-    assert "-threads" in argv
-    assert "1" in argv
+    assert argv[argv.index("-threads") + 1] == "2"
     assert "libx264" in argv
 
 
@@ -497,6 +496,50 @@ def test_filtergraph_fully_connected_single_scene():
     _assert_fully_connected(graph)
     # The single scene seeds [v0]; the intro bookends straight onto it.
     assert "[intro][v0]xfade" in graph
+
+
+def test_explicit_style_overrides_plan_independent_of_template():
+    # The visual look is keyed off the passed style id, NOT template_id.
+    plan = _plan(template_id="product_demo")
+    default_argv = build_render_script(plan, WORKDIR)
+    default_graph = default_argv[default_argv.index("-filter_complex") + 1]
+    # The default resolves clean_product_demo: no cinematic grade.
+    assert "eq=contrast=1.06" not in default_graph
+
+    cine_argv = build_render_script(plan, WORKDIR, style="cinematic")
+    cine_graph = cine_argv[cine_argv.index("-filter_complex") + 1]
+    # Explicit "cinematic" selects the cinematic StyleConfig: grade chain +
+    # cinema239 blurred-fill letterbox.
+    assert "eq=contrast=1.06" in cine_graph
+    assert "split=2" in cine_graph
+
+
+def test_unknown_style_falls_back_to_default():
+    plan = _plan()
+    argv = build_render_script(plan, WORKDIR, style="not-a-real-style")
+    graph = argv[argv.index("-filter_complex") + 1]
+    # Falls back to clean_product_demo (no cinematic grade), never raises.
+    assert "eq=contrast=1.06" not in graph
+
+
+def test_delivery_grade_encode_tail():
+    argv = build_render_script(_plan(), WORKDIR)
+
+    def _val(flag):
+        return argv[argv.index(flag) + 1]
+
+    assert _val("-c:v") == "libx264"
+    assert _val("-preset") == "veryfast"
+    assert _val("-crf") == "21"
+    assert _val("-pix_fmt") == "yuv420p"
+    assert _val("-threads") == "2"
+    assert _val("-r") == "30"
+    assert _val("-c:a") == "aac"
+    assert _val("-b:a") == "192k"
+    assert _val("-movflags") == "+faststart"
+    # Phase 1 still maps the single (delayed) voice branch; music arrives later.
+    assert "[aud]" in argv
+    assert argv[-1].endswith("out.mp4")
 
 
 def test_card_xfade_offsets_keep_both_cards_visible():

@@ -42,6 +42,7 @@ from sqlalchemy import and_, func, select, update
 
 from auth import CurrentUser, current_user
 from db import session
+from templates_video.style_config import STYLE_CONFIGS
 from heavy_lock import enough_free_disk
 from video_capability import verify_video_capability
 from video_models import VideoJob
@@ -115,6 +116,7 @@ class RevertRequest(BaseModel):
 async def upload(
     title: str = Form(..., min_length=1, max_length=200),
     prompt: str = Form(..., min_length=1, max_length=2000),
+    style: str = Form("clean_product_demo", max_length=50),
     files: list[UploadFile] = File(default_factory=list),
     user: CurrentUser = Depends(current_user),
 ) -> dict:
@@ -124,6 +126,10 @@ async def upload(
         raise HTTPException(503, "Video generation is disabled")
     if not files or len(files) > MAX_FILES:
         raise HTTPException(400, f"1-{MAX_FILES} screenshots required")
+    # Style is allowlist-validated against the known StyleConfigs so it can never
+    # reach the render as an unknown id (and never an ffmpeg/file path).
+    if style not in STYLE_CONFIGS:
+        raise HTTPException(400, f"Unknown style: {style}")
     # Disk guard (cheap, no-DB): reject a batch we have no room to store + render
     # before reading bytes into memory, and well before any disk write.
     if not enough_free_disk(
@@ -177,6 +183,7 @@ async def upload(
                 user_email=user.email,
                 prompt=prompt,
                 title=title,
+                style=style,
                 status="queued",
             )
         )

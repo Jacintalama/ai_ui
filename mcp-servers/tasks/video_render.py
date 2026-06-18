@@ -20,12 +20,14 @@ Pipeline shape per scene, all driven by the validated plan
     ``concat`` (hard cut),
   * ``voice.mp3`` is mapped as audio, delayed by the intro card so the cards
     stay silent (no ``-shortest``: the video chain bounds the output length),
-  * encoded with libx264/veryfast/yuv420p at ``-threads 1`` (low RAM) and
-    ``-r 30`` to ``<workdir>/out.mp4``.
+  * encoded delivery-grade: libx264 veryfast ``-crf 21`` yuv420p at
+    ``-threads 2``, ``-r 30``, AAC ``-b:a 192k``, ``-movflags +faststart`` to
+    ``<workdir>/out.mp4``.
 
 Visual style (letterbox, motion, grade, caption look, crossfade length) comes
-from ``templates_video`` via :func:`get_style_config`. For now the style is the
-documented ``clean_product_demo`` fallback; Task U6 wires the real job style.
+from ``templates_video`` via :func:`get_style_config`, keyed off the job's
+selected style id (passed to :func:`build_render_script`), with an unknown id
+falling back to ``clean_product_demo``.
 """
 from __future__ import annotations
 
@@ -275,7 +277,8 @@ def render_all_captions(
     Used by the executor (Task 3.2) to materialize ``captions/scene-<i>.png``
     before invoking ffmpeg. ``style_config`` defaults to the plan's resolved
     style (``get_style_config(plan.get("style"))``, which falls back to
-    ``clean_product_demo``); Task U6 threads the real job style through here.
+    ``clean_product_demo``); the executor injects the job's style into the plan
+    so this resolves the same StyleConfig as the ffmpeg builder.
     Returns the list of written paths.
     """
     if style_config is None:
@@ -597,11 +600,18 @@ def _card_bookend_stmts(
     return [intro_stmt, outro_stmt, head_stmt, tail_stmt], "[vout]"
 
 
-def build_render_script(plan: dict, workdir: str) -> list[str]:
+def build_render_script(
+    plan: dict, workdir: str, style: str | None = None
+) -> list[str]:
     """Build the single-invocation ffmpeg ``argv`` for ``plan``.
 
     Pure: returns a ``list[str]``; does not run ffmpeg and writes nothing.
     Caption PNGs are expected to already exist (see ``render_all_captions``).
+
+    ``style`` is the selected style id (e.g. ``"cinematic"``); when omitted it
+    falls back to ``plan["style"]``. The visual look is keyed off this style
+    id, independent of the plan's ``template_id``. An unknown id resolves to the
+    default ``clean_product_demo`` via :func:`get_style_config`.
     """
     workdir = str(workdir).rstrip("/")
     scenes = plan["scenes"]
@@ -609,7 +619,8 @@ def build_render_script(plan: dict, workdir: str) -> list[str]:
         raise ValueError("plan has no scenes")
 
     width, height = resolution_size(plan)
-    style = get_style_config(plan.get("style"))
+    chosen_style = style if style is not None else plan.get("style")
+    style_cfg = get_style_config(chosen_style)
     n = len(scenes)
 
     argv: list[str] = ["ffmpeg", "-y"]
@@ -642,7 +653,7 @@ def build_render_script(plan: dict, workdir: str) -> list[str]:
     outro_color_idx = voice_index + 2
     intro_png_idx = voice_index + 3
     outro_png_idx = voice_index + 4
-    card_bg = _hex_color(style.cards.get("bg_color", (0, 0, 0)))
+    card_bg = _hex_color(style_cfg.cards.get("bg_color", (0, 0, 0)))
     card_size = f"{width}x{height}"
     card_dur = _fmt_num(CARD_DURATION)
     argv += [
@@ -661,7 +672,7 @@ def build_render_script(plan: dict, workdir: str) -> list[str]:
     ]
 
     body_graph, body_label, body_duration = build_filtergraph(
-        scenes, width, height, style
+        scenes, width, height, style_cfg
     )
     card_stmts, video_label = _card_bookend_stmts(
         body_label,
@@ -684,9 +695,13 @@ def build_render_script(plan: dict, workdir: str) -> list[str]:
         "-map", "[aud]",
         "-c:v", "libx264",
         "-preset", "veryfast",
+        "-crf", "21",
         "-pix_fmt", "yuv420p",
-        "-threads", "1",
+        "-threads", "2",
         "-r", str(FPS),
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
         _out_path(workdir),
     ]
     return argv

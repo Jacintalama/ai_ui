@@ -494,6 +494,16 @@
           </div>
 
           <div class="field">
+            <label class="form-label" for="style">Style</label>
+            <select class="form-input" id="style" name="style">
+              <option value="clean_product_demo" selected>Clean product demo (recommended)</option>
+              <option value="cinematic">Cinematic</option>
+              <option value="snappy_social">Snappy social</option>
+            </select>
+            <span class="form-hint">The visual look: motion, transitions, captions, color grade and intro/outro cards.</span>
+          </div>
+
+          <div class="field">
             <label class="form-label">Screenshots</label>
             <div class="uploader-head">
               <button class="btn sm" type="button" id="add-shots-btn">+ Add screenshots</button>
@@ -636,6 +646,7 @@
     const shotEmpty = document.getElementById("shot-empty");
     const shotError = document.getElementById("shot-error");
     const promptInput = document.getElementById("prompt");
+    const styleSelect = document.getElementById("style");
     const submitBtn = document.getElementById("submit-btn");
     const formError = document.getElementById("form-error");
 
@@ -1527,6 +1538,7 @@
       const fd = new FormData();
       fd.append("title", title);
       fd.append("prompt", prompt);
+      fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
       // Append in the CURRENT DISPLAYED ORDER so screenshot-1 = the first card.
       for (const s of shots) fd.append("files", s.file, s.file.name);
 
