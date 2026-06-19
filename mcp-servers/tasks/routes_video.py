@@ -771,6 +771,45 @@ class DraftPatch(BaseModel):
     voice: str | None = Field(None, max_length=50)
 
 
+@router.post("/{job_id}/queue")
+async def queue_job(job_id: str, user: CurrentUser = Depends(current_user)) -> dict:
+    """Commit a draft to rendering: 'collecting' -> 'queued'. Validates the draft
+    has >=1 screenshot and enforces the per-user daily limit HERE (counting only
+    jobs that actually rendered/queued, so abandoned drafts are free)."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        if job.status != "collecting":
+            raise HTTPException(409, "Video is not a draft")
+        if not _list_screenshots(job.slug, str(jid)):
+            raise HTTPException(400, "Add at least one screenshot first")
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        used = (await s.execute(
+            select(func.count()).select_from(VideoJob).where(and_(
+                VideoJob.user_email == job.user_email,
+                VideoJob.created_at >= cutoff,
+                VideoJob.status.in_(["queued", "scripting", "rendering", "done"]),
+            ))
+        )).scalar() or 0
+        if used >= int(os.environ.get("VIDEO_MAX_PER_USER_PER_DAY", "10")):
+            raise HTTPException(429, "Daily video limit reached")
+        await s.execute(update(VideoJob).where(VideoJob.id == jid).values(status="queued"))
+        await s.commit()
+        queue_position = (await s.execute(
+            select(func.count()).select_from(VideoJob).where(and_(
+                VideoJob.status == "queued",
+                VideoJob.created_at < job.created_at,
+            ))
+        )).scalar() or 0
+    return {"status": "queued", "queue_position": queue_position}
+
+
 @router.post("/{job_id}/draft-set")
 async def update_draft(job_id: str, body: DraftPatch, user: CurrentUser = Depends(current_user)) -> dict:
     """Update style/voice on a 'collecting' draft (the Discord select handlers)."""
