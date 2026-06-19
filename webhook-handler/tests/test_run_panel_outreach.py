@@ -147,3 +147,85 @@ async def test_run_panel_reverse_empty_background_does_not_start():
     await r.run_panel_reverse(ctx, "Backend", "", "   ", 8)
     ctx.respond.assert_awaited()  # asks for background; no task started
     r._tasks_client.start_outreach.assert_not_called()
+
+
+def _review_ctx(captured: dict, platform="discord"):
+    """A review-capable CommandContext whose edit_message captures the rendered
+    payload (mirrors discord_commands._out_ctx: edit the component's own message
+    in place)."""
+    async def edit_message(msg: dict) -> None:
+        captured.clear()
+        captured.update(msg)
+    return CommandContext(
+        user_id="100", user_name="alice", channel_id="c", raw_text="outreach",
+        subcommand="outreach", arguments="", platform=platform,
+        respond=AsyncMock(), edit_message=edit_message)
+
+
+@pytest.mark.asyncio
+async def test_run_outreach_select_reverse_renders_company_copy():
+    # REGRESSION (review-demanded): on RE-RENDER the builder must read
+    # direction/role/location FROM the tasks-client response and produce
+    # company-oriented copy — not the hire defaults baked into the (empty) args.
+    tc = MagicMock()
+    tc.patch_outreach_candidate = AsyncMock(return_value={
+        "status": "review", "direction": "reverse",
+        "role": "Senior Python backend", "location": "Berlin",
+        "candidates": [{
+            "id": "c0", "name": "Acme Corp", "github_url": "acme.com/careers",
+            "email": "jobs@acme.com", "subject": "S", "body": "B",
+            "selected": True, "status": "draft"}]})
+    r = _router(tc)
+    captured: dict = {}
+    ctx = _review_ctx(captured)
+    # NB: discord_commands still passes role=""/location="" — the handler must
+    # IGNORE those and read from the response instead.
+    await r.run_outreach_select(ctx, "task-1", ["c0"], "", "")
+    tc.patch_outreach_candidate.assert_awaited_once()
+    title = captured["embeds"][0]["title"]
+    assert title == "Found 1 companies for Senior Python backend"
+    assert "apply" in captured["embeds"][0]["footer"]["text"].lower()
+    sel = captured["components"][0]["components"][0]
+    assert "apply" in sel["placeholder"].lower()
+    send = captured["components"][2]["components"][0]
+    assert send["label"] == "\U0001f4e7 Send applications (1)"
+
+
+@pytest.mark.asyncio
+async def test_run_outreach_select_hire_still_renders_engineer_copy():
+    tc = MagicMock()
+    tc.patch_outreach_candidate = AsyncMock(return_value={
+        "status": "review", "direction": "hire", "role": "Python", "location": "Manila",
+        "candidates": [{
+            "id": "c0", "name": "Alice", "github_url": "gh/a", "email": "a@x.com",
+            "subject": "S", "body": "B", "selected": True, "status": "draft"}]})
+    r = _router(tc)
+    captured: dict = {}
+    await r.run_outreach_select(_review_ctx(captured), "task-1", ["c0"], "", "")
+    assert captured["embeds"][0]["title"] == "\U0001f50d Found 1 · Python · Manila"
+    assert "email" in captured["embeds"][0]["footer"]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_run_outreach_send_zero_selected_uses_company_pick_one():
+    tc = MagicMock()
+    tc.send_outreach = AsyncMock(return_value={
+        "status": "review", "direction": "reverse", "role": "Backend", "location": "",
+        "text": "", "candidates": []})
+    r = _router(tc)
+    captured: dict = {}
+    await r.run_outreach_send(_review_ctx(captured), "task-1")
+    assert "Pick at least one company first." in captured["content"]
+
+
+@pytest.mark.asyncio
+async def test_run_outreach_send_sent_locks_with_backend_text():
+    tc = MagicMock()
+    tc.send_outreach = AsyncMock(return_value={
+        "status": "sent", "direction": "reverse",
+        "text": "Emailed 2 companies, saved 3", "sheet_url": "http://sheet"})
+    r = _router(tc)
+    captured: dict = {}
+    await r.run_outreach_send(_review_ctx(captured), "task-1")
+    assert "Emailed 2 companies" in captured["content"]
+    assert captured["components"] == []   # locked, no components

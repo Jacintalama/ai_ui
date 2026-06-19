@@ -2517,8 +2517,11 @@ class CommandRouter:
         selected_ids: Optional[list[str]], role: str = "", location: str = "",
     ) -> None:
         """Apply a recipient selection (``selected_ids``) or just refresh
-        (``selected_ids is None``), then re-render the overview in place."""
-        from handlers import recruiting_review as rr
+        (``selected_ids is None``), then re-render the overview in place. Builder
+        is resolved by ``ctx.platform`` and copy by the ``direction`` returned in
+        the response (the ``role``/``location`` args are legacy and ignored —
+        labels/title are restored from backend state, §5)."""
+        rr = self._review_builder(ctx)
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await self._respond_not_linked(ctx)
@@ -2533,7 +2536,8 @@ class CommandRouter:
             await ctx.respond(self._format_build_error(e))
             return
         msg = rr.build_review_message(
-            task_id, st.get("candidates", []), role=role, location=location)
+            task_id, st.get("candidates", []), role=st.get("role", ""),
+            location=st.get("location", ""), kind=st.get("direction", "hire"))
         if ctx.edit_message is not None:
             await ctx.edit_message(msg)
 
@@ -2542,8 +2546,8 @@ class CommandRouter:
         subject: str, body: str, role: str = "", location: str = "",
     ) -> None:
         """Save an edited candidate (email/subject/body) then re-render the
-        overview in place."""
-        from handlers import recruiting_review as rr
+        overview in place. Platform-/direction-aware (see run_outreach_select)."""
+        rr = self._review_builder(ctx)
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await self._respond_not_linked(ctx)
@@ -2557,7 +2561,9 @@ class CommandRouter:
             except TasksAPIError:
                 return
             if ctx.edit_message is not None:
-                msg = rr.build_review_message(task_id, st.get("candidates", []), role="", location="")
+                msg = rr.build_review_message(
+                    task_id, st.get("candidates", []), role=st.get("role", ""),
+                    location=st.get("location", ""), kind=st.get("direction", "hire"))
                 msg = {**msg, "content": f"⚠️ `{ev}` doesn't look like a valid email — not saved."}
                 await ctx.edit_message(msg)
             return
@@ -2569,14 +2575,17 @@ class CommandRouter:
             await ctx.respond(self._format_build_error(e))
             return
         msg = rr.build_review_message(
-            task_id, st.get("candidates", []), role=role, location=location)
+            task_id, st.get("candidates", []), role=st.get("role", ""),
+            location=st.get("location", ""), kind=st.get("direction", "hire"))
         if ctx.edit_message is not None:
             await ctx.edit_message(msg)
 
     async def run_outreach_send(self, ctx: CommandContext, task_id: str) -> None:
-        """Send to the selected candidates. On success, lock the message with
-        the sent summary; otherwise surface why nothing went out."""
-        from handlers import recruiting_review as rr
+        """Send to the selected candidates. On success, lock the message with the
+        backend's (already direction-aware) sent summary; otherwise surface why
+        nothing went out. Platform-/direction-aware (see run_outreach_select)."""
+        from handlers import recruiting_labels
+        rr = self._review_builder(ctx)
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await self._respond_not_linked(ctx)
@@ -2586,19 +2595,26 @@ class CommandRouter:
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
             return
+        kind = st.get("direction", "hire")
         if st.get("status") == "sent":
-            await ctx.edit_message(rr.build_sent_message(st.get("text", "Sent."),
-                                                         st.get("sheet_url", "")))
+            msg = rr.build_sent_message(
+                st.get("text", "Sent."), st.get("sheet_url", ""), kind=kind)
+            if ctx.edit_message is not None:
+                await ctx.edit_message(msg)
+            else:
+                await ctx.respond(msg.get("content", "✅ Sent."))
             return
         # not sent (e.g. nothing selected / transient send error): keep the
         # interactive overview intact and show the reason as a content line.
+        lab = recruiting_labels.labels_for(kind)
         if ctx.edit_message is not None:
-            msg = rr.build_review_message(task_id, st.get("candidates", []),
-                                          role="", location="")
-            msg = {**msg, "content": "⚠️ " + (st.get("text") or "Pick at least one engineer first.")}
+            msg = rr.build_review_message(
+                task_id, st.get("candidates", []), role=st.get("role", ""),
+                location=st.get("location", ""), kind=kind)
+            msg = {**msg, "content": "⚠️ " + (st.get("text") or lab["pick_one"])}
             await ctx.edit_message(msg)
         else:
-            await ctx.respond(st.get("text") or "Pick at least one engineer first.")
+            await ctx.respond(st.get("text") or lab["pick_one"])
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""
