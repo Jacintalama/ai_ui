@@ -15,15 +15,23 @@ from handlers.recruiting_panel import parse_outreach_modal as _parse_outreach_mo
 __all__ = [
     "OUT_FIND_ACTION_ID",
     "OUT_MODAL_CALLBACK",
+    "OUT_REV_ACTION_ID",
+    "OUT_REV_CALLBACK",
     "build_recruiting_blocks",
     "build_outreach_view",
+    "build_reverse_view",
     "outreach_fields_from_view",
+    "reverse_fields_from_view",
     "sample_state",
 ]
 
 # Stable action_id / callback_id constants.
 OUT_FIND_ACTION_ID = "aiuiout:find"
 OUT_MODAL_CALLBACK = "aiuiout:modal"
+
+# Reverse-recruiting ("Find Jobs") entry button + modal ids.
+OUT_REV_ACTION_ID = "aiuiout:revfind"
+OUT_REV_CALLBACK = "aiuiout:revmodal"
 
 # Stable block_id / action_id pairs for the modal inputs.
 _ROLE_BLOCK_ID = "out_role"
@@ -59,6 +67,7 @@ def build_recruiting_blocks() -> list[dict]:
             "type": "actions",
             "elements": [
                 _button("\U0001f50d Find Engineers", OUT_FIND_ACTION_ID, primary=True),
+                _button("Find Jobs", OUT_REV_ACTION_ID),
             ],
         },
     ]
@@ -179,3 +188,91 @@ def sample_state(role: str, location: str, jobdesc: str, count: str) -> dict:
         _JOBDESC_BLOCK_ID: {_JOBDESC_INPUT_ID: _entry(jobdesc)},
         _COUNT_BLOCK_ID: {_COUNT_INPUT_ID: _entry(count)},
     }
+
+
+def build_reverse_view(channel_id: str) -> dict:
+    """Slack modal for reverse recruiting ("Find Jobs"). Relabeled for a
+    job-seeker but REUSES the exact role/location/jobdesc/count block & input
+    ids of build_outreach_view, so reverse_fields_from_view (-> parse_outreach_modal)
+    parses it unchanged. callback_id == OUT_REV_CALLBACK; the originating channel
+    is stashed in private_metadata so the submit handler knows where to post."""
+    return {
+        "type": "modal",
+        "callback_id": OUT_REV_CALLBACK,
+        "private_metadata": channel_id or "",
+        "title": {"type": "plain_text", "text": "Find Jobs"[:_TITLE_MAX]},
+        "submit": {"type": "plain_text", "text": "Search"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": _ROLE_BLOCK_ID,
+                "label": {"type": "plain_text", "text": "Target role"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": _ROLE_INPUT_ID,
+                    "multiline": False,
+                    "max_length": 100,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "e.g. Senior Python backend",
+                    },
+                },
+            },
+            {
+                "type": "input",
+                "block_id": _LOCATION_BLOCK_ID,
+                "label": {"type": "plain_text", "text": "Location (optional)"},
+                "optional": True,
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": _LOCATION_INPUT_ID,
+                    "multiline": False,
+                    "max_length": 100,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "e.g. Berlin or Remote",
+                    },
+                },
+            },
+            {
+                "type": "input",
+                "block_id": _JOBDESC_BLOCK_ID,
+                "label": {"type": "plain_text", "text": "Your background / skills"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": _JOBDESC_INPUT_ID,
+                    "multiline": True,
+                    "max_length": 4000,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "Your experience, key skills, and what you're looking for...",
+                    },
+                },
+            },
+            {
+                "type": "input",
+                "block_id": _COUNT_BLOCK_ID,
+                "label": {"type": "plain_text", "text": "How many companies (max 25)"},
+                "optional": True,
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": _COUNT_INPUT_ID,
+                    "multiline": False,
+                    "max_length": 3,
+                    "placeholder": {
+                        "type": "plain_text",
+                        "text": "10",
+                    },
+                },
+            },
+        ],
+    }
+
+
+def reverse_fields_from_view(view: dict) -> tuple[str, str, str, int]:
+    """Extract (role, location, jobdesc, count) from a reverse modal submit.
+    The reverse modal reuses build_outreach_view's block/input ids, so this
+    delegates to outreach_fields_from_view (kept as a named function for routing
+    clarity / symmetry with the Discord side)."""
+    return outreach_fields_from_view(view)
