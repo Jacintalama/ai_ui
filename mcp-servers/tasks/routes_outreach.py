@@ -68,20 +68,26 @@ async def _process_outreach_result(raw_log: str, *, job_title: str, count: int) 
             "text": outreach.format_outreach_summary(found, sent, saved, sheet_url)}
 
 
-def _process_outreach_find(raw_log: str, *, job_title: str, count: int) -> dict:
+def _process_outreach_find(raw_log: str, *, job_title: str, count: int,
+                           direction: str = "hire", location: str = "") -> dict:
     """Manual mode: parse candidates, DON'T send. Store a review state."""
+    meta = {"direction": direction, "role": job_title, "location": location}
     outcome = parse_outcome(raw_log)
     if outcome.kind == "failed":
-        return {"status": "failed", "found": 0, "text":
-                (outcome.payload or "The search failed.").strip()[:500]}
+        return {"status": "failed", "found": 0, "job_title": job_title,
+                "text": (outcome.payload or "The search failed.").strip()[:500],
+                **meta}
     cand = outreach.extract_candidates(raw_log)
     if not cand.candidates:
-        return {"status": "failed", "found": 0,
-                "text": "I couldn't find engineers matching that — try a broader role."}
+        nf = ("I couldn't find companies hiring for that — try a broader role."
+              if direction == "reverse"
+              else "I couldn't find engineers matching that — try a broader role.")
+        return {"status": "failed", "found": 0, "job_title": job_title,
+                "text": nf, **meta}
     batch = outreach.cap_and_dedupe(cand.candidates, count)
     return {"status": "review", "phase": "review", "job_title": job_title,
             "found": len(batch),
-            "candidates": outreach.build_review_candidates(batch)}
+            "candidates": outreach.build_review_candidates(batch), **meta}
 
 
 async def _load_review(task_id, user) -> tuple[object, dict]:
