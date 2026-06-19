@@ -92,8 +92,9 @@ holds a careers/jobs URL, not a GitHub profile URL), email = the contact email \
 ```
 If you cannot find any companies, output a candidates list of [] then COMPLETED. \
 On a hard error, output a line starting with FAILED: and the reason."""
-    loc = f" located in {location}" if location.strip() else ""
-    return f"""You are a recruiting research assistant. Find up to {count} software \
+    elif direction == "hire":
+        loc = f" located in {location}" if location.strip() else ""
+        return f"""You are a recruiting research assistant. Find up to {count} software \
 engineers matching: {role}{loc}.
 
 STEPS:
@@ -118,6 +119,8 @@ new line with the single word COMPLETED:
 ```
 If you cannot find anyone, output a candidates list of [] then COMPLETED. \
 On a hard error, output a line starting with FAILED: and the reason."""
+    else:
+        raise ValueError(f"Unknown direction: {direction!r}")
 
 
 async def post_outreach_to_n8n(job_title: str, candidates: list[Candidate],
@@ -138,7 +141,7 @@ async def post_outreach_to_n8n(job_title: str, candidates: list[Candidate],
 
 
 def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = "",
-                            *, direction: str = "hire") -> str:
+                            *, direction: Literal["hire", "reverse"] = "hire") -> str:
     # `saved` is the total written to the sheet this run (emailed + collected),
     # per the n8n Respond node — so phrase it as total-saved, not "no-email only".
     noun = "compan(y/ies)" if direction == "reverse" else "engineer(s)"
