@@ -2344,7 +2344,9 @@ class CommandRouter:
         if not (jobdesc or "").strip():
             await ctx.respond("Please paste the job description so I know what to send.")
             return
-        manual = ctx.platform == "discord"
+        # Both Discord and Slack now review-before-send (the Slack review layer
+        # exists as of this feature). Reverse always uses run_panel_reverse.
+        manual = True
         try:
             result = await self._tasks_client.start_outreach(email, {
                 "role": role, "location": location, "jobdesc": jobdesc,

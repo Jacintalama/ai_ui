@@ -53,8 +53,7 @@ async def test_run_panel_outreach_starts_and_acks():
 
 @pytest.mark.asyncio
 async def test_run_panel_outreach_slack_stays_auto():
-    # Regression: run_panel_outreach is shared with Slack, which must keep the
-    # OLD auto-send behaviour (mode="auto"), not Discord's manual review flow.
+    # Slack hire now also uses review-before-send (mode="manual") — same as Discord.
     tc = MagicMock()
     tc.start_outreach = AsyncMock(return_value={"task_id": "abc"})
     r = _router(tc)
@@ -62,7 +61,28 @@ async def test_run_panel_outreach_slack_stays_auto():
     await r.run_panel_outreach(ctx, "Python", "Berlin", "Hiring", 8)
     tc.start_outreach.assert_awaited_once()
     _email, payload = tc.start_outreach.await_args.args
-    assert payload["mode"] == "auto"
+    assert payload["mode"] == "manual"
+
+
+@pytest.mark.asyncio
+async def test_slack_hire_uses_manual_review(monkeypatch):
+    # Slack "Find Engineers" must now post a review (mode="manual"), not auto-send.
+    tc = MagicMock()
+    captured = {}
+
+    async def fake_start_outreach(email, payload):
+        captured["mode"] = payload["mode"]
+        return {"task_id": "t-slack-hire"}
+
+    tc.start_outreach = fake_start_outreach
+    r = _router(tc)
+    monkeypatch.setattr(r, "_resolve_email_for_ctx",
+                        AsyncMock(return_value="seeker@example.com"))
+
+    ctx = _ctx(AsyncMock(), platform="slack")
+    await r.run_panel_outreach(ctx, "Python", "Berlin", "Hiring a dev", 5)
+
+    assert captured["mode"] == "manual"
 
 
 @pytest.mark.asyncio
