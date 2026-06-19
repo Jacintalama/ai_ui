@@ -62,7 +62,35 @@ def cap_and_dedupe(candidates: list[Candidate], count: int) -> list[Candidate]:
     return emailable[:max(0, count)] + no_email
 
 
-def build_outreach_prompt(role: str, location: str, jobdesc: str, count: int) -> str:
+def build_outreach_prompt(role: str, location: str, jobdesc: str, count: int,
+                          *, direction: str = "hire") -> str:
+    if direction == "reverse":
+        rloc = f" in {location}" if location.strip() else ""
+        return f"""You are a job-search assistant working ON BEHALF OF a job seeker. \
+Find up to {count} companies hiring for: {role}{rloc}, then draft a tailored \
+application email to each — written in the FIRST PERSON as the seeker.
+
+The seeker's background / skills (use this to tailor every application):
+---
+{jobdesc}
+---
+
+STEPS:
+1. Use the WebSearch and WebFetch tools to find companies plausibly hiring for \
+"{role}"{rloc}. For each company, find a REAL careers/jobs/hiring-contact email \
+(careers@, jobs@, or a named recruiter). Never guess or fabricate an email — use \
+null if you cannot find a real one.
+2. Draft a SHORT, tailored, first-person application email per company (subject + \
+body), grounded in the seeker's background above and signed as the seeker.
+3. Output EXACTLY ONE fenced json block (no prose after it), then a new line with \
+the single word COMPLETED. Use name = the company, github_url = the company \
+careers/jobs URL, email = the contact email (or null), and subject/body = the \
+application:
+```json
+{{"candidates":[{{"name":"...","github_url":"...","email":"... or null","subject":"...","body":"..."}}]}}
+```
+If you cannot find any companies, output a candidates list of [] then COMPLETED. \
+On a hard error, output a line starting with FAILED: and the reason."""
     loc = f" located in {location}" if location.strip() else ""
     return f"""You are a recruiting research assistant. Find up to {count} software \
 engineers matching: {role}{loc}.

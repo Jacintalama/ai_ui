@@ -55,3 +55,27 @@ def test_build_outreach_prompt_contains_contract():
 def test_format_outreach_summary():
     s = outreach.format_outreach_summary(found=12, sent=8, saved=4, sheet_url="http://s")
     assert "8" in s and "4" in s
+
+
+def test_build_outreach_prompt_hire_unchanged_by_direction_default():
+    # Positional call and explicit direction="hire" must be byte-identical.
+    p_default = outreach.build_outreach_prompt("Python", "Berlin", "Hiring a dev", 8)
+    p_hire = outreach.build_outreach_prompt("Python", "Berlin", "Hiring a dev", 8,
+                                            direction="hire")
+    assert p_default == p_hire
+    assert "recruiting research assistant" in p_hire
+    assert "api.github.com/search/users" in p_hire
+
+
+def test_build_outreach_prompt_reverse_branch():
+    p = outreach.build_outreach_prompt("Senior Python backend", "Berlin",
+                                       "10y Python, FastAPI, AWS", 5,
+                                       direction="reverse")
+    assert "on behalf of" in p.lower()            # acts for the seeker
+    assert "companies hiring for" in p.lower()    # company-oriented search
+    assert "WebSearch" in p and "WebFetch" in p   # web-search tools, not GitHub API
+    assert "first person" in p.lower() or "first-person" in p.lower()
+    assert "10y Python, FastAPI, AWS" in p        # seeker background grounded
+    assert "5" in p                               # count threaded
+    assert "```json" in p and "COMPLETED" in p    # SAME machine contract reused
+    assert "github.com/search/users" not in p     # NOT the hire/GitHub flow
