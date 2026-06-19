@@ -370,6 +370,9 @@ class DiscordCommandHandler:
         if recruiting_panel.is_out_find(custom_id):
             return {"type": MODAL, "data": recruiting_panel.build_outreach_modal()}
 
+        if recruiting_panel.is_rev_find(custom_id):
+            return {"type": MODAL, "data": recruiting_panel.build_reverse_modal()}
+
         if rr.is_out_send(custom_id):
             return await self._handle_outreach_send(payload, custom_id)
         if rr.is_out_refresh(custom_id):
@@ -820,6 +823,48 @@ class DiscordCommandHandler:
                 notify_channel_msg=notify_channel_msg if channel_id else None,
             )
             self._spawn(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
+            return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if recruiting_panel.is_rev_modal(custom_id):
+            values = {c["custom_id"]: c.get("value", "")
+                      for row in data.get("components", [])
+                      for c in row.get("components", [])}
+            role, location, jobdesc, count = recruiting_panel.parse_outreach_modal(values)
+            interaction_token = payload.get("token", "")
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            channel_id = payload.get("channel_id", "")
+            notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+            async def respond(msg: str) -> None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=msg,
+                )
+
+            async def notify_channel_msg(msg: dict) -> None:
+                await self.discord.post_channel_message(
+                    channel_id, content=msg.get("content", ""),
+                    embeds=msg.get("embeds"), components=msg.get("components"),
+                )
+
+            ctx = CommandContext(
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=channel_id,
+                raw_text="reverse find",
+                subcommand="outreach",
+                arguments="",
+                platform="discord",
+                respond=respond,
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
+                notify_channel=notify_channel if channel_id else None,
+                notify_channel_rich=notify_channel_rich if channel_id else None,
+                notify_channel_msg=notify_channel_msg if channel_id else None,
+            )
+            self._spawn(self.router.run_panel_reverse(ctx, role, location, jobdesc, count))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
         if rr.is_out_editmodal(custom_id):
             values = {c["custom_id"]: c.get("value", "")
