@@ -160,11 +160,12 @@ def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = 
         noun = "company" if found == 1 else "companies"
     else:
         noun = "engineer(s)"
+    # sheet_url is surfaced separately by the callers (the route returns it and
+    # the Discord/Slack renderers append it), so it is intentionally NOT included
+    # in this text to avoid showing the link twice.
     parts = [f"Outreach complete — found {found} {noun}.",
              f"Emailed {sent}.",
              f"Saved {saved} to your sheet."]
-    if sheet_url:
-        parts.append(f"View: {sheet_url}")
     return " ".join(parts)
 
 
