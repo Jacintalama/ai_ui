@@ -81,6 +81,7 @@ from handlers import cronjob_panel as cron
 from handlers import onboarding
 from handlers import recruiting_panel
 from handlers import recruiting_review as rr
+from handlers import video_panel as vid
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,8 @@ class DiscordCommandHandler:
     async def _handle_application_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle a slash command interaction."""
         data = payload.get("data", {})
+        if data.get("name") == "video":
+            return await self._handle_video_command(payload)
         options = data.get("options", [])
         interaction_token = payload.get("token", "")
 
@@ -384,6 +387,62 @@ class DiscordCommandHandler:
             if not values:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return await self._handle_outreach_edit_open(payload, custom_id, values[0])
+
+        # --- Video studio (aiuivid:*) ---
+        if vid.is_vid_new(custom_id):
+            return {"type": MODAL, "data": vid.build_video_modal()}
+        if vid.is_vid_list(custom_id):
+            return await self._handle_video_route(
+                payload, lambda ctx: self.router.run_video_list(ctx),
+                raw_text="video list")
+        if vid.is_vid_style(custom_id) or vid.is_vid_voice(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            is_style = vid.is_vid_style(custom_id)
+            try:
+                job_id = (vid.job_from_style(custom_id) if is_style
+                          else vid.job_from_voice(custom_id))
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            field = {"style": values[0]} if is_style else {"voice": values[0]}
+            self._spawn(self._run_video_set(payload, job_id, field))
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        if vid.is_vid_generate(custom_id):
+            try:
+                job_id = vid.job_from_generate(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_generate(ctx, j),
+                raw_text="video generate")
+        if vid.is_vid_refine(custom_id):
+            try:
+                job_id = vid.job_from_refine(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_refine_modal(job_id)}
+        if vid.is_vid_apply(custom_id):
+            try:
+                job_id = vid.job_from_apply(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_apply(ctx, j),
+                raw_text="video apply")
+        if vid.is_vid_version(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            try:
+                job_id = vid.job_from_version(custom_id)
+                version_no = int(values[0])
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload,
+                lambda ctx, j=job_id, n=version_no: self.router.run_video_revert(ctx, j, n),
+                raw_text="video revert")
 
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
@@ -737,6 +796,192 @@ class DiscordCommandHandler:
         self._spawn(run(ctx))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
+    async def _handle_video_route(
+        self, payload: dict[str, Any], run: Callable[[CommandContext], Awaitable[None]],
+        *, raw_text: str = "video",
+    ) -> dict[str, Any]:
+        """Build an ephemeral CommandContext for a video-studio component/modal
+        interaction, schedule `run(ctx)` in the background, and ACK
+        ephemeral-deferred (flags=64).
+
+        Unlike `_handle_panel_route`, this binds the channel notifiers
+        (`notify_channel` / `notify_channel_rich`) AND a channel-message poster
+        (`notify_channel_msg`): generate/apply/revert gate their render watcher
+        on `notify_channel` (and `_deliver_video` posts the finished MP4 to
+        `channel_id` + the Refine/version controls via `notify_channel_msg`),
+        and refine posts its proposal via `notify_channel_msg`. The interaction
+        happens inside the user's private video thread, so `channel_id` is that
+        thread and results land there."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        channel_id = payload.get("channel_id", "")
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg, components=components, embeds=embeds,
+            )
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg.get("content", ""),
+                embeds=msg.get("embeds"), components=msg.get("components"),
+            )
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=channel_id,
+            raw_text=raw_text,
+            subcommand="video",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            respond_components=respond_components,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+            notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None,
+            notify_channel_msg=notify_channel_msg if channel_id else None,
+        )
+        self._spawn(run(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _run_video_set(self, payload: dict[str, Any], job_id: str, field: dict) -> None:
+        """Persist a style/voice pick on the draft. The select interaction is
+        ACK'd with DEFERRED_UPDATE_MESSAGE (no message edit), so this needs no
+        responder — the runner saves the field and logs any failure."""
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="video set",
+            subcommand="video", arguments="", platform="discord",
+            respond=lambda m: asyncio.sleep(0))
+        await self.router.run_video_set_field(ctx, job_id, **field)
+
+    async def _handle_video_command(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """`/video add` (push the attached screenshots onto the current draft) and
+        `/video list` (list the caller's videos). ACK ephemeral-deferred."""
+        data = payload.get("data", {})
+        options = data.get("options", [])
+        sub = options[0].get("name") if options else "list"
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        channel_id = payload.get("channel_id", "")
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg, components=components)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=channel_id, raw_text=f"video {sub}", subcommand="video",
+            arguments="", platform="discord", respond=respond,
+            respond_components=respond_components,
+            metadata={"interaction_token": interaction_token, "guild_id": payload.get("guild_id", "")},
+            notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None)
+
+        if sub == "add":
+            urls = [a["url"] for a in self._all_attachments(data) if a.get("url")]
+            self._spawn(self.router.run_video_add(ctx, urls))
+        else:
+            self._spawn(self.router.run_video_list(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_video_new_modal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'New video' modal submit → create a draft, open the user's private
+        video thread, point the ephemeral ACK at it, post the voice-sample MP3s
+        (best-effort) and the studio controls there. Mirrors the build-modal
+        fire-and-forget pattern; ACK is ephemeral-deferred within 3s."""
+        data = payload.get("data", {})
+        title = self._extract_modal_value(data, vid.TITLE_INPUT)
+        prompt = self._extract_modal_value(data, vid.PROMPT_INPUT)
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _open_studio() -> None:
+            try:
+                email = await self.router._resolve_email(user_id)
+                if email is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
+                draft = await self.router._tasks_client.create_video_draft(
+                    email, title, prompt, "clean_product_demo", "amy")
+                job_id = draft["id"]
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="video")
+                target = thread_id or channel_id
+                if thread_id:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"Your video studio is ready → <#{thread_id}>",
+                    )
+                else:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="Your video studio is ready below.",
+                    )
+                voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
+                # Best-effort: post the voice preview clips so the user can listen
+                # before picking. A failure here must never block the studio.
+                try:
+                    files: list[tuple[str, bytes, str]] = []
+                    for v in voices[:6]:
+                        sample_url = v.get("sample_url")
+                        vid_id = v.get("id") or "voice"
+                        if not sample_url:
+                            continue
+                        blob = await self.router._tasks_client.fetch_bytes(sample_url)
+                        files.append((f"{vid_id}.mp3", blob, "audio/mpeg"))
+                    if files:
+                        await self.discord.post_channel_file(
+                            target, files[:10],
+                            content="Voice previews — listen, then pick a voice below:")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("video voice-sample post failed user=%s: %s", user_id, exc)
+                await self.discord.post_channel_message(
+                    target,
+                    "Pick a style + voice, add 1-12 screenshots with `/video add`, "
+                    "then hit **Generate video**.",
+                    components=vid.build_studio_components(job_id, voices),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_video_new_modal failed user=%s: %s", user_id, exc)
+                try:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="Couldn't open the video studio — please try again.",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self._spawn(_open_studio())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
     async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
         """An App Builder modal submission. Extract the description, route to the
         build in the background, and ACK deferred — mirrors the slash-command
@@ -879,6 +1124,17 @@ class DiscordCommandHandler:
             return self._handle_sched_edit_submit(payload, custom_id)
         if is_link_modal(custom_id):
             return self._handle_link_modal_submit(payload)
+        if vid.is_vid_new_modal(custom_id):
+            return await self._handle_video_new_modal(payload)
+        if vid.is_vid_refine_modal(custom_id):
+            try:
+                job_id = vid.job_from_refine_modal(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            change = self._extract_modal_value(data, vid.REFINE_INPUT)
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id, ch=change: self.router.run_video_refine(ctx, j, ch),
+                raw_text="video refine")
         if not is_panel_modal(custom_id):
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -1247,6 +1503,10 @@ class DiscordCommandHandler:
             get_thread = self.router.get_user_thread
             set_thread = self.router.set_user_thread
             name = f"schedules-{user_name}"
+        elif kind == "video":
+            get_thread = self.router.get_user_video_thread
+            set_thread = self.router.set_user_video_thread
+            name = f"aiui-video-{user_name}"
         else:  # pragma: no cover - defensive
             raise ValueError(f"unknown thread kind: {kind!r}")
         thread_id = await get_thread(user_id)
@@ -1566,6 +1826,15 @@ class DiscordCommandHandler:
                 "size": a.get("size"),
             }
         return None
+
+    @staticmethod
+    def _all_attachments(data: dict) -> list[dict]:
+        """All resolved slash-command attachments (Discord option type 11), in
+        resolved-map order, as {url, filename, content_type, size}."""
+        atts = (data.get("resolved") or {}).get("attachments") or {}
+        return [{"url": a.get("url"), "filename": a.get("filename"),
+                 "content_type": a.get("content_type"), "size": a.get("size")}
+                for a in atts.values()]
 
     @staticmethod
     def _parse_options(options: list[dict]) -> tuple[str, str]:

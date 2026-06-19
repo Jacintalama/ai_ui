@@ -75,6 +75,22 @@ def build_command_payload() -> dict:
     }
 
 
+def build_video_command_payload() -> dict:
+    """A top-level /video command: `add` (up to 12 screenshot attachments) and
+    `list`. Subcommands mirror the /aiui structure (type SUB_COMMAND)."""
+    shot_opts = [(f"shot{i}", f"Screenshot {i}", False, ATTACHMENT) for i in range(1, 13)]
+    return {
+        "name": "video",
+        "description": "Generate narrated videos from screenshots",
+        "options": [
+            {"name": "add", "description": "Add screenshots to your current video",
+             "type": SUB_COMMAND, "options": [_build_option(o) for o in shot_opts]},
+            {"name": "list", "description": "List your videos",
+             "type": SUB_COMMAND, "options": []},
+        ],
+    }
+
+
 def main() -> int:
     app_id = os.environ.get("DISCORD_APPLICATION_ID", "").strip()
     token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
@@ -92,10 +108,10 @@ def main() -> int:
         url = f"https://discord.com/api/v10/applications/{app_id}/commands"
         scope = "GLOBAL (may take up to 1 hour to propagate)"
 
-    payload = [build_command_payload()]  # PUT replaces the whole list
+    payload = [build_command_payload(), build_video_command_payload()]  # PUT replaces the whole list
     headers = {"Authorization": f"Bot {token}", "Content-Type": "application/json"}
 
-    print(f"Registering /aiui with {len(SUBCOMMANDS)} subcommands ({scope})...")
+    print(f"Registering /aiui ({len(SUBCOMMANDS)} subcommands) and /video ({scope})...")
     with httpx.Client(timeout=30.0) as client:
         r = client.put(url, headers=headers, json=payload)
     if r.status_code in (200, 201):

@@ -181,3 +181,37 @@ async def set_builder_thread(
             ))
         await s.commit()
     return {"status": "ok"}
+
+
+@router.get("/{discord_id}/video-thread")
+async def get_video_thread(discord_id: str, x_internal_secret: str = Header(default="")) -> dict[str, Any]:
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        link = (await s.execute(
+            select(DiscordLink).where(DiscordLink.discord_id == discord_id)
+        )).scalar_one_or_none()
+    return {"thread_id": link.video_thread_id if link else None}
+
+
+@router.post("/{discord_id}/video-thread")
+async def set_video_thread(
+    discord_id: str, body: ThreadIn, x_internal_secret: str = Header(default=""),
+) -> dict[str, str]:
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        link = (await s.execute(
+            select(DiscordLink).where(DiscordLink.discord_id == discord_id)
+        )).scalar_one_or_none()
+        if link:
+            link.video_thread_id = body.thread_id
+        else:
+            # Same placeholder rationale as set_builder_thread (unlinked users)
+            # so the video thread mapping persists across opens.
+            s.add(DiscordLink(
+                discord_id=discord_id,
+                email=f"discord-{discord_id}@aiui.local",
+                status="pending",
+                video_thread_id=body.thread_id,
+            ))
+        await s.commit()
+    return {"status": "ok"}

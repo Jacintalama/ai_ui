@@ -31,6 +31,11 @@ BUILD_POLL_SECONDS = 12
 BUILD_MAX_POLLS = 150  # ~30 min at 12s
 BUILD_MAX_CONSECUTIVE_ERRORS = 5
 
+VIDEO_POLL_SECONDS = 6
+VIDEO_MAX_POLLS = 120  # ~12 min, > render timeout (600s) + queue wait
+VIDEO_MAX_CONSECUTIVE_ERRORS = 5
+VIDEO_ATTACH_MAX_MB = int(os.environ.get("VIDEO_DISCORD_ATTACH_MAX_MB", "24"))
+
 OUTREACH_POLL_SECONDS = 12
 OUTREACH_MAX_POLLS = 80   # ~16 min, > agent EXECUTION_TIMEOUT_SECONDS (600s) + n8n
 OUTREACH_MAX_CONSECUTIVE_ERRORS = 5
@@ -123,6 +128,7 @@ class CommandRouter:
         loki_client=None,
         discord_user_email_map: Optional[dict] = None,
         tasks_client: Optional[TasksClient] = None,
+        discord_client=None,
     ):
         self.openwebui = openwebui_client
         self.n8n = n8n_client
@@ -131,6 +137,7 @@ class CommandRouter:
         self._github_client = github_client
         self._mcp_client = mcp_client
         self._loki_client = loki_client
+        self._discord = discord_client
 
         # New collaborators — read from settings only when not injected.
         if discord_user_email_map is None or tasks_client is None:
@@ -2047,6 +2054,12 @@ class CommandRouter:
     async def set_user_builder_thread(self, discord_id: str, thread_id: str) -> bool:
         return await self._tasks_client.set_user_builder_thread(discord_id, thread_id)
 
+    async def get_user_video_thread(self, discord_id: str) -> str | None:
+        return await self._tasks_client.get_user_video_thread(discord_id)
+
+    async def set_user_video_thread(self, discord_id: str, thread_id: str) -> bool:
+        return await self._tasks_client.set_user_video_thread(discord_id, thread_id)
+
     async def request_link(self, discord_id: str, username: str, email: str) -> dict:
         return await self._tasks_client.request_link(discord_id, username, email)
 
@@ -2332,6 +2345,222 @@ class CommandRouter:
         await _notify(
             f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
         )
+
+    async def run_video_add(self, ctx: CommandContext, urls: list[str]) -> None:
+        """`/video add`: push Discord CDN screenshot URLs onto the caller's current
+        draft. Replies (ephemeral) with the running count + a Generate button."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        if not urls:
+            await ctx.respond("Attach 1-10 screenshots to `/video add`.")
+            return
+        try:
+            draft = await self._tasks_client.get_current_video_draft(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't load your draft: {e.message}")
+            return
+        if not draft:
+            await ctx.respond("No video in progress — click **New video** first.")
+            return
+        try:
+            res = await self._tasks_client.add_video_screenshots_urls(email, draft["id"], urls)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't add screenshots: {e.message}")
+            return
+        count = res.get("count", 0)
+        msg = f"Added screenshots — {count}/12 so far. Click **Generate video** when ready."
+        if ctx.respond_components is not None:
+            from handlers.video_panel import build_generate_row
+            await ctx.respond_components(msg, build_generate_row(draft["id"]))
+        else:
+            await ctx.respond(msg)
+
+    async def run_video_set_field(self, ctx: CommandContext, job_id: str, *,
+                                  style: str | None = None, voice: str | None = None) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.set_video_draft_fields(email, job_id, style=style, voice=voice)
+        except TasksAPIError as e:
+            logger.warning("video set field failed job=%s: %s", job_id, e)
+
+    async def run_video_generate(self, ctx: CommandContext, job_id: str) -> None:
+        """Generate button: queue the draft + spawn the watcher."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.queue_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't start the render: {e.message}")
+            return
+        qp = res.get("queue_position", 0)
+        tail = f" (queue position {qp}; renders queue behind app builds)" if qp else ""
+        await ctx.respond(f"Rendering your video…{tail} I'll post it here when it's done.")
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_video_watcher_done)
+
+    async def run_video_refine(self, ctx: CommandContext, job_id: str, message: str) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.refine_video(email, job_id, message)
+        except TasksAPIError as e:
+            await ctx.respond(f"Refine failed: {e.message}")
+            return
+        text = res.get("message", "")
+        if res.get("can_apply") and ctx.notify_channel_msg is not None:
+            from handlers.video_panel import build_proposal_components
+            await ctx.notify_channel_msg({"content": text or "Here's the proposed change.",
+                                          "components": build_proposal_components(job_id)})
+        else:
+            await ctx.respond(text or "Okay.")
+
+    async def run_video_apply(self, ctx: CommandContext, job_id: str) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.apply_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(f"Apply failed: {e.message}")
+            return
+        await ctx.respond("Applying the change and re-rendering…")
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_video_watcher_done)
+
+    async def run_video_revert(self, ctx: CommandContext, job_id: str, version_no: int) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.revert_video(email, job_id, version_no)
+        except TasksAPIError as e:
+            await ctx.respond(f"Revert failed: {e.message}")
+            return
+        if res.get("status") == "reverted":
+            await self._deliver_video(ctx, email, job_id)
+        else:
+            await ctx.respond("Re-rendering that version…")
+            if ctx.notify_channel is not None:
+                watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+                self._background_tasks.add(watcher)
+                watcher.add_done_callback(self._on_video_watcher_done)
+
+    async def run_video_list(self, ctx: CommandContext) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.list_videos(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't list your videos: {e.message}")
+            return
+        vids = res.get("videos", [])
+        if not vids:
+            await ctx.respond("You have no videos yet. Click **New video** to make one.")
+            return
+        lines = [f"- **{v.get('title') or v['id']}** — {v.get('status')}"
+                 + (" (ready)" if v.get("output_available") else "")
+                 for v in vids[:25]]
+        await ctx.respond("Your videos:\n" + "\n".join(lines))
+
+    def _on_video_watcher_done(self, task: "asyncio.Task") -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("video watcher failed: %r", exc, exc_info=exc)
+
+    async def _deliver_video(self, ctx: CommandContext, email: str, job_id: str) -> None:
+        """Post the finished MP4 to the thread: attach when small enough, else a
+        capability link. Then post Refine + version controls."""
+        try:
+            data = await self._tasks_client.get_video(email, job_id)
+        except TasksAPIError:
+            return
+        title = data.get("title") or "your video"
+        share_url = data.get("share_url")
+        versions = []
+        try:
+            versions = (await self._tasks_client.video_versions(email, job_id)).get("versions", [])
+        except TasksAPIError:
+            pass
+        from handlers.video_panel import build_done_components
+        components = build_done_components(job_id, versions)
+        attached = False
+        if self._discord is not None:
+            try:
+                blob = await self._tasks_client.download_video_bytes(email, job_id)
+                if len(blob) <= VIDEO_ATTACH_MAX_MB * 1024 * 1024:
+                    attached = await self._discord.post_channel_file(
+                        ctx.channel_id, [(f"{title[:60]}.mp4", blob, "video/mp4")],
+                        content=f"**{title}** is ready.", components=components)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("video attach failed job=%s: %s", job_id, e)
+        if not attached and ctx.notify_channel is not None:
+            if share_url:
+                await ctx.notify_channel(f"**{title}** is ready: {share_url}")
+            else:
+                await ctx.notify_channel(
+                    f"**{title}** is ready, but it's too large to attach here. "
+                    "Open it in the web Video Studio.")
+            if ctx.notify_channel_msg is not None:
+                await ctx.notify_channel_msg({"content": "Refine or revert:",
+                                              "components": components})
+
+    async def _watch_video(self, ctx: CommandContext, email: str, job_id: str,
+                           *, poll_seconds: int | None = None, max_polls: int | None = None) -> None:
+        """Poll a video job until it terminates, then deliver it. Modeled on
+        _watch_build: detached task, transient errors tolerated."""
+        if ctx.notify_channel is None:
+            return
+
+        async def _notify(msg: str) -> None:
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_video notify failed job=%s: %s", job_id, exc)
+
+        poll_seconds = VIDEO_POLL_SECONDS if poll_seconds is None else poll_seconds
+        max_polls = VIDEO_MAX_POLLS if max_polls is None else max_polls
+        errors = 0
+        for _ in range(max_polls):
+            await asyncio.sleep(poll_seconds)
+            try:
+                st = await self._tasks_client.get_video(email, job_id)
+                errors = 0
+            except (TasksAPIError, httpx.HTTPError) as e:
+                errors += 1
+                logger.warning("watch_video status error (%s) job=%s", getattr(e, "status", "?"), job_id)
+                if errors >= VIDEO_MAX_CONSECUTIVE_ERRORS:
+                    await _notify("Lost track of your video — check **My videos**.")
+                    return
+                continue
+            status = st.get("status")
+            if status == "done":
+                await self._deliver_video(ctx, email, job_id)
+                return
+            if status == "failed":
+                err = (st.get("error") or "").strip()
+                await _notify(f"Video render failed.{(' ' + err) if err else ''}")
+                return
+        await _notify("Your video is still rendering — check **My videos** shortly.")
 
     async def run_panel_outreach(
         self, ctx: CommandContext, role: str, location: str,

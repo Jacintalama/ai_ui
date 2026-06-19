@@ -196,6 +196,15 @@ class TasksClient:
             json={"thread_id": thread_id})
         return True
 
+    async def get_user_video_thread(self, discord_id: str) -> str | None:
+        resp = await self._internal_request("GET", f"/discord-links/{discord_id}/video-thread")
+        return resp.json().get("thread_id")
+
+    async def set_user_video_thread(self, discord_id: str, thread_id: str) -> bool:
+        await self._internal_request("POST", f"/discord-links/{discord_id}/video-thread",
+                                     json={"thread_id": thread_id})
+        return True
+
     async def list_projects(self, user_email: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", "/api/projects", user_email)
         return resp.json()
@@ -233,6 +242,91 @@ class TasksClient:
             "GET", f"/api/aiuibuilder/build/{task_id}", user_email,
         )
         return resp.json()
+
+    # --- Video generation (user-scoped, X-User-Email) ---
+    async def get_video_voices(self) -> dict[str, Any]:
+        # /voices is unauthenticated server-side; reuse _request (the header is harmless).
+        resp = await self._request("GET", "/api/video-jobs/voices", "system@aiui.local")
+        return resp.json()
+
+    async def create_video_draft(self, user_email: str, title: str, prompt: str,
+                                 style: str, voice: str) -> dict[str, Any]:
+        resp = await self._request("POST", "/api/video-jobs/draft", user_email,
+                                   json={"title": title, "prompt": prompt,
+                                         "style": style, "voice": voice})
+        return resp.json()
+
+    async def get_current_video_draft(self, user_email: str) -> dict[str, Any] | None:
+        try:
+            resp = await self._request("GET", "/api/video-jobs/current-draft", user_email)
+        except TasksAPIError as e:
+            if e.status == 404:
+                return None
+            raise
+        return resp.json()
+
+    async def set_video_draft_fields(self, user_email: str, job_id: str, *,
+                                     style: str | None = None, voice: str | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if style is not None:
+            body["style"] = style
+        if voice is not None:
+            body["voice"] = voice
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/draft-set", user_email, json=body)
+        return resp.json()
+
+    async def add_video_screenshots_urls(self, user_email: str, job_id: str,
+                                         urls: list[str]) -> dict[str, Any]:
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/screenshots-by-url",
+                                   user_email, json={"urls": urls})
+        return resp.json()
+
+    async def queue_video(self, user_email: str, job_id: str) -> dict[str, Any]:
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/queue", user_email)
+        return resp.json()
+
+    async def get_video(self, user_email: str, job_id: str) -> dict[str, Any]:
+        resp = await self._request("GET", f"/api/video-jobs/{job_id}", user_email)
+        return resp.json()
+
+    async def list_videos(self, user_email: str) -> dict[str, Any]:
+        resp = await self._request("GET", "/api/video-jobs", user_email)
+        return resp.json()
+
+    async def refine_video(self, user_email: str, job_id: str, message: str) -> dict[str, Any]:
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/refine", user_email,
+                                   json={"message": message})
+        return resp.json()
+
+    async def apply_video(self, user_email: str, job_id: str) -> dict[str, Any]:
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/apply", user_email)
+        return resp.json()
+
+    async def video_versions(self, user_email: str, job_id: str) -> dict[str, Any]:
+        resp = await self._request("GET", f"/api/video-jobs/{job_id}/versions", user_email)
+        return resp.json()
+
+    async def revert_video(self, user_email: str, job_id: str, version_no: int) -> dict[str, Any]:
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/revert", user_email,
+                                   json={"version_no": version_no})
+        return resp.json()
+
+    async def download_video_bytes(self, user_email: str, job_id: str) -> bytes:
+        """Fetch the rendered MP4 (member-auth via X-User-Email). Returns raw bytes."""
+        resp = await self._request("GET", f"/api/video-jobs/{job_id}/download", user_email)
+        return resp.content
+
+    async def fetch_bytes(self, path: str) -> bytes:
+        """GET a public/static path on the tasks service (e.g. a voice sample), no auth.
+        Used to attach the voice preview MP3s."""
+        url = f"{self.base_url}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+        except httpx.HTTPError as e:
+            raise TasksAPIError(0, f"fetch failed: {e}") from e
+        return resp.content
 
     async def start_outreach(
         self, user_email: str, payload: dict[str, Any],

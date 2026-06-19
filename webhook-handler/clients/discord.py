@@ -1,5 +1,6 @@
 """Discord API client for interaction followups and Ed25519 verification."""
 import httpx
+import json
 import logging
 from typing import Optional
 
@@ -137,6 +138,39 @@ class DiscordClient:
                 return False
         except Exception as e:
             logger.error(f"Error posting Discord channel message: {e}")
+            return False
+
+    async def post_channel_file(
+        self, channel_id: str, files: list[tuple[str, bytes, str]],
+        content: str = "", components: list | None = None,
+    ) -> bool:
+        """Post a message with one or more file attachments (bot token, multipart).
+        `files` = list of (filename, data, content_type). Discord allows <=10
+        files. Never raises. Do NOT set Content-Type — httpx sets the multipart
+        boundary itself."""
+        url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
+        body: dict = {"content": (content or "")[:2000],
+                      "attachments": [{"id": i, "filename": fn}
+                                      for i, (fn, _, _) in enumerate(files)]}
+        if components:
+            body["components"] = components
+        multipart = {f"files[{i}]": (fn, data, ctype)
+                     for i, (fn, data, ctype) in enumerate(files)}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bot {self.bot_token}"},
+                    data={"payload_json": json.dumps(body)},
+                    files=multipart,
+                )
+                if response.status_code in (200, 201):
+                    return True
+                logger.error(
+                    f"Discord file post error: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error posting Discord file: {e}")
             return False
 
     async def open_dm(self, user_id: str) -> str | None:

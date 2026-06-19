@@ -1,0 +1,346 @@
+"""Tests for webhook-handler/handlers/video_panel.py — pure builders and custom_id helpers."""
+import pytest
+from handlers.video_panel import (
+    # builders
+    build_video_panel, build_video_modal, build_refine_modal,
+    build_style_select, build_voice_select, build_studio_components,
+    build_generate_row, build_done_components, build_proposal_components,
+    build_video_embed,
+    # constants
+    NEW_ID, LIST_ID, NEW_MODAL_ID,
+    STYLE_PREFIX, VOICE_PREFIX, GENERATE_PREFIX,
+    REFINE_PREFIX, REFINE_MODAL_PREFIX, APPLY_PREFIX, VERSION_PREFIX,
+    TITLE_INPUT, PROMPT_INPUT, REFINE_INPUT,
+    STYLES,
+    # predicates
+    is_vid_new, is_vid_list, is_vid_new_modal,
+    is_vid_style, is_vid_voice, is_vid_generate,
+    is_vid_refine, is_vid_refine_modal, is_vid_apply, is_vid_version,
+    # extractors
+    job_from_style, job_from_voice, job_from_generate,
+    job_from_refine, job_from_refine_modal, job_from_apply, job_from_version,
+)
+from handlers.app_builder_panel import ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT
+
+
+# ---------------------------------------------------------------------------
+# Panel
+# ---------------------------------------------------------------------------
+
+def test_panel_has_new_and_list_buttons():
+    payload = build_video_panel()
+    buttons = [c for row in payload["components"] for c in row["components"]
+               if c.get("type") == BUTTON]
+    ids = {b["custom_id"] for b in buttons}
+    assert NEW_ID in ids
+    assert LIST_ID in ids
+    assert len(ids) == 2
+
+
+def test_panel_rows_are_action_rows():
+    payload = build_video_panel()
+    for row in payload["components"]:
+        assert row["type"] == ACTION_ROW
+
+
+# ---------------------------------------------------------------------------
+# New-video modal
+# ---------------------------------------------------------------------------
+
+def test_modal_field_custom_ids():
+    modal = build_video_modal()
+    assert modal["custom_id"] == NEW_MODAL_ID
+    inputs = [c for row in modal["components"] for c in row["components"]
+              if c.get("type") == TEXT_INPUT]
+    input_ids = [inp["custom_id"] for inp in inputs]
+    assert input_ids == [TITLE_INPUT, PROMPT_INPUT]
+
+
+def test_modal_fields_required():
+    modal = build_video_modal()
+    inputs = [c for row in modal["components"] for c in row["components"]
+              if c.get("type") == TEXT_INPUT]
+    for inp in inputs:
+        assert inp.get("required") is True
+
+
+# ---------------------------------------------------------------------------
+# Style select
+# ---------------------------------------------------------------------------
+
+def test_style_select_has_three_options():
+    sel = build_style_select("job-1")
+    assert sel["type"] == SELECT_MENU
+    assert sel["custom_id"] == f"{STYLE_PREFIX}job-1"
+    assert len(sel["options"]) == len(STYLES)
+
+
+def test_style_select_option_values_match_style_keys():
+    sel = build_style_select("job-2")
+    values = {opt["value"] for opt in sel["options"]}
+    expected = {key for key, _, _ in STYLES}
+    assert values == expected
+
+
+def test_style_select_default_is_clean_product_demo():
+    sel = build_style_select("job-3")
+    defaults = [opt for opt in sel["options"] if opt.get("default")]
+    assert len(defaults) == 1
+    assert defaults[0]["value"] == "clean_product_demo"
+
+
+def test_style_select_custom_default():
+    sel = build_style_select("job-4", current="cinematic")
+    defaults = [opt for opt in sel["options"] if opt.get("default")]
+    assert len(defaults) == 1
+    assert defaults[0]["value"] == "cinematic"
+
+
+# ---------------------------------------------------------------------------
+# Voice select
+# ---------------------------------------------------------------------------
+
+_VOICES = [
+    {"id": "amy", "label": "Amy", "accent": "US", "gender": "female"},
+    {"id": "josh", "label": "Josh", "accent": "US", "gender": "male"},
+    {"id": "bella", "label": "Bella", "accent": "UK", "gender": "female"},
+]
+
+
+def test_voice_select_builds_from_catalog():
+    sel = build_voice_select("job-5", _VOICES)
+    assert sel["type"] == SELECT_MENU
+    assert sel["custom_id"] == f"{VOICE_PREFIX}job-5"
+    assert len(sel["options"]) == len(_VOICES)
+
+
+def test_voice_select_default():
+    sel = build_voice_select("job-6", _VOICES, current="josh")
+    defaults = [opt for opt in sel["options"] if opt.get("default")]
+    assert len(defaults) == 1
+    assert defaults[0]["value"] == "josh"
+
+
+def test_voice_select_skips_entries_without_id():
+    voices = [{"id": "amy", "label": "Amy"}, {"label": "No ID"}]
+    sel = build_voice_select("job-7", voices)
+    assert len(sel["options"]) == 1
+    assert sel["options"][0]["value"] == "amy"
+
+
+def test_voice_select_caps_at_25():
+    voices = [{"id": f"v{i}", "label": f"Voice {i}"} for i in range(30)]
+    sel = build_voice_select("job-8", voices)
+    assert len(sel["options"]) <= 25
+
+
+# ---------------------------------------------------------------------------
+# custom_id round-trips
+# ---------------------------------------------------------------------------
+
+def test_generate_custom_id_roundtrip():
+    cid = f"{GENERATE_PREFIX}abc-123"
+    assert is_vid_generate(cid)
+    assert job_from_generate(cid) == "abc-123"
+
+
+def test_generate_id_is_not_refine():
+    cid = f"{GENERATE_PREFIX}abc-123"
+    assert not is_vid_refine(cid)
+    assert not is_vid_refine_modal(cid)
+
+
+def test_style_custom_id_roundtrip():
+    cid = f"{STYLE_PREFIX}job-x"
+    assert is_vid_style(cid)
+    assert job_from_style(cid) == "job-x"
+
+
+def test_voice_custom_id_roundtrip():
+    cid = f"{VOICE_PREFIX}job-y"
+    assert is_vid_voice(cid)
+    assert job_from_voice(cid) == "job-y"
+
+
+def test_refine_custom_id_roundtrip():
+    cid = f"{REFINE_PREFIX}job-r"
+    assert is_vid_refine(cid)
+    assert job_from_refine(cid) == "job-r"
+
+
+def test_refine_modal_custom_id_roundtrip():
+    cid = f"{REFINE_MODAL_PREFIX}job-rm"
+    assert is_vid_refine_modal(cid)
+    assert job_from_refine_modal(cid) == "job-rm"
+
+
+def test_apply_custom_id_roundtrip():
+    cid = f"{APPLY_PREFIX}job-a"
+    assert is_vid_apply(cid)
+    assert job_from_apply(cid) == "job-a"
+
+
+def test_version_custom_id_roundtrip():
+    cid = f"{VERSION_PREFIX}job-v"
+    assert is_vid_version(cid)
+    assert job_from_version(cid) == "job-v"
+
+
+# ---------------------------------------------------------------------------
+# Bare-prefix raises ValueError
+# ---------------------------------------------------------------------------
+
+def test_job_from_generate_bare_prefix_raises():
+    with pytest.raises(ValueError):
+        job_from_generate(GENERATE_PREFIX)
+
+
+def test_job_from_style_bare_prefix_raises():
+    with pytest.raises(ValueError):
+        job_from_style(STYLE_PREFIX)
+
+
+def test_job_from_voice_bare_prefix_raises():
+    with pytest.raises(ValueError):
+        job_from_voice(VOICE_PREFIX)
+
+
+def test_job_from_refine_bare_prefix_raises():
+    with pytest.raises(ValueError):
+        job_from_refine(REFINE_PREFIX)
+
+
+def test_job_from_refine_modal_bare_prefix_raises():
+    with pytest.raises(ValueError):
+        job_from_refine_modal(REFINE_MODAL_PREFIX)
+
+
+def test_job_from_apply_bare_prefix_raises():
+    with pytest.raises(ValueError):
+        job_from_apply(APPLY_PREFIX)
+
+
+def test_job_from_version_bare_prefix_raises():
+    with pytest.raises(ValueError):
+        job_from_version(VERSION_PREFIX)
+
+
+# ---------------------------------------------------------------------------
+# CRITICAL: refine vs refine_modal are disjoint prefixes
+# ---------------------------------------------------------------------------
+
+def test_refinemodal_id_does_not_match_refine_predicate():
+    """aiuivid:refinemodal:<job> must NOT match is_vid_refine (starts with "aiuivid:refine:")
+    because after "aiuivid:refine" comes "modal", not ":". Confirm disjoint routing."""
+    cid = "aiuivid:refinemodal:j1"
+    assert is_vid_refine(cid) is False
+    assert is_vid_refine_modal(cid) is True
+
+
+def test_refine_id_does_not_match_refine_modal_predicate():
+    cid = f"{REFINE_PREFIX}j2"
+    assert is_vid_refine(cid) is True
+    assert is_vid_refine_modal(cid) is False
+
+
+# ---------------------------------------------------------------------------
+# build_done_components — version select only when versions given
+# ---------------------------------------------------------------------------
+
+def test_done_components_with_versions_has_version_select():
+    versions = [
+        {"version_no": 1, "current": False},
+        {"version_no": 2, "current": True},
+    ]
+    rows = build_done_components("job-d1", versions)
+    # First row is Refine button
+    assert any(
+        c.get("custom_id") == f"{REFINE_PREFIX}job-d1"
+        for row in rows for c in row["components"]
+    )
+    # Second row is a SELECT_MENU for version history
+    selects = [c for row in rows for c in row["components"] if c.get("type") == SELECT_MENU]
+    assert len(selects) == 1
+    assert selects[0]["custom_id"] == f"{VERSION_PREFIX}job-d1"
+    labels = [opt["label"] for opt in selects[0]["options"]]
+    assert any("current" in lbl for lbl in labels)
+
+
+def test_done_components_without_versions_has_no_select():
+    rows = build_done_components("job-d2", [])
+    selects = [c for row in rows for c in row["components"] if c.get("type") == SELECT_MENU]
+    assert selects == []
+
+
+def test_done_components_skips_versions_without_version_no():
+    versions = [{"current": True}]  # missing version_no
+    rows = build_done_components("job-d3", versions)
+    selects = [c for row in rows for c in row["components"] if c.get("type") == SELECT_MENU]
+    assert selects == []
+
+
+# ---------------------------------------------------------------------------
+# Refine modal
+# ---------------------------------------------------------------------------
+
+def test_refine_modal_custom_id_and_field():
+    modal = build_refine_modal("job-rm2")
+    assert modal["custom_id"] == f"{REFINE_MODAL_PREFIX}job-rm2"
+    inputs = [c for row in modal["components"] for c in row["components"]
+              if c.get("type") == TEXT_INPUT]
+    assert len(inputs) == 1
+    assert inputs[0]["custom_id"] == REFINE_INPUT
+    assert inputs[0]["required"] is True
+
+
+# ---------------------------------------------------------------------------
+# build_proposal_components
+# ---------------------------------------------------------------------------
+
+def test_proposal_components_has_apply_button():
+    rows = build_proposal_components("job-p1")
+    buttons = [c for row in rows for c in row["components"] if c.get("type") == BUTTON]
+    assert len(buttons) == 1
+    assert buttons[0]["custom_id"] == f"{APPLY_PREFIX}job-p1"
+
+
+# ---------------------------------------------------------------------------
+# build_studio_components
+# ---------------------------------------------------------------------------
+
+def test_studio_components_has_style_voice_generate_rows():
+    rows = build_studio_components("job-s1", _VOICES)
+    assert len(rows) == 3
+    # row 0: style select
+    assert any(c.get("type") == SELECT_MENU and c.get("custom_id") == f"{STYLE_PREFIX}job-s1"
+               for c in rows[0]["components"])
+    # row 1: voice select
+    assert any(c.get("type") == SELECT_MENU and c.get("custom_id") == f"{VOICE_PREFIX}job-s1"
+               for c in rows[1]["components"])
+    # row 2: generate button
+    assert any(c.get("custom_id") == f"{GENERATE_PREFIX}job-s1"
+               for c in rows[2]["components"])
+
+
+# ---------------------------------------------------------------------------
+# build_generate_row
+# ---------------------------------------------------------------------------
+
+def test_generate_row_has_generate_button():
+    rows = build_generate_row("job-g1")
+    assert len(rows) == 1
+    buttons = [c for row in rows for c in row["components"] if c.get("type") == BUTTON]
+    assert len(buttons) == 1
+    assert buttons[0]["custom_id"] == f"{GENERATE_PREFIX}job-g1"
+
+
+# ---------------------------------------------------------------------------
+# build_video_embed
+# ---------------------------------------------------------------------------
+
+def test_video_embed_has_expected_keys():
+    embed = build_video_embed()
+    assert "title" in embed
+    assert "color" in embed
+    assert "description" in embed
+    assert "footer" in embed

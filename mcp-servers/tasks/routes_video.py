@@ -34,6 +34,9 @@ import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -45,7 +48,7 @@ from db import session
 from templates_video.style_config import STYLE_CONFIGS
 from video_voices import DEFAULT_VOICE_ID, is_valid_voice, voice_catalog
 from heavy_lock import enough_free_disk
-from video_capability import verify_video_capability
+from video_capability import mint_video_capability, verify_video_capability
 from video_models import VideoJob
 from video_plan import validate_plan
 from video_refine import (
@@ -66,6 +69,15 @@ logger = logging.getLogger("routes_video")
 MAX_FILES = 12
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TOTAL_BYTES = 50 * 1024 * 1024
+
+ALLOWED_URL_HOSTS = {
+    h.strip().lower()
+    for h in os.environ.get(
+        "VIDEO_URL_INTAKE_ALLOWED_HOSTS",
+        "cdn.discordapp.com,media.discordapp.net",
+    ).split(",")
+    if h.strip()
+}
 
 
 def _apps_dir() -> Path:
@@ -111,6 +123,33 @@ class RefineRequest(BaseModel):
 
 class RevertRequest(BaseModel):
     version_no: int
+
+
+class DraftRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    style: str = Field("clean_product_demo", max_length=50)
+    voice: str = Field(DEFAULT_VOICE_ID, max_length=50)
+
+
+@router.post("/draft", status_code=201)
+async def create_draft(body: DraftRequest, user: CurrentUser = Depends(current_user)) -> dict:
+    """Create a 'collecting' draft video job (no screenshots yet) for the Discord
+    wizard. The render worker only picks 'queued' jobs, so a draft is inert until
+    POST /{job_id}/queue flips it. Daily limit is NOT charged here (only at queue)."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    if body.style not in STYLE_CONFIGS:
+        raise HTTPException(400, f"Unknown style: {body.style}")
+    if not is_valid_voice(body.voice):
+        raise HTTPException(400, f"Unknown voice: {body.voice}")
+    job_id = uuid.uuid4()
+    slug = f"vid-{job_id.hex[:8]}"
+    async with session() as s:
+        s.add(VideoJob(id=job_id, slug=slug, user_email=user.email, prompt=body.prompt,
+                       title=body.title, style=body.style, voice=body.voice, status="collecting"))
+        await s.commit()
+    return {"id": str(job_id), "slug": slug, "status": "collecting"}
 
 
 @router.post("/upload", status_code=201)
@@ -171,6 +210,7 @@ async def upload(
                     and_(
                         VideoJob.user_email == user.email,
                         VideoJob.created_at >= cutoff,
+                        VideoJob.status.in_(["queued", "scripting", "rendering", "done"]),
                     )
                 )
             )
@@ -235,6 +275,25 @@ async def voices() -> dict:
     return {"voices": voice_catalog(), "default": DEFAULT_VOICE_ID}
 
 
+# Registered BEFORE "/{job_id}" so the literal "current-draft" path is not
+# captured as a job id.
+@router.get("/current-draft")
+async def current_draft(user: CurrentUser = Depends(current_user)) -> dict:
+    """The caller's newest in-progress draft ('collecting') + its screenshot count.
+    404 when there is no draft. Used by `/video add` to find which draft to attach to."""
+    async with session() as s:
+        job = (await s.execute(
+            select(VideoJob)
+            .where(and_(VideoJob.user_email == user.email, VideoJob.status == "collecting"))
+            .order_by(VideoJob.created_at.desc())
+        )).scalars().first()
+    if job is None:
+        raise HTTPException(404, "No draft in progress")
+    return {"id": str(job.id), "slug": job.slug, "title": job.title,
+            "style": job.style, "voice": job.voice,
+            "screenshot_count": len(_list_screenshots(job.slug, str(job.id)))}
+
+
 def _coerce_job_id(job_id: str) -> uuid.UUID:
     """Parse a path job_id into a UUID, treating a malformed id as a missing
     job (404) rather than letting it bubble up as a 500."""
@@ -281,6 +340,15 @@ async def job_status(
                 )
             ).scalar() or 0
         output_available = job.status == "done" and job.output_path is not None
+        share_url = None
+        if output_available:
+            base = os.environ.get("VIDEO_PUBLIC_BASE", "").rstrip("/")
+            if base:
+                try:
+                    tok = mint_video_capability(job.user_email, job.slug, str(job.id))
+                    share_url = f"{base}/api/video-jobs/{job.id}/download?cap={tok}"
+                except RuntimeError:
+                    share_url = None  # OAUTH_STATE_SECRET unset -> no link
         return {
             "id": str(job.id),
             "slug": job.slug,
@@ -289,6 +357,7 @@ async def job_status(
             "queue_position": queue_position,
             "error": job.error,
             "output_available": output_available,
+            "share_url": share_url,
             "conversation": job.conversation or [],
             "current_version_no": job.current_version_no,
             "pending": latest_pending_proposal(job.conversation or []) is not None,
@@ -546,6 +615,91 @@ async def add_screenshots(
     return {"screenshots": _list_screenshots(slug, str(jid))}
 
 
+class ScreenshotUrlsRequest(BaseModel):
+    urls: list[str] = Field(..., min_length=1, max_length=MAX_FILES)
+
+
+def _check_intake_url(u: str) -> None:
+    """SSRF guard: only https URLs on the Discord CDN allow-list may be fetched.
+    Fails closed (400) for any other scheme or host."""
+    p = urlparse(u)
+    if p.scheme != "https" or (p.hostname or "").lower() not in ALLOWED_URL_HOSTS:
+        raise HTTPException(400, "screenshot URL host not allowed")
+
+
+@router.post("/{job_id}/screenshots-by-url")
+async def add_screenshots_by_url(
+    job_id: str,
+    body: ScreenshotUrlsRequest,
+    user: CurrentUser = Depends(current_user),
+) -> dict:
+    """Add screenshots to a job by fetching image URLs server-side. Mirrors
+    /screenshots guards (count/size/validation/disk) and screenshot-N numbering.
+    SSRF guard restricts fetches to the Discord CDN allow-list, validated up front
+    before any DB work."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    for u in body.urls:
+        _check_intake_url(u)
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(
+            select(VideoJob).where(VideoJob.id == jid)
+        )).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        slug = job.slug
+    if not enough_free_disk(
+        str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
+    ):
+        raise HTTPException(507, "Insufficient storage; try again later")
+    shots_dir = _apps_dir() / slug / ".video" / str(jid) / "screenshots"
+    existing = _list_screenshots(slug, str(jid))
+    start = _next_screenshot_index(existing)
+    if len(existing) + len(body.urls) > MAX_FILES:
+        raise HTTPException(400, f"max {MAX_FILES} screenshots per job")
+    total = sum(
+        (shots_dir / name).stat().st_size
+        for name in existing
+        if (shots_dir / name).is_file()
+    )
+    raw: list[bytes] = []
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        for url in body.urls:
+            try:
+                async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    # Reject up front if the server declares an oversized body.
+                    declared = resp.headers.get("content-length")
+                    if declared is not None and declared.isdigit() and int(declared) > MAX_FILE_BYTES:
+                        raise HTTPException(413, "screenshot too large (max 10 MB)")
+                    # Stream, aborting the moment the running size exceeds the cap
+                    # so an oversized body is never fully buffered in memory.
+                    buf = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > MAX_FILE_BYTES:
+                            raise HTTPException(413, "screenshot too large (max 10 MB)")
+            except httpx.HTTPError:
+                raise HTTPException(400, "could not fetch screenshot URL")
+            data = bytes(buf)
+            total += len(data)
+            if total > MAX_TOTAL_BYTES:
+                raise HTTPException(413, "batch too large")
+            try:
+                validate_screenshot(urlparse(url).path.rsplit("/", 1)[-1] or "x.png", data)
+            except ScreenshotRejected as e:
+                raise HTTPException(400, str(e))
+            raw.append(data)
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    for i, data in enumerate(raw):
+        (shots_dir / f"screenshot-{start + i}.png").write_bytes(data)
+    shots = _list_screenshots(slug, str(jid))
+    return {"screenshots": shots, "count": len(shots)}
+
+
 @router.get("/{job_id}/versions")
 async def versions(job_id: str, user: CurrentUser = Depends(current_user)) -> dict:
     """List saved render versions for a job (newest state via current/available flags).
@@ -630,3 +784,76 @@ async def revert(
         )
         await s.commit()
         return {"status": "queued", "output_available": False}
+
+
+class DraftPatch(BaseModel):
+    style: str | None = Field(None, max_length=50)
+    voice: str | None = Field(None, max_length=50)
+
+
+@router.post("/{job_id}/queue")
+async def queue_job(job_id: str, user: CurrentUser = Depends(current_user)) -> dict:
+    """Commit a draft to rendering: 'collecting' -> 'queued'. Validates the draft
+    has >=1 screenshot and enforces the per-user daily limit HERE (counting only
+    jobs that actually rendered/queued, so abandoned drafts are free)."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        if job.status != "collecting":
+            raise HTTPException(409, "Video is not a draft")
+        if not _list_screenshots(job.slug, str(jid)):
+            raise HTTPException(400, "Add at least one screenshot first")
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        used = (await s.execute(
+            select(func.count()).select_from(VideoJob).where(and_(
+                VideoJob.user_email == job.user_email,
+                VideoJob.created_at >= cutoff,
+                VideoJob.status.in_(["queued", "scripting", "rendering", "done"]),
+            ))
+        )).scalar() or 0
+        if used >= int(os.environ.get("VIDEO_MAX_PER_USER_PER_DAY", "10")):
+            raise HTTPException(429, "Daily video limit reached")
+        await s.execute(update(VideoJob).where(VideoJob.id == jid).values(status="queued"))
+        await s.commit()
+        queue_position = (await s.execute(
+            select(func.count()).select_from(VideoJob).where(and_(
+                VideoJob.status == "queued",
+                VideoJob.created_at < job.created_at,
+            ))
+        )).scalar() or 0
+    return {"status": "queued", "queue_position": queue_position}
+
+
+@router.post("/{job_id}/draft-set")
+async def update_draft(job_id: str, body: DraftPatch, user: CurrentUser = Depends(current_user)) -> dict:
+    """Update style/voice on a 'collecting' draft (the Discord select handlers)."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        if job.status != "collecting":
+            raise HTTPException(409, "Video is not a draft")
+        vals = {}
+        if body.style is not None:
+            if body.style not in STYLE_CONFIGS:
+                raise HTTPException(400, f"Unknown style: {body.style}")
+            vals["style"] = body.style
+        if body.voice is not None:
+            if not is_valid_voice(body.voice):
+                raise HTTPException(400, f"Unknown voice: {body.voice}")
+            vals["voice"] = body.voice
+        if vals:
+            await s.execute(update(VideoJob).where(VideoJob.id == jid).values(**vals))
+            await s.commit()
+    return {"status": "ok", **vals}

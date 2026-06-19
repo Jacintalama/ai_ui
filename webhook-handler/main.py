@@ -189,6 +189,10 @@ async def lifespan(app: FastAPI):
             application_id=settings.discord_application_id,
             bot_token=settings.discord_bot_token,
         )
+        # Give the router a DiscordClient handle so video runners can attach
+        # finished MP4s to the thread (bot-token multipart, outlives interactions).
+        if command_router is not None:
+            command_router._discord = discord_client
         discord_command_handler = DiscordCommandHandler(
             discord_client=discord_client,
             command_router=command_router,
