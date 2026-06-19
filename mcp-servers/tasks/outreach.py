@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 from pydantic import BaseModel
@@ -63,7 +63,7 @@ def cap_and_dedupe(candidates: list[Candidate], count: int) -> list[Candidate]:
 
 
 def build_outreach_prompt(role: str, location: str, jobdesc: str, count: int,
-                          *, direction: str = "hire") -> str:
+                          *, direction: Literal["hire", "reverse"] = "hire") -> str:
     if direction == "reverse":
         rloc = f" in {location}" if location.strip() else ""
         return f"""You are a job-search assistant working ON BEHALF OF a job seeker. \
@@ -84,8 +84,9 @@ null if you cannot find a real one.
 body), grounded in the seeker's background above and signed as the seeker.
 3. Output EXACTLY ONE fenced json block (no prose after it), then a new line with \
 the single word COMPLETED. Use name = the company, github_url = the company \
-careers/jobs URL, email = the contact email (or null), and subject/body = the \
-application:
+careers/jobs URL (NOTE: field is intentionally reused from the hire flow — here it \
+holds a careers/jobs URL, not a GitHub profile URL), email = the contact email \
+(or null), and subject/body = the application:
 ```json
 {{"candidates":[{{"name":"...","github_url":"...","email":"... or null","subject":"...","body":"..."}}]}}
 ```
