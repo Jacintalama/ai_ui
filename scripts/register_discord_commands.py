@@ -111,7 +111,7 @@ def main() -> int:
     payload = [build_command_payload(), build_video_command_payload()]  # PUT replaces the whole list
     headers = {"Authorization": f"Bot {token}", "Content-Type": "application/json"}
 
-    print(f"Registering /aiui with {len(SUBCOMMANDS)} subcommands ({scope})...")
+    print(f"Registering /aiui ({len(SUBCOMMANDS)} subcommands) and /video ({scope})...")
     with httpx.Client(timeout=30.0) as client:
         r = client.put(url, headers=headers, json=payload)
     if r.status_code in (200, 201):
