@@ -125,10 +125,55 @@ def build_review_message(task_id: str, candidates: list[dict], *,
     return {"text": header[:_SECTION_MAX], "blocks": blocks}
 
 
-def build_edit_modal_view(task_id: str, candidate: dict, *,
-                          response_url: str = "", kind: str = "hire") -> dict:
-    """Placeholder — implemented in a later task."""
-    raise NotImplementedError
+def build_edit_modal_view(task_id: str, candidate: dict,
+                          response_url: str = "") -> dict:
+    """Slack modal to edit one candidate's email/subject/body.
+
+    callback_id = aiuiout:editmodal:<task_id>:<cid>. Block actions carry a
+    response_url but view_submission does NOT, so we stash the block action's
+    response_url (alongside task_id/cid) in private_metadata as JSON. On submit
+    the router reads it back to replace the review message in place. Empty values
+    omit initial_value (Slack rejects initial_value="")."""
+    cid = candidate.get("id", "")
+    name = candidate.get("name", "")
+    meta = json.dumps({"response_url": response_url or "",
+                       "task_id": task_id, "cid": cid})
+
+    def _input(block_id: str, input_id: str, label: str, value, *,
+               multiline: bool, maxlen: int) -> dict:
+        element: dict = {
+            "type": "plain_text_input",
+            "action_id": input_id,
+            "multiline": multiline,
+            "max_length": maxlen,
+        }
+        v = (value or "")[:maxlen]
+        if v:
+            element["initial_value"] = v
+        return {
+            "type": "input",
+            "block_id": block_id,
+            "optional": True,
+            "label": {"type": "plain_text", "text": label},
+            "element": element,
+        }
+
+    return {
+        "type": "modal",
+        "callback_id": f"{EDITMODAL_PREFIX}{task_id}:{cid}",
+        "private_metadata": meta,
+        "title": {"type": "plain_text", "text": f"Edit: {name}"[:_TITLE_MAX]},
+        "submit": {"type": "plain_text", "text": "Save"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": [
+            _input(_EMAIL_BLOCK_ID, _EMAIL_INPUT_ID, "Email (blank = don't email)",
+                   candidate.get("email"), multiline=False, maxlen=200),
+            _input(_SUBJECT_BLOCK_ID, _SUBJECT_INPUT_ID, "Subject",
+                   candidate.get("subject"), multiline=False, maxlen=200),
+            _input(_BODY_BLOCK_ID, _BODY_INPUT_ID, "Message",
+                   candidate.get("body"), multiline=True, maxlen=_SECTION_MAX),
+        ],
+    }
 
 
 def build_sent_message(task_id: str, sent: list[dict], *,
@@ -138,21 +183,48 @@ def build_sent_message(task_id: str, sent: list[dict], *,
     raise NotImplementedError
 
 
-def edit_fields_from_view(view: dict) -> dict:
-    """Placeholder — implemented in a later task."""
-    raise NotImplementedError
+def edit_fields_from_view(view: dict) -> tuple[str, str, str]:
+    """(email, subject, body) from an editmodal view_submission's state."""
+    values = (view or {}).get("state", {}).get("values", {})
+
+    def _val(block_id: str, input_id: str) -> str:
+        return (
+            ((values.get(block_id) or {}).get(input_id) or {}).get("value") or ""
+        ).strip()
+
+    return (
+        _val(_EMAIL_BLOCK_ID, _EMAIL_INPUT_ID),
+        _val(_SUBJECT_BLOCK_ID, _SUBJECT_INPUT_ID),
+        _val(_BODY_BLOCK_ID, _BODY_INPUT_ID),
+    )
 
 
-def ids_from_editmodal(action_id: str) -> tuple[str, str]:
-    """Placeholder — implemented in a later task."""
-    raise NotImplementedError
+def ids_from_editmodal(callback_id: str) -> tuple[str, str]:
+    """aiuiout:editmodal:<task_id>:<cid> -> (task_id, cid). task_id is a UUID
+    (no colons) so the final ':' splits cleanly."""
+    rest = callback_id[len(EDITMODAL_PREFIX):]
+    task_id, _, cid = rest.rpartition(":")
+    return task_id, cid
 
 
-def response_url_from_meta(view: dict) -> str:
-    """Placeholder — implemented in a later task."""
-    raise NotImplementedError
+def response_url_from_meta(private_metadata: str) -> str:
+    """Pull the stashed response_url out of an edit modal's private_metadata JSON.
+    Returns "" on any parse failure (router then posts a fresh review message)."""
+    try:
+        return (json.loads(private_metadata or "{}") or {}).get("response_url", "") or ""
+    except (ValueError, TypeError):
+        return ""
 
 
-def sample_edit_state(task_id: str, cid: str) -> dict:
-    """Placeholder — implemented in a later task."""
-    raise NotImplementedError
+def sample_edit_state(email: str, subject: str, body: str) -> dict:
+    """A view.state.values dict shaped exactly as Slack sends an edit-modal
+    submit. Used in tests so edit_fields_from_view and the test agree on the
+    structure without duplicating the block/input id constants."""
+    def _e(v: str) -> dict:
+        return {"type": "plain_text_input", "value": v}
+
+    return {
+        _EMAIL_BLOCK_ID: {_EMAIL_INPUT_ID: _e(email)},
+        _SUBJECT_BLOCK_ID: {_SUBJECT_INPUT_ID: _e(subject)},
+        _BODY_BLOCK_ID: {_BODY_INPUT_ID: _e(body)},
+    }
