@@ -43,6 +43,9 @@ class OutreachStatusResponse(BaseModel):
     text: str = ""
     candidates: list[dict] = []
     job_title: str = ""
+    direction: str = "hire"
+    role: str = ""
+    location: str = ""
 
 
 async def _process_outreach_result(raw_log: str, *, job_title: str, count: int,

@@ -129,3 +129,14 @@ async def test_process_result_reverse_not_found_company_copy():
     assert out["status"] == "failed" and out["found"] == 0
     assert "companies" in out["text"]
     assert out["direction"] == "reverse"
+
+
+def test_outreach_request_direction_default_hire():
+    assert routes_outreach.OutreachRequest(jobdesc="hiring a dev").direction == "hire"
+    assert routes_outreach.OutreachRequest(jobdesc="x", direction="reverse").direction == "reverse"
+
+
+def test_outreach_status_response_has_direction_role_location():
+    r = routes_outreach.OutreachStatusResponse(status="review")
+    assert r.direction == "hire"
+    assert r.role == "" and r.location == ""
