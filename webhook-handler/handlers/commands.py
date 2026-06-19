@@ -2369,6 +2369,53 @@ class CommandRouter:
             self._background_tasks.add(w)
             w.add_done_callback(self._background_tasks.discard)
 
+    @staticmethod
+    def _review_builder(ctx: CommandContext):
+        """Resolve the review-message builder module for ``ctx.platform``:
+        Discord embeds (handlers.recruiting_review) vs Slack Block Kit
+        (handlers.slack_recruiting_review, added in Phase 3). Lazy-imported so
+        Phase 2 (Discord) does not require the Slack module to exist yet."""
+        if ctx.platform == "discord":
+            from handlers import recruiting_review as rr
+        else:
+            from handlers import slack_recruiting_review as rr
+        return rr
+
+    async def run_panel_reverse(
+        self, ctx: CommandContext, role: str, location: str,
+        jobdesc: str, count: int,
+    ) -> None:
+        """Reverse recruiting ('Find Jobs'): find COMPANIES hiring for the
+        seeker's target role and draft a tailored application to each, for review
+        before send. Mirrors run_panel_outreach but sends direction='reverse' and
+        is ALWAYS manual (review-before-send) on every platform — unlike
+        run_panel_outreach, whose ``manual`` is Discord-only today."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        if not (jobdesc or "").strip():
+            await ctx.respond(
+                "Please paste your background / skills so I can tailor each application.")
+            return
+        try:
+            result = await self._tasks_client.start_outreach(email, {
+                "role": role, "location": location, "jobdesc": jobdesc,
+                "count": count, "mode": "manual", "direction": "reverse"})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        task_id = result["task_id"]
+        where = f"{role}" + (f" · {location}" if location else "")
+        await ctx.respond(
+            f"\U0001f50e Searching for companies hiring for **{where}** … I'll post "
+            "the list here to review when it's ready (usually a minute or two).")
+        if ctx.notify_channel is not None:
+            w = asyncio.create_task(self._watch_outreach_review(
+                ctx, email, task_id, role, location, direction="reverse"))
+            self._background_tasks.add(w)
+            w.add_done_callback(self._background_tasks.discard)
+
     async def _watch_outreach(
         self, ctx: CommandContext, email: str, task_id: str,
         *, poll_seconds: int | None = None, max_polls: int | None = None,
@@ -2412,13 +2459,16 @@ class CommandRouter:
 
     async def _watch_outreach_review(
         self, ctx: CommandContext, email: str, task_id: str,
-        role: str, location: str,
+        role: str, location: str, *, direction: str = "hire",
     ) -> None:
-        """Discord manual mode: poll the find until it reaches ``review``, then
-        post the interactive overview (embed + select/edit/send components) to
-        the channel as a fresh bot-token message that outlives the interaction
-        window. Slack keeps the auto-send path via ``_watch_outreach``."""
-        from handlers import recruiting_review as rr
+        """Manual mode: poll the find until it reaches ``review``, then post the
+        interactive overview to the channel as a fresh message that outlives the
+        interaction window. The builder is chosen by ``ctx.platform`` (Discord
+        embeds vs Slack Block Kit, Phase 3) and copy by ``direction`` (hire vs
+        reverse). Slack hire keeps the auto-send path via ``_watch_outreach``."""
+        from handlers import recruiting_labels
+        rr = self._review_builder(ctx)
+        lab = recruiting_labels.labels_for(direction)
         if ctx.notify_channel is None:
             return
 
@@ -2437,7 +2487,7 @@ class CommandRouter:
                     # so the result still lands somewhere.
                     embeds = msg.get("embeds") or []
                     desc = embeds[0].get("description", "") if embeds else ""
-                    await ctx.notify_channel(desc or "Engineers ready to review.")
+                    await ctx.notify_channel(desc or lab["ready"])
             except Exception as exc:  # noqa: BLE001
                 logger.error("watch_outreach_review rich notify failed task=%s: %s", task_id, exc)
 
@@ -2453,10 +2503,12 @@ class CommandRouter:
                 continue
             if status == "review":
                 msg = rr.build_review_message(
-                    task_id, st.get("candidates", []), role=role, location=location)
+                    task_id, st.get("candidates", []),
+                    role=st.get("role", role), location=st.get("location", location),
+                    kind=st.get("direction", direction))
                 await _notify_msg(msg)
                 return
-            await _notify_text((st.get("text") or "").strip() or "No engineers found.")
+            await _notify_text((st.get("text") or "").strip() or lab["none_found"])
             return
         await _notify_text("Outreach search timed out — try again.")
 
