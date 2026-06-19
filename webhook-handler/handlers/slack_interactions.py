@@ -513,19 +513,26 @@ class SlackInteractionsHandler:
 
         async def notify_channel_msg(msg: dict) -> None:
             await self.slack.post_message(
-                channel=channel_id, blocks=msg["blocks"], text=msg.get("text", ""))
+                channel=channel_id, blocks=msg.get("blocks", []),
+                text=msg.get("text", ""))
 
         async def edit_message(msg: dict) -> None:
-            if response_url:
-                # Router warning nudges (e.g. "Pick at least one company first.",
-                # invalid-email notice) arrive as msg["content"]; Slack only renders
-                # text/blocks, so surface content into the message text or the nudge
-                # is lost (parity with Discord, which shows it as the content).
-                text = msg.get("content") or msg.get("text", "")
-                await self.slack.post_to_response_url(
-                    response_url, text,
-                    response_type="in_channel", replace_original=True,
-                    blocks=msg["blocks"])
+            if not response_url:
+                return
+            # Router warning nudges (e.g. "Pick at least one company first.",
+            # invalid-email notice) arrive as msg["content"]; Slack renders blocks,
+            # not the text fallback, so ALSO surface the warning as an inline
+            # context block (parity with Discord, which shows it as the content line).
+            blocks = list(msg.get("blocks", []))
+            warning = msg.get("content")
+            if warning:
+                blocks = [{"type": "context",
+                           "elements": [{"type": "mrkdwn", "text": warning}]},
+                          *blocks]
+            await self.slack.post_to_response_url(
+                response_url, warning or msg.get("text", ""),
+                response_type="in_channel", replace_original=True,
+                blocks=blocks)
 
         return CommandContext(
             user_id=user_id, user_name=user_name, channel_id=channel_id,
