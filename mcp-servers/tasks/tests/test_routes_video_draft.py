@@ -158,6 +158,28 @@ async def test_draft_set_rejects_non_collecting_409(db_session):
     assert r.status_code == 409
 
 
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_draft_set_rejects_non_owner_403(db_session):
+    """POST /{job_id}/draft-set returns 403 when a non-owner, non-admin user
+    tries to patch someone else's draft."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/api/video-jobs/draft",
+            json={"title": "Mine", "prompt": "do stuff"},
+            headers={"X-User-Email": "owner@aiui.com"},
+        )
+    assert r.status_code == 201
+    job_id = r.json()["id"]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{job_id}/draft-set",
+            json={"style": "cinematic"},
+            headers={"X-User-Email": "intruder@aiui.com"},
+        )
+    assert r.status_code == 403
+
+
 # ---- Offline tests (no DB needed) ----
 
 

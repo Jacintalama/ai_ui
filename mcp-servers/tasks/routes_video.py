@@ -45,7 +45,7 @@ from db import session
 from templates_video.style_config import STYLE_CONFIGS
 from video_voices import DEFAULT_VOICE_ID, is_valid_voice, voice_catalog
 from heavy_lock import enough_free_disk
-from video_capability import mint_video_capability, verify_video_capability
+from video_capability import verify_video_capability
 from video_models import VideoJob
 from video_plan import validate_plan
 from video_refine import (
