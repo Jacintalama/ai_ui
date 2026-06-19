@@ -12,9 +12,10 @@ from handlers.app_builder_panel import (
 
 __all__ = [
     "OUT_FIND_ID", "OUT_MODAL_ID", "OUT_ROLE_INPUT", "OUT_LOCATION_INPUT",
-    "OUT_JOBDESC_INPUT", "OUT_COUNT_INPUT", "build_recruiting_panel",
-    "build_recruiting_embed", "build_outreach_modal", "is_out_find",
-    "is_out_modal", "parse_outreach_modal",
+    "OUT_JOBDESC_INPUT", "OUT_COUNT_INPUT", "REV_FIND_ID", "REV_MODAL_ID",
+    "build_recruiting_panel", "build_recruiting_embed", "build_outreach_modal",
+    "build_reverse_modal", "is_out_find", "is_out_modal", "is_rev_find",
+    "is_rev_modal", "parse_outreach_modal",
 ]
 
 OUT_FIND_ID = "aiuiout:find"
@@ -23,6 +24,8 @@ OUT_ROLE_INPUT = "role"
 OUT_LOCATION_INPUT = "location"
 OUT_JOBDESC_INPUT = "jobdesc"
 OUT_COUNT_INPUT = "count"
+REV_FIND_ID = "aiuiout:revfind"
+REV_MODAL_ID = "aiuiout:revmodal"
 
 _DEFAULT_COUNT = 10
 _MAX_COUNT = 25
@@ -39,6 +42,7 @@ def build_recruiting_panel() -> dict:
     """Pinned #recruiting panel: Find Engineers + the self-service Link button."""
     row = {"type": ACTION_ROW, "components": [
         _button("\U0001f50d Find Engineers", OUT_FIND_ID, STYLE_SUCCESS),
+        _button("Find Jobs", REV_FIND_ID, STYLE_PRIMARY),
         _button("\U0001f517 Link my account", LINK_START_ID, STYLE_PRIMARY),
     ]}
     return {"content": PANEL_CONTENT, "components": [row]}
@@ -84,12 +88,46 @@ def build_outreach_modal() -> dict:
     }
 
 
+def build_reverse_modal() -> dict:
+    """Type-9 MODAL data for reverse recruiting ('Find Jobs'): target role,
+    location, the seeker's background/skills, how many companies. Reuses the
+    SAME input custom_ids as build_outreach_modal (role/location/jobdesc/count)
+    so parse_outreach_modal works unchanged — only the labels differ."""
+    def _ti(cid, label, style, required, maxlen, placeholder):
+        return {"type": ACTION_ROW, "components": [{
+            "type": TEXT_INPUT, "custom_id": cid, "label": label, "style": style,
+            "required": required, "max_length": maxlen, "placeholder": placeholder,
+        }]}
+    return {
+        "title": "Find Jobs"[:45],
+        "custom_id": REV_MODAL_ID,
+        "components": [
+            _ti(OUT_ROLE_INPUT, "Target role", TEXT_SHORT, True, 100,
+                "e.g. Senior Python backend"),
+            _ti(OUT_LOCATION_INPUT, "Location (optional)", TEXT_SHORT, False, 100,
+                "e.g. Berlin"),
+            _ti(OUT_JOBDESC_INPUT, "Your background / skills", TEXT_PARAGRAPH, True,
+                4000, "6 yrs Python/Django, led payments team, ..."),
+            _ti(OUT_COUNT_INPUT, "How many companies (max 25)", TEXT_SHORT, False, 3,
+                "10"),
+        ],
+    }
+
+
 def is_out_find(custom_id: str) -> bool:
     return custom_id == OUT_FIND_ID
 
 
 def is_out_modal(custom_id: str) -> bool:
     return custom_id == OUT_MODAL_ID
+
+
+def is_rev_find(custom_id: str) -> bool:
+    return custom_id == REV_FIND_ID
+
+
+def is_rev_modal(custom_id: str) -> bool:
+    return custom_id == REV_MODAL_ID
 
 
 def parse_outreach_modal(values: dict) -> tuple[str, str, str, int]:
