@@ -46,3 +46,38 @@ def test_id_parsers():
     assert rr.is_out_send("aiuiout:send:t1") and rr.task_id_from_send("aiuiout:send:t1") == "t1"
     assert rr.is_out_refresh("aiuiout:refresh:t1")
     assert rr.is_out_editmodal("aiuiout:editmodal:t1:c0")
+
+
+def test_hire_kind_default_is_unchanged():
+    msg = rr.build_review_message("t1", CANDS, role="Python", location="Manila")
+    title = msg["embeds"][0]["title"]
+    assert title == "\U0001f50d Found 2 · Python · Manila"
+    assert msg["embeds"][0]["footer"]["text"] == (
+        "Pick who to email · ✏️ edit/add-email · then Send")
+    sel = msg["components"][0]["components"][0]
+    assert sel["placeholder"] == "Select who to email…"
+    send = msg["components"][2]["components"][0]
+    assert send["label"] == "\U0001f4e7 Send to selected (1)"
+
+
+def test_reverse_kind_renders_company_copy():
+    msg = rr.build_review_message("t1", CANDS, role="Backend", location="Berlin",
+                                  kind="reverse")
+    title = msg["embeds"][0]["title"]
+    assert title == "Found 2 companies for Backend"   # no location, "companies for"
+    assert "apply" in msg["embeds"][0]["footer"]["text"].lower()
+    sel = msg["components"][0]["components"][0]
+    assert "apply" in sel["placeholder"].lower()
+    send = msg["components"][2]["components"][0]
+    assert send["label"] == "\U0001f4e7 Send applications (1)"
+
+
+def test_reverse_empty_list_uses_no_companies_copy():
+    msg = rr.build_review_message("t1", [], role="Backend", kind="reverse")
+    assert msg["embeds"][0]["description"] == "No companies found."
+
+
+def test_build_sent_message_accepts_kind_kwarg():
+    out = rr.build_sent_message("Emailed 3 companies, saved 5", kind="reverse")
+    assert "Emailed 3 companies" in out["content"]
+    assert out["components"] == []

@@ -10,6 +10,7 @@ from handlers.app_builder_panel import (
     ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT, TEXT_SHORT, TEXT_PARAGRAPH,
     STYLE_SUCCESS, STYLE_SECONDARY, ROBOTIC_CYAN, _button,
 )
+from handlers.recruiting_labels import labels_for
 
 SEL_PREFIX = "aiuiout:sel:"
 EDIT_PREFIX = "aiuiout:edit:"
@@ -24,27 +25,34 @@ def _emailable(candidates: list[dict]) -> list[dict]:
 
 
 def build_review_message(task_id: str, candidates: list[dict], *,
-                         role: str = "", location: str = "") -> dict:
+                         role: str = "", location: str = "",
+                         kind: str = "hire") -> dict:
     """Overview message: embed list + recipient multi-select (emailable only) +
-    edit dropdown (all) + Send/Refresh buttons."""
+    edit dropdown (all) + Send/Refresh buttons. ``kind`` ∈ {"hire","reverse"}
+    selects engineer- vs company-oriented copy (recruiting_labels.labels_for)."""
+    lab = labels_for(kind)
     lines = []
     for c in candidates:
         email = (c.get("email") or "").strip()
         icon = "✅" if (c.get("selected") and email) else ("⚠️" if not email else "⬜")
         lines.append(f"{icon} **{c.get('name', '?')}** — {email or '(no email)'}")
-    where = role + (f" · {location}" if location else "")
+    if kind == "reverse":
+        title = f"{lab['found_prefix']} {len(candidates)} companies for {role}"
+    else:
+        where = role + (f" · {location}" if location else "")
+        title = f"{lab['found_prefix']} {len(candidates)} · {where}"
     embed = {
-        "title": f"\U0001f50d Found {len(candidates)} · {where}"[:256],
+        "title": title[:256],
         "color": ROBOTIC_CYAN,
-        "description": ("\n".join(lines) or "No engineers found.")[:4000],
-        "footer": {"text": "Pick who to email · ✏️ edit/add-email · then Send"},
+        "description": ("\n".join(lines) or lab["none_found"])[:4000],
+        "footer": {"text": lab["footer"]},
     }
     rows: list[dict] = []
     emailable = _emailable(candidates)[:_MAX]
     if emailable:
         rows.append({"type": ACTION_ROW, "components": [{
             "type": SELECT_MENU, "custom_id": f"{SEL_PREFIX}{task_id}",
-            "placeholder": "Select who to email…",
+            "placeholder": lab["select_placeholder"],
             "min_values": 0, "max_values": len(emailable),
             "options": [{
                 "label": (c.get("name") or c["id"])[:100], "value": c["id"],
@@ -53,7 +61,7 @@ def build_review_message(task_id: str, candidates: list[dict], *,
         }]})
     rows.append({"type": ACTION_ROW, "components": [{
         "type": SELECT_MENU, "custom_id": f"{EDIT_PREFIX}{task_id}",
-        "placeholder": "Edit / add email for one…",
+        "placeholder": lab["edit_placeholder"],
         "min_values": 1, "max_values": 1,
         "options": [{
             "label": (c.get("name") or c["id"])[:100], "value": c["id"],
@@ -62,13 +70,13 @@ def build_review_message(task_id: str, candidates: list[dict], *,
     }]})
     selected = sum(1 for c in candidates if c.get("selected") and (c.get("email") or "").strip())
     rows.append({"type": ACTION_ROW, "components": [
-        _button(f"\U0001f4e7 Send to selected ({selected})", f"{SEND_PREFIX}{task_id}", STYLE_SUCCESS),
+        _button(f"{lab['send_button']} ({selected})", f"{SEND_PREFIX}{task_id}", STYLE_SUCCESS),
         _button("♻ Refresh", f"{REFRESH_PREFIX}{task_id}", STYLE_SECONDARY),
     ]})
     return {"embeds": [embed], "components": rows}
 
 
-def build_sent_message(text: str, sheet_url: str = "") -> dict:
+def build_sent_message(text: str, sheet_url: str = "", *, kind: str = "hire") -> dict:
     """Final locked message after Send (no components)."""
     body = f"✅ {text}" + (f"\n\U0001f449 {sheet_url}" if sheet_url else "")
     return {"content": body[:2000], "embeds": [], "components": []}
