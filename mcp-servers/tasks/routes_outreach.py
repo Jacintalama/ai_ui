@@ -25,6 +25,7 @@ class OutreachRequest(BaseModel):
     jobdesc: str
     count: int = 10
     mode: str = "auto"   # "auto" = find+send (Slack/legacy); "manual" = find+store
+    direction: str = "hire"  # "hire" = find engineers; "reverse" = find companies (job seeker)
 
 
 class OutreachResponse(BaseModel):
@@ -42,7 +43,8 @@ class OutreachStatusResponse(BaseModel):
     job_title: str = ""
 
 
-async def _process_outreach_result(raw_log: str, *, job_title: str, count: int) -> dict:
+async def _process_outreach_result(raw_log: str, *, job_title: str, count: int,
+                                   direction: str = "hire") -> dict:
     """Pure: agent log -> summary dict."""
     outcome = parse_outcome(raw_log)
     if outcome.kind == "failed":
@@ -51,21 +53,26 @@ async def _process_outreach_result(raw_log: str, *, job_title: str, count: int) 
     cand = outreach.extract_candidates(raw_log)
     found = len(cand.candidates)
     if found == 0:
+        nf = ("I couldn't find companies hiring for that — try a broader role or remove the location."
+              if direction == "reverse"
+              else "I couldn't find engineers matching that — try a broader role or remove the location.")
         return {"status": "failed", "found": 0, "sent": 0, "saved": 0, "sheet_url": "",
-                "text": "I couldn't find engineers matching that — try a broader role or remove the location."}
+                "text": nf}
     batch = outreach.cap_and_dedupe(cand.candidates, count)
     try:
         res = await outreach.post_outreach_to_n8n(job_title, batch)
     except Exception as exc:  # noqa: BLE001
         logger.error("outreach n8n POST failed: %s", exc)
+        noun = "compan(y/ies)" if direction == "reverse" else "engineer(s)"
         return {"status": "completed", "found": found, "sent": 0, "saved": len(batch),
                 "sheet_url": "",
-                "text": f"Found {found} engineer(s) but sending failed — they're saved; I'll retry sends."}
+                "text": f"Found {found} {noun} but sending failed — they're saved; I'll retry sends."}
     sent = int(res.get("sent", 0)); saved = int(res.get("saved", len(batch)))
     sheet_url = res.get("sheet_url", "")
     return {"status": "completed", "found": found, "sent": sent, "saved": saved,
             "sheet_url": sheet_url,
-            "text": outreach.format_outreach_summary(found, sent, saved, sheet_url)}
+            "text": outreach.format_outreach_summary(found, sent, saved, sheet_url,
+                                                     direction=direction)}
 
 
 def _process_outreach_find(raw_log: str, *, job_title: str, count: int,
@@ -114,7 +121,8 @@ async def _save_candidates(task_id, data: dict, candidates: list[dict]) -> None:
 @router.post("/outreach", response_model=OutreachResponse, status_code=201)
 async def start_outreach(body: OutreachRequest, user: CurrentUser = Depends(current_user)):
     import asyncio
-    prompt = outreach.build_outreach_prompt(body.role, body.location, body.jobdesc, body.count)
+    prompt = outreach.build_outreach_prompt(body.role, body.location, body.jobdesc, body.count,
+                                            direction=body.direction)
     async with session() as s:
         item = TaskItem(
             meeting_id=uuid.uuid4(), action_type="OUTREACH",
@@ -128,7 +136,8 @@ async def start_outreach(body: OutreachRequest, user: CurrentUser = Depends(curr
         task_id, exec_id = item.id, execution.id
     asyncio.create_task(_run_outreach(task_id, exec_id, prompt,
                                       job_title=body.role, count=body.count,
-                                      mode=body.mode))
+                                      mode=body.mode, direction=body.direction,
+                                      location=body.location))
     return OutreachResponse(task_id=task_id)
 
 
@@ -189,11 +198,13 @@ async def patch_outreach_candidate(task_id: uuid.UUID, cid: str, body: Candidate
 @router.post("/outreach/{task_id}/send", response_model=OutreachStatusResponse)
 async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_user)):
     item, data = await _load_review(task_id, user)
+    direction = data.get("direction", "hire")
     candidates = data.get("candidates", [])
     batch = outreach.sendable_candidates(candidates)
     if not batch:
+        noun = "company" if direction == "reverse" else "engineer"
         return OutreachStatusResponse(status="review", candidates=candidates,
-                                      text="Pick at least one engineer with an email first.",
+                                      text=f"Pick at least one {noun} with an email first.",
                                       job_title=data.get("job_title", ""))
     try:
         res = await outreach.post_outreach_to_n8n(data.get("job_title", ""), batch)
@@ -215,7 +226,8 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
                 "text": outreach.format_outreach_summary(
                     data.get("found", len(candidates)),
                     int(res.get("sent", len(batch))),
-                    int(res.get("saved", len(batch))), res.get("sheet_url", ""))}
+                    int(res.get("saved", len(batch))), res.get("sheet_url", ""),
+                    direction=direction)}
     async with session() as s:
         await s.execute(update(TaskItem).where(TaskItem.id == task_id)
                         .values(result=json.dumps(new_data)))
@@ -227,14 +239,17 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
 
 
 async def _run_outreach(task_id, execution_id, prompt, *, job_title: str,
-                        count: int, mode: str = "auto"):
+                        count: int, mode: str = "auto", direction: str = "hire",
+                        location: str = ""):
     from routes_execution import _stream_claude  # LOCAL import (keep here, not module-top)
     try:
         raw_log = await _stream_claude(prompt, execution_id, task_id)
         if mode == "manual":
-            summary = _process_outreach_find(raw_log, job_title=job_title, count=count)
+            summary = _process_outreach_find(raw_log, job_title=job_title, count=count,
+                                             direction=direction, location=location)
         else:
-            summary = await _process_outreach_result(raw_log, job_title=job_title, count=count)
+            summary = await _process_outreach_result(raw_log, job_title=job_title, count=count,
+                                                     direction=direction)
         final_status = "completed" if summary["status"] in ("completed", "review") else "failed"
         async with session() as s:
             await s.execute(update(TaskExecution).where(TaskExecution.id == execution_id)

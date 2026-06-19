@@ -38,6 +38,33 @@ async def test_process_no_candidates():
     assert summary["found"] == 0
 
 
+@pytest.mark.asyncio
+async def test_process_no_candidates_reverse_company_copy():
+    log = json.dumps({"type": "result", "result": "```json\n{\"candidates\":[]}\n```\nCOMPLETED"}) + "\n"
+    summary = await routes_outreach._process_outreach_result(
+        log, job_title="x", count=10, direction="reverse")
+    assert summary["status"] == "failed"
+    assert "companies" in summary["text"]
+
+
+@pytest.mark.asyncio
+async def test_process_n8n_failure_reverse_noun(monkeypatch):
+    cand = json.dumps({"candidates": [
+        {"name": "Acme", "github_url": "https://acme.com/careers",
+         "email": "jobs@acme.com", "subject": "s", "body": "b"}]})
+    log = json.dumps({"type": "result", "result": f"```json\n{cand}\n```\nCOMPLETED"}) + "\n"
+
+    async def boom(job_title, candidates, **kw):
+        raise RuntimeError("n8n down")
+    monkeypatch.setattr(routes_outreach.outreach, "post_outreach_to_n8n", boom)
+
+    summary = await routes_outreach._process_outreach_result(
+        log, job_title="Python", count=10, direction="reverse")
+    assert summary["status"] == "completed"
+    assert "compan" in summary["text"]
+    assert "engineer" not in summary["text"]
+
+
 def _find_log(cands):
     body = json.dumps({"candidates": cands})
     return json.dumps({"type": "result",
