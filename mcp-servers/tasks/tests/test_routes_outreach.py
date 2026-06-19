@@ -61,7 +61,7 @@ async def test_process_n8n_failure_reverse_noun(monkeypatch):
     summary = await routes_outreach._process_outreach_result(
         log, job_title="Python", count=10, direction="reverse")
     assert summary["status"] == "completed"
-    assert "compan" in summary["text"]
+    assert "company" in summary["text"]
     assert "engineer" not in summary["text"]
 
 

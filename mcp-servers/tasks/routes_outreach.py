@@ -54,7 +54,6 @@ async def _process_outreach_result(raw_log: str, *, job_title: str, count: int,
     """Pure: agent log -> summary dict."""
     meta = {"direction": direction, "role": job_title, "location": location,
             "reply_to": reply_to}
-    noun = "compan(y/ies)" if direction == "reverse" else "engineer(s)"
     outcome = parse_outcome(raw_log)
     if outcome.kind == "failed":
         return {"status": "failed", "found": 0, "sent": 0, "saved": 0,
@@ -62,6 +61,7 @@ async def _process_outreach_result(raw_log: str, *, job_title: str, count: int,
                 **meta}
     cand = outreach.extract_candidates(raw_log)
     found = len(cand.candidates)
+    noun = ("company" if found == 1 else "companies") if direction == "reverse" else "engineer(s)"
     if found == 0:
         nf = ("I couldn't find companies hiring for that — try a broader role or drop the location."
               if direction == "reverse"
