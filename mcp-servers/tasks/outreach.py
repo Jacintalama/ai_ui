@@ -134,10 +134,12 @@ async def post_outreach_to_n8n(job_title: str, candidates: list[Candidate],
         return json.loads(text) if text else {}
 
 
-def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = "") -> str:
+def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = "",
+                            *, direction: str = "hire") -> str:
     # `saved` is the total written to the sheet this run (emailed + collected),
     # per the n8n Respond node — so phrase it as total-saved, not "no-email only".
-    parts = [f"Outreach complete — found {found} engineer(s).",
+    noun = "compan(y/ies)" if direction == "reverse" else "engineer(s)"
+    parts = [f"Outreach complete — found {found} {noun}.",
              f"Emailed {sent}.",
              f"Saved {saved} to your sheet."]
     return " ".join(parts)

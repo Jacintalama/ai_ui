@@ -79,3 +79,16 @@ def test_build_outreach_prompt_reverse_branch():
     assert "5" in p                               # count threaded
     assert "```json" in p and "COMPLETED" in p    # SAME machine contract reused
     assert "github.com/search/users" not in p     # NOT the hire/GitHub flow
+
+
+def test_format_outreach_summary_hire_default_unchanged():
+    s = outreach.format_outreach_summary(found=12, sent=8, saved=4, sheet_url="http://s")
+    assert "found 12 engineer(s)" in s
+    assert "Emailed 8" in s and "Saved 4 to your sheet" in s
+
+
+def test_format_outreach_summary_reverse_company_noun():
+    s = outreach.format_outreach_summary(found=12, sent=8, saved=4, sheet_url="http://s",
+                                         direction="reverse")
+    assert "found 12 compan(y/ies)" in s
+    assert "engineer" not in s
