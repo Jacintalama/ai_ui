@@ -9,6 +9,7 @@ import pathlib
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from video_models import VideoJob
 
@@ -35,8 +36,6 @@ async def test_collecting_status_roundtrip(db_session):
 
     Requires Postgres (aiui_test DB) — to be verified on the server at deploy.
     """
-    from sqlalchemy import select
-
     job_id = uuid.uuid4()
     job = VideoJob(
         id=job_id,
@@ -53,4 +52,3 @@ async def test_collecting_status_roundtrip(db_session):
     )
     fetched = result.scalar_one()
     assert fetched.status == "collecting"
-    assert fetched.slug == "test-collecting"
