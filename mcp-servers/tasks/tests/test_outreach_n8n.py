@@ -33,3 +33,20 @@ async def test_post_outreach_url_and_payload(monkeypatch):
     assert _Client.last["url"].endswith("/webhook/recruiting-outreach")
     assert _Client.last["json"]["job_title"] == "Python role"
     assert _Client.last["json"]["candidates"][0]["email"] == "a@x.com"
+
+
+@pytest.mark.asyncio
+async def test_post_outreach_includes_reply_to(monkeypatch):
+    monkeypatch.setattr(outreach.httpx, "AsyncClient", _Client)
+    await outreach.post_outreach_to_n8n("Python role", [
+        Candidate(name="A", email="a@x.com", subject="s", body="b")],
+        reply_to="seeker@x.com")
+    assert _Client.last["json"]["reply_to"] == "seeker@x.com"
+
+
+@pytest.mark.asyncio
+async def test_post_outreach_reply_to_defaults_empty(monkeypatch):
+    monkeypatch.setattr(outreach.httpx, "AsyncClient", _Client)
+    await outreach.post_outreach_to_n8n("Python role", [
+        Candidate(name="A", email="a@x.com", subject="s", body="b")])
+    assert _Client.last["json"]["reply_to"] == ""

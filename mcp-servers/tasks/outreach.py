@@ -121,11 +121,14 @@ On a hard error, output a line starting with FAILED: and the reason."""
 
 
 async def post_outreach_to_n8n(job_title: str, candidates: list[Candidate],
-                               *, timeout: float = 90.0) -> dict:
+                               *, reply_to: str = "", timeout: float = 90.0) -> dict:
     """POST the batch to the n8n recruiting-outreach webhook (mirror routes_cron).
-    Returns the parsed JSON ({sent, saved, sheet_url}) or raises on non-2xx."""
+    `reply_to` (optional) becomes the Gmail Reply-To so company/recruiter replies
+    route to the seeker (reverse) or recruiter (hire). Returns parsed JSON
+    ({sent, saved, sheet_url}) or raises on non-2xx."""
     url = f"{N8N_BASE.rstrip('/')}/webhook/{OUTREACH_WEBHOOK_PATH}"
     payload = {"job_title": job_title,
+               "reply_to": reply_to,
                "candidates": [c.model_dump() for c in candidates]}
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(url, json=payload)
