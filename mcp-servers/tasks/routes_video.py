@@ -669,7 +669,7 @@ async def add_screenshots_by_url(
             if total > MAX_TOTAL_BYTES:
                 raise HTTPException(413, "batch too large")
             try:
-                validate_screenshot(url.rsplit("/", 1)[-1] or "x.png", data)
+                validate_screenshot(urlparse(url).path.rsplit("/", 1)[-1] or "x.png", data)
             except ScreenshotRejected as e:
                 raise HTTPException(400, str(e))
             raw.append(data)
