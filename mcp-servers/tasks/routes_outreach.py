@@ -223,26 +223,25 @@ async def patch_outreach_candidate(task_id: uuid.UUID, cid: str, body: Candidate
 async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_user)):
     item, data = await _load_review(task_id, user)
     direction = data.get("direction", "hire")
-    reply_to = data.get("reply_to", "")
+    role = data.get("role", "") or data.get("job_title", "")
+    location = data.get("location", "")
     candidates = data.get("candidates", [])
     batch = outreach.sendable_candidates(candidates)
     if not batch:
-        noun = "company" if direction == "reverse" else "engineer"
+        none_sel = ("Pick at least one company with an email first."
+                    if direction == "reverse"
+                    else "Pick at least one engineer with an email first.")
         return OutreachStatusResponse(status="review", candidates=candidates,
-                                      text=f"Pick at least one {noun} with an email first.",
-                                      job_title=data.get("job_title", ""),
-                                      direction=direction, role=data.get("role", ""),
-                                      location=data.get("location", ""))
+                                      text=none_sel, job_title=role,
+                                      direction=direction, role=role, location=location)
     try:
-        res = await outreach.post_outreach_to_n8n(data.get("job_title", ""), batch,
-                                                  reply_to=reply_to)
+        res = await outreach.post_outreach_to_n8n(role, batch,
+                                                  reply_to=item.assignee_email)
     except Exception as exc:  # noqa: BLE001
         logger.error("manual outreach send failed: %s", exc)
         return OutreachStatusResponse(status="review", candidates=candidates,
-                                      text="Sending failed — try again.",
-                                      job_title=data.get("job_title", ""),
-                                      direction=direction, role=data.get("role", ""),
-                                      location=data.get("location", ""))
+                                      text="Sending failed — try again.", job_title=role,
+                                      direction=direction, role=role, location=location)
     sent_emails = {c.email.strip().lower() for c in batch}
     for c in candidates:
         if (c.get("email") or "").strip().lower() in sent_emails:
@@ -250,6 +249,7 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
             c["selected"] = False
     new_data = {**data, "phase": "sent", "candidates": candidates,
                 "status": "completed",
+                "direction": direction, "role": role, "location": location,
                 "sent": int(res.get("sent", len(batch))),
                 "saved": int(res.get("saved", len(batch))),
                 "sheet_url": res.get("sheet_url", ""),
@@ -265,8 +265,7 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
     return OutreachStatusResponse(
         status="sent", candidates=candidates, sent=new_data["sent"],
         saved=new_data["saved"], sheet_url=new_data["sheet_url"], text=new_data["text"],
-        job_title=data.get("job_title", ""), direction=direction,
-        role=data.get("role", ""), location=data.get("location", ""))
+        job_title=role, direction=direction, role=role, location=location)
 
 
 async def _run_outreach(task_id, execution_id, prompt, *, job_title: str,
