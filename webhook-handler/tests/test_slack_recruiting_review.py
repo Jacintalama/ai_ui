@@ -94,3 +94,18 @@ def test_edit_fields_and_parsers_round_trip():
     meta = json.dumps({"response_url": "https://hook", "task_id": "t1", "cid": "c0"})
     assert srr.response_url_from_meta(meta) == "https://hook"
     assert srr.response_url_from_meta("not json") == ""
+
+
+def test_build_sent_message():
+    msg = srr.build_sent_message("Emailed 3, saved 5.", "https://sheet")
+    assert set(msg) == {"text", "blocks"}
+    body = msg["blocks"][0]["text"]["text"]
+    assert "Emailed 3, saved 5." in body and "https://sheet" in body
+    # locked: no actions blocks
+    assert all(b["type"] != "actions" for b in msg["blocks"])
+
+
+def test_build_sent_message_no_sheet():
+    msg = srr.build_sent_message("Done.")
+    assert "Done." in msg["blocks"][0]["text"]["text"]
+    assert "http" not in msg["text"]

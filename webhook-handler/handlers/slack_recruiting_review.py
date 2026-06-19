@@ -176,11 +176,13 @@ def build_edit_modal_view(task_id: str, candidate: dict,
     }
 
 
-def build_sent_message(task_id: str, sent: list[dict], *,
-                       role: str = "", location: str = "",
+def build_sent_message(text: str, sheet_url: str = "", *,
                        kind: str = "hire") -> dict:
-    """Placeholder — implemented in a later task."""
-    raise NotImplementedError
+    """Final locked Block Kit message after Send (no action elements). `text` is
+    already direction-aware from the backend; `kind` is reserved (unused)."""
+    body = (f"✅ {text}" + (f"\n{sheet_url}" if sheet_url else ""))[:_SECTION_MAX]
+    return {"text": body, "blocks": [
+        {"type": "section", "text": {"type": "mrkdwn", "text": body}}]}
 
 
 def edit_fields_from_view(view: dict) -> tuple[str, str, str]:
