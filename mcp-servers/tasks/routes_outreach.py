@@ -170,7 +170,9 @@ async def get_outreach_status(task_id: uuid.UUID, user: CurrentUser = Depends(cu
         status=data.get("status", "failed"), found=data.get("found", 0),
         sent=data.get("sent", 0), saved=data.get("saved", 0),
         sheet_url=data.get("sheet_url", ""), text=data.get("text", ""),
-        candidates=data.get("candidates", []), job_title=data.get("job_title", ""))
+        candidates=data.get("candidates", []), job_title=data.get("job_title", ""),
+        direction=data.get("direction", "hire"), role=data.get("role", ""),
+        location=data.get("location", ""))
 
 
 @router.get("/outreach/{task_id}/candidates", response_model=OutreachStatusResponse)
@@ -181,7 +183,8 @@ async def get_outreach_candidates(task_id: uuid.UUID, user: CurrentUser = Depend
     return OutreachStatusResponse(
         status=data.get("status", "failed"), found=data.get("found", 0),
         text=data.get("text", ""), candidates=data.get("candidates", []),
-        job_title=data.get("job_title", ""))
+        job_title=data.get("job_title", ""), direction=data.get("direction", "hire"),
+        role=data.get("role", ""), location=data.get("location", ""))
 
 
 class CandidatePatch(BaseModel):
@@ -205,7 +208,9 @@ async def patch_outreach_candidate(task_id: uuid.UUID, cid: str, body: Candidate
             body=body.body, selected=body.selected)
     await _save_candidates(task_id, data, candidates)
     return OutreachStatusResponse(status="review", candidates=candidates,
-                                  found=len(candidates), job_title=data.get("job_title", ""))
+                                  found=len(candidates), job_title=data.get("job_title", ""),
+                                  direction=data.get("direction", "hire"),
+                                  role=data.get("role", ""), location=data.get("location", ""))
 
 
 @router.post("/outreach/{task_id}/send", response_model=OutreachStatusResponse)
@@ -219,7 +224,9 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
         noun = "company" if direction == "reverse" else "engineer"
         return OutreachStatusResponse(status="review", candidates=candidates,
                                       text=f"Pick at least one {noun} with an email first.",
-                                      job_title=data.get("job_title", ""))
+                                      job_title=data.get("job_title", ""),
+                                      direction=direction, role=data.get("role", ""),
+                                      location=data.get("location", ""))
     try:
         res = await outreach.post_outreach_to_n8n(data.get("job_title", ""), batch,
                                                   reply_to=reply_to)
@@ -227,7 +234,9 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
         logger.error("manual outreach send failed: %s", exc)
         return OutreachStatusResponse(status="review", candidates=candidates,
                                       text="Sending failed — try again.",
-                                      job_title=data.get("job_title", ""))
+                                      job_title=data.get("job_title", ""),
+                                      direction=direction, role=data.get("role", ""),
+                                      location=data.get("location", ""))
     sent_emails = {c.email.strip().lower() for c in batch}
     for c in candidates:
         if (c.get("email") or "").strip().lower() in sent_emails:
@@ -250,7 +259,8 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
     return OutreachStatusResponse(
         status="sent", candidates=candidates, sent=new_data["sent"],
         saved=new_data["saved"], sheet_url=new_data["sheet_url"], text=new_data["text"],
-        job_title=data.get("job_title", ""))
+        job_title=data.get("job_title", ""), direction=direction,
+        role=data.get("role", ""), location=data.get("location", ""))
 
 
 async def _run_outreach(task_id, execution_id, prompt, *, job_title: str,
