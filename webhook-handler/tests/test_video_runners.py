@@ -208,7 +208,7 @@ async def test_run_video_revert_instant_delivers():
 @pytest.mark.asyncio
 async def test_run_video_revert_rerender_no_watcher_when_no_channel():
     tc = MagicMock()
-    tc.revert_video = AsyncMock(return_value={"status": "rendering"})
+    tc.revert_video = AsyncMock(return_value={"status": "queued"})
     r = _router(tc)
     ctx = _ctx(notify_channel=None)
     await r.run_video_revert(ctx, "job1", 2)

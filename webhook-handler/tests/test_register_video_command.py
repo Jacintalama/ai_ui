@@ -8,7 +8,7 @@ def test_video_command_has_add_with_attachments():
     assert p["name"] == "video"
     add = next(o for o in p["options"] if o["name"] == "add")
     atts = [o for o in add["options"] if o["type"] == reg.ATTACHMENT]
-    assert len(atts) == 10
+    assert len(atts) == 12
     assert all(o["required"] is False for o in atts)
     assert any(o["name"] == "list" for o in p["options"])
 

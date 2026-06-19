@@ -76,9 +76,9 @@ def build_command_payload() -> dict:
 
 
 def build_video_command_payload() -> dict:
-    """A top-level /video command: `add` (up to 10 screenshot attachments) and
+    """A top-level /video command: `add` (up to 12 screenshot attachments) and
     `list`. Subcommands mirror the /aiui structure (type SUB_COMMAND)."""
-    shot_opts = [(f"shot{i}", f"Screenshot {i}", False, ATTACHMENT) for i in range(1, 11)]
+    shot_opts = [(f"shot{i}", f"Screenshot {i}", False, ATTACHMENT) for i in range(1, 13)]
     return {
         "name": "video",
         "description": "Generate narrated videos from screenshots",

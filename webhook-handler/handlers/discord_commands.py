@@ -968,6 +968,13 @@ class DiscordCommandHandler:
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("_handle_video_new_modal failed user=%s: %s", user_id, exc)
+                try:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="Couldn't open the video studio — please try again.",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
         self._spawn(_open_studio())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}

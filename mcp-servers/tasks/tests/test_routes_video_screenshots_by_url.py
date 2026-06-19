@@ -10,6 +10,7 @@ before _coerce_job_id / any DB call, so no real job is needed.
 DB tests (skipif not _HAVE_DB):
   - happy path: 2 allowlisted URLs → 200, count==2, files written to disk
   - count-cap: existing 0 + MAX_FILES+1 urls → 400 before any fetch
+  - oversized stream: a body exceeding MAX_FILE_BYTES → 413 mid-stream (OOM guard)
 """
 import io
 import os
@@ -22,7 +23,7 @@ from httpx import ASGITransport, AsyncClient
 os.environ.setdefault("AIUI_FERNET_KEY", Fernet.generate_key().decode())
 
 from main import app  # noqa: E402
-from routes_video import MAX_FILES  # noqa: E402
+from routes_video import MAX_FILES, MAX_FILE_BYTES  # noqa: E402
 
 HEAD = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 
@@ -42,14 +43,28 @@ def _make_png() -> bytes:
     return buf.getvalue()
 
 
-class _FakeResp:
-    """Minimal stand-in for httpx.Response."""
+class _FakeStream:
+    """Async context manager standing in for httpx.AsyncClient.stream(...).
 
-    def __init__(self, content: bytes) -> None:
-        self.content = content
+    Yields the given chunks from aiter_bytes(); `headers` lets a test exercise
+    (or skip) the Content-Length fast-reject path."""
+
+    def __init__(self, chunks: list[bytes], headers: dict | None = None) -> None:
+        self._chunks = chunks
+        self.headers = headers or {}
+
+    async def __aenter__(self) -> "_FakeStream":
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
 
     def raise_for_status(self) -> None:
         pass  # no-op: pretend 200 OK
+
+    async def aiter_bytes(self):
+        for chunk in self._chunks:
+            yield chunk
 
 
 # ---- OFFLINE tests (no DB needed) ------------------------------------------
@@ -122,11 +137,11 @@ async def test_happy_path_two_urls(db_session, tmp_path, monkeypatch):
     assert r.status_code == 201
     job_id = r.json()["id"]
 
-    # Step 2: monkeypatch httpx.AsyncClient.get to return our fake PNG.
-    async def _get(self, url, *a, **k):
-        return _FakeResp(png)
+    # Step 2: monkeypatch httpx.AsyncClient.stream to stream our fake PNG.
+    def _stream(self, method, url, *a, **k):
+        return _FakeStream([png])
 
-    monkeypatch.setattr("httpx.AsyncClient.get", _get)
+    monkeypatch.setattr("httpx.AsyncClient.stream", _stream)
 
     urls = [
         "https://cdn.discordapp.com/attachments/1/1/img1.png",
@@ -157,10 +172,10 @@ async def test_count_cap_rejects_over_max(db_session, tmp_path, monkeypatch):
     """
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
 
-    async def _no_get(self, url, *a, **k):
+    def _no_stream(self, method, url, *a, **k):
         raise AssertionError("Fetch must not be reached when count cap fires")
 
-    monkeypatch.setattr("httpx.AsyncClient.get", _no_get)
+    monkeypatch.setattr("httpx.AsyncClient.stream", _no_stream)
 
     # Create a draft so we have a real job_id + slug.
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -193,3 +208,39 @@ async def test_count_cap_rejects_over_max(db_session, tmp_path, monkeypatch):
         )
 
     assert r.status_code == 400
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_oversized_stream_rejected_413(db_session, tmp_path, monkeypatch):
+    """A streamed body whose running size exceeds MAX_FILE_BYTES is rejected 413
+    mid-stream — the full body is never buffered (the OOM guard from MF-1)."""
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+
+    # Create a draft to get a real job_id.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/api/video-jobs/draft",
+            json={"title": "Big", "prompt": "oversized stream"},
+            headers=HEAD,
+        )
+    assert r.status_code == 201
+    job_id = r.json()["id"]
+
+    # No Content-Length header → exercise the streaming-accumulation cap.
+    # Two chunks of (cap // 2 + 1) bytes exceed MAX_FILE_BYTES after the 2nd chunk.
+    half = MAX_FILE_BYTES // 2 + 1
+    chunks = [b"\x00" * half, b"\x00" * half]
+
+    def _stream(self, method, url, *a, **k):
+        return _FakeStream(chunks)
+
+    monkeypatch.setattr("httpx.AsyncClient.stream", _stream)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{job_id}/screenshots-by-url",
+            json={"urls": ["https://cdn.discordapp.com/attachments/1/1/big.png"]},
+            headers=HEAD,
+        )
+
+    assert r.status_code == 413, r.text

@@ -2356,7 +2356,11 @@ class CommandRouter:
         if not urls:
             await ctx.respond("Attach 1-10 screenshots to `/video add`.")
             return
-        draft = await self._tasks_client.get_current_video_draft(email)
+        try:
+            draft = await self._tasks_client.get_current_video_draft(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't load your draft: {e.message}")
+            return
         if not draft:
             await ctx.respond("No video in progress — click **New video** first.")
             return
@@ -2401,7 +2405,7 @@ class CommandRouter:
         if ctx.notify_channel is not None:
             watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
             self._background_tasks.add(watcher)
-            watcher.add_done_callback(self._background_tasks.discard)
+            watcher.add_done_callback(self._on_video_watcher_done)
 
     async def run_video_refine(self, ctx: CommandContext, job_id: str, message: str) -> None:
         email = await self._resolve_email_for_ctx(ctx)
@@ -2435,7 +2439,7 @@ class CommandRouter:
         if ctx.notify_channel is not None:
             watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
             self._background_tasks.add(watcher)
-            watcher.add_done_callback(self._background_tasks.discard)
+            watcher.add_done_callback(self._on_video_watcher_done)
 
     async def run_video_revert(self, ctx: CommandContext, job_id: str, version_no: int) -> None:
         email = await self._resolve_email_for_ctx(ctx)
@@ -2454,7 +2458,7 @@ class CommandRouter:
             if ctx.notify_channel is not None:
                 watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
                 self._background_tasks.add(watcher)
-                watcher.add_done_callback(self._background_tasks.discard)
+                watcher.add_done_callback(self._on_video_watcher_done)
 
     async def run_video_list(self, ctx: CommandContext) -> None:
         email = await self._resolve_email_for_ctx(ctx)
@@ -2474,6 +2478,14 @@ class CommandRouter:
                  + (" (ready)" if v.get("output_available") else "")
                  for v in vids[:25]]
         await ctx.respond("Your videos:\n" + "\n".join(lines))
+
+    def _on_video_watcher_done(self, task: "asyncio.Task") -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("video watcher failed: %r", exc, exc_info=exc)
 
     async def _deliver_video(self, ctx: CommandContext, email: str, job_id: str) -> None:
         """Post the finished MP4 to the thread: attach when small enough, else a
@@ -2533,9 +2545,9 @@ class CommandRouter:
             try:
                 st = await self._tasks_client.get_video(email, job_id)
                 errors = 0
-            except TasksAPIError as e:
+            except (TasksAPIError, httpx.HTTPError) as e:
                 errors += 1
-                logger.warning("watch_video status error (%s) job=%s", e.status, job_id)
+                logger.warning("watch_video status error (%s) job=%s", getattr(e, "status", "?"), job_id)
                 if errors >= VIDEO_MAX_CONSECUTIVE_ERRORS:
                     await _notify("Lost track of your video — check **My videos**.")
                     return

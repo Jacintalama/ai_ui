@@ -210,6 +210,7 @@ async def upload(
                     and_(
                         VideoJob.user_email == user.email,
                         VideoJob.created_at >= cutoff,
+                        VideoJob.status.in_(["queued", "scripting", "rendering", "done"]),
                     )
                 )
             )
@@ -668,13 +669,22 @@ async def add_screenshots_by_url(
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         for url in body.urls:
             try:
-                resp = await client.get(url)
-                resp.raise_for_status()
+                async with client.stream("GET", url) as resp:
+                    resp.raise_for_status()
+                    # Reject up front if the server declares an oversized body.
+                    declared = resp.headers.get("content-length")
+                    if declared is not None and declared.isdigit() and int(declared) > MAX_FILE_BYTES:
+                        raise HTTPException(413, "screenshot too large (max 10 MB)")
+                    # Stream, aborting the moment the running size exceeds the cap
+                    # so an oversized body is never fully buffered in memory.
+                    buf = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > MAX_FILE_BYTES:
+                            raise HTTPException(413, "screenshot too large (max 10 MB)")
             except httpx.HTTPError:
                 raise HTTPException(400, "could not fetch screenshot URL")
-            data = resp.content
-            if len(data) > MAX_FILE_BYTES:
-                raise HTTPException(413, "screenshot too large (max 10 MB)")
+            data = bytes(buf)
             total += len(data)
             if total > MAX_TOTAL_BYTES:
                 raise HTTPException(413, "batch too large")
