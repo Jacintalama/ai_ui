@@ -102,7 +102,13 @@ def build_review_message(task_id: str, candidates: list[dict], *,
         }
         if initial:
             sel["initial_options"] = initial
-        blocks.append({"type": "actions", "elements": [sel]})
+        # multi_static_select is only valid as a Section accessory or Input
+        # element — Slack rejects it inside an actions block (invalid_blocks).
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": lbl["select_placeholder"]},
+            "accessory": sel,
+        })
 
     if candidates:
         blocks.append({"type": "actions", "elements": [{

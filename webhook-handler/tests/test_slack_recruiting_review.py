@@ -10,13 +10,18 @@ CANDS = [
 
 
 def _by_action_prefix(blocks, prefix):
-    """First Block Kit element across all actions blocks whose action_id starts with prefix."""
+    """First Block Kit element whose action_id starts with prefix, across both
+    actions-block elements and section-block accessories (a multi_static_select
+    rides as a section accessory, not in an actions block)."""
     for b in blocks:
-        if b.get("type") != "actions":
-            continue
-        for el in b["elements"]:
-            if el.get("action_id", "").startswith(prefix):
-                return el
+        if b.get("type") == "actions":
+            for el in b["elements"]:
+                if el.get("action_id", "").startswith(prefix):
+                    return el
+        elif b.get("type") == "section":
+            acc = b.get("accessory")
+            if acc and acc.get("action_id", "").startswith(prefix):
+                return acc
     return None
 
 
