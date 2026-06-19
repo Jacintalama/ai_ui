@@ -45,7 +45,7 @@ from db import session
 from templates_video.style_config import STYLE_CONFIGS
 from video_voices import DEFAULT_VOICE_ID, is_valid_voice, voice_catalog
 from heavy_lock import enough_free_disk
-from video_capability import verify_video_capability
+from video_capability import mint_video_capability, verify_video_capability
 from video_models import VideoJob
 from video_plan import validate_plan
 from video_refine import (
@@ -111,6 +111,33 @@ class RefineRequest(BaseModel):
 
 class RevertRequest(BaseModel):
     version_no: int
+
+
+class DraftRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    prompt: str = Field(..., min_length=1, max_length=2000)
+    style: str = Field("clean_product_demo", max_length=50)
+    voice: str = Field(DEFAULT_VOICE_ID, max_length=50)
+
+
+@router.post("/draft", status_code=201)
+async def create_draft(body: DraftRequest, user: CurrentUser = Depends(current_user)) -> dict:
+    """Create a 'collecting' draft video job (no screenshots yet) for the Discord
+    wizard. The render worker only picks 'queued' jobs, so a draft is inert until
+    POST /{job_id}/queue flips it. Daily limit is NOT charged here (only at queue)."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    if body.style not in STYLE_CONFIGS:
+        raise HTTPException(400, f"Unknown style: {body.style}")
+    if not is_valid_voice(body.voice):
+        raise HTTPException(400, f"Unknown voice: {body.voice}")
+    job_id = uuid.uuid4()
+    slug = f"vid-{job_id.hex[:8]}"
+    async with session() as s:
+        s.add(VideoJob(id=job_id, slug=slug, user_email=user.email, prompt=body.prompt,
+                       title=body.title, style=body.style, voice=body.voice, status="collecting"))
+        await s.commit()
+    return {"id": str(job_id), "slug": slug, "status": "collecting"}
 
 
 @router.post("/upload", status_code=201)
@@ -233,6 +260,25 @@ async def list_jobs(user: CurrentUser = Depends(current_user)) -> dict:
 async def voices() -> dict:
     """The selectable narration voices for the create-form picker."""
     return {"voices": voice_catalog(), "default": DEFAULT_VOICE_ID}
+
+
+# Registered BEFORE "/{job_id}" so the literal "current-draft" path is not
+# captured as a job id.
+@router.get("/current-draft")
+async def current_draft(user: CurrentUser = Depends(current_user)) -> dict:
+    """The caller's newest in-progress draft ('collecting') + its screenshot count.
+    404 when there is no draft. Used by `/video add` to find which draft to attach to."""
+    async with session() as s:
+        job = (await s.execute(
+            select(VideoJob)
+            .where(and_(VideoJob.user_email == user.email, VideoJob.status == "collecting"))
+            .order_by(VideoJob.created_at.desc())
+        )).scalars().first()
+    if job is None:
+        raise HTTPException(404, "No draft in progress")
+    return {"id": str(job.id), "slug": job.slug, "title": job.title,
+            "style": job.style, "voice": job.voice,
+            "screenshot_count": len(_list_screenshots(job.slug, str(job.id)))}
 
 
 def _coerce_job_id(job_id: str) -> uuid.UUID:
@@ -630,3 +676,37 @@ async def revert(
         )
         await s.commit()
         return {"status": "queued", "output_available": False}
+
+
+class DraftPatch(BaseModel):
+    style: str | None = Field(None, max_length=50)
+    voice: str | None = Field(None, max_length=50)
+
+
+@router.post("/{job_id}/draft-set")
+async def update_draft(job_id: str, body: DraftPatch, user: CurrentUser = Depends(current_user)) -> dict:
+    """Update style/voice on a 'collecting' draft (the Discord select handlers)."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        if job.status != "collecting":
+            raise HTTPException(409, "Video is not a draft")
+        vals = {}
+        if body.style is not None:
+            if body.style not in STYLE_CONFIGS:
+                raise HTTPException(400, f"Unknown style: {body.style}")
+            vals["style"] = body.style
+        if body.voice is not None:
+            if not is_valid_voice(body.voice):
+                raise HTTPException(400, f"Unknown voice: {body.voice}")
+            vals["voice"] = body.voice
+        if vals:
+            await s.execute(update(VideoJob).where(VideoJob.id == jid).values(**vals))
+            await s.commit()
+    return {"status": "ok", **vals}
