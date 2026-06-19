@@ -117,7 +117,7 @@ async def test_process_result_reverse_meta_and_summary(monkeypatch):
     assert out["status"] == "completed"
     assert out["direction"] == "reverse"
     assert out["role"] == "Senior Python" and out["location"] == "Berlin"
-    assert "compan(y/ies)" in out["text"]
+    assert "company" in out["text"]
 
 
 @pytest.mark.asyncio
