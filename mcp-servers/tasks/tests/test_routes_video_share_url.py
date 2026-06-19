@@ -3,7 +3,6 @@
 DB tests (marked skipif not _HAVE_DB) insert VideoJob rows and require a real
 Postgres. They run at deploy/CI where DATABASE_URL points at aiui_test (a DB
 whose name contains "test", required by the db_session fixture's safety check).
-Offline tests exercise guards that fire BEFORE any DB call and run anywhere.
 """
 import os
 import uuid
@@ -16,6 +15,10 @@ from httpx import ASGITransport, AsyncClient
 # CI / the tasks container set the real key in the environment; this only fills
 # in a throwaway for local offline runs so the no-DB tests can import the app.
 os.environ.setdefault("AIUI_FERNET_KEY", Fernet.generate_key().decode())
+# video_capability reads OAUTH_STATE_SECRET into a module-level _SECRET at import
+# time, so it must be set BEFORE `from main import app` — monkeypatch.setenv in a
+# test body would be too late (mirrors test_routes_video_download.py).
+os.environ.setdefault("OAUTH_STATE_SECRET", "test-secret")
 
 from main import app  # noqa: E402
 from video_models import VideoJob  # noqa: E402
@@ -34,7 +37,6 @@ async def test_done_job_returns_share_url(db_session, tmp_path, monkeypatch):
     """GET /{job_id} on a done job with VIDEO_PUBLIC_BASE set returns a share_url
     that starts with the configured base + /api/video-jobs/ and contains cap=."""
     monkeypatch.setenv("VIDEO_PUBLIC_BASE", "https://ai-ui.coolestdomain.win/tasks")
-    monkeypatch.setenv("OAUTH_STATE_SECRET", "test-secret")
 
     # Create a real output file so output_path passes the None check.
     out_file = tmp_path / "out.mp4"
@@ -73,7 +75,6 @@ async def test_done_job_returns_share_url(db_session, tmp_path, monkeypatch):
 async def test_queued_job_returns_share_url_none(db_session, monkeypatch):
     """GET /{job_id} on a non-done (queued) job returns share_url == None."""
     monkeypatch.setenv("VIDEO_PUBLIC_BASE", "https://ai-ui.coolestdomain.win/tasks")
-    monkeypatch.setenv("OAUTH_STATE_SECRET", "test-secret")
 
     job_id = uuid.uuid4()
     slug = f"vid-{job_id.hex[:8]}"
