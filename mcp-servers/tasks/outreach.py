@@ -163,6 +163,8 @@ def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = 
     parts = [f"Outreach complete — found {found} {noun}.",
              f"Emailed {sent}.",
              f"Saved {saved} to your sheet."]
+    if sheet_url:
+        parts.append(f"View: {sheet_url}")
     return " ".join(parts)
 
 

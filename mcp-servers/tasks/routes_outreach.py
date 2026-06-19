@@ -236,7 +236,7 @@ async def send_outreach(task_id: uuid.UUID, user: CurrentUser = Depends(current_
                                       direction=direction, role=role, location=location)
     try:
         res = await outreach.post_outreach_to_n8n(role, batch,
-                                                  reply_to=item.assignee_email)
+                                                  reply_to=data.get("reply_to", "") or item.assignee_email)
     except Exception as exc:  # noqa: BLE001
         logger.error("manual outreach send failed: %s", exc)
         return OutreachStatusResponse(status="review", candidates=candidates,
