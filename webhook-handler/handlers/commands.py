@@ -2467,7 +2467,7 @@ class CommandRouter:
         interactive overview to the channel as a fresh message that outlives the
         interaction window. The builder is chosen by ``ctx.platform`` (Discord
         embeds vs Slack Block Kit, Phase 3) and copy by ``direction`` (hire vs
-        reverse). Slack hire keeps the auto-send path via ``_watch_outreach``."""
+        reverse). All platforms now use this review path."""
         from handlers import recruiting_labels
         rr = self._review_builder(ctx)
         lab = recruiting_labels.labels_for(direction)

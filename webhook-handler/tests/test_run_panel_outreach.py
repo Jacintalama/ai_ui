@@ -52,7 +52,7 @@ async def test_run_panel_outreach_starts_and_acks():
 
 
 @pytest.mark.asyncio
-async def test_run_panel_outreach_slack_stays_auto():
+async def test_run_panel_outreach_slack_now_manual():
     # Slack hire now also uses review-before-send (mode="manual") — same as Discord.
     tc = MagicMock()
     tc.start_outreach = AsyncMock(return_value={"task_id": "abc"})

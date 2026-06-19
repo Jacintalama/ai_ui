@@ -47,8 +47,8 @@ _TITLE_MAX = 24  # Slack modal title hard limit
 
 
 def build_recruiting_blocks() -> list[dict]:
-    """Channel entry panel: a header section + an actions block with a single
-    primary 'Find Engineers' button."""
+    """Channel entry panel: a header section + an actions block with the
+    'Find Engineers' (hire) and 'Find Jobs' (reverse) buttons."""
     return [
         {
             "type": "section",
