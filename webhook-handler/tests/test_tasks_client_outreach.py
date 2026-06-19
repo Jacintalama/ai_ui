@@ -30,3 +30,18 @@ async def test_get_outreach_status_gets():
     assert out["sent"] == 8
     method, path, email = tc._request.call_args.args[:3]
     assert method == "GET" and path == "/outreach/abc" and email == "u@x.com"
+
+
+@pytest.mark.asyncio
+async def test_start_outreach_defaults_direction_hire():
+    tc = _client({"task_id": "abc"})
+    await tc.start_outreach("u@x.com", {"role": "Python", "count": 8})
+    assert tc._request.call_args.kwargs["json"]["direction"] == "hire"
+
+
+@pytest.mark.asyncio
+async def test_start_outreach_passes_reverse_direction():
+    tc = _client({"task_id": "abc"})
+    await tc.start_outreach("u@x.com", {
+        "role": "Python", "count": 8, "mode": "manual", "direction": "reverse"})
+    assert tc._request.call_args.kwargs["json"]["direction"] == "reverse"

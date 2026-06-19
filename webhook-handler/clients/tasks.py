@@ -237,7 +237,10 @@ class TasksClient:
     async def start_outreach(
         self, user_email: str, payload: dict[str, Any],
     ) -> dict[str, Any]:
-        resp = await self._request("POST", "/outreach", user_email, json=payload)
+        # Always include a direction so the backend can label the run; callers
+        # override via payload["direction"] ("hire" | "reverse").
+        body = {"direction": "hire", **payload}
+        resp = await self._request("POST", "/outreach", user_email, json=body)
         return resp.json()
 
     async def get_outreach_status(
