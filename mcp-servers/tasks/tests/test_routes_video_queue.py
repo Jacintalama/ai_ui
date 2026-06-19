@@ -124,3 +124,35 @@ async def test_queue_rejects_non_draft_409(db_session, tmp_path, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(f"/api/video-jobs/{job_id}/queue", headers=HEAD)
     assert r.status_code == 409
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_queue_rejects_non_owner_403(db_session):
+    """POST /queue by a non-owner, non-admin user returns 403 (ownership is
+    checked before the status/screenshot guards)."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            "/api/video-jobs/draft",
+            json={"title": "Mine", "prompt": "do stuff"},
+            headers={"X-User-Email": "owner@aiui.com"},
+        )
+    assert r.status_code == 201
+    job_id = r.json()["id"]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(
+            f"/api/video-jobs/{job_id}/queue",
+            headers={"X-User-Email": "intruder@aiui.com"},
+        )
+    assert r.status_code == 403
+
+
+# ---- Offline tests (no DB needed) ----
+
+
+async def test_queue_503_when_disabled(monkeypatch):
+    """The VIDEO_ENABLED kill switch fires before any DB work -> 503."""
+    monkeypatch.setenv("VIDEO_ENABLED", "false")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(f"/api/video-jobs/{uuid.uuid4()}/queue", headers=HEAD)
+    assert r.status_code == 503
