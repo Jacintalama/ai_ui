@@ -170,8 +170,10 @@ async def get_outreach_status(task_id: uuid.UUID, user: CurrentUser = Depends(cu
         status=data.get("status", "failed"), found=data.get("found", 0),
         sent=data.get("sent", 0), saved=data.get("saved", 0),
         sheet_url=data.get("sheet_url", ""), text=data.get("text", ""),
-        candidates=data.get("candidates", []), job_title=data.get("job_title", ""),
-        direction=data.get("direction", "hire"), role=data.get("role", ""),
+        candidates=data.get("candidates", []),
+        job_title=data.get("job_title", "") or data.get("role", ""),
+        direction=data.get("direction", "hire"),
+        role=data.get("role", "") or data.get("job_title", ""),
         location=data.get("location", ""))
 
 
@@ -183,8 +185,10 @@ async def get_outreach_candidates(task_id: uuid.UUID, user: CurrentUser = Depend
     return OutreachStatusResponse(
         status=data.get("status", "failed"), found=data.get("found", 0),
         text=data.get("text", ""), candidates=data.get("candidates", []),
-        job_title=data.get("job_title", ""), direction=data.get("direction", "hire"),
-        role=data.get("role", ""), location=data.get("location", ""))
+        job_title=data.get("job_title", "") or data.get("role", ""),
+        direction=data.get("direction", "hire"),
+        role=data.get("role", "") or data.get("job_title", ""),
+        location=data.get("location", ""))
 
 
 class CandidatePatch(BaseModel):
@@ -208,9 +212,11 @@ async def patch_outreach_candidate(task_id: uuid.UUID, cid: str, body: Candidate
             body=body.body, selected=body.selected)
     await _save_candidates(task_id, data, candidates)
     return OutreachStatusResponse(status="review", candidates=candidates,
-                                  found=len(candidates), job_title=data.get("job_title", ""),
+                                  found=len(candidates),
+                                  job_title=data.get("job_title", "") or data.get("role", ""),
                                   direction=data.get("direction", "hire"),
-                                  role=data.get("role", ""), location=data.get("location", ""))
+                                  role=data.get("role", "") or data.get("job_title", ""),
+                                  location=data.get("location", ""))
 
 
 @router.post("/outreach/{task_id}/send", response_model=OutreachStatusResponse)
