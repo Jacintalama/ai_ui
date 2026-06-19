@@ -97,3 +97,35 @@ def test_process_find_hire_default_unchanged():
     assert out["status"] == "failed"
     assert "engineers" in out["text"]
     assert out["direction"] == "hire" and out["role"] == "x" and out["location"] == ""
+
+
+@pytest.mark.asyncio
+async def test_process_result_reverse_meta_and_summary(monkeypatch):
+    cand = json.dumps({"candidates": [
+        {"name": "Acme", "github_url": "https://acme.com", "email": "jobs@acme.com",
+         "subject": "s", "body": "b"}]})
+    log = json.dumps({"type": "result",
+                      "result": f"```json\n{cand}\n```\nCOMPLETED"}) + "\n"
+
+    async def fake_post(job_title, candidates, **kw):
+        return {"sent": 1, "saved": 1, "sheet_url": "http://sheet"}
+    monkeypatch.setattr(routes_outreach.outreach, "post_outreach_to_n8n", fake_post)
+
+    out = await routes_outreach._process_outreach_result(
+        log, job_title="Senior Python", count=10, direction="reverse",
+        location="Berlin")
+    assert out["status"] == "completed"
+    assert out["direction"] == "reverse"
+    assert out["role"] == "Senior Python" and out["location"] == "Berlin"
+    assert "compan(y/ies)" in out["text"]
+
+
+@pytest.mark.asyncio
+async def test_process_result_reverse_not_found_company_copy():
+    log = json.dumps({"type": "result",
+                      "result": "```json\n{\"candidates\":[]}\n```\nCOMPLETED"}) + "\n"
+    out = await routes_outreach._process_outreach_result(
+        log, job_title="x", count=10, direction="reverse")
+    assert out["status"] == "failed" and out["found"] == 0
+    assert "companies" in out["text"]
+    assert out["direction"] == "reverse"

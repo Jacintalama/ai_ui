@@ -44,35 +44,39 @@ class OutreachStatusResponse(BaseModel):
 
 
 async def _process_outreach_result(raw_log: str, *, job_title: str, count: int,
-                                   direction: str = "hire") -> dict:
+                                   direction: str = "hire", location: str = "") -> dict:
     """Pure: agent log -> summary dict."""
+    meta = {"direction": direction, "role": job_title, "location": location}
+    noun = "compan(y/ies)" if direction == "reverse" else "engineer(s)"
     outcome = parse_outcome(raw_log)
     if outcome.kind == "failed":
         return {"status": "failed", "found": 0, "sent": 0, "saved": 0,
-                "sheet_url": "", "text": (outcome.payload or "The search failed.").strip()[:500]}
+                "sheet_url": "", "text": (outcome.payload or "The search failed.").strip()[:500],
+                **meta}
     cand = outreach.extract_candidates(raw_log)
     found = len(cand.candidates)
     if found == 0:
-        nf = ("I couldn't find companies hiring for that — try a broader role or remove the location."
+        nf = ("I couldn't find companies hiring for that — try a broader role or drop the location."
               if direction == "reverse"
               else "I couldn't find engineers matching that — try a broader role or remove the location.")
         return {"status": "failed", "found": 0, "sent": 0, "saved": 0, "sheet_url": "",
-                "text": nf}
+                "text": nf, **meta}
     batch = outreach.cap_and_dedupe(cand.candidates, count)
     try:
         res = await outreach.post_outreach_to_n8n(job_title, batch)
     except Exception as exc:  # noqa: BLE001
         logger.error("outreach n8n POST failed: %s", exc)
-        noun = "compan(y/ies)" if direction == "reverse" else "engineer(s)"
         return {"status": "completed", "found": found, "sent": 0, "saved": len(batch),
                 "sheet_url": "",
-                "text": f"Found {found} {noun} but sending failed — they're saved; I'll retry sends."}
+                "text": f"Found {found} {noun} but sending failed — they're saved; I'll retry sends.",
+                **meta}
     sent = int(res.get("sent", 0)); saved = int(res.get("saved", len(batch)))
     sheet_url = res.get("sheet_url", "")
     return {"status": "completed", "found": found, "sent": sent, "saved": saved,
             "sheet_url": sheet_url,
             "text": outreach.format_outreach_summary(found, sent, saved, sheet_url,
-                                                     direction=direction)}
+                                                     direction=direction),
+            **meta}
 
 
 def _process_outreach_find(raw_log: str, *, job_title: str, count: int,
@@ -249,7 +253,7 @@ async def _run_outreach(task_id, execution_id, prompt, *, job_title: str,
                                              direction=direction, location=location)
         else:
             summary = await _process_outreach_result(raw_log, job_title=job_title, count=count,
-                                                     direction=direction)
+                                                     direction=direction, location=location)
         final_status = "completed" if summary["status"] in ("completed", "review") else "failed"
         async with session() as s:
             await s.execute(update(TaskExecution).where(TaskExecution.id == execution_id)
