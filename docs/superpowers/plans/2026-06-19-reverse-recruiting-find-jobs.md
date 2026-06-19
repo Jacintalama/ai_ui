@@ -46,9 +46,12 @@
 
 ## Phase 1 — Backend (tasks service)
 
-All paths are under repo root `C:\Users\alama\Desktop\Lukas Work\IO`. Pure-logic tests run via the documented harness from `mcp-servers/tasks`:
-`"../../webhook-handler/.venv/Scripts/python.exe" -m pytest tests/<file>.py -v`
-Never run the full tasks suite (its conftest TRUNCATEs the prod DB). Only the three named files (`test_outreach_logic.py`, `test_outreach_n8n.py`, `test_routes_outreach.py`) — none of them request the `db_session` fixture, so no DB is touched.
+All paths are under repo root `C:\Users\alama\Desktop\Lukas Work\IO`.
+
+> **ENVIRONMENT CORRECTION (2026-06-19, verified):** this machine has **no** `webhook-handler/.venv`. Use **system Python** (`python -m pytest`, Python 3.13 + pytest 9, both present). Wherever a task below shows `./.venv/Scripts/python.exe` or `"../../webhook-handler/.venv/Scripts/python.exe"`, substitute `python`. Baselines confirmed green under system Python: tasks pure (9 passed), webhook pure (15 passed).
+
+Pure-logic tasks-service tests run from `mcp-servers/tasks`: `python -m pytest tests/<file>.py -v`. Webhook tests run from `webhook-handler`: `python -m pytest tests/<file>.py -v`.
+Never run the full tasks suite (its conftest `TRUNCATE`s tables, but ONLY inside the function-scoped `db_session` fixture, which the pure files don't request; `DATABASE_URL` also defaults to a dummy `nobody@nowhere`). Only run the named pure files (`test_outreach_logic.py`, `test_outreach_n8n.py`, `test_routes_outreach.py`), and NEVER set `AIUI_TEST_DB=1` or a prod `DATABASE_URL` in this shell.
 
 Current line numbers (verified):
 - `mcp-servers/tasks/outreach.py`: `build_outreach_prompt` 65–91, `post_outreach_to_n8n` 94–105, `format_outreach_summary` 108–114.
