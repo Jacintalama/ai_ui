@@ -2501,7 +2501,7 @@ class CommandRouter:
                         content=f"**{title}** is ready.", components=components)
             except Exception as e:  # noqa: BLE001
                 logger.warning("video attach failed job=%s: %s", job_id, e)
-        if not attached:
+        if not attached and ctx.notify_channel is not None:
             if share_url:
                 await ctx.notify_channel(f"**{title}** is ready: {share_url}")
             else:
