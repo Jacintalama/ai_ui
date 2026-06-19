@@ -48,7 +48,7 @@ from db import session
 from templates_video.style_config import STYLE_CONFIGS
 from video_voices import DEFAULT_VOICE_ID, is_valid_voice, voice_catalog
 from heavy_lock import enough_free_disk
-from video_capability import verify_video_capability
+from video_capability import mint_video_capability, verify_video_capability
 from video_models import VideoJob
 from video_plan import validate_plan
 from video_refine import (
@@ -339,6 +339,15 @@ async def job_status(
                 )
             ).scalar() or 0
         output_available = job.status == "done" and job.output_path is not None
+        share_url = None
+        if output_available:
+            base = os.environ.get("VIDEO_PUBLIC_BASE", "").rstrip("/")
+            if base:
+                try:
+                    tok = mint_video_capability(job.user_email, job.slug, str(job.id))
+                    share_url = f"{base}/api/video-jobs/{job.id}/download?cap={tok}"
+                except RuntimeError:
+                    share_url = None  # OAUTH_STATE_SECRET unset -> no link
         return {
             "id": str(job.id),
             "slug": job.slug,
@@ -347,6 +356,7 @@ async def job_status(
             "queue_position": queue_position,
             "error": job.error,
             "output_available": output_available,
+            "share_url": share_url,
             "conversation": job.conversation or [],
             "current_version_no": job.current_version_no,
             "pending": latest_pending_proposal(job.conversation or []) is not None,
