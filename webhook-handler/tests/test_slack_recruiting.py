@@ -71,3 +71,56 @@ def test_reverse_fields_round_trip_and_clamp():
     view = {"state": {"values": srp.sample_state("Backend", "Remote", "Skills here", "30")}}
     # delegates to outreach_fields_from_view -> parse_outreach_modal (count clamps 30->25)
     assert srp.reverse_fields_from_view(view) == ("Backend", "Remote", "Skills here", 25)
+
+
+# --- Phase 3.5: reverse entry routing ---
+
+@pytest.mark.asyncio
+async def test_reverse_button_opens_modal():
+    h = _handler(MagicMock())
+    payload = {"type": "block_actions", "trigger_id": "tg",
+               "channel": {"id": "c"}, "user": {"id": "u"},
+               "actions": [{"action_id": srp.OUT_REV_ACTION_ID}]}
+    await h.handle_interaction(payload)
+    h.slack.open_modal.assert_awaited_once()
+    _, view = h.slack.open_modal.await_args.args
+    assert view["callback_id"] == srp.OUT_REV_CALLBACK
+
+
+@pytest.mark.asyncio
+async def test_reverse_modal_dispatches_run_panel_reverse():
+    calls = []
+    router = MagicMock()
+    async def fake(ctx, role, location, jobdesc, count):
+        calls.append((role, location, jobdesc, count,
+                      ctx.notify_channel, ctx.notify_channel_msg))
+    router.run_panel_reverse = fake
+    h = _handler(router)
+    view = {"callback_id": srp.OUT_REV_CALLBACK, "private_metadata": "c",
+            "state": {"values": srp.sample_state("Backend dev", "Remote", "10y Python", "5")}}
+    payload = {"type": "view_submission", "user": {"id": "u"}, "view": view}
+    await h.handle_interaction(payload)
+    for _ in range(6):
+        await asyncio.sleep(0)
+    assert calls, "run_panel_reverse was not dispatched"
+    role, location, jobdesc, count, notify, ncm = calls[0]
+    assert (role, location, jobdesc, count) == ("Backend dev", "Remote", "10y Python", 5)
+    assert notify is not None      # text fallbacks
+    assert ncm is not None         # Block Kit review poster for the manual watcher
+
+
+@pytest.mark.asyncio
+async def test_hire_modal_ctx_has_review_poster():
+    calls = []
+    router = MagicMock()
+    async def fake(ctx, role, location, jobdesc, count):
+        calls.append(ctx.notify_channel_msg)
+    router.run_panel_outreach = fake
+    h = _handler(router)
+    view = {"callback_id": srp.OUT_MODAL_CALLBACK, "private_metadata": "c",
+            "state": {"values": srp.sample_state("Python", "Berlin", "Hiring", "8")}}
+    payload = {"type": "view_submission", "user": {"id": "u"}, "view": view}
+    await h.handle_interaction(payload)
+    for _ in range(6):
+        await asyncio.sleep(0)
+    assert calls and calls[0] is not None  # manual review needs notify_channel_msg

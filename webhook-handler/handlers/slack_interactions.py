@@ -69,6 +69,7 @@ from handlers import schedule_picker
 from datetime import datetime, timedelta, timezone
 from handlers import connector_intent
 from handlers import slack_recruiting_panel as srp
+from handlers import slack_recruiting_review as srr
 from clients import connectors
 from config import settings
 import uuid
@@ -345,6 +346,9 @@ class SlackInteractionsHandler:
         # ----- Recruiting outreach panel (aiuiout:*) -----
         if action_id == srp.OUT_FIND_ACTION_ID:
             await self.slack.open_modal(trigger_id, srp.build_outreach_view(channel_id))
+            return {}
+        if action_id == srp.OUT_REV_ACTION_ID:
+            await self.slack.open_modal(trigger_id, srp.build_reverse_view(channel_id))
             return {}
 
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
@@ -770,6 +774,11 @@ class SlackInteractionsHandler:
                     async def respond(msg: str) -> None:
                         await self.slack.post_message(channel=target_channel, text=msg)
 
+                    async def notify_channel_msg(msg: dict) -> None:
+                        await self.slack.post_message(
+                            channel=target_channel, blocks=msg["blocks"],
+                            text=msg.get("text", ""))
+
                     ctx = CommandContext(
                         user_id=user_id,
                         user_name=user_name,
@@ -781,6 +790,7 @@ class SlackInteractionsHandler:
                         respond=respond,
                         metadata={},
                         notify_channel=notify_channel,
+                        notify_channel_msg=notify_channel_msg,
                     )
                     await self.router.run_panel_outreach(
                         ctx, role, location, jobdesc, count
@@ -792,6 +802,50 @@ class SlackInteractionsHandler:
                     )
 
             task = asyncio.create_task(_start_outreach())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        # ----- Reverse recruiting modal (Find Jobs) -----
+        if callback_id == srp.OUT_REV_CALLBACK:
+            role, location, jobdesc, count = srp.reverse_fields_from_view(view)
+            target_channel = view.get("private_metadata") or ""
+
+            async def _start_reverse() -> None:
+                try:
+                    async def respond(msg: str) -> None:
+                        await self.slack.post_message(channel=target_channel, text=msg)
+
+                    async def notify_channel(msg: str) -> None:
+                        await respond(msg)
+
+                    async def notify_channel_msg(msg: dict) -> None:
+                        await self.slack.post_message(
+                            channel=target_channel, blocks=msg["blocks"],
+                            text=msg.get("text", ""))
+
+                    ctx = CommandContext(
+                        user_id=user_id,
+                        user_name=user_name,
+                        channel_id=target_channel,
+                        raw_text="",
+                        subcommand="outreach",
+                        arguments="",
+                        platform="slack",
+                        respond=respond,
+                        metadata={},
+                        notify_channel=notify_channel,
+                        notify_channel_msg=notify_channel_msg,
+                    )
+                    await self.router.run_panel_reverse(
+                        ctx, role, location, jobdesc, count)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Slack reverse _start_reverse failed user=%s: %s",
+                        user_id, exc,
+                    )
+
+            task = asyncio.create_task(_start_reverse())
             self.router._background_tasks.add(task)
             task.add_done_callback(self.router._background_tasks.discard)
             return {}
