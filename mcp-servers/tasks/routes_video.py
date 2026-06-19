@@ -34,6 +34,9 @@ import re
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -66,6 +69,15 @@ logger = logging.getLogger("routes_video")
 MAX_FILES = 12
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_TOTAL_BYTES = 50 * 1024 * 1024
+
+ALLOWED_URL_HOSTS = {
+    h.strip().lower()
+    for h in os.environ.get(
+        "VIDEO_URL_INTAKE_ALLOWED_HOSTS",
+        "cdn.discordapp.com,media.discordapp.net",
+    ).split(",")
+    if h.strip()
+}
 
 
 def _apps_dir() -> Path:
@@ -590,6 +602,82 @@ async def add_screenshots(
     for i, body in enumerate(raw):
         (shots_dir / f"screenshot-{start + i}.png").write_bytes(body)
     return {"screenshots": _list_screenshots(slug, str(jid))}
+
+
+class ScreenshotUrlsRequest(BaseModel):
+    urls: list[str] = Field(..., min_length=1, max_length=MAX_FILES)
+
+
+def _check_intake_url(u: str) -> None:
+    """SSRF guard: only https URLs on the Discord CDN allow-list may be fetched.
+    Fails closed (400) for any other scheme or host."""
+    p = urlparse(u)
+    if p.scheme != "https" or (p.hostname or "").lower() not in ALLOWED_URL_HOSTS:
+        raise HTTPException(400, "screenshot URL host not allowed")
+
+
+@router.post("/{job_id}/screenshots-by-url")
+async def add_screenshots_by_url(
+    job_id: str,
+    body: ScreenshotUrlsRequest,
+    user: CurrentUser = Depends(current_user),
+) -> dict:
+    """Add screenshots to a job by fetching image URLs server-side. Mirrors
+    /screenshots guards (count/size/validation/disk) and screenshot-N numbering.
+    SSRF guard restricts fetches to the Discord CDN allow-list, validated up front
+    before any DB work."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    for u in body.urls:
+        _check_intake_url(u)
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(
+            select(VideoJob).where(VideoJob.id == jid)
+        )).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        slug = job.slug
+    if not enough_free_disk(
+        str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
+    ):
+        raise HTTPException(507, "Insufficient storage; try again later")
+    shots_dir = _apps_dir() / slug / ".video" / str(jid) / "screenshots"
+    existing = _list_screenshots(slug, str(jid))
+    start = _next_screenshot_index(existing)
+    if len(existing) + len(body.urls) > MAX_FILES:
+        raise HTTPException(400, f"max {MAX_FILES} screenshots per job")
+    total = sum(
+        (shots_dir / name).stat().st_size
+        for name in existing
+        if (shots_dir / name).is_file()
+    )
+    raw: list[bytes] = []
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+        for url in body.urls:
+            try:
+                resp = await client.get(url)
+                resp.raise_for_status()
+            except httpx.HTTPError:
+                raise HTTPException(400, "could not fetch screenshot URL")
+            data = resp.content
+            if len(data) > MAX_FILE_BYTES:
+                raise HTTPException(413, "screenshot too large (max 10 MB)")
+            total += len(data)
+            if total > MAX_TOTAL_BYTES:
+                raise HTTPException(413, "batch too large")
+            try:
+                validate_screenshot(url.rsplit("/", 1)[-1] or "x.png", data)
+            except ScreenshotRejected as e:
+                raise HTTPException(400, str(e))
+            raw.append(data)
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    for i, data in enumerate(raw):
+        (shots_dir / f"screenshot-{start + i}.png").write_bytes(data)
+    shots = _list_screenshots(slug, str(jid))
+    return {"screenshots": shots, "count": len(shots)}
 
 
 @router.get("/{job_id}/versions")
