@@ -156,7 +156,10 @@ def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = 
                             *, direction: Literal["hire", "reverse"] = "hire") -> str:
     # `saved` is the total written to the sheet this run (emailed + collected),
     # per the n8n Respond node — so phrase it as total-saved, not "no-email only".
-    noun = "compan(y/ies)" if direction == "reverse" else "engineer(s)"
+    if direction == "reverse":
+        noun = "company" if found == 1 else "companies"
+    else:
+        noun = "engineer(s)"
     parts = [f"Outreach complete — found {found} {noun}.",
              f"Emailed {sent}.",
              f"Saved {saved} to your sheet."]

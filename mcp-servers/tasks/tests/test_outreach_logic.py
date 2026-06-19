@@ -90,5 +90,54 @@ def test_format_outreach_summary_hire_default_unchanged():
 def test_format_outreach_summary_reverse_company_noun():
     s = outreach.format_outreach_summary(found=12, sent=8, saved=4, sheet_url="http://s",
                                          direction="reverse")
-    assert "found 12 compan(y/ies)" in s
+    assert "found 12 companies" in s
     assert "engineer" not in s
+    assert "compan(y/ies)" not in s
+
+
+def test_format_outreach_summary_reverse_singular_company():
+    s = outreach.format_outreach_summary(found=1, sent=1, saved=1, sheet_url="http://s",
+                                         direction="reverse")
+    assert "found 1 company" in s
+    assert "companies" not in s
+    assert "compan(y/ies)" not in s
+
+
+def test_build_review_candidates_profile_url_falls_back_to_github_url():
+    """hire-mode row: profile_url is empty → fallback fills it from github_url."""
+    from outreach import Candidate
+    c = Candidate(name="Dev A", github_url="https://github.com/deva", profile_url="",
+                  email="a@x.com", subject="Hi", body="body text")
+    rows = outreach.build_review_candidates([c])
+    assert len(rows) == 1
+    assert rows[0]["github_url"] == "https://github.com/deva"
+    assert rows[0]["profile_url"] == "https://github.com/deva"  # backward-compat fallback
+
+
+def test_sendable_candidates_backward_compat_missing_profile_url_key():
+    """Rows without a 'profile_url' key (old data) do not crash and default to ''."""
+    cands = [
+        {"id": "c0", "name": "Dev A", "github_url": "https://github.com/deva",
+         # NOTE: no "profile_url" key — simulates data written before field was added
+         "email": "a@x.com", "subject": "Hi", "body": "body text", "selected": True},
+    ]
+    result = outreach.sendable_candidates(cands)
+    assert len(result) == 1
+    assert result[0].github_url == "https://github.com/deva"
+    assert result[0].profile_url == ""  # defaults to empty string via c.get("profile_url", "")
+
+
+def test_hire_mode_github_url_survives_review_roundtrip():
+    """hire-mode candidate: github_url flows through build_review_candidates then
+    sendable_candidates without the link being silently lost."""
+    from outreach import Candidate
+    c = Candidate(name="Dev A", github_url="https://github.com/deva", profile_url="",
+                  email="a@x.com", subject="Hi", body="body text")
+    rows = outreach.build_review_candidates([c])
+    # Backward-compat: profile_url was empty → filled from github_url
+    assert rows[0]["profile_url"] == "https://github.com/deva"
+    result = outreach.sendable_candidates(rows)
+    assert len(result) == 1
+    assert result[0].github_url == "https://github.com/deva"
+    # profile_url was filled by build_review_candidates so it also survives
+    assert result[0].profile_url == "https://github.com/deva"
