@@ -124,3 +124,61 @@ async def test_hire_modal_ctx_has_review_poster():
     for _ in range(6):
         await asyncio.sleep(0)
     assert calls and calls[0] is not None  # manual review needs notify_channel_msg
+
+
+# --- Phase 3.6: review block-action routing ---
+
+@pytest.mark.asyncio
+async def test_review_select_dispatches_and_wires_ctx():
+    calls = []
+    router = MagicMock()
+    async def fake(ctx, task_id, selected_ids):
+        calls.append((task_id, selected_ids, ctx.platform,
+                      ctx.notify_channel_msg, ctx.edit_message))
+    router.run_outreach_select = fake
+    h = _handler(router)
+    payload = {"type": "block_actions", "user": {"id": "u"},
+               "channel": {"id": "c"}, "response_url": "https://hook",
+               "actions": [{"action_id": "aiuiout:sel:t1",
+                            "selected_options": [{"value": "c0"}, {"value": "c1"}]}]}
+    await h.handle_interaction(payload)
+    for _ in range(6):
+        await asyncio.sleep(0)
+    assert calls, "run_outreach_select not dispatched"
+    task_id, selected_ids, platform, ncm, em = calls[0]
+    assert task_id == "t1" and selected_ids == ["c0", "c1"]
+    assert platform == "slack" and ncm is not None and em is not None
+
+
+@pytest.mark.asyncio
+async def test_review_refresh_passes_none():
+    calls = []
+    router = MagicMock()
+    async def fake(ctx, task_id, selected_ids):
+        calls.append((task_id, selected_ids))
+    router.run_outreach_select = fake
+    h = _handler(router)
+    payload = {"type": "block_actions", "user": {"id": "u"},
+               "channel": {"id": "c"}, "response_url": "https://hook",
+               "actions": [{"action_id": "aiuiout:refresh:t1"}]}
+    await h.handle_interaction(payload)
+    for _ in range(6):
+        await asyncio.sleep(0)
+    assert calls == [("t1", None)]
+
+
+@pytest.mark.asyncio
+async def test_review_send_dispatches():
+    calls = []
+    router = MagicMock()
+    async def fake(ctx, task_id):
+        calls.append((task_id, ctx.edit_message))
+    router.run_outreach_send = fake
+    h = _handler(router)
+    payload = {"type": "block_actions", "user": {"id": "u"},
+               "channel": {"id": "c"}, "response_url": "https://hook",
+               "actions": [{"action_id": "aiuiout:send:t1"}]}
+    await h.handle_interaction(payload)
+    for _ in range(6):
+        await asyncio.sleep(0)
+    assert calls and calls[0][0] == "t1" and calls[0][1] is not None

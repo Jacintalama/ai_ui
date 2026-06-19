@@ -351,6 +351,22 @@ class SlackInteractionsHandler:
             await self.slack.open_modal(trigger_id, srp.build_reverse_view(channel_id))
             return {}
 
+        # ----- Recruiting review interactions (aiuiout:sel|send|refresh:<task_id>) -----
+        if action_id.startswith(srr.SEL_PREFIX):
+            task_id = action_id[len(srr.SEL_PREFIX):]
+            selected = [o.get("value")
+                        for o in (actions[0].get("selected_options") or [])]
+            self._spawn_review(payload, "run_outreach_select", task_id, selected)
+            return {}
+        if action_id.startswith(srr.REFRESH_PREFIX):
+            task_id = action_id[len(srr.REFRESH_PREFIX):]
+            self._spawn_review(payload, "run_outreach_select", task_id, None)
+            return {}
+        if action_id.startswith(srr.SEND_PREFIX):
+            task_id = action_id[len(srr.SEND_PREFIX):]
+            self._spawn_review(payload, "run_outreach_send", task_id)
+            return {}
+
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
         return {}
 
@@ -464,6 +480,69 @@ class SlackInteractionsHandler:
             respond=_noop,
             metadata={},
         )
+
+    def _review_ctx(
+        self, *, user_id: str, user_name: str, channel_id: str, response_url: str,
+    ) -> CommandContext:
+        """A CommandContext wired for Slack outreach-review interactions:
+          - notify_channel_msg posts the Block Kit review message (bot token),
+          - edit_message replaces the review message in place via response_url
+            (block actions carry one; the editmodal path passes the stashed one),
+          - respond posts the reason/error privately via the response_url.
+        Email resolves from the Slack user id inside the router methods
+        (run_outreach_* call _resolve_email_for_ctx)."""
+
+        async def respond(msg: str) -> None:
+            if response_url:
+                await self.slack.post_to_response_url(response_url, msg)
+            elif channel_id:
+                await self.slack.post_message(channel=channel_id, text=msg)
+
+        async def notify_channel(msg: str) -> None:
+            await respond(msg)
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.slack.post_message(
+                channel=channel_id, blocks=msg["blocks"], text=msg.get("text", ""))
+
+        async def edit_message(msg: dict) -> None:
+            if response_url:
+                # Router warning nudges (e.g. "Pick at least one company first.",
+                # invalid-email notice) arrive as msg["content"]; Slack only renders
+                # text/blocks, so surface content into the message text or the nudge
+                # is lost (parity with Discord, which shows it as the content).
+                text = msg.get("content") or msg.get("text", "")
+                await self.slack.post_to_response_url(
+                    response_url, text,
+                    response_type="in_channel", replace_original=True,
+                    blocks=msg["blocks"])
+
+        return CommandContext(
+            user_id=user_id, user_name=user_name, channel_id=channel_id,
+            raw_text="outreach", subcommand="outreach", arguments="",
+            platform="slack", respond=respond, metadata={},
+            notify_channel=notify_channel,
+            notify_channel_msg=notify_channel_msg,
+            edit_message=edit_message,
+        )
+
+    def _spawn_review(
+        self, payload: dict[str, Any], method_name: str, *args: Any,
+    ) -> None:
+        """Build a review ctx from a block-action payload and run the named
+        router method (run_outreach_select / run_outreach_send) in the
+        background. response_url comes from the block action."""
+        user = payload.get("user", {})
+        ctx = self._review_ctx(
+            user_id=user.get("id", ""),
+            user_name=user.get("username") or user.get("name", "user"),
+            channel_id=(payload.get("channel") or {}).get("id", ""),
+            response_url=payload.get("response_url", ""),
+        )
+        method = getattr(self.router, method_name)
+        task = asyncio.create_task(method(ctx, *args))
+        self.router._background_tasks.add(task)
+        task.add_done_callback(self.router._background_tasks.discard)
 
     async def _email_for(self, user_id: str) -> Optional[str]:
         return await self.router._resolve_email_for_ctx(self._slack_ctx(user_id))
