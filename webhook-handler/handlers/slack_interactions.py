@@ -366,6 +366,16 @@ class SlackInteractionsHandler:
             task_id = action_id[len(srr.SEND_PREFIX):]
             self._spawn_review(payload, "run_outreach_send", task_id)
             return {}
+        if action_id.startswith(srr.EDIT_PREFIX):
+            task_id = action_id[len(srr.EDIT_PREFIX):]
+            cid = (actions[0].get("selected_option") or {}).get("value", "")
+            response_url = payload.get("response_url", "")
+            task = asyncio.create_task(
+                self._open_outreach_edit(
+                    trigger_id, payload, task_id, cid, response_url))
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
 
         logger.info(f"Ignoring unknown Slack action_id: {action_id}")
         return {}
@@ -543,6 +553,35 @@ class SlackInteractionsHandler:
         task = asyncio.create_task(method(ctx, *args))
         self.router._background_tasks.add(task)
         task.add_done_callback(self.router._background_tasks.discard)
+
+    async def _open_outreach_edit(
+        self, trigger_id: str, payload: dict[str, Any],
+        task_id: str, cid: str, response_url: str,
+    ) -> None:
+        """Edit dropdown picked a candidate → fetch it and open the prefilled
+        edit modal, stashing the block action's response_url in private_metadata
+        so the view_submission can re-render the review message in place.
+
+        NOTE: one await (the candidate fetch) precedes views.open — under prod
+        latency the ~3s trigger_id TTL can lapse; acceptable per the spec and
+        verified manually e2e."""
+        user_id = (payload.get("user") or {}).get("id", "")
+        try:
+            email = await self._email_for(user_id)
+            if not email:
+                return
+            st = await self.router._tasks_client.get_outreach_candidates(email, task_id)
+            cand = next(
+                (c for c in st.get("candidates", []) if c.get("id") == cid), None)
+            if cand is None:
+                return
+            await self.slack.open_modal(
+                trigger_id, srr.build_edit_modal_view(task_id, cand, response_url))
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Slack outreach edit-open failed task=%s cid=%s: %s",
+                task_id, cid, exc,
+            )
 
     async def _email_for(self, user_id: str) -> Optional[str]:
         return await self.router._resolve_email_for_ctx(self._slack_ctx(user_id))
@@ -925,6 +964,22 @@ class SlackInteractionsHandler:
                     )
 
             task = asyncio.create_task(_start_reverse())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        # ----- Recruiting edit modal submit (aiuiout:editmodal:<task_id>:<cid>) -----
+        if callback_id.startswith(srr.EDITMODAL_PREFIX):
+            task_id, cid = srr.ids_from_editmodal(callback_id)
+            email_val, subject, body = srr.edit_fields_from_view(view)
+            response_url = srr.response_url_from_meta(
+                view.get("private_metadata", ""))
+            ctx = self._review_ctx(
+                user_id=user_id, user_name=user_name,
+                channel_id="", response_url=response_url)
+            task = asyncio.create_task(
+                self.router.run_outreach_edit_submit(
+                    ctx, task_id, cid, email_val, subject, body))
             self.router._background_tasks.add(task)
             task.add_done_callback(self.router._background_tasks.discard)
             return {}

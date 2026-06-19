@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from handlers.slack_interactions import SlackInteractionsHandler
 from handlers import slack_recruiting_panel as srp
+from handlers import slack_recruiting_review as srr
 
 
 def _handler(router):
@@ -182,3 +183,53 @@ async def test_review_send_dispatches():
     for _ in range(6):
         await asyncio.sleep(0)
     assert calls and calls[0][0] == "t1" and calls[0][1] is not None
+
+
+# --- Phase 3.7: edit-modal open + submit routing ---
+
+@pytest.mark.asyncio
+async def test_edit_select_opens_modal_with_response_url():
+    import json
+    router = MagicMock()
+    router._tasks_client = MagicMock()
+    router._tasks_client.get_outreach_candidates = AsyncMock(return_value={
+        "candidates": [{"id": "c0", "name": "Alice", "email": "a@x.com",
+                        "subject": "S", "body": "B"}]})
+    h = _handler(router)
+    # _open_outreach_edit calls self._email_for(user_id) (slack_interactions.py:464),
+    # NOT router._resolve_email_for_ctx — stub the method actually invoked.
+    h._email_for = AsyncMock(return_value="e@x.com")
+    payload = {"type": "block_actions", "trigger_id": "tg",
+               "user": {"id": "u"}, "channel": {"id": "c"},
+               "response_url": "https://hook",
+               "actions": [{"action_id": "aiuiout:edit:t1",
+                            "selected_option": {"value": "c0"}}]}
+    await h.handle_interaction(payload)
+    for _ in range(8):
+        await asyncio.sleep(0)
+    h.slack.open_modal.assert_awaited_once()
+    _, view = h.slack.open_modal.await_args.args
+    assert view["callback_id"] == "aiuiout:editmodal:t1:c0"
+    assert json.loads(view["private_metadata"])["response_url"] == "https://hook"
+
+
+@pytest.mark.asyncio
+async def test_editmodal_submit_dispatches_with_response_url():
+    import json
+    calls = []
+    router = MagicMock()
+    async def fake(ctx, task_id, cid, email_val, subject, body):
+        calls.append((task_id, cid, email_val, subject, body, ctx.edit_message))
+    router.run_outreach_edit_submit = fake
+    h = _handler(router)
+    meta = json.dumps({"response_url": "https://hook", "task_id": "t1", "cid": "c0"})
+    view = {"callback_id": "aiuiout:editmodal:t1:c0", "private_metadata": meta,
+            "state": {"values": srr.sample_edit_state("a@x.com", "S2", "B2")}}
+    payload = {"type": "view_submission", "user": {"id": "u"}, "view": view}
+    await h.handle_interaction(payload)
+    for _ in range(6):
+        await asyncio.sleep(0)
+    assert calls, "run_outreach_edit_submit not dispatched"
+    task_id, cid, email_val, subject, body, em = calls[0]
+    assert (task_id, cid, email_val, subject, body) == ("t1", "c0", "a@x.com", "S2", "B2")
+    assert em is not None
