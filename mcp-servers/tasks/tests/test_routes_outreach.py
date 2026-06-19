@@ -1,4 +1,4 @@
-import json, os, sys, pytest
+import inspect, json, os, sys, pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import routes_outreach
 
@@ -140,3 +140,10 @@ def test_outreach_status_response_has_direction_role_location():
     r = routes_outreach.OutreachStatusResponse(status="review")
     assert r.direction == "hire"
     assert r.role == "" and r.location == ""
+
+
+def test_run_outreach_signature_accepts_direction_and_location():
+    sig = inspect.signature(routes_outreach._run_outreach)
+    assert sig.parameters["direction"].default == "hire"
+    assert sig.parameters["location"].default == ""
+    assert sig.parameters["mode"].default == "auto"   # unchanged
