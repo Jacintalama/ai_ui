@@ -18,8 +18,20 @@ _FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 class Candidate(BaseModel):
+    """Agent-produced candidate row, shared between hire and reverse-recruiting flows.
+
+    Field semantics differ by direction:
+    - hire mode:    ``github_url`` holds the GitHub profile URL; ``profile_url`` is empty.
+    - reverse mode: ``profile_url`` holds the careers/jobs page URL; ``github_url`` is empty.
+
+    Using a single ``github_url`` for both meanings caused ambiguous JSON responses
+    (e.g. ``github_url: "https://acme.com/careers"``). New code should write
+    ``profile_url`` for reverse-mode results and read ``profile_url or github_url``
+    for backward compatibility with data stored before this field was added.
+    """
     name: str
-    github_url: str = ""
+    github_url: str = ""   # hire mode only: GitHub profile URL
+    profile_url: str = ""  # reverse mode only: careers/jobs page URL
     email: Optional[str] = None
     subject: str = ""
     body: str = ""
@@ -83,12 +95,12 @@ null if you cannot find a real one.
 2. Draft a SHORT, tailored, first-person application email per company (subject + \
 body), grounded in the seeker's background above and signed as the seeker.
 3. Output EXACTLY ONE fenced json block (no prose after it), then a new line with \
-the single word COMPLETED. Use name = the company, github_url = the company \
-careers/jobs URL (NOTE: field is intentionally reused from the hire flow — here it \
-holds a careers/jobs URL, not a GitHub profile URL), email = the contact email \
-(or null), and subject/body = the application:
+the single word COMPLETED. Use name = the company, profile_url = the company \
+careers/jobs page URL, github_url = "" (leave empty — it is for GitHub profiles \
+in the hire flow), email = the contact email (or null), and subject/body = the \
+application:
 ```json
-{{"candidates":[{{"name":"...","github_url":"...","email":"... or null","subject":"...","body":"..."}}]}}
+{{"candidates":[{{"name":"...","profile_url":"...","github_url":"","email":"... or null","subject":"...","body":"..."}}]}}
 ```
 If you cannot find any companies, output a candidates list of [] then COMPLETED. \
 On a hard error, output a line starting with FAILED: and the reason."""
@@ -153,12 +165,20 @@ def format_outreach_summary(found: int, sent: int, saved: int, sheet_url: str = 
 
 def build_review_candidates(candidates: list[Candidate]) -> list[dict]:
     """Manual-review rows with stable ids. Selected defaults ON for emailable
-    candidates, OFF for no-email ones."""
+    candidates, OFF for no-email ones.
+
+    Both ``github_url`` (hire) and ``profile_url`` (reverse) are included so
+    API consumers can read the semantically correct field for their flow.
+    For data written before ``profile_url`` was added, ``profile_url`` falls
+    back to ``github_url``.
+    """
     rows = []
     for i, c in enumerate(candidates):
         email = (c.email or "").strip()
         rows.append({
-            "id": f"c{i}", "name": c.name, "github_url": c.github_url,
+            "id": f"c{i}", "name": c.name,
+            "github_url": c.github_url,
+            "profile_url": c.profile_url or c.github_url,  # backward compat
             "email": email, "subject": c.subject, "body": c.body,
             "selected": bool(email),
             "status": "draft" if email else "no_email",
@@ -207,7 +227,8 @@ def set_selection(candidates: list[dict], selected_ids: list[str]) -> list[dict]
 
 def sendable_candidates(candidates: list[dict]) -> list[Candidate]:
     """Selected + has-email rows -> Candidate objects for n8n."""
-    return [Candidate(name=c["name"], github_url=c["github_url"], email=c["email"],
+    return [Candidate(name=c["name"], github_url=c.get("github_url", ""),
+                      profile_url=c.get("profile_url", ""), email=c["email"],
                       subject=c["subject"], body=c["body"])
             for c in candidates if c.get("selected") and (c.get("email") or "").strip()]
 
