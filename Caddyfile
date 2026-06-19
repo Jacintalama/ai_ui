@@ -167,6 +167,22 @@
 		reverse_proxy tasks:8210
 	}
 
+	# No-login video download deep links — the share_url the video bot posts in
+	# Discord. The tasks /download endpoint authorizes via a signed ?cap=
+	# capability bound to one (owner, slug, job_id), so it needs no gateway/JWT.
+	# SECURITY (same rationale as /tasks/schedules*): strip identity headers so
+	# this public route can ONLY be used with a valid capability — never to
+	# impersonate a user via a forged X-User-Email/X-User-Admin. Scoped by regex
+	# to the download path only; every other /api/video-jobs/* call still goes
+	# through the gateway (/api/tasks/* or the SPA's cookie-authed fetch).
+	@video_dl path_regexp ^/tasks/api/video-jobs/[^/]+/download$
+	handle @video_dl {
+		uri strip_prefix /tasks
+		request_header -X-User-Email
+		request_header -X-User-Admin
+		reverse_proxy tasks:8210
+	}
+
 	# Schedules API (heartbeat scheduler) — protected by X-Cron-Secret header
 	# inside the tasks service itself, so no gateway/JWT step needed here.
 	# Tasks service exposes /schedules at root, so strip /tasks prefix.
