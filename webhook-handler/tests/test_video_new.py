@@ -59,3 +59,40 @@ async def test_open_video_studio_not_linked_posts_card_no_draft():
         title="t", prompt="d", screenshot_urls=["http://cdn/1.png"])
     router._tasks_client.create_video_draft.assert_not_called()
     discord.edit_original.assert_awaited()  # the not-linked card
+
+
+def test_parse_video_new_extracts_fields_and_urls():
+    data = {
+        "options": [{"name": "new", "type": 1, "options": [
+            {"name": "description", "type": 3, "value": "walk the dashboard"},
+            {"name": "title", "type": 3, "value": "My Demo"},
+            {"name": "shot1", "type": 11, "value": "att1"},
+        ]}],
+        "resolved": {"attachments": {
+            "att1": {"url": "http://cdn/1.png", "filename": "1.png",
+                     "content_type": "image/png", "size": 10},
+        }},
+    }
+    title, prompt, urls = DiscordCommandHandler._parse_video_new(data)
+    assert title == "My Demo"
+    assert prompt == "walk the dashboard"
+    assert urls == ["http://cdn/1.png"]
+
+
+def test_parse_video_new_defaults_title_from_description():
+    data = {"options": [{"name": "new", "type": 1, "options": [
+        {"name": "description", "type": 3, "value": "x" * 80},
+    ]}], "resolved": {}}
+    title, prompt, urls = DiscordCommandHandler._parse_video_new(data)
+    assert title == "x" * 60
+    assert prompt == "x" * 80
+    assert urls == []
+
+
+def test_parse_video_new_untitled_when_blank():
+    data = {"options": [{"name": "new", "type": 1, "options": [
+        {"name": "description", "type": 3, "value": "   "},
+    ]}], "resolved": {}}
+    title, prompt, urls = DiscordCommandHandler._parse_video_new(data)
+    assert title == "Untitled video"
+    assert prompt == ""

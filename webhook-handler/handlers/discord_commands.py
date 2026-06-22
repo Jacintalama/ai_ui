@@ -870,8 +870,9 @@ class DiscordCommandHandler:
         await self.router.run_video_set_field(ctx, job_id, **field)
 
     async def _handle_video_command(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """`/video add` (push the attached screenshots onto the current draft) and
-        `/video list` (list the caller's videos). ACK ephemeral-deferred."""
+        """`/video new` (one-shot: describe + attach screenshots), `/video add`
+        (push the attached screenshots onto the current draft) and `/video list`.
+        ACK ephemeral-deferred."""
         data = payload.get("data", {})
         options = data.get("options", [])
         sub = options[0].get("name") if options else "list"
@@ -879,6 +880,17 @@ class DiscordCommandHandler:
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
         channel_id = payload.get("channel_id", "")
+
+        if sub == "new":
+            title, prompt, urls = self._parse_video_new(data)
+            self._spawn(self._open_video_studio(
+                interaction_token=interaction_token,
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=channel_id, title=title, prompt=prompt,
+                screenshot_urls=urls))
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
         notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
 
         async def respond(msg: str) -> None:
@@ -1859,6 +1871,21 @@ class DiscordCommandHandler:
         return [{"url": a.get("url"), "filename": a.get("filename"),
                  "content_type": a.get("content_type"), "size": a.get("size")}
                 for a in atts.values()]
+
+    @staticmethod
+    def _parse_video_new(data: dict) -> "tuple[str, str, list[str]]":
+        """Parse the `/video new` payload → (title, prompt, screenshot_urls).
+        Title falls back to the first 60 chars of the description, then to
+        'Untitled video' when the description is blank too."""
+        sub_opts = ((data.get("options") or [{}])[0].get("options")) or []
+
+        def _opt(name: str) -> str:
+            return next((o.get("value", "") for o in sub_opts if o.get("name") == name), "")
+
+        prompt = (_opt("description") or "").strip()
+        title = (_opt("title") or "").strip() or prompt[:60].strip() or "Untitled video"
+        urls = [a["url"] for a in DiscordCommandHandler._all_attachments(data) if a.get("url")]
+        return title, prompt, urls
 
     @staticmethod
     def _parse_options(options: list[dict]) -> tuple[str, str]:
