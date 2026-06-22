@@ -82,6 +82,26 @@ async def test_run_video_add_no_urls():
 
 
 @pytest.mark.asyncio
+async def test_run_video_set_details_patches_and_confirms():
+    tc = MagicMock()
+    tc.set_video_draft_fields = AsyncMock(return_value={"status": "ok"})
+    r = _router(tc)
+    ctx = _ctx()
+    await r.run_video_set_details(ctx, "job1", title="T", prompt="P")
+    tc.set_video_draft_fields.assert_awaited_once_with("u@x.com", "job1", title="T", prompt="P")
+    ctx.respond.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_video_set_details_unlinked():
+    r = _router(MagicMock())
+    r._resolve_email_for_ctx = AsyncMock(return_value=None)
+    ctx = _ctx()
+    await r.run_video_set_details(ctx, "job1", title="T", prompt="P")
+    r._respond_not_linked.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_run_video_add_unlinked():
     r = _router(MagicMock())
     r._resolve_email_for_ctx = AsyncMock(return_value=None)

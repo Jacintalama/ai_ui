@@ -47,14 +47,32 @@ async def _drain():
 
 
 @pytest.mark.asyncio
-async def test_new_button_opens_new_modal():
-    handler = _handler(_router())
+async def test_new_button_opens_studio_deferred():
+    """Clicking New video ACKs ephemeral-deferred and opens the studio with an
+    EMPTY draft (title 'Untitled video', blank prompt) in the background."""
+    router = _router()
+    router._resolve_email = AsyncMock(return_value="u@x.com")
+    tc = MagicMock()
+    tc.create_video_draft = AsyncMock(return_value={"id": "jobN"})
+    tc.get_video_voices = AsyncMock(return_value={"voices": []})
+    tc.fetch_bytes = AsyncMock(return_value=b"mp3")
+    router._tasks_client = tc
+    handler = _handler(router)
+    discord = handler.discord
+    discord.edit_original = AsyncMock(return_value=True)
+    discord.post_channel_message = AsyncMock(return_value=True)
+    discord.post_channel_file = AsyncMock(return_value=True)
+    handler._get_or_make_thread = AsyncMock(return_value="thread-n")
     payload = {"type": 3, "id": "i", "token": "t", "channel_id": "c",
                "member": {"user": {"id": "100", "username": "alice"}},
                "data": {"custom_id": vid.NEW_ID}}
     resp = await handler.handle_interaction(payload)
-    assert resp["type"] == MODAL
-    assert resp["data"]["custom_id"] == vid.NEW_MODAL_ID  # "aiuivid:newmodal"
+    assert resp["type"] == DEFERRED_CHANNEL_MESSAGE
+    assert resp["data"]["flags"] == 64
+    await _drain()
+    tc.create_video_draft.assert_awaited_once_with(
+        "u@x.com", "Untitled video", "", "clean_product_demo", "amy")
+    assert discord.post_channel_message.await_args.args[0] == "thread-n"
 
 
 @pytest.mark.asyncio
@@ -220,30 +238,19 @@ async def test_refine_modal_submit_dispatches_with_notify_channel_msg():
 
 
 @pytest.mark.asyncio
-async def test_new_video_modal_submit_acks_ephemeral_deferred():
-    """New-video modal submit ACKs ephemeral-deferred and opens the studio in the
-    background (resolve email -> draft -> thread -> studio components)."""
+async def test_details_modal_submit_routes_to_set_details():
+    """Add-title-&-description modal submit ACKs ephemeral-deferred and routes
+    to run_video_set_details with the parsed job id + title/prompt."""
     router = _router()
-    router._resolve_email = AsyncMock(return_value="u@x.com")
-    tc = MagicMock()
-    tc.create_video_draft = AsyncMock(return_value={"id": "job9"})
-    tc.get_video_voices = AsyncMock(return_value={"voices": [
-        {"id": "amy", "label": "Amy", "sample_url": "/v/amy.mp3"}]})
-    tc.fetch_bytes = AsyncMock(return_value=b"mp3")
-    router._tasks_client = tc
+    router.run_video_set_details = AsyncMock()
     handler = _handler(router)
-    discord = handler.discord
-    discord.edit_original = AsyncMock(return_value=True)
-    discord.post_channel_message = AsyncMock(return_value=True)
-    discord.post_channel_file = AsyncMock(return_value=True)
-    handler._get_or_make_thread = AsyncMock(return_value="thread-9")
-
+    handler.discord.edit_original = AsyncMock(return_value=True)
     payload = {
         "type": 5, "id": "i", "token": "t", "channel_id": "c",
         "member": {"user": {"id": "100", "username": "alice"}},
-        "data": {"custom_id": vid.NEW_MODAL_ID, "components": [
+        "data": {"custom_id": f"{vid.DETAILS_MODAL_PREFIX}job7", "components": [
             {"type": 1, "components": [
-                {"type": 4, "custom_id": vid.TITLE_INPUT, "value": "Dashboard"}]},
+                {"type": 4, "custom_id": vid.TITLE_INPUT, "value": "Dash"}]},
             {"type": 1, "components": [
                 {"type": 4, "custom_id": vid.PROMPT_INPUT, "value": "walk it"}]},
         ]},
@@ -252,7 +259,7 @@ async def test_new_video_modal_submit_acks_ephemeral_deferred():
     assert resp["type"] == DEFERRED_CHANNEL_MESSAGE
     assert resp["data"]["flags"] == 64
     await _drain()
-    tc.create_video_draft.assert_awaited_once_with(
-        "u@x.com", "Dashboard", "walk it", "clean_product_demo", "amy")
-    # studio controls posted into the thread
-    assert discord.post_channel_message.await_args.args[0] == "thread-9"
+    router.run_video_set_details.assert_awaited_once()
+    args, kwargs = router.run_video_set_details.await_args
+    assert args[1] == "job7"
+    assert kwargs == {"title": "Dash", "prompt": "walk it"}

@@ -390,7 +390,21 @@ class DiscordCommandHandler:
 
         # --- Video studio (aiuivid:*) ---
         if vid.is_vid_new(custom_id):
-            return {"type": MODAL, "data": vid.build_video_modal()}
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            self._spawn(self._open_video_studio(
+                interaction_token=payload.get("token", ""),
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=payload.get("channel_id", ""),
+                title="Untitled video", prompt="", screenshot_urls=None))
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+        if vid.is_vid_details(custom_id):
+            try:
+                job_id = vid.job_from_details(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_details_modal(job_id)}
         if vid.is_vid_list(custom_id):
             return await self._handle_video_route(
                 payload, lambda ctx: self.router.run_video_list(ctx),
@@ -985,8 +999,9 @@ class DiscordCommandHandler:
                 )
             else:
                 studio_msg = (
-                    "Pick a style + voice, then **drop your screenshots here** "
-                    "(or use `/video add`), then hit **Generate video**."
+                    "Drag your screenshots into this thread (up to 12). Then click "
+                    "**Add title & description**, pick a style + voice, and hit "
+                    "**Generate video**."
                 )
             await self.discord.post_channel_message(
                 target, studio_msg,
@@ -1002,20 +1017,29 @@ class DiscordCommandHandler:
             except Exception:  # noqa: BLE001
                 pass
 
-    async def _handle_video_new_modal(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """'New video' modal submit → open the video studio (no up-front
-        screenshots). ACK is ephemeral-deferred within 3s."""
+    async def _handle_video_details_modal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'Add title & description' modal submit → patch the draft's title/prompt.
+        ACK ephemeral-deferred within 3s."""
         data = payload.get("data", {})
-        title = self._extract_modal_value(data, vid.TITLE_INPUT)
+        custom_id = data.get("custom_id", "")
+        try:
+            job_id = vid.job_from_details_modal(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+        title = self._extract_modal_value(data, vid.TITLE_INPUT) or None
         prompt = self._extract_modal_value(data, vid.PROMPT_INPUT)
+        interaction_token = payload.get("token", "")
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
-        self._spawn(self._open_video_studio(
-            interaction_token=payload.get("token", ""),
-            user_id=user.get("id", ""),
-            user_name=user.get("username", "unknown"),
-            channel_id=payload.get("channel_id", ""),
-            title=title, prompt=prompt, screenshot_urls=None))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="video details",
+            subcommand="video", arguments="", platform="discord", respond=respond)
+        self._spawn(self.router.run_video_set_details(ctx, job_id, title=title, prompt=prompt))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1160,8 +1184,8 @@ class DiscordCommandHandler:
             return self._handle_sched_edit_submit(payload, custom_id)
         if is_link_modal(custom_id):
             return self._handle_link_modal_submit(payload)
-        if vid.is_vid_new_modal(custom_id):
-            return await self._handle_video_new_modal(payload)
+        if vid.is_vid_details_modal(custom_id):
+            return await self._handle_video_details_modal(payload)
         if vid.is_vid_refine_modal(custom_id):
             try:
                 job_id = vid.job_from_refine_modal(custom_id)

@@ -2388,6 +2388,22 @@ class CommandRouter:
         except TasksAPIError as e:
             logger.warning("video set field failed job=%s: %s", job_id, e)
 
+    async def run_video_set_details(self, ctx: CommandContext, job_id: str, *,
+                                    title: str | None = None, prompt: str | None = None) -> None:
+        """Add-title-&-description submit: patch the draft's title/prompt."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.set_video_draft_fields(
+                email, job_id, title=title, prompt=prompt)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't save: {e.message}")
+            return
+        await ctx.respond(
+            "Saved. Drag your screenshots in, pick a style + voice, then hit Generate video.")
+
     async def run_video_generate(self, ctx: CommandContext, job_id: str) -> None:
         """Generate button: queue the draft + spawn the watcher."""
         email = await self._resolve_email_for_ctx(ctx)

@@ -48,7 +48,7 @@ async def test_open_video_studio_without_screenshots_skips_add():
         title="My Demo", prompt="desc", screenshot_urls=None)
     router._tasks_client.add_video_screenshots_urls.assert_not_called()
     content = discord.post_channel_message.await_args.args[1]
-    assert "drop your screenshots here" in content.lower()
+    assert "drag your screenshots" in content.lower()
 
 
 @pytest.mark.asyncio
