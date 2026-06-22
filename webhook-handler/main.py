@@ -1,5 +1,6 @@
 """Webhook Handler Service - Main FastAPI Application."""
 import asyncio
+import os
 import hmac
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
@@ -201,6 +202,18 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Discord integration disabled (no DISCORD_PUBLIC_KEY)")
 
+    # Video thread image-drop intake (drop screenshots into the video thread).
+    # Needs a DiscordClient to post replies; if Discord isn't configured the
+    # intake stays None and the voice bot simply won't ingest dropped images.
+    video_intake = None
+    if discord_client is not None and command_router is not None:
+        from handlers.video_intake import VideoThreadIntake
+        video_intake = VideoThreadIntake(
+            command_router, discord_client,
+            video_channel_id=os.environ.get("VIDEO_CHANNEL_ID"),
+            video_channel_name=os.environ.get("VIDEO_CHANNEL_NAME", "video-generation"),
+        )
+
     # Generic handler
     generic_handler = GenericWebhookHandler(
         openwebui_client=openwebui_client,
@@ -229,6 +242,7 @@ async def lifespan(app: FastAPI):
             bot_token=settings.discord_bot_token,
             elevenlabs_api_key=settings.elevenlabs_api_key,
             agent_id=settings.elevenlabs_agent_id,
+            video_intake=video_intake,
         ))
         voice_bot_task.add_done_callback(_log_voice_bot_exit)
         logger.info("Voice bot starting as background task")
