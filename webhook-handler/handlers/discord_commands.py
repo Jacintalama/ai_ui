@@ -1570,14 +1570,19 @@ class DiscordCommandHandler:
         else:  # pragma: no cover - defensive
             raise ValueError(f"unknown thread kind: {kind!r}")
         thread_id = await get_thread(user_id)
+        # A stored thread the user deleted (or that the bot can no longer reach)
+        # would otherwise be reused and rendered as a dead "#unknown" link.
+        # add_thread_member returns False for a gone thread (404), so treat that
+        # as "stale" and recreate. Doubles as adding the user to a live thread.
+        if thread_id and not await self.discord.add_thread_member(thread_id, user_id):
+            thread_id = None
         if not thread_id:
             thread_id = await self.discord.create_private_thread(
                 channel_id, name[:90]
             )
             if thread_id:
                 await set_thread(user_id, thread_id)
-        if thread_id:
-            await self.discord.add_thread_member(thread_id, user_id)
+                await self.discord.add_thread_member(thread_id, user_id)
         return thread_id
 
     async def _handle_build_new(self, payload: dict[str, Any]) -> dict[str, Any]:

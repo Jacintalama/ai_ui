@@ -98,6 +98,53 @@ def test_parse_video_new_untitled_when_blank():
     assert prompt == ""
 
 
+def _thread_handler():
+    h = DiscordCommandHandler.__new__(DiscordCommandHandler)
+    router = MagicMock()
+    router.get_user_video_thread = AsyncMock(return_value=None)
+    router.set_user_video_thread = AsyncMock()
+    h.router = router
+    discord = MagicMock()
+    discord.add_thread_member = AsyncMock(return_value=True)
+    discord.create_private_thread = AsyncMock(return_value="t-new")
+    h.discord = discord
+    return h, router, discord
+
+
+@pytest.mark.asyncio
+async def test_get_or_make_thread_reuses_live_thread():
+    h, router, discord = _thread_handler()
+    router.get_user_video_thread = AsyncMock(return_value="t-live")
+    discord.add_thread_member = AsyncMock(return_value=True)
+    tid = await h._get_or_make_thread("100", "chan", "alice", kind="video")
+    assert tid == "t-live"
+    discord.create_private_thread.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_or_make_thread_recreates_deleted_thread():
+    """A stored thread the user deleted (add_thread_member -> False) is replaced
+    with a fresh one instead of returning a dead '#unknown' link."""
+    h, router, discord = _thread_handler()
+    router.get_user_video_thread = AsyncMock(return_value="t-dead")
+    discord.add_thread_member = AsyncMock(side_effect=[False, True])
+    discord.create_private_thread = AsyncMock(return_value="t-new")
+    tid = await h._get_or_make_thread("100", "chan", "alice", kind="video")
+    assert tid == "t-new"
+    discord.create_private_thread.assert_awaited_once()
+    router.set_user_video_thread.assert_awaited_once_with("100", "t-new")
+
+
+@pytest.mark.asyncio
+async def test_get_or_make_thread_creates_when_none():
+    h, router, discord = _thread_handler()
+    router.get_user_video_thread = AsyncMock(return_value=None)
+    discord.create_private_thread = AsyncMock(return_value="t-new")
+    tid = await h._get_or_make_thread("100", "chan", "alice", kind="video")
+    assert tid == "t-new"
+    router.set_user_video_thread.assert_awaited_once_with("100", "t-new")
+
+
 @pytest.mark.asyncio
 async def test_set_video_draft_fields_includes_title_and_prompt():
     from clients.tasks import TasksClient
