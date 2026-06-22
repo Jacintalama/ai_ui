@@ -47,8 +47,8 @@ def build_video_embed() -> dict:
         "description": (
             "```\n"
             "> turn screenshots into a narrated walkthrough\n"
-            "> New video -> name it, pick style + voice\n"
-            "> drop your screenshots in the thread (or /video add)\n"
+            "> fastest: /video new  - attach screenshots + describe it\n"
+            "> or New video -> drop screenshots in your thread\n"
             "> Generate -> we render it in your private thread\n"
             "```"
         ),

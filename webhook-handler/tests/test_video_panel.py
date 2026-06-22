@@ -349,3 +349,8 @@ def test_video_embed_has_expected_keys():
 def test_video_embed_mentions_dropping_screenshots():
     embed = build_video_embed()
     assert "drop" in embed["description"].lower()
+
+
+def test_video_embed_mentions_video_new_command():
+    embed = build_video_embed()
+    assert "/video new" in embed["description"]
