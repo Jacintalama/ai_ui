@@ -2,22 +2,22 @@
 import pytest
 from handlers.video_panel import (
     # builders
-    build_video_panel, build_video_modal, build_refine_modal,
+    build_video_panel, build_details_modal, build_refine_modal,
     build_style_select, build_voice_select, build_studio_components,
     build_generate_row, build_done_components, build_proposal_components,
     build_video_embed,
     # constants
-    NEW_ID, LIST_ID, NEW_MODAL_ID,
-    STYLE_PREFIX, VOICE_PREFIX, GENERATE_PREFIX,
+    NEW_ID, LIST_ID,
+    STYLE_PREFIX, VOICE_PREFIX, GENERATE_PREFIX, DETAILS_PREFIX, DETAILS_MODAL_PREFIX,
     REFINE_PREFIX, REFINE_MODAL_PREFIX, APPLY_PREFIX, VERSION_PREFIX,
     TITLE_INPUT, PROMPT_INPUT, REFINE_INPUT,
     STYLES,
     # predicates
-    is_vid_new, is_vid_list, is_vid_new_modal,
+    is_vid_new, is_vid_list, is_vid_details, is_vid_details_modal,
     is_vid_style, is_vid_voice, is_vid_generate,
     is_vid_refine, is_vid_refine_modal, is_vid_apply, is_vid_version,
     # extractors
-    job_from_style, job_from_voice, job_from_generate,
+    job_from_style, job_from_voice, job_from_generate, job_from_details, job_from_details_modal,
     job_from_refine, job_from_refine_modal, job_from_apply, job_from_version,
 )
 from handlers.app_builder_panel import ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT
@@ -47,21 +47,25 @@ def test_panel_rows_are_action_rows():
 # New-video modal
 # ---------------------------------------------------------------------------
 
-def test_modal_field_custom_ids():
-    modal = build_video_modal()
-    assert modal["custom_id"] == NEW_MODAL_ID
+def test_details_modal_custom_id_and_inputs():
+    modal = build_details_modal("job-d1")
+    assert modal["custom_id"] == f"{DETAILS_MODAL_PREFIX}job-d1"
     inputs = [c for row in modal["components"] for c in row["components"]
               if c.get("type") == TEXT_INPUT]
     input_ids = [inp["custom_id"] for inp in inputs]
     assert input_ids == [TITLE_INPUT, PROMPT_INPUT]
+    by_id = {inp["custom_id"]: inp for inp in inputs}
+    assert by_id[TITLE_INPUT].get("required") is False
+    assert by_id[PROMPT_INPUT].get("required") is True
 
 
-def test_modal_fields_required():
-    modal = build_video_modal()
-    inputs = [c for row in modal["components"] for c in row["components"]
-              if c.get("type") == TEXT_INPUT]
-    for inp in inputs:
-        assert inp.get("required") is True
+def test_details_prefix_predicates_disjoint():
+    assert is_vid_details(f"{DETAILS_PREFIX}j1") is True
+    assert is_vid_details(f"{DETAILS_MODAL_PREFIX}j1") is False
+    assert is_vid_details_modal(f"{DETAILS_MODAL_PREFIX}j1") is True
+    assert is_vid_details_modal(f"{DETAILS_PREFIX}j1") is False
+    assert job_from_details(f"{DETAILS_PREFIX}j1") == "j1"
+    assert job_from_details_modal(f"{DETAILS_MODAL_PREFIX}j1") == "j1"
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +324,9 @@ def test_studio_components_has_style_voice_generate_rows():
     # row 2: generate button
     assert any(c.get("custom_id") == f"{GENERATE_PREFIX}job-s1"
                for c in rows[2]["components"])
+    # row 2 also has the Add-title-&-description button
+    assert any(c.get("custom_id") == f"{DETAILS_PREFIX}job-s1"
+               for c in rows[2]["components"])
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +358,7 @@ def test_video_embed_mentions_dropping_screenshots():
     assert "drop" in embed["description"].lower()
 
 
-def test_video_embed_mentions_video_new_command():
+def test_video_embed_is_slash_free_and_mentions_drop():
     embed = build_video_embed()
-    assert "/video new" in embed["description"]
+    assert "/video" not in embed["description"]
+    assert "drop" in embed["description"].lower()

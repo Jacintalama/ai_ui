@@ -12,7 +12,8 @@ from handlers.app_builder_panel import (  # reuse the shared component constants
 # --- custom_id namespace ---
 NEW_ID = "aiuivid:new"
 LIST_ID = "aiuivid:list"
-NEW_MODAL_ID = "aiuivid:newmodal"
+DETAILS_PREFIX = "aiuivid:details:"
+DETAILS_MODAL_PREFIX = "aiuivid:detailsmodal:"
 STYLE_PREFIX = "aiuivid:style:"
 VOICE_PREFIX = "aiuivid:voice:"
 GENERATE_PREFIX = "aiuivid:generate:"
@@ -47,9 +48,9 @@ def build_video_embed() -> dict:
         "description": (
             "```\n"
             "> turn screenshots into a narrated walkthrough\n"
-            "> fastest: /video new  - attach screenshots + describe it\n"
-            "> or New video -> drop screenshots in your thread\n"
-            "> Generate -> we render it in your private thread\n"
+            "> 1. click New video below\n"
+            "> 2. drag-and-drop your screenshots into the thread that opens\n"
+            "> 3. add a description, pick style + voice, hit Generate\n"
             "```"
         ),
         "footer": {"text": "AIUI · video generation"},
@@ -65,14 +66,14 @@ def build_video_panel() -> dict:
     ]}
 
 
-def build_video_modal() -> dict:
+def build_details_modal(job_id: str) -> dict:
     return {
-        "title": "New video"[:45],
-        "custom_id": NEW_MODAL_ID,
+        "title": "Title & description"[:45],
+        "custom_id": f"{DETAILS_MODAL_PREFIX}{job_id}",
         "components": [
             {"type": ACTION_ROW, "components": [{
                 "type": TEXT_INPUT, "custom_id": TITLE_INPUT,
-                "label": "Title", "style": TEXT_SHORT, "required": True,
+                "label": "Title (optional)", "style": TEXT_SHORT, "required": False,
                 "max_length": 200, "placeholder": "e.g. Dashboard walkthrough",
             }]},
             {"type": ACTION_ROW, "components": [{
@@ -129,6 +130,7 @@ def build_studio_components(job_id: str, voices: list[dict]) -> list[dict]:
         {"type": ACTION_ROW, "components": [build_style_select(job_id)]},
         {"type": ACTION_ROW, "components": [build_voice_select(job_id, voices)]},
         {"type": ACTION_ROW, "components": [
+            _button("Add title & description", f"{DETAILS_PREFIX}{job_id}", STYLE_SECONDARY),
             _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS)]},
     ]
 
@@ -164,7 +166,8 @@ def build_proposal_components(job_id: str) -> list[dict]:
 # --- predicates / extractors ---
 def is_vid_new(c: str) -> bool: return c == NEW_ID
 def is_vid_list(c: str) -> bool: return c == LIST_ID
-def is_vid_new_modal(c: str) -> bool: return c == NEW_MODAL_ID
+def is_vid_details(c: str) -> bool: return c.startswith(DETAILS_PREFIX)
+def is_vid_details_modal(c: str) -> bool: return c.startswith(DETAILS_MODAL_PREFIX)
 def is_vid_style(c: str) -> bool: return c.startswith(STYLE_PREFIX)
 def is_vid_voice(c: str) -> bool: return c.startswith(VOICE_PREFIX)
 def is_vid_generate(c: str) -> bool: return c.startswith(GENERATE_PREFIX)
@@ -176,6 +179,8 @@ def is_vid_version(c: str) -> bool: return c.startswith(VERSION_PREFIX)
 def job_from_style(c: str) -> str: return _suffix_after(c, STYLE_PREFIX)
 def job_from_voice(c: str) -> str: return _suffix_after(c, VOICE_PREFIX)
 def job_from_generate(c: str) -> str: return _suffix_after(c, GENERATE_PREFIX)
+def job_from_details(c: str) -> str: return _suffix_after(c, DETAILS_PREFIX)
+def job_from_details_modal(c: str) -> str: return _suffix_after(c, DETAILS_MODAL_PREFIX)
 def job_from_refine(c: str) -> str: return _suffix_after(c, REFINE_PREFIX)
 def job_from_refine_modal(c: str) -> str: return _suffix_after(c, REFINE_MODAL_PREFIX)
 def job_from_apply(c: str) -> str: return _suffix_after(c, APPLY_PREFIX)
