@@ -48,7 +48,7 @@ def build_video_embed() -> dict:
             "```\n"
             "> turn screenshots into a narrated walkthrough\n"
             "> New video -> name it, pick style + voice\n"
-            "> add 1-12 screenshots with  /video add\n"
+            "> drop your screenshots in the thread (or /video add)\n"
             "> Generate -> we render it in your private thread\n"
             "```"
         ),

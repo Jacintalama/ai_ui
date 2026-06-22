@@ -965,8 +965,8 @@ class DiscordCommandHandler:
                     logger.warning("video voice-sample post failed user=%s: %s", user_id, exc)
                 await self.discord.post_channel_message(
                     target,
-                    "Pick a style + voice, add 1-12 screenshots with `/video add`, "
-                    "then hit **Generate video**.",
+                    "Pick a style + voice, then **drop your screenshots here** "
+                    "(or use `/video add`), then hit **Generate video**.",
                     components=vid.build_studio_components(job_id, voices),
                 )
             except Exception as exc:  # noqa: BLE001

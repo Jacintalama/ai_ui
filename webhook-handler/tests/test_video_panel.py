@@ -344,3 +344,8 @@ def test_video_embed_has_expected_keys():
     assert "color" in embed
     assert "description" in embed
     assert "footer" in embed
+
+
+def test_video_embed_mentions_dropping_screenshots():
+    embed = build_video_embed()
+    assert "drop" in embed["description"].lower()
