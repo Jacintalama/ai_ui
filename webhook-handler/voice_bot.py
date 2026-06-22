@@ -402,13 +402,14 @@ class ConversationalVoiceBot(discord.Client):
     Auto-joins voice channels. Full duplex voice conversation.
     """
 
-    def __init__(self, elevenlabs_api_key: str, agent_id: str):
+    def __init__(self, elevenlabs_api_key: str, agent_id: str, video_intake=None):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.voice_states = True
         super().__init__(intents=intents)
         self._elevenlabs_api_key = elevenlabs_api_key
         self._agent_id = agent_id
+        self._video_intake = video_intake
         self._conversation = None
         self._audio_interface = None
         self._audio_output = None
@@ -483,6 +484,18 @@ class ConversationalVoiceBot(discord.Client):
             stats = self._pipeline_stats()
             lines.append("Pipeline: " + ", ".join(f"{k}=`{v}`" for k, v in stats.items()))
             await message.channel.send("\n".join(lines))
+
+        # Drop-to-add screenshots: an image posted in #video-generation or one
+        # of its threads is ingested as a screenshot. Best-effort; an error here
+        # must never crash the gateway loop.
+        if self._video_intake is not None and getattr(message, "attachments", None):
+            from handlers.video_intake import extract_image_drop
+            info = extract_image_drop(message)
+            if info is not None:
+                try:
+                    await self._video_intake.handle_image_drop(**info)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("video image-drop intake failed: %s", exc)
 
     def _pick_text_channel(self, voice_channel):
         """Transcripts and build links go where the user is looking: the text
@@ -940,6 +953,7 @@ async def start_voice_bot(
     bot_token: str,
     elevenlabs_api_key: str,
     agent_id: str = "",
+    video_intake=None,
     **kwargs,
 ):
     """Start the conversational voice bot as a background task."""
@@ -950,6 +964,7 @@ async def start_voice_bot(
     bot = ConversationalVoiceBot(
         elevenlabs_api_key=elevenlabs_api_key,
         agent_id=agent_id,
+        video_intake=video_intake,
     )
     global _active_bot
     _active_bot = bot
