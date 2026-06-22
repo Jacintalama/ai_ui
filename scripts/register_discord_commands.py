@@ -52,11 +52,15 @@ SUBCOMMANDS = [
 
 
 def _build_option(opt: tuple) -> dict:
-    """An option tuple is (name, description, required[, type]); type defaults
-    to STRING so existing 3-tuples are unchanged."""
+    """An option tuple is (name, description, required[, type[, extra]]); type
+    defaults to STRING so existing 3-tuples are unchanged. `extra` (optional
+    dict) merges extra keys like max_length/min_length onto the option."""
     opt_name, opt_desc, req = opt[0], opt[1], opt[2]
     opt_type = opt[3] if len(opt) > 3 else STRING
-    return {"name": opt_name, "description": opt_desc, "type": opt_type, "required": req}
+    out = {"name": opt_name, "description": opt_desc, "type": opt_type, "required": req}
+    if len(opt) > 4 and opt[4]:
+        out.update(opt[4])
+    return out
 
 
 def build_command_payload() -> dict:
@@ -81,8 +85,8 @@ def build_video_command_payload() -> dict:
     Subcommands mirror the /aiui structure (type SUB_COMMAND)."""
     shot_opts = [(f"shot{i}", f"Screenshot {i}", False, ATTACHMENT) for i in range(1, 13)]
     new_opts = [
-        ("description", "What the narrated walkthrough should say", True),
-        ("title", "Title (optional)", False),
+        ("description", "What the narrated walkthrough should say", True, STRING, {"max_length": 2000}),
+        ("title", "Title (optional)", False, STRING, {"max_length": 200}),
     ] + shot_opts
     return {
         "name": "video",

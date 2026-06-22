@@ -45,3 +45,13 @@ def test_video_command_has_new_with_description_title_and_attachments():
             seen_optional = True
         else:
             assert not seen_optional, f"required '{o['name']}' after optional"
+
+
+def test_video_new_text_options_have_length_bounds():
+    """Parity with the New-video modal (title<=200, description<=2000) so long
+    input is rejected client-side instead of dead-ending on a backend 422."""
+    p = reg.build_video_command_payload()
+    new = next(o for o in p["options"] if o["name"] == "new")
+    by_name = {o["name"]: o for o in new["options"]}
+    assert by_name["description"].get("max_length") == 2000
+    assert by_name["title"].get("max_length") == 200
