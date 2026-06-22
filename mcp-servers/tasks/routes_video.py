@@ -126,8 +126,8 @@ class RevertRequest(BaseModel):
 
 
 class DraftRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
-    prompt: str = Field(..., min_length=1, max_length=2000)
+    title: str = Field("Untitled video", max_length=200)
+    prompt: str = Field("", max_length=2000)
     style: str = Field("clean_product_demo", max_length=50)
     voice: str = Field(DEFAULT_VOICE_ID, max_length=50)
 
@@ -789,6 +789,8 @@ async def revert(
 class DraftPatch(BaseModel):
     style: str | None = Field(None, max_length=50)
     voice: str | None = Field(None, max_length=50)
+    title: str | None = Field(None, max_length=200)
+    prompt: str | None = Field(None, max_length=2000)
 
 
 @router.post("/{job_id}/queue")
@@ -809,6 +811,8 @@ async def queue_job(job_id: str, user: CurrentUser = Depends(current_user)) -> d
             raise HTTPException(409, "Video is not a draft")
         if not _list_screenshots(job.slug, str(jid)):
             raise HTTPException(400, "Add at least one screenshot first")
+        if not (job.prompt or "").strip():
+            raise HTTPException(400, "Add a description first")
         cutoff = datetime.utcnow() - timedelta(hours=24)
         used = (await s.execute(
             select(func.count()).select_from(VideoJob).where(and_(
@@ -853,6 +857,10 @@ async def update_draft(job_id: str, body: DraftPatch, user: CurrentUser = Depend
             if not is_valid_voice(body.voice):
                 raise HTTPException(400, f"Unknown voice: {body.voice}")
             vals["voice"] = body.voice
+        if body.title is not None:
+            vals["title"] = body.title
+        if body.prompt is not None:
+            vals["prompt"] = body.prompt
         if vals:
             await s.execute(update(VideoJob).where(VideoJob.id == jid).values(**vals))
             await s.commit()

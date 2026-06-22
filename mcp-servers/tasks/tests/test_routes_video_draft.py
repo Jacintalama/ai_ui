@@ -213,3 +213,49 @@ async def test_draft_requires_auth_401():
             json={"title": "Draft", "prompt": "show it"},
         )
     assert r.status_code == 401
+
+
+def test_draft_request_allows_empty_defaults():
+    """DraftRequest with no fields is valid (title defaults to 'Untitled video',
+    prompt to '') so the New-video button can create a bare draft."""
+    from routes_video import DraftRequest
+    req = DraftRequest()
+    assert req.title == "Untitled video"
+    assert req.prompt == ""
+
+
+def test_draft_patch_accepts_title_and_prompt():
+    """DraftPatch carries optional title/prompt so the Add-title-&-description
+    popup can patch them on a collecting draft."""
+    from routes_video import DraftPatch
+    p = DraftPatch(title="T", prompt="P")
+    assert p.title == "T"
+    assert p.prompt == "P"
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_create_empty_draft_defaults_title_and_blank_prompt(db_session):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/api/video-jobs/draft", json={}, headers=HEAD)
+    assert r.status_code == 201
+    job = (await db_session.execute(
+        select(VideoJob).where(VideoJob.id == uuid.UUID(r.json()["id"])))).scalar_one()
+    assert job.title == "Untitled video"
+    assert job.prompt == ""
+    assert job.status == "collecting"
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_draft_set_updates_title_and_prompt(db_session, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/api/video-jobs/draft", json={}, headers=HEAD)
+    job_id = r.json()["id"]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(f"/api/video-jobs/{job_id}/draft-set",
+                         json={"title": "Real Title", "prompt": "narrate the dashboard"},
+                         headers=HEAD)
+    assert r.status_code == 200
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get("/api/video-jobs/current-draft", headers=HEAD)
+    assert r.json()["title"] == "Real Title"

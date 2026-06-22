@@ -156,3 +156,22 @@ async def test_queue_503_when_disabled(monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(f"/api/video-jobs/{uuid.uuid4()}/queue", headers=HEAD)
     assert r.status_code == 503
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_queue_blocks_blank_description(db_session, tmp_path, monkeypatch):
+    """A draft with a screenshot but a blank description cannot be queued."""
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post("/api/video-jobs/draft",
+                         json={"title": "T", "prompt": ""}, headers=HEAD)
+    assert r.status_code == 201
+    job_id = r.json()["id"]
+    slug = r.json()["slug"]
+    shots_dir = tmp_path / slug / ".video" / job_id / "screenshots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    (shots_dir / "screenshot-1.png").write_bytes(b"fake-png-content")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(f"/api/video-jobs/{job_id}/queue", headers=HEAD)
+    assert r.status_code == 400
+    assert "description" in r.json()["detail"].lower()
