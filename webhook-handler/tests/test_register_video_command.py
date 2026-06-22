@@ -28,3 +28,20 @@ def test_add_subcommand_no_required_after_optional():
             assert not seen_optional, (
                 f"Required option '{o['name']}' appears after an optional option"
             )
+
+
+def test_video_command_has_new_with_description_title_and_attachments():
+    p = reg.build_video_command_payload()
+    new = next(o for o in p["options"] if o["name"] == "new")
+    by_name = {o["name"]: o for o in new["options"]}
+    assert by_name["description"]["type"] == reg.STRING and by_name["description"]["required"] is True
+    assert by_name["title"]["type"] == reg.STRING and by_name["title"]["required"] is False
+    atts = [o for o in new["options"] if o["type"] == reg.ATTACHMENT]
+    assert len(atts) == 12 and all(o["required"] is False for o in atts)
+    # Discord rule: no required option after an optional one
+    seen_optional = False
+    for o in new["options"]:
+        if not o["required"]:
+            seen_optional = True
+        else:
+            assert not seen_optional, f"required '{o['name']}' after optional"

@@ -76,13 +76,20 @@ def build_command_payload() -> dict:
 
 
 def build_video_command_payload() -> dict:
-    """A top-level /video command: `add` (up to 12 screenshot attachments) and
-    `list`. Subcommands mirror the /aiui structure (type SUB_COMMAND)."""
+    """A top-level /video command: `new` (one-shot create: describe + attach
+    screenshots), `add` (up to 12 screenshot attachments), and `list`.
+    Subcommands mirror the /aiui structure (type SUB_COMMAND)."""
     shot_opts = [(f"shot{i}", f"Screenshot {i}", False, ATTACHMENT) for i in range(1, 13)]
+    new_opts = [
+        ("description", "What the narrated walkthrough should say", True),
+        ("title", "Title (optional)", False),
+    ] + shot_opts
     return {
         "name": "video",
         "description": "Generate narrated videos from screenshots",
         "options": [
+            {"name": "new", "description": "Create a video: describe it + attach screenshots",
+             "type": SUB_COMMAND, "options": [_build_option(o) for o in new_opts]},
             {"name": "add", "description": "Add screenshots to your current video",
              "type": SUB_COMMAND, "options": [_build_option(o) for o in shot_opts]},
             {"name": "list", "description": "List your videos",
