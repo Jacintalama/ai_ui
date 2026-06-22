@@ -96,3 +96,22 @@ def test_parse_video_new_untitled_when_blank():
     title, prompt, urls = DiscordCommandHandler._parse_video_new(data)
     assert title == "Untitled video"
     assert prompt == ""
+
+
+@pytest.mark.asyncio
+async def test_set_video_draft_fields_includes_title_and_prompt():
+    from clients.tasks import TasksClient
+    tc = TasksClient(base_url="http://t")
+    captured = {}
+
+    async def fake_request(method, path, user_email, json=None):
+        captured["json"] = json
+
+        class R:
+            def json(self_inner):
+                return {"status": "ok"}
+        return R()
+
+    tc._request = fake_request
+    await tc.set_video_draft_fields("u@x.com", "job1", title="T", prompt="P")
+    assert captured["json"] == {"title": "T", "prompt": "P"}

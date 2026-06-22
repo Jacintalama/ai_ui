@@ -266,12 +266,17 @@ class TasksClient:
         return resp.json()
 
     async def set_video_draft_fields(self, user_email: str, job_id: str, *,
-                                     style: str | None = None, voice: str | None = None) -> dict[str, Any]:
+                                     style: str | None = None, voice: str | None = None,
+                                     title: str | None = None, prompt: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if style is not None:
             body["style"] = style
         if voice is not None:
             body["voice"] = voice
+        if title is not None:
+            body["title"] = title
+        if prompt is not None:
+            body["prompt"] = prompt
         resp = await self._request("POST", f"/api/video-jobs/{job_id}/draft-set", user_email, json=body)
         return resp.json()
 
