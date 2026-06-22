@@ -904,82 +904,106 @@ class DiscordCommandHandler:
             self._spawn(self.router.run_video_list(ctx))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
+    async def _open_video_studio(self, *, interaction_token: str, user_id: str,
+                                 user_name: str, channel_id: str, title: str,
+                                 prompt: str, screenshot_urls: "list[str] | None" = None) -> None:
+        """Create a video draft, open the user's private video thread, point the
+        ephemeral ACK at it, post the voice-sample MP3s + studio controls, and —
+        when screenshot_urls is given (/video new) — push those screenshots onto
+        the new draft. Shared by the 'New video' modal submit and `/video new`."""
+        try:
+            email = await self.router._resolve_email(user_id)
+            if email is None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content=onboarding.not_linked_text_discord(),
+                    components=onboarding.link_button_row(),
+                )
+                return
+            draft = await self.router._tasks_client.create_video_draft(
+                email, title, prompt, "clean_product_demo", "amy")
+            job_id = draft["id"]
+            thread_id = await self._get_or_make_thread(
+                user_id, channel_id, user_name, kind="video")
+            target = thread_id or channel_id
+            if thread_id:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content=f"Your video studio is ready → <#{thread_id}>",
+                )
+            else:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Your video studio is ready below.",
+                )
+            # Push any screenshots attached up-front (/video new). Best-effort: a
+            # failure must not block the studio — the user can still drop images
+            # in the thread or use /video add.
+            added = 0
+            if screenshot_urls:
+                try:
+                    res = await self.router._tasks_client.add_video_screenshots_urls(
+                        email, job_id, screenshot_urls)
+                    added = res.get("count", 0)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("video new: screenshot add failed user=%s: %s", user_id, exc)
+            voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
+            # Best-effort: post the voice preview clips so the user can listen
+            # before picking. A failure here must never block the studio.
+            try:
+                files: list[tuple[str, bytes, str]] = []
+                for v in voices[:6]:
+                    sample_url = v.get("sample_url")
+                    vid_id = v.get("id") or "voice"
+                    if not sample_url:
+                        continue
+                    blob = await self.router._tasks_client.fetch_bytes(sample_url)
+                    files.append((f"{vid_id}.mp3", blob, "audio/mpeg"))
+                if files:
+                    await self.discord.post_channel_file(
+                        target, files[:10],
+                        content="Voice previews — listen, then pick a voice below:")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("video voice-sample post failed user=%s: %s", user_id, exc)
+            if added:
+                studio_msg = (
+                    f"Created **{title}** — added {added} screenshot"
+                    f"{'s' if added != 1 else ''}. Pick a style + voice, drop more "
+                    "here (or `/video add`), then hit **Generate video**."
+                )
+            else:
+                studio_msg = (
+                    "Pick a style + voice, then **drop your screenshots here** "
+                    "(or use `/video add`), then hit **Generate video**."
+                )
+            await self.discord.post_channel_message(
+                target, studio_msg,
+                components=vid.build_studio_components(job_id, voices),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_open_video_studio failed user=%s: %s", user_id, exc)
+            try:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't open the video studio — please try again.",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _handle_video_new_modal(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """'New video' modal submit → create a draft, open the user's private
-        video thread, point the ephemeral ACK at it, post the voice-sample MP3s
-        (best-effort) and the studio controls there. Mirrors the build-modal
-        fire-and-forget pattern; ACK is ephemeral-deferred within 3s."""
+        """'New video' modal submit → open the video studio (no up-front
+        screenshots). ACK is ephemeral-deferred within 3s."""
         data = payload.get("data", {})
         title = self._extract_modal_value(data, vid.TITLE_INPUT)
         prompt = self._extract_modal_value(data, vid.PROMPT_INPUT)
-        interaction_token = payload.get("token", "")
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
-        user_id = user.get("id", "")
-        user_name = user.get("username", "unknown")
-        channel_id = payload.get("channel_id", "")
-
-        async def _open_studio() -> None:
-            try:
-                email = await self.router._resolve_email(user_id)
-                if email is None:
-                    await self.discord.edit_original(
-                        interaction_token=interaction_token,
-                        content=onboarding.not_linked_text_discord(),
-                        components=onboarding.link_button_row(),
-                    )
-                    return
-                draft = await self.router._tasks_client.create_video_draft(
-                    email, title, prompt, "clean_product_demo", "amy")
-                job_id = draft["id"]
-                thread_id = await self._get_or_make_thread(
-                    user_id, channel_id, user_name, kind="video")
-                target = thread_id or channel_id
-                if thread_id:
-                    await self.discord.edit_original(
-                        interaction_token=interaction_token,
-                        content=f"Your video studio is ready → <#{thread_id}>",
-                    )
-                else:
-                    await self.discord.edit_original(
-                        interaction_token=interaction_token,
-                        content="Your video studio is ready below.",
-                    )
-                voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
-                # Best-effort: post the voice preview clips so the user can listen
-                # before picking. A failure here must never block the studio.
-                try:
-                    files: list[tuple[str, bytes, str]] = []
-                    for v in voices[:6]:
-                        sample_url = v.get("sample_url")
-                        vid_id = v.get("id") or "voice"
-                        if not sample_url:
-                            continue
-                        blob = await self.router._tasks_client.fetch_bytes(sample_url)
-                        files.append((f"{vid_id}.mp3", blob, "audio/mpeg"))
-                    if files:
-                        await self.discord.post_channel_file(
-                            target, files[:10],
-                            content="Voice previews — listen, then pick a voice below:")
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("video voice-sample post failed user=%s: %s", user_id, exc)
-                await self.discord.post_channel_message(
-                    target,
-                    "Pick a style + voice, then **drop your screenshots here** "
-                    "(or use `/video add`), then hit **Generate video**.",
-                    components=vid.build_studio_components(job_id, voices),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error("_handle_video_new_modal failed user=%s: %s", user_id, exc)
-                try:
-                    await self.discord.edit_original(
-                        interaction_token=interaction_token,
-                        content="Couldn't open the video studio — please try again.",
-                    )
-                except Exception:  # noqa: BLE001
-                    pass
-
-        self._spawn(_open_studio())
+        self._spawn(self._open_video_studio(
+            interaction_token=payload.get("token", ""),
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""),
+            title=title, prompt=prompt, screenshot_urls=None))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
