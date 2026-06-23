@@ -37,7 +37,9 @@ async def test_open_video_studio_with_screenshots_creates_draft_and_adds_urls():
         "u@x.com", "job1", ["http://cdn/1.png", "http://cdn/2.png"])
     discord.post_channel_message.assert_awaited_once()
     content = discord.post_channel_message.await_args.args[1]
-    assert "added 2 screenshot" in content.lower()
+    # New copy: "Screenshots added: 2/12. ..." then the remaining numbered steps.
+    assert "2/12" in content
+    assert "add a description" in content.lower()
 
 
 @pytest.mark.asyncio

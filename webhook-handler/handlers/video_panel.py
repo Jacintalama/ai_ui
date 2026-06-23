@@ -46,15 +46,17 @@ def _suffix_after(custom_id: str, prefix: str) -> str:
 
 def build_video_embed() -> dict:
     return {
-        "title": "AIUI · VIDEO STUDIO",
+        "title": "AIUI Video Studio",
         "color": ROBOTIC_CYAN,
         "description": (
+            "**Turn screenshots into a narrated walkthrough.**\n"
             "```\n"
-            "> turn screenshots into a narrated walkthrough\n"
-            "> 1. click New video below\n"
-            "> 2. drag-and-drop your screenshots into the thread that opens\n"
-            "> 3. add a description, pick style + voice, hit Generate\n"
-            "```"
+            "1. Click New video to open your private thread.\n"
+            "2. Add screenshots - paste your site link, or drag your own images in (up to 12).\n"
+            "3. Add a description of what the walkthrough should show.\n"
+            "4. Click Generate video.\n"
+            "```\n"
+            "Style and voice are optional - good defaults are set."
         ),
         "footer": {"text": "AIUI · video generation"},
     }
@@ -91,7 +93,7 @@ def build_details_modal(job_id: str) -> dict:
 
 def build_capture_modal(job_id: str) -> dict:
     return {
-        "title": "Capture from website"[:45],
+        "title": "Paste your site link"[:45],
         "custom_id": f"{CAPTURE_MODAL_PREFIX}{job_id}",
         "components": [
             {"type": ACTION_ROW, "components": [{
@@ -147,9 +149,9 @@ def build_studio_components(job_id: str, voices: list[dict]) -> list[dict]:
         {"type": ACTION_ROW, "components": [build_style_select(job_id)]},
         {"type": ACTION_ROW, "components": [build_voice_select(job_id, voices)]},
         {"type": ACTION_ROW, "components": [
-            _button("Capture from website", f"{CAPTURE_PREFIX}{job_id}", STYLE_PRIMARY)]},
+            _button("Paste your site link", f"{CAPTURE_PREFIX}{job_id}", STYLE_PRIMARY)]},
         {"type": ACTION_ROW, "components": [
-            _button("Add title & description", f"{DETAILS_PREFIX}{job_id}", STYLE_SECONDARY),
+            _button("Add description", f"{DETAILS_PREFIX}{job_id}", STYLE_SECONDARY),
             _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS)]},
     ]
 

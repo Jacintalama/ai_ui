@@ -374,12 +374,13 @@ def test_video_embed_has_expected_keys():
     assert "footer" in embed
 
 
-def test_video_embed_mentions_dropping_screenshots():
+def test_video_embed_mentions_adding_screenshots():
     embed = build_video_embed()
-    assert "drop" in embed["description"].lower()
+    desc = embed["description"].lower()
+    assert "screenshot" in desc and ("drag" in desc or "paste" in desc)
 
 
-def test_video_embed_is_slash_free_and_mentions_drop():
+def test_video_embed_is_slash_free_and_mentions_screenshots():
     embed = build_video_embed()
     assert "/video" not in embed["description"]
-    assert "drop" in embed["description"].lower()
+    assert "screenshot" in embed["description"].lower()

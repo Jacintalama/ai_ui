@@ -999,16 +999,22 @@ class DiscordCommandHandler:
                 logger.warning("video voice-sample post failed user=%s: %s", user_id, exc)
             if added:
                 studio_msg = (
-                    f"Created **{title}** — added {added} screenshot"
-                    f"{'s' if added != 1 else ''}. Pick a style + voice, drop more "
-                    "here (or `/video add`), then hit **Generate video**."
+                    f"Screenshots added: {added}/12. Two steps to go:\n\n"
+                    "**3. Add a description** - what the walkthrough should show.\n"
+                    "**4. Generate video** - click it when you're ready.\n\n"
+                    "Want more screenshots? Paste your site link, or drag your own "
+                    "images in (up to 12). Style and voice are optional - good "
+                    "defaults are set."
                 )
             else:
                 studio_msg = (
-                    "Paste your site's URL here to grab screenshots automatically — "
-                    "or drag your own screenshots into this thread (up to 12). Then "
-                    "click **Add title & description**, pick a style + voice, and hit "
-                    "**Generate video**."
+                    "You're in your private thread - step 1 done. Three steps to go:\n\n"
+                    "**2. Add screenshots** - either:\n"
+                    "- paste your site link (button below, we capture it for you), or\n"
+                    "- drag your own images in (up to 12).\n"
+                    "**3. Add a description** - what the walkthrough should show.\n"
+                    "**4. Generate video** - click it when you're ready.\n\n"
+                    "Style and voice are optional - good defaults are set."
                 )
             await self.discord.post_channel_message(
                 target, studio_msg,

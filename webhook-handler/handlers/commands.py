@@ -2370,7 +2370,7 @@ class CommandRouter:
             await ctx.respond(f"Couldn't add screenshots: {e.message}")
             return
         count = res.get("count", 0)
-        msg = f"Added screenshots — {count}/12 so far. Click **Generate video** when ready."
+        msg = f"Added - {count}/12 screenshots. Next: add a description, then click **Generate video**."
         if ctx.respond_components is not None:
             from handlers.video_panel import build_generate_row
             await ctx.respond_components(msg, build_generate_row(draft["id"]))
@@ -2395,7 +2395,7 @@ class CommandRouter:
             return
         from urllib.parse import urlparse
         host = urlparse(url).hostname or "your site"
-        await ctx.respond(f"Capturing {host}… this takes a few seconds.")
+        await ctx.respond(f"Capturing screenshots from {host} - this takes a few seconds.")
         try:
             res = await self._tasks_client.capture_video_screenshots(email, draft["id"], url)
         except TasksAPIError as e:
@@ -2404,8 +2404,8 @@ class CommandRouter:
                 "You can drag screenshots into this thread instead.")
             return
         count = res.get("count", 0)
-        msg = (f"Added screenshots from {host} — {count}/12 so far. "
-               "Click **Generate video** when ready.")
+        msg = (f"Added {count}/12 screenshots from {host}. "
+               "Next: add a description, then click **Generate video**.")
         if ctx.respond_components is not None:
             from handlers.video_panel import build_generate_row
             await ctx.respond_components(msg, build_generate_row(draft["id"]))
@@ -2437,7 +2437,8 @@ class CommandRouter:
             await ctx.respond(f"Couldn't save: {e.message}")
             return
         await ctx.respond(
-            "Saved. Drag your screenshots in, pick a style + voice, then hit Generate video.")
+            "Description saved. Make sure you've added a screenshot - paste your site "
+            "link, or drag your own images in (up to 12) - then click **Generate video**.")
 
     async def run_video_generate(self, ctx: CommandContext, job_id: str) -> None:
         """Generate button: queue the draft + spawn the watcher."""
