@@ -270,7 +270,10 @@ ANIM_PLAN_SCHEMA = {
     "properties": {
         "title": {"type": "string"},
         "scenes": {
-            "type": "array", "minItems": 1, "maxItems": ANIM_MAX_SCENES,
+            # NOTE: Anthropic structured outputs support minItems but NOT maxItems
+            # on arrays (400 otherwise). The scene cap is enforced by trimming in
+            # generate_anim_plan + the total-duration check in validate_anim_plan.
+            "type": "array", "minItems": 1,
             "items": {
                 "type": "object", "additionalProperties": False,
                 "required": ["kind", "headline", "motion", "duration_s"],
@@ -371,6 +374,8 @@ async def generate_anim_plan(prompt: str, screenshots: list[str], *, attempts: i
             )
             text = next(b.text for b in msg.content if b.type == "text")
             plan = json.loads(text)
+            # Enforce the scene cap here (schema can't express maxItems).
+            plan["scenes"] = (plan.get("scenes") or [])[:ANIM_MAX_SCENES]
             validate_anim_plan(plan, screenshots)
             return plan
         except Exception as e:  # noqa: BLE001 - retry on bad plan / API hiccup

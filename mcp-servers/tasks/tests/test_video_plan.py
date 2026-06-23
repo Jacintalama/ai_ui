@@ -233,11 +233,25 @@ async def test_generate_plan_falls_back_when_model_returns_no_scenes(monkeypatch
 
 
 def test_anim_schema_bounds_scenes_and_motion():
-    from video_plan import ANIM_PLAN_SCHEMA
+    from video_plan import ANIM_PLAN_SCHEMA, ANIM_MAX_SCENES
     sc = ANIM_PLAN_SCHEMA["properties"]["scenes"]
-    assert sc["minItems"] == 1 and sc["maxItems"] == 8
+    assert sc["minItems"] == 1
+    # Anthropic structured outputs reject maxItems; the cap is enforced in code.
+    assert "maxItems" not in sc
+    assert ANIM_MAX_SCENES == 8
     motions = set(sc["items"]["properties"]["motion"]["enum"])
     assert {"zoom-in", "pan-up", "fade"} <= motions
+
+
+async def test_generate_anim_plan_trims_to_scene_cap(monkeypatch):
+    from video_plan import generate_anim_plan, ANIM_MAX_SCENES
+    big = {"title": "t", "narration_script": "", "scenes": [
+        {"kind": "screenshot", "screenshot": "screenshot-1.png", "headline": "h",
+         "motion": "zoom-in", "duration_s": 1.0} for _ in range(12)]}
+    fake = _FakeClient(json.dumps(big))
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    plan = await generate_anim_plan("x", ["screenshot-1.png"], attempts=1)
+    assert len(plan["scenes"]) == ANIM_MAX_SCENES  # trimmed from 12
 
 
 def test_anim_fallback_plan_is_valid():
