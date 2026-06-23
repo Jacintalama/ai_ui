@@ -47,8 +47,11 @@ async def test_open_video_studio_without_screenshots_skips_add():
         interaction_token="t", user_id="100", user_name="alice", channel_id="c",
         title="My Demo", prompt="desc", screenshot_urls=None)
     router._tasks_client.add_video_screenshots_urls.assert_not_called()
-    content = discord.post_channel_message.await_args.args[1]
-    assert "drag your screenshots" in content.lower()
+    content = discord.post_channel_message.await_args.args[1].lower()
+    # The empty-draft prompt surfaces both intake paths: paste a URL (auto) or
+    # drag screenshots in (fallback).
+    assert "paste your site" in content
+    assert "screenshots" in content
 
 
 @pytest.mark.asyncio
