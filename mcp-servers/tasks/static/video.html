@@ -662,6 +662,11 @@
           <button class="btn primary" type="button" id="send-btn">Send</button>
         </div>
         <input type="file" id="shot-input" accept="image/*" multiple hidden>
+        <div class="composer-row" style="margin-top:6px;">
+          <input type="url" class="form-input" id="capture-url" placeholder="https://yoursite.com"
+                 style="flex:1;" aria-label="Capture screenshots from a website URL">
+          <button class="btn sm" type="button" id="capture-url-btn">Capture from website</button>
+        </div>
       </div>
     </aside>
   </main>
@@ -721,6 +726,13 @@
     let voiceAudio = null;      // single shared <Audio> for previews
     const submitBtn = document.getElementById("submit-btn");
     const formError = document.getElementById("form-error");
+    const captureUrlInput = document.getElementById("capture-url");
+    const captureUrlBtn = document.getElementById("capture-url-btn");
+    const createCaptureUrl = document.getElementById("create-capture-url");
+    const createCaptureBtn = document.getElementById("create-capture-btn");
+    const collectingPanel = document.getElementById("collecting-panel");
+    const collectingCount = document.getElementById("collecting-count");
+    const collectingGenerateBtn = document.getElementById("collecting-generate-btn");
 
     const projectName = document.getElementById("project-name");
     const statusPill = document.getElementById("status-pill");
@@ -1254,6 +1266,30 @@
         toast("Upload failed: " + (e.message || String(e)), "error");
       }
     }
+
+    // --- Capture from website (studio): add captured frames to the open job ---
+    async function runStudioCapture() {
+      const url = (captureUrlInput.value || "").trim();
+      if (!url) { toast("Enter a site URL.", "warn"); return; }
+      if (!currentJobId) { toast("Open or create a video first.", "warn"); return; }
+      captureUrlBtn.disabled = true;
+      const orig = captureUrlBtn.textContent;
+      captureUrlBtn.textContent = "Capturing…";
+      try {
+        const res = await captureFromUrl(currentJobId, url);
+        const n = res && res.count != null ? res.count : "the";
+        toast("Added " + n + " screenshot(s) from the site.", "success", 4500);
+        captureUrlInput.value = "";
+        const data = await fetchJob(currentJobId);
+        if (data.status === "collecting") renderCollecting(data);
+      } catch (e) {
+        toast(e.message || "Capture failed.", "error");
+      } finally {
+        captureUrlBtn.disabled = false;
+        captureUrlBtn.textContent = orig;
+      }
+    }
+    captureUrlBtn.addEventListener("click", runStudioCapture);
 
     // --- Open an existing job in studio state (deep link / reload) ---
     async function openExistingJob(id) {
