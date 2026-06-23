@@ -5,9 +5,12 @@ API with structured outputs (model `claude-opus-4-8`) to produce a plan, then
 validates it against the available screenshots.
 """
 import json
+import logging
 import os
 
 import anthropic
+
+logger = logging.getLogger("video_plan")
 
 TEMPLATES = {"product_demo", "feature_walkthrough"}
 MAX_TOTAL_SECONDS = 60
@@ -66,6 +69,7 @@ PLAN_SCHEMA = {
         "title": {"type": "string"},
         "scenes": {
             "type": "array",
+            "minItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -185,20 +189,70 @@ def clamp_plan(plan: dict) -> dict:
     return plan
 
 
-async def generate_plan(prompt: str, screenshots: list[str]) -> dict:
+def _fallback_plan(prompt: str, screenshots: list[str]) -> dict:
+    """Deterministic, always-valid plan used when the model fails to return a
+    usable plan (e.g. an empty `scenes` array). One scene per screenshot (capped
+    so the total fits MAX_TOTAL_SECONDS) guarantees a video still renders rather
+    than failing with 'plan has no scenes'. Narration carries the user's prompt
+    on the opening scene; the slideshow itself does the rest."""
+    shots = list(screenshots[:12]) or list(screenshots)
+    n = max(1, len(shots))
+    per = max(MIN_SCENE_SECONDS, min(5.0, round(MAX_TOTAL_SECONDS / n, 2)))
+    clean = (prompt or "").strip()
+    scenes = [
+        {
+            "screenshot": s,
+            "caption": "",
+            "narration": clean if i == 0 else "",
+            "duration_s": per,
+            "transition": "crossfade",
+        }
+        for i, s in enumerate(shots)
+    ]
+    return {
+        "template_id": "feature_walkthrough",
+        "title": (clean[:60] or "Walkthrough"),
+        "scenes": scenes,
+        "narration_script": clean,
+        "resolution": "720p",
+    }
+
+
+async def generate_plan(prompt: str, screenshots: list[str], *, attempts: int = 3) -> dict:
+    """Generate a slideshow plan from the prompt + screenshots, resiliently.
+
+    The model occasionally returns a schema-valid-but-empty plan (no scenes) or a
+    transient API error; a single bad response must not fail the whole video. So
+    we retry up to `attempts` times and, if every attempt fails, fall back to a
+    deterministic one-scene-per-screenshot plan (when screenshots exist)."""
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     sys = build_plan_system_prompt()
-    msg = client.messages.create(
-        model="claude-opus-4-8",
-        max_tokens=2048,
-        system=sys,
-        output_config={"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
-        messages=[
-            {"role": "user", "content": f"Prompt: {prompt}\nScreenshots: {screenshots}"}
-        ],
-    )
-    text = next(b.text for b in msg.content if b.type == "text")
-    plan = json.loads(text)
-    clamp_plan(plan)
-    validate_plan(plan, screenshots)
-    return plan
+    last_err: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            msg = client.messages.create(
+                model="claude-opus-4-8",
+                max_tokens=2048,
+                system=sys,
+                output_config={"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
+                messages=[
+                    {"role": "user", "content": f"Prompt: {prompt}\nScreenshots: {screenshots}"}
+                ],
+            )
+            text = next(b.text for b in msg.content if b.type == "text")
+            plan = json.loads(text)
+            clamp_plan(plan)
+            validate_plan(plan, screenshots)
+            return plan
+        except Exception as e:  # noqa: BLE001 - retry on bad plan / API hiccup
+            last_err = e
+            logger.warning("generate_plan attempt %d/%d failed: %s: %s",
+                           i + 1, attempts, type(e).__name__, e)
+    if screenshots:
+        logger.warning("generate_plan falling back to a deterministic plan after "
+                       "%d attempts (last error: %s)", attempts, last_err)
+        plan = _fallback_plan(prompt, screenshots)
+        clamp_plan(plan)
+        validate_plan(plan, screenshots)  # valid by construction
+        return plan
+    raise PlanInvalid(f"could not generate a plan: {last_err}")

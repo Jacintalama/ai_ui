@@ -202,6 +202,36 @@ def test_clamp_plan_trim_loop_keeps_floor():
     assert min(s["duration_s"] for s in out["scenes"]) >= 0.5
 
 
+def test_scene_schema_requires_at_least_one_scene():
+    from video_plan import PLAN_SCHEMA
+    # minItems forces the model (constrained decoding) to emit >=1 scene, so the
+    # 'plan has no scenes' failure can't originate at the API layer.
+    assert PLAN_SCHEMA["properties"]["scenes"]["minItems"] == 1
+
+
+def test_fallback_plan_is_valid():
+    from video_plan import _fallback_plan
+    shots = ["screenshot-1.png", "screenshot-2.png", "screenshot-3.png"]
+    p = _fallback_plan("show the dashboard and explain it", shots)
+    validate_plan(p, shots)  # must not raise
+    assert len(p["scenes"]) == len(shots)
+    assert {s["screenshot"] for s in p["scenes"]} == set(shots)
+
+
+async def test_generate_plan_falls_back_when_model_returns_no_scenes(monkeypatch):
+    """A model response with empty scenes must NOT fail the render: generate_plan
+    retries, then falls back to a deterministic one-scene-per-screenshot plan."""
+    empty = {"template_id": "product_demo", "title": "x", "scenes": [],
+             "narration_script": ""}
+    fake = _FakeClient(json.dumps(empty))
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    shots = ["screenshot-1.png", "screenshot-2.png", "screenshot-3.png"]
+    result = await generate_plan("walk the dashboard", shots, attempts=2)
+    validate_plan(result, shots)  # fallback plan is valid -> no raise
+    assert len(result["scenes"]) == len(shots)
+    assert len(fake.messages.calls) == 2  # tried the model twice before fallback
+
+
 def test_clamp_plan_floor_bumped_total_capped():
     from video_plan import MAX_TOTAL_SECONDS, clamp_plan
     scenes = [
