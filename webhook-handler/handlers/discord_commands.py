@@ -405,6 +405,12 @@ class DiscordCommandHandler:
             except ValueError:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return {"type": MODAL, "data": vid.build_details_modal(job_id)}
+        if vid.is_vid_capture(custom_id):
+            try:
+                job_id = vid.job_from_capture(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_capture_modal(job_id)}
         if vid.is_vid_list(custom_id):
             return await self._handle_video_route(
                 payload, lambda ctx: self.router.run_video_list(ctx),
@@ -999,8 +1005,9 @@ class DiscordCommandHandler:
                 )
             else:
                 studio_msg = (
-                    "Drag your screenshots into this thread (up to 12). Then click "
-                    "**Add title & description**, pick a style + voice, and hit "
+                    "Paste your site's URL here to grab screenshots automatically — "
+                    "or drag your own screenshots into this thread (up to 12). Then "
+                    "click **Add title & description**, pick a style + voice, and hit "
                     "**Generate video**."
                 )
             await self.discord.post_channel_message(
@@ -1040,6 +1047,31 @@ class DiscordCommandHandler:
             channel_id=payload.get("channel_id", ""), raw_text="video details",
             subcommand="video", arguments="", platform="discord", respond=respond)
         self._spawn(self.router.run_video_set_details(ctx, job_id, title=title, prompt=prompt))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_video_capture_modal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'Capture from website' modal submit → drive server-side capture of the
+        submitted URL onto the current draft. ACK ephemeral-deferred within 3s;
+        the runner edits the original with progress/result."""
+        data = payload.get("data", {})
+        custom_id = data.get("custom_id", "")
+        try:
+            vid.job_from_capture_modal(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+        url = (self._extract_modal_value(data, vid.URL_INPUT) or "").strip()
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="video capture",
+            subcommand="video", arguments="", platform="discord", respond=respond)
+        self._spawn(self.router.run_video_capture(ctx, url))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1186,6 +1218,8 @@ class DiscordCommandHandler:
             return self._handle_link_modal_submit(payload)
         if vid.is_vid_details_modal(custom_id):
             return await self._handle_video_details_modal(payload)
+        if vid.is_vid_capture_modal(custom_id):
+            return await self._handle_video_capture_modal(payload)
         if vid.is_vid_refine_modal(custom_id):
             try:
                 job_id = vid.job_from_refine_modal(custom_id)

@@ -28,6 +28,7 @@ def _router():
     r.run_video_apply = AsyncMock()
     r.run_video_revert = AsyncMock()
     r.run_video_refine = AsyncMock()
+    r.run_video_capture = AsyncMock()
     return r
 
 
@@ -235,6 +236,39 @@ async def test_refine_modal_submit_dispatches_with_notify_channel_msg():
     ctx, job_id, change = router.run_video_refine.await_args.args
     assert job_id == "j1" and change == "slow scene 2"
     assert ctx.notify_channel_msg is not None  # proposal poster
+
+
+@pytest.mark.asyncio
+async def test_capture_button_opens_capture_modal():
+    handler = _handler(_router())
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "c",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": f"{vid.CAPTURE_PREFIX}j1"}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == MODAL
+    assert resp["data"]["custom_id"] == f"{vid.CAPTURE_MODAL_PREFIX}j1"
+
+
+@pytest.mark.asyncio
+async def test_capture_modal_submit_dispatches_capture():
+    router = _router()
+    handler = _handler(router)
+    handler.discord.edit_original = AsyncMock(return_value=True)
+    payload = {
+        "type": 5, "id": "i", "token": "t", "channel_id": "c",
+        "member": {"user": {"id": "100", "username": "alice"}},
+        "data": {"custom_id": f"{vid.CAPTURE_MODAL_PREFIX}j1", "components": [
+            {"type": 1, "components": [
+                {"type": 4, "custom_id": vid.URL_INPUT, "value": "https://s.com"}]},
+        ]},
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == DEFERRED_CHANNEL_MESSAGE
+    assert resp["data"]["flags"] == 64
+    await _drain()
+    router.run_video_capture.assert_awaited_once()
+    ctx, url = router.run_video_capture.await_args.args
+    assert url == "https://s.com"
 
 
 @pytest.mark.asyncio
