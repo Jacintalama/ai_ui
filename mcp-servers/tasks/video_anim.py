@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html as _html
+import json as _json
 import os
 import shutil
 import tempfile
@@ -67,6 +68,73 @@ def build_demo_composition(screenshots: list[bytes], title: str,
     C.style.opacity=cp; C.style.transform='translateX('+lerp(-40,0,ease((t-2.4)/0.5))+'px)';
     // 6-8s: outro
     O.style.opacity=ease((t-6.0)/0.6);
+  }};
+  window.__seek(0);
+</script></body></html>"""
+
+
+def composition_duration(plan: dict) -> float:
+    return float(sum(float(s.get("duration_s") or 0) for s in (plan.get("scenes") or [])))
+
+
+def build_composition(plan: dict, shots: dict[str, bytes],
+                      *, width: int = 1280, height: int = 720) -> str:
+    """Deterministic, seek-safe HTML for an animated plan. Text is delivered to the
+    page via a JSON SCENES array + JS textContent (never interpolated into markup),
+    and screenshots as data URIs — so it is self-contained and injection-safe."""
+    scenes = []
+    for sc in (plan.get("scenes") or []):
+        img = ""
+        if sc.get("kind") == "screenshot":
+            png = shots.get(sc.get("screenshot") or "")
+            if png:
+                img = _data_uri(png)
+        scenes.append({
+            "kind": sc.get("kind", "screenshot"),
+            "img": img,
+            "headline": str(sc.get("headline") or ""),
+            "subtext": str(sc.get("subtext") or ""),
+            "motion": sc.get("motion", "fade"),
+            "dur": max(0.5, float(sc.get("duration_s") or 3.0)),
+        })
+    data = _json.dumps(scenes).replace("</", "<\\/")  # safe to embed in <script>
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+  html,body{{margin:0;width:{width}px;height:{height}px;background:#0b0b10;overflow:hidden;
+    font-family:Inter,Segoe UI,system-ui,sans-serif;color:#fff}}
+  #img{{position:absolute;top:7%;left:50%;width:66%;border-radius:14px;
+    box-shadow:0 24px 80px rgba(0,0,0,.6);opacity:0;transform:translate(-50%,0)}}
+  #headline{{position:absolute;bottom:13%;left:6%;right:6%;text-align:center;font-size:56px;
+    font-weight:800;letter-spacing:-1px;opacity:0;transform:translateY(24px)}}
+  #subtext{{position:absolute;bottom:8%;left:6%;right:6%;text-align:center;font-size:28px;
+    font-weight:600;opacity:0}}
+  body.center #headline{{bottom:auto;top:44%}}
+</style></head><body>
+  <img id="img"><div id="headline"></div><div id="subtext"></div>
+<script>
+  var SCENES={data};
+  function clamp(x){{return Math.max(0,Math.min(1,x));}}
+  function lerp(a,b,p){{return a+(b-a)*p;}}
+  function ease(p){{p=clamp(p);return p*p*(3-2*p);}}
+  var IMG=document.getElementById('img'), H=document.getElementById('headline'),
+      SUB=document.getElementById('subtext'), BODY=document.body;
+  var starts=[],acc=0; for(var i=0;i<SCENES.length;i++){{starts.push(acc);acc+=SCENES[i].dur;}}
+  window.__seek=function(t){{
+    var idx=0; for(var i=0;i<SCENES.length;i++){{if(t>=starts[i])idx=i;}}
+    var sc=SCENES[idx]; if(!sc){{return;}}
+    var p=clamp((t-starts[idx])/Math.max(0.001,sc.dur));
+    var env=ease(p/0.25)*(1-ease((p-0.8)/0.2));
+    if(sc.img){{IMG.src=sc.img; var tx='translate(-50%,0)';
+      if(sc.motion==='zoom-in')tx+=' scale('+lerp(1.0,1.1,ease(p))+')';
+      else if(sc.motion==='zoom-out')tx+=' scale('+lerp(1.1,1.0,ease(p))+')';
+      else if(sc.motion==='pan-up')tx='translate(-50%,'+lerp(20,-20,ease(p))+'px)';
+      else if(sc.motion==='pan-left')tx='translate(calc(-50% + '+lerp(30,-30,ease(p))+'px),0)';
+      IMG.style.opacity=env; IMG.style.transform=tx;}}
+    else {{IMG.style.opacity=0;}}
+    BODY.className=(sc.kind==='screenshot')?'':'center';
+    H.textContent=sc.headline||''; SUB.textContent=sc.subtext||'';
+    var hy=(sc.motion==='rise')?lerp(24,0,ease(p)):0;
+    H.style.opacity=env; H.style.transform='translateY('+hy+'px)';
+    SUB.style.opacity=sc.subtext?env:0;
   }};
   window.__seek(0);
 </script></body></html>"""

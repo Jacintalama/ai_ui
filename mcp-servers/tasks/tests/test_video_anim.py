@@ -28,6 +28,23 @@ def test_demo_composition_is_self_contained_and_seekable():
     assert "Date.now(" not in html and "Math.random(" not in html
 
 
+def test_build_composition_is_deterministic_and_safe():
+    from video_anim import build_composition, composition_duration
+    plan = {"title": "Demo", "narration_script": "", "scenes": [
+        {"kind": "title", "headline": "Hello </script><b>x", "motion": "rise", "duration_s": 2.0},
+        {"kind": "screenshot", "screenshot": "screenshot-1.png", "headline": "Look",
+         "motion": "zoom-in", "duration_s": 3.0},
+        {"kind": "outro", "headline": "Bye", "motion": "fade", "duration_s": 2.0},
+    ]}
+    shots = {"screenshot-1.png": _png()}
+    html = build_composition(plan, shots)
+    assert "window.__seek" in html
+    assert "data:image/png;base64," in html              # the screenshot embedded
+    # Raw text is NOT injected into markup (delivered via JSON + JS textContent).
+    assert "</script><b>x" not in html
+    assert abs(composition_duration(plan) - 7.0) < 0.01
+
+
 def _have_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
