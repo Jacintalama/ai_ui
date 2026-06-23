@@ -23,9 +23,10 @@ from heavy_lock import (
     enough_free_ram,
     try_heavy_lock,
 )
+from video_anim import render_animated_job
 from video_executor import VideoRenderExecutor
 from video_models import VideoJob
-from video_plan import generate_plan
+from video_plan import generate_anim_plan, generate_plan
 from video_versions import next_version_no, record_version
 
 logger = logging.getLogger("video_worker")
@@ -99,6 +100,7 @@ async def _process_job(job_id) -> None:
             slug, prompt, plan, pending_summary = job.slug, job.prompt, job.plan_json, job.pending_summary
             style = job.style
             voice = job.voice
+            render_mode = job.render_mode
 
         # Stage 1: scripting (idempotent — reuse an existing plan).
         if not plan:
@@ -110,7 +112,8 @@ async def _process_job(job_id) -> None:
                 await s.commit()
             shots_dir = os.path.join(APPS_DIR, slug, ".video", str(job_id), "screenshots")
             screenshots = sorted(os.listdir(shots_dir)) if os.path.isdir(shots_dir) else []
-            plan = await generate_plan(prompt, screenshots)
+            plan = await (generate_anim_plan(prompt, screenshots) if render_mode == "animated"
+                          else generate_plan(prompt, screenshots))
             async with session() as s:
                 await s.execute(
                     update(VideoJob).where(VideoJob.id == job_id)
@@ -125,7 +128,10 @@ async def _process_job(job_id) -> None:
                 .values(status="rendering")
             )
             await s.commit()
-        out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
+        if render_mode == "animated":
+            out = await render_animated_job(APPS_DIR, slug, str(job_id), plan)
+        else:
+            out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
 
         # Stage 3: snapshot this render as a version, then mark done.
         async with session() as s:
