@@ -178,6 +178,11 @@ def test_extract_url_message_none_when_no_url():
     assert extract_url_message(_url_msg("just describing the demo")) is None
 
 
+def test_extract_url_message_trims_trailing_punctuation():
+    info = extract_url_message(_url_msg("see (https://mysite.com/home)."))
+    assert info["url"] == "https://mysite.com/home"
+
+
 @pytest.mark.asyncio
 async def test_handle_url_paste_in_thread_calls_capture():
     intake, router, discord = _intake()

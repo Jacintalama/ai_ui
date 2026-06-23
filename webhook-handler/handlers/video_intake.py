@@ -70,6 +70,9 @@ def extract_url_message(message) -> dict | None:
     m = _URL_RE.search(content)
     if not m:
         return None
+    # Trim trailing punctuation the greedy match swept up from prose / markdown
+    # links, e.g. "see (https://site.com)." -> "https://site.com".
+    url = m.group(0).rstrip(".,;:!?)]}'\"")
     channel = message.channel
     parent_id = getattr(channel, "parent_id", None)
     parent = getattr(channel, "parent", None)
@@ -82,7 +85,7 @@ def extract_url_message(message) -> dict | None:
         "is_thread": parent_id is not None,
         "parent_channel_id": str(parent_id) if parent_id else None,
         "parent_channel_name": getattr(parent, "name", None) if parent is not None else None,
-        "url": m.group(0),
+        "url": url,
     }
 
 
