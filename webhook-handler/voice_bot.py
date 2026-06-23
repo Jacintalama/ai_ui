@@ -496,6 +496,15 @@ class ConversationalVoiceBot(discord.Client):
                     await self._video_intake.handle_image_drop(**info)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("video image-drop intake failed: %s", exc)
+        # A URL pasted (no image) in a video thread -> auto-capture that site.
+        elif self._video_intake is not None and getattr(message, "content", None):
+            from handlers.video_intake import extract_url_message
+            info = extract_url_message(message)
+            if info is not None:
+                try:
+                    await self._video_intake.handle_url_paste(**info)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("video url intake failed: %s", exc)
 
     def _pick_text_channel(self, voice_channel):
         """Transcripts and build links go where the user is looking: the text
