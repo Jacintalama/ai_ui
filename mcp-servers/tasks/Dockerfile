@@ -18,7 +18,7 @@ RUN python -m playwright install --with-deps chromium
 # blip must NOT break the build, and render_animated_job falls back to silent
 # video if /opt/piper/piper or the voice model is missing.
 RUN mkdir -p /opt/piper/voices && \
-    ( curl -fsSL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz -o /tmp/piper.tgz \
+    ( curl -fsSL "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_$(uname -m).tar.gz" -o /tmp/piper.tgz \
       && tar -xzf /tmp/piper.tgz -C /opt && rm -f /tmp/piper.tgz \
       && curl -fsSL "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx" -o /opt/piper/voices/en_US-amy-medium.onnx \
       && curl -fsSL "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json" -o /opt/piper/voices/en_US-amy-medium.onnx.json \
