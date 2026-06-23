@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Chromium for server-side site capture (video URL auto-capture). Installed at
+# build time so runtime only pays a transient, serialized memory spike.
+RUN python -m playwright install --with-deps chromium
 COPY . .
 EXPOSE 8210
 # Use standard asyncio event loop — uvloop has issues with async subprocess

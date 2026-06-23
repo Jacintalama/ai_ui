@@ -38,3 +38,21 @@ def test_capture_enabled_default_true(monkeypatch):
     assert capture_enabled() is True
     monkeypatch.setenv("VIDEO_CAPTURE_ENABLED", "false")
     assert capture_enabled() is False
+
+
+playwright_async = pytest.importorskip("playwright.async_api")
+
+
+@pytest.mark.asyncio
+async def test_capture_site_real_example():
+    """Real headless-Chromium capture of a public page. Skipped if Playwright or
+    its Chromium build is not installed (so the suite stays green offline); run
+    locally after `python -m playwright install chromium`."""
+    from video_capture import CaptureError, capture_site
+    try:
+        frames = await capture_site("https://example.com", max_frames=2)
+    except CaptureError as e:
+        pytest.skip(f"chromium not available: {e}")
+    assert 1 <= len(frames) <= 2
+    assert frames[0][:8] == b"\x89PNG\r\n\x1a\n"  # PNG magic
+

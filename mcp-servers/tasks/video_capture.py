@@ -66,3 +66,84 @@ def assert_capturable(url: str) -> str:
         if is_blocked_ip(info[4][0]):
             raise CaptureError("that host resolves to a blocked address")
     return url
+
+
+_BLOCK_LITERAL_HOSTS = {"localhost"}
+
+
+def _host_is_literal_blocked(host: str) -> bool:
+    """Cheap synchronous check for the in-browser route guard: block localhost
+    and any IP-literal host that is private/internal. Hostnames are allowed here
+    because the top-level URL was already pre-resolved by assert_capturable."""
+    low = (host or "").lower()
+    if low in _BLOCK_LITERAL_HOSTS or low.endswith(".localhost"):
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False  # a name, not a literal — pre-resolve already vetted the top URL
+    return is_blocked_ip(host)
+
+
+async def capture_site(
+    url: str,
+    *,
+    max_frames: int = 5,
+    viewport: tuple[int, int] = (1280, 800),
+    nav_timeout_ms: int = 20000,
+) -> list[bytes]:
+    """Capture a live site as up to `max_frames` viewport-height PNG frames by
+    scrolling top-to-bottom. Serialized to one browser at a time. Raises
+    CaptureError on a blocked URL, missing engine, timeout, or zero frames."""
+    assert_capturable(url)
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as e:
+        raise CaptureError("capture engine unavailable") from e
+
+    vw, vh = viewport
+    frames: list[bytes] = []
+    async with _CAPTURE_LOCK:
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+                )
+                try:
+                    context = await browser.new_context(
+                        viewport={"width": vw, "height": vh},
+                        user_agent="Mozilla/5.0 (compatible; AIUI-VideoCapture)",
+                    )
+                    page = await context.new_page()
+
+                    async def _route(route):
+                        host = urlparse(route.request.url).hostname or ""
+                        if _host_is_literal_blocked(host):
+                            await route.abort()
+                        else:
+                            await route.continue_()
+
+                    await page.route("**/*", _route)
+                    try:
+                        await page.goto(url, wait_until="load", timeout=nav_timeout_ms)
+                    except Exception as e:  # noqa: BLE001 - playwright TimeoutError etc.
+                        raise CaptureError(f"could not load the page: {e}") from e
+                    # A redirect may have landed somewhere internal — re-check.
+                    assert_capturable(page.url)
+                    height = int(await page.evaluate("document.body.scrollHeight") or vh)
+                    n = max(1, min(max_frames, math.ceil(height / vh)))
+                    for i in range(n):
+                        await page.evaluate(f"window.scrollTo(0, {i * vh})")
+                        await page.wait_for_timeout(400)
+                        frames.append(await page.screenshot(
+                            clip={"x": 0, "y": 0, "width": vw, "height": vh}))
+                finally:
+                    await browser.close()
+        except CaptureError:
+            raise
+        except Exception as e:  # noqa: BLE001 - launch/engine failure -> clean error
+            raise CaptureError(f"capture failed: {e}") from e
+    if not frames:
+        raise CaptureError("no frames captured")
+    return frames
