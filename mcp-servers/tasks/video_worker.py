@@ -129,7 +129,7 @@ async def _process_job(job_id) -> None:
             )
             await s.commit()
         if render_mode == "animated":
-            out = await render_animated_job(APPS_DIR, slug, str(job_id), plan)
+            out = await render_animated_job(APPS_DIR, slug, str(job_id), plan, voice=voice)
         else:
             out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
 

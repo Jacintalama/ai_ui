@@ -93,3 +93,37 @@ async def test_render_animated_job_reads_shots_and_renders(tmp_path, monkeypatch
     out = await video_anim.render_animated_job(str(tmp_path), slug, jid, plan)
     assert out.endswith("out.mp4") and os.path.exists(out)
     assert "data:image/png;base64," in captured["html"]
+
+
+async def test_synthesize_narration_none_without_piper(monkeypatch, tmp_path):
+    import video_anim
+    # No Piper binary in the test env -> graceful None (animated stays silent).
+    monkeypatch.setattr(video_anim, "_PIPER_BIN", "/nonexistent/piper")
+    out = await video_anim._synthesize_narration("hello there", "amy", str(tmp_path / "n.wav"))
+    assert out is None
+
+
+async def test_render_animated_job_muxes_audio_when_available(tmp_path, monkeypatch):
+    import video_anim
+    captured = {}
+
+    async def fake_render(html, out_path, *, fps=24, duration_s=8.0, audio_path=None,
+                          width=1280, height=720):
+        captured["audio_path"] = audio_path
+        open(out_path, "wb").write(b"\x00\x00\x00\x18ftypmp42")
+        return int(duration_s * fps)
+
+    async def fake_synth(text, voice, out_wav):
+        open(out_wav, "wb").write(b"RIFFfake")
+        return out_wav
+
+    monkeypatch.setattr(video_anim, "render_html_to_mp4", fake_render)
+    monkeypatch.setattr(video_anim, "_synthesize_narration", fake_synth)
+    slug, jid = "vid-a", "22222222-2222-2222-2222-222222222222"
+    (tmp_path / slug / ".video" / jid / "screenshots").mkdir(parents=True)
+    (tmp_path / slug / ".video" / jid / "screenshots" / "screenshot-1.png").write_bytes(_png())
+    plan = {"title": "t", "narration_script": "walk through it", "scenes": [
+        {"kind": "screenshot", "screenshot": "screenshot-1.png", "headline": "h",
+         "motion": "zoom-in", "duration_s": 3.0}]}
+    await video_anim.render_animated_job(str(tmp_path), slug, jid, plan, voice="amy")
+    assert captured["audio_path"] and captured["audio_path"].endswith("narration.wav")

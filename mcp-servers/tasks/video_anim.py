@@ -12,9 +12,16 @@ import asyncio
 import base64
 import html as _html
 import json as _json
+import logging
 import os
 import shutil
 import tempfile
+
+logger = logging.getLogger("video_anim")
+
+# Piper TTS binary for in-container narration (best-effort; animated renders fall
+# back to silent video if Piper or the voice model is unavailable).
+_PIPER_BIN = "/opt/piper/piper"
 
 
 def _data_uri(png: bytes) -> str:
@@ -210,11 +217,34 @@ async def render_html_to_mp4(html: str, out_path: str, *, fps: int = 24,
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+async def _synthesize_narration(text: str, voice: str | None, out_wav: str) -> str | None:
+    """Piper TTS narration.txt -> wav (text via stdin; no shell). Returns the wav
+    path, or None if Piper/the model is unavailable or fails — so animated renders
+    degrade to silent video rather than crashing."""
+    from video_voices import resolve_model
+    model = resolve_model(voice)  # allowlisted path; never user input
+    if not (text or "").strip() or not os.path.exists(_PIPER_BIN) or not os.path.exists(model):
+        return None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _PIPER_BIN, "-m", model, "-f", out_wav,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE)
+        _, err = await proc.communicate(text.encode("utf-8"))
+    except Exception as e:  # noqa: BLE001 - never fail the render on narration
+        logger.warning("narration synth failed: %s", e)
+        return None
+    if proc.returncode != 0 or not os.path.exists(out_wav):
+        logger.warning("piper returned %s: %s", proc.returncode, err.decode("utf-8", "replace")[-200:])
+        return None
+    return out_wav
+
+
 async def render_animated_job(apps_dir: str, slug: str, job_id: str, plan: dict,
-                              *, fps: int = 24) -> str:
+                              *, fps: int = 24, voice: str | None = None) -> str:
     """Render an animated job's plan to out.mp4 in-container: read the job's
-    screenshots from disk, build the composition, render via Chromium+ffmpeg.
-    Returns the output path. (Video-only in v1; narration is a fast-follow.)"""
+    screenshots from disk, build the composition, synthesize Piper narration (if
+    available), then render via Chromium+ffmpeg. Returns the output path."""
     shots_dir = os.path.join(apps_dir, slug, ".video", job_id, "screenshots")
     shots: dict[str, bytes] = {}
     if os.path.isdir(shots_dir):
@@ -224,7 +254,10 @@ async def render_animated_job(apps_dir: str, slug: str, job_id: str, plan: dict,
                 with open(p, "rb") as f:
                     shots[name] = f.read()
     html = build_composition(plan, shots)
-    out = os.path.join(apps_dir, slug, ".video", job_id, "out.mp4")
+    job_dir = os.path.join(apps_dir, slug, ".video", job_id)
+    out = os.path.join(job_dir, "out.mp4")
     dur = min(MAX_DURATION_S, composition_duration(plan) or 8.0)
-    await render_html_to_mp4(html, out, fps=fps, duration_s=dur)
+    audio = await _synthesize_narration(
+        plan.get("narration_script") or "", voice, os.path.join(job_dir, "narration.wav"))
+    await render_html_to_mp4(html, out, fps=fps, duration_s=dur, audio_path=audio)
     return out
