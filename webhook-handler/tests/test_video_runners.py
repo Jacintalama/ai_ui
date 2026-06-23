@@ -234,3 +234,54 @@ async def test_run_video_revert_rerender_no_watcher_when_no_channel():
     await r.run_video_revert(ctx, "job1", 2)
     ctx.respond.assert_awaited()
     assert not r._background_tasks
+
+
+# --- run_video_capture ------------------------------------------------------ #
+
+@pytest.mark.asyncio
+async def test_run_video_capture_captures_and_reports():
+    tc = MagicMock()
+    tc.get_current_video_draft = AsyncMock(return_value={"id": "job9"})
+    tc.capture_video_screenshots = AsyncMock(return_value={"count": 4})
+    r = _router(tc)
+    rc = AsyncMock()
+    ctx = _ctx(respond_components=rc)
+    await r.run_video_capture(ctx, "https://mysite.com")
+    tc.capture_video_screenshots.assert_awaited_once_with("u@x.com", "job9", "https://mysite.com")
+    rc.assert_awaited_once()
+    msg, components = rc.await_args.args
+    assert "4/12" in msg
+    assert isinstance(components, list) and components  # Generate button row
+
+
+@pytest.mark.asyncio
+async def test_run_video_capture_no_draft_prompts_new_video():
+    tc = MagicMock()
+    tc.get_current_video_draft = AsyncMock(return_value=None)
+    r = _router(tc)
+    ctx = _ctx(respond_components=AsyncMock())
+    await r.run_video_capture(ctx, "https://mysite.com")
+    ctx.respond.assert_awaited()
+    assert "New video" in ctx.respond.await_args.args[0]
+    tc.capture_video_screenshots.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_video_capture_unlinked():
+    r = _router(MagicMock())
+    r._resolve_email_for_ctx = AsyncMock(return_value=None)
+    ctx = _ctx()
+    await r.run_video_capture(ctx, "https://mysite.com")
+    r._respond_not_linked.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_video_capture_api_error_offers_fallback():
+    tc = MagicMock()
+    tc.get_current_video_draft = AsyncMock(return_value={"id": "job9"})
+    tc.capture_video_screenshots = AsyncMock(side_effect=TasksAPIError(502, "couldn't capture site"))
+    r = _router(tc)
+    ctx = _ctx()
+    await r.run_video_capture(ctx, "https://mysite.com")
+    msgs = [call.args[0] for call in ctx.respond.await_args_list]
+    assert any("drag screenshots" in m.lower() for m in msgs)

@@ -2377,6 +2377,41 @@ class CommandRouter:
         else:
             await ctx.respond(msg)
 
+    async def run_video_capture(self, ctx: CommandContext, url: str) -> None:
+        """Paste-a-URL / Capture-from-website: drive server-side headless-browser
+        capture of `url` onto the caller's current draft, then reply with the
+        running count + a Generate button. Mirrors run_video_add."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            draft = await self._tasks_client.get_current_video_draft(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't load your draft: {e.message}")
+            return
+        if not draft:
+            await ctx.respond("No video in progress — click **New video** first.")
+            return
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or "your site"
+        await ctx.respond(f"Capturing {host}… this takes a few seconds.")
+        try:
+            res = await self._tasks_client.capture_video_screenshots(email, draft["id"], url)
+        except TasksAPIError as e:
+            await ctx.respond(
+                f"Couldn't capture that site: {e.message}. "
+                "You can drag screenshots into this thread instead.")
+            return
+        count = res.get("count", 0)
+        msg = (f"Added screenshots from {host} — {count}/12 so far. "
+               "Click **Generate video** when ready.")
+        if ctx.respond_components is not None:
+            from handlers.video_panel import build_generate_row
+            await ctx.respond_components(msg, build_generate_row(draft["id"]))
+        else:
+            await ctx.respond(msg)
+
     async def run_video_set_field(self, ctx: CommandContext, job_id: str, *,
                                   style: str | None = None, voice: str | None = None) -> None:
         email = await self._resolve_email_for_ctx(ctx)
