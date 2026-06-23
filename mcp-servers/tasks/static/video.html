@@ -537,69 +537,65 @@
       <div class="create-grid" data-show="create">
       <section class="card create-form-card" data-show="create">
         <div class="card-title">Generate a video</div>
-        <div class="card-sub">Name your video, upload 1 to 12 screenshots, describe the narrated slideshow you want.</div>
+        <div class="card-sub">Paste your website link and we make a narrated video. That's it.</div>
         <form id="video-form" autocomplete="off">
           <div class="field">
-            <label class="form-label" for="title">Title</label>
-            <input class="form-input" id="title" name="title" maxlength="200" placeholder="Name your video, e.g. Dashboard walkthrough" required>
+            <label class="form-label" for="create-capture-url">Your website link</label>
+            <input type="url" class="form-input" id="create-capture-url"
+                   placeholder="https://yoursite.com">
+            <span class="form-hint">We grab the screenshots for you — no upload needed.</span>
           </div>
 
           <div class="field">
-            <label class="form-label" for="style">Style</label>
-            <select class="form-input" id="style" name="style">
-              <option value="clean_product_demo" selected>Clean product demo (recommended)</option>
-              <option value="cinematic">Cinematic</option>
-              <option value="snappy_social">Snappy social</option>
-            </select>
-            <span class="form-hint">The visual look: motion, transitions, captions, color grade and intro/outro cards.</span>
-          </div>
-
-          <div class="field">
-            <label class="form-label">Voice</label>
-            <div class="voice-list" id="voice-list" role="radiogroup" aria-label="Narration voice">
-              <div class="voice-loading">Loading voices...</div>
-            </div>
-            <span class="form-hint">The narration voice. Press play to hear a sample.</span>
-          </div>
-
-          <div class="field">
-            <label class="form-label">Screenshots</label>
-            <div class="uploader-head">
-              <button class="btn sm" type="button" id="add-shots-btn">+ Add screenshots</button>
-              <span class="uploader-count" id="shot-count">0 / 12</span>
-            </div>
-            <!-- Hidden native input only carries the File objects; the visible
-                 manager below owns the order, names and validation. -->
-            <input id="files" name="files" type="file" accept="image/*" multiple hidden>
-            <span class="form-hint">1 to 12 images, max 10&nbsp;MB each, 50&nbsp;MB total. The order below is the sequence the AI narrates (first to last); use the arrows to reorder.</span>
-            <div class="shot-grid" id="shot-grid"></div>
-            <div class="shot-empty" id="shot-empty">No screenshots yet. Click "Add screenshots" to begin.</div>
-            <div class="error" id="shot-error" hidden></div>
-          </div>
-
-          <div class="field">
-            <label class="form-label" for="create-capture-url">Or capture from a website</label>
-            <div class="uploader-head">
-              <input type="url" class="form-input" id="create-capture-url"
-                     placeholder="https://yoursite.com" style="flex:1;">
-              <button class="btn sm" type="button" id="create-capture-btn">Capture from website</button>
-            </div>
-            <span class="form-hint">Enter your site URL and we grab the screenshots for you (needs a title + prompt). Opens the studio — no manual upload.</span>
-          </div>
-
-          <div class="field">
-            <label class="form-label" for="prompt">Prompt</label>
+            <label class="form-label" for="prompt">What should it say? <span style="opacity:.6">(optional)</span></label>
             <textarea class="form-textarea" id="prompt" name="prompt" maxlength="2000"
-              placeholder="Walk through the dashboard, highlight the new charts, end on the export button."
-              required></textarea>
-            <span class="form-hint">Up to 2000 characters.</span>
+              placeholder="e.g. walk through my portfolio and highlight the projects"></textarea>
           </div>
 
           <div class="error box" id="form-error" hidden></div>
 
           <div class="field" style="margin-top: 4px;">
-            <button class="btn primary" type="submit" id="submit-btn">Generate video</button>
+            <button class="btn primary" type="submit" id="submit-btn">Make my video</button>
           </div>
+
+          <details class="more-options" style="margin-top:14px;">
+            <summary style="cursor:pointer; color: var(--text-2); font-size: 13px;">More options</summary>
+
+            <div class="field" style="margin-top:12px;">
+              <label class="form-label" for="title">Title <span style="opacity:.6">(optional)</span></label>
+              <input class="form-input" id="title" name="title" maxlength="200"
+                     placeholder="Auto from your site if left blank">
+            </div>
+
+            <div class="field">
+              <label class="form-label">Upload your own images instead</label>
+              <div class="uploader-head">
+                <button class="btn sm" type="button" id="add-shots-btn">+ Add screenshots</button>
+                <span class="uploader-count" id="shot-count">0 / 12</span>
+              </div>
+              <input id="files" name="files" type="file" accept="image/*" multiple hidden>
+              <span class="form-hint">Optional — up to 12 images. Used only if you don't give a website link.</span>
+              <div class="shot-grid" id="shot-grid"></div>
+              <div class="shot-empty" id="shot-empty">No images added.</div>
+              <div class="error" id="shot-error" hidden></div>
+            </div>
+
+            <div class="field">
+              <label class="form-label" for="style">Style</label>
+              <select class="form-input" id="style" name="style">
+                <option value="clean_product_demo" selected>Clean product demo (recommended)</option>
+                <option value="cinematic">Cinematic</option>
+                <option value="snappy_social">Snappy social</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="form-label">Voice</label>
+              <div class="voice-list" id="voice-list" role="radiogroup" aria-label="Narration voice">
+                <div class="voice-loading">Loading voices...</div>
+              </div>
+            </div>
+          </details>
         </form>
       </section>
 
@@ -613,11 +609,9 @@
                src="/tasks/static/demo-video.mp4?v=tut2"></video>
         <div class="section-label" style="margin-top:18px;">How it works</div>
         <ol class="how-steps">
-          <li><b>Name</b> your video.</li>
-          <li>Pick a <b>style</b> and a <b>voice</b> (press play to hear each).</li>
-          <li><b>Add screenshots</b> in the order you want narrated.</li>
-          <li><b>Describe</b> the walkthrough you want.</li>
-          <li>Hit <b>Generate</b> and we render a narrated video.</li>
+          <li><b>Paste your website link.</b></li>
+          <li>Optionally say <b>what it should cover</b>.</li>
+          <li>Hit <b>Make my video</b> — we capture the site and render it.</li>
         </ol>
       </section>
       </div>
@@ -748,7 +742,6 @@
     const captureUrlInput = document.getElementById("capture-url");
     const captureUrlBtn = document.getElementById("capture-url-btn");
     const createCaptureUrl = document.getElementById("create-capture-url");
-    const createCaptureBtn = document.getElementById("create-capture-btn");
     const collectingPanel = document.getElementById("collecting-panel");
     const collectingCount = document.getElementById("collecting-count");
     const collectingGenerateBtn = document.getElementById("collecting-generate-btn");
@@ -1421,7 +1414,7 @@
       form.reset();
       clearShots();
       clearFormError();
-      submitBtn.disabled = false; submitBtn.textContent = "Generate video";
+      submitBtn.disabled = false; submitBtn.textContent = "Make my video";
       // player + side panels
       playerVideo.removeAttribute("src"); playerVideo.hidden = true;
       playerOverlay.hidden = true; playerError.hidden = true;
@@ -1719,92 +1712,85 @@
       shotInput.value = ""; // allow re-selecting the same files
     });
 
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      clearFormError();
-      const title = titleInput.value.trim();
-      const prompt = promptInput.value.trim();
-      if (!title) return showFormError("A title is required.");
-      if (!prompt) return showFormError("A prompt is required.");
-      if (!shots.length) return showFormError("Add at least one screenshot.");
-      if (shots.length > MAX_FILES) return showFormError("You can add at most " + MAX_FILES + " images.");
-      if (shotsTotalBytes() > MAX_TOTAL_BYTES) return showFormError("Total size is over 50 MB.");
-
-      submitBtn.disabled = true;
-      submitBtn.textContent = "Uploading...";
-
+    // Manual path: upload the staged images and open the studio.
+    async function uploadAndOpen(title, prompt) {
       const fd = new FormData();
       fd.append("title", title);
       fd.append("prompt", prompt);
       fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
       fd.append("voice", selectedVoice || defaultVoiceId);
       stopVoicePreview();
-      // Append in the CURRENT DISPLAYED ORDER so screenshot-1 = the first card.
       for (const s of shots) fd.append("files", s.file, s.file.name);
-
-      let data;
-      try {
-        const resp = await fetch(API + "/upload", {
-          method: "POST", headers: multipartAuthHeaders(), credentials: "include", body: fd,
-        });
-        if (resp.status !== 201) {
-          const txt = await resp.text();
-          throw new Error("Upload failed (" + resp.status + "): " + txt.slice(0, 300));
-        }
-        data = await resp.json();
-      } catch (err) {
-        showFormError(err.message);
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Generate video";
-        return;
+      const resp = await fetch(API + "/upload", {
+        method: "POST", headers: multipartAuthHeaders(), credentials: "include", body: fd,
+      });
+      if (resp.status !== 201) {
+        const txt = await resp.text();
+        throw new Error("Upload failed (" + resp.status + "): " + txt.slice(0, 300));
       }
-
-      // Job accepted -> navigate to its per-job page and open the studio
-      // exactly as a deep link (?job=<id>) would. Reuses openExistingJob so
-      // the studio render + polling path is not duplicated.
-      submitBtn.disabled = false;
-      submitBtn.textContent = "Generate video";
-      clearShots(); // free object URLs now the upload succeeded
+      const data = await resp.json();
+      clearShots();
       history.pushState({}, "", "?job=" + encodeURIComponent(data.id));
       openExistingJob(data.id);
-    });
+    }
 
-    // --- Create from a website URL: draft -> capture -> open studio (collecting) ---
-    createCaptureBtn.addEventListener("click", async () => {
+    // One button does it all: a website link (capture + render) OR your own images.
+    async function makeVideo() {
       clearFormError();
-      const title = titleInput.value.trim();
-      const prompt = promptInput.value.trim();
       const url = (createCaptureUrl.value || "").trim();
-      if (!title) return showFormError("A title is required.");
-      if (!prompt) return showFormError("A prompt is required.");
-      if (!url) return showFormError("Enter a website URL to capture.");
-      createCaptureBtn.disabled = true;
-      const orig = createCaptureBtn.textContent;
-      createCaptureBtn.textContent = "Capturing…";
-      try {
-        const draftResp = await fetch(API + "/draft", {
-          method: "POST", headers: authHeaders(), credentials: "include",
-          body: JSON.stringify({
-            title: title, prompt: prompt,
-            style: styleSelect ? styleSelect.value : "clean_product_demo",
-            voice: selectedVoice || defaultVoiceId,
-          }),
-        });
-        if (!draftResp.ok) {
-          const t = await draftResp.text();
-          throw new Error("Couldn't start: " + t.slice(0, 160));
-        }
-        const draft = await draftResp.json();
-        await captureFromUrl(draft.id, url);
-        history.pushState({}, "", "?job=" + encodeURIComponent(draft.id));
-        openExistingJob(draft.id);
-      } catch (e) {
-        showFormError(e.message || "Capture failed.");
-      } finally {
-        createCaptureBtn.disabled = false;
-        createCaptureBtn.textContent = orig;
+      const rawPrompt = promptInput.value.trim();
+      let host = "";
+      if (url) {
+        try { host = new URL(url).hostname.replace(/^www\./, ""); }
+        catch (e) { return showFormError("That doesn't look like a valid link (try https://yoursite.com)."); }
       }
-    });
+      const title = titleInput.value.trim() || host || "Untitled video";
+      submitBtn.disabled = true;
+      const orig = submitBtn.textContent;
+      submitBtn.textContent = "Making your video…";
+      try {
+        if (url) {
+          const prompt = rawPrompt || ("A short walkthrough of " + host + ".");
+          const draftResp = await fetch(API + "/draft", {
+            method: "POST", headers: authHeaders(), credentials: "include",
+            body: JSON.stringify({
+              title: title, prompt: prompt,
+              style: styleSelect ? styleSelect.value : "clean_product_demo",
+              voice: selectedVoice || defaultVoiceId,
+            }),
+          });
+          if (!draftResp.ok) {
+            const t = await draftResp.text();
+            throw new Error("Couldn't start: " + t.slice(0, 160));
+          }
+          const draft = await draftResp.json();
+          await captureFromUrl(draft.id, url);
+          const q = await fetch(API + "/" + encodeURIComponent(draft.id) + "/queue", {
+            method: "POST", headers: authHeaders(), credentials: "include",
+          });
+          if (!q.ok) {
+            const t = await q.text();
+            throw new Error("Couldn't start the video: " + t.slice(0, 160));
+          }
+          history.pushState({}, "", "?job=" + encodeURIComponent(draft.id));
+          openExistingJob(draft.id);
+        } else if (shots.length) {
+          if (shots.length > MAX_FILES) throw new Error("You can add at most " + MAX_FILES + " images.");
+          if (shotsTotalBytes() > MAX_TOTAL_BYTES) throw new Error("Total size is over 50 MB.");
+          const prompt = rawPrompt || "A short walkthrough.";
+          await uploadAndOpen(title, prompt);
+        } else {
+          showFormError("Add your website link above (or upload images under More options).");
+        }
+      } catch (e) {
+        showFormError(e.message || "Couldn't make the video.");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = orig;
+      }
+    }
+
+    form.addEventListener("submit", (e) => { e.preventDefault(); makeVideo(); });
 
     // --- Boot ---
     // --- Voice picker: load the catalog, render selectable cards w/ previews --
