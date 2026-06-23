@@ -179,6 +179,7 @@ class DraftRequest(BaseModel):
     prompt: str = Field("", max_length=2000)
     style: str = Field("clean_product_demo", max_length=50)
     voice: str = Field(DEFAULT_VOICE_ID, max_length=50)
+    render_mode: str = Field("slideshow", pattern="^(slideshow|animated)$")
 
 
 @router.post("/draft", status_code=201)
@@ -196,7 +197,8 @@ async def create_draft(body: DraftRequest, user: CurrentUser = Depends(current_u
     slug = f"vid-{job_id.hex[:8]}"
     async with session() as s:
         s.add(VideoJob(id=job_id, slug=slug, user_email=user.email, prompt=body.prompt,
-                       title=body.title, style=body.style, voice=body.voice, status="collecting"))
+                       title=body.title, style=body.style, voice=body.voice,
+                       render_mode=body.render_mode, status="collecting"))
         await s.commit()
     return {"id": str(job_id), "slug": slug, "status": "collecting"}
 
