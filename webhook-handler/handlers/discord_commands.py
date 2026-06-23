@@ -415,17 +415,19 @@ class DiscordCommandHandler:
             return await self._handle_video_route(
                 payload, lambda ctx: self.router.run_video_list(ctx),
                 raw_text="video list")
-        if vid.is_vid_style(custom_id) or vid.is_vid_voice(custom_id):
+        if vid.is_vid_style(custom_id) or vid.is_vid_voice(custom_id) or vid.is_vid_mode(custom_id):
             values = data.get("values") or []
             if not values:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
-            is_style = vid.is_vid_style(custom_id)
             try:
-                job_id = (vid.job_from_style(custom_id) if is_style
-                          else vid.job_from_voice(custom_id))
+                if vid.is_vid_style(custom_id):
+                    job_id, field = vid.job_from_style(custom_id), {"style": values[0]}
+                elif vid.is_vid_voice(custom_id):
+                    job_id, field = vid.job_from_voice(custom_id), {"voice": values[0]}
+                else:
+                    job_id, field = vid.job_from_mode(custom_id), {"render_mode": values[0]}
             except ValueError:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
-            field = {"style": values[0]} if is_style else {"voice": values[0]}
             self._spawn(self._run_video_set(payload, job_id, field))
             return {"type": DEFERRED_UPDATE_MESSAGE}
         if vid.is_vid_generate(custom_id):

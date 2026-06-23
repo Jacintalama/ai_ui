@@ -893,6 +893,7 @@ class DraftPatch(BaseModel):
     voice: str | None = Field(None, max_length=50)
     title: str | None = Field(None, max_length=200)
     prompt: str | None = Field(None, max_length=2000)
+    render_mode: str | None = Field(None, pattern="^(slideshow|animated)$")
 
 
 @router.post("/{job_id}/queue")
@@ -963,6 +964,8 @@ async def update_draft(job_id: str, body: DraftPatch, user: CurrentUser = Depend
             vals["title"] = body.title
         if body.prompt is not None:
             vals["prompt"] = body.prompt
+        if body.render_mode is not None:
+            vals["render_mode"] = body.render_mode
         if vals:
             await s.execute(update(VideoJob).where(VideoJob.id == jid).values(**vals))
             await s.commit()

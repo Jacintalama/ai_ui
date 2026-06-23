@@ -19,6 +19,7 @@ CAPTURE_MODAL_PREFIX = "aiuivid:capturemodal:"
 URL_INPUT = "url"
 STYLE_PREFIX = "aiuivid:style:"
 VOICE_PREFIX = "aiuivid:voice:"
+MODE_PREFIX = "aiuivid:mode:"
 GENERATE_PREFIX = "aiuivid:generate:"
 REFINE_PREFIX = "aiuivid:refine:"
 REFINE_MODAL_PREFIX = "aiuivid:refinemodal:"
@@ -144,10 +145,23 @@ def build_voice_select(job_id: str, voices: list[dict], current: str = "amy") ->
             "options": options}
 
 
+def build_mode_select(job_id: str, current: str = "slideshow") -> dict:
+    options = [
+        {"label": "Slideshow (screenshots)", "value": "slideshow",
+         "description": "Narrated screenshot slideshow"[:100], "default": current == "slideshow"},
+        {"label": "Animated (motion graphics)", "value": "animated",
+         "description": "Kinetic text + motion around your screenshots"[:100], "default": current == "animated"},
+    ]
+    return {"type": SELECT_MENU, "custom_id": f"{MODE_PREFIX}{job_id}",
+            "placeholder": "Output: Slideshow or Animated…", "min_values": 1, "max_values": 1,
+            "options": options}
+
+
 def build_studio_components(job_id: str, voices: list[dict]) -> list[dict]:
     return [
         {"type": ACTION_ROW, "components": [build_style_select(job_id)]},
         {"type": ACTION_ROW, "components": [build_voice_select(job_id, voices)]},
+        {"type": ACTION_ROW, "components": [build_mode_select(job_id)]},
         {"type": ACTION_ROW, "components": [
             _button("Paste your site link", f"{CAPTURE_PREFIX}{job_id}", STYLE_PRIMARY)]},
         {"type": ACTION_ROW, "components": [
@@ -193,6 +207,7 @@ def is_vid_capture(c: str) -> bool: return c.startswith(CAPTURE_PREFIX)
 def is_vid_capture_modal(c: str) -> bool: return c.startswith(CAPTURE_MODAL_PREFIX)
 def is_vid_style(c: str) -> bool: return c.startswith(STYLE_PREFIX)
 def is_vid_voice(c: str) -> bool: return c.startswith(VOICE_PREFIX)
+def is_vid_mode(c: str) -> bool: return c.startswith(MODE_PREFIX)
 def is_vid_generate(c: str) -> bool: return c.startswith(GENERATE_PREFIX)
 def is_vid_refine(c: str) -> bool: return c.startswith(REFINE_PREFIX)
 def is_vid_refine_modal(c: str) -> bool: return c.startswith(REFINE_MODAL_PREFIX)
@@ -201,6 +216,7 @@ def is_vid_version(c: str) -> bool: return c.startswith(VERSION_PREFIX)
 
 def job_from_style(c: str) -> str: return _suffix_after(c, STYLE_PREFIX)
 def job_from_voice(c: str) -> str: return _suffix_after(c, VOICE_PREFIX)
+def job_from_mode(c: str) -> str: return _suffix_after(c, MODE_PREFIX)
 def job_from_generate(c: str) -> str: return _suffix_after(c, GENERATE_PREFIX)
 def job_from_details(c: str) -> str: return _suffix_after(c, DETAILS_PREFIX)
 def job_from_details_modal(c: str) -> str: return _suffix_after(c, DETAILS_MODAL_PREFIX)

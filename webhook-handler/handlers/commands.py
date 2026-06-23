@@ -2413,13 +2413,15 @@ class CommandRouter:
             await ctx.respond(msg)
 
     async def run_video_set_field(self, ctx: CommandContext, job_id: str, *,
-                                  style: str | None = None, voice: str | None = None) -> None:
+                                  style: str | None = None, voice: str | None = None,
+                                  render_mode: str | None = None) -> None:
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await self._respond_not_linked(ctx)
             return
         try:
-            await self._tasks_client.set_video_draft_fields(email, job_id, style=style, voice=voice)
+            await self._tasks_client.set_video_draft_fields(
+                email, job_id, style=style, voice=voice, render_mode=render_mode)
         except TasksAPIError as e:
             logger.warning("video set field failed job=%s: %s", job_id, e)
 

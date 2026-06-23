@@ -312,24 +312,25 @@ def test_proposal_components_has_apply_button():
 # build_studio_components
 # ---------------------------------------------------------------------------
 
-def test_studio_components_has_style_voice_capture_generate_rows():
+def test_studio_components_has_style_voice_mode_capture_generate_rows():
     from handlers import video_panel as vp
     rows = build_studio_components("job-s1", _VOICES)
-    assert len(rows) == 4
-    # row 0: style select
-    assert any(c.get("type") == SELECT_MENU and c.get("custom_id") == f"{STYLE_PREFIX}job-s1"
-               for c in rows[0]["components"])
-    # row 1: voice select
-    assert any(c.get("type") == SELECT_MENU and c.get("custom_id") == f"{VOICE_PREFIX}job-s1"
-               for c in rows[1]["components"])
-    # row 2: capture-from-website button
-    assert any(c.get("custom_id") == f"{vp.CAPTURE_PREFIX}job-s1"
-               for c in rows[2]["components"])
-    # row 3: generate + add-title buttons
-    assert any(c.get("custom_id") == f"{GENERATE_PREFIX}job-s1"
-               for c in rows[3]["components"])
-    assert any(c.get("custom_id") == f"{DETAILS_PREFIX}job-s1"
-               for c in rows[3]["components"])
+    assert len(rows) == 5
+    ids = [c.get("custom_id") for row in rows for c in row["components"]]
+    assert f"{STYLE_PREFIX}job-s1" in ids
+    assert f"{VOICE_PREFIX}job-s1" in ids
+    assert f"{vp.MODE_PREFIX}job-s1" in ids        # output-mode select (slideshow|animated)
+    assert f"{vp.CAPTURE_PREFIX}job-s1" in ids
+    assert f"{GENERATE_PREFIX}job-s1" in ids
+    assert f"{DETAILS_PREFIX}job-s1" in ids
+
+
+def test_mode_select_options_and_predicates():
+    from handlers import video_panel as vp
+    sel = vp.build_mode_select("j1")
+    vals = {o["value"] for o in sel["options"]}
+    assert vals == {"slideshow", "animated"}
+    assert vp.is_vid_mode("aiuivid:mode:j1") and vp.job_from_mode("aiuivid:mode:j1") == "j1"
 
 
 def test_capture_modal_has_url_input():

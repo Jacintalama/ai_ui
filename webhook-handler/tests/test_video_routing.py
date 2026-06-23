@@ -153,6 +153,23 @@ async def test_voice_select_sets_field():
 
 
 @pytest.mark.asyncio
+async def test_mode_select_sets_render_mode():
+    router = _router()
+    handler = _handler(router)
+    payload = {
+        "type": 3, "id": "i", "token": "t", "channel_id": "c",
+        "member": {"user": {"id": "100", "username": "alice"}},
+        "data": {"custom_id": f"{vid.MODE_PREFIX}j1", "values": ["animated"]},
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == DEFERRED_UPDATE_MESSAGE
+    await _drain()
+    args = router.run_video_set_field.await_args
+    assert args.args[1] == "j1"
+    assert args.kwargs == {"render_mode": "animated"}
+
+
+@pytest.mark.asyncio
 async def test_empty_select_is_noop():
     router = _router()
     handler = _handler(router)
