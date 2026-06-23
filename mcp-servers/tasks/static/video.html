@@ -637,6 +637,15 @@
         <div class="scene-strip" id="scene-strip"></div>
       </section>
 
+      <section class="card" data-show="studio" id="collecting-panel" hidden>
+        <div class="section-label">Ready to generate</div>
+        <div class="uploader-head">
+          <span class="uploader-count" id="collecting-count">0 / 12 screenshots</span>
+          <button class="btn primary" type="button" id="collecting-generate-btn">Generate video</button>
+        </div>
+        <span class="form-hint">Add more with the URL field or attach button in the chat, then Generate.</span>
+      </section>
+
       <section class="card" data-show="studio" id="version-section" hidden>
         <div class="section-label">Versions</div>
         <div class="version-bar" id="version-bar"></div>
@@ -1330,7 +1339,9 @@
       setPill(data.status);
       renderScenes(data);
       loadVersions();
-      if (data.status === "done") {
+      if (data.status === "collecting") {
+        renderCollecting(data);
+      } else if (data.status === "done") {
         if (data.output_available) showVideo(null);
         else showPlaceholder("empty", "Render finished but no output is available.");
       } else if (data.status === "failed") {
@@ -1342,6 +1353,50 @@
         startPolling(id, { mode: "initial" });
       }
     }
+
+    // --- Collecting state: a draft with screenshots but not yet queued. Show the
+    // count + a Generate button (POST /queue) instead of polling. ---
+    function renderCollecting(data) {
+      stopPolling();
+      const shots = Number(
+        data.screenshot_count != null ? data.screenshot_count
+          : Array.isArray(data.screenshots) ? data.screenshots.length : 0
+      ) || 0;
+      collectingCount.textContent = shots + " / " + MAX_FILES + " screenshots";
+      collectingGenerateBtn.disabled = shots < 1;
+      collectingGenerateBtn.textContent = "Generate video";
+      collectingPanel.hidden = false;
+      showPlaceholder("empty", shots > 0
+        ? "Screenshots captured. Hit Generate when ready."
+        : "Add at least one screenshot (paste a URL or attach), then Generate.");
+    }
+
+    async function runCollectingGenerate() {
+      if (!currentJobId) return;
+      collectingGenerateBtn.disabled = true;
+      collectingGenerateBtn.textContent = "Starting…";
+      try {
+        const r = await fetch(API + "/" + encodeURIComponent(currentJobId) + "/queue", {
+          method: "POST", headers: authHeaders(), credentials: "include",
+        });
+        if (!r.ok) {
+          const t = await r.text();
+          toast("Couldn't start: " + t.slice(0, 160), "error");
+          collectingGenerateBtn.disabled = false;
+          collectingGenerateBtn.textContent = "Generate video";
+          return;
+        }
+        collectingPanel.hidden = true;
+        setPill("queued");
+        showPlaceholder("rendering", humanStatus("queued"));
+        startPolling(currentJobId, { mode: "initial" });
+      } catch (e) {
+        toast("Couldn't start: " + (e.message || String(e)), "error");
+        collectingGenerateBtn.disabled = false;
+        collectingGenerateBtn.textContent = "Generate video";
+      }
+    }
+    collectingGenerateBtn.addEventListener("click", runCollectingGenerate);
 
     // --- Reset to the create state. Shared by the "New video" button and the
     // URL router. Deliberately does NOT touch history; the caller decides
@@ -1363,6 +1418,9 @@
       playerActionsCard.hidden = true;
       sceneSection.hidden = true; sceneStrip.innerHTML = "";
       versionSection.hidden = true; versionBar.innerHTML = "";
+      if (collectingPanel) collectingPanel.hidden = true;
+      if (captureUrlInput) captureUrlInput.value = "";
+      if (createCaptureUrl) createCaptureUrl.value = "";
       showPlaceholder("empty", "Your video will appear here.");
       projectName.textContent = "";
       resetChatWelcome();
