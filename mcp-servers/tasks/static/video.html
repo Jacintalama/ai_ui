@@ -578,6 +578,16 @@
           </div>
 
           <div class="field">
+            <label class="form-label" for="create-capture-url">Or capture from a website</label>
+            <div class="uploader-head">
+              <input type="url" class="form-input" id="create-capture-url"
+                     placeholder="https://yoursite.com" style="flex:1;">
+              <button class="btn sm" type="button" id="create-capture-btn">Capture from website</button>
+            </div>
+            <span class="form-hint">Enter your site URL and we grab the screenshots for you (needs a title + prompt). Opens the studio — no manual upload.</span>
+          </div>
+
+          <div class="field">
             <label class="form-label" for="prompt">Prompt</label>
             <textarea class="form-textarea" id="prompt" name="prompt" maxlength="2000"
               placeholder="Walk through the dashboard, highlight the new charts, end on the export button."
@@ -1757,6 +1767,43 @@
       clearShots(); // free object URLs now the upload succeeded
       history.pushState({}, "", "?job=" + encodeURIComponent(data.id));
       openExistingJob(data.id);
+    });
+
+    // --- Create from a website URL: draft -> capture -> open studio (collecting) ---
+    createCaptureBtn.addEventListener("click", async () => {
+      clearFormError();
+      const title = titleInput.value.trim();
+      const prompt = promptInput.value.trim();
+      const url = (createCaptureUrl.value || "").trim();
+      if (!title) return showFormError("A title is required.");
+      if (!prompt) return showFormError("A prompt is required.");
+      if (!url) return showFormError("Enter a website URL to capture.");
+      createCaptureBtn.disabled = true;
+      const orig = createCaptureBtn.textContent;
+      createCaptureBtn.textContent = "Capturing…";
+      try {
+        const draftResp = await fetch(API + "/draft", {
+          method: "POST", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify({
+            title: title, prompt: prompt,
+            style: styleSelect ? styleSelect.value : "clean_product_demo",
+            voice: selectedVoice || defaultVoiceId,
+          }),
+        });
+        if (!draftResp.ok) {
+          const t = await draftResp.text();
+          throw new Error("Couldn't start: " + t.slice(0, 160));
+        }
+        const draft = await draftResp.json();
+        await captureFromUrl(draft.id, url);
+        history.pushState({}, "", "?job=" + encodeURIComponent(draft.id));
+        openExistingJob(draft.id);
+      } catch (e) {
+        showFormError(e.message || "Capture failed.");
+      } finally {
+        createCaptureBtn.disabled = false;
+        createCaptureBtn.textContent = orig;
+      }
     });
 
     // --- Boot ---
