@@ -143,6 +143,27 @@ async def test_get_current_video_draft_reraises_non_404():
     assert exc_info.value.status == 500
 
 
+async def test_capture_video_screenshots_posts_url():
+    client = _make_client()
+    captured = {}
+
+    async def fake_request(method, path, user_email, **kwargs):
+        captured.update(method=method, path=path, email=user_email, **kwargs)
+
+        class _R:
+            def json(self_inner):
+                return {"screenshots": ["screenshot-1.png"], "count": 1}
+        return _R()
+
+    client._request = fake_request
+    out = await client.capture_video_screenshots("u@x.com", "job1", "https://site.com")
+    assert out["count"] == 1
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/api/video-jobs/job1/capture-from-url"
+    assert captured["json"] == {"url": "https://site.com"}
+    assert captured["timeout"] == 45.0
+
+
 async def test_get_current_video_draft_returns_dict_on_success():
     client = _make_client()
     fake, caps = _fake_request_factory(return_json={"job_id": "draft-1", "status": "draft"})

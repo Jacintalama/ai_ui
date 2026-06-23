@@ -286,6 +286,17 @@ class TasksClient:
                                    user_email, json={"urls": urls})
         return resp.json()
 
+    async def capture_video_screenshots(self, user_email: str, job_id: str, url: str,
+                                        *, max_frames: int | None = None) -> dict[str, Any]:
+        """Drive server-side headless-browser capture of `url` onto the job. Uses
+        a longer timeout than the default because a capture takes seconds."""
+        body: dict[str, Any] = {"url": url}
+        if max_frames is not None:
+            body["max_frames"] = max_frames
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/capture-from-url",
+                                   user_email, json=body, timeout=45.0)
+        return resp.json()
+
     async def queue_video(self, user_email: str, job_id: str) -> dict[str, Any]:
         resp = await self._request("POST", f"/api/video-jobs/{job_id}/queue", user_email)
         return resp.json()
