@@ -232,6 +232,46 @@ async def test_generate_plan_falls_back_when_model_returns_no_scenes(monkeypatch
     assert len(fake.messages.calls) == 2  # tried the model twice before fallback
 
 
+def test_anim_schema_bounds_scenes_and_motion():
+    from video_plan import ANIM_PLAN_SCHEMA
+    sc = ANIM_PLAN_SCHEMA["properties"]["scenes"]
+    assert sc["minItems"] == 1 and sc["maxItems"] == 8
+    motions = set(sc["items"]["properties"]["motion"]["enum"])
+    assert {"zoom-in", "pan-up", "fade"} <= motions
+
+
+def test_anim_fallback_plan_is_valid():
+    from video_plan import _anim_fallback_plan, validate_anim_plan
+    shots = ["screenshot-1.png", "screenshot-2.png"]
+    p = _anim_fallback_plan("show my portfolio", shots)
+    validate_anim_plan(p, shots)  # no raise
+    assert p["scenes"]
+    for s in p["scenes"]:
+        if s["kind"] == "screenshot":
+            assert s["screenshot"] in shots
+
+
+def test_validate_anim_plan_rejects_bad():
+    from video_plan import validate_anim_plan, PlanInvalid
+    with pytest.raises(PlanInvalid):
+        validate_anim_plan({"title": "t", "scenes": [], "narration_script": ""}, ["a.png"])
+    with pytest.raises(PlanInvalid):
+        validate_anim_plan({"title": "t", "narration_script": "", "scenes": [
+            {"kind": "screenshot", "screenshot": "missing.png", "headline": "h",
+             "motion": "zoom-in", "duration_s": 3}]}, ["a.png"])
+
+
+async def test_generate_anim_plan_falls_back_on_empty(monkeypatch):
+    from video_plan import generate_anim_plan, validate_anim_plan
+    empty = {"title": "x", "scenes": [], "narration_script": ""}
+    fake = _FakeClient(json.dumps(empty))
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    shots = ["screenshot-1.png"]
+    plan = await generate_anim_plan("walk my site", shots, attempts=2)
+    validate_anim_plan(plan, shots)        # fallback is valid
+    assert len(fake.messages.calls) == 2   # tried the model before fallback
+
+
 def test_clamp_plan_floor_bumped_total_capped():
     from video_plan import MAX_TOTAL_SECONDS, clamp_plan
     scenes = [

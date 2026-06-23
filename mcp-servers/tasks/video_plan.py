@@ -256,3 +256,128 @@ async def generate_plan(prompt: str, screenshots: list[str], *, attempts: int = 
         validate_plan(plan, screenshots)  # valid by construction
         return plan
     raise PlanInvalid(f"could not generate a plan: {last_err}")
+
+
+# --- Animated (HTML-composition) plan path -------------------------------------
+ANIM_MOTIONS = ["zoom-in", "zoom-out", "pan-up", "pan-left", "rise", "fade"]
+ANIM_MAX_SCENES = 8
+ANIM_MAX_TOTAL_SECONDS = 40.0
+
+ANIM_PLAN_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["title", "scenes", "narration_script"],
+    "properties": {
+        "title": {"type": "string"},
+        "scenes": {
+            "type": "array", "minItems": 1, "maxItems": ANIM_MAX_SCENES,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["kind", "headline", "motion", "duration_s"],
+                "properties": {
+                    "kind": {"type": "string", "enum": ["title", "screenshot", "outro"]},
+                    "screenshot": {"type": "string"},
+                    "headline": {"type": "string"},
+                    "subtext": {"type": "string"},
+                    "motion": {"type": "string", "enum": ANIM_MOTIONS},
+                    "duration_s": {"type": "number"},
+                },
+            },
+        },
+        "narration_script": {"type": "string"},
+    },
+}
+
+ANIM_BEST_PRACTICES = (
+    "ANIMATED-VIDEO BEST PRACTICES (HyperFrames/Remotion-style motion design) — "
+    "follow for every plan:\n"
+    "- Arc: open with a short TITLE beat (what it is), then SCREENSHOT scenes that "
+    "show the product with motion, then a brief OUTRO. You need NOT use every "
+    "screenshot — pick the ones that tell the story.\n"
+    "- One idea per scene. Headline = punchy kinetic text, <= ~8 words, benefit-led "
+    "(not the UI read verbatim). Optional subtext is a short supporting line.\n"
+    "- Motion choreographs AROUND the screenshot (it is the hero): pick a motion that "
+    "suits the beat (zoom-in to focus, pan-up/pan-left to reveal, rise/fade for text). "
+    "Don't reuse the same motion every scene.\n"
+    "- Pacing: 2.5-5s per scene; keep the whole video tight (20-35s is ideal, hard "
+    "cap 40s). Narration must be speakable within the total (~2.5 words/second).\n"
+    "- Reference ONLY the provided screenshot filenames, exactly as given, and only "
+    "on scenes with kind 'screenshot'."
+)
+
+
+def build_anim_system_prompt() -> str:
+    return (
+        "You produce a JSON plan for a short ANIMATED motion video built from the "
+        "given screenshots. kind 'title'/'outro' scenes show kinetic text only; "
+        "kind 'screenshot' scenes animate one provided screenshot with a headline. "
+        "Use ONLY the provided screenshot filenames. Keep total duration under "
+        f"{ANIM_MAX_TOTAL_SECONDS:.0f}s.\n\n" + ANIM_BEST_PRACTICES
+    )
+
+
+def validate_anim_plan(plan: dict, available: list[str]) -> None:
+    scenes = plan.get("scenes") or []
+    if not scenes:
+        raise PlanInvalid("animated plan has no scenes")
+    have = set(available)
+    total = 0.0
+    for sc in scenes:
+        if sc.get("kind") == "screenshot":
+            if sc.get("screenshot") not in have:
+                raise PlanInvalid(f"scene references missing screenshot {sc.get('screenshot')!r}")
+        if sc.get("motion") not in ANIM_MOTIONS:
+            raise PlanInvalid(f"unknown motion {sc.get('motion')!r}")
+        d = float(sc.get("duration_s") or 0)
+        if not (0.5 <= d <= 15):
+            raise PlanInvalid("scene duration out of range")
+        total += d
+    if total > ANIM_MAX_TOTAL_SECONDS + 0.01:
+        raise PlanInvalid(f"animated video too long ({total}s)")
+
+
+def _anim_fallback_plan(prompt: str, screenshots: list[str]) -> dict:
+    """Deterministic valid animated plan: title -> one scene per screenshot -> outro."""
+    clean = (prompt or "").strip()
+    shots = list(screenshots[:6])
+    scenes = [{"kind": "title", "headline": (clean[:60] or "A quick look"),
+               "motion": "rise", "duration_s": 2.5}]
+    for i, s in enumerate(shots):
+        scenes.append({"kind": "screenshot", "screenshot": s, "headline": "",
+                       "motion": ("zoom-in" if i % 2 == 0 else "pan-up"),
+                       "duration_s": 3.5})
+    scenes.append({"kind": "outro", "headline": (clean[:40] or "Thanks for watching"),
+                   "motion": "fade", "duration_s": 2.5})
+    scenes = scenes[:ANIM_MAX_SCENES]
+    while sum(s["duration_s"] for s in scenes) > ANIM_MAX_TOTAL_SECONDS and len(scenes) > 1:
+        scenes.pop(-2 if len(scenes) > 2 else -1)
+    return {"title": (clean[:60] or "Walkthrough"), "scenes": scenes,
+            "narration_script": clean}
+
+
+async def generate_anim_plan(prompt: str, screenshots: list[str], *, attempts: int = 3) -> dict:
+    """LLM-authored animated plan, resilient (retry + deterministic fallback),
+    mirroring generate_plan. Motion best-practices injected via build_anim_system_prompt."""
+    client = anthropic.Anthropic()
+    sys = build_anim_system_prompt()
+    last_err: Exception | None = None
+    for i in range(max(1, attempts)):
+        try:
+            msg = client.messages.create(
+                model="claude-opus-4-8", max_tokens=2048, system=sys,
+                output_config={"format": {"type": "json_schema", "schema": ANIM_PLAN_SCHEMA}},
+                messages=[{"role": "user",
+                           "content": f"Prompt: {prompt}\nScreenshots: {screenshots}"}],
+            )
+            text = next(b.text for b in msg.content if b.type == "text")
+            plan = json.loads(text)
+            validate_anim_plan(plan, screenshots)
+            return plan
+        except Exception as e:  # noqa: BLE001 - retry on bad plan / API hiccup
+            last_err = e
+            logger.warning("generate_anim_plan attempt %d/%d failed: %s: %s",
+                           i + 1, attempts, type(e).__name__, e)
+    logger.warning("generate_anim_plan falling back after %d attempts (%s)", attempts, last_err)
+    plan = _anim_fallback_plan(prompt, screenshots)
+    validate_anim_plan(plan, screenshots)
+    return plan
