@@ -60,6 +60,7 @@ from video_refine import (
     mark_proposal_applied,
     refine_plan,
 )
+from video_capture import CaptureError, assert_capturable, capture_enabled, capture_site
 from video_validation import ScreenshotRejected, validate_screenshot
 from video_versions import find_version, list_versions
 
@@ -734,6 +735,55 @@ async def add_screenshots_by_url(
                 raise HTTPException(400, "could not fetch screenshot URL")
             fname = urlparse(url).path.rsplit("/", 1)[-1] or "x.png"
             blobs.append((fname, bytes(buf)))
+    shots = await _store_screenshot_blobs(slug, str(jid), blobs)
+    return {"screenshots": shots, "count": len(shots)}
+
+
+class CaptureUrlRequest(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    max_frames: int | None = Field(default=None, ge=1, le=MAX_FILES)
+
+
+@router.post("/{job_id}/capture-from-url")
+async def capture_from_url(
+    job_id: str,
+    body: CaptureUrlRequest,
+    user: CurrentUser = Depends(current_user),
+) -> dict:
+    """Capture screenshots of a live site server-side (headless Chromium) and add
+    them to a job. Guard order: video kill switch (503), capture kill switch
+    (503), SSRF/scheme (400, before any DB), missing job (404), ownership (403),
+    free-disk (507), capture failure (502). Frames are clamped to 1..MAX_FILES
+    and stored via the shared blob helper (count/size/validation caps + numbering)."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    if not capture_enabled():
+        raise HTTPException(503, "Site capture is disabled")
+    try:
+        assert_capturable(body.url)
+    except CaptureError as e:
+        raise HTTPException(400, str(e))
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(
+            select(VideoJob).where(VideoJob.id == jid)
+        )).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        slug = job.slug
+    if not enough_free_disk(
+        str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
+    ):
+        raise HTTPException(507, "Insufficient storage; try again later")
+    frames = max(1, min(body.max_frames or 5, MAX_FILES))
+    try:
+        captured = await capture_site(body.url, max_frames=frames)
+    except CaptureError as e:
+        raise HTTPException(502, f"couldn't capture site: {e}")
+    host = urlparse(body.url).hostname or "site"
+    blobs = [(f"{host}-{i + 1}.png", data) for i, data in enumerate(captured)]
     shots = await _store_screenshot_blobs(slug, str(jid), blobs)
     return {"screenshots": shots, "count": len(shots)}
 

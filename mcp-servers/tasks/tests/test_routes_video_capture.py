@@ -45,3 +45,56 @@ async def test_store_blobs_enforces_count_cap(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as ei:
         await _store_screenshot_blobs(slug, jid, blobs)
     assert ei.value.status_code == 400
+
+
+# ---- capture-from-url endpoint ---------------------------------------------
+
+
+async def _post_capture(url_body, headers=HEAD):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        return await c.post(
+            "/api/video-jobs/00000000-0000-0000-0000-000000000000/capture-from-url",
+            json=url_body, headers=headers)
+
+
+async def test_capture_endpoint_blocks_ssrf_before_db():
+    r = await _post_capture({"url": "http://127.0.0.1/admin"})
+    assert r.status_code == 400
+
+
+async def test_capture_endpoint_rejects_bad_scheme():
+    r = await _post_capture({"url": "file:///etc/passwd"})
+    assert r.status_code == 400
+
+
+async def test_capture_endpoint_503_when_capture_disabled(monkeypatch):
+    monkeypatch.setenv("VIDEO_CAPTURE_ENABLED", "false")
+    r = await _post_capture({"url": "https://example.com"})
+    assert r.status_code == 503
+
+
+async def test_capture_endpoint_requires_auth():
+    r = await _post_capture({"url": "https://example.com"}, headers={})
+    assert r.status_code == 401
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_capture_endpoint_stores_frames(db_session, tmp_path, monkeypatch):
+    """DB happy path with the browser mocked: a draft owner captures a site and
+    the returned frames are stored as screenshots on the job."""
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+
+    async def fake_capture(url, *, max_frames=5):
+        return [_png(), _png(), _png()]
+
+    monkeypatch.setattr(routes_video, "capture_site", fake_capture)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        draft = await c.post("/api/video-jobs/draft",
+                             json={"title": "t", "prompt": "", "style": "clean_product_demo",
+                                   "voice": "amy"}, headers=HEAD)
+        jid = draft.json()["id"]
+        r = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
+                         json={"url": "https://example.com", "max_frames": 3}, headers=HEAD)
+    assert r.status_code == 200
+    assert r.json()["count"] == 3
