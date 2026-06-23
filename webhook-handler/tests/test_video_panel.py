@@ -312,21 +312,42 @@ def test_proposal_components_has_apply_button():
 # build_studio_components
 # ---------------------------------------------------------------------------
 
-def test_studio_components_has_style_voice_generate_rows():
+def test_studio_components_has_style_voice_capture_generate_rows():
+    from handlers import video_panel as vp
     rows = build_studio_components("job-s1", _VOICES)
-    assert len(rows) == 3
+    assert len(rows) == 4
     # row 0: style select
     assert any(c.get("type") == SELECT_MENU and c.get("custom_id") == f"{STYLE_PREFIX}job-s1"
                for c in rows[0]["components"])
     # row 1: voice select
     assert any(c.get("type") == SELECT_MENU and c.get("custom_id") == f"{VOICE_PREFIX}job-s1"
                for c in rows[1]["components"])
-    # row 2: generate button
+    # row 2: capture-from-website button
+    assert any(c.get("custom_id") == f"{vp.CAPTURE_PREFIX}job-s1"
+               for c in rows[2]["components"])
+    # row 3: generate + add-title buttons
     assert any(c.get("custom_id") == f"{GENERATE_PREFIX}job-s1"
-               for c in rows[2]["components"])
-    # row 2 also has the Add-title-&-description button
+               for c in rows[3]["components"])
     assert any(c.get("custom_id") == f"{DETAILS_PREFIX}job-s1"
-               for c in rows[2]["components"])
+               for c in rows[3]["components"])
+
+
+def test_capture_modal_has_url_input():
+    from handlers import video_panel as vp
+    modal = vp.build_capture_modal("job1")
+    assert modal["custom_id"] == "aiuivid:capturemodal:job1"
+    inp = modal["components"][0]["components"][0]
+    assert inp["custom_id"] == "url"
+    assert inp["required"] is True
+
+
+def test_capture_predicates_and_extractors():
+    from handlers import video_panel as vp
+    assert vp.is_vid_capture("aiuivid:capture:abc")
+    assert vp.is_vid_capture_modal("aiuivid:capturemodal:abc")
+    assert not vp.is_vid_capture("aiuivid:capturemodal:abc")  # prefix disjoint
+    assert vp.job_from_capture("aiuivid:capture:abc") == "abc"
+    assert vp.job_from_capture_modal("aiuivid:capturemodal:abc") == "abc"
 
 
 # ---------------------------------------------------------------------------
