@@ -8,12 +8,15 @@ CommandRouter.run_video_add() for all backend work. No discord.py import here,
 so the policy is unit-testable without the gateway library.
 """
 import logging
+import re
 
 from handlers.commands import CommandContext
 
 logger = logging.getLogger("video_intake")
 
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 
 _CHANNEL_NUDGE = (
     "To add screenshots, click **New video** to start — your screenshots go "
@@ -56,6 +59,33 @@ def extract_image_drop(message) -> dict | None:
     }
 
 
+def extract_url_message(message) -> dict | None:
+    """Plain primitives from a discord.py message whose text carries an http(s)
+    URL and that has NO image attachment (attachment-bearing messages are handled
+    by extract_image_drop). Returns the first URL found, or None. A channel with
+    a parent_id is a thread."""
+    if getattr(message, "attachments", None):
+        return None
+    content = getattr(message, "content", "") or ""
+    m = _URL_RE.search(content)
+    if not m:
+        return None
+    channel = message.channel
+    parent_id = getattr(channel, "parent_id", None)
+    parent = getattr(channel, "parent", None)
+    author = message.author
+    return {
+        "author_id": str(author.id),
+        "author_name": getattr(author, "display_name", None) or getattr(author, "name", "unknown"),
+        "channel_id": str(channel.id),
+        "channel_name": getattr(channel, "name", None),
+        "is_thread": parent_id is not None,
+        "parent_channel_id": str(parent_id) if parent_id else None,
+        "parent_channel_name": getattr(parent, "name", None) if parent is not None else None,
+        "url": m.group(0),
+    }
+
+
 class VideoThreadIntake:
     """Decide what to do with an image-drop in #video-generation or its threads,
     and act (reusing CommandRouter.run_video_add for the thread case)."""
@@ -84,6 +114,15 @@ class VideoThreadIntake:
         elif (not is_thread) and self._is_video_channel(channel_id, channel_name):
             await self._discord.post_channel_message(channel_id, _CHANNEL_NUDGE)
         # else: image dropped somewhere unrelated — ignore.
+
+    async def handle_url_paste(self, *, author_id, author_name, channel_id,
+                               channel_name, is_thread, parent_channel_id,
+                               parent_channel_name, url) -> None:
+        """A URL pasted in a video thread → capture that site onto the draft. A
+        URL anywhere else is ignored (the image nudge already directs users)."""
+        if is_thread and self._is_video_channel(parent_channel_id, parent_channel_name):
+            ctx = self._thread_ctx(author_id, author_name, channel_id)
+            await self._router.run_video_capture(ctx, url)
 
     def _thread_ctx(self, author_id, author_name, channel_id) -> CommandContext:
         """A CommandContext whose responders post NEW messages into the thread

@@ -4,7 +4,7 @@ fed primitives, so these run without the gateway library installed."""
 import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from handlers.video_intake import VideoThreadIntake, extract_image_drop
+from handlers.video_intake import VideoThreadIntake, extract_image_drop, extract_url_message
 
 
 def _intake(channel_id="999", channel_name="video-generation"):
@@ -146,3 +146,60 @@ def test_extract_no_attachments_returns_none():
         channel=SimpleNamespace(id=999, name="video-generation"),
     )
     assert extract_image_drop(msg) is None
+
+
+# --- extract_url_message ---
+
+def _url_msg(content, attachments=None, parent_id=999, parent_name="video-generation"):
+    return SimpleNamespace(
+        author=SimpleNamespace(id=100, bot=False, name="alice", display_name="Alice"),
+        attachments=attachments or [],
+        content=content,
+        channel=SimpleNamespace(id=555, name="aiui-video-alice",
+                                parent_id=parent_id,
+                                parent=SimpleNamespace(name=parent_name) if parent_name else None),
+    )
+
+
+def test_extract_url_message_finds_url_in_thread():
+    info = extract_url_message(_url_msg("check it https://mysite.com/home please"))
+    assert info["url"] == "https://mysite.com/home"
+    assert info["is_thread"] is True
+    assert info["parent_channel_id"] == "999"
+    assert info["parent_channel_name"] == "video-generation"
+
+
+def test_extract_url_message_none_when_image_present():
+    img = SimpleNamespace(url="http://cdn/a.png", content_type="image/png", filename="a.png")
+    assert extract_url_message(_url_msg("https://mysite.com", attachments=[img])) is None
+
+
+def test_extract_url_message_none_when_no_url():
+    assert extract_url_message(_url_msg("just describing the demo")) is None
+
+
+@pytest.mark.asyncio
+async def test_handle_url_paste_in_thread_calls_capture():
+    intake, router, discord = _intake()
+    router.run_video_capture = AsyncMock()
+    await intake.handle_url_paste(
+        author_id="100", author_name="alice", channel_id="thread1",
+        channel_name="aiui-video-alice", is_thread=True,
+        parent_channel_id="999", parent_channel_name="video-generation",
+        url="https://mysite.com")
+    router.run_video_capture.assert_awaited_once()
+    ctx, url = router.run_video_capture.await_args.args
+    assert url == "https://mysite.com"
+    assert ctx.user_id == "100"
+
+
+@pytest.mark.asyncio
+async def test_handle_url_paste_ignored_outside_thread():
+    intake, router, discord = _intake()
+    router.run_video_capture = AsyncMock()
+    await intake.handle_url_paste(
+        author_id="100", author_name="alice", channel_id="999",
+        channel_name="video-generation", is_thread=False,
+        parent_channel_id=None, parent_channel_name=None,
+        url="https://mysite.com")
+    router.run_video_capture.assert_not_called()
