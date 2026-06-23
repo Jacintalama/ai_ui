@@ -209,6 +209,7 @@ async def upload(
     prompt: str = Form(..., min_length=1, max_length=2000),
     style: str = Form("clean_product_demo", max_length=50),
     voice: str = Form(DEFAULT_VOICE_ID, max_length=50),
+    render_mode: str = Form("slideshow", pattern="^(slideshow|animated)$"),
     files: list[UploadFile] = File(default_factory=list),
     user: CurrentUser = Depends(current_user),
 ) -> dict:
@@ -282,6 +283,7 @@ async def upload(
                 title=title,
                 style=style,
                 voice=voice,
+                render_mode=render_mode,
                 status="queued",
             )
         )

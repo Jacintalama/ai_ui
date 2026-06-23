@@ -552,6 +552,13 @@
               placeholder="e.g. walk through my portfolio and highlight the projects"></textarea>
           </div>
 
+          <div class="field" style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="anim-toggle" style="width:auto;">
+            <label class="form-label" for="anim-toggle" style="margin:0;cursor:pointer;">
+              Animated <span style="opacity:.6">— kinetic text + motion instead of a slideshow</span>
+            </label>
+          </div>
+
           <div class="error box" id="form-error" hidden></div>
 
           <div class="field" style="margin-top: 4px;">
@@ -1424,6 +1431,7 @@
       if (collectingPanel) collectingPanel.hidden = true;
       if (captureUrlInput) captureUrlInput.value = "";
       if (createCaptureUrl) createCaptureUrl.value = "";
+      var _at = document.getElementById("anim-toggle"); if (_at) _at.checked = false;
       showPlaceholder("empty", "Your video will appear here.");
       projectName.textContent = "";
       resetChatWelcome();
@@ -1713,12 +1721,18 @@
     });
 
     // Manual path: upload the staged images and open the studio.
+    function _renderMode() {
+      const t = document.getElementById("anim-toggle");
+      return (t && t.checked) ? "animated" : "slideshow";
+    }
+
     async function uploadAndOpen(title, prompt) {
       const fd = new FormData();
       fd.append("title", title);
       fd.append("prompt", prompt);
       fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
       fd.append("voice", selectedVoice || defaultVoiceId);
+      fd.append("render_mode", _renderMode());
       stopVoicePreview();
       for (const s of shots) fd.append("files", s.file, s.file.name);
       const resp = await fetch(API + "/upload", {
@@ -1757,6 +1771,7 @@
               title: title, prompt: prompt,
               style: styleSelect ? styleSelect.value : "clean_product_demo",
               voice: selectedVoice || defaultVoiceId,
+              render_mode: _renderMode(),
             }),
           });
           if (!draftResp.ok) {
