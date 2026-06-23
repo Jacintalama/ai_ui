@@ -304,9 +304,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          # Headroom for the short-lived, serialized headless Chromium used by
+          # video URL auto-capture (one browser at a time, a few seconds). At
+          # 256M Chromium OOM-kills during capture. Compose V2 enforces this cap.
+          memory: 1G
         reservations:
-          memory: 128M
+          memory: 256M
 
   # ===========================================================================
   # MCP WEB SEARCH - Search, Scrape, Save to Knowledge Base
