@@ -659,11 +659,12 @@ async def add_screenshots(
             raise HTTPException(400, str(e))
         raw.append(body)
     async with _job_lock(str(jid)):
-        # Recompute the start index under the lock so a batch that landed between
-        # the early read and here cannot collide on the same screenshot-N.
+        # Recompute under the lock so a batch that landed between the early read
+        # and here cannot collide on the same screenshot-N or slip past the cap.
         existing = _list_screenshots(slug, str(jid))
+        if len(existing) + len(raw) > MAX_FILES:
+            raise HTTPException(400, f"max {MAX_FILES} screenshots per job")
         if existing_count != len(existing):
-            existing_count = len(existing)
             start = _next_screenshot_index(existing)
         shots_dir.mkdir(parents=True, exist_ok=True)
         for i, body in enumerate(raw):
@@ -760,7 +761,7 @@ async def capture_from_url(
     if not capture_enabled():
         raise HTTPException(503, "Site capture is disabled")
     try:
-        assert_capturable(body.url)
+        await assert_capturable(body.url)
     except CaptureError as e:
         raise HTTPException(400, str(e))
     jid = _coerce_job_id(job_id)
@@ -779,9 +780,18 @@ async def capture_from_url(
         raise HTTPException(507, "Insufficient storage; try again later")
     frames = max(1, min(body.max_frames or 5, MAX_FILES))
     try:
-        captured = await capture_site(body.url, max_frames=frames)
+        # Hard overall wall-clock cap (below the bot's 45s client timeout) so a
+        # capture — including time queued behind another behind _CAPTURE_LOCK —
+        # never outlives the caller and orphans stored work. Cancellation unwinds
+        # capture_site's finally (browser closed) before anything is stored.
+        captured = await asyncio.wait_for(
+            capture_site(body.url, max_frames=frames), timeout=40.0)
+    except asyncio.TimeoutError:
+        logger.warning("capture timed out: job=%s url=%s", jid, body.url)
+        raise HTTPException(504, "site capture timed out — try again")
     except CaptureError as e:
-        raise HTTPException(502, f"couldn't capture site: {e}")
+        logger.warning("capture failed: job=%s: %s", jid, e)
+        raise HTTPException(502, "couldn't capture that site")
     host = urlparse(body.url).hostname or "site"
     blobs = [(f"{host}-{i + 1}.png", data) for i, data in enumerate(captured)]
     shots = await _store_screenshot_blobs(slug, str(jid), blobs)

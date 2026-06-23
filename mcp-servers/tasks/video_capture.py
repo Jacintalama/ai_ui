@@ -14,7 +14,6 @@ import asyncio
 import ipaddress
 import math
 import os
-import socket
 from urllib.parse import urlparse
 
 
@@ -47,42 +46,52 @@ def is_blocked_ip(ip_str: str) -> bool:
     )
 
 
-def assert_capturable(url: str) -> str:
+def _extra_blocked_hosts() -> set[str]:
+    """Operator-configured extra host blocklist (e.g. the box's own public IP/
+    hostname), comma-separated in VIDEO_CAPTURE_BLOCKED_HOSTS. Empty by default."""
+    return {h.strip().lower() for h in
+            os.environ.get("VIDEO_CAPTURE_BLOCKED_HOSTS", "").split(",") if h.strip()}
+
+
+async def _host_blocked(host: str, cache: dict[str, bool] | None = None) -> bool:
+    """True if this host must not be fetched: empty/localhost, in the operator
+    blocklist, an IP literal in a blocked range, or a name that resolves to any
+    blocked address. Resolution is async (never blocks the event loop) and
+    fails closed. `cache` memoizes per-capture so a page's many subresource
+    requests to the same host resolve once."""
+    low = (host or "").strip().lower()
+    if not low or low == "localhost" or low.endswith(".localhost"):
+        return True
+    if low in _extra_blocked_hosts():
+        return True
+    if cache is not None and low in cache:
+        return cache[low]
+    try:
+        ipaddress.ip_address(low)
+        blocked = is_blocked_ip(low)
+    except ValueError:
+        try:
+            loop = asyncio.get_running_loop()
+            infos = await loop.getaddrinfo(host, None)
+            blocked = any(is_blocked_ip(i[4][0]) for i in infos)
+        except Exception:  # noqa: BLE001 - resolution failure -> fail closed
+            blocked = True
+    if cache is not None:
+        cache[low] = blocked
+    return blocked
+
+
+async def assert_capturable(url: str) -> str:
     """Return the URL if it is safe to capture, else raise CaptureError. Scheme
-    must be http/https; the host must not be localhost and must not resolve to
-    any blocked address. Resolves the host (literal IPs resolve to themselves)."""
+    must be http/https and the host must not be blocked (localhost, blocklist,
+    or resolving to a private/loopback/link-local/reserved address)."""
     p = urlparse(url)
     if p.scheme not in ("http", "https"):
         raise CaptureError("only http/https URLs can be captured")
     host = (p.hostname or "").strip()
-    low = host.lower()
-    if not host or low == "localhost" or low.endswith(".localhost"):
+    if not host or await _host_blocked(host):
         raise CaptureError("that host can't be captured")
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror as e:
-        raise CaptureError("could not resolve that host") from e
-    for info in infos:
-        if is_blocked_ip(info[4][0]):
-            raise CaptureError("that host resolves to a blocked address")
     return url
-
-
-_BLOCK_LITERAL_HOSTS = {"localhost"}
-
-
-def _host_is_literal_blocked(host: str) -> bool:
-    """Cheap synchronous check for the in-browser route guard: block localhost
-    and any IP-literal host that is private/internal. Hostnames are allowed here
-    because the top-level URL was already pre-resolved by assert_capturable."""
-    low = (host or "").lower()
-    if low in _BLOCK_LITERAL_HOSTS or low.endswith(".localhost"):
-        return True
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return False  # a name, not a literal — pre-resolve already vetted the top URL
-    return is_blocked_ip(host)
 
 
 async def capture_site(
@@ -95,7 +104,7 @@ async def capture_site(
     """Capture a live site as up to `max_frames` viewport-height PNG frames by
     scrolling top-to-bottom. Serialized to one browser at a time. Raises
     CaptureError on a blocked URL, missing engine, timeout, or zero frames."""
-    assert_capturable(url)
+    await assert_capturable(url)
     try:
         from playwright.async_api import async_playwright
     except ImportError as e:
@@ -103,6 +112,7 @@ async def capture_site(
 
     vw, vh = viewport
     frames: list[bytes] = []
+    resolve_cache: dict[str, bool] = {}
     async with _CAPTURE_LOCK:
         try:
             async with async_playwright() as pw:
@@ -118,11 +128,18 @@ async def capture_site(
                     page = await context.new_page()
 
                     async def _route(route):
+                        # Abort any request (main frame, subresource, iframe,
+                        # redirect hop) whose host is internal — resolving names,
+                        # not just IP literals, so a page cannot pull internal
+                        # Docker services (n8n, api-gateway, ...) into the render.
                         host = urlparse(route.request.url).hostname or ""
-                        if _host_is_literal_blocked(host):
+                        try:
+                            if await _host_blocked(host, resolve_cache):
+                                await route.abort()
+                            else:
+                                await route.continue_()
+                        except Exception:  # noqa: BLE001 - never wedge the route
                             await route.abort()
-                        else:
-                            await route.continue_()
 
                     await page.route("**/*", _route)
                     try:
@@ -130,14 +147,18 @@ async def capture_site(
                     except Exception as e:  # noqa: BLE001 - playwright TimeoutError etc.
                         raise CaptureError(f"could not load the page: {e}") from e
                     # A redirect may have landed somewhere internal — re-check.
-                    assert_capturable(page.url)
+                    await assert_capturable(page.url)
                     height = int(await page.evaluate("document.body.scrollHeight") or vh)
                     n = max(1, min(max_frames, math.ceil(height / vh)))
                     for i in range(n):
                         await page.evaluate(f"window.scrollTo(0, {i * vh})")
                         await page.wait_for_timeout(400)
-                        frames.append(await page.screenshot(
-                            clip={"x": 0, "y": 0, "width": vw, "height": vh}))
+                        # No clip: a default screenshot captures the *current
+                        # viewport* at this scroll position. A clip would be
+                        # document-relative (captureBeyondViewport), which can
+                        # re-capture the top regardless of scroll on some engine
+                        # versions — the viewport screenshot is version-robust.
+                        frames.append(await page.screenshot())
                 finally:
                     await browser.close()
         except CaptureError:
