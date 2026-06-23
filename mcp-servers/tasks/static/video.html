@@ -1203,6 +1203,26 @@
       }
     }
 
+    // --- Capture screenshots from a live site URL (server-side headless browser).
+    // Shared by the create-form "From website" entry and the studio capture button.
+    // Throws Error (with .status) on failure; the message is user-facing. ---
+    async function captureFromUrl(jobId, url) {
+      const r = await fetch(API + "/" + encodeURIComponent(jobId) + "/capture-from-url", {
+        method: "POST", headers: authHeaders(), credentials: "include",
+        body: JSON.stringify({ url: url }),
+      });
+      if (!r.ok) {
+        let msg;
+        if (r.status === 400) msg = "That URL can't be captured.";
+        else if (r.status === 502) msg = "Couldn't capture that site.";
+        else if (r.status === 503) msg = "Site capture is disabled.";
+        else if (r.status === 504) msg = "Capture timed out — try again.";
+        else { const t = await r.text(); msg = "Capture failed: " + t.slice(0, 160); }
+        const err = new Error(msg); err.status = r.status; throw err;
+      }
+      return r.json();
+    }
+
     // --- Add screenshots (paperclip) ---
     async function addScreenshots(fileList) {
       const files = Array.from(fileList || []);
