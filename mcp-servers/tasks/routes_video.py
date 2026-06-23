@@ -28,6 +28,7 @@ no-DB check, so it runs before any file is read; both it and the rate limit run
 before any file is written, so a flooding user is rejected before any disk is
 consumed.
 """
+import asyncio
 import logging
 import os
 import re
@@ -115,6 +116,53 @@ def _next_screenshot_index(existing: list[str]) -> int:
         if (m := re.match(r"screenshot-(\d+)\.", name))
     ]
     return (max(nums) + 1) if nums else 1
+
+
+# Per-job write locks make screenshot-index assignment atomic across the
+# concurrent writers (/screenshots, /screenshots-by-url, /capture-from-url),
+# fixing the index-reuse race where two near-simultaneous batches could both
+# compute the same screenshot-N and overwrite each other.
+_JOB_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _job_lock(jid: str) -> asyncio.Lock:
+    lock = _JOB_LOCKS.get(jid)
+    if lock is None:
+        lock = asyncio.Lock()
+        _JOB_LOCKS[jid] = lock
+    return lock
+
+
+async def _store_screenshot_blobs(slug: str, jid: str, blobs: list[tuple[str, bytes]]) -> list[str]:
+    """Validate and write already-in-memory screenshot bytes onto a job, under
+    the per-job lock. Enforces the count cap (400), cumulative byte cap (413) and
+    per-file validation (400), then writes screenshot-N continuing the existing
+    numbering. Returns the full screenshot list. Callers do disk/ownership/auth."""
+    shots_dir = _apps_dir() / slug / ".video" / jid / "screenshots"
+    async with _job_lock(jid):
+        existing = _list_screenshots(slug, jid)
+        if len(existing) + len(blobs) > MAX_FILES:
+            raise HTTPException(400, f"max {MAX_FILES} screenshots per job")
+        total = sum(
+            (shots_dir / name).stat().st_size
+            for name in existing
+            if (shots_dir / name).is_file()
+        )
+        validated: list[bytes] = []
+        for fname, data in blobs:
+            total += len(data)
+            if total > MAX_TOTAL_BYTES:
+                raise HTTPException(413, "batch too large")
+            try:
+                validate_screenshot(fname or "x.png", data)
+            except ScreenshotRejected as e:
+                raise HTTPException(400, str(e))
+            validated.append(data)
+        start = _next_screenshot_index(existing)
+        shots_dir.mkdir(parents=True, exist_ok=True)
+        for i, data in enumerate(validated):
+            (shots_dir / f"screenshot-{start + i}.png").write_bytes(data)
+        return _list_screenshots(slug, jid)
 
 
 class RefineRequest(BaseModel):
@@ -609,9 +657,16 @@ async def add_screenshots(
         except ScreenshotRejected as e:
             raise HTTPException(400, str(e))
         raw.append(body)
-    shots_dir.mkdir(parents=True, exist_ok=True)
-    for i, body in enumerate(raw):
-        (shots_dir / f"screenshot-{start + i}.png").write_bytes(body)
+    async with _job_lock(str(jid)):
+        # Recompute the start index under the lock so a batch that landed between
+        # the early read and here cannot collide on the same screenshot-N.
+        existing = _list_screenshots(slug, str(jid))
+        if existing_count != len(existing):
+            existing_count = len(existing)
+            start = _next_screenshot_index(existing)
+        shots_dir.mkdir(parents=True, exist_ok=True)
+        for i, body in enumerate(raw):
+            (shots_dir / f"screenshot-{start + i}.png").write_bytes(body)
     return {"screenshots": _list_screenshots(slug, str(jid))}
 
 
@@ -655,17 +710,10 @@ async def add_screenshots_by_url(
         str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
     ):
         raise HTTPException(507, "Insufficient storage; try again later")
-    shots_dir = _apps_dir() / slug / ".video" / str(jid) / "screenshots"
     existing = _list_screenshots(slug, str(jid))
-    start = _next_screenshot_index(existing)
     if len(existing) + len(body.urls) > MAX_FILES:
         raise HTTPException(400, f"max {MAX_FILES} screenshots per job")
-    total = sum(
-        (shots_dir / name).stat().st_size
-        for name in existing
-        if (shots_dir / name).is_file()
-    )
-    raw: list[bytes] = []
+    blobs: list[tuple[str, bytes]] = []
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
         for url in body.urls:
             try:
@@ -684,19 +732,9 @@ async def add_screenshots_by_url(
                             raise HTTPException(413, "screenshot too large (max 10 MB)")
             except httpx.HTTPError:
                 raise HTTPException(400, "could not fetch screenshot URL")
-            data = bytes(buf)
-            total += len(data)
-            if total > MAX_TOTAL_BYTES:
-                raise HTTPException(413, "batch too large")
-            try:
-                validate_screenshot(urlparse(url).path.rsplit("/", 1)[-1] or "x.png", data)
-            except ScreenshotRejected as e:
-                raise HTTPException(400, str(e))
-            raw.append(data)
-    shots_dir.mkdir(parents=True, exist_ok=True)
-    for i, data in enumerate(raw):
-        (shots_dir / f"screenshot-{start + i}.png").write_bytes(data)
-    shots = _list_screenshots(slug, str(jid))
+            fname = urlparse(url).path.rsplit("/", 1)[-1] or "x.png"
+            blobs.append((fname, bytes(buf)))
+    shots = await _store_screenshot_blobs(slug, str(jid), blobs)
     return {"screenshots": shots, "count": len(shots)}
 
 
