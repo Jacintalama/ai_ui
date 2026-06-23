@@ -208,3 +208,23 @@ async def render_html_to_mp4(html: str, out_path: str, *, fps: int = 24,
         return n
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+async def render_animated_job(apps_dir: str, slug: str, job_id: str, plan: dict,
+                              *, fps: int = 24) -> str:
+    """Render an animated job's plan to out.mp4 in-container: read the job's
+    screenshots from disk, build the composition, render via Chromium+ffmpeg.
+    Returns the output path. (Video-only in v1; narration is a fast-follow.)"""
+    shots_dir = os.path.join(apps_dir, slug, ".video", job_id, "screenshots")
+    shots: dict[str, bytes] = {}
+    if os.path.isdir(shots_dir):
+        for name in sorted(os.listdir(shots_dir)):
+            p = os.path.join(shots_dir, name)
+            if os.path.isfile(p):
+                with open(p, "rb") as f:
+                    shots[name] = f.read()
+    html = build_composition(plan, shots)
+    out = os.path.join(apps_dir, slug, ".video", job_id, "out.mp4")
+    dur = min(MAX_DURATION_S, composition_duration(plan) or 8.0)
+    await render_html_to_mp4(html, out, fps=fps, duration_s=dur)
+    return out

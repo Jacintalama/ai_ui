@@ -1,6 +1,7 @@
 """Tests for the animated-composition runtime (Phase 1 de-risk). The real-render
 test is skipped unless Playwright+Chromium AND ffmpeg are available."""
 import io
+import os
 import shutil
 
 import pytest
@@ -67,3 +68,28 @@ async def test_render_demo_to_mp4(tmp_path):
         pytest.skip(f"render runtime unavailable: {e}")
     assert out.exists() and out.stat().st_size > 10_000
     assert frames >= 2
+
+
+async def test_render_animated_job_reads_shots_and_renders(tmp_path, monkeypatch):
+    import video_anim
+    captured = {}
+
+    async def fake_render(html, out_path, *, fps=24, duration_s=8.0, audio_path=None,
+                          width=1280, height=720):
+        captured["html"] = html
+        captured["out"] = out_path
+        with open(out_path, "wb") as f:
+            f.write(b"\x00\x00\x00\x18ftypmp42")  # tiny stub
+        return int(duration_s * fps)
+
+    monkeypatch.setattr(video_anim, "render_html_to_mp4", fake_render)
+    slug, jid = "vid-x", "11111111-1111-1111-1111-111111111111"
+    shots_dir = tmp_path / slug / ".video" / jid / "screenshots"
+    shots_dir.mkdir(parents=True)
+    (shots_dir / "screenshot-1.png").write_bytes(_png())
+    plan = {"title": "t", "narration_script": "", "scenes": [
+        {"kind": "screenshot", "screenshot": "screenshot-1.png", "headline": "h",
+         "motion": "zoom-in", "duration_s": 3.0}]}
+    out = await video_anim.render_animated_job(str(tmp_path), slug, jid, plan)
+    assert out.endswith("out.mp4") and os.path.exists(out)
+    assert "data:image/png;base64," in captured["html"]
