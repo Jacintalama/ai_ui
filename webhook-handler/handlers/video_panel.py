@@ -55,14 +55,14 @@ def build_video_embed() -> dict:
         "title": "AIUI Video Studio",
         "color": ROBOTIC_CYAN,
         "description": (
-            "**Turn screenshots into a narrated walkthrough.**\n"
+            "**Turn a website or screenshots into a narrated walkthrough.**\n"
             "```\n"
             "1. Click New video to open your private thread.\n"
-            "2. Add screenshots - paste your site link, or drag your own images in (up to 12).\n"
-            "3. Add a description of what the walkthrough should show.\n"
-            "4. Click Generate video.\n"
-            "```\n"
-            "Style and voice are optional - good defaults are set."
+            "2. Choose your source: paste a website link (we screenshot it for you),\n"
+            "   or drag your own images in (up to 12).\n"
+            "3. Add a short description of what the walkthrough should show.\n"
+            "4. Click Generate video. Style and voice are optional - good defaults are set.\n"
+            "```"
         ),
         "footer": {"text": "AIUI · video generation"},
     }

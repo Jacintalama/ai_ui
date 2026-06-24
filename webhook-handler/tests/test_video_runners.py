@@ -32,10 +32,11 @@ def _router(tasks_client, *, email="u@x.com"):
 # --- run_video_add ---------------------------------------------------------- #
 
 @pytest.mark.asyncio
-async def test_run_video_add_pushes_urls_and_replies_components():
+async def test_run_video_add_first_add_posts_describe_step():
+    """First add (draft had 0 screenshots) -> posts build_describe_components."""
     tc = MagicMock()
-    tc.get_current_video_draft = AsyncMock(return_value={"id": "job1"})
-    tc.add_video_screenshots_urls = AsyncMock(return_value={"count": 3})
+    tc.get_current_video_draft = AsyncMock(return_value={"id": "job1", "screenshot_count": 0})
+    tc.add_video_screenshots_urls = AsyncMock(return_value={"count": 2})
     r = _router(tc)
     rc = AsyncMock()
     ctx = _ctx(respond_components=rc)
@@ -44,8 +45,29 @@ async def test_run_video_add_pushes_urls_and_replies_components():
     tc.add_video_screenshots_urls.assert_awaited_once_with("u@x.com", "job1", urls)
     rc.assert_awaited_once()
     msg, components = rc.await_args.args
-    assert "3/12" in msg
-    assert isinstance(components, list) and components  # a Generate button row
+    assert "2/12" in msg
+    # Should post Describe step (not Generate row)
+    assert isinstance(components, list) and components
+    all_ids = [c.get("custom_id") for row in components for c in row.get("components", [])]
+    assert any("aiuivid:details:job1" == cid for cid in all_ids)
+
+
+@pytest.mark.asyncio
+async def test_run_video_add_subsequent_add_no_describe_repost():
+    """Subsequent add (draft already had screenshots) -> just the N/12 text, no Describe card."""
+    tc = MagicMock()
+    tc.get_current_video_draft = AsyncMock(return_value={"id": "job1", "screenshot_count": 2})
+    tc.add_video_screenshots_urls = AsyncMock(return_value={"count": 3})
+    r = _router(tc)
+    rc = AsyncMock()
+    ctx = _ctx(respond_components=rc)
+    urls = ["http://cdn/3.png"]
+    await r.run_video_add(ctx, urls)
+    # respond_components should NOT have been called (no new wizard card)
+    rc.assert_not_called()
+    # plain text respond should have been called with count progress
+    ctx.respond.assert_awaited()
+    assert "3/12" in ctx.respond.await_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -82,7 +104,27 @@ async def test_run_video_add_no_urls():
 
 
 @pytest.mark.asyncio
-async def test_run_video_set_details_patches_and_confirms():
+async def test_run_video_set_details_patches_and_posts_generate_step():
+    """set_details saves fields and posts the Generate step card when respond_components is wired."""
+    tc = MagicMock()
+    tc.set_video_draft_fields = AsyncMock(return_value={"status": "ok"})
+    r = _router(tc)
+    rc = AsyncMock()
+    ctx = _ctx(respond_components=rc)
+    await r.run_video_set_details(ctx, "job1", title="T", prompt="P")
+    tc.set_video_draft_fields.assert_awaited_once_with("u@x.com", "job1", title="T", prompt="P")
+    # Should post Generate step components
+    rc.assert_awaited_once()
+    msg, components = rc.await_args.args
+    assert isinstance(components, list) and components
+    all_ids = [c.get("custom_id") for row in components for c in row.get("components", [])]
+    assert any("aiuivid:generate:job1" == cid for cid in all_ids)
+    assert any("aiuivid:options:job1" == cid for cid in all_ids)
+
+
+@pytest.mark.asyncio
+async def test_run_video_set_details_patches_and_confirms_text():
+    """set_details always calls ctx.respond with a confirmation (even when no poster)."""
     tc = MagicMock()
     tc.set_video_draft_fields = AsyncMock(return_value={"status": "ok"})
     r = _router(tc)
@@ -239,7 +281,8 @@ async def test_run_video_revert_rerender_no_watcher_when_no_channel():
 # --- run_video_capture ------------------------------------------------------ #
 
 @pytest.mark.asyncio
-async def test_run_video_capture_captures_and_reports():
+async def test_run_video_capture_captures_and_posts_describe_step():
+    """After a successful capture, posts the Describe step card (not the Generate row)."""
     tc = MagicMock()
     tc.get_current_video_draft = AsyncMock(return_value={"id": "job9"})
     tc.capture_video_screenshots = AsyncMock(return_value={"count": 4})
@@ -251,7 +294,10 @@ async def test_run_video_capture_captures_and_reports():
     rc.assert_awaited_once()
     msg, components = rc.await_args.args
     assert "4/12" in msg
-    assert isinstance(components, list) and components  # Generate button row
+    # Should post Describe step (Add description button) not Generate row
+    assert isinstance(components, list) and components
+    all_ids = [c.get("custom_id") for row in components for c in row.get("components", [])]
+    assert any("aiuivid:details:job9" == cid for cid in all_ids)
 
 
 @pytest.mark.asyncio
