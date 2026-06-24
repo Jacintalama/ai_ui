@@ -3,8 +3,8 @@ import pytest
 from handlers.video_panel import (
     # builders
     build_video_panel, build_details_modal, build_refine_modal,
-    build_style_select, build_voice_select, build_studio_components,
-    build_generate_row, build_done_components, build_proposal_components,
+    build_style_select, build_voice_select,
+    build_done_components, build_proposal_components,
     build_video_embed,
     # constants
     NEW_ID, LIST_ID,
@@ -21,6 +21,7 @@ from handlers.video_panel import (
     job_from_refine, job_from_refine_modal, job_from_apply, job_from_version,
 )
 from handlers.app_builder_panel import ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT
+from handlers import video_panel as vp
 
 
 # ---------------------------------------------------------------------------
@@ -308,23 +309,6 @@ def test_proposal_components_has_apply_button():
     assert buttons[0]["custom_id"] == f"{APPLY_PREFIX}job-p1"
 
 
-# ---------------------------------------------------------------------------
-# build_studio_components
-# ---------------------------------------------------------------------------
-
-def test_studio_components_has_style_voice_mode_capture_generate_rows():
-    from handlers import video_panel as vp
-    rows = build_studio_components("job-s1", _VOICES)
-    assert len(rows) == 5
-    ids = [c.get("custom_id") for row in rows for c in row["components"]]
-    assert f"{STYLE_PREFIX}job-s1" in ids
-    assert f"{VOICE_PREFIX}job-s1" in ids
-    assert f"{vp.MODE_PREFIX}job-s1" in ids        # output-mode select (slideshow|animated)
-    assert f"{vp.CAPTURE_PREFIX}job-s1" in ids
-    assert f"{GENERATE_PREFIX}job-s1" in ids
-    assert f"{DETAILS_PREFIX}job-s1" in ids
-
-
 def test_mode_select_options_and_predicates():
     from handlers import video_panel as vp
     sel = vp.build_mode_select("j1")
@@ -352,18 +336,6 @@ def test_capture_predicates_and_extractors():
 
 
 # ---------------------------------------------------------------------------
-# build_generate_row
-# ---------------------------------------------------------------------------
-
-def test_generate_row_has_generate_button():
-    rows = build_generate_row("job-g1")
-    assert len(rows) == 1
-    buttons = [c for row in rows for c in row["components"] if c.get("type") == BUTTON]
-    assert len(buttons) == 1
-    assert buttons[0]["custom_id"] == f"{GENERATE_PREFIX}job-g1"
-
-
-# ---------------------------------------------------------------------------
 # build_video_embed
 # ---------------------------------------------------------------------------
 
@@ -385,3 +357,51 @@ def test_video_embed_is_slash_free_and_mentions_screenshots():
     embed = build_video_embed()
     assert "/video" not in embed["description"]
     assert "screenshot" in embed["description"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Wizard step builders (W1)
+# ---------------------------------------------------------------------------
+
+def test_build_source_components_two_buttons():
+    rows = vp.build_source_components("job1")
+    assert len(rows) == 1
+    btns = rows[0]["components"]
+    assert [b["custom_id"] for b in btns] == ["aiuivid:srcurl:job1", "aiuivid:srcshots:job1"]
+
+def test_build_upload_components_continue_button():
+    rows = vp.build_upload_components("job1")
+    ids = [c["custom_id"] for r in rows for c in r["components"]]
+    assert ids == ["aiuivid:srcshotsgo:job1"]
+
+def test_build_describe_components_add_description():
+    rows = vp.build_describe_components("job1")
+    ids = [c["custom_id"] for r in rows for c in r["components"]]
+    assert ids == ["aiuivid:details:job1"]
+
+def test_build_generate_step_components_generate_and_options():
+    rows = vp.build_generate_step_components("job1")
+    ids = [c["custom_id"] for r in rows for c in r["components"]]
+    assert ids == ["aiuivid:generate:job1", "aiuivid:options:job1"]
+
+def test_build_options_components_three_selects_plus_buttons():
+    voices = [{"id": "amy", "label": "Amy", "accent": "US", "gender": "Female"}]
+    rows = vp.build_options_components("job1", voices)
+    # 3 selects + 1 button row (generate + back)
+    assert len(rows) == 4
+    last_ids = [c["custom_id"] for c in rows[-1]["components"]]
+    assert last_ids == ["aiuivid:generate:job1", "aiuivid:optionsback:job1"]
+    select_ids = [rows[i]["components"][0]["custom_id"] for i in range(3)]
+    assert select_ids == ["aiuivid:style:job1", "aiuivid:voice:job1", "aiuivid:mode:job1"]
+
+def test_new_predicates_round_trip():
+    assert vp.is_vid_src_url("aiuivid:srcurl:j") and vp.job_from_src_url("aiuivid:srcurl:j") == "j"
+    assert vp.is_vid_src_shots("aiuivid:srcshots:j") and vp.job_from_src_shots("aiuivid:srcshots:j") == "j"
+    assert vp.is_vid_src_shots_continue("aiuivid:srcshotsgo:j")
+    assert vp.is_vid_options("aiuivid:options:j") and vp.job_from_options("aiuivid:options:j") == "j"
+    assert vp.is_vid_options_back("aiuivid:optionsback:j")
+
+def test_new_prefixes_disjoint():
+    # trailing-colon safety: srcshots must NOT match srcshotsgo, options must NOT match optionsback
+    assert vp.is_vid_src_shots("aiuivid:srcshotsgo:x") is False
+    assert vp.is_vid_options("aiuivid:optionsback:x") is False

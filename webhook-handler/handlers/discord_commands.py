@@ -465,6 +465,44 @@ class DiscordCommandHandler:
                 payload,
                 lambda ctx, j=job_id, n=version_no: self.router.run_video_revert(ctx, j, n),
                 raw_text="video revert")
+        if vid.is_vid_src_url(custom_id):
+            try:
+                job_id = vid.job_from_src_url(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_capture_modal(job_id)}
+        if vid.is_vid_src_shots(custom_id):
+            try:
+                job_id = vid.job_from_src_shots(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": ("Drag your screenshots into this thread (up to 12), "
+                            "then I will continue automatically."),
+                "components": vid.build_upload_components(job_id)}}
+        if vid.is_vid_src_shots_continue(custom_id):
+            try:
+                job_id = vid.job_from_src_shots_continue(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            self._spawn(self._post_video_describe(payload.get("channel_id", ""), job_id))
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": "Screenshots added.", "components": []}}
+        if vid.is_vid_options(custom_id):
+            try:
+                job_id = vid.job_from_options(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            self._spawn(self._open_video_options(payload, job_id))
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        if vid.is_vid_options_back(custom_id):
+            try:
+                job_id = vid.job_from_options_back(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": "Ready. Generate when you are. Style and voice are optional.",
+                "components": vid.build_generate_step_components(job_id)}}
 
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
@@ -891,6 +929,57 @@ class DiscordCommandHandler:
             respond=lambda m: asyncio.sleep(0))
         await self.router.run_video_set_field(ctx, job_id, **field)
 
+    async def _post_video_describe(self, channel_id: str, job_id: str) -> None:
+        """Post the Describe-step card into the thread. Used after the screenshots
+        upload step resolves (the Continue button or auto-advance), since that
+        component interaction can only edit/strip its own card, not advance."""
+        if not channel_id:
+            return
+        try:
+            await self.discord.post_channel_message(
+                channel_id,
+                "Add a short description of what the walkthrough should show.",
+                components=vid.build_describe_components(job_id),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("video describe-step post failed job=%s: %s", job_id, exc)
+
+    async def _open_video_options(self, payload: dict[str, Any], job_id: str) -> None:
+        """Reveal the Style & voice options card by editing the component message
+        in place. The interaction was ACK'd DEFERRED_UPDATE_MESSAGE, so this reads
+        the draft (current style/voice/mode) + voices catalog off the 3s path,
+        then edit_original's the options view onto the same message."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        try:
+            email = await self.router._resolve_email(user.get("id", ""))
+            if email is None:
+                return
+            # Use current-draft to read style/voice (GET /api/video-jobs/{job_id}
+            # does not return style, voice, or render_mode fields).
+            draft = await self.router._tasks_client.get_current_video_draft(email) or {}
+            voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
+            # render_mode is not returned by the current-draft endpoint;
+            # defaults to "slideshow" until the backend exposes it.
+            await self.discord.edit_original(
+                interaction_token=interaction_token,
+                content="Style and voice (optional). Pick, then Generate or go Back.",
+                components=vid.build_options_components(
+                    job_id, voices,
+                    current_style=draft.get("style", "clean_product_demo"),
+                    current_voice=draft.get("voice", "amy"),
+                    current_mode="slideshow"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("video options open failed job=%s: %s", job_id, exc)
+            try:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't load Style & voice, please try again.")
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _handle_video_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         """`/video new` (one-shot: describe + attach screenshots), `/video add`
         (push the attached screenshots onto the current draft) and `/video list`.
@@ -942,9 +1031,10 @@ class DiscordCommandHandler:
                                  user_name: str, channel_id: str, title: str,
                                  prompt: str, screenshot_urls: "list[str] | None" = None) -> None:
         """Create a video draft, open the user's private video thread, point the
-        ephemeral ACK at it, post the voice-sample MP3s + studio controls, and —
-        when screenshot_urls is given (/video new) — push those screenshots onto
-        the new draft. Shared by the 'New video' modal submit and `/video new`."""
+        ephemeral ACK at it, and post the wizard's Step 1 (source choice) card.
+        When screenshot_urls is given (/video new), push those screenshots onto
+        the new draft and skip straight to the Describe step. Shared by the
+        'New video' modal submit and `/video new`."""
         try:
             email = await self.router._resolve_email(user_id)
             if email is None:
@@ -981,47 +1071,24 @@ class DiscordCommandHandler:
                     added = res.get("count", 0)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("video new: screenshot add failed user=%s: %s", user_id, exc)
-            voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
-            # Best-effort: post the voice preview clips so the user can listen
-            # before picking. A failure here must never block the studio.
-            try:
-                files: list[tuple[str, bytes, str]] = []
-                for v in voices[:6]:
-                    sample_url = v.get("sample_url")
-                    vid_id = v.get("id") or "voice"
-                    if not sample_url:
-                        continue
-                    blob = await self.router._tasks_client.fetch_bytes(sample_url)
-                    files.append((f"{vid_id}.mp3", blob, "audio/mpeg"))
-                if files:
-                    await self.discord.post_channel_file(
-                        target, files[:10],
-                        content="Voice previews — listen, then pick a voice below:")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("video voice-sample post failed user=%s: %s", user_id, exc)
             if added:
-                studio_msg = (
-                    f"Screenshots added: {added}/12. Two steps to go:\n\n"
-                    "**3. Add a description** - what the walkthrough should show.\n"
-                    "**4. Generate video** - click it when you're ready.\n\n"
-                    "Want more screenshots? Paste your site link, or drag your own "
-                    "images in (up to 12). Style and voice are optional - good "
-                    "defaults are set."
+                # Pre-attached screenshots (/video new): the source choice is moot
+                # because screenshots already exist, so skip Step 1 (source) and go
+                # straight to the Describe step.
+                await self.discord.post_channel_message(
+                    target,
+                    f"Screenshots added: {added}/12. "
+                    "Now add a short description of what the walkthrough should show.",
+                    components=vid.build_describe_components(job_id),
                 )
             else:
-                studio_msg = (
-                    "You're in your private thread - step 1 done. Three steps to go:\n\n"
-                    "**2. Add screenshots** - either:\n"
-                    "- paste your site link (button below, we capture it for you), or\n"
-                    "- drag your own images in (up to 12).\n"
-                    "**3. Add a description** - what the walkthrough should show.\n"
-                    "**4. Generate video** - click it when you're ready.\n\n"
-                    "Style and voice are optional - good defaults are set."
+                # Step 1 of the wizard: choose a source (website or screenshots).
+                # Style/voice/output-mode now live behind the optional Style & voice
+                # button at the Generate step, so nothing else is posted up-front.
+                await self.discord.post_channel_message(
+                    target, "Let's make a video. How do you want to start?",
+                    components=vid.build_source_components(job_id),
                 )
-            await self.discord.post_channel_message(
-                target, studio_msg,
-                components=vid.build_studio_components(job_id, voices),
-            )
         except Exception as exc:  # noqa: BLE001
             logger.error("_open_video_studio failed user=%s: %s", user_id, exc)
             try:
@@ -1047,13 +1114,26 @@ class DiscordCommandHandler:
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
 
+        channel_id = payload.get("channel_id", "")
+
         async def respond(msg: str) -> None:
             await self.discord.edit_original(interaction_token=interaction_token, content=msg)
 
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg, embeds=embeds, components=components)
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg.get("content", ""),
+                embeds=msg.get("embeds"), components=msg.get("components"))
+
         ctx = CommandContext(
             user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
-            channel_id=payload.get("channel_id", ""), raw_text="video details",
-            subcommand="video", arguments="", platform="discord", respond=respond)
+            channel_id=channel_id, raw_text="video details",
+            subcommand="video", arguments="", platform="discord", respond=respond,
+            respond_components=respond_components if channel_id else None,
+            notify_channel_msg=notify_channel_msg if channel_id else None)
         self._spawn(self.router.run_video_set_details(ctx, job_id, title=title, prompt=prompt))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
@@ -1072,13 +1152,26 @@ class DiscordCommandHandler:
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
 
+        channel_id = payload.get("channel_id", "")
+
         async def respond(msg: str) -> None:
             await self.discord.edit_original(interaction_token=interaction_token, content=msg)
 
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg, embeds=embeds, components=components)
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg.get("content", ""),
+                embeds=msg.get("embeds"), components=msg.get("components"))
+
         ctx = CommandContext(
             user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
-            channel_id=payload.get("channel_id", ""), raw_text="video capture",
-            subcommand="video", arguments="", platform="discord", respond=respond)
+            channel_id=channel_id, raw_text="video capture",
+            subcommand="video", arguments="", platform="discord", respond=respond,
+            respond_components=respond_components if channel_id else None,
+            notify_channel_msg=notify_channel_msg if channel_id else None)
         self._spawn(self.router.run_video_capture(ctx, url))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 

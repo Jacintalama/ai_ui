@@ -2364,6 +2364,7 @@ class CommandRouter:
         if not draft:
             await ctx.respond("No video in progress — click **New video** first.")
             return
+        prior_count = draft.get("screenshot_count", 0)
         try:
             res = await self._tasks_client.add_video_screenshots_urls(email, draft["id"], urls)
         except TasksAPIError as e:
@@ -2371,10 +2372,15 @@ class CommandRouter:
             return
         count = res.get("count", 0)
         msg = f"Added - {count}/12 screenshots. Next: add a description, then click **Generate video**."
-        if ctx.respond_components is not None:
-            from handlers.video_panel import build_generate_row
-            await ctx.respond_components(msg, build_generate_row(draft["id"]))
+        if prior_count == 0 and ctx.respond_components is not None:
+            # First add: advance wizard to the Describe step.
+            # NOTE: benign TOCTOU - dropping images across multiple separate messages in
+            # quick succession can each read screenshot_count==0 and post Describe more
+            # than once; acceptable for auto-advance.
+            from handlers.video_panel import build_describe_components
+            await ctx.respond_components(msg, build_describe_components(draft["id"]))
         else:
+            # Subsequent add: just echo the running count; no new wizard card.
             await ctx.respond(msg)
 
     async def run_video_capture(self, ctx: CommandContext, url: str) -> None:
@@ -2407,8 +2413,8 @@ class CommandRouter:
         msg = (f"Added {count}/12 screenshots from {host}. "
                "Next: add a description, then click **Generate video**.")
         if ctx.respond_components is not None:
-            from handlers.video_panel import build_generate_row
-            await ctx.respond_components(msg, build_generate_row(draft["id"]))
+            from handlers.video_panel import build_describe_components
+            await ctx.respond_components(msg, build_describe_components(draft["id"]))
         else:
             await ctx.respond(msg)
 
@@ -2438,9 +2444,11 @@ class CommandRouter:
         except TasksAPIError as e:
             await ctx.respond(f"Couldn't save: {e.message}")
             return
-        await ctx.respond(
-            "Description saved. Make sure you've added a screenshot - paste your site "
-            "link, or drag your own images in (up to 12) - then click **Generate video**.")
+        confirm = "Description saved. Click Generate video when you're ready."
+        await ctx.respond(confirm)  # resolve the deferred ephemeral spinner
+        if ctx.respond_components is not None:
+            from handlers.video_panel import build_generate_step_components
+            await ctx.respond_components("", build_generate_step_components(job_id))
 
     async def run_video_generate(self, ctx: CommandContext, job_id: str) -> None:
         """Generate button: queue the draft + spawn the watcher."""
