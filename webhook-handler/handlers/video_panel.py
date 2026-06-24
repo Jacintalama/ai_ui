@@ -21,6 +21,11 @@ STYLE_PREFIX = "aiuivid:style:"
 VOICE_PREFIX = "aiuivid:voice:"
 MODE_PREFIX = "aiuivid:mode:"
 GENERATE_PREFIX = "aiuivid:generate:"
+SRC_URL_PREFIX = "aiuivid:srcurl:"
+SRC_SHOTS_PREFIX = "aiuivid:srcshots:"
+SRC_SHOTS_CONTINUE_PREFIX = "aiuivid:srcshotsgo:"
+OPTIONS_PREFIX = "aiuivid:options:"
+OPTIONS_BACK_PREFIX = "aiuivid:optionsback:"
 REFINE_PREFIX = "aiuivid:refine:"
 REFINE_MODAL_PREFIX = "aiuivid:refinemodal:"
 APPLY_PREFIX = "aiuivid:apply:"
@@ -175,6 +180,43 @@ def build_generate_row(job_id: str) -> list[dict]:
         _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS)]}]
 
 
+def build_source_components(job_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("From a website", f"{SRC_URL_PREFIX}{job_id}", STYLE_PRIMARY),
+        _button("From my screenshots", f"{SRC_SHOTS_PREFIX}{job_id}", STYLE_SECONDARY),
+    ]}]
+
+
+def build_upload_components(job_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Continue", f"{SRC_SHOTS_CONTINUE_PREFIX}{job_id}", STYLE_SUCCESS)]}]
+
+
+def build_describe_components(job_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Add description", f"{DETAILS_PREFIX}{job_id}", STYLE_PRIMARY)]}]
+
+
+def build_generate_step_components(job_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS),
+        _button("Style & voice", f"{OPTIONS_PREFIX}{job_id}", STYLE_SECONDARY)]}]
+
+
+def build_options_components(job_id: str, voices: list[dict],
+                             current_style: str = "clean_product_demo",
+                             current_voice: str = "amy",
+                             current_mode: str = "slideshow") -> list[dict]:
+    return [
+        {"type": ACTION_ROW, "components": [build_style_select(job_id, current_style)]},
+        {"type": ACTION_ROW, "components": [build_voice_select(job_id, voices, current_voice)]},
+        {"type": ACTION_ROW, "components": [build_mode_select(job_id, current_mode)]},
+        {"type": ACTION_ROW, "components": [
+            _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS),
+            _button("Back", f"{OPTIONS_BACK_PREFIX}{job_id}", STYLE_SECONDARY)]},
+    ]
+
+
 def build_done_components(job_id: str, versions: list[dict]) -> list[dict]:
     rows = [{"type": ACTION_ROW, "components": [
         _button("Refine", f"{REFINE_PREFIX}{job_id}", STYLE_PRIMARY)]}]
@@ -226,3 +268,15 @@ def job_from_refine(c: str) -> str: return _suffix_after(c, REFINE_PREFIX)
 def job_from_refine_modal(c: str) -> str: return _suffix_after(c, REFINE_MODAL_PREFIX)
 def job_from_apply(c: str) -> str: return _suffix_after(c, APPLY_PREFIX)
 def job_from_version(c: str) -> str: return _suffix_after(c, VERSION_PREFIX)
+
+def is_vid_src_url(c: str) -> bool: return c.startswith(SRC_URL_PREFIX)
+def is_vid_src_shots(c: str) -> bool: return c.startswith(SRC_SHOTS_PREFIX)
+def is_vid_src_shots_continue(c: str) -> bool: return c.startswith(SRC_SHOTS_CONTINUE_PREFIX)
+def is_vid_options(c: str) -> bool: return c.startswith(OPTIONS_PREFIX)
+def is_vid_options_back(c: str) -> bool: return c.startswith(OPTIONS_BACK_PREFIX)
+
+def job_from_src_url(c: str) -> str: return _suffix_after(c, SRC_URL_PREFIX)
+def job_from_src_shots(c: str) -> str: return _suffix_after(c, SRC_SHOTS_PREFIX)
+def job_from_src_shots_continue(c: str) -> str: return _suffix_after(c, SRC_SHOTS_CONTINUE_PREFIX)
+def job_from_options(c: str) -> str: return _suffix_after(c, OPTIONS_PREFIX)
+def job_from_options_back(c: str) -> str: return _suffix_after(c, OPTIONS_BACK_PREFIX)

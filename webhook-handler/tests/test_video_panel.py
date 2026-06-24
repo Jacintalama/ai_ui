@@ -21,6 +21,7 @@ from handlers.video_panel import (
     job_from_refine, job_from_refine_modal, job_from_apply, job_from_version,
 )
 from handlers.app_builder_panel import ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT
+from handlers import video_panel as vp
 
 
 # ---------------------------------------------------------------------------
@@ -385,3 +386,51 @@ def test_video_embed_is_slash_free_and_mentions_screenshots():
     embed = build_video_embed()
     assert "/video" not in embed["description"]
     assert "screenshot" in embed["description"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Wizard step builders (W1)
+# ---------------------------------------------------------------------------
+
+def test_build_source_components_two_buttons():
+    rows = vp.build_source_components("job1")
+    assert len(rows) == 1
+    btns = rows[0]["components"]
+    assert [b["custom_id"] for b in btns] == ["aiuivid:srcurl:job1", "aiuivid:srcshots:job1"]
+
+def test_build_upload_components_continue_button():
+    rows = vp.build_upload_components("job1")
+    ids = [c["custom_id"] for r in rows for c in r["components"]]
+    assert ids == ["aiuivid:srcshotsgo:job1"]
+
+def test_build_describe_components_add_description():
+    rows = vp.build_describe_components("job1")
+    ids = [c["custom_id"] for r in rows for c in r["components"]]
+    assert ids == ["aiuivid:details:job1"]
+
+def test_build_generate_step_components_generate_and_options():
+    rows = vp.build_generate_step_components("job1")
+    ids = [c["custom_id"] for r in rows for c in r["components"]]
+    assert ids == ["aiuivid:generate:job1", "aiuivid:options:job1"]
+
+def test_build_options_components_three_selects_plus_buttons():
+    voices = [{"id": "amy", "label": "Amy", "accent": "US", "gender": "Female"}]
+    rows = vp.build_options_components("job1", voices)
+    # 3 selects + 1 button row (generate + back)
+    assert len(rows) == 4
+    last_ids = [c["custom_id"] for c in rows[-1]["components"]]
+    assert last_ids == ["aiuivid:generate:job1", "aiuivid:optionsback:job1"]
+    select_ids = [rows[i]["components"][0]["custom_id"] for i in range(3)]
+    assert select_ids == ["aiuivid:style:job1", "aiuivid:voice:job1", "aiuivid:mode:job1"]
+
+def test_new_predicates_round_trip():
+    assert vp.is_vid_src_url("aiuivid:srcurl:j") and vp.job_from_src_url("aiuivid:srcurl:j") == "j"
+    assert vp.is_vid_src_shots("aiuivid:srcshots:j") and vp.job_from_src_shots("aiuivid:srcshots:j") == "j"
+    assert vp.is_vid_src_shots_continue("aiuivid:srcshotsgo:j")
+    assert vp.is_vid_options("aiuivid:options:j") and vp.job_from_options("aiuivid:options:j") == "j"
+    assert vp.is_vid_options_back("aiuivid:optionsback:j")
+
+def test_new_prefixes_disjoint():
+    # trailing-colon safety: srcshots must NOT match srcshotsgo, options must NOT match optionsback
+    assert vp.is_vid_src_shots("aiuivid:srcshotsgo:x") is False
+    assert vp.is_vid_options("aiuivid:optionsback:x") is False
