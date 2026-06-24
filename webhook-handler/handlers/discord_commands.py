@@ -477,8 +477,15 @@ class DiscordCommandHandler:
             except ValueError:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return {"type": UPDATE_MESSAGE, "data": {
-                "content": ("Drag your screenshots into this thread (up to 12), "
-                            "then I will continue automatically."),
+                "content": (
+                    "**Add your screenshots right here in this thread** (up to 12).\n"
+                    "Three ways to do it:\n"
+                    "1. **Paste** a copied screenshot with **Ctrl+V** (or Cmd+V), then press Enter.\n"
+                    "2. Click the **+** next to the message box, choose **Upload a File**, pick your images.\n"
+                    "3. **Drag** image files from your computer onto this thread.\n"
+                    "On phone: tap the **+** or image icon by the message box and pick from your gallery.\n"
+                    "I will continue automatically once I see them, or tap **Continue** below."
+                ),
                 "components": vid.build_upload_components(job_id)}}
         if vid.is_vid_src_shots_continue(custom_id):
             try:
@@ -1086,7 +1093,10 @@ class DiscordCommandHandler:
                 # Style/voice/output-mode now live behind the optional Style & voice
                 # button at the Generate step, so nothing else is posted up-front.
                 await self.discord.post_channel_message(
-                    target, "Let's make a video. How do you want to start?",
+                    target,
+                    "Let's make a video. How do you want to start?\n"
+                    "- **From a website**: paste a link and I screenshot the pages for you.\n"
+                    "- **From my screenshots**: you upload your own images in this thread.",
                     components=vid.build_source_components(job_id),
                 )
         except Exception as exc:  # noqa: BLE001
