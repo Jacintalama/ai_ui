@@ -415,11 +415,11 @@ class SlackInteractionsHandler:
                     res = await self.router._tasks_client.list_videos(email)
                     jobs = (res.get("videos", [])
                             if isinstance(res, dict) else (res or []))
-                    if channel_id:
-                        await self.slack.post_message(
-                            channel_id, "Your videos",
-                            blocks=svp.build_list_blocks(jobs),
-                        )
+                    await self._video_dm(
+                        user_id, channel_id,
+                        text="Your videos",
+                        blocks=svp.build_list_blocks(jobs),
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Slack video list failed user=%s: %s", user_id, exc)
@@ -439,11 +439,12 @@ class SlackInteractionsHandler:
                     if not email:
                         return
                     await self.router._tasks_client.apply_video(email, job_id)
-                    await self._watch_slack_video(email, job_id, channel_id)
+                    await self._watch_slack_video(
+                        email, job_id, user_id, channel_id)
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Slack video apply failed job=%s: %s", job_id, exc)
-                    await self._post_video_error(channel_id, str(exc))
+                    await self._post_video_error(user_id, channel_id, str(exc))
 
             task = asyncio.create_task(_do_vid_apply())
             self.router._background_tasks.add(task)
@@ -1091,9 +1092,10 @@ class SlackInteractionsHandler:
                         return
                     result = await self.router._tasks_client.refine_video(
                         email, job_id, change)
-                    if result.get("can_apply") and channel:
-                        await self.slack.post_message(
-                            channel, "Here's the proposed change:",
+                    if result.get("can_apply"):
+                        await self._video_dm(
+                            user_id, channel,
+                            text="Here's the proposed change:",
                             blocks=svp.build_proposal_blocks(job_id),
                         )
                 except Exception as exc:  # noqa: BLE001
@@ -1112,24 +1114,42 @@ class SlackInteractionsHandler:
     # Video studio: runner + poll/deliver
     # ------------------------------------------------------------------
 
-    async def _post_video_error(self, channel: str, reason: str) -> None:
-        """Post a clean (never raw-traceback) error to the channel."""
-        if not channel:
-            return
+    async def _video_dm(
+        self,
+        user_id: str,
+        origin_channel: str,
+        *,
+        text: str = "",
+        blocks=None,
+    ) -> None:
+        """Deliver a video message privately: DM the user; fall back to an
+        ephemeral message in the origin channel if the DM cannot be opened."""
+        dm = await self.slack.open_dm(user_id)
+        if dm:
+            await self.slack.post_message(
+                channel=dm, text=text or " ", blocks=blocks)
+        elif origin_channel:
+            await self.slack.post_ephemeral(
+                origin_channel, user_id, text or " ", blocks=blocks)
+
+    async def _post_video_error(
+        self, user_id: str, origin_channel: str, reason: str
+    ) -> None:
+        """Deliver a clean (never raw-traceback) video error privately to the user."""
         reason = (reason or "").strip()
         msg = "Couldn't make the video"
         if reason:
             msg += f": {reason[:300]}"
         try:
-            await self.slack.post_message(channel, msg)
+            await self._video_dm(user_id, origin_channel, text=msg)
         except Exception as exc:  # noqa: BLE001
             logger.error(
-                "Slack video error-post failed channel=%s: %s", channel, exc)
+                "Slack video error-post failed user=%s: %s", user_id, exc)
 
     async def _watch_slack_video(
-        self, email: str, job_id: str, channel: str
+        self, email: str, job_id: str, user_id: str, origin_channel: str
     ) -> None:
-        """Poll a video job until it terminates, then post the result blocks.
+        """Poll a video job until it terminates, then deliver the result privately.
         Slack-specific (does NOT reuse the Discord-coupled _watch_video)."""
         tasks = self.router._tasks_client
         errors = 0
@@ -1144,34 +1164,35 @@ class SlackInteractionsHandler:
                     "Slack watch_video status error job=%s: %s", job_id, exc)
                 if errors >= SLACK_VIDEO_MAX_ERRORS:
                     await self._post_video_error(
-                        channel, "lost track of the render. Check My videos.")
+                        user_id, origin_channel,
+                        "lost track of the render. Check My videos.")
                     return
                 continue
             status = st.get("status")
             if status == "done":
                 share_url = st.get("share_url") or ""
                 title = st.get("title") or "your video"
-                if channel:
-                    await self.slack.post_message(
-                        channel, f"Your video is ready: {title}",
-                        blocks=svp.build_result_blocks(
-                            job_id, title, share_url),
-                    )
+                await self._video_dm(
+                    user_id, origin_channel,
+                    text=f"Your video is ready: {title}",
+                    blocks=svp.build_result_blocks(job_id, title, share_url),
+                )
                 return
             if status == "failed":
                 err = (st.get("error") or "").strip()
-                await self._post_video_error(channel, err or "the render failed.")
+                await self._post_video_error(
+                    user_id, origin_channel, err or "the render failed.")
                 return
-        if channel:
-            await self.slack.post_message(
-                channel, "Still rendering. Check My videos shortly.")
+        await self._video_dm(
+            user_id, origin_channel,
+            text="Still rendering. Check My videos shortly.")
 
     async def _run_slack_video(
         self, user_id: str, fields: dict[str, Any]
     ) -> None:
         """Create draft -> set mode -> capture -> queue -> watch -> deliver.
         Runs as a background task; never leaks a traceback to Slack."""
-        channel = fields.get("channel_id") or ""
+        origin_channel = fields.get("channel_id") or ""
         try:
             email = await self._bail_if_not_linked(user_id)
             if not email:
@@ -1186,21 +1207,22 @@ class SlackInteractionsHandler:
             )
             job_id = str(draft.get("id") or "")
             if not job_id:
-                await self._post_video_error(channel, "couldn't start the render.")
+                await self._post_video_error(
+                    user_id, origin_channel, "couldn't start the render.")
                 return
             await tasks.set_video_draft_fields(
                 email, job_id, render_mode=fields.get("mode") or svp.DEFAULT_MODE)
             url = fields.get("url") or ""
             host = urlsplit(url).netloc or "the site"
-            if channel:
-                await self.slack.post_message(
-                    channel, f"Working on it: capturing {host}...")
+            await self._video_dm(
+                user_id, origin_channel,
+                text=f"Working on it: capturing {host}...")
             await tasks.capture_video_screenshots(email, job_id, url)
             await tasks.queue_video(email, job_id)
-            await self._watch_slack_video(email, job_id, channel)
+            await self._watch_slack_video(email, job_id, user_id, origin_channel)
         except Exception as exc:  # noqa: BLE001
             logger.error("Slack video run failed user=%s: %s", user_id, exc)
-            await self._post_video_error(channel, str(exc))
+            await self._post_video_error(user_id, origin_channel, str(exc))
 
     @staticmethod
     def _sched_value(view: dict[str, Any], block_id: str, input_id: str) -> str:
