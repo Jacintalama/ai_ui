@@ -386,7 +386,7 @@ class SlackInteractionsHandler:
 
         # ----- Video studio panel (slackvid_*) -----
         if svp.is_vid_new(action_id):
-            # Open the create modal SYNCHRONOUSLY with no preceding I/O — the
+            # Open the create modal SYNCHRONOUSLY with no preceding I/O. The
             # trigger_id expires ~3s after the interaction, so any awaited
             # tasks/email call before open_modal risks the modal failing.
             await self.slack.open_modal(
@@ -1144,7 +1144,7 @@ class SlackInteractionsHandler:
                     "Slack watch_video status error job=%s: %s", job_id, exc)
                 if errors >= SLACK_VIDEO_MAX_ERRORS:
                     await self._post_video_error(
-                        channel, "lost track of the render — check My videos.")
+                        channel, "lost track of the render. Check My videos.")
                     return
                 continue
             status = st.get("status")
@@ -1164,7 +1164,7 @@ class SlackInteractionsHandler:
                 return
         if channel:
             await self.slack.post_message(
-                channel, "Still rendering — check My videos shortly.")
+                channel, "Still rendering. Check My videos shortly.")
 
     async def _run_slack_video(
         self, user_id: str, fields: dict[str, Any]
