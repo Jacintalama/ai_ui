@@ -110,7 +110,7 @@ async def test_draft_set_updates_style_and_voice(db_session, tmp_path, monkeypat
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(
             f"/api/video-jobs/{job_id}/draft-set",
-            json={"style": "cinematic", "voice": "ryan"},
+            json={"style": "cinematic", "voice": "ryan", "render_mode": "animated"},
             headers=HEAD,
         )
     assert r.status_code == 200
@@ -119,13 +119,15 @@ async def test_draft_set_updates_style_and_voice(db_session, tmp_path, monkeypat
     assert body["style"] == "cinematic"
     assert body["voice"] == "ryan"
 
-    # Verify the update is visible via current-draft.
+    # Verify the update is visible via current-draft (incl. render_mode so the
+    # Discord wizard's Style & voice card can pre-select the output mode).
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get("/api/video-jobs/current-draft", headers=HEAD)
     assert r.status_code == 200
     body = r.json()
     assert body["style"] == "cinematic"
     assert body["voice"] == "ryan"
+    assert body["render_mode"] == "animated"
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
