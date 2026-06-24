@@ -16,6 +16,7 @@ from handlers import video_panel as vid
 MODAL = 9
 DEFERRED_CHANNEL_MESSAGE = 5
 DEFERRED_UPDATE_MESSAGE = 6
+UPDATE_MESSAGE = 7
 
 
 def _router():
@@ -286,6 +287,97 @@ async def test_capture_modal_submit_dispatches_capture():
     router.run_video_capture.assert_awaited_once()
     ctx, url = router.run_video_capture.await_args.args
     assert url == "https://s.com"
+
+
+@pytest.mark.asyncio
+async def test_src_url_opens_capture_modal():
+    """Step 1 'From a website' opens the existing capture modal."""
+    handler = _handler(_router())
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "c",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": f"{vid.SRC_URL_PREFIX}j1"}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == MODAL
+    assert resp["data"]["custom_id"] == f"{vid.CAPTURE_MODAL_PREFIX}j1"
+
+
+@pytest.mark.asyncio
+async def test_src_shots_edits_to_upload_card():
+    """Step 1 'From my screenshots' edits the card in place to the Upload step."""
+    handler = _handler(_router())
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "c",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": f"{vid.SRC_SHOTS_PREFIX}j1"}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == UPDATE_MESSAGE
+    ids = [c.get("custom_id") for row in resp["data"]["components"]
+           for c in row["components"]]
+    assert f"{vid.SRC_SHOTS_CONTINUE_PREFIX}j1" in ids
+
+
+@pytest.mark.asyncio
+async def test_src_shots_continue_acks_update_and_posts_describe():
+    """The upload Continue button strips its card (UPDATE_MESSAGE) and spawns a
+    Describe-step post into the thread."""
+    handler = _handler(_router())
+    handler.discord.post_channel_message = AsyncMock(return_value=True)
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "thread-1",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": f"{vid.SRC_SHOTS_CONTINUE_PREFIX}j1"}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == UPDATE_MESSAGE
+    assert resp["data"]["components"] == []
+    await _drain()
+    handler.discord.post_channel_message.assert_awaited_once()
+    assert handler.discord.post_channel_message.await_args.args[0] == "thread-1"
+    ids = [c.get("custom_id") for row in
+           handler.discord.post_channel_message.await_args.kwargs["components"]
+           for c in row["components"]]
+    assert f"{vid.DETAILS_PREFIX}j1" in ids
+
+
+@pytest.mark.asyncio
+async def test_options_acks_deferred_and_edits_options_card():
+    """Style & voice acks DEFERRED_UPDATE_MESSAGE (it must hit the network first),
+    then edits the message in place with the options card."""
+    router = _router()
+    router._resolve_email = AsyncMock(return_value="u@x.com")
+    tc = MagicMock()
+    tc.get_video = AsyncMock(return_value={
+        "style": "cinematic", "voice": "amy", "render_mode": "slideshow"})
+    tc.get_video_voices = AsyncMock(return_value={"voices": []})
+    router._tasks_client = tc
+    handler = _handler(router)
+    handler.discord.edit_original = AsyncMock(return_value=True)
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "c",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": f"{vid.OPTIONS_PREFIX}j1"}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == DEFERRED_UPDATE_MESSAGE
+    await _drain()
+    tc.get_video.assert_awaited_once_with("u@x.com", "j1")
+    tc.get_video_voices.assert_awaited_once()
+    handler.discord.edit_original.assert_awaited_once()
+    ids = [c.get("custom_id") for row in
+           handler.discord.edit_original.await_args.kwargs["components"]
+           for c in row["components"]]
+    assert f"{vid.STYLE_PREFIX}j1" in ids
+    assert f"{vid.OPTIONS_BACK_PREFIX}j1" in ids
+
+
+@pytest.mark.asyncio
+async def test_options_back_edits_to_generate_step():
+    """Back returns to the Generate step card in place."""
+    handler = _handler(_router())
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "c",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": f"{vid.OPTIONS_BACK_PREFIX}j1"}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == UPDATE_MESSAGE
+    ids = [c.get("custom_id") for row in resp["data"]["components"]
+           for c in row["components"]]
+    assert f"{vid.GENERATE_PREFIX}j1" in ids
+    assert f"{vid.OPTIONS_PREFIX}j1" in ids
 
 
 @pytest.mark.asyncio

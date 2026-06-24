@@ -3,7 +3,7 @@ import pytest
 from handlers.video_panel import (
     # builders
     build_video_panel, build_details_modal, build_refine_modal,
-    build_style_select, build_voice_select, build_studio_components,
+    build_style_select, build_voice_select,
     build_generate_row, build_done_components, build_proposal_components,
     build_video_embed,
     # constants
@@ -307,23 +307,6 @@ def test_proposal_components_has_apply_button():
     buttons = [c for row in rows for c in row["components"] if c.get("type") == BUTTON]
     assert len(buttons) == 1
     assert buttons[0]["custom_id"] == f"{APPLY_PREFIX}job-p1"
-
-
-# ---------------------------------------------------------------------------
-# build_studio_components
-# ---------------------------------------------------------------------------
-
-def test_studio_components_has_style_voice_mode_capture_generate_rows():
-    from handlers import video_panel as vp
-    rows = build_studio_components("job-s1", _VOICES)
-    assert len(rows) == 5
-    ids = [c.get("custom_id") for row in rows for c in row["components"]]
-    assert f"{STYLE_PREFIX}job-s1" in ids
-    assert f"{VOICE_PREFIX}job-s1" in ids
-    assert f"{vp.MODE_PREFIX}job-s1" in ids        # output-mode select (slideshow|animated)
-    assert f"{vp.CAPTURE_PREFIX}job-s1" in ids
-    assert f"{GENERATE_PREFIX}job-s1" in ids
-    assert f"{DETAILS_PREFIX}job-s1" in ids
 
 
 def test_mode_select_options_and_predicates():

@@ -37,9 +37,13 @@ async def test_open_video_studio_with_screenshots_creates_draft_and_adds_urls():
         "u@x.com", "job1", ["http://cdn/1.png", "http://cdn/2.png"])
     discord.post_channel_message.assert_awaited_once()
     content = discord.post_channel_message.await_args.args[1]
-    # New copy: "Screenshots added: 2/12. ..." then the remaining numbered steps.
+    # Pre-attached screenshots skip the source step and go straight to Describe.
     assert "2/12" in content
-    assert "add a description" in content.lower()
+    assert "description" in content.lower()
+    components = discord.post_channel_message.await_args.kwargs["components"]
+    ids = [c.get("custom_id") for row in components for c in row["components"]]
+    from handlers import video_panel as vp
+    assert f"{vp.DETAILS_PREFIX}job1" in ids  # Describe-step button
 
 
 @pytest.mark.asyncio
@@ -50,10 +54,13 @@ async def test_open_video_studio_without_screenshots_skips_add():
         title="My Demo", prompt="desc", screenshot_urls=None)
     router._tasks_client.add_video_screenshots_urls.assert_not_called()
     content = discord.post_channel_message.await_args.args[1].lower()
-    # The empty-draft prompt surfaces both intake paths: paste a URL (auto) or
-    # drag screenshots in (fallback).
-    assert "paste your site" in content
-    assert "screenshots" in content
+    # The empty-draft entry posts the wizard Step 1 source-choice card.
+    assert "how do you want to start" in content
+    components = discord.post_channel_message.await_args.kwargs["components"]
+    ids = [c.get("custom_id") for row in components for c in row["components"]]
+    from handlers import video_panel as vp
+    assert f"{vp.SRC_URL_PREFIX}job1" in ids
+    assert f"{vp.SRC_SHOTS_PREFIX}job1" in ids
 
 
 @pytest.mark.asyncio

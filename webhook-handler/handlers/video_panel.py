@@ -162,19 +162,6 @@ def build_mode_select(job_id: str, current: str = "slideshow") -> dict:
             "options": options}
 
 
-def build_studio_components(job_id: str, voices: list[dict]) -> list[dict]:
-    return [
-        {"type": ACTION_ROW, "components": [build_style_select(job_id)]},
-        {"type": ACTION_ROW, "components": [build_voice_select(job_id, voices)]},
-        {"type": ACTION_ROW, "components": [build_mode_select(job_id)]},
-        {"type": ACTION_ROW, "components": [
-            _button("Paste your site link", f"{CAPTURE_PREFIX}{job_id}", STYLE_PRIMARY)]},
-        {"type": ACTION_ROW, "components": [
-            _button("Add description", f"{DETAILS_PREFIX}{job_id}", STYLE_SECONDARY),
-            _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS)]},
-    ]
-
-
 def build_generate_row(job_id: str) -> list[dict]:
     return [{"type": ACTION_ROW, "components": [
         _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS)]}]
