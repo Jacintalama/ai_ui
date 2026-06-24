@@ -344,6 +344,7 @@ async def current_draft(user: CurrentUser = Depends(current_user)) -> dict:
         raise HTTPException(404, "No draft in progress")
     return {"id": str(job.id), "slug": job.slug, "title": job.title,
             "style": job.style, "voice": job.voice,
+            "render_mode": job.render_mode,
             "screenshot_count": len(_list_screenshots(job.slug, str(job.id)))}
 
 
