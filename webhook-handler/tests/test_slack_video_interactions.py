@@ -128,6 +128,7 @@ async def test_vid_refine_opens_refine_modal():
 
 @pytest.mark.asyncio
 async def test_vid_list_spawns_and_posts_list():
+    """List delivers via DM when open_dm succeeds."""
     router = _video_router()
     router._tasks_client.list_videos = AsyncMock(
         return_value={"videos": [{"id": "j1", "title": "Demo", "status": "done"}]})
@@ -138,9 +139,31 @@ async def test_vid_list_spawns_and_posts_list():
     await asyncio.sleep(0)
 
     router._tasks_client.list_videos.assert_awaited_once_with("u@x.com")
+    slack.open_dm.assert_awaited()
     slack.post_message.assert_awaited()
-    args, kwargs = slack.post_message.call_args
+    _, kwargs = slack.post_message.call_args
+    assert kwargs.get("channel") == "D9"
     assert kwargs.get("blocks")
+
+
+@pytest.mark.asyncio
+async def test_vid_list_ephemeral_fallback_when_dm_fails():
+    """List falls back to ephemeral in origin channel when open_dm returns None."""
+    router = _video_router()
+    router._tasks_client.list_videos = AsyncMock(
+        return_value={"videos": []})
+    handler, slack = _handler(router)
+    slack.open_dm = AsyncMock(return_value=None)
+
+    resp = await handler.handle_interaction(
+        _block_actions_payload(svp.LIST_ID, channel="C-vid"))
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    slack.post_message.assert_not_awaited()
+    slack.post_ephemeral.assert_awaited_once()
+    args, _ = slack.post_ephemeral.call_args
+    assert "C-vid" in args
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +232,7 @@ def _fields(url="https://example.com", channel="C-vid"):
 
 @pytest.mark.asyncio
 async def test_run_slack_video_happy_path_posts_result_blocks():
+    """Happy path: result blocks delivered to the user's DM."""
     router = _video_router()
     handler, slack = _handler(router)
 
@@ -219,17 +243,40 @@ async def test_run_slack_video_happy_path_posts_result_blocks():
     router._tasks_client.capture_video_screenshots.assert_awaited_once()
     router._tasks_client.queue_video.assert_awaited_once()
 
-    # A posted message carries the result blocks with the share_url link.
+    # open_dm must have been called (DM delivery path).
+    slack.open_dm.assert_awaited()
+
+    # A DM message carries the result blocks with the share_url link.
     found = False
     for call in slack.post_message.call_args_list:
+        if call.kwargs.get("channel") != "D9":
+            continue
         blocks = call.kwargs.get("blocks")
         if blocks and "http://x/v" in json.dumps(blocks):
             found = True
-    assert found, "expected a result message containing the share_url"
+    assert found, "expected a DM result message with the share_url"
+
+
+@pytest.mark.asyncio
+async def test_run_slack_video_result_ephemeral_fallback():
+    """When open_dm fails, result is delivered via ephemeral in origin channel."""
+    router = _video_router()
+    handler, slack = _handler(router)
+    slack.open_dm = AsyncMock(return_value=None)
+
+    with patch("handlers.slack_interactions.asyncio.sleep", new=AsyncMock()):
+        await handler._run_slack_video("U1", _fields(channel="C-vid"))
+
+    slack.post_message.assert_not_awaited()
+    slack.post_ephemeral.assert_awaited()
+    # At least one ephemeral should target the origin channel.
+    channels = [c.args[0] for c in slack.post_ephemeral.call_args_list]
+    assert "C-vid" in channels
 
 
 @pytest.mark.asyncio
 async def test_run_slack_video_failed_path_posts_clean_error():
+    """Failed render: clean error delivered privately (DM), no traceback."""
     router = _video_router()
     router._tasks_client.get_video = AsyncMock(
         return_value={"status": "failed", "error": "boom"})
@@ -238,15 +285,20 @@ async def test_run_slack_video_failed_path_posts_clean_error():
     with patch("handlers.slack_interactions.asyncio.sleep", new=AsyncMock()):
         await handler._run_slack_video("U1", _fields())
 
-    slack.post_message.assert_awaited()
-    blob = json.dumps([c.args for c in slack.post_message.call_args_list]) \
-        + json.dumps([c.kwargs for c in slack.post_message.call_args_list])
-    assert "Traceback" not in blob
-    assert "boom" in blob
+    # All user-facing delivery goes through open_dm + post_message to DM.
+    slack.open_dm.assert_awaited()
+    dm_texts = " ".join(
+        c.kwargs.get("text", "") or ""
+        for c in slack.post_message.call_args_list
+        if c.kwargs.get("channel") == "D9"
+    )
+    assert "Traceback" not in dm_texts
+    assert "boom" in dm_texts
 
 
 @pytest.mark.asyncio
 async def test_run_slack_video_exception_posts_clean_error():
+    """Unhandled exception: clean error delivered privately (DM), no traceback."""
     router = _video_router()
     router._tasks_client.create_video_draft = AsyncMock(
         side_effect=RuntimeError("kaboom"))
@@ -255,10 +307,33 @@ async def test_run_slack_video_exception_posts_clean_error():
     with patch("handlers.slack_interactions.asyncio.sleep", new=AsyncMock()):
         await handler._run_slack_video("U1", _fields())
 
-    slack.post_message.assert_awaited()
-    blob = json.dumps([c.args for c in slack.post_message.call_args_list])
-    assert "Traceback" not in blob
-    assert "Couldn't make the video" in blob
+    # Error goes through _video_dm -> open_dm + post_message to DM.
+    slack.open_dm.assert_awaited()
+    dm_texts = " ".join(
+        c.kwargs.get("text", "") or ""
+        for c in slack.post_message.call_args_list
+        if c.kwargs.get("channel") == "D9"
+    )
+    assert "Traceback" not in dm_texts
+    assert "Couldn't make the video" in dm_texts
+
+
+@pytest.mark.asyncio
+async def test_run_slack_video_error_ephemeral_fallback():
+    """When open_dm fails for error path, error is delivered via post_ephemeral."""
+    router = _video_router()
+    router._tasks_client.create_video_draft = AsyncMock(
+        side_effect=RuntimeError("kaboom"))
+    handler, slack = _handler(router)
+    slack.open_dm = AsyncMock(return_value=None)
+
+    with patch("handlers.slack_interactions.asyncio.sleep", new=AsyncMock()):
+        await handler._run_slack_video("U1", _fields(channel="C-vid"))
+
+    slack.post_message.assert_not_awaited()
+    slack.post_ephemeral.assert_awaited()
+    args, _ = slack.post_ephemeral.call_args
+    assert "C-vid" in args
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +342,7 @@ async def test_run_slack_video_exception_posts_clean_error():
 
 @pytest.mark.asyncio
 async def test_refine_callback_posts_proposal_when_can_apply():
+    """Refine proposal delivered via DM when open_dm succeeds."""
     router = _video_router()
     handler, slack = _handler(router)
 
@@ -277,10 +353,11 @@ async def test_refine_callback_posts_proposal_when_can_apply():
 
     router._tasks_client.refine_video.assert_awaited_once_with(
         "u@x.com", "j7", "make it shorter")
+    slack.open_dm.assert_awaited()
     slack.post_message.assert_awaited()
-    args, kwargs = slack.post_message.call_args
+    _, kwargs = slack.post_message.call_args
     assert kwargs.get("blocks")
-    assert "C-vid" in (args[0] if args else kwargs.get("channel", ""))
+    assert kwargs.get("channel") == "D9"
 
 
 # ---------------------------------------------------------------------------
