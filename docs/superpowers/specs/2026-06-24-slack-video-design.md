@@ -47,7 +47,8 @@ short prefix consistent with other slack panels). No I/O.
 - `build_video_panel()` -> the channel panel blocks: a header + a
   `New video from a website` button (action_id e.g. `slackvid_new`) and a
   `My videos` button (`slackvid_list`).
-- `build_video_modal()` -> the `view` for views.open: a modal with
+- `build_video_modal(channel_id)` -> the `view` for views.open (sets
+  `private_metadata=channel_id` so view_submission knows where to post): a modal with
   - URL (plain_text_input, required, block_id `url`)
   - Description (plain_text_input multiline, required, block_id `prompt`)
   - Title (plain_text_input, optional, block_id `title`)
@@ -83,19 +84,34 @@ short prefix consistent with other slack panels). No I/O.
 
 ### Slack runner + deliver (slack_interactions.py or a small helper)
 `_run_slack_video(user_id, channel_id, fields)`:
-1. Resolve the user's email (existing Slack->email mapping used by other flows).
-2. `create_video_draft(email, title, prompt, style, voice)` (tasks-client; add
-   render_mode if the client method supports it, else draft-set it).
-3. If style/voice/mode need setting beyond create, call `set_video_draft_fields`.
+1. Resolve the user's email via `self._bail_if_not_linked(user_id)`
+   (slack_interactions.py:596) - this returns the email AND DMs the user if not
+   linked. There is NO Slack->email map (DISCORD_USER_EMAIL_MAP is Discord-only);
+   email is resolved live via get_user_email (needs users:read.email scope).
+2. `draft = create_video_draft(email, title, prompt, style, voice)`; then
+   `job_id = draft["id"]`. (create_video_draft does NOT take render_mode.)
+3. Set the output mode (and any fields beyond create) via
+   `set_video_draft_fields(email, job_id, render_mode=mode)` (tasks.py:268).
 4. Post "Working on it: capturing {host}..." to the channel.
 5. `capture_video_screenshots(email, job_id, url)`.
 6. `queue_video(email, job_id)`.
-7. Poll `get_video(email, job_id)` until done/failed (a Slack version of the
-   Discord `_watch_video` loop). On done, post `build_result_blocks(job,
+7. Poll `get_video(email, job_id)` until status done/failed (a Slack-specific
+   loop; do NOT reuse the Discord-coupled `_watch_video`/`_deliver_video`, which
+   branch on self._discord and post Discord components). On done, read
+   `share_url = job.get("share_url")` and post `build_result_blocks(job,
    share_url)` to the channel; on failed, post a clean error.
 All tasks-client methods already exist (used by Discord). Reuse them; do not
-duplicate. The only Slack-specific code is the posting/formatting + the poll
-loop's delivery target (slack.post_message instead of Discord).
+duplicate. The only Slack-specific code is the posting/formatting + the poll loop.
+
+CHANNEL ID for view_submission: a view_submission payload has NO `channel`. The
+originating channel id MUST be stashed in the modal's `private_metadata` at
+open time (build path does this at slack_interactions.py:679) and read back in
+`_run_slack_video`. So `build_video_modal(channel_id)` sets
+`private_metadata=channel_id`.
+
+BACKGROUND TASKS: every spawned task must be registered like the ~15 existing
+ones: `t = asyncio.create_task(...); self.router._background_tasks.add(t);
+t.add_done_callback(self.router._background_tasks.discard)`. Do not fire-and-forget.
 
 ### Setup: webhook-handler/scripts/setup_slack_video_channel.py
 Posts `build_video_panel()` into `#video-generation` via chat.postMessage. Takes
@@ -135,6 +151,8 @@ of the channel (it is: AIUI-Automation joined).
   Use the working key `~/.ssh/aiui_vps`.
 - After deploy, run the setup script (or a one-off chat.postMessage) to post the
   panel into `#video-generation` (C0BCRE20JNR). Verify the bot is in the channel.
+- Verify the Slack app has the `users:read.email` scope (needed for live email
+  resolution); the schedule/builder Slack flows already rely on it.
 - Verify end to end: click New video, submit a URL, confirm the video link posts.
 
 ## Open questions for the user
