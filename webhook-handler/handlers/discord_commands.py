@@ -956,8 +956,12 @@ class DiscordCommandHandler:
             email = await self.router._resolve_email(user.get("id", ""))
             if email is None:
                 return
-            draft = await self.router._tasks_client.get_video(email, job_id)
+            # Use current-draft to read style/voice (GET /api/video-jobs/{job_id}
+            # does not return style, voice, or render_mode fields).
+            draft = await self.router._tasks_client.get_current_video_draft(email) or {}
             voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
+            # render_mode is not returned by the current-draft endpoint;
+            # defaults to "slideshow" until the backend exposes it.
             await self.discord.edit_original(
                 interaction_token=interaction_token,
                 content="Style and voice (optional). Pick, then Generate or go Back.",
@@ -965,10 +969,16 @@ class DiscordCommandHandler:
                     job_id, voices,
                     current_style=draft.get("style", "clean_product_demo"),
                     current_voice=draft.get("voice", "amy"),
-                    current_mode=draft.get("render_mode", "slideshow")),
+                    current_mode="slideshow"),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("video options open failed job=%s: %s", job_id, exc)
+            try:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't load Style & voice, please try again.")
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _handle_video_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         """`/video new` (one-shot: describe + attach screenshots), `/video add`

@@ -2374,6 +2374,9 @@ class CommandRouter:
         msg = f"Added - {count}/12 screenshots. Next: add a description, then click **Generate video**."
         if prior_count == 0 and ctx.respond_components is not None:
             # First add: advance wizard to the Describe step.
+            # NOTE: benign TOCTOU - dropping images across multiple separate messages in
+            # quick succession can each read screenshot_count==0 and post Describe more
+            # than once; acceptable for auto-advance.
             from handlers.video_panel import build_describe_components
             await ctx.respond_components(msg, build_describe_components(draft["id"]))
         else:
@@ -2442,11 +2445,10 @@ class CommandRouter:
             await ctx.respond(f"Couldn't save: {e.message}")
             return
         confirm = "Description saved. Click Generate video when you're ready."
+        await ctx.respond(confirm)  # resolve the deferred ephemeral spinner
         if ctx.respond_components is not None:
             from handlers.video_panel import build_generate_step_components
-            await ctx.respond_components(confirm, build_generate_step_components(job_id))
-        else:
-            await ctx.respond(confirm)
+            await ctx.respond_components("", build_generate_step_components(job_id))
 
     async def run_video_generate(self, ctx: CommandContext, job_id: str) -> None:
         """Generate button: queue the draft + spawn the watcher."""

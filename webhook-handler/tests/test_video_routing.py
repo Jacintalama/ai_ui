@@ -343,8 +343,8 @@ async def test_options_acks_deferred_and_edits_options_card():
     router = _router()
     router._resolve_email = AsyncMock(return_value="u@x.com")
     tc = MagicMock()
-    tc.get_video = AsyncMock(return_value={
-        "style": "cinematic", "voice": "amy", "render_mode": "slideshow"})
+    tc.get_current_video_draft = AsyncMock(return_value={
+        "style": "cinematic", "voice": "amy"})
     tc.get_video_voices = AsyncMock(return_value={"voices": []})
     router._tasks_client = tc
     handler = _handler(router)
@@ -355,7 +355,7 @@ async def test_options_acks_deferred_and_edits_options_card():
     resp = await handler.handle_interaction(payload)
     assert resp["type"] == DEFERRED_UPDATE_MESSAGE
     await _drain()
-    tc.get_video.assert_awaited_once_with("u@x.com", "j1")
+    tc.get_current_video_draft.assert_awaited_once_with("u@x.com")
     tc.get_video_voices.assert_awaited_once()
     handler.discord.edit_original.assert_awaited_once()
     ids = [c.get("custom_id") for row in

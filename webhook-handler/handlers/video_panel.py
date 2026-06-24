@@ -162,11 +162,6 @@ def build_mode_select(job_id: str, current: str = "slideshow") -> dict:
             "options": options}
 
 
-def build_generate_row(job_id: str) -> list[dict]:
-    return [{"type": ACTION_ROW, "components": [
-        _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS)]}]
-
-
 def build_source_components(job_id: str) -> list[dict]:
     return [{"type": ACTION_ROW, "components": [
         _button("From a website", f"{SRC_URL_PREFIX}{job_id}", STYLE_PRIMARY),

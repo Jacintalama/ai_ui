@@ -113,6 +113,8 @@ async def test_run_video_set_details_patches_and_posts_generate_step():
     ctx = _ctx(respond_components=rc)
     await r.run_video_set_details(ctx, "job1", title="T", prompt="P")
     tc.set_video_draft_fields.assert_awaited_once_with("u@x.com", "job1", title="T", prompt="P")
+    # Spinner must always be resolved first (regression guard: never skip ctx.respond)
+    ctx.respond.assert_awaited()
     # Should post Generate step components
     rc.assert_awaited_once()
     msg, components = rc.await_args.args

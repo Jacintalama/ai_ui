@@ -4,7 +4,7 @@ from handlers.video_panel import (
     # builders
     build_video_panel, build_details_modal, build_refine_modal,
     build_style_select, build_voice_select,
-    build_generate_row, build_done_components, build_proposal_components,
+    build_done_components, build_proposal_components,
     build_video_embed,
     # constants
     NEW_ID, LIST_ID,
@@ -333,18 +333,6 @@ def test_capture_predicates_and_extractors():
     assert not vp.is_vid_capture("aiuivid:capturemodal:abc")  # prefix disjoint
     assert vp.job_from_capture("aiuivid:capture:abc") == "abc"
     assert vp.job_from_capture_modal("aiuivid:capturemodal:abc") == "abc"
-
-
-# ---------------------------------------------------------------------------
-# build_generate_row
-# ---------------------------------------------------------------------------
-
-def test_generate_row_has_generate_button():
-    rows = build_generate_row("job-g1")
-    assert len(rows) == 1
-    buttons = [c for row in rows for c in row["components"] if c.get("type") == BUTTON]
-    assert len(buttons) == 1
-    assert buttons[0]["custom_id"] == f"{GENERATE_PREFIX}job-g1"
 
 
 # ---------------------------------------------------------------------------
