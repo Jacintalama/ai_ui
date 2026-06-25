@@ -440,12 +440,16 @@ async def delete_video_job(
             raise HTTPException(status_code=404, detail="Video job not found")
         if not user.is_admin and job.user_email != user.email:
             raise HTTPException(403, "Not authorized for this video")
+        if job.status in ("scripting", "rendering"):
+            raise HTTPException(409, "Cannot delete a video while it is rendering")
         slug = job.slug
         try:
             await s.delete(job)
             await s.commit()
-            shutil.rmtree(
-                _apps_dir() / slug / ".video" / str(jid), ignore_errors=True)
+            await asyncio.to_thread(
+                shutil.rmtree,
+                _apps_dir() / slug / ".video" / str(jid),
+                ignore_errors=True)
         except Exception:  # noqa: BLE001 - surface a clean 500, not a stack trace
             logger.exception("failed to delete video job=%s", jid)
             raise HTTPException(500, "could not delete that video")

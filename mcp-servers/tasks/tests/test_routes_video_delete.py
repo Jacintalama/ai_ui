@@ -82,6 +82,20 @@ async def test_delete_admin_can_delete_any(db_session, tmp_path, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.delete(f"/api/video-jobs/{job_id}", headers=ADMIN)
     assert r.status_code == 200
+    assert await db_session.get(VideoJob, job_id) is None
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_delete_blocked_while_rendering(db_session, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+    job_id = uuid.uuid4()
+    db_session.add(VideoJob(id=job_id, slug="alpha", user_email="owner@x.com",
+                            prompt="p", status="rendering"))
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.delete(f"/api/video-jobs/{job_id}", headers=OWNER)
+    assert r.status_code == 409
+    assert await db_session.get(VideoJob, job_id) is not None  # untouched
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
