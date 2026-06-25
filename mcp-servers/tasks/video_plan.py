@@ -9,6 +9,7 @@ import logging
 import os
 
 import anthropic
+from video_vision import build_vision_content
 
 logger = logging.getLogger("video_plan")
 
@@ -218,27 +219,41 @@ def _fallback_plan(prompt: str, screenshots: list[str]) -> dict:
     }
 
 
-async def generate_plan(prompt: str, screenshots: list[str], *, attempts: int = 3) -> dict:
+async def generate_plan(
+    prompt: str,
+    screenshots: list[str],
+    *,
+    site_context: dict | None = None,
+    screenshot_paths: list[tuple[str, str]] | None = None,
+    attempts: int = 3,
+) -> dict:
     """Generate a slideshow plan from the prompt + screenshots, resiliently.
 
     The model occasionally returns a schema-valid-but-empty plan (no scenes) or a
     transient API error; a single bad response must not fail the whole video. So
     we retry up to `attempts` times and, if every attempt fails, fall back to a
-    deterministic one-scene-per-screenshot plan (when screenshots exist)."""
+    deterministic one-scene-per-screenshot plan (when screenshots exist).
+    When screenshot_paths are provided, sends images as vision content for richer context."""
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     sys = build_plan_system_prompt()
+    use_vision = bool(screenshot_paths)
+    if use_vision:
+        content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+    else:
+        content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
     last_err: Exception | None = None
     for i in range(max(1, attempts)):
         try:
-            msg = client.messages.create(
+            kwargs: dict = dict(
                 model="claude-opus-4-8",
-                max_tokens=2048,
+                max_tokens=4096 if use_vision else 2048,
                 system=sys,
                 output_config={"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
-                messages=[
-                    {"role": "user", "content": f"Prompt: {prompt}\nScreenshots: {screenshots}"}
-                ],
+                messages=[{"role": "user", "content": content}],
             )
+            if use_vision:
+                kwargs["thinking"] = {"type": "adaptive"}
+            msg = client.messages.create(**kwargs)
             text = next(b.text for b in msg.content if b.type == "text")
             plan = json.loads(text)
             clamp_plan(plan)
@@ -375,20 +390,37 @@ def _anim_fallback_plan(prompt: str, screenshots: list[str]) -> dict:
             "narration_script": clean}
 
 
-async def generate_anim_plan(prompt: str, screenshots: list[str], *, attempts: int = 3) -> dict:
+async def generate_anim_plan(
+    prompt: str,
+    screenshots: list[str],
+    *,
+    site_context: dict | None = None,
+    screenshot_paths: list[tuple[str, str]] | None = None,
+    attempts: int = 3,
+) -> dict:
     """LLM-authored animated plan, resilient (retry + deterministic fallback),
-    mirroring generate_plan. Motion best-practices injected via build_anim_system_prompt."""
+    mirroring generate_plan. Motion best-practices injected via build_anim_system_prompt.
+    When screenshot_paths are provided, sends images as vision content for richer context."""
     client = anthropic.Anthropic()
     sys = build_anim_system_prompt()
+    use_vision = bool(screenshot_paths)
+    if use_vision:
+        content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+    else:
+        content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
     last_err: Exception | None = None
     for i in range(max(1, attempts)):
         try:
-            msg = client.messages.create(
-                model="claude-opus-4-8", max_tokens=2048, system=sys,
+            kwargs: dict = dict(
+                model="claude-opus-4-8",
+                max_tokens=4096 if use_vision else 2048,
+                system=sys,
                 output_config={"format": {"type": "json_schema", "schema": ANIM_PLAN_SCHEMA}},
-                messages=[{"role": "user",
-                           "content": f"Prompt: {prompt}\nScreenshots: {screenshots}"}],
+                messages=[{"role": "user", "content": content}],
             )
+            if use_vision:
+                kwargs["thinking"] = {"type": "adaptive"}
+            msg = client.messages.create(**kwargs)
             text = next(b.text for b in msg.content if b.type == "text")
             plan = json.loads(text)
             # Enforce the scene cap here (schema can't express maxItems).
