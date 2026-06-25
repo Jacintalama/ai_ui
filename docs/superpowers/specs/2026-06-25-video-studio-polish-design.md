@@ -64,10 +64,13 @@ structure and approach.
 - Base image is `python:3.11-slim` (Debian bookworm) with an existing apt-get
   layer (Dockerfile:4-9). EXTEND that same RUN layer with `fonts-inter` (present
   in bookworm; installs family "Inter" so the existing `font-family:Inter`
-  resolves) plus a guaranteed fallback (`fonts-liberation2`) so a font-repo change
-  can't break the build. The fontconfig dpkg trigger runs fc-cache on install
-  (headless Chromium reads via fontconfig); adding `fc-cache -f` to the same RUN
-  is cheap insurance. Verify the package resolves during the build.
+  resolves), a guaranteed fallback (`fonts-liberation2`), AND `fontconfig`. The
+  base slim image has NO fontconfig, so a bare `fc-cache` in that RUN would be
+  "command not found" and break the `&&` chain - install `fontconfig` in the same
+  apt list FIRST, then `fc-cache -f` registers the new fonts (headless Chromium
+  reads via fontconfig). (Playwright's later `install --with-deps chromium` also
+  pulls fontconfig, but installing it explicitly here makes font registration
+  order-independent.) Verify the package names resolve during the build.
 - Use a clear type hierarchy in build_composition: small uppercase EYEBROW/kicker,
   bold HEADLINE (tight tracking), optional subtext.
 
@@ -118,6 +121,12 @@ structure and approach.
   - amix of finite narration + infinite ambient: use amix `duration=longest`
     (or `first`) and rely on `-shortest` against the finite PNG video so output
     stops at video end (the infinite sine never extends it).
+  - The current encode only appends `-shortest`/`-c:a` when audio_path is set
+    (video_anim.py:204-205). Since the bed is now UNCONDITIONAL, restructure that
+    branch so there is ALWAYS an audio stream and ALWAYS `-shortest` (against the
+    finite PNG-sequence video), in both the narration and no-narration paths -
+    otherwise the infinite lavfi sine has nothing finite to bound it and the
+    encode hangs.
 
 ### 6. Wiring site_context into the composition
 - `render_animated_job` loads `site_context.json` from the job dir (same path the
@@ -126,6 +135,15 @@ structure and approach.
   site_context=...)`. The composition uses `site_context.title`/host for the
   address pill + a kicker. New keyword arg with a default so existing callers/tests
   keep working.
+- BLOCKING DATA GAP: `extract_site_context` (video_capture.py:117-121) returns only
+  `{title, headings, meta_description}` - there is NO `host` in the persisted
+  site_context. The host is computed at routes_video.py:801 (`urlparse(body.url)
+  .hostname`) but used only for screenshot filenames, never written into the dict.
+  So the address pill would be permanently empty in prod. FIX: in the capture route,
+  set `site_context["host"] = host` (and optionally the full url) BEFORE the
+  `ctx_path.write_text(json.dumps(site_context))` at routes_video.py:805-806. The
+  composition reads host from there; if absent, omit the pill text (covers
+  screenshot-upload jobs that have no URL).
 
 ### Testing (Part A)
 - Structural (offline, no Chromium/ffmpeg): build_composition output contains the
