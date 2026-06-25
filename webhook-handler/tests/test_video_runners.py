@@ -333,3 +333,40 @@ async def test_run_video_capture_api_error_offers_fallback():
     await r.run_video_capture(ctx, "https://mysite.com")
     msgs = [call.args[0] for call in ctx.respond.await_args_list]
     assert any("drag screenshots" in m.lower() for m in msgs)
+
+
+# --- run_video_gennow ------------------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_run_video_gennow_sets_animated_then_generates():
+    """run_video_gennow forces render_mode=animated then queues the video."""
+    tc = MagicMock()
+    tc.set_video_draft_fields = AsyncMock()
+    tc.queue_video = AsyncMock(return_value={"queue_position": 0})
+    r = _router(tc)
+    ctx = _ctx(notify_channel=None)  # no watcher spawned - keeps test hermetic
+    await r.run_video_gennow(ctx, "job-1")
+    tc.set_video_draft_fields.assert_awaited()
+    assert tc.set_video_draft_fields.await_args.kwargs.get("render_mode") == "animated"
+    tc.queue_video.assert_awaited()
+    # ordering: set_video_draft_fields must be awaited before queue_video
+    names = [c[0] for c in tc.mock_calls]
+    assert names.index("set_video_draft_fields") < names.index("queue_video")
+
+
+@pytest.mark.asyncio
+async def test_run_video_capture_posts_choice_card():
+    """After a successful capture, posts the choice card with Generate-now button."""
+    tc = MagicMock()
+    tc.get_current_video_draft = AsyncMock(return_value={"id": "job9"})
+    tc.capture_video_screenshots = AsyncMock(return_value={"count": 4})
+    r = _router(tc)
+    rc = AsyncMock()
+    ctx = _ctx(respond_components=rc)
+    await r.run_video_capture(ctx, "https://mysite.com")
+    rc.assert_awaited_once()
+    msg, components = rc.await_args.args
+    assert isinstance(components, list) and components
+    all_ids = [c.get("custom_id") for row in components for c in row.get("components", [])]
+    # Choice card must have the Generate-now button (not just the describe/details button)
+    assert any("aiuivid:gennow:job9" == cid for cid in all_ids)

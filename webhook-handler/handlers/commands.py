@@ -2377,8 +2377,8 @@ class CommandRouter:
             # NOTE: benign TOCTOU - dropping images across multiple separate messages in
             # quick succession can each read screenshot_count==0 and post Describe more
             # than once; acceptable for auto-advance.
-            from handlers.video_panel import build_describe_components
-            await ctx.respond_components(msg, build_describe_components(draft["id"]))
+            from handlers.video_panel import build_choice_components
+            await ctx.respond_components(msg, build_choice_components(draft["id"]))
         else:
             # Subsequent add: just echo the running count; no new wizard card.
             await ctx.respond(msg)
@@ -2413,8 +2413,8 @@ class CommandRouter:
         msg = (f"Added {count}/12 screenshots from {host}. "
                "Next: add a description, then click **Generate video**.")
         if ctx.respond_components is not None:
-            from handlers.video_panel import build_describe_components
-            await ctx.respond_components(msg, build_describe_components(draft["id"]))
+            from handlers.video_panel import build_choice_components
+            await ctx.respond_components(msg, build_choice_components(draft["id"]))
         else:
             await ctx.respond(msg)
 
@@ -2468,6 +2468,12 @@ class CommandRouter:
             watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
             self._background_tasks.add(watcher)
             watcher.add_done_callback(self._on_video_watcher_done)
+
+    async def run_video_gennow(self, ctx: CommandContext, job_id: str) -> None:
+        """Default path: force kinetic animated, then queue and watch and deliver. The
+        brain scripts the whole video from an empty prompt."""
+        await self.run_video_set_field(ctx, job_id, render_mode="animated")
+        await self.run_video_generate(ctx, job_id)
 
     async def run_video_refine(self, ctx: CommandContext, job_id: str, message: str) -> None:
         email = await self._resolve_email_for_ctx(ctx)
