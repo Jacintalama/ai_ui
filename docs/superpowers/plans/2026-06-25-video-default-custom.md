@@ -95,7 +95,10 @@ async def test_run_video_gennow_sets_animated_then_generates(monkeypatch):
     # queue_video / run_video_generate was awaited.
     ...
 ```
-NOTE: write these against the REAL test harness in test_video_runners.py (it has the _FakeCtx/_FakeTasksClient patterns used by the existing run_video_capture / run_video_set_field tests). Read those tests and mirror exactly; the pseudocode above is the intent.
+NOTES (verified against the real harness):
+- test_video_runners.py uses `_router()` (CommandRouter.__new__, real methods) + `_ctx()` + a MagicMock tasks client. run_video_gennow calls the REAL run_video_set_field -> `tc.set_video_draft_fields` and REAL run_video_generate -> `tc.queue_video`. So assert on those two AsyncMocks; do NOT mock run_video_generate. Assert ordering (set_video_draft_fields with render_mode="animated" BEFORE queue_video) via the parent mock's `mock_calls`. Default `notify_channel=None` means no watcher spawns -> test stays hermetic.
+- `run_video_set_field(self, ctx, job_id, *, style=None, voice=None, render_mode=None)` takes explicit keyword-only kwargs (confirmed) — `run_video_set_field(ctx, job_id, render_mode="animated")` is valid.
+- The EXISTING tests at test_video_runners.py:35 and :286 assert the details button id is present; since build_choice_components STILL contains the details button, they keep passing unchanged (they will NOT fail at Step 2). The NEW tests asserting the gennow id are what drive the change. Optionally rename the two old tests for clarity.
 
 - [ ] **Step 2: Run, confirm FAIL.**
 
@@ -130,29 +133,35 @@ cd "C:/All/Work - Code/ai_ui" && git add webhook-handler/handlers/commands.py we
 - [ ] **Step 1: Append failing tests** to tests/test_video_routing.py (mirror its dispatch-assertion style):
 
 ```python
-# gennow dispatches through _handle_video_route -> run_video_gennow
+# Mirror test_generate_dispatches_and_binds_notify_channel (test_video_routing.py:199).
+# CRITICAL: _router() does NOT define run_video_gennow -> it auto-creates a NON-async
+# MagicMock, and _spawn(create_task(...)) would raise. So in the test, set
+# r.run_video_gennow = AsyncMock() on the router (mirror how run_video_generate is set).
 async def test_gennow_dispatches_to_gennow_runner(...):
-    # build a block_actions payload with custom_id aiuivid:gennow:<job>;
-    # assert the handler routes it (ack type matches the generate handler) and
-    # schedules run_video_gennow (patch self.router.run_video_gennow).
+    # block_actions payload, custom_id aiuivid:gennow:<job>; assert the gennow
+    # runner is scheduled and notify_channel is bound (same as the generate test).
     ...
 ```
-Read the existing is_vid_generate dispatch test and mirror it exactly.
+Read test_generate_dispatches_and_binds_notify_channel (:199-217) and mirror it exactly, including the `r.run_video_gennow = AsyncMock()` setup.
 
 - [ ] **Step 2: Run, confirm FAIL.**
 
 - [ ] **Step 3: Implement** in discord_commands.py.
-(a) Add a routing branch next to the generate handler (`is_vid_generate` at :433-440). Mirror it EXACTLY (same ack type, same `_handle_video_route`), only swapping the runner:
+(a) Add a routing branch next to the generate handler (`is_vid_generate` at :433-440). The REAL generate branch wraps the id-extract in `try/except ValueError: return {"type": DEFERRED_UPDATE_MESSAGE}` and passes a `raw_text=...` to `_handle_video_route`. COPY THAT EXACT SHAPE, substituting gennow:
 ```python
         if vid.is_vid_gennow(custom_id):
-            job_id = vid.job_from_gennow(custom_id)
+            try:
+                job_id = vid.job_from_gennow(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
             return await self._handle_video_route(
-                payload, lambda ctx, j=job_id: self.router.run_video_gennow(ctx, j))
+                payload, lambda ctx, j=job_id: self.router.run_video_gennow(ctx, j),
+                raw_text="video gennow")
 ```
-(Match the real shape of the is_vid_generate branch — it may already extract job_id and call _handle_video_route with run_video_generate; copy that exactly, substituting gennow.)
+(Read the real is_vid_generate branch and match its exact arg names; the ack type DEFERRED_CHANNEL_MESSAGE+flags:64 is inherited from _handle_video_route.)
 (b) `_post_video_describe` (~:939-949): change the posted components from `build_describe_components(job_id)` to `build_choice_components(job_id)`, and update the message text (~:948) from the "Add a short description..." wording to choice wording, e.g. "Screenshots ready. Generate now (I will direct it) or add your own direction.".
-(c) `/video new` pre-attached block (~:1085-1089): change its `build_describe_components(job_id)` post to `build_choice_components(job_id)`.
-(d) Ensure `build_choice_components` is imported wherever `build_describe_components` was imported in discord_commands.py.
+(c) `/video new` pre-attached block (~:1085-1089): change its `build_describe_components(job_id)` post to `build_choice_components(job_id)`. Do NOT change that block's surrounding text (test_video_new.py:43-44 asserts "description" appears in the studio text; leave the text, swap only the components).
+(d) NO import edit needed: discord_commands.py uses the module alias `from handlers import video_panel as vid` (:84), so `vid.build_choice_components` works as soon as the function exists. (The import note applies only to commands.py, which uses named local imports.)
 
 - [ ] **Step 4: Run, confirm PASS** + the routing + new suites + import check:
 `cd "C:/All/Work - Code/ai_ui/webhook-handler" && python -c "import handlers.discord_commands; print('import ok')" && python -m pytest tests/test_video_routing.py tests/test_video_new.py -v`
@@ -172,16 +181,15 @@ cd "C:/All/Work - Code/ai_ui" && git add webhook-handler/handlers/discord_comman
 
 ```python
 def test_video_modal_description_is_optional():
-    view = svp.build_video_modal("C123")
+    view = build_video_modal("C123")   # file uses NAMED imports, no `svp` alias
     prompt_block = next(b for b in view["blocks"] if b.get("block_id") == "prompt")
     assert prompt_block.get("optional") is True
 
 
 def test_default_mode_is_animated():
-    from slack_video_panel import DEFAULT_MODE
-    assert DEFAULT_MODE == "animated"
+    assert DEFAULT_MODE == "animated"   # DEFAULT_MODE already imported at test top (:24)
 ```
-(Confirm the prompt block's block_id is "prompt" by reading the builder; adapt if different.)
+NOTE: test_slack_video_panel.py uses NAMED imports (`from handlers.slack_video_panel import build_video_modal, DEFAULT_MODE, ...` at :5/:24) - do NOT add `svp.` or a bare `from slack_video_panel import`. The prompt block_id is "prompt" (confirmed); adapt if the builder differs.
 
 - [ ] **Step 2: Run, confirm FAIL.**
 
