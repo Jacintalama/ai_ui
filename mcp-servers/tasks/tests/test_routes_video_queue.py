@@ -159,8 +159,9 @@ async def test_queue_503_when_disabled(monkeypatch):
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
-async def test_queue_blocks_blank_description(db_session, tmp_path, monkeypatch):
-    """A draft with a screenshot but a blank description cannot be queued."""
+async def test_queue_allows_blank_description_ai_directs(db_session, tmp_path, monkeypatch):
+    """A draft with a screenshot but a blank description queues fine: the empty
+    prompt puts the auto-edit brain in charge (Default "Generate now" flow)."""
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post("/api/video-jobs/draft",
@@ -173,5 +174,5 @@ async def test_queue_blocks_blank_description(db_session, tmp_path, monkeypatch)
     (shots_dir / "screenshot-1.png").write_bytes(b"fake-png-content")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(f"/api/video-jobs/{job_id}/queue", headers=HEAD)
-    assert r.status_code == 400
-    assert "description" in r.json()["detail"].lower()
+    assert r.status_code == 200
+    assert r.json()["status"] == "queued"

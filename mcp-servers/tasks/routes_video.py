@@ -958,8 +958,9 @@ async def queue_job(job_id: str, user: CurrentUser = Depends(current_user)) -> d
             raise HTTPException(409, "Video is not a draft")
         if not _list_screenshots(job.slug, str(jid)):
             raise HTTPException(400, "Add at least one screenshot first")
-        if not (job.prompt or "").strip():
-            raise HTTPException(400, "Add a description first")
+        # No description required: an empty prompt puts the auto-edit brain in
+        # charge (it scripts from the screenshots + site_context). See
+        # video_plan._resolve_brief. The Default "Generate now" flow relies on this.
         cutoff = datetime.utcnow() - timedelta(hours=24)
         used = (await s.execute(
             select(func.count()).select_from(VideoJob).where(and_(
