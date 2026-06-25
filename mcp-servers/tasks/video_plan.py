@@ -238,7 +238,12 @@ async def generate_plan(
     sys = build_plan_system_prompt()
     use_vision = bool(screenshot_paths)
     if use_vision:
-        content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+        try:
+            content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+        except Exception:  # noqa: BLE001 - never let content-build sink the planner
+            logger.warning("build_vision_content failed; using text prompt")
+            content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
+            use_vision = False
     else:
         content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
     last_err: Exception | None = None
@@ -246,13 +251,14 @@ async def generate_plan(
         try:
             kwargs: dict = dict(
                 model="claude-opus-4-8",
-                max_tokens=4096 if use_vision else 2048,
+                max_tokens=16000 if use_vision else 2048,
                 system=sys,
                 output_config={"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
                 messages=[{"role": "user", "content": content}],
             )
             if use_vision:
                 kwargs["thinking"] = {"type": "adaptive"}
+                kwargs["output_config"]["effort"] = "medium"
             msg = client.messages.create(**kwargs)
             text = next(b.text for b in msg.content if b.type == "text")
             plan = json.loads(text)
@@ -405,7 +411,12 @@ async def generate_anim_plan(
     sys = build_anim_system_prompt()
     use_vision = bool(screenshot_paths)
     if use_vision:
-        content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+        try:
+            content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+        except Exception:  # noqa: BLE001 - never let content-build sink the planner
+            logger.warning("build_vision_content failed; using text prompt")
+            content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
+            use_vision = False
     else:
         content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
     last_err: Exception | None = None
@@ -413,13 +424,14 @@ async def generate_anim_plan(
         try:
             kwargs: dict = dict(
                 model="claude-opus-4-8",
-                max_tokens=4096 if use_vision else 2048,
+                max_tokens=16000 if use_vision else 2048,
                 system=sys,
                 output_config={"format": {"type": "json_schema", "schema": ANIM_PLAN_SCHEMA}},
                 messages=[{"role": "user", "content": content}],
             )
             if use_vision:
                 kwargs["thinking"] = {"type": "adaptive"}
+                kwargs["output_config"]["effort"] = "medium"
             msg = client.messages.create(**kwargs)
             text = next(b.text for b in msg.content if b.type == "text")
             plan = json.loads(text)
