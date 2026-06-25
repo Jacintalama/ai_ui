@@ -32,8 +32,8 @@ def _router(tasks_client, *, email="u@x.com"):
 # --- run_video_add ---------------------------------------------------------- #
 
 @pytest.mark.asyncio
-async def test_run_video_add_first_add_posts_describe_step():
-    """First add (draft had 0 screenshots) -> posts build_describe_components."""
+async def test_run_video_add_first_add_posts_choice_card():
+    """First add (draft had 0 screenshots) -> posts build_choice_components."""
     tc = MagicMock()
     tc.get_current_video_draft = AsyncMock(return_value={"id": "job1", "screenshot_count": 0})
     tc.add_video_screenshots_urls = AsyncMock(return_value={"count": 2})
@@ -46,9 +46,10 @@ async def test_run_video_add_first_add_posts_describe_step():
     rc.assert_awaited_once()
     msg, components = rc.await_args.args
     assert "2/12" in msg
-    # Should post Describe step (not Generate row)
+    # Should post the choice card: Generate now (gennow) + Add direction (details)
     assert isinstance(components, list) and components
     all_ids = [c.get("custom_id") for row in components for c in row.get("components", [])]
+    assert any("aiuivid:gennow:job1" == cid for cid in all_ids)
     assert any("aiuivid:details:job1" == cid for cid in all_ids)
 
 
