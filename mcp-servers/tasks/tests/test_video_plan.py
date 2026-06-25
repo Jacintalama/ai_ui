@@ -296,3 +296,21 @@ def test_clamp_plan_floor_bumped_total_capped():
         {"template_id": "product_demo", "title": "t", "scenes": scenes, "narration_script": "n"}
     )
     assert sum(s["duration_s"] for s in out["scenes"]) <= MAX_TOTAL_SECONDS
+
+
+def test_resolve_brief_default_when_empty():
+    from video_plan import _resolve_brief
+    b = _resolve_brief("")
+    assert "director" in b.lower()
+
+
+def test_resolve_brief_uses_user_direction():
+    from video_plan import _resolve_brief
+    b = _resolve_brief("energetic, focus on pricing")
+    assert "energetic, focus on pricing" in b
+
+
+def test_anim_brief_is_director_grade():
+    from video_plan import ANIM_BEST_PRACTICES
+    low = ANIM_BEST_PRACTICES.lower()
+    assert "hook" in low and "cta" in low

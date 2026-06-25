@@ -292,21 +292,38 @@ ANIM_PLAN_SCHEMA = {
 }
 
 ANIM_BEST_PRACTICES = (
-    "ANIMATED-VIDEO BEST PRACTICES (HyperFrames/Remotion-style motion design) — "
-    "follow for every plan:\n"
-    "- Arc: open with a short TITLE beat (what it is), then SCREENSHOT scenes that "
-    "show the product with motion, then a brief OUTRO. You need NOT use every "
-    "screenshot — pick the ones that tell the story.\n"
-    "- One idea per scene. Headline = punchy kinetic text, <= ~8 words, benefit-led "
-    "(not the UI read verbatim). Optional subtext is a short supporting line.\n"
-    "- Motion choreographs AROUND the screenshot (it is the hero): pick a motion that "
-    "suits the beat (zoom-in to focus, pan-up/pan-left to reveal, rise/fade for text). "
-    "Don't reuse the same motion every scene.\n"
-    "- Pacing: 2.5-5s per scene; keep the whole video tight (20-35s is ideal, hard "
-    "cap 40s). Narration must be speakable within the total (~2.5 words/second).\n"
+    "You are a professional motion-graphics editor. From the screenshots and page "
+    "text, work out what the product is and who it is for, then cut a punchy "
+    "kinetic video - NOT a slideshow.\n"
+    "- ARC: open with a HOOK title beat (what it is / why care), then 2-4 "
+    "SCREENSHOT beats on the strongest features or benefits, then a short OUTRO/CTA. "
+    "Use ONLY the best shots; skip weak or repetitive ones.\n"
+    "- HEADLINES: punchy, benefit-led, <= ~8 words. Say why it matters; never read "
+    "the UI verbatim. Optional subtext is one short supporting line.\n"
+    "- MOTION choreographs around the screenshot (it is the hero). Choose the motion "
+    "that fits the beat: zoom-in to focus a feature, pan-up/pan-left to reveal long "
+    "content, rise/fade for text beats. Vary it - do NOT reuse one motion every "
+    "scene.\n"
+    "- NARRATION: conversational, one idea per scene, speakable in the scene's "
+    "duration (~2.5 words/second).\n"
+    "- PACING: 2.5-5s per scene, vary the lengths, keep it tight (20-35s ideal, hard "
+    "cap 40s). Avoid a run of identical durations.\n"
     "- Reference ONLY the provided screenshot filenames, exactly as given, and only "
     "on scenes with kind 'screenshot'."
 )
+
+
+def _resolve_brief(prompt: str) -> str:
+    """The per-job creative brief sent in the user turn. The user's free-text
+    direction steers the editor; an empty prompt puts the editor in charge."""
+    clean = (prompt or "").strip()
+    if clean:
+        return f"Creative direction from the user: {clean}"
+    return (
+        "No brief was given. You are the director: study these pages and make the "
+        "best short product video (about 20-40 seconds). Decide the story, pick the "
+        "strongest shots, and choreograph the motion, captions, and pacing yourself."
+    )
 
 
 def build_anim_system_prompt() -> str:
