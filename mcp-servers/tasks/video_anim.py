@@ -231,6 +231,49 @@ _ANIM_LOCK = asyncio.Lock()
 MAX_FPS = 24
 MAX_DURATION_S = 40.0
 
+# Ambient bed: a cheap, infinite lavfi sine pad with slow tremolo + lowpass so it
+# reads as warm room tone rather than a test tone. -shortest bounds the infinite
+# stream to the finite PNG-sequence video.
+_AMBIENT_LAVFI = (
+    "sine=frequency=110:sample_rate=44100,volume=0.18,"
+    "tremolo=f=0.15:d=0.5,lowpass=f=600,afade=t=in:st=0:d=1.5"
+)
+# Bed level when ducked under narration (kept quiet so the voice sits on top).
+_BED_DUCK_VOLUME = 0.12
+
+
+def _build_ffmpeg_args(frames_pattern: str, out_path: str, *, fps: int,
+                       audio_path: str | None, duration_s: float) -> list[str]:
+    """Pure builder for the ffmpeg argv that encodes the PNG sequence to MP4.
+
+    The render ALWAYS carries an audio stream: an ffmpeg-synthesized ambient pad
+    (input 1, lavfi). When narration (audio_path) is present it becomes input 2
+    and the bed is ducked under it via amix; otherwise the bed plays alone at a
+    moderate level. A named filtergraph label forces explicit stream mapping, so
+    the video is taken from input 0 and the audio from [aout]. -shortest always
+    bounds the infinite lavfi sine to the finite video."""
+    # input 0: PNG sequence (video).  input 1: ambient bed (always).
+    args = ["ffmpeg", "-y",
+            "-framerate", str(fps), "-i", frames_pattern,
+            "-f", "lavfi", "-i", _AMBIENT_LAVFI]
+    if audio_path:
+        # input 2: narration. Duck the bed, then mix bed + narration.
+        args += ["-i", audio_path]
+        filtergraph = (
+            f"[1:a]volume={_BED_DUCK_VOLUME}[bed];"
+            "[bed][2:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]"
+        )
+    else:
+        # Bed alone at a moderate level.
+        filtergraph = "[1:a]volume=0.4[aout]"
+    args += ["-filter_complex", filtergraph,
+             "-map", "0:v", "-map", "[aout]",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+             "-pix_fmt", "yuv420p", "-r", str(fps), "-threads", "2",
+             "-c:a", "aac", "-b:a", "192k", "-shortest",
+             "-movflags", "+faststart", out_path]
+    return args
+
 
 async def render_html_to_mp4(html: str, out_path: str, *, fps: int = 24,
                              duration_s: float = 8.0, audio_path: str | None = None,
@@ -270,16 +313,11 @@ async def render_html_to_mp4(html: str, out_path: str, *, fps: int = 24,
                             path=os.path.join(frames_dir, "f%05d.png" % i))
                 finally:
                     await browser.close()
-            # Encode: ffmpeg PNG sequence (+ optional audio) -> H.264 MP4.
-            args = ["ffmpeg", "-y", "-framerate", str(fps),
-                    "-i", os.path.join(frames_dir, "f%05d.png")]
-            if audio_path:
-                args += ["-i", audio_path]
-            args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-                     "-pix_fmt", "yuv420p", "-r", str(fps), "-threads", "2"]
-            if audio_path:
-                args += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
-            args += ["-movflags", "+faststart", out_path]
+            # Encode: ffmpeg PNG sequence + ambient bed (ducked under narration
+            # when present) -> H.264 MP4.
+            args = _build_ffmpeg_args(
+                os.path.join(frames_dir, "f%05d.png"), out_path,
+                fps=fps, audio_path=audio_path, duration_s=duration_s)
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)

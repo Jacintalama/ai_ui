@@ -154,3 +154,27 @@ async def test_render_animated_job_muxes_audio_when_available(tmp_path, monkeypa
          "motion": "zoom-in", "duration_s": 3.0}]}
     await video_anim.render_animated_job(str(tmp_path), slug, jid, plan, voice="amy")
     assert captured["audio_path"] and captured["audio_path"].endswith("narration.wav")
+
+
+def test_ffmpeg_args_include_ambient_and_mapping_with_narration():
+    from video_anim import _build_ffmpeg_args
+    args = _build_ffmpeg_args("frames/f%05d.png", "out.mp4", fps=24,
+                              audio_path="narration.wav", duration_s=8.0)
+    joined = " ".join(args)
+    assert "lavfi" in joined           # ambient synth input present
+    assert "amix" in joined            # bed mixed with narration
+    assert "[aout]" in joined and "-map" in args
+    assert "0:v" in joined             # video mapped from input 0
+    assert "narration.wav" in args
+    assert "-shortest" in args
+
+
+def test_ffmpeg_args_ambient_without_narration():
+    from video_anim import _build_ffmpeg_args
+    args = _build_ffmpeg_args("frames/f%05d.png", "out.mp4", fps=24,
+                              audio_path=None, duration_s=8.0)
+    joined = " ".join(args)
+    assert "lavfi" in joined           # bed plays even with no narration
+    assert "[aout]" in joined and "-map" in args
+    assert "-shortest" in args
+    assert "narration" not in joined   # no narration input
