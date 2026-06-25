@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@remotion/bundler": "4.0.*",
+    "@remotion/google-fonts": "^4.0.483",
     "@remotion/renderer": "4.0.*",
     "fastify": "^5",
     "react": "19.0.0",
