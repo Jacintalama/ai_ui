@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -418,6 +419,37 @@ async def job_status(
             "pending": latest_pending_proposal(job.conversation or []) is not None,
             "plan": job.plan_json,
         }
+
+
+@router.delete("/{job_id}")
+async def delete_video_job(
+    job_id: str,
+    user: CurrentUser = Depends(current_user),
+) -> dict:
+    """Delete one video job: its DB row (video_job_versions cascade via the FK's
+    ON DELETE CASCADE) and its on-disk job dir. Owner-or-admin only.
+
+    Auth: any logged-in gateway identity (401 with no identity). A user may
+    delete only their own video; an admin may delete anyone's (403 otherwise).
+    A malformed or unknown id is a 404.
+    """
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = await s.get(VideoJob, jid)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        slug = job.slug
+        try:
+            await s.delete(job)
+            await s.commit()
+            shutil.rmtree(
+                _apps_dir() / slug / ".video" / str(jid), ignore_errors=True)
+        except Exception:  # noqa: BLE001 - surface a clean 500, not a stack trace
+            logger.exception("failed to delete video job=%s", jid)
+            raise HTTPException(500, "could not delete that video")
+    return {"status": "deleted"}
 
 
 @router.get("/{job_id}/download")
