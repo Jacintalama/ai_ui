@@ -268,15 +268,17 @@ Initialize `site_context: dict = {}` near `frames: list[bytes] = []` so it exist
         captured, site_context = await asyncio.wait_for(
             capture_site(body.url, max_frames=frames), timeout=40.0)
 ```
-After `shots = await _store_screenshot_blobs(slug, str(jid), blobs)` and before the return, add:
+First add `import json` to the top of `routes_video.py` (it is NOT currently
+imported there — confirmed; the other modules import it). Then, after
+`shots = await _store_screenshot_blobs(slug, str(jid), blobs)` and before the
+return, add:
 ```python
         try:
             ctx_path = _apps_dir() / slug / ".video" / str(jid) / "site_context.json"
-            ctx_path.write_text(__import__("json").dumps(site_context))
+            ctx_path.write_text(json.dumps(site_context))
         except Exception:  # noqa: BLE001 - context is best-effort
             logger.warning("could not write site_context for job=%s", jid)
 ```
-(Use the existing `json` import if present at module top instead of `__import__`; prefer `import json` at top and `json.dumps`.)
 
 (d) Update `tests/test_routes_video_capture.py` `fake_capture` (~line 90) to return the tuple:
 ```python
@@ -388,7 +390,7 @@ cd "C:/All/Work - Code/ai_ui" && git add mcp-servers/tasks/video_plan.py mcp-ser
 - [ ] **Step 1: Write failing tests** (append). The existing `_FakeClient`/`_Messages` records calls; add a path that asserts image content + the fallback:
 
 ```python
-def test_generate_anim_plan_sends_images(tmp_path, monkeypatch):
+async def test_generate_anim_plan_sends_images(tmp_path, monkeypatch):
     import anthropic, json as _json
     from PIL import Image
     from video_plan import generate_anim_plan
@@ -398,10 +400,8 @@ def test_generate_anim_plan_sends_images(tmp_path, monkeypatch):
                           "motion": "zoom-in", "duration_s": 3.0}]}
     fake = _FakeClient(_json.dumps(canned))
     monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
-    import asyncio
-    plan = asyncio.get_event_loop().run_until_complete(
-        generate_anim_plan("x", ["a.png"], site_context={"title": "Acme"},
-                           screenshot_paths=[("a.png", str(p))], attempts=1))
+    plan = await generate_anim_plan("x", ["a.png"], site_context={"title": "Acme"},
+                                    screenshot_paths=[("a.png", str(p))], attempts=1)
     assert plan["scenes"][0]["screenshot"] == "a.png"
     sent = fake.messages.calls[0]
     content = sent["messages"][0]["content"]
@@ -410,7 +410,7 @@ def test_generate_anim_plan_sends_images(tmp_path, monkeypatch):
     assert sent["max_tokens"] >= 4096
 
 
-def test_generate_anim_plan_falls_back_on_api_error(tmp_path, monkeypatch):
+async def test_generate_anim_plan_falls_back_on_api_error(tmp_path, monkeypatch):
     import anthropic
     from PIL import Image
     from video_plan import generate_anim_plan
@@ -422,12 +422,14 @@ def test_generate_anim_plan_falls_back_on_api_error(tmp_path, monkeypatch):
             def create(*a, **k):
                 raise RuntimeError("api down")
     monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: _Boom())
-    import asyncio
-    plan = asyncio.get_event_loop().run_until_complete(
-        generate_anim_plan("hi there", ["a.png"], screenshot_paths=[("a.png", str(p))], attempts=2))
+    plan = await generate_anim_plan(
+        "hi there", ["a.png"], screenshot_paths=[("a.png", str(p))], attempts=2)
     assert plan["scenes"]  # deterministic fallback, valid by construction
 ```
-(Match the file's existing async-test style; if it uses `pytest.mark.asyncio` + `async def`, write these as `async def` and `await` instead of `run_until_complete`. Read the file head and mirror it.)
+NOTE: the repo runs async tests as bare `async def` with NO decorator (pytest.ini
+`asyncio_mode = auto`, confirmed: every async test in tests/test_video_plan.py is
+undecorated). Do NOT use `asyncio.get_event_loop().run_until_complete` — it raises
+`RuntimeError: no current event loop` on Python 3.14. Write `async def` + `await`.
 
 - [ ] **Step 2: Run, confirm FAIL** (kwargs not accepted / no image content):
 `cd "C:/All/Work - Code/ai_ui/mcp-servers/tasks" && python -m pytest tests/test_video_plan.py -k "sends_images or falls_back_on_api" -v`
