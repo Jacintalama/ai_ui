@@ -494,6 +494,12 @@
       gap: 10px; margin-top: auto;
     }
     .video-card .vc-date { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+    .video-card .vc-del {
+      flex-shrink: 0; cursor: pointer; color: var(--muted);
+      font-size: 14px; line-height: 1; padding: 4px; border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .video-card .vc-del:hover { color: #ef4444; background: rgba(239,68,68,0.12); }
     .list-empty { color: var(--muted); font-size: 13px; }
   </style>
 </head>
@@ -1474,6 +1480,21 @@
       openExistingJob(id);
     }
 
+    async function deleteVideo(ev, id) {
+      ev.stopPropagation();
+      ev.preventDefault();
+      if (!confirm("Delete this video? This cannot be undone.")) return;
+      try {
+        const r = await fetch(API + "/" + encodeURIComponent(id), {
+          method: "DELETE", headers: authHeaders(), credentials: "include" });
+        if (!r.ok) { alert("Could not delete that video."); return; }
+        await showList();
+      } catch (e) {
+        console.warn("[video] delete failed", e);
+        alert("Could not delete that video.");
+      }
+    }
+
     async function fetchVideoList() {
       const r = await fetch(API, {
         headers: authHeaders(), credentials: "include", cache: "no-store",
@@ -1499,10 +1520,24 @@
         const meta = document.createElement("div");
         meta.className = "vc-meta";
         meta.appendChild(statusBadge(v.status));
+
+        const right = document.createElement("div");
+        right.style.cssText = "display:flex;align-items:center;gap:8px;";
         const date = document.createElement("span");
         date.className = "vc-date";
         date.textContent = fmtDate(v.created_at);
-        meta.appendChild(date);
+        right.appendChild(date);
+
+        const del = document.createElement("span");
+        del.className = "vc-del";
+        del.setAttribute("role", "button");
+        del.setAttribute("title", "Delete");
+        del.setAttribute("aria-label", "Delete video");
+        del.textContent = "🗑";
+        del.addEventListener("click", (ev) => deleteVideo(ev, v.id));
+        right.appendChild(del);
+
+        meta.appendChild(right);
         card.appendChild(meta);
 
         videoGrid.appendChild(card);
