@@ -46,6 +46,33 @@ def test_build_composition_is_deterministic_and_safe():
     assert abs(composition_duration(plan) - 7.0) < 0.01
 
 
+def test_build_composition_has_frame_eyebrow_and_kinetic_words():
+    from video_anim import build_composition
+    plan = {"title": "Demo", "narration_script": "", "scenes": [
+        {"kind": "screenshot", "screenshot": "screenshot-1.png",
+         "headline": "Fast and clean", "motion": "zoom-in", "duration_s": 3.0}]}
+    shots = {"screenshot-1.png": _png()}
+    html = build_composition(plan, shots,
+                             site_context={"host": "example.com", "title": "Example"})
+    assert "window.__seek" in html
+    assert "example.com" in html                      # address pill host
+    assert ("class=\"eyebrow\"" in html) or ("id=\"eyebrow\"" in html)
+    assert ".split(" in html                          # JS per-word splitter present
+    # Injection-safe: headline text not baked into the markup (only in <script> JSON).
+    assert "Fast and clean" not in html.split("<script")[0]
+    # Still deterministic.
+    assert "Date.now(" not in html and "Math.random(" not in html
+
+
+def test_build_composition_omits_host_when_absent():
+    from video_anim import build_composition
+    plan = {"title": "D", "narration_script": "", "scenes": [
+        {"kind": "title", "headline": "Hi", "motion": "rise", "duration_s": 2.0}]}
+    html = build_composition(plan, {})                # no site_context
+    assert "example.com" not in html
+    assert "window.__seek" in html
+
+
 def _have_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
