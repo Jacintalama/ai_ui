@@ -124,7 +124,7 @@ def build_composition(plan: dict, shots: dict[str, bytes],
   .vignette{{position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply;
     background:radial-gradient(125% 125% at 50% 48%, rgba(0,0,0,0) 56%, rgba(0,0,0,.6) 100%)}}
   .stage{{position:absolute;inset:0}}
-  .frame{{position:absolute;top:6.5%;left:50%;width:66%;opacity:0;
+  .frame{{position:absolute;top:5.5%;left:50%;width:64%;max-height:58%;opacity:0;
     transform:translate(-50%,0);transform-origin:50% 50%;
     border-radius:14px;overflow:hidden;background:#0e0e14;
     border:1px solid rgba(255,255,255,.07);
@@ -192,7 +192,7 @@ def build_composition(plan: dict, shots: dict[str, bytes],
     var p=clamp((t-starts[idx])/Math.max(0.001,sc.dur));
     // Rounded fade-through envelope: scenes cross through the background.
     var env=ease2(clamp(p/0.18))*(1-ease2(clamp((p-0.82)/0.18)));
-    EB.style.opacity=env;
+    EB.style.opacity=sc.img?0:env;
     if(sc.img){{
       IMG.src=sc.img;
       var kb=lerp(1.0,1.06,ease2(p));            // always-on Ken Burns scale
