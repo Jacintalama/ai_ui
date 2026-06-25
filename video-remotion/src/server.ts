@@ -25,6 +25,7 @@ export function buildServer() {
       const result = await renderJob(body as unknown as RenderRequest);
       return { ok: true, outPath: result.outPath, frames: result.frames };
     } catch (err: unknown) {
+      console.error("[render] failed:", err);  // preserve the full stack in container logs
       reply.code(500);
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, error: message };
