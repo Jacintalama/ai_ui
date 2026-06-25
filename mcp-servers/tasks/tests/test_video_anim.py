@@ -46,6 +46,33 @@ def test_build_composition_is_deterministic_and_safe():
     assert abs(composition_duration(plan) - 7.0) < 0.01
 
 
+def test_build_composition_has_frame_eyebrow_and_kinetic_words():
+    from video_anim import build_composition
+    plan = {"title": "Demo", "narration_script": "", "scenes": [
+        {"kind": "screenshot", "screenshot": "screenshot-1.png",
+         "headline": "Fast and clean", "motion": "zoom-in", "duration_s": 3.0}]}
+    shots = {"screenshot-1.png": _png()}
+    html = build_composition(plan, shots,
+                             site_context={"host": "example.com", "title": "Example"})
+    assert "window.__seek" in html
+    assert "example.com" in html                      # address pill host
+    assert ("class=\"eyebrow\"" in html) or ("id=\"eyebrow\"" in html)
+    assert ".split(" in html                          # JS per-word splitter present
+    # Injection-safe: headline text not baked into the markup (only in <script> JSON).
+    assert "Fast and clean" not in html.split("<script")[0]
+    # Still deterministic.
+    assert "Date.now(" not in html and "Math.random(" not in html
+
+
+def test_build_composition_omits_host_when_absent():
+    from video_anim import build_composition
+    plan = {"title": "D", "narration_script": "", "scenes": [
+        {"kind": "title", "headline": "Hi", "motion": "rise", "duration_s": 2.0}]}
+    html = build_composition(plan, {})                # no site_context
+    assert "example.com" not in html
+    assert "window.__seek" in html
+
+
 def _have_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
@@ -87,12 +114,15 @@ async def test_render_animated_job_reads_shots_and_renders(tmp_path, monkeypatch
     shots_dir = tmp_path / slug / ".video" / jid / "screenshots"
     shots_dir.mkdir(parents=True)
     (shots_dir / "screenshot-1.png").write_bytes(_png())
+    (tmp_path / slug / ".video" / jid / "site_context.json").write_text(
+        '{"host": "example.com", "title": "Example"}')
     plan = {"title": "t", "narration_script": "", "scenes": [
         {"kind": "screenshot", "screenshot": "screenshot-1.png", "headline": "h",
          "motion": "zoom-in", "duration_s": 3.0}]}
     out = await video_anim.render_animated_job(str(tmp_path), slug, jid, plan)
     assert out.endswith("out.mp4") and os.path.exists(out)
     assert "data:image/png;base64," in captured["html"]
+    assert "example.com" in captured["html"]
 
 
 async def test_synthesize_narration_none_without_piper(monkeypatch, tmp_path):
@@ -127,3 +157,27 @@ async def test_render_animated_job_muxes_audio_when_available(tmp_path, monkeypa
          "motion": "zoom-in", "duration_s": 3.0}]}
     await video_anim.render_animated_job(str(tmp_path), slug, jid, plan, voice="amy")
     assert captured["audio_path"] and captured["audio_path"].endswith("narration.wav")
+
+
+def test_ffmpeg_args_include_ambient_and_mapping_with_narration():
+    from video_anim import _build_ffmpeg_args
+    args = _build_ffmpeg_args("frames/f%05d.png", "out.mp4", fps=24,
+                              audio_path="narration.wav", duration_s=8.0)
+    joined = " ".join(args)
+    assert "lavfi" in joined           # ambient synth input present
+    assert "amix" in joined            # bed mixed with narration
+    assert "[aout]" in joined and "-map" in args
+    assert "0:v" in joined             # video mapped from input 0
+    assert "narration.wav" in args
+    assert "-shortest" in args
+
+
+def test_ffmpeg_args_ambient_without_narration():
+    from video_anim import _build_ffmpeg_args
+    args = _build_ffmpeg_args("frames/f%05d.png", "out.mp4", fps=24,
+                              audio_path=None, duration_s=8.0)
+    joined = " ".join(args)
+    assert "lavfi" in joined           # bed plays even with no narration
+    assert "[aout]" in joined and "-map" in args
+    assert "-shortest" in args
+    assert "narration" not in joined   # no narration input

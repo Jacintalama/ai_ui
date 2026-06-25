@@ -85,10 +85,15 @@ def composition_duration(plan: dict) -> float:
 
 
 def build_composition(plan: dict, shots: dict[str, bytes],
-                      *, width: int = 1280, height: int = 720) -> str:
+                      *, width: int = 1280, height: int = 720,
+                      site_context: dict | None = None) -> str:
     """Deterministic, seek-safe HTML for an animated plan. Text is delivered to the
-    page via a JSON SCENES array + JS textContent (never interpolated into markup),
-    and screenshots as data URIs — so it is self-contained and injection-safe."""
+    page via a JSON SCENES array + JS textContent / runtime-built nodes (never
+    interpolated into markup), and screenshots as data URIs, so it is self-contained
+    and injection-safe. The composition reads like a motion-graphics piece: a
+    browser-chrome frame around each screenshot, depth (gradient bg, glow, vignette),
+    an uppercase eyebrow + bold headline with a kinetic per-word reveal, and an
+    always-on Ken Burns layered on each scene's motion. Pure function of t."""
     scenes = []
     for sc in (plan.get("scenes") or []):
         img = ""
@@ -104,44 +109,115 @@ def build_composition(plan: dict, shots: dict[str, bytes],
             "motion": sc.get("motion", "fade"),
             "dur": max(0.5, float(sc.get("duration_s") or 3.0)),
         })
-    data = _json.dumps(scenes).replace("</", "<\\/")  # safe to embed in <script>
+    ctx = site_context or {}
+    cfg = {"host": str(ctx.get("host") or ""), "title": str(ctx.get("title") or "")}
+    data = _json.dumps(scenes).replace("</", "<\\/")     # safe to embed in <script>
+    cfg_json = _json.dumps(cfg).replace("</", "<\\/")
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
-  html,body{{margin:0;width:{width}px;height:{height}px;background:#0b0b10;overflow:hidden;
-    font-family:Inter,Segoe UI,system-ui,sans-serif;color:#fff}}
-  #img{{position:absolute;top:7%;left:50%;width:66%;border-radius:14px;
-    box-shadow:0 24px 80px rgba(0,0,0,.6);opacity:0;transform:translate(-50%,0)}}
-  #headline{{position:absolute;bottom:13%;left:6%;right:6%;text-align:center;font-size:56px;
-    font-weight:800;letter-spacing:-1px;opacity:0;transform:translateY(24px)}}
-  #subtext{{position:absolute;bottom:8%;left:6%;right:6%;text-align:center;font-size:28px;
-    font-weight:600;opacity:0}}
+  html,body{{margin:0;width:{width}px;height:{height}px;overflow:hidden;color:#fff;
+    font-family:Inter,Segoe UI,system-ui,sans-serif;
+    background:radial-gradient(125% 120% at 50% -10%, #16161f 0%, #0b0b10 55%, #060608 100%)}}
+  .bgglow{{position:absolute;top:-18%;left:50%;width:88%;height:72%;
+    transform:translateX(-50%);border-radius:50%;pointer-events:none;
+    background:radial-gradient(closest-side, rgba(96,108,180,.34), rgba(96,108,180,0));
+    filter:blur(46px)}}
+  .vignette{{position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply;
+    background:radial-gradient(125% 125% at 50% 48%, rgba(0,0,0,0) 56%, rgba(0,0,0,.6) 100%)}}
+  .stage{{position:absolute;inset:0}}
+  .frame{{position:absolute;top:5.5%;left:50%;width:64%;max-height:58%;opacity:0;
+    transform:translate(-50%,0);transform-origin:50% 50%;
+    border-radius:14px;overflow:hidden;background:#0e0e14;
+    border:1px solid rgba(255,255,255,.07);
+    box-shadow:0 44px 130px rgba(0,0,0,.66),0 10px 28px rgba(0,0,0,.45)}}
+  .bar{{height:36px;display:flex;align-items:center;gap:8px;padding:0 14px;
+    background:linear-gradient(#24242f,#191921);
+    border-bottom:1px solid rgba(255,255,255,.05)}}
+  .dot{{width:11px;height:11px;border-radius:50%;background:#3a3a46;flex:0 0 auto}}
+  .dot.r{{background:#ff5f57}} .dot.y{{background:#febc2e}} .dot.g{{background:#28c840}}
+  .addr{{margin-left:12px;flex:1;height:20px;border-radius:10px;
+    background:rgba(255,255,255,.06);font-size:12px;line-height:20px;
+    padding:0 12px;color:#aab1c8;letter-spacing:.2px;
+    overflow:hidden;white-space:nowrap;text-overflow:ellipsis}}
+  #img{{display:block;width:100%}}
+  .eyebrow{{position:absolute;bottom:21%;left:6%;right:6%;text-align:center;
+    font-size:18px;font-weight:700;letter-spacing:3px;text-transform:uppercase;
+    color:#9aa6ff;opacity:0}}
+  #headline{{position:absolute;bottom:13%;left:6%;right:6%;text-align:center;
+    font-size:56px;font-weight:800;letter-spacing:-1.5px}}
+  #headline span{{display:inline-block;white-space:pre;will-change:opacity,transform}}
+  #subtext{{position:absolute;bottom:8%;left:6%;right:6%;text-align:center;
+    font-size:28px;font-weight:600;opacity:0}}
+  body.center .eyebrow{{bottom:auto;top:37%}}
   body.center #headline{{bottom:auto;top:44%}}
+  body.center #subtext{{bottom:auto;top:57%}}
 </style></head><body>
-  <img id="img"><div id="headline"></div><div id="subtext"></div>
+  <div class="bgglow"></div>
+  <div class="stage"><div id="frame" class="frame">
+    <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span id="addr" class="addr"></span></div>
+    <img id="img">
+  </div></div>
+  <div id="eyebrow" class="eyebrow"></div>
+  <div id="headline"></div>
+  <div id="subtext"></div>
+  <div class="vignette"></div>
 <script>
-  var SCENES={data};
+  var SCENES={data}, CFG={cfg_json};
   function clamp(x){{return Math.max(0,Math.min(1,x));}}
   function lerp(a,b,p){{return a+(b-a)*p;}}
-  function ease(p){{p=clamp(p);return p*p*(3-2*p);}}
+  function ease(p){{p=clamp(p);return p*p*(3-2*p);}}            // smoothstep
+  function ease2(p){{p=clamp(p);return p*p*p*(p*(6*p-15)+10);}} // smootherstep
   var IMG=document.getElementById('img'), H=document.getElementById('headline'),
-      SUB=document.getElementById('subtext'), BODY=document.body;
+      SUB=document.getElementById('subtext'), EB=document.getElementById('eyebrow'),
+      FRAME=document.getElementById('frame'), ADDR=document.getElementById('addr'),
+      BODY=document.body;
+  ADDR.textContent = CFG.host || '';
+  EB.textContent = CFG.title || 'OVERVIEW';
   var starts=[],acc=0; for(var i=0;i<SCENES.length;i++){{starts.push(acc);acc+=SCENES[i].dur;}}
+  // Kinetic headline: words are split + built as <span> nodes from the JSON string
+  // at runtime (never baked into markup). Cached per scene index for determinism.
+  var _wIdx=-1, _wSpans=[];
+  function buildWords(text){{
+    while(H.firstChild){{H.removeChild(H.firstChild);}}
+    _wSpans=[];
+    var words=String(text||'').split(" ");
+    for(var i=0;i<words.length;i++){{
+      var s=document.createElement('span');
+      s.textContent=(i>0?' ':'')+words[i];
+      H.appendChild(s); _wSpans.push(s);
+    }}
+  }}
   window.__seek=function(t){{
     var idx=0; for(var i=0;i<SCENES.length;i++){{if(t>=starts[i])idx=i;}}
     var sc=SCENES[idx]; if(!sc){{return;}}
     var p=clamp((t-starts[idx])/Math.max(0.001,sc.dur));
-    var env=ease(p/0.25)*(1-ease((p-0.8)/0.2));
-    if(sc.img){{IMG.src=sc.img; var tx='translate(-50%,0)';
-      if(sc.motion==='zoom-in')tx+=' scale('+lerp(1.0,1.1,ease(p))+')';
-      else if(sc.motion==='zoom-out')tx+=' scale('+lerp(1.1,1.0,ease(p))+')';
-      else if(sc.motion==='pan-up')tx='translate(-50%,'+lerp(20,-20,ease(p))+'px)';
-      else if(sc.motion==='pan-left')tx='translate(calc(-50% + '+lerp(30,-30,ease(p))+'px),0)';
-      IMG.style.opacity=env; IMG.style.transform=tx;}}
-    else {{IMG.style.opacity=0;}}
+    // Rounded fade-through envelope: scenes cross through the background.
+    var env=ease2(clamp(p/0.18))*(1-ease2(clamp((p-0.82)/0.18)));
+    EB.style.opacity=sc.img?0:env;
+    if(sc.img){{
+      IMG.src=sc.img;
+      var kb=lerp(1.0,1.06,ease2(p));            // always-on Ken Burns scale
+      var kx=lerp(0,-1.2,ease2(p)), ky=lerp(0,-1.0,ease2(p));  // gentle drift (%)
+      var mz=1.0, dx=0, dy=0;
+      if(sc.motion==='zoom-in')mz=lerp(1.0,1.1,ease2(p));
+      else if(sc.motion==='zoom-out')mz=lerp(1.1,1.0,ease2(p));
+      else if(sc.motion==='pan-up')dy=lerp(20,-20,ease2(p));
+      else if(sc.motion==='pan-left')dx=lerp(30,-30,ease2(p));
+      FRAME.style.opacity=env;
+      FRAME.style.transform='translate(calc(-50% + '+dx+'px),'+dy+'px) '
+        +'translate('+kx+'%,'+ky+'%) scale('+(kb*mz)+')';
+    }} else {{FRAME.style.opacity=0;}}
     BODY.className=(sc.kind==='screenshot')?'':'center';
-    H.textContent=sc.headline||''; SUB.textContent=sc.subtext||'';
-    var hy=(sc.motion==='rise')?lerp(24,0,ease(p)):0;
-    H.style.opacity=env; H.style.transform='translateY('+hy+'px)';
-    SUB.style.opacity=sc.subtext?env:0;
+    if(_wIdx!==idx){{buildWords(sc.headline); _wIdx=idx;}}
+    var n=_wSpans.length;
+    for(var i=0;i<n;i++){{
+      var d=(n>1)?(i/n)*0.45:0;                  // earlier words lead later ones
+      var wo=ease2(clamp((p-d)/0.4));            // per-word reveal envelope
+      _wSpans[i].style.opacity=env*wo;
+      _wSpans[i].style.transform='translateY('+lerp(20,0,wo)+'px)';
+    }}
+    var hy=(sc.motion==='rise')?lerp(24,0,ease2(p)):0;
+    H.style.transform='translateY('+hy+'px)';
+    SUB.textContent=sc.subtext||''; SUB.style.opacity=sc.subtext?env:0;
   }};
   window.__seek(0);
 </script></body></html>"""
@@ -154,6 +230,49 @@ _ANIM_LOCK = asyncio.Lock()
 # the box's RAM/time budget.
 MAX_FPS = 24
 MAX_DURATION_S = 40.0
+
+# Ambient bed: a cheap, infinite lavfi sine pad with slow tremolo + lowpass so it
+# reads as warm room tone rather than a test tone. -shortest bounds the infinite
+# stream to the finite PNG-sequence video.
+_AMBIENT_LAVFI = (
+    "sine=frequency=110:sample_rate=44100,volume=0.18,"
+    "tremolo=f=0.15:d=0.5,lowpass=f=600,afade=t=in:st=0:d=1.5"
+)
+# Bed level when ducked under narration (kept quiet so the voice sits on top).
+_BED_DUCK_VOLUME = 0.12
+
+
+def _build_ffmpeg_args(frames_pattern: str, out_path: str, *, fps: int,
+                       audio_path: str | None, duration_s: float) -> list[str]:
+    """Pure builder for the ffmpeg argv that encodes the PNG sequence to MP4.
+
+    The render ALWAYS carries an audio stream: an ffmpeg-synthesized ambient pad
+    (input 1, lavfi). When narration (audio_path) is present it becomes input 2
+    and the bed is ducked under it via amix; otherwise the bed plays alone at a
+    moderate level. A named filtergraph label forces explicit stream mapping, so
+    the video is taken from input 0 and the audio from [aout]. -shortest always
+    bounds the infinite lavfi sine to the finite video."""
+    # input 0: PNG sequence (video).  input 1: ambient bed (always).
+    args = ["ffmpeg", "-y",
+            "-framerate", str(fps), "-i", frames_pattern,
+            "-f", "lavfi", "-i", _AMBIENT_LAVFI]
+    if audio_path:
+        # input 2: narration. Duck the bed, then mix bed + narration.
+        args += ["-i", audio_path]
+        filtergraph = (
+            f"[1:a]volume={_BED_DUCK_VOLUME}[bed];"
+            "[bed][2:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]"
+        )
+    else:
+        # Bed alone at a moderate level.
+        filtergraph = "[1:a]volume=0.4[aout]"
+    args += ["-filter_complex", filtergraph,
+             "-map", "0:v", "-map", "[aout]",
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+             "-pix_fmt", "yuv420p", "-r", str(fps), "-threads", "2",
+             "-c:a", "aac", "-b:a", "192k", "-shortest",
+             "-movflags", "+faststart", out_path]
+    return args
 
 
 async def render_html_to_mp4(html: str, out_path: str, *, fps: int = 24,
@@ -194,16 +313,11 @@ async def render_html_to_mp4(html: str, out_path: str, *, fps: int = 24,
                             path=os.path.join(frames_dir, "f%05d.png" % i))
                 finally:
                     await browser.close()
-            # Encode: ffmpeg PNG sequence (+ optional audio) -> H.264 MP4.
-            args = ["ffmpeg", "-y", "-framerate", str(fps),
-                    "-i", os.path.join(frames_dir, "f%05d.png")]
-            if audio_path:
-                args += ["-i", audio_path]
-            args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-                     "-pix_fmt", "yuv420p", "-r", str(fps), "-threads", "2"]
-            if audio_path:
-                args += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
-            args += ["-movflags", "+faststart", out_path]
+            # Encode: ffmpeg PNG sequence + ambient bed (ducked under narration
+            # when present) -> H.264 MP4.
+            args = _build_ffmpeg_args(
+                os.path.join(frames_dir, "f%05d.png"), out_path,
+                fps=fps, audio_path=audio_path, duration_s=duration_s)
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -253,8 +367,16 @@ async def render_animated_job(apps_dir: str, slug: str, job_id: str, plan: dict,
             if os.path.isfile(p):
                 with open(p, "rb") as f:
                     shots[name] = f.read()
-    html = build_composition(plan, shots)
     job_dir = os.path.join(apps_dir, slug, ".video", job_id)
+    site_context: dict = {}
+    ctx_path = os.path.join(job_dir, "site_context.json")
+    if os.path.isfile(ctx_path):
+        try:
+            with open(ctx_path, encoding="utf-8") as f:
+                site_context = _json.load(f)
+        except Exception:  # noqa: BLE001 - context is best-effort
+            site_context = {}
+    html = build_composition(plan, shots, site_context=site_context)
     out = os.path.join(job_dir, "out.mp4")
     dur = min(MAX_DURATION_S, composition_duration(plan) or 8.0)
     audio = await _synthesize_narration(
