@@ -555,23 +555,22 @@ Expected: FAIL (host not in html — not loaded yet).
 
 - [ ] **Step 3: Load and pass site_context**
 
-In `render_animated_job`, after computing `job_dir` (note: currently `job_dir` is computed at `:257` AFTER `build_composition` at `:256`; move the `job_dir` line up so it precedes the load), load the context and pass it:
+Currently `html = build_composition(...)` is at `:256` and `job_dir` is computed AFTER it at `:257`. Move the `job_dir` assignment up so it precedes the load, REMOVE the now-duplicate `job_dir` line at the old `:257`, load the context, and pass it. Note the module imports `json as _json` (`:14`) — there is no bare `json`, so call `_json.load`:
 
 ```python
-    job_dir = os.path.join(apps_dir, slug, job_id) if False else os.path.join(
-        apps_dir, slug, ".video", job_id)
+    job_dir = os.path.join(apps_dir, slug, ".video", job_id)
     site_context: dict = {}
     ctx_path = os.path.join(job_dir, "site_context.json")
     if os.path.isfile(ctx_path):
         try:
             with open(ctx_path, encoding="utf-8") as f:
-                site_context = json.load(f)
+                site_context = _json.load(f)
         except Exception:  # noqa: BLE001 - context is best-effort
             site_context = {}
     html = build_composition(plan, shots, site_context=site_context)
 ```
 
-(Use the existing `import json as _json`? No — the module imports `json as _json`. Use `_json.load`. Keep consistent: `import json as _json` at `:14`, so call `_json.load(f)`.)
+After this, the existing `out = os.path.join(job_dir, "out.mp4")` line still works (job_dir now defined above it); delete the old standalone `job_dir = os.path.join(...)` that sat between build_composition and `out`.
 
 - [ ] **Step 4: Run to verify pass**
 
