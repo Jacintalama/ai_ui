@@ -42,47 +42,81 @@ real images + page text + a stronger brief is the highest-ROI change.
 ## Architecture (all in mcp-servers/tasks/)
 
 ### 1. Capture page context (video_capture.py)
-During the existing Playwright `capture_site` run, also collect a small
-`site_context`:
-- `title` = page.title()
-- `headings` = text of the first N h1/h2/h3 (cap count + length)
+During the existing async `capture_site` run, also collect a small `site_context`
+in the same pass (the Playwright `page` object is in scope at video_capture.py
+~:128-161, after the post-redirect SSRF re-check):
+- `title` = await page.title()
+- `headings` = text of the first N h1/h2/h3 via page.evaluate (cap count + length)
 - `meta_description` if present
-Bound the total to ~1500 chars. Persist it to the job dir as
-`<APPS_DIR>/<slug>/.video/<job_id>/site_context.json` next to `screenshots/`,
-and return it from the capture function. If extraction fails, write `{}` and
-continue (never fail the capture over context).
+Bound the total to ~1500 chars. Wrap ALL extraction in try/except so a failure
+NEVER turns a successful capture into a failure (fall back to `{}`).
+
+SIGNATURE CHANGE (enumerate every site): `capture_site` returns `list[bytes]`
+today (video_capture.py:97-103). Change it to return
+`tuple[list[bytes], dict]` (frames, site_context). Update all callers:
+- routes_video.py:793 `captured = await asyncio.wait_for(capture_site(...))` ->
+  unpack `frames, site_context = ...`; after `_store_screenshot_blobs` writes the
+  frames, write `site_context` to `<APPS_DIR>/<slug>/.video/<jid>/site_context.json`
+  (slug/jid are already in scope there).
+- tests/test_routes_video_capture.py:90 `fake_capture` monkeypatch -> return the
+  tuple.
+- tests/test_video_capture.py:61 and :106 direct callers -> unpack the tuple.
+The job dir layout matches the worker/renderers (video_anim.py:248,
+video_render.py:74-75): site_context.json sits next to `screenshots/`.
+Note: captured frames are 1280x800 VIEWPORT screenshots (not tall full-page), so
+aspect-ratio risk is low; the decode-bomb concern is about uploads (see Cost).
 
 ### 2. Vision message builder (new module video_vision.py)
 One pure, testable responsibility: turn screenshot files + site_context into a
 multimodal user-content list for the Anthropic SDK.
-- `build_vision_content(screenshot_paths, site_context, brief) -> list[dict]`:
-  - For each screenshot (cap at MAX_VISION_IMAGES = 8, in rank order): open with
-    Pillow, downscale so the long edge <= VISION_MAX_EDGE = 1568 px (keeps image
-    token cost ~1.6k, not the ~4.8k full-res costs), re-encode as JPEG quality
-    ~80, base64-encode, and emit
-    `{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
-    "data": <b64>}}` immediately followed by a small text block naming the file
-    (`"screenshot-01.png (page 1)"`) so the model can reference exact filenames.
+- `build_vision_content(images, site_context, brief) -> list[dict]` where
+  `images` is an ordered list of `(basename, abs_path)` pairs (the worker builds
+  this from the real on-disk basenames; see Worker integration):
+  - For each pair (cap at MAX_VISION_IMAGES = 8, in the order given): open with
+    Pillow, downscale so the long edge <= VISION_MAX_EDGE = 1568 px (image token
+    cost ~1.6k, vs the ~4.8k full-res costs), re-encode as JPEG quality ~80,
+    base64-encode, and emit `{"type": "image", "source": {"type": "base64",
+    "media_type": "image/jpeg", "data": <b64>}}` immediately followed by a small
+    text block naming the file using its REAL basename (e.g.
+    `"<basename> (page N)"`). The label MUST be the exact basename the validator
+    and renderers use, because the model echoes it into `scene["screenshot"]`.
+    Captured files are named `{host}-{i}.png`, uploads `screenshot-N.png` — do
+    NOT assume `screenshot-NN.png`; use whatever the worker passes.
   - Prepend a text block with the site_context (title, headings, meta) and the
     brief (the user's creative direction, or the Default director instruction).
   - This downscaled copy is ONLY for the model to understand the page; the final
     render still uses the full-resolution captured PNGs on disk.
-- Helpers downscale in-memory only (no disk writes), one image at a time (bounded
-  memory). Skip any unreadable image rather than failing.
+- Downscale in-memory only (no disk writes), one image at a time (bounded
+  memory). KEEP Pillow's default `MAX_IMAGE_PIXELS` decompression-bomb guard
+  (do not disable it) and wrap `Image.open` in try/except so a corrupt or
+  oversize upload is skipped, not raised.
 
 ### 3. Vision-enabled plan generation (video_plan.py + the animated planner)
-- Change the animated planner (`generate_anim_plan`) and `generate_plan` to
-  accept the screenshot PATHS (not just names) and the `site_context`, build the
-  message via `build_vision_content`, and call claude-opus-4-8 with the EXISTING
-  structured-output schema (ANIM_PLAN_SCHEMA / PLAN_SCHEMA). Use adaptive
-  thinking (`thinking={"type":"adaptive"}`); do NOT pass temperature/top_p/
-  budget_tokens (removed on opus-4-8). Keep the existing retry + deterministic
-  fallback.
-- Build the helper so both planners share `build_vision_content`; the creative
-  brief text differs per planner (animated gets the kinetic brief below).
-- FALLBACK: if the vision call fails after retries, fall back to the current
-  behavior (filenames-only prompt, then the deterministic plan) so a job never
-  hard-fails.
+- `generate_anim_plan` (video_plan.py:361) and `generate_plan` (:221) today take
+  `(prompt, screenshots, *, attempts=3)` where `screenshots` is a list of BARE
+  BASENAMES used for validation (`sc["screenshot"] in set(available)`), scene
+  identity, the model's filename instruction, and the deterministic fallback.
+  KEEP `screenshots` as basenames unchanged. ADD two keyword-only params with
+  defaults so existing callers/tests keep working:
+  `generate_anim_plan(prompt, screenshots, *, site_context=None,
+  screenshot_paths=None, attempts=3)`. `screenshot_paths` is a `basename -> abs
+  path` map (or ordered `(basename, path)` list) consumed ONLY by
+  `build_vision_content` to open the image bytes. Everything else stays basenames.
+- When `screenshot_paths` is provided, build a multimodal user-content list via
+  `build_vision_content(...)` (images + site_context + brief) and call
+  claude-opus-4-8 with the EXISTING structured-output schema (output_config
+  json_schema). Use adaptive thinking (`thinking={"type":"adaptive"}`); do NOT
+  pass temperature/top_p/budget_tokens (the code already passes none — adding
+  adaptive thinking introduces no conflict).
+- BUMP `max_tokens` from 2048 to ~4096 on the vision/thinking path: adaptive
+  thinking tokens count against `max_tokens`, and 2048 risks truncating the JSON
+  plan (stop_reason=max_tokens) -> json.loads fail -> forced fallback.
+- Both planners share `build_vision_content`; the creative brief text differs
+  (animated gets the kinetic brief below; slideshow keeps its brief).
+- FALLBACK unchanged and still reachable: if the vision call fails after
+  `attempts`, fall back to the current filenames-only prompt, then the
+  deterministic `_anim_fallback_plan` / `_fallback_plan` (which build scenes from
+  the `screenshots` basenames, so they stay valid and renderable).
 
 ### 4. The pro kinetic creative brief (animated planner system prompt)
 Replace the mechanical ANIM_BEST_PRACTICES checklist with a creative-director
@@ -110,21 +144,38 @@ Keep the slideshow brief as-is but it now also benefits from vision.
 - The URL host/title from site_context grounds names either way.
 
 ### 6. Worker integration (video_worker.py)
-The scripting stage already lists the screenshots dir. Change it to pass the full
-PATHS and load `site_context.json` (default `{}` if missing), and pass both into
-the planner. No status-flow change.
+The scripting stage already lists the screenshots dir as
+`sorted(os.listdir(shots_dir))` basenames (video_worker.py:115-116). Keep passing
+those basenames as `screenshots` (unchanged). ADDITIONALLY: build the
+`basename -> abs path` map from the same listing, load `site_context.json`
+(default `{}` if missing), and pass both as the new keyword-only args
+(`site_context=..., screenshot_paths=...`). No status-flow change. The new args
+are keyword-only with defaults, so `video_refine.py:114` and other callers that
+don't pass them are unaffected.
 
 ## Cost / memory
 
 - Images go to the Anthropic API, not held on the box beyond one in-memory
   downscale at a time, so no OOM risk. MAX_VISION_IMAGES=8 at <=1568px long edge
   bounds tokens (~1.6k each, ~13k for images + a small text payload per job).
+  Vision + adaptive thinking run on every paste-URL job; the slight added
+  latency/cost is acceptable for the quality jump.
+- The vision builder reads the SAME `screenshots/` dir that user uploads
+  (`/screenshots`) and fetched-by-url images (`/screenshots-by-url`) write to.
+  Those are the untrusted-size vector (not the viewport captures), so KEEP
+  Pillow's default `MAX_IMAGE_PIXELS` guard on and skip-on-error.
 - The final render is unchanged and still 720p from the full-res captures.
 
 ## Testing
 
 - video_capture: site_context extraction returns title/headings/meta (mock the
-  Playwright page object); failure writes `{}` and does not raise.
+  Playwright page object); failure (title/evaluate raises) yields `{}` and does
+  not break the capture. Update the existing capture call sites/tests for the new
+  tuple return (routes_video.py:793, test_routes_video_capture.py fake_capture,
+  test_video_capture.py:61,106).
+- New planner params are keyword-only with defaults, so existing
+  tests/test_video_plan.py calls (:102,229,253,284) and video_refine.py:114 keep
+  passing with no edit.
 - video_vision.build_vision_content: returns N image blocks + filename labels +
   a leading context/brief text block; downscales a tall/large test image so the
   emitted base64 decodes to an image with long edge <= 1568; caps at
