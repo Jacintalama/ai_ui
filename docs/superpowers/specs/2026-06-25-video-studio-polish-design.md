@@ -13,8 +13,10 @@ then Part A (renderer polish, iterative/visual).
 ## Part B: Delete icon on the web Video Studio
 
 ### Backend (routes_video.py)
-Add `@router.delete("/{job_id}")` (DELETE is a distinct method from the existing
-`GET /{job_id}`, so no route shadowing):
+Add `import shutil` to routes_video.py (NOT currently imported - the import block
+has only asyncio/json/logging/os/re/uuid/datetime/Path/urlparse; rmtree will
+NameError without it). Then add `@router.delete("/{job_id}")` (DELETE is a
+distinct method from the existing `GET /{job_id}` at :361, so no route shadowing):
 - `user: CurrentUser = Depends(current_user)`.
 - Load the job (session + select VideoJob by id; `_coerce_job_id` for a bad id ->
   404). If None -> 404.
@@ -34,8 +36,9 @@ Each card is a `<button class="video-card">` whose click calls `openJob(v.id)`.
 - Its click handler: `ev.stopPropagation();` then `if (!confirm("Delete this
   video?")) return;` then `fetch(API + "/" + encodeURIComponent(v.id), {method:
   "DELETE", headers: authHeaders(), credentials: "include"})`; on `r.ok` remove
-  the card element from the DOM (and show the empty state if it was the last one).
-  On failure, a small inline error/alert.
+  the card element from the DOM. If it was the LAST card, call `showList()` (it
+  already routes the zero-video case to resetToCreate at video.html:1525-1527)
+  rather than unhiding the textless `listEmpty` div. On failure, a small inline alert.
 - MUST be a `<span>` (not a nested `<button>` - invalid inside the card button)
   with stopPropagation so clicking trash does not also open the job.
 - CSS: `.vc-del` muted color, hover -> red/danger; small, right-aligned in the meta.
@@ -58,19 +61,26 @@ timings) are TUNED by rendering a real frame and viewing it; the spec fixes the
 structure and approach.
 
 ### 1. Reliable font (Dockerfile, not a bundled binary)
-- Install a real font package in `mcp-servers/tasks/Dockerfile` via apt (e.g.
-  `fonts-inter`, or a distinctive grotesk) so the existing CSS font-family
-  actually resolves in the container instead of falling back. No woff2 binary in
-  the repo, no network at render time. Verify the package name exists in the base
-  image's apt repo during the build.
+- Base image is `python:3.11-slim` (Debian bookworm) with an existing apt-get
+  layer (Dockerfile:4-9). EXTEND that same RUN layer with `fonts-inter` (present
+  in bookworm; installs family "Inter" so the existing `font-family:Inter`
+  resolves) plus a guaranteed fallback (`fonts-liberation2`) so a font-repo change
+  can't break the build. The fontconfig dpkg trigger runs fc-cache on install
+  (headless Chromium reads via fontconfig); adding `fc-cache -f` to the same RUN
+  is cheap insurance. Verify the package resolves during the build.
 - Use a clear type hierarchy in build_composition: small uppercase EYEBROW/kicker,
   bold HEADLINE (tight tracking), optional subtext.
 
 ### 2. Kinetic typography
-- Replace the single whole-block headline fade with a staggered reveal: split the
-  headline into words (or lines) and offset each one's fade+rise by a small delay
-  derived from the scene progress `p` in `window.__seek` (deterministic, seek-safe
-  - the offset is a pure function of word index + p, no timers).
+- Replace the single whole-block headline fade with a staggered reveal. CRITICAL:
+  keep headline text OUT of the static HTML markup - it is currently delivered as
+  a JSON array + assigned via `textContent` (video_anim.py:107,141), and
+  `test_build_composition_is_deterministic_and_safe` asserts no HTML injection
+  (test_video_anim.py:45). So split the headline into words IN JS (from the
+  JSON-supplied string, building spans at runtime in __seek) and offset each
+  word's fade+rise by a delay derived from word index + scene progress `p`
+  (deterministic, seek-safe, no timers). Do NOT interpolate words into server-side
+  markup.
 
 ### 3. Browser-chrome frame around the screenshot
 - Wrap the screenshot in a mock browser window: a rounded container with a top
@@ -96,7 +106,18 @@ structure and approach.
   (sidechaincompress, or music at a low fixed level ~0.12 via amix); if no
   narration, the bed plays at a moderate level. Keep `-shortest`.
 - Build this as an extra lavfi input + filter_complex in the existing ffmpeg
-  command; keep libx264/yuv420p/faststart as-is.
+  command; keep libx264/yuv420p/faststart as-is. WATCH-OUTS:
+  - The command relies on IMPLICIT stream mapping today (no -map). The moment a
+    filter_complex produces a named audio label, you MUST add explicit
+    `-map 0:v -map "[aout]"` or default mapping breaks.
+  - Keep the bed UNCONDITIONAL: ambient must play even with no narration, so add
+    the lavfi input/filtergraph INSIDE render_html_to_mp4 regardless of audio_path.
+    Do NOT add a new kwarg to render_html_to_mp4 - the test fake_render stubs pin
+    its exact signature (test_video_anim.py:77-78,110-111) and a new call kwarg
+    would TypeError. Keep passing narration.wav as `audio_path` as today.
+  - amix of finite narration + infinite ambient: use amix `duration=longest`
+    (or `first`) and rely on `-shortest` against the finite PNG video so output
+    stops at video end (the infinite sine never extends it).
 
 ### 6. Wiring site_context into the composition
 - `render_animated_job` loads `site_context.json` from the job dir (same path the
@@ -108,9 +129,15 @@ structure and approach.
 
 ### Testing (Part A)
 - Structural (offline, no Chromium/ffmpeg): build_composition output contains the
-  browser-frame markup (dots/address element), the @font-face or font-family, the
-  eyebrow element, and per-word headline spans; site_context host appears in the
-  address pill when provided and is omitted when not.
+  browser-frame markup (dots/address element), the font-family, and the eyebrow
+  element; site_context host appears in the address pill when provided and is
+  omitted when not. Do NOT assert literal per-word `<span>`s in the static HTML
+  (they are built in JS at runtime, not in markup - asserting them would conflict
+  with the no-injection test); instead assert the word-splitting JS function/marker
+  is present.
+- Keep `render_html_to_mp4`'s signature unchanged (the fake_render stubs pin it);
+  the ambient bed is ffmpeg-internal. Keep the existing no-HTML-injection test
+  (test_video_anim.py:45) green - headline still flows through JSON+textContent.
 - composition_duration / plan mapping unchanged.
 - Music: a unit test that the ffmpeg arg builder includes the lavfi ambient input
   + the duck/mix filter when rendering (factor the arg building into a pure helper
