@@ -275,6 +275,35 @@ def _build_ffmpeg_args(frames_pattern: str, out_path: str, *, fps: int,
     return args
 
 
+def _build_audio_mux_args(video_in: str, out_path: str, *, audio_path: str | None) -> list[str]:
+    """Pure builder for the ffmpeg argv that muxes audio onto an existing video file.
+
+    The video stream is copied (no re-encode). The audio stream is always
+    built from the ambient bed (input 1, lavfi). When narration (audio_path)
+    is present it becomes input 2 and the bed is ducked under it via amix;
+    otherwise the bed plays alone at a moderate level."""
+    # input 0: existing video file.  input 1: ambient bed (always).
+    args = ["ffmpeg", "-y",
+            "-i", video_in,
+            "-f", "lavfi", "-i", _AMBIENT_LAVFI]
+    if audio_path:
+        # input 2: narration. Duck the bed, then mix bed + narration.
+        args += ["-i", audio_path]
+        filtergraph = (
+            f"[1:a]volume={_BED_DUCK_VOLUME}[bed];"
+            "[bed][2:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]"
+        )
+    else:
+        # Bed alone at a moderate level.
+        filtergraph = "[1:a]volume=0.4[aout]"
+    args += ["-filter_complex", filtergraph,
+             "-map", "0:v", "-map", "[aout]",
+             "-c:v", "copy",
+             "-c:a", "aac", "-b:a", "192k", "-shortest",
+             "-movflags", "+faststart", out_path]
+    return args
+
+
 async def render_html_to_mp4(html: str, out_path: str, *, fps: int = 24,
                              duration_s: float = 8.0, audio_path: str | None = None,
                              width: int = 1280, height: int = 720) -> int:

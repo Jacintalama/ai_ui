@@ -72,3 +72,51 @@ def test_build_planner_args(tmp_path, monkeypatch):
     assert paths == [("a.png", os.path.join(str(shots), "a.png")),
                      ("b.png", os.path.join(str(shots), "b.png"))]
     assert ctx == {"title": "T"}
+
+
+async def test_process_job_remotion_uses_remotion_engine(tmp_path, monkeypatch):
+    """render_mode='remotion' must route to render_remotion_job, not the animated or slideshow engine."""
+    import video_worker
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    job_id = uuid.uuid4()
+    job_dir = tmp_path / "alpha" / ".video" / str(job_id)
+    job_dir.mkdir(parents=True)
+    out_mp4 = job_dir / "out.mp4"
+    out_mp4.write_bytes(b"remotion-video")
+
+    # Fake job: plan already set so scripting stage is skipped.
+    fake_job = MagicMock()
+    fake_job.slug = "alpha"
+    fake_job.prompt = "make a remotion video"
+    fake_job.plan_json = PLAN
+    fake_job.pending_summary = None
+    fake_job.style = "cinematic"
+    fake_job.voice = None
+    fake_job.render_mode = "remotion"
+
+    fake_result = MagicMock()
+    fake_result.scalar_one_or_none.return_value = fake_job
+
+    fake_s = AsyncMock()
+    fake_s.execute = AsyncMock(return_value=fake_result)
+
+    @asynccontextmanager
+    async def fake_session():
+        yield fake_s
+
+    monkeypatch.setattr(video_worker, "session", fake_session)
+    monkeypatch.setattr(video_worker, "APPS_DIR", str(tmp_path))
+    monkeypatch.setattr(video_worker, "next_version_no", AsyncMock(return_value=1))
+    monkeypatch.setattr(video_worker, "record_version", AsyncMock())
+
+    mock_remotion = AsyncMock(return_value=str(out_mp4))
+    mock_animated = AsyncMock(return_value=str(out_mp4))
+    monkeypatch.setattr(video_worker, "render_remotion_job", mock_remotion)
+    monkeypatch.setattr(video_worker, "render_animated_job", mock_animated)
+
+    await video_worker._process_job(job_id)
+
+    mock_remotion.assert_called_once()
+    mock_animated.assert_not_called()

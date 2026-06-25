@@ -181,7 +181,7 @@ class DraftRequest(BaseModel):
     prompt: str = Field("", max_length=2000)
     style: str = Field("clean_product_demo", max_length=50)
     voice: str = Field(DEFAULT_VOICE_ID, max_length=50)
-    render_mode: str = Field("slideshow", pattern="^(slideshow|animated)$")
+    render_mode: str = Field("slideshow", pattern="^(slideshow|animated|remotion)$")
 
 
 @router.post("/draft", status_code=201)
@@ -211,7 +211,7 @@ async def upload(
     prompt: str = Form(..., min_length=1, max_length=2000),
     style: str = Form("clean_product_demo", max_length=50),
     voice: str = Form(DEFAULT_VOICE_ID, max_length=50),
-    render_mode: str = Form("slideshow", pattern="^(slideshow|animated)$"),
+    render_mode: str = Form("slideshow", pattern="^(slideshow|animated|remotion)$"),
     files: list[UploadFile] = File(default_factory=list),
     user: CurrentUser = Depends(current_user),
 ) -> dict:
@@ -937,7 +937,7 @@ class DraftPatch(BaseModel):
     voice: str | None = Field(None, max_length=50)
     title: str | None = Field(None, max_length=200)
     prompt: str | None = Field(None, max_length=2000)
-    render_mode: str | None = Field(None, pattern="^(slideshow|animated)$")
+    render_mode: str | None = Field(None, pattern="^(slideshow|animated|remotion)$")
 
 
 @router.post("/{job_id}/queue")

@@ -181,3 +181,25 @@ def test_ffmpeg_args_ambient_without_narration():
     assert "[aout]" in joined and "-map" in args
     assert "-shortest" in args
     assert "narration" not in joined   # no narration input
+
+
+def test_audio_mux_args_with_narration():
+    from video_anim import _build_audio_mux_args
+    args = _build_audio_mux_args("in.mp4", "out.mp4", audio_path="narration.wav")
+    j = " ".join(args)
+    assert args[0] == "ffmpeg"
+    assert "in.mp4" in args and "narration.wav" in args
+    assert "lavfi" in j and "amix" in j
+    assert "-c:v" in args and "copy" in args
+    assert "-map" in args and "[aout]" in j
+    assert "-shortest" in args
+    assert "+faststart" in j
+
+
+def test_audio_mux_args_without_narration():
+    from video_anim import _build_audio_mux_args
+    args = _build_audio_mux_args("in.mp4", "out.mp4", audio_path=None)
+    j = " ".join(args)
+    assert "lavfi" in j and "[aout]" in j
+    assert "copy" in args and "-shortest" in args
+    assert "narration" not in j

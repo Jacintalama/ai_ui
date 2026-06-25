@@ -26,6 +26,7 @@ from heavy_lock import (
 )
 from video_anim import render_animated_job
 from video_executor import VideoRenderExecutor
+from video_remotion_render import render_remotion_job
 from video_models import VideoJob
 from video_plan import generate_anim_plan, generate_plan
 from video_versions import next_version_no, record_version
@@ -131,7 +132,7 @@ async def _process_job(job_id) -> None:
             plan = await (
                 generate_anim_plan(prompt, screenshots, site_context=site_context,
                                    screenshot_paths=screenshot_paths)
-                if render_mode == "animated"
+                if render_mode in ("animated", "remotion")
                 else generate_plan(prompt, screenshots, site_context=site_context,
                                    screenshot_paths=screenshot_paths)
             )
@@ -151,6 +152,8 @@ async def _process_job(job_id) -> None:
             await s.commit()
         if render_mode == "animated":
             out = await render_animated_job(APPS_DIR, slug, str(job_id), plan, voice=voice)
+        elif render_mode == "remotion":
+            out = await render_remotion_job(APPS_DIR, slug, str(job_id), plan, voice=voice)
         else:
             out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
 
