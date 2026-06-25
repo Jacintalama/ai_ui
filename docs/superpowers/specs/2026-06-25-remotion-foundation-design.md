@@ -81,8 +81,16 @@ crashes / OOM from the tasks API. The worker just swaps its render call for
   - smootherstep easing and a fade-through between scenes.
   - eyebrow hidden on screenshot scenes (matches the shipped tuning).
 - `inputProps` schema: `{ theme: "parity", fps, width, height, host, title,
-  scenes: [{ kind, screenshot (abs path or staticFile), headline, subtext,
-  motion, durInFrames }] }`. The host/title feed the address pill + eyebrow.
+  scenes: [{ kind, screenshot, headline, subtext, motion, durInFrames }] }`. The
+  host/title feed the address pill + eyebrow.
+  - SCREENSHOT LOADING: headless Chromium `<Img>` will NOT load a bare filesystem
+    path. Because both containers mount the repo at the identical
+    `/workspace/ai_ui`, pass each screenshot as a `file://<abs path>` URL (e.g.
+    `file:///workspace/ai_ui/apps/<slug>/.video/<job>/screenshots/screenshot-1.png`)
+    and render it with `<Img src={...}>`. Do NOT copy assets into Remotion's
+    `public/`. (Remotion's `delayRenderRetries`/asset handling accepts file URLs.)
+  - `subtext` is optional (the planner does not always emit it); treat empty as no
+    subtext, like the current composition.
 - `server.ts` (Fastify): `POST /render` and `GET /healthz`.
   - `POST /render` body: `{ jobDir, theme, fps, width, height, host, title,
     scenes, outFile }` (outFile defaults to `<jobDir>/remotion-video.mp4`).
@@ -102,13 +110,32 @@ crashes / OOM from the tasks API. The worker just swaps its render call for
   clear error. `base_url` from env `VIDEO_REMOTION_URL` (default
   `http://video-remotion:PORT`).
 
-### tasks worker change (`mcp-servers/tasks/video_worker.py` / render dispatch)
-- Add a `remotion` branch alongside the existing `animated` / `slideshow` dispatch.
-  For a `remotion` job: build the same scene list the brain produced (reuse the
-  plan -> scenes mapping), synthesize narration.wav with Piper (existing helper),
-  call `render_remotion(...)` to get the video-only mp4, then MUX audio (narration
-  + ambient bed) onto it, producing the final `out.mp4` in the job dir, then
-  version + mark done exactly as the other modes do.
+### render_mode enum: allow "remotion" (BLOCKING - currently rejected)
+`render_mode="remotion"` is NOT currently accepted: it is gated by
+`pattern="^(slideshow|animated)$"` in THREE places in `routes_video.py`
+(DraftRequest ~:184, the multipart Form param ~:214, and the draft-set update
+~:940). All three must be widened to `^(slideshow|animated|remotion)$`. The DB
+column (`video_models.py` `render_mode TEXT NOT NULL DEFAULT 'slideshow'`) has no
+CHECK constraint, so no migration is needed. The website frontend posts
+`render_mode` (`static/video.html` ~:1770,1809) but only ever sends
+slideshow/animated; v1 leaves that UI untouched (the theme/mode picker is
+sub-project 3), so `remotion` is set only via an explicit/dev path (e.g.
+draft-set, or an admin-set field) for testing.
+
+### tasks worker change (`mcp-servers/tasks/video_worker.py`)
+TWO branches must learn about `remotion`, not one:
+- PLAN selection (~:131-137): currently `generate_anim_plan` if mode=="animated"
+  else slideshow planner. `remotion` maps to the ANIM scene shape, so it must use
+  `generate_anim_plan` (treat `mode in ("animated","remotion")`).
+- RENDER dispatch (~:152-155): add a `remotion` branch. For a `remotion` job:
+  reuse the plan -> scenes mapping, synthesize narration.wav with Piper (existing
+  helper), call `render_remotion(...)` to get the video-only mp4, then MUX audio
+  (narration + ambient bed) onto it producing the final `out.mp4` in the job dir,
+  then version + mark done exactly as the other modes do.
+- Apply the same total/per-scene duration clamp the anim path uses
+  (`MAX_DURATION_S=40`, and the planner's `ANIM_MAX_TOTAL_SECONDS`) when deriving
+  `durInFrames = round(duration_s * fps)` per scene, so a bad plan cannot produce a
+  runaway render.
 
 ### audio mux (tasks, reuse Task-6 logic)
 - The ambient-bed + narration ffmpeg logic added in the renderer polish
@@ -118,6 +145,11 @@ crashes / OOM from the tasks API. The worker just swaps its render call for
   pattern), keeps the always-on lavfi ambient bed + ducked-narration mix +
   explicit `-map 0:v -map [aout]` + `-shortest`, and `-c:v copy` (no re-encode of
   the Remotion video). Unit-testable without ffmpeg.
+  - `-c:v copy` is safe ONLY if Remotion outputs the stream the pipeline targets:
+    pin `renderMedia` to `codec: "h264"` + `pixelFormat: "yuv420p"` so copy never
+    inherits an exotic format. Keep `-movflags +faststart` on the mux output (a
+    remux still needs it for web streaming). If a copy ever fails, fall back to a
+    libx264 re-encode.
 
 ## Data flow
 
@@ -169,8 +201,10 @@ crashes / OOM from the tasks API. The worker just swaps its render call for
 - New container, so the deploy adds `video-remotion` to compose and builds it.
   The Node+Remotion+Chromium image is large (~1-2GB) and the box runs ~85% disk;
   use the prune discipline already in use (`docker builder prune -af` reclaims the
-  build-cache hog) before/after the build. Verify the service `/healthz` and a
-  real `remotion` render end-to-end before considering it done.
+  build-cache hog) before/after the build, and do a HARD pre-build free-space check
+  (abort the build if free space is under a safe margin, e.g. ~4GB) so a half-built
+  image cannot fill the disk. Verify the service `/healthz` and a real `remotion`
+  render end-to-end before considering it done.
 - tasks redeploy for the worker branch + the audio-mux helper + the client.
 
 ## Risks
@@ -179,7 +213,11 @@ crashes / OOM from the tasks API. The worker just swaps its render call for
   fit and we revisit Lambda).
 - Cross-container Chromium overlap (capture in tasks vs render in remotion):
   bounded by single-job worker processing + the service mutex; a shared lock is a
-  later hardening if it bites.
+  later hardening if it bites. NOTE: the worker's `enough_free_ram` gate
+  (`MIN_RAM_MB=1200`) guards render START but does NOT cover the capture path
+  (screenshot capture runs in the tasks API route, independent of the worker), so
+  a user capturing while a Remotion render runs = two Chromiums on the 3.7GB box.
+  Acceptable for v1; the shared cross-container lock is the real fix.
 - Font/visual parity: Remotion must use the same Inter font and equivalent
   CSS values; parity is judged by viewing real frames, budget a few iterations.
 - Determinism: Remotion is frame-based via `useCurrentFrame()`, so it is
