@@ -29,6 +29,7 @@ before any file is written, so a flooding user is rejected before any disk is
 consumed.
 """
 import asyncio
+import json
 import logging
 import os
 import re
@@ -789,7 +790,7 @@ async def capture_from_url(
         # capture — including time queued behind another behind _CAPTURE_LOCK —
         # never outlives the caller and orphans stored work. Cancellation unwinds
         # capture_site's finally (browser closed) before anything is stored.
-        captured = await asyncio.wait_for(
+        captured, site_context = await asyncio.wait_for(
             capture_site(body.url, max_frames=frames), timeout=40.0)
     except asyncio.TimeoutError:
         logger.warning("capture timed out: job=%s url=%s", jid, body.url)
@@ -800,6 +801,11 @@ async def capture_from_url(
     host = urlparse(body.url).hostname or "site"
     blobs = [(f"{host}-{i + 1}.png", data) for i, data in enumerate(captured)]
     shots = await _store_screenshot_blobs(slug, str(jid), blobs)
+    try:
+        ctx_path = _apps_dir() / slug / ".video" / str(jid) / "site_context.json"
+        ctx_path.write_text(json.dumps(site_context))
+    except Exception:  # noqa: BLE001 - context is best-effort
+        logger.warning("could not write site_context for job=%s", jid)
     return {"screenshots": shots, "count": len(shots)}
 
 

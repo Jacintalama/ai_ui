@@ -85,7 +85,7 @@ async def test_capture_endpoint_stores_frames(db_session, tmp_path, monkeypatch)
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
 
     async def fake_capture(url, *, max_frames=5):
-        return [_png(), _png(), _png()]
+        return [_png(), _png(), _png()], {"title": "Example"}
 
     monkeypatch.setattr(routes_video, "capture_site", fake_capture)
 

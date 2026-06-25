@@ -58,7 +58,7 @@ async def test_capture_site_real_example():
     locally after `python -m playwright install chromium`."""
     from video_capture import CaptureError, capture_site
     try:
-        frames = await capture_site("https://example.com", max_frames=2)
+        frames, _ctx = await capture_site("https://example.com", max_frames=2)
     except CaptureError as e:
         pytest.skip(f"chromium not available: {e}")
     assert 1 <= len(frames) <= 2
@@ -103,7 +103,7 @@ async def test_capture_site_scrolls_into_distinct_frames(monkeypatch):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         try:
-            frames = await capture_site(f"http://127.0.0.1:{port}/", max_frames=4)
+            frames, _ctx = await capture_site(f"http://127.0.0.1:{port}/", max_frames=4)
         except CaptureError as e:
             pytest.skip(f"chromium not available: {e}")
     finally:
@@ -111,4 +111,36 @@ async def test_capture_site_scrolls_into_distinct_frames(monkeypatch):
     assert len(frames) >= 3
     hashes = {hashlib.md5(f).hexdigest() for f in frames}
     assert len(hashes) == len(frames)  # every scrolled frame is different
+
+
+# ---- extract_site_context ----------------------------------------------------
+
+from video_capture import extract_site_context  # noqa: E402
+
+
+class _FakePage:
+    def __init__(self, title="T", headings=None, meta="M", fail=False):
+        self._title, self._headings, self._meta, self._fail = title, headings or ["A", "B"], meta, fail
+
+    async def title(self):
+        if self._fail:
+            raise RuntimeError("boom")
+        return self._title
+
+    async def evaluate(self, js):
+        if self._fail:
+            raise RuntimeError("boom")
+        return self._headings if "querySelectorAll" in js else self._meta
+
+
+async def test_extract_site_context_reads_fields():
+    ctx = await extract_site_context(_FakePage(title="Acme", headings=["Hero", "Pricing"], meta="desc"))
+    assert ctx["title"] == "Acme"
+    assert ctx["headings"] == ["Hero", "Pricing"]
+    assert ctx["meta_description"] == "desc"
+
+
+async def test_extract_site_context_never_raises():
+    ctx = await extract_site_context(_FakePage(fail=True))
+    assert ctx == {"title": "", "headings": [], "meta_description": ""}
 

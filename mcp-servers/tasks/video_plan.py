@@ -9,6 +9,7 @@ import logging
 import os
 
 import anthropic
+from video_vision import build_vision_content
 
 logger = logging.getLogger("video_plan")
 
@@ -218,27 +219,47 @@ def _fallback_plan(prompt: str, screenshots: list[str]) -> dict:
     }
 
 
-async def generate_plan(prompt: str, screenshots: list[str], *, attempts: int = 3) -> dict:
+async def generate_plan(
+    prompt: str,
+    screenshots: list[str],
+    *,
+    site_context: dict | None = None,
+    screenshot_paths: list[tuple[str, str]] | None = None,
+    attempts: int = 3,
+) -> dict:
     """Generate a slideshow plan from the prompt + screenshots, resiliently.
 
     The model occasionally returns a schema-valid-but-empty plan (no scenes) or a
     transient API error; a single bad response must not fail the whole video. So
     we retry up to `attempts` times and, if every attempt fails, fall back to a
-    deterministic one-scene-per-screenshot plan (when screenshots exist)."""
+    deterministic one-scene-per-screenshot plan (when screenshots exist).
+    When screenshot_paths are provided, sends images as vision content for richer context."""
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY
     sys = build_plan_system_prompt()
+    use_vision = bool(screenshot_paths)
+    if use_vision:
+        try:
+            content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+        except Exception:  # noqa: BLE001 - never let content-build sink the planner
+            logger.warning("build_vision_content failed; using text prompt")
+            content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
+            use_vision = False
+    else:
+        content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
     last_err: Exception | None = None
     for i in range(max(1, attempts)):
         try:
-            msg = client.messages.create(
+            kwargs: dict = dict(
                 model="claude-opus-4-8",
-                max_tokens=2048,
+                max_tokens=16000 if use_vision else 2048,
                 system=sys,
                 output_config={"format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
-                messages=[
-                    {"role": "user", "content": f"Prompt: {prompt}\nScreenshots: {screenshots}"}
-                ],
+                messages=[{"role": "user", "content": content}],
             )
+            if use_vision:
+                kwargs["thinking"] = {"type": "adaptive"}
+                kwargs["output_config"]["effort"] = "medium"
+            msg = client.messages.create(**kwargs)
             text = next(b.text for b in msg.content if b.type == "text")
             plan = json.loads(text)
             clamp_plan(plan)
@@ -292,21 +313,38 @@ ANIM_PLAN_SCHEMA = {
 }
 
 ANIM_BEST_PRACTICES = (
-    "ANIMATED-VIDEO BEST PRACTICES (HyperFrames/Remotion-style motion design) — "
-    "follow for every plan:\n"
-    "- Arc: open with a short TITLE beat (what it is), then SCREENSHOT scenes that "
-    "show the product with motion, then a brief OUTRO. You need NOT use every "
-    "screenshot — pick the ones that tell the story.\n"
-    "- One idea per scene. Headline = punchy kinetic text, <= ~8 words, benefit-led "
-    "(not the UI read verbatim). Optional subtext is a short supporting line.\n"
-    "- Motion choreographs AROUND the screenshot (it is the hero): pick a motion that "
-    "suits the beat (zoom-in to focus, pan-up/pan-left to reveal, rise/fade for text). "
-    "Don't reuse the same motion every scene.\n"
-    "- Pacing: 2.5-5s per scene; keep the whole video tight (20-35s is ideal, hard "
-    "cap 40s). Narration must be speakable within the total (~2.5 words/second).\n"
+    "You are a professional motion-graphics editor. From the screenshots and page "
+    "text, work out what the product is and who it is for, then cut a punchy "
+    "kinetic video - NOT a slideshow.\n"
+    "- ARC: open with a HOOK title beat (what it is / why care), then 2-4 "
+    "SCREENSHOT beats on the strongest features or benefits, then a short OUTRO/CTA. "
+    "Use ONLY the best shots; skip weak or repetitive ones.\n"
+    "- HEADLINES: punchy, benefit-led, <= ~8 words. Say why it matters; never read "
+    "the UI verbatim. Optional subtext is one short supporting line.\n"
+    "- MOTION choreographs around the screenshot (it is the hero). Choose the motion "
+    "that fits the beat: zoom-in to focus a feature, pan-up/pan-left to reveal long "
+    "content, rise/fade for text beats. Vary it - do NOT reuse one motion every "
+    "scene.\n"
+    "- NARRATION: conversational, one idea per scene, speakable in the scene's "
+    "duration (~2.5 words/second).\n"
+    "- PACING: 2.5-5s per scene, vary the lengths, keep it tight (20-35s ideal, hard "
+    "cap 40s). Avoid a run of identical durations.\n"
     "- Reference ONLY the provided screenshot filenames, exactly as given, and only "
     "on scenes with kind 'screenshot'."
 )
+
+
+def _resolve_brief(prompt: str) -> str:
+    """The per-job creative brief sent in the user turn. The user's free-text
+    direction steers the editor; an empty prompt puts the editor in charge."""
+    clean = (prompt or "").strip()
+    if clean:
+        return f"Creative direction from the user: {clean}"
+    return (
+        "No brief was given. You are the director: study these pages and make the "
+        "best short product video (about 20-40 seconds). Decide the story, pick the "
+        "strongest shots, and choreograph the motion, captions, and pacing yourself."
+    )
 
 
 def build_anim_system_prompt() -> str:
@@ -358,20 +396,43 @@ def _anim_fallback_plan(prompt: str, screenshots: list[str]) -> dict:
             "narration_script": clean}
 
 
-async def generate_anim_plan(prompt: str, screenshots: list[str], *, attempts: int = 3) -> dict:
+async def generate_anim_plan(
+    prompt: str,
+    screenshots: list[str],
+    *,
+    site_context: dict | None = None,
+    screenshot_paths: list[tuple[str, str]] | None = None,
+    attempts: int = 3,
+) -> dict:
     """LLM-authored animated plan, resilient (retry + deterministic fallback),
-    mirroring generate_plan. Motion best-practices injected via build_anim_system_prompt."""
+    mirroring generate_plan. Motion best-practices injected via build_anim_system_prompt.
+    When screenshot_paths are provided, sends images as vision content for richer context."""
     client = anthropic.Anthropic()
     sys = build_anim_system_prompt()
+    use_vision = bool(screenshot_paths)
+    if use_vision:
+        try:
+            content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+        except Exception:  # noqa: BLE001 - never let content-build sink the planner
+            logger.warning("build_vision_content failed; using text prompt")
+            content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
+            use_vision = False
+    else:
+        content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
     last_err: Exception | None = None
     for i in range(max(1, attempts)):
         try:
-            msg = client.messages.create(
-                model="claude-opus-4-8", max_tokens=2048, system=sys,
+            kwargs: dict = dict(
+                model="claude-opus-4-8",
+                max_tokens=16000 if use_vision else 2048,
+                system=sys,
                 output_config={"format": {"type": "json_schema", "schema": ANIM_PLAN_SCHEMA}},
-                messages=[{"role": "user",
-                           "content": f"Prompt: {prompt}\nScreenshots: {screenshots}"}],
+                messages=[{"role": "user", "content": content}],
             )
+            if use_vision:
+                kwargs["thinking"] = {"type": "adaptive"}
+                kwargs["output_config"]["effort"] = "medium"
+            msg = client.messages.create(**kwargs)
             text = next(b.text for b in msg.content if b.type == "text")
             plan = json.loads(text)
             # Enforce the scene cap here (schema can't express maxItems).

@@ -94,16 +94,45 @@ async def assert_capturable(url: str) -> str:
     return url
 
 
+async def extract_site_context(page) -> dict:
+    """Best-effort page title + first headings + meta description. Never raises;
+    a failure on any field yields an empty value so capture never fails over it."""
+    try:
+        title = await page.title()
+    except Exception:  # noqa: BLE001
+        title = ""
+    try:
+        headings = await page.evaluate(
+            "Array.from(document.querySelectorAll('h1,h2,h3')).slice(0,8)"
+            ".map(e => (e.innerText || '').trim()).filter(Boolean)"
+        )
+    except Exception:  # noqa: BLE001
+        headings = []
+    try:
+        meta = await page.evaluate(
+            "(document.querySelector('meta[name=\"description\"]') || {}).content || ''"
+        )
+    except Exception:  # noqa: BLE001
+        meta = ""
+    return {
+        "title": (title or "")[:200],
+        "headings": [(h or "")[:120] for h in (headings or [])][:8],
+        "meta_description": (meta or "")[:400],
+    }
+
+
 async def capture_site(
     url: str,
     *,
     max_frames: int = 5,
     viewport: tuple[int, int] = (1280, 800),
     nav_timeout_ms: int = 20000,
-) -> list[bytes]:
+) -> tuple[list[bytes], dict]:
     """Capture a live site as up to `max_frames` viewport-height PNG frames by
-    scrolling top-to-bottom. Serialized to one browser at a time. Raises
-    CaptureError on a blocked URL, missing engine, timeout, or zero frames."""
+    scrolling top-to-bottom. Also extracts best-effort page context (title,
+    headings, meta description). Serialized to one browser at a time. Raises
+    CaptureError on a blocked URL, missing engine, timeout, or zero frames.
+    Returns a (frames, site_context) tuple."""
     await assert_capturable(url)
     try:
         from playwright.async_api import async_playwright
@@ -112,6 +141,7 @@ async def capture_site(
 
     vw, vh = viewport
     frames: list[bytes] = []
+    site_context: dict = {}
     resolve_cache: dict[str, bool] = {}
     async with _CAPTURE_LOCK:
         try:
@@ -159,6 +189,7 @@ async def capture_site(
                         # re-capture the top regardless of scroll on some engine
                         # versions — the viewport screenshot is version-robust.
                         frames.append(await page.screenshot())
+                    site_context = await extract_site_context(page)
                 finally:
                     await browser.close()
         except CaptureError:
@@ -167,4 +198,4 @@ async def capture_site(
             raise CaptureError(f"capture failed: {e}") from e
     if not frames:
         raise CaptureError("no frames captured")
-    return frames
+    return frames, site_context

@@ -58,3 +58,17 @@ async def test_process_job_snapshots_version(db_session, tmp_path, monkeypatch):
     assert job.pending_summary is None
     vs = (await db_session.execute(select(VideoJobVersion).where(VideoJobVersion.job_id == job_id))).scalars().all()
     assert len(vs) == 1 and vs[0].version_no == 1 and vs[0].summary == "trim intro"
+
+
+def test_build_planner_args(tmp_path, monkeypatch):
+    import os, json, video_worker
+    shots = tmp_path / "vid-x" / ".video" / "JID" / "screenshots"
+    shots.mkdir(parents=True)
+    (shots / "a.png").write_bytes(b"x"); (shots / "b.png").write_bytes(b"y")
+    (tmp_path / "vid-x" / ".video" / "JID" / "site_context.json").write_text(json.dumps({"title": "T"}))
+    monkeypatch.setattr(video_worker, "APPS_DIR", str(tmp_path))
+    names, paths, ctx = video_worker._planner_inputs("vid-x", "JID")
+    assert names == ["a.png", "b.png"]
+    assert paths == [("a.png", os.path.join(str(shots), "a.png")),
+                     ("b.png", os.path.join(str(shots), "b.png"))]
+    assert ctx == {"title": "T"}

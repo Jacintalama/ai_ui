@@ -296,3 +296,58 @@ def test_clamp_plan_floor_bumped_total_capped():
         {"template_id": "product_demo", "title": "t", "scenes": scenes, "narration_script": "n"}
     )
     assert sum(s["duration_s"] for s in out["scenes"]) <= MAX_TOTAL_SECONDS
+
+
+def test_resolve_brief_default_when_empty():
+    from video_plan import _resolve_brief
+    b = _resolve_brief("")
+    assert "director" in b.lower()
+
+
+def test_resolve_brief_uses_user_direction():
+    from video_plan import _resolve_brief
+    b = _resolve_brief("energetic, focus on pricing")
+    assert "energetic, focus on pricing" in b
+
+
+def test_anim_brief_is_director_grade():
+    from video_plan import ANIM_BEST_PRACTICES
+    low = ANIM_BEST_PRACTICES.lower()
+    assert "hook" in low and "cta" in low
+
+
+async def test_generate_anim_plan_sends_images(tmp_path, monkeypatch):
+    import anthropic, json as _json
+    from PIL import Image
+    from video_plan import generate_anim_plan
+    p = tmp_path / "a.png"; Image.new("RGB", (400, 300), "white").save(p, "PNG")
+    canned = {"title": "t", "narration_script": "",
+              "scenes": [{"kind": "screenshot", "screenshot": "a.png", "headline": "h",
+                          "motion": "zoom-in", "duration_s": 3.0}]}
+    fake = _FakeClient(_json.dumps(canned))
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    plan = await generate_anim_plan("x", ["a.png"], site_context={"title": "Acme"},
+                                    screenshot_paths=[("a.png", str(p))], attempts=1)
+    assert plan["scenes"][0]["screenshot"] == "a.png"
+    sent = fake.messages.calls[0]
+    content = sent["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert any(b.get("type") == "image" for b in content)
+    assert sent["max_tokens"] >= 4096
+
+
+async def test_generate_anim_plan_falls_back_on_api_error(tmp_path, monkeypatch):
+    import anthropic
+    from PIL import Image
+    from video_plan import generate_anim_plan
+    p = tmp_path / "a.png"; Image.new("RGB", (400, 300), "white").save(p, "PNG")
+
+    class _Boom:
+        class messages:
+            @staticmethod
+            def create(*a, **k):
+                raise RuntimeError("api down")
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: _Boom())
+    plan = await generate_anim_plan(
+        "hi there", ["a.png"], screenshot_paths=[("a.png", str(p))], attempts=2)
+    assert plan["scenes"]  # deterministic fallback, valid by construction

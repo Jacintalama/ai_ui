@@ -10,6 +10,7 @@ is filled in Phase 3; `_process_job` is a stub here. The whole worker is
 gated by a `VIDEO_ENABLED` kill switch (default-on).
 """
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -34,6 +35,22 @@ MIN_RAM_MB = int(os.environ.get("VIDEO_MIN_FREE_RAM_MB", "1200"))
 MIN_DISK_MB = int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
 APPS_DIR = os.environ.get("APPS_DIR") or os.path.join(
     os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps")
+
+
+def _planner_inputs(slug: str, job_id: str):
+    """Return (basenames, [(basename, abs_path)], site_context) for the scripting stage."""
+    shots_dir = os.path.join(APPS_DIR, slug, ".video", str(job_id), "screenshots")
+    names = sorted(os.listdir(shots_dir)) if os.path.isdir(shots_dir) else []
+    paths = [(n, os.path.join(shots_dir, n)) for n in names]
+    ctx = {}
+    ctx_path = os.path.join(APPS_DIR, slug, ".video", str(job_id), "site_context.json")
+    if os.path.isfile(ctx_path):
+        try:
+            with open(ctx_path, encoding="utf-8") as f:
+                ctx = json.load(f) or {}
+        except Exception:  # noqa: BLE001
+            ctx = {}
+    return names, paths, ctx
 
 
 def _should_run() -> bool:
@@ -110,10 +127,14 @@ async def _process_job(job_id) -> None:
                     .values(status="scripting")
                 )
                 await s.commit()
-            shots_dir = os.path.join(APPS_DIR, slug, ".video", str(job_id), "screenshots")
-            screenshots = sorted(os.listdir(shots_dir)) if os.path.isdir(shots_dir) else []
-            plan = await (generate_anim_plan(prompt, screenshots) if render_mode == "animated"
-                          else generate_plan(prompt, screenshots))
+            screenshots, screenshot_paths, site_context = _planner_inputs(slug, str(job_id))
+            plan = await (
+                generate_anim_plan(prompt, screenshots, site_context=site_context,
+                                   screenshot_paths=screenshot_paths)
+                if render_mode == "animated"
+                else generate_plan(prompt, screenshots, site_context=site_context,
+                                   screenshot_paths=screenshot_paths)
+            )
             async with session() as s:
                 await s.execute(
                     update(VideoJob).where(VideoJob.id == job_id)
