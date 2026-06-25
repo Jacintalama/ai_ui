@@ -293,6 +293,7 @@ services:
       # Video generator: ON by default (worker still self-gates on free RAM/disk,
       # so it won't OOM the box). Set VIDEO_ENABLED=false to kill-switch it off.
       - VIDEO_ENABLED=${VIDEO_ENABLED:-true}
+      - VIDEO_REMOTION_URL=http://video-remotion:8090
     volumes:
       - ./:/workspace/ai_ui
       - /etc/proxy-server/agent_ssh_key:/run/secrets/agent_ssh_key:ro
@@ -310,6 +311,23 @@ services:
           memory: 1G
         reservations:
           memory: 256M
+
+  # ===========================================================================
+  # VIDEO REMOTION - Headless Remotion render server
+  # ===========================================================================
+  video-remotion:
+    logging: *logging
+    build: ./video-remotion
+    container_name: video-remotion
+    restart: unless-stopped
+    environment:
+      - PORT=8090
+    volumes:
+      - ./:/workspace/ai_ui
+    networks:
+      - backend
+    expose:
+      - "8090"
 
   # ===========================================================================
   # MCP WEB SEARCH - Search, Scrape, Save to Knowledge Base
