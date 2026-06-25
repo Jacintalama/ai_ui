@@ -100,7 +100,8 @@ multimodal user-content list for the Anthropic SDK.
   defaults so existing callers/tests keep working:
   `generate_anim_plan(prompt, screenshots, *, site_context=None,
   screenshot_paths=None, attempts=3)`. `screenshot_paths` is a `basename -> abs
-  path` map (or ordered `(basename, path)` list) consumed ONLY by
+  path` ORDERED list of `(basename, abs_path)` pairs (one concrete shape,
+  matching build_vision_content; preserves render order) consumed ONLY by
   `build_vision_content` to open the image bytes. Everything else stays basenames.
 - When `screenshot_paths` is provided, build a multimodal user-content list via
   `build_vision_content(...)` (images + site_context + brief) and call
