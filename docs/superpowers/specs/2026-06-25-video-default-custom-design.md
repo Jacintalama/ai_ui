@@ -40,30 +40,53 @@ only; the tasks service is untouched.
   no longer posted by the runners (replaced by build_choice_components). If
   removing it, update its tests.
 
-### commands.py (runners that post the next card)
-- `run_video_capture`: after a successful capture it currently posts
-  `build_describe_components`; change to post `build_choice_components(job_id)`.
-- `run_video_add` (first add): same change -> post `build_choice_components`.
+### Every site that posts the describe card (ALL FOUR must change)
+There are FOUR posters of `build_describe_components`; the choice card must
+replace it at all four, or the screenshot path silently keeps the old
+describe-only card:
+1. `commands.py:2417` `run_video_capture` (wizard "From a website") -> post
+   `build_choice_components(draft["id"])`.
+2. `commands.py:2375-2381` `run_video_add` (first add only, prior_count==0) ->
+   `build_choice_components(draft["id"])`. Subsequent adds (:2384) unchanged.
+3. `discord_commands.py:939-949` `_post_video_describe` (called at :495 from the
+   "From my screenshots" Continue/auto-advance path) -> post
+   `build_choice_components(job_id)` and update its text from "Add a short
+   description..." to the choice wording.
+4. `discord_commands.py:1085-1089` (`/video new` with pre-attached screenshots)
+   -> post `build_choice_components(job_id)`.
 - `run_video_set_details` (Custom path): unchanged - still posts
   `build_generate_step_components` after the user submits their direction.
 
 ### discord_commands.py (handler)
-- New routing branch: `vid.is_vid_gennow(custom_id)` -> Default path. It must:
-  1. set the job to animated: `run_video_set_field(ctx, job_id, render_mode="animated")`
-     (or the tasks-client `set_video_draft_fields(email, job_id, render_mode="animated")`
-     used by the existing select handlers) - this is a bot-side call to the
-     existing endpoint, no tasks redeploy.
-  2. then queue + watch + deliver via the existing `run_video_generate(ctx, job_id)`.
-  Ack type + context: mirror the existing generate-button handler
-  (`is_vid_generate` -> `_handle_video_route` -> run_video_generate). The gennow
-  handler does the same, with the render_mode set first.
+- New routing branch: `vid.is_vid_gennow(custom_id)` -> Default path. CRITICAL:
+  route it through `_handle_video_route` (exactly like the `is_vid_generate`
+  handler at discord_commands.py:433-440), NOT the `_run_video_set` context. Only
+  `_handle_video_route` binds `notify_channel`/`notify_channel_msg` (:919-921),
+  and `run_video_generate` only spawns the result watcher when
+  `ctx.notify_channel is not None` (commands.py:2467). If you mirror the select
+  handler instead, the render finishes but the MP4 is NEVER delivered.
+  Inside that route, the runner must:
+  1. set animated first: `await run_video_set_field(ctx, job_id, render_mode="animated")`
+     (commands.py:2421-2430; calls set_video_draft_fields). MUST be awaited BEFORE
+     queue, because `run_video_generate`/`queue_video` reads render_mode from the
+     persisted draft, not from a param.
+  2. then `await run_video_generate(ctx, job_id)` (queue + watch + deliver).
+  Practically: add a small runner (e.g. `run_video_gennow(ctx, job_id)`) that does
+  set-then-generate, and dispatch gennow via `_handle_video_route(payload, lambda
+  ctx, j=job_id: self.router.run_video_gennow(ctx, j))`.
+  NOTE: `run_video_set_field` swallows errors (logs only, commands.py:2431-2432).
+  If the PATCH fails the job renders the DB-default slideshow (degraded, not
+  broken). Acceptable; document it.
 - The existing "Add direction" (details) handler is unchanged.
 
 ## Slack changes (slack_video_panel.py)
 - In `build_video_modal(channel_id)`: make the Description input `optional` (not
-  required) and add a hint line in its label/placeholder: "Leave blank to let the
-  AI direct it." Change the output-mode static_select `initial_option` from
-  slideshow to ANIMATED.
+  required) and add a hint in its label/placeholder: "Leave blank to let the AI
+  direct it." For the output-mode default, flip the module constant
+  `DEFAULT_MODE` (slack_video_panel.py:38) from "slideshow" to "animated" - it
+  drives BOTH the select's initial_option (:119/:221) AND the parse fallback
+  (`_sel(..., DEFAULT_MODE)` at :249), so flipping the constant keeps them
+  aligned. Do NOT change only the initial_option (the fallback would disagree).
 - `parse_video_modal`: already returns prompt; an empty string is fine.
 - `_run_slack_video`: already passes the (possibly empty) prompt to
   create_video_draft; the brain directs when empty. No change needed beyond
@@ -88,7 +111,12 @@ only; the tasks service is untouched.
   + run_video_generate).
 - test_slack_video_panel.py: build_video_modal's description block is optional and
   the mode select defaults to animated.
-- Update any test that asserted run_video_capture/add post build_describe_components.
+- Update test_video_runners.py:36 (asserts first add posts build_describe_components)
+  to expect build_choice_components.
+- Add coverage for the screenshot path: assert `_post_video_describe` and the
+  `/video new` pre-attached block now post build_choice_components (these have no
+  existing tests, so the change is otherwise uncaught).
+- Keep build_describe_components exported (test_video_panel.py:377 imports it).
 
 ## Rollout
 - webhook-handler only. NOT covered by the orchestrator: deploy via per-file scp
