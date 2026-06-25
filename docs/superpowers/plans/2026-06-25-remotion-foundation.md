@@ -173,7 +173,10 @@ export function buildRenderConfig(req: RenderRequest) {
   }).filter((s) => s.durInFrames > 0);
   const durationInFrames = Math.max(1, scenes.reduce((a, s) => a + s.durInFrames, 0));
   const width = req.width || 1280, height = req.height || 720;
-  const screenshotUrl = (p?: string) => (p ? "file://" + p : undefined);
+  // DATA-URI TRANSPORT (decided post Task 2): pass the screenshot ABS PATH through
+  // unchanged (no file:// prefix). The render service converts the path to a
+  // data: URI before rendering, because Chromium refuses file:// from the bundle.
+  const screenshotUrl = (p?: string) => (p ? p : undefined);
   // inputProps carries fps/width/height so the composition's calculateMetadata
   // can derive the real duration (see Root.tsx).
   const inputProps = { theme: req.theme, host: req.host, title: req.title,
@@ -198,7 +201,7 @@ describe("buildRenderConfig", () => {
       scenes: [{kind: "screenshot", screenshot: "/j/s/screenshot-1.png",
         headline: "Hi", motion: "zoom-in", durationS: 3}]});
     expect(c.inputProps.scenes[0].durInFrames).toBe(90);
-    expect(c.inputProps.scenes[0].screenshot).toBe("file:///j/s/screenshot-1.png");
+    expect(c.inputProps.scenes[0].screenshot).toBe("/j/s/screenshot-1.png"); // abs path, service converts to data URI
     expect(c.durationInFrames).toBe(90);
   });
   it("clamps total duration to MAX_DURATION_S", () => {
@@ -285,39 +288,40 @@ git commit -m "feat(remotion): parity theme (browser frame, kinetic type, depth,
   - `POST /render` -> validate body (`jobDir` non-empty string; `scenes` non-empty array), build config via `buildRenderConfig`, acquire a module-level async mutex (a simple promise chain) so only ONE render runs at a time, then:
     - `bundle()` the project once (cache the bundle URL across requests), `selectComposition({serveUrl, id:"Video", inputProps})` (this RUNS `calculateMetadata`, so `composition.durationInFrames` is the real total), `renderMedia({composition, serveUrl, codec:"h264", outputLocation: outFile, inputProps, ...})`.
     - return `{ok:true, outPath: outFile, frames: composition.durationInFrames}`.
-  - BLOCKING-FIX (review) - the `renderMedia` call MUST pin format and allow file:// images:
+  - SCREENSHOT TRANSPORT = DATA URIs (decided after Task 2): headless Chromium
+    refuses `file://` images from the http-served Remotion bundle
+    (`ERR_UNKNOWN_URL_SCHEME`), but data URIs render fine (this is exactly what the
+    current HTML engine does). So: the HTTP payload still carries small ABS PATHS,
+    and THIS SERVICE converts each scene's screenshot path to a `data:image/png;base64,...`
+    URI (read the file from the shared volume mount, base64-encode) BEFORE rendering,
+    rewriting `inputProps.scenes[i].screenshot` to the data URI. Keep `buildRenderConfig`
+    PURE (it just passes the abs path through, no `file://`); the data-URI conversion
+    is the service's one impure I/O step (a small `toDataUri(absPath)` helper). The
+    payload stays tiny (paths, not megabytes of base64) and there is no scheme issue.
+  - BLOCKING-FIX (review) - the `renderMedia` call MUST pin format so the later
+    `-c:v copy` mux is safe:
     ```ts
     await renderMedia({
       composition, serveUrl, codec: "h264", outputLocation: outFile, inputProps,
-      pixelFormat: "yuv420p",            // pin so the later -c:v copy mux is safe
-      imageFormat: "jpeg",
-      chromiumOptions: { disableWebSecurity: true }, // allow file:// <Img> from the http bundle
+      pixelFormat: "yuv420p", imageFormat: "jpeg",
     });
     ```
     `remotion.config.ts` (Task 1) only affects the CLI, NOT programmatic `renderMedia`, so these must be passed here explicitly.
   - On validation error -> 400; on render error -> 500 with `{ok:false, error: <message tail>}` and log the full error.
   - Listen on `0.0.0.0:${PORT||8090}`.
-  - FALLBACK if `file://` images still fail to load even with `disableWebSecurity`
-    (verify in Step 3.5 below): stage the job's screenshots into a per-render
-    `publicDir` and reference them with `staticFile()`, passing `publicDir` to both
-    `bundle()`/`renderMedia()`. Keep this fallback documented but only implement it
-    if the file:// path fails the verification.
 
 - [ ] **Step 3: Run tests**
 
 Run: `cd video-remotion && npm test` -> all pass (render mocked).
 
-- [ ] **Step 4: GATE - prove file:// screenshot loading before Part B (do not skip).**
-  This is the architectural lynchpin (review blocking item #2). Run a REAL render
-  with a real screenshot and confirm the image actually appears (not a blank frame):
-  - If local Chromium is available: `npm run server`, then POST `/render` with a
-    scene whose `screenshot` is an absolute path to a real PNG; open the output and
-    confirm the screenshot is visible inside the frame.
-  - If no local Chromium: do a quick Docker spike now - build a throwaway image from
-    the Task 9 Dockerfile, run the service, POST the same request, pull a frame.
-  - If the image is BLANK with `chromiumOptions.disableWebSecurity`, implement the
-    `publicDir` + `staticFile()` fallback (Step 2) and re-verify here. Do NOT proceed
-    to Part B until a screenshot demonstrably renders, because Tasks 7-8 assume it.
+- [ ] **Step 4: GATE - prove the screenshot actually appears (do not skip).**
+  Run a REAL render through the service with a scene whose `screenshot` is an abs
+  path to a real PNG and confirm the screenshot is VISIBLE inside the frame (not
+  blank). The service converts the path to a data URI (per Step 2), which Chromium
+  renders reliably (Task 2 already verified data URIs work locally; `file://` does
+  not). If local Chromium works, `npm run server` + POST; otherwise do this in the
+  container at deploy (Task 10) - but since data URIs are already proven, this is
+  low risk now rather than the former lynchpin.
 
 - [ ] **Step 5: Commit**
 
