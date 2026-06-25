@@ -35,7 +35,7 @@ MODES: list[tuple[str, str]] = [
 ]
 DEFAULT_STYLE = "clean_product_demo"
 DEFAULT_VOICE = "amy"
-DEFAULT_MODE = "slideshow"
+DEFAULT_MODE = "animated"
 
 _BUTTON_TEXT_MAX = 75
 _TITLE_MAX = 24
@@ -190,6 +190,8 @@ def build_video_modal(channel_id: str) -> dict:
                 "What should the walkthrough show?",
                 "prompt",
                 multiline=True,
+                placeholder="Leave blank to let the AI direct it.",
+                optional=True,
             ),
             _plain_input(
                 "title",
