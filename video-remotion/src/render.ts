@@ -15,7 +15,10 @@ export function buildRenderConfig(req: RenderRequest) {
   }).filter((s) => s.durInFrames > 0);
   const durationInFrames = Math.max(1, scenes.reduce((a, s) => a + s.durInFrames, 0));
   const width = req.width || 1280, height = req.height || 720;
-  const screenshotUrl = (p?: string) => (p ? "file://" + p : undefined);
+  // Pass the screenshot ABS PATH through unchanged. The render service converts it
+  // to a data: URI before rendering, because headless Chromium refuses file://
+  // images from the http-served bundle (ERR_UNKNOWN_URL_SCHEME).
+  const screenshotUrl = (p?: string) => (p ? p : undefined);
   const inputProps = { theme: req.theme, host: req.host, title: req.title,
     fps, width, height,
     scenes: scenes.map((s) => ({ kind: s.kind, screenshot: screenshotUrl(s.screenshot),

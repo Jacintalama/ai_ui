@@ -1,13 +1,14 @@
 import {describe, it, expect} from "vitest";
 import {buildRenderConfig} from "./render";
 describe("buildRenderConfig", () => {
-  it("converts seconds to frames and builds file:// urls", () => {
+  it("converts seconds to frames and passes the screenshot abs path through", () => {
     const c = buildRenderConfig({jobDir: "/j", theme: "parity", fps: 30,
       width: 1280, height: 720, host: "x.com", title: "X",
       scenes: [{kind: "screenshot", screenshot: "/j/s/screenshot-1.png",
         headline: "Hi", motion: "zoom-in", durationS: 3}]});
     expect(c.inputProps.scenes[0].durInFrames).toBe(90);
-    expect(c.inputProps.scenes[0].screenshot).toBe("file:///j/s/screenshot-1.png");
+    // abs path passed through; the render service converts it to a data: URI.
+    expect(c.inputProps.scenes[0].screenshot).toBe("/j/s/screenshot-1.png");
     expect(c.durationInFrames).toBe(90);
   });
   it("clamps total duration to MAX_DURATION_S", () => {
