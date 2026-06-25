@@ -406,3 +406,26 @@ async def test_details_modal_submit_routes_to_set_details():
     args, kwargs = router.run_video_set_details.await_args
     assert args[1] == "job7"
     assert kwargs == {"title": "Dash", "prompt": "walk it"}
+
+
+@pytest.mark.asyncio
+async def test_gennow_dispatches_and_binds_notify_channel():
+    """Generate-now must route through a ctx with notify_channel bound so the
+    render watcher can post the finished video into the thread."""
+    router = _router()
+    router.run_video_gennow = AsyncMock()
+    handler = _handler(router, no_notifiers=False)  # real notifier closures
+    payload = {
+        "type": 3, "id": "i", "token": "t", "channel_id": "thread-1",
+        "member": {"user": {"id": "100", "username": "alice"}},
+        "data": {"custom_id": f"{vid.GENNOW_PREFIX}j1"},
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == DEFERRED_CHANNEL_MESSAGE
+    assert resp["data"]["flags"] == 64
+    await _drain()
+    router.run_video_gennow.assert_awaited_once()
+    ctx, job_id = router.run_video_gennow.await_args.args
+    assert job_id == "j1"
+    assert ctx.notify_channel is not None  # watcher gate
+    assert ctx.notify_channel_msg is not None  # controls poster

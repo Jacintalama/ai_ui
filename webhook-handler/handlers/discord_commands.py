@@ -438,6 +438,14 @@ class DiscordCommandHandler:
             return await self._handle_video_route(
                 payload, lambda ctx, j=job_id: self.router.run_video_generate(ctx, j),
                 raw_text="video generate")
+        if vid.is_vid_gennow(custom_id):
+            try:
+                job_id = vid.job_from_gennow(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_gennow(ctx, j),
+                raw_text="video gennow")
         if vid.is_vid_refine(custom_id):
             try:
                 job_id = vid.job_from_refine(custom_id)
@@ -945,8 +953,8 @@ class DiscordCommandHandler:
         try:
             await self.discord.post_channel_message(
                 channel_id,
-                "Add a short description of what the walkthrough should show.",
-                components=vid.build_describe_components(job_id),
+                "Screenshots ready. Generate now and I will direct it, or add your own direction.",
+                components=vid.build_choice_components(job_id),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("video describe-step post failed job=%s: %s", job_id, exc)
@@ -1086,7 +1094,7 @@ class DiscordCommandHandler:
                     target,
                     f"Screenshots added: {added}/12. "
                     "Now add a short description of what the walkthrough should show.",
-                    components=vid.build_describe_components(job_id),
+                    components=vid.build_choice_components(job_id),
                 )
             else:
                 # Step 1 of the wizard: choose a source (website or screenshots).
