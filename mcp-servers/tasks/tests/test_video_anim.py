@@ -114,12 +114,15 @@ async def test_render_animated_job_reads_shots_and_renders(tmp_path, monkeypatch
     shots_dir = tmp_path / slug / ".video" / jid / "screenshots"
     shots_dir.mkdir(parents=True)
     (shots_dir / "screenshot-1.png").write_bytes(_png())
+    (tmp_path / slug / ".video" / jid / "site_context.json").write_text(
+        '{"host": "example.com", "title": "Example"}')
     plan = {"title": "t", "narration_script": "", "scenes": [
         {"kind": "screenshot", "screenshot": "screenshot-1.png", "headline": "h",
          "motion": "zoom-in", "duration_s": 3.0}]}
     out = await video_anim.render_animated_job(str(tmp_path), slug, jid, plan)
     assert out.endswith("out.mp4") and os.path.exists(out)
     assert "data:image/png;base64," in captured["html"]
+    assert "example.com" in captured["html"]
 
 
 async def test_synthesize_narration_none_without_piper(monkeypatch, tmp_path):

@@ -367,8 +367,16 @@ async def render_animated_job(apps_dir: str, slug: str, job_id: str, plan: dict,
             if os.path.isfile(p):
                 with open(p, "rb") as f:
                     shots[name] = f.read()
-    html = build_composition(plan, shots)
     job_dir = os.path.join(apps_dir, slug, ".video", job_id)
+    site_context: dict = {}
+    ctx_path = os.path.join(job_dir, "site_context.json")
+    if os.path.isfile(ctx_path):
+        try:
+            with open(ctx_path, encoding="utf-8") as f:
+                site_context = _json.load(f)
+        except Exception:  # noqa: BLE001 - context is best-effort
+            site_context = {}
+    html = build_composition(plan, shots, site_context=site_context)
     out = os.path.join(job_dir, "out.mp4")
     dur = min(MAX_DURATION_S, composition_duration(plan) or 8.0)
     audio = await _synthesize_narration(
