@@ -838,6 +838,7 @@ async def capture_from_url(
     blobs = [(f"{host}-{i + 1}.png", data) for i, data in enumerate(captured)]
     shots = await _store_screenshot_blobs(slug, str(jid), blobs)
     try:
+        site_context = {**(site_context or {}), "host": host, "url": body.url}
         ctx_path = _apps_dir() / slug / ".video" / str(jid) / "site_context.json"
         ctx_path.write_text(json.dumps(site_context))
     except Exception:  # noqa: BLE001 - context is best-effort

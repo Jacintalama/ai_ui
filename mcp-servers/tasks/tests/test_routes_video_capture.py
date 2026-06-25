@@ -98,3 +98,29 @@ async def test_capture_endpoint_stores_frames(db_session, tmp_path, monkeypatch)
                          json={"url": "https://example.com", "max_frames": 3}, headers=HEAD)
     assert r.status_code == 200
     assert r.json()["count"] == 3
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_capture_persists_host_in_site_context(db_session, tmp_path, monkeypatch):
+    """The persisted site_context.json carries the site host for the address pill."""
+    import json
+    from pathlib import Path
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+
+    async def fake_capture(url, *, max_frames=5):
+        return [_png()], {"title": "Example"}
+
+    monkeypatch.setattr(routes_video, "capture_site", fake_capture)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        draft = await c.post("/api/video-jobs/draft",
+                             json={"title": "t", "prompt": "", "style": "clean_product_demo",
+                                   "voice": "amy"}, headers=HEAD)
+        jid = draft.json()["id"]
+        slug = draft.json()["slug"]
+        r = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
+                         json={"url": "https://example.com/x"}, headers=HEAD)
+    assert r.status_code == 200
+    ctx = json.loads(
+        (Path(str(tmp_path)) / slug / ".video" / str(jid) / "site_context.json").read_text())
+    assert ctx["host"] == "example.com"
