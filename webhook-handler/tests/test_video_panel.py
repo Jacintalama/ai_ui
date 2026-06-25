@@ -405,3 +405,24 @@ def test_new_prefixes_disjoint():
     # trailing-colon safety: srcshots must NOT match srcshotsgo, options must NOT match optionsback
     assert vp.is_vid_src_shots("aiuivid:srcshotsgo:x") is False
     assert vp.is_vid_options("aiuivid:optionsback:x") is False
+
+
+# ---------------------------------------------------------------------------
+# DC1: Choice-card builder + gennow id
+# ---------------------------------------------------------------------------
+
+def test_build_choice_components_two_buttons():
+    rows = vp.build_choice_components("job1")
+    ids = [c["custom_id"] for r in rows for c in r["components"]]
+    assert ids == ["aiuivid:gennow:job1", "aiuivid:details:job1"]
+
+
+def test_gennow_predicate_round_trips():
+    assert vp.is_vid_gennow("aiuivid:gennow:j") and vp.job_from_gennow("aiuivid:gennow:j") == "j"
+
+
+def test_gennow_disjoint_from_generate_and_details():
+    assert vp.is_vid_gennow("aiuivid:generate:x") is False
+    assert vp.is_vid_gennow("aiuivid:details:x") is False
+    assert vp.is_vid_generate("aiuivid:gennow:x") is False
+    assert vp.is_vid_details("aiuivid:gennow:x") is False
