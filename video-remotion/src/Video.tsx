@@ -1,3 +1,4 @@
+import React from "react";
 import {AbsoluteFill} from "remotion";
 export type Scene = { kind: string; screenshot?: string; headline?: string;
   subtext?: string; motion?: string; durInFrames: number };

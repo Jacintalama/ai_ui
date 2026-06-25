@@ -1,3 +1,4 @@
+import React from "react";
 import {Composition} from "remotion";
 import {Video} from "./Video";
 const calc = ({props}: {props: any}) => {

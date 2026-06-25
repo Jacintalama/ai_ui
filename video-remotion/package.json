@@ -18,6 +18,8 @@
   },
   "devDependencies": {
     "@remotion/cli": "4.0.*",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
     "tsx": "^4",
     "typescript": "^5",
     "vitest": "^2"
