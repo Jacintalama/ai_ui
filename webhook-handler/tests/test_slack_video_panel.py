@@ -427,3 +427,13 @@ def test_is_vid_apply_true_for_prefix():
 def test_job_from_apply_extracts_id():
     assert job_from_apply("slackvid_apply:xyz") == "xyz"
     assert job_from_apply(f"{APPLY_PREFIX}job-99") == "job-99"
+
+
+def test_video_modal_description_is_optional():
+    view = build_video_modal("C123")
+    prompt_block = next(b for b in view["blocks"] if b.get("block_id") == "prompt")
+    assert prompt_block.get("optional") is True
+
+
+def test_default_mode_is_animated():
+    assert DEFAULT_MODE == "animated"

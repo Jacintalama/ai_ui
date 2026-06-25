@@ -21,6 +21,7 @@ STYLE_PREFIX = "aiuivid:style:"
 VOICE_PREFIX = "aiuivid:voice:"
 MODE_PREFIX = "aiuivid:mode:"
 GENERATE_PREFIX = "aiuivid:generate:"
+GENNOW_PREFIX = "aiuivid:gennow:"
 SRC_URL_PREFIX = "aiuivid:srcurl:"
 SRC_SHOTS_PREFIX = "aiuivid:srcshots:"
 SRC_SHOTS_CONTINUE_PREFIX = "aiuivid:srcshotsgo:"
@@ -179,6 +180,12 @@ def build_describe_components(job_id: str) -> list[dict]:
         _button("Add description", f"{DETAILS_PREFIX}{job_id}", STYLE_PRIMARY)]}]
 
 
+def build_choice_components(job_id: str) -> list[dict]:
+    return [{"type": ACTION_ROW, "components": [
+        _button("Generate now", f"{GENNOW_PREFIX}{job_id}", STYLE_SUCCESS),
+        _button("Add direction", f"{DETAILS_PREFIX}{job_id}", STYLE_SECONDARY)]}]
+
+
 def build_generate_step_components(job_id: str) -> list[dict]:
     return [{"type": ACTION_ROW, "components": [
         _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS),
@@ -233,6 +240,8 @@ def is_vid_style(c: str) -> bool: return c.startswith(STYLE_PREFIX)
 def is_vid_voice(c: str) -> bool: return c.startswith(VOICE_PREFIX)
 def is_vid_mode(c: str) -> bool: return c.startswith(MODE_PREFIX)
 def is_vid_generate(c: str) -> bool: return c.startswith(GENERATE_PREFIX)
+def is_vid_gennow(c: str) -> bool: return c.startswith(GENNOW_PREFIX)
+def job_from_gennow(c: str) -> str: return _suffix_after(c, GENNOW_PREFIX)
 def is_vid_refine(c: str) -> bool: return c.startswith(REFINE_PREFIX)
 def is_vid_refine_modal(c: str) -> bool: return c.startswith(REFINE_MODAL_PREFIX)
 def is_vid_apply(c: str) -> bool: return c.startswith(APPLY_PREFIX)
