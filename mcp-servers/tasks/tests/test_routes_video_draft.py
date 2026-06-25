@@ -261,3 +261,13 @@ async def test_draft_set_updates_title_and_prompt(db_session, tmp_path, monkeypa
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get("/api/video-jobs/current-draft", headers=HEAD)
     assert r.json()["title"] == "Real Title"
+
+
+def test_draft_request_accepts_remotion_render_mode():
+    from routes_video import DraftRequest
+    assert DraftRequest(render_mode="remotion").render_mode == "remotion"
+
+
+def test_draft_patch_accepts_remotion_render_mode():
+    from routes_video import DraftPatch
+    assert DraftPatch(render_mode="remotion").render_mode == "remotion"
