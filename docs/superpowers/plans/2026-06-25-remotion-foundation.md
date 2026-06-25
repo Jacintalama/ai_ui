@@ -125,12 +125,26 @@ export const Video: React.FC<VideoProps> = () => (
 // src/Root.tsx
 import {Composition} from "remotion";
 import {Video} from "./Video";
+// BLOCKING-FIX (review): the composition MUST derive its real duration/fps/size
+// from inputProps via calculateMetadata, else selectComposition() returns the
+// static defaults and renderMedia produces a 1-second clip regardless of scenes.
+const calc = ({props}: {props: any}) => {
+  const fps = props.fps || 24;
+  const total = (props.scenes || []).reduce(
+    (a: number, s: any) => a + Math.max(1, s.durInFrames || 0), 0);
+  return { durationInFrames: Math.max(1, total), fps,
+           width: props.width || 1280, height: props.height || 720 };
+};
 export const Root: React.FC = () => (
-  <Composition id="Video" component={Video} durationInFrames={30} fps={30}
-    width={1280} height={720}
-    defaultProps={{theme: "parity", host: "", title: "", scenes: []}} />
+  <Composition id="Video" component={Video} durationInFrames={1} fps={24}
+    width={1280} height={720} calculateMetadata={calc}
+    defaultProps={{theme: "parity", host: "", title: "", fps: 24,
+      width: 1280, height: 720, scenes: []}} />
 );
 ```
+Note: `VideoProps`/`inputProps` now also carry `fps`, `width`, `height` (so
+`calculateMetadata` can read them); add those fields to the `Video.tsx` prop type
+and include them in `buildRenderConfig`'s `inputProps`.
 ```ts
 // src/index.ts
 import {registerRoot} from "remotion";
@@ -148,7 +162,7 @@ export type RenderRequest = { jobDir: string; theme: string; fps: number;
     subtext?: string; motion?: string; durationS: number }[] };
 
 export function buildRenderConfig(req: RenderRequest) {
-  const fps = req.fps || 30;
+  const fps = req.fps || 24;  // match the animated path's fps for parity
   // clamp total duration; convert per-scene seconds -> frames (min 1 frame)
   let totalS = 0;
   const scenes = req.scenes.map((s) => {
@@ -158,13 +172,17 @@ export function buildRenderConfig(req: RenderRequest) {
     return { ...s, durInFrames: Math.max(1, Math.round(durS * fps)) };
   }).filter((s) => s.durInFrames > 0);
   const durationInFrames = Math.max(1, scenes.reduce((a, s) => a + s.durInFrames, 0));
+  const width = req.width || 1280, height = req.height || 720;
   const screenshotUrl = (p?: string) => (p ? "file://" + p : undefined);
+  // inputProps carries fps/width/height so the composition's calculateMetadata
+  // can derive the real duration (see Root.tsx).
   const inputProps = { theme: req.theme, host: req.host, title: req.title,
+    fps, width, height,
     scenes: scenes.map((s) => ({ kind: s.kind, screenshot: screenshotUrl(s.screenshot),
       headline: s.headline ?? "", subtext: s.subtext ?? "", motion: s.motion ?? "fade",
       durInFrames: s.durInFrames })) };
-  return { fps, width: req.width || 1280, height: req.height || 720,
-    durationInFrames, inputProps, outFile: req.outFile || (req.jobDir + "/remotion-video.mp4") };
+  return { fps, width, height, durationInFrames, inputProps,
+    outFile: req.outFile || (req.jobDir + "/remotion-video.mp4") };
 }
 ```
 
@@ -265,16 +283,41 @@ git commit -m "feat(remotion): parity theme (browser frame, kinetic type, depth,
 - [ ] **Step 2: Implement `server.ts`** with Fastify:
   - `GET /healthz` -> `{status:"ok"}`.
   - `POST /render` -> validate body (`jobDir` non-empty string; `scenes` non-empty array), build config via `buildRenderConfig`, acquire a module-level async mutex (a simple promise chain) so only ONE render runs at a time, then:
-    - `bundle()` the project once (cache the bundle URL across requests), `selectComposition({serveUrl, id:"Video", inputProps})`, `renderMedia({composition, serveUrl, codec:"h264", outputLocation: outFile, inputProps})`.
-    - return `{ok:true, outPath: outFile, frames: durationInFrames}`.
+    - `bundle()` the project once (cache the bundle URL across requests), `selectComposition({serveUrl, id:"Video", inputProps})` (this RUNS `calculateMetadata`, so `composition.durationInFrames` is the real total), `renderMedia({composition, serveUrl, codec:"h264", outputLocation: outFile, inputProps, ...})`.
+    - return `{ok:true, outPath: outFile, frames: composition.durationInFrames}`.
+  - BLOCKING-FIX (review) - the `renderMedia` call MUST pin format and allow file:// images:
+    ```ts
+    await renderMedia({
+      composition, serveUrl, codec: "h264", outputLocation: outFile, inputProps,
+      pixelFormat: "yuv420p",            // pin so the later -c:v copy mux is safe
+      imageFormat: "jpeg",
+      chromiumOptions: { disableWebSecurity: true }, // allow file:// <Img> from the http bundle
+    });
+    ```
+    `remotion.config.ts` (Task 1) only affects the CLI, NOT programmatic `renderMedia`, so these must be passed here explicitly.
   - On validation error -> 400; on render error -> 500 with `{ok:false, error: <message tail>}` and log the full error.
   - Listen on `0.0.0.0:${PORT||8090}`.
+  - FALLBACK if `file://` images still fail to load even with `disableWebSecurity`
+    (verify in Step 3.5 below): stage the job's screenshots into a per-render
+    `publicDir` and reference them with `staticFile()`, passing `publicDir` to both
+    `bundle()`/`renderMedia()`. Keep this fallback documented but only implement it
+    if the file:// path fails the verification.
 
 - [ ] **Step 3: Run tests**
 
 Run: `cd video-remotion && npm test` -> all pass (render mocked).
 
-- [ ] **Step 4: Local live smoke (optional, if Chromium present)** - start `npm run server`, `curl -XPOST localhost:8090/render -d @<sample.json>`; confirm an mp4 is written. Skip if no local Chromium (verified on box).
+- [ ] **Step 4: GATE - prove file:// screenshot loading before Part B (do not skip).**
+  This is the architectural lynchpin (review blocking item #2). Run a REAL render
+  with a real screenshot and confirm the image actually appears (not a blank frame):
+  - If local Chromium is available: `npm run server`, then POST `/render` with a
+    scene whose `screenshot` is an absolute path to a real PNG; open the output and
+    confirm the screenshot is visible inside the frame.
+  - If no local Chromium: do a quick Docker spike now - build a throwaway image from
+    the Task 9 Dockerfile, run the service, POST the same request, pull a frame.
+  - If the image is BLANK with `chromiumOptions.disableWebSecurity`, implement the
+    `publicDir` + `staticFile()` fallback (Step 2) and re-verify here. Do NOT proceed
+    to Part B until a screenshot demonstrably renders, because Tasks 7-8 assume it.
 
 - [ ] **Step 5: Commit**
 
@@ -442,7 +485,13 @@ async def test_render_remotion_job_orchestrates(tmp_path, monkeypatch):
 
 - [ ] **Step 2: Run -> FAIL.**
 
-- [ ] **Step 3: Implement `render_remotion_job(apps_dir, slug, job_id, plan, *, fps=30, voice=None)`:**
+- [ ] **Step 3: Implement `render_remotion_job(apps_dir, slug, job_id, plan, *, fps=24, voice=None)`:**
+  IMPORT STYLE (so the Task-7 test's monkeypatch works): use module-level
+  from-imports at the top of `video_remotion_render.py` -
+  `from video_remotion_client import render_remotion` and
+  `from video_anim import _synthesize_narration` - so they are attributes of
+  `video_remotion_render` that `monkeypatch.setattr(vrr, "render_remotion", ...)`
+  can replace. (fps=24 matches the animated path for parity.)
   - `job_dir = os.path.join(apps_dir, slug, ".video", job_id)`.
   - Load `site_context.json` (default `{}`); host/title from it.
   - Build `scenes` from `plan["scenes"]`: each `{kind, screenshot: <abs path to job_dir/screenshots/<name>> if screenshot else None, headline, subtext, motion, durationS: duration_s}`. (Pass ABS paths; the client/service turns them into `file://` URLs.)
@@ -470,16 +519,21 @@ git commit -m "feat(video): render_remotion_job orchestrator (service render + l
 
 - [ ] **Step 3: Implement** two edits in `video_worker.py`:
   - Plan selection: change the condition so `render_mode in ("animated", "remotion")` uses `generate_anim_plan` (else slideshow). (Grep the current ternary at ~:131-137.)
-  - Render dispatch: add a branch:
+  - Render dispatch: add a branch. Use a TOP-LEVEL import (no circular dep:
+    `video_remotion_render` imports `video_anim`/`video_remotion_client`, neither
+    imports `video_worker`), matching the `render_animated_job` import pattern:
+    add `from video_remotion_render import render_remotion_job` near
+    `from video_anim import render_animated_job` (~:27), then:
     ```python
     if render_mode == "animated":
         out = await render_animated_job(APPS_DIR, slug, str(job_id), plan, voice=voice)
     elif render_mode == "remotion":
-        from video_remotion_render import render_remotion_job
         out = await render_remotion_job(APPS_DIR, slug, str(job_id), plan, voice=voice)
     else:
         out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
     ```
+  - The worker test patches `video_worker.render_remotion_job` (the name bound into
+    the worker module by the top-level import).
 
 - [ ] **Step 4: Run -> PASS;** run the worker + pipeline suites.
 Run: `python -m pytest tests/test_video_worker.py tests/test_video_pipeline.py -v`
@@ -502,8 +556,9 @@ git commit -m "feat(video): worker renders render_mode=remotion via the remotion
 - [ ] **Step 1: `video-remotion/Dockerfile`** - a Node base with Chromium deps + Inter font:
   - `FROM node:20-bookworm-slim`
   - install Remotion's Chromium OS deps + `fontconfig fonts-inter fonts-liberation2` + `fc-cache -f` (same font discipline as the tasks image), and ffmpeg (Remotion bundles its own ffmpeg, but install the system one as a fallback for the mux-side parity; the actual audio mux runs in tasks, so ffmpeg here is only for Remotion if needed).
-  - `WORKDIR /app`, copy `package.json`, `npm ci` (or `npm install`), copy `src/` + configs, `npx remotion browser ensure` to pre-install the headless Chromium at build time, expose `8090`, `CMD ["npm","run","server"]`.
-  - Add `.dockerignore` (node_modules, out).
+  - `WORKDIR /app`, copy `package.json` + `package-lock.json`, `npm ci`, copy `src/` + configs, `npx remotion browser ensure` to pre-install the headless Chromium at build time, expose `8090`, `CMD ["npm","run","server"]`.
+  - `npm ci` requires a committed `package-lock.json` - ensure Task 1's `npm install` generated it and that `.gitignore`/`.dockerignore` do NOT exclude it (only `node_modules/` and `out/`). If no lockfile is committed, use `npm install` instead.
+  - Compose snippet: use the file's LIST-form network style to match `tasks` (`networks:` then `- backend`), not the map form.
 
 - [ ] **Step 2: Add the compose service** to `docker-compose.unified.yml` (mirror the `tasks` service's volume + network; Grep the `tasks:` block ~:267-300 for the exact mount/network keys):
   ```yaml
@@ -516,7 +571,7 @@ git commit -m "feat(video): worker renders render_mode=remotion via the remotion
     volumes:
       - ./:/workspace/ai_ui
     networks:
-      backend:
+      - backend
     expose:
       - "8090"
   ```
