@@ -182,6 +182,23 @@
 		redir * /tasks/app-builder 308
 	}
 
+	# Clean public URL for the Cron Jobs / Schedules page (the sidebar links here).
+	# Mirrors /video-generator; without this it falls through to the Open WebUI 404.
+	handle /cron-jobs {
+		rewrite * /tasks/static/cron.html
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+	handle /cron-jobs/ {
+		rewrite * /tasks/static/cron.html
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+
 	# Liveness probe — used by scripts/deploy_orchestrator.sh post-deploy smoke.
 	# Without this handler, /tasks/healthz would fall through to the Open WebUI
 	# SPA catch-all (returns 200 + HTML), giving a false positive in deploys.
