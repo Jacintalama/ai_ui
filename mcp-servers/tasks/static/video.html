@@ -559,7 +559,7 @@
           </div>
 
           <div class="field" style="display:flex;align-items:center;gap:8px;">
-            <input type="checkbox" id="anim-toggle" style="width:auto;">
+            <input type="checkbox" id="anim-toggle" checked style="width:auto;">
             <label class="form-label" for="anim-toggle" style="margin:0;cursor:pointer;">
               Animated <span style="opacity:.6">— kinetic text + motion instead of a slideshow</span>
             </label>
@@ -600,6 +600,17 @@
                 <option value="cinematic">Cinematic</option>
                 <option value="snappy_social">Snappy social</option>
               </select>
+            </div>
+
+            <div class="field">
+              <label class="form-label" for="animation-preset">Animation</label>
+              <select class="form-input" id="animation-preset" name="animation_preset">
+                <option value="cursor_click" selected>Cursor click (recommended)</option>
+                <option value="smooth_scroll">Smooth scroll</option>
+                <option value="spotlight">Spotlight focus</option>
+                <option value="zoom_pan">Zoom and pan</option>
+              </select>
+              <span class="form-hint">Controls how screenshots move in the generated video.</span>
             </div>
 
             <div class="field">
@@ -746,6 +757,7 @@
     const shotError = document.getElementById("shot-error");
     const promptInput = document.getElementById("prompt");
     const styleSelect = document.getElementById("style");
+    const animationPresetSelect = document.getElementById("animation-preset");
     const voiceList = document.getElementById("voice-list");
     let selectedVoice = null;   // chosen voice id, set once voices load
     let defaultVoiceId = "amy"; // updated from the catalog's default flag on load
@@ -1437,7 +1449,7 @@
       if (collectingPanel) collectingPanel.hidden = true;
       if (captureUrlInput) captureUrlInput.value = "";
       if (createCaptureUrl) createCaptureUrl.value = "";
-      var _at = document.getElementById("anim-toggle"); if (_at) _at.checked = false;
+      var _at = document.getElementById("anim-toggle"); if (_at) _at.checked = true;
       showPlaceholder("empty", "Your video will appear here.");
       projectName.textContent = "";
       resetChatWelcome();
@@ -1758,7 +1770,11 @@
     // Manual path: upload the staged images and open the studio.
     function _renderMode() {
       const t = document.getElementById("anim-toggle");
-      return (t && t.checked) ? "animated" : "slideshow";
+      return (!t || t.checked) ? "remotion" : "slideshow";
+    }
+
+    function _animationPreset() {
+      return animationPresetSelect ? animationPresetSelect.value : "cursor_click";
     }
 
     async function uploadAndOpen(title, prompt) {
@@ -1768,6 +1784,7 @@
       fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
       fd.append("voice", selectedVoice || defaultVoiceId);
       fd.append("render_mode", _renderMode());
+      fd.append("animation_preset", _animationPreset());
       stopVoicePreview();
       for (const s of shots) fd.append("files", s.file, s.file.name);
       const resp = await fetch(API + "/upload", {
@@ -1807,6 +1824,7 @@
               style: styleSelect ? styleSelect.value : "clean_product_demo",
               voice: selectedVoice || defaultVoiceId,
               render_mode: _renderMode(),
+              animation_preset: _animationPreset(),
             }),
           });
           if (!draftResp.ok) {
