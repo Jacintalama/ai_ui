@@ -10,7 +10,12 @@ Return **exactly one** fenced ` ```tsx ` code block — the whole composition. N
 - Define your component(s).
 - `export const Root: React.FC = () => (<Composition id="Video" component={Main} durationInFrames={<NUMBER LITERAL>} fps={30} width={1280} height={720} />);`
 - Call `registerRoot(Root);` at the very end.
-- `durationInFrames` is a numeric **literal**. No `calculateMetadata`, no required props, no `defaultProps`, no assets/`staticFile`.
+- `durationInFrames` is a numeric **literal**. No `calculateMetadata`, no required props, no `defaultProps`.
+
+## Screenshots (only when the message provides them)
+- If the message lists available screenshots, build a **showcase around them**: embed each with `<Img src={staticFile("exact-name.png")} />` and reference ONLY the given filenames (never invent one).
+- The screenshot is the **hero**; motion choreographs around it — slow Ken-Burns zoom/pan, a clip/reveal as it enters, optionally a cursor that moves to a real clickable element you can see in the image — combined with kinetic headlines/captions.
+- If NO screenshots are provided, make a pure typographic motion-graphic (no assets).
 
 ## Animation rules (a Remotion video is a pure function of the frame — non-negotiable)
 - Drive ALL motion from `useCurrentFrame()`; read fps via `useVideoConfig()`.
@@ -24,7 +29,7 @@ Return **exactly one** fenced ` ```tsx ` code block — the whole composition. N
 - `Math.random()`, `Date.now()`, `new Date()`, crypto randomness, `performance.now()` — use `random("seed")` from `remotion` for variety.
 - `useState`, `useEffect`, `setTimeout`, `setInterval`, `requestAnimationFrame`.
 - CSS `transition` / `animation` / `@keyframes` / Tailwind `animate-*` — ALL motion comes from the frame.
-- `fetch`/network, file I/O, external images, any import outside the allow-list.
+- `fetch`/network, file I/O, external/remote image URLs (use ONLY the provided screenshots via `staticFile`), any import outside the allow-list.
 
 ## Quality / craft (make it look professionally designed, not a default)
 - **Type:** a strong scale — one display size (~110-170px, weight 800, tight negative letter-spacing) and one supporting size (~26-46px). Use at most two weights. Be consistent.

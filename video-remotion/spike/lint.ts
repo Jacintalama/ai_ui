@@ -35,6 +35,24 @@ function importAllowed(mod: string): boolean {
   return mod.startsWith("@remotion/") || mod.startsWith("react/") || ALLOWED_EXACT.has(mod);
 }
 
+const STATICFILE_RE = /staticFile\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
+
+// Stage 1.5: a composition may only reference screenshots that were actually
+// provided. Flags any staticFile('X') whose X isn't in `allowed`.
+export function lintAssets(src: string, allowed: string[]): string[] {
+  const set = new Set(allowed);
+  const errs: string[] = [];
+  let m: RegExpExecArray | null;
+  STATICFILE_RE.lastIndex = 0;
+  while ((m = STATICFILE_RE.exec(src))) {
+    const ref = m[1].replace(/^\.?\//, "");
+    if (!set.has(ref)) {
+      errs.push(`[asset] staticFile('${m[1]}') references a file that wasn't provided (available: ${allowed.join(", ") || "none"}).`);
+    }
+  }
+  return errs;
+}
+
 export function lintComposition(src: string): string[] {
   const errs: string[] = [];
   for (const r of RULES) {

@@ -7,7 +7,7 @@ import {selectComposition, renderStill, renderMedia} from "@remotion/renderer";
 import {readFileSync, writeFileSync, mkdirSync, rmSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import path from "node:path";
-import {lintComposition} from "./lint";
+import {lintComposition, lintAssets} from "./lint";
 import {renderConcurrency} from "../src/render";
 
 const SPIKE = path.dirname(fileURLToPath(import.meta.url));
@@ -22,12 +22,12 @@ export class GateError extends Error {
   }
 }
 
-export async function harness(compSrc: string, label: string) {
+export async function harness(compSrc: string, label: string, allowedAssets: string[] = []) {
   const report: Record<string, unknown> = {label, gates: {}};
   const gates = report.gates as Record<string, unknown>;
 
-  // GATE 1 — determinism heuristic lint
-  const lintErrs = lintComposition(compSrc);
+  // GATE 1 — determinism heuristic lint + asset allow-list (only provided screenshots)
+  const lintErrs = [...lintComposition(compSrc), ...lintAssets(compSrc, allowedAssets)];
   gates.lint = lintErrs.length === 0 ? "pass" : lintErrs;
   if (lintErrs.length) throw new GateError("lint failed", lintErrs.join("\n"), report);
 

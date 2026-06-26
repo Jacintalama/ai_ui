@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {lintComposition} from "./lint";
+import {lintComposition, lintAssets} from "./lint";
 
 const GOOD = `
 import {AbsoluteFill, Sequence, Series, useCurrentFrame, useVideoConfig, interpolate, spring, Easing, registerRoot, Composition} from "remotion";
@@ -57,5 +57,21 @@ describe("lintComposition", () => {
 
   it("does not false-positive 'fetch' inside 'prefetch'", () => {
     expect(lintComposition("import {prefetch} from 'remotion'; prefetch('x');")).toEqual([]);
+  });
+});
+
+describe("lintAssets", () => {
+  const allowed = ["shot-1.png", "shot-2.png"];
+  it("passes when staticFile refs are all provided", () => {
+    expect(lintAssets("<Img src={staticFile('shot-1.png')} />", allowed)).toEqual([]);
+  });
+  it("normalizes a leading slash or ./", () => {
+    expect(lintAssets("staticFile(\"/shot-2.png\"); staticFile('./shot-1.png')", allowed)).toEqual([]);
+  });
+  it("flags a staticFile ref that was not provided", () => {
+    expect(lintAssets("staticFile('logo.png')", allowed).length).toBe(1);
+  });
+  it("returns nothing when there are no staticFile calls", () => {
+    expect(lintAssets("const x = 1;", allowed)).toEqual([]);
   });
 });
