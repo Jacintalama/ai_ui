@@ -17,6 +17,8 @@ import os
 import shutil
 import tempfile
 
+from video_plan import DEFAULT_ANIMATION_PRESET, ensure_anim_narration
+
 logger = logging.getLogger("video_anim")
 
 # Piper TTS binary for in-container narration (best-effort; animated renders fall
@@ -86,7 +88,8 @@ def composition_duration(plan: dict) -> float:
 
 def build_composition(plan: dict, shots: dict[str, bytes],
                       *, width: int = 1280, height: int = 720,
-                      site_context: dict | None = None) -> str:
+                      site_context: dict | None = None,
+                      animation_preset: str = DEFAULT_ANIMATION_PRESET) -> str:
     """Deterministic, seek-safe HTML for an animated plan. Text is delivered to the
     page via a JSON SCENES array + JS textContent / runtime-built nodes (never
     interpolated into markup), and screenshots as data URIs, so it is self-contained
@@ -110,7 +113,11 @@ def build_composition(plan: dict, shots: dict[str, bytes],
             "dur": max(0.5, float(sc.get("duration_s") or 3.0)),
         })
     ctx = site_context or {}
-    cfg = {"host": str(ctx.get("host") or ""), "title": str(ctx.get("title") or "")}
+    cfg = {
+        "host": str(ctx.get("host") or ""),
+        "title": str(ctx.get("title") or ""),
+        "animationPreset": animation_preset or DEFAULT_ANIMATION_PRESET,
+    }
     data = _json.dumps(scenes).replace("</", "<\\/")     # safe to embed in <script>
     cfg_json = _json.dumps(cfg).replace("</", "<\\/")
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>
@@ -147,6 +154,16 @@ def build_composition(plan: dict, shots: dict[str, bytes],
   #headline span{{display:inline-block;white-space:pre;will-change:opacity,transform}}
   #subtext{{position:absolute;bottom:8%;left:6%;right:6%;text-align:center;
     font-size:28px;font-weight:600;opacity:0}}
+  #cursor{{position:absolute;left:0;top:0;width:0;height:0;opacity:0;
+    border-top:24px solid #f7f5ef;border-right:15px solid transparent;
+    filter:drop-shadow(0 2px 1px rgba(0,0,0,.55));transform:rotate(-12deg);
+    pointer-events:none;z-index:4}}
+  #click{{position:absolute;left:0;top:0;width:82px;height:82px;margin:-41px 0 0 -41px;
+    border:4px solid rgba(154,166,255,.9);border-radius:50%;opacity:0;
+    transform:scale(.35);pointer-events:none;z-index:3}}
+  #spotlight{{position:absolute;inset:0;opacity:0;pointer-events:none;z-index:2;
+    background:radial-gradient(circle at 65% 42%, rgba(255,255,255,.18) 0 11%,
+      rgba(0,0,0,0) 19%, rgba(0,0,0,.48) 64%)}}
   body.center .eyebrow{{bottom:auto;top:37%}}
   body.center #headline{{bottom:auto;top:44%}}
   body.center #subtext{{bottom:auto;top:57%}}
@@ -159,6 +176,7 @@ def build_composition(plan: dict, shots: dict[str, bytes],
   <div id="eyebrow" class="eyebrow"></div>
   <div id="headline"></div>
   <div id="subtext"></div>
+  <div id="spotlight"></div><div id="click"></div><div id="cursor"></div>
   <div class="vignette"></div>
 <script>
   var SCENES={data}, CFG={cfg_json};
@@ -169,7 +187,8 @@ def build_composition(plan: dict, shots: dict[str, bytes],
   var IMG=document.getElementById('img'), H=document.getElementById('headline'),
       SUB=document.getElementById('subtext'), EB=document.getElementById('eyebrow'),
       FRAME=document.getElementById('frame'), ADDR=document.getElementById('addr'),
-      BODY=document.body;
+      BODY=document.body, CUR=document.getElementById('cursor'),
+      CLK=document.getElementById('click'), SPOT=document.getElementById('spotlight');
   ADDR.textContent = CFG.host || '';
   EB.textContent = CFG.title || 'OVERVIEW';
   var starts=[],acc=0; for(var i=0;i<SCENES.length;i++){{starts.push(acc);acc+=SCENES[i].dur;}}
@@ -195,17 +214,27 @@ def build_composition(plan: dict, shots: dict[str, bytes],
     EB.style.opacity=sc.img?0:env;
     if(sc.img){{
       IMG.src=sc.img;
-      var kb=lerp(1.0,1.06,ease2(p));            // always-on Ken Burns scale
+      var preset=CFG.animationPreset||'cursor_click';
+      var kb=lerp(1.0,(preset==='zoom_pan'?1.13:1.06),ease2(p)); // always-on Ken Burns scale
       var kx=lerp(0,-1.2,ease2(p)), ky=lerp(0,-1.0,ease2(p));  // gentle drift (%)
       var mz=1.0, dx=0, dy=0;
       if(sc.motion==='zoom-in')mz=lerp(1.0,1.1,ease2(p));
       else if(sc.motion==='zoom-out')mz=lerp(1.1,1.0,ease2(p));
       else if(sc.motion==='pan-up')dy=lerp(20,-20,ease2(p));
       else if(sc.motion==='pan-left')dx=lerp(30,-30,ease2(p));
+      if(preset==='smooth_scroll')dy+=lerp(34,-46,ease2(p));
       FRAME.style.opacity=env;
       FRAME.style.transform='translate(calc(-50% + '+dx+'px),'+dy+'px) '
         +'translate('+kx+'%,'+ky+'%) scale('+(kb*mz)+')';
-    }} else {{FRAME.style.opacity=0;}}
+      var cx=lerp(430,820,ease2(clamp((p-.12)/.52)));
+      var cy=lerp(530,300,ease2(clamp((p-.12)/.52)));
+      var click=ease2(clamp((p-.48)/.10))*(1-ease2(clamp((p-.68)/.18)));
+      CUR.style.opacity=(preset==='cursor_click')?env:0;
+      CUR.style.transform='translate('+cx+'px,'+cy+'px) rotate(-12deg)';
+      CLK.style.opacity=(preset==='cursor_click')?click:0;
+      CLK.style.transform='translate('+cx+'px,'+cy+'px) scale('+lerp(.35,1.2,click)+')';
+      SPOT.style.opacity=(preset==='spotlight')?env:0;
+    }} else {{FRAME.style.opacity=0; CUR.style.opacity=0; CLK.style.opacity=0; SPOT.style.opacity=0;}}
     BODY.className=(sc.kind==='screenshot')?'':'center';
     if(_wIdx!==idx){{buildWords(sc.headline); _wIdx=idx;}}
     var n=_wSpans.length;
@@ -384,7 +413,8 @@ async def _synthesize_narration(text: str, voice: str | None, out_wav: str) -> s
 
 
 async def render_animated_job(apps_dir: str, slug: str, job_id: str, plan: dict,
-                              *, fps: int = 24, voice: str | None = None) -> str:
+                              *, fps: int = 24, voice: str | None = None,
+                              animation_preset: str = DEFAULT_ANIMATION_PRESET) -> str:
     """Render an animated job's plan to out.mp4 in-container: read the job's
     screenshots from disk, build the composition, synthesize Piper narration (if
     available), then render via Chromium+ffmpeg. Returns the output path."""
@@ -405,7 +435,9 @@ async def render_animated_job(apps_dir: str, slug: str, job_id: str, plan: dict,
                 site_context = _json.load(f)
         except Exception:  # noqa: BLE001 - context is best-effort
             site_context = {}
-    html = build_composition(plan, shots, site_context=site_context)
+    plan = ensure_anim_narration(plan, "")
+    html = build_composition(plan, shots, site_context=site_context,
+                             animation_preset=animation_preset)
     out = os.path.join(job_dir, "out.mp4")
     dur = min(MAX_DURATION_S, composition_duration(plan) or 8.0)
     audio = await _synthesize_narration(

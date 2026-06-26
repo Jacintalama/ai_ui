@@ -19,12 +19,14 @@ export const SceneParity: React.FC<{
   scene: Scene;
   host: string;
   title: string;
-}> = ({scene, host, title}) => {
+  animationPreset?: string;
+}> = ({scene, host, title, animationPreset = "cursor_click"}) => {
   const frame = useCurrentFrame();
   const p = clamp(frame / Math.max(1, scene.durInFrames));
 
   const hasShot = Boolean(scene.screenshot);
   const motion = scene.motion || "fade";
+  const preset = animationPreset || "cursor_click";
 
   // Fade-through envelope: in over first 18%, out over last 18%.
   const env =
@@ -32,7 +34,7 @@ export const SceneParity: React.FC<{
 
   // --- Frame (browser chrome) transform ---
   // Ken Burns (always on for screenshot scenes)
-  const kb = lerp(1.0, 1.06, ease2(p));
+  const kb = lerp(1.0, preset === "zoom_pan" ? 1.13 : 1.06, ease2(p));
   const kx = lerp(0, -1.2, ease2(p)); // percent
   const ky = lerp(0, -1.0, ease2(p)); // percent
 
@@ -49,9 +51,18 @@ export const SceneParity: React.FC<{
   } else if (motion === "pan-left") {
     dx = lerp(30, -30, ease2(p));
   }
+  if (preset === "smooth_scroll") {
+    dy += lerp(34, -46, ease2(p));
+  }
 
   const frameOpacity = hasShot ? env : 0;
   const frameTransform = `translate(calc(-50% + ${dx}px), ${dy}px) translate(${kx}%, ${ky}%) scale(${kb * mz})`;
+  const cursorX = lerp(430, 820, ease2(clamp((p - 0.12) / 0.52)));
+  const cursorY = lerp(530, 300, ease2(clamp((p - 0.12) / 0.52)));
+  const clickPulse =
+    ease2(clamp((p - 0.48) / 0.1)) *
+    (1 - ease2(clamp((p - 0.68) / 0.18)));
+  const showCursor = hasShot && preset === "cursor_click";
 
   // --- Eyebrow ---
   const eyebrowOpacity = hasShot ? 0 : env;
@@ -238,6 +249,55 @@ export const SceneParity: React.FC<{
       </div>
 
       {/* .vignette (on top of everything) */}
+      {hasShot && preset === "spotlight" ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: env,
+            background:
+              "radial-gradient(circle at 65% 42%, rgba(255,255,255,.18) 0 11%, rgba(0,0,0,0) 19%, rgba(0,0,0,.48) 64%)",
+            pointerEvents: "none",
+          }}
+        />
+      ) : null}
+
+      {showCursor ? (
+        <>
+          <div
+            style={{
+              position: "absolute",
+              left: cursorX,
+              top: cursorY,
+              width: 0,
+              height: 0,
+              borderTop: "24px solid #f7f5ef",
+              borderRight: "15px solid transparent",
+              filter: "drop-shadow(0 2px 1px rgba(0,0,0,.55))",
+              transform: "rotate(-12deg)",
+              opacity: env,
+              pointerEvents: "none",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              left: cursorX,
+              top: cursorY,
+              width: 82,
+              height: 82,
+              marginLeft: -41,
+              marginTop: -41,
+              border: "4px solid rgba(154,166,255,.9)",
+              borderRadius: "50%",
+              opacity: clickPulse,
+              transform: `scale(${lerp(0.35, 1.2, clickPulse)})`,
+              pointerEvents: "none",
+            }}
+          />
+        </>
+      ) : null}
+
       <div
         style={{
           position: "absolute",

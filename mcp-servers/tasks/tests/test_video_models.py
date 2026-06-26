@@ -66,3 +66,11 @@ def test_video_job_has_style_voice_columns():
     assert VideoJob.__table__.c.style.nullable is False
     assert VideoJob.__table__.c.style.default.arg == "clean_product_demo"
     assert VideoJob.__table__.c.voice.nullable is True
+
+
+def test_video_job_has_animation_preset_column():
+    cols = set(VideoJob.__table__.columns.keys())
+    assert "animation_preset" in cols
+    col = VideoJob.__table__.c.animation_preset
+    assert col.nullable is False
+    assert col.default.arg == "cursor_click"

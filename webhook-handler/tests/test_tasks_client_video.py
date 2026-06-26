@@ -63,7 +63,8 @@ async def test_create_video_draft_path_and_body():
 
     result = await client.create_video_draft(
         "user@test.com", title="My Video", prompt="A cool promo",
-        style="cinematic", voice="adam",
+        style="cinematic", voice="adam", render_mode="remotion",
+        animation_preset="cursor_click",
     )
 
     assert caps["method"] == "POST"
@@ -74,6 +75,8 @@ async def test_create_video_draft_path_and_body():
         "prompt": "A cool promo",
         "style": "cinematic",
         "voice": "adam",
+        "render_mode": "remotion",
+        "animation_preset": "cursor_click",
     }
     assert result == {"job_id": "j1"}
 
@@ -206,6 +209,16 @@ async def test_set_video_draft_fields_both():
     await client.set_video_draft_fields("u@t.com", "job-3", style="cinematic", voice="adam")
 
     assert caps["json"] == {"style": "cinematic", "voice": "adam"}
+
+
+async def test_set_video_draft_fields_animation_preset():
+    client = _make_client()
+    fake, caps = _fake_request_factory(return_json={})
+    client._request = fake
+
+    await client.set_video_draft_fields("u@t.com", "job-a", animation_preset="spotlight")
+
+    assert caps["json"] == {"animation_preset": "spotlight"}
 
 
 async def test_set_video_draft_fields_neither_sends_empty_body():

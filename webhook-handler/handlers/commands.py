@@ -2420,14 +2420,16 @@ class CommandRouter:
 
     async def run_video_set_field(self, ctx: CommandContext, job_id: str, *,
                                   style: str | None = None, voice: str | None = None,
-                                  render_mode: str | None = None) -> None:
+                                  render_mode: str | None = None,
+                                  animation_preset: str | None = None) -> None:
         email = await self._resolve_email_for_ctx(ctx)
         if not email:
             await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.set_video_draft_fields(
-                email, job_id, style=style, voice=voice, render_mode=render_mode)
+                email, job_id, style=style, voice=voice, render_mode=render_mode,
+                animation_preset=animation_preset)
         except TasksAPIError as e:
             logger.warning("video set field failed job=%s: %s", job_id, e)
 
@@ -2470,9 +2472,10 @@ class CommandRouter:
             watcher.add_done_callback(self._on_video_watcher_done)
 
     async def run_video_gennow(self, ctx: CommandContext, job_id: str) -> None:
-        """Default path: force kinetic animated, then queue and watch and deliver. The
+        """Default path: force Remotion animated, then queue and watch and deliver. The
         brain scripts the whole video from an empty prompt."""
-        await self.run_video_set_field(ctx, job_id, render_mode="animated")
+        await self.run_video_set_field(
+            ctx, job_id, render_mode="remotion", animation_preset="cursor_click")
         await self.run_video_generate(ctx, job_id)
 
     async def run_video_refine(self, ctx: CommandContext, job_id: str, message: str) -> None:

@@ -20,6 +20,7 @@ URL_INPUT = "url"
 STYLE_PREFIX = "aiuivid:style:"
 VOICE_PREFIX = "aiuivid:voice:"
 MODE_PREFIX = "aiuivid:mode:"
+ANIMATION_PREFIX = "aiuivid:animation:"
 GENERATE_PREFIX = "aiuivid:generate:"
 GENNOW_PREFIX = "aiuivid:gennow:"
 SRC_URL_PREFIX = "aiuivid:srcurl:"
@@ -39,6 +40,13 @@ STYLES = [
     ("clean_product_demo", "Clean product demo", "Crisp, recommended default"),
     ("cinematic", "Cinematic", "Graded, glassy lower-thirds, ambient bed"),
     ("snappy_social", "Snappy social", "Punchy, bold pop-in captions"),
+]
+
+ANIMATIONS = [
+    ("cursor_click", "Cursor click", "Mouse cursor moves and clicks the key area"),
+    ("smooth_scroll", "Smooth scroll", "Guided page movement for long screens"),
+    ("spotlight", "Spotlight", "Highlight the most important UI area"),
+    ("zoom_pan", "Zoom and pan", "Stronger camera movement, no cursor"),
 ]
 
 
@@ -151,15 +159,30 @@ def build_voice_select(job_id: str, voices: list[dict], current: str = "amy") ->
             "options": options}
 
 
-def build_mode_select(job_id: str, current: str = "slideshow") -> dict:
+def build_mode_select(job_id: str, current: str = "remotion") -> dict:
     options = [
-        {"label": "Slideshow (screenshots)", "value": "slideshow",
-         "description": "Narrated screenshot slideshow"[:100], "default": current == "slideshow"},
-        {"label": "Animated (motion graphics)", "value": "animated",
-         "description": "Kinetic text + motion around your screenshots"[:100], "default": current == "animated"},
+        {"label": "Animated (recommended)", "value": "remotion",
+         "description": "Remotion kinetic text, cursor, and motion"[:100],
+         "default": current == "remotion"},
+        {"label": "Simple animation", "value": "animated",
+         "description": "In-container kinetic text and motion"[:100],
+         "default": current == "animated"},
+        {"label": "Slideshow", "value": "slideshow",
+         "description": "Plain narrated screenshot slideshow"[:100],
+         "default": current == "slideshow"},
     ]
     return {"type": SELECT_MENU, "custom_id": f"{MODE_PREFIX}{job_id}",
-            "placeholder": "Output: Slideshow or Animated…", "min_values": 1, "max_values": 1,
+            "placeholder": "Output format", "min_values": 1, "max_values": 1,
+            "options": options}
+
+
+def build_animation_select(job_id: str, current: str = "cursor_click") -> dict:
+    options = [{
+        "label": label, "value": key, "description": desc[:100],
+        "default": key == current,
+    } for key, label, desc in ANIMATIONS]
+    return {"type": SELECT_MENU, "custom_id": f"{ANIMATION_PREFIX}{job_id}",
+            "placeholder": "Animation style", "min_values": 1, "max_values": 1,
             "options": options}
 
 
@@ -195,11 +218,13 @@ def build_generate_step_components(job_id: str) -> list[dict]:
 def build_options_components(job_id: str, voices: list[dict],
                              current_style: str = "clean_product_demo",
                              current_voice: str = "amy",
-                             current_mode: str = "slideshow") -> list[dict]:
+                             current_mode: str = "remotion",
+                             current_animation: str = "cursor_click") -> list[dict]:
     return [
         {"type": ACTION_ROW, "components": [build_style_select(job_id, current_style)]},
         {"type": ACTION_ROW, "components": [build_voice_select(job_id, voices, current_voice)]},
         {"type": ACTION_ROW, "components": [build_mode_select(job_id, current_mode)]},
+        {"type": ACTION_ROW, "components": [build_animation_select(job_id, current_animation)]},
         {"type": ACTION_ROW, "components": [
             _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS),
             _button("Back", f"{OPTIONS_BACK_PREFIX}{job_id}", STYLE_SECONDARY)]},
@@ -239,6 +264,7 @@ def is_vid_capture_modal(c: str) -> bool: return c.startswith(CAPTURE_MODAL_PREF
 def is_vid_style(c: str) -> bool: return c.startswith(STYLE_PREFIX)
 def is_vid_voice(c: str) -> bool: return c.startswith(VOICE_PREFIX)
 def is_vid_mode(c: str) -> bool: return c.startswith(MODE_PREFIX)
+def is_vid_animation(c: str) -> bool: return c.startswith(ANIMATION_PREFIX)
 def is_vid_generate(c: str) -> bool: return c.startswith(GENERATE_PREFIX)
 def is_vid_gennow(c: str) -> bool: return c.startswith(GENNOW_PREFIX)
 def job_from_gennow(c: str) -> str: return _suffix_after(c, GENNOW_PREFIX)
@@ -250,6 +276,7 @@ def is_vid_version(c: str) -> bool: return c.startswith(VERSION_PREFIX)
 def job_from_style(c: str) -> str: return _suffix_after(c, STYLE_PREFIX)
 def job_from_voice(c: str) -> str: return _suffix_after(c, VOICE_PREFIX)
 def job_from_mode(c: str) -> str: return _suffix_after(c, MODE_PREFIX)
+def job_from_animation(c: str) -> str: return _suffix_after(c, ANIMATION_PREFIX)
 def job_from_generate(c: str) -> str: return _suffix_after(c, GENERATE_PREFIX)
 def job_from_details(c: str) -> str: return _suffix_after(c, DETAILS_PREFIX)
 def job_from_details_modal(c: str) -> str: return _suffix_after(c, DETAILS_MODAL_PREFIX)

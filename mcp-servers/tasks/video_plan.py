@@ -283,6 +283,8 @@ async def generate_plan(
 ANIM_MOTIONS = ["zoom-in", "zoom-out", "pan-up", "pan-left", "rise", "fade"]
 ANIM_MAX_SCENES = 8
 ANIM_MAX_TOTAL_SECONDS = 40.0
+ANIMATION_PRESETS = ["cursor_click", "smooth_scroll", "spotlight", "zoom_pan"]
+DEFAULT_ANIMATION_PRESET = "cursor_click"
 
 ANIM_PLAN_SCHEMA = {
     "type": "object",
@@ -347,6 +349,61 @@ def _resolve_brief(prompt: str) -> str:
     )
 
 
+def _animation_instruction(animation_preset: str | None) -> str:
+    preset = animation_preset if animation_preset in ANIMATION_PRESETS else DEFAULT_ANIMATION_PRESET
+    notes = {
+        "cursor_click": (
+            "show a visible mouse cursor moving across screenshot scenes with a "
+            "click pulse on the important area"
+        ),
+        "smooth_scroll": "make screenshots feel like a smooth page scroll or guided vertical reveal",
+        "spotlight": "use a focus spotlight/highlight on the most important UI area",
+        "zoom_pan": "use stronger zoom and pan movement without a cursor overlay",
+    }
+    return f"Animation preference: {preset} - {notes[preset]}."
+
+
+def _with_animation_preference(content, animation_preset: str | None):
+    instruction = _animation_instruction(animation_preset)
+    if isinstance(content, list) and content:
+        first = content[0]
+        if isinstance(first, dict) and first.get("type") == "text":
+            first["text"] = (str(first.get("text") or "").strip() + "\n\n" + instruction).strip()
+            return content
+    if isinstance(content, str):
+        return (content.strip() + "\n" + instruction).strip()
+    return instruction
+
+
+def ensure_anim_narration(plan: dict, prompt: str = "") -> dict:
+    """Ensure animated/remotion plans always have speakable narration.
+
+    The TTS layer correctly stays silent when narration_script is empty. For the
+    default no-brief flow that made selected voices look broken, so derive a
+    short voiceover from the scene copy when the model or fallback returns none.
+    """
+    if not isinstance(plan, dict):
+        return plan
+    if (plan.get("narration_script") or "").strip():
+        return plan
+    lines: list[str] = []
+    title = (plan.get("title") or "").strip()
+    if title:
+        lines.append(title)
+    for sc in plan.get("scenes") or []:
+        headline = (sc.get("headline") or "").strip()
+        subtext = (sc.get("subtext") or "").strip()
+        if headline:
+            lines.append(headline)
+        if subtext:
+            lines.append(subtext)
+    if not lines:
+        clean = (prompt or "").strip()
+        lines.append(clean or "A quick look at the key screens.")
+    plan["narration_script"] = ". ".join(lines[:8])
+    return plan
+
+
 def build_anim_system_prompt() -> str:
     return (
         "You produce a JSON plan for a short ANIMATED motion video built from the "
@@ -392,8 +449,11 @@ def _anim_fallback_plan(prompt: str, screenshots: list[str]) -> dict:
     scenes = scenes[:ANIM_MAX_SCENES]
     while sum(s["duration_s"] for s in scenes) > ANIM_MAX_TOTAL_SECONDS and len(scenes) > 1:
         scenes.pop(-2 if len(scenes) > 2 else -1)
-    return {"title": (clean[:60] or "Walkthrough"), "scenes": scenes,
-            "narration_script": clean}
+    return ensure_anim_narration(
+        {"title": (clean[:60] or "A quick look"), "scenes": scenes,
+         "narration_script": clean},
+        prompt,
+    )
 
 
 async def generate_anim_plan(
@@ -402,6 +462,7 @@ async def generate_anim_plan(
     *,
     site_context: dict | None = None,
     screenshot_paths: list[tuple[str, str]] | None = None,
+    animation_preset: str | None = DEFAULT_ANIMATION_PRESET,
     attempts: int = 3,
 ) -> dict:
     """LLM-authored animated plan, resilient (retry + deterministic fallback),
@@ -413,12 +474,15 @@ async def generate_anim_plan(
     if use_vision:
         try:
             content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
+            content = _with_animation_preference(content, animation_preset)
         except Exception:  # noqa: BLE001 - never let content-build sink the planner
             logger.warning("build_vision_content failed; using text prompt")
             content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
+            content = _with_animation_preference(content, animation_preset)
             use_vision = False
     else:
         content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
+        content = _with_animation_preference(content, animation_preset)
     last_err: Exception | None = None
     for i in range(max(1, attempts)):
         try:
@@ -437,6 +501,7 @@ async def generate_anim_plan(
             plan = json.loads(text)
             # Enforce the scene cap here (schema can't express maxItems).
             plan["scenes"] = (plan.get("scenes") or [])[:ANIM_MAX_SCENES]
+            ensure_anim_narration(plan, prompt)
             validate_anim_plan(plan, screenshots)
             return plan
         except Exception as e:  # noqa: BLE001 - retry on bad plan / API hiccup
@@ -445,5 +510,6 @@ async def generate_anim_plan(
                            i + 1, attempts, type(e).__name__, e)
     logger.warning("generate_anim_plan falling back after %d attempts (%s)", attempts, last_err)
     plan = _anim_fallback_plan(prompt, screenshots)
+    ensure_anim_narration(plan, prompt)
     validate_anim_plan(plan, screenshots)
     return plan

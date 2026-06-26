@@ -339,8 +339,8 @@ async def test_run_video_capture_api_error_offers_fallback():
 # --- run_video_gennow ------------------------------------------------------- #
 
 @pytest.mark.asyncio
-async def test_run_video_gennow_sets_animated_then_generates():
-    """run_video_gennow forces render_mode=animated then queues the video."""
+async def test_run_video_gennow_sets_remotion_then_generates():
+    """run_video_gennow forces Remotion + cursor-click, then queues the video."""
     tc = MagicMock()
     tc.set_video_draft_fields = AsyncMock()
     tc.queue_video = AsyncMock(return_value={"queue_position": 0})
@@ -348,7 +348,8 @@ async def test_run_video_gennow_sets_animated_then_generates():
     ctx = _ctx(notify_channel=None)  # no watcher spawned - keeps test hermetic
     await r.run_video_gennow(ctx, "job-1")
     tc.set_video_draft_fields.assert_awaited()
-    assert tc.set_video_draft_fields.await_args.kwargs.get("render_mode") == "animated"
+    assert tc.set_video_draft_fields.await_args.kwargs.get("render_mode") == "remotion"
+    assert tc.set_video_draft_fields.await_args.kwargs.get("animation_preset") == "cursor_click"
     tc.queue_video.assert_awaited()
     # ordering: set_video_draft_fields must be awaited before queue_video
     names = [c[0] for c in tc.mock_calls]

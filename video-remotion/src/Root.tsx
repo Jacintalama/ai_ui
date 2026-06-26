@@ -12,5 +12,5 @@ export const Root: React.FC = () => (
   <Composition id="Video" component={Video} durationInFrames={1} fps={24}
     width={1280} height={720} calculateMetadata={calc}
     defaultProps={{theme: "parity", host: "", title: "", fps: 24,
-      width: 1280, height: 720, scenes: []}} />
+      width: 1280, height: 720, animationPreset: "cursor_click", scenes: []}} />
 );

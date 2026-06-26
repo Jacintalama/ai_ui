@@ -313,8 +313,21 @@ def test_mode_select_options_and_predicates():
     from handlers import video_panel as vp
     sel = vp.build_mode_select("j1")
     vals = {o["value"] for o in sel["options"]}
-    assert vals == {"slideshow", "animated"}
+    assert vals == {"remotion", "animated", "slideshow"}
+    defaults = [o["value"] for o in sel["options"] if o.get("default")]
+    assert defaults == ["remotion"]
     assert vp.is_vid_mode("aiuivid:mode:j1") and vp.job_from_mode("aiuivid:mode:j1") == "j1"
+
+
+def test_animation_select_options_and_predicates():
+    from handlers import video_panel as vp
+    sel = vp.build_animation_select("j1")
+    vals = {o["value"] for o in sel["options"]}
+    assert vals == {"cursor_click", "smooth_scroll", "spotlight", "zoom_pan"}
+    defaults = [o["value"] for o in sel["options"] if o.get("default")]
+    assert defaults == ["cursor_click"]
+    assert vp.is_vid_animation("aiuivid:animation:j1")
+    assert vp.job_from_animation("aiuivid:animation:j1") == "j1"
 
 
 def test_capture_modal_has_url_input():
@@ -387,12 +400,17 @@ def test_build_generate_step_components_generate_and_options():
 def test_build_options_components_three_selects_plus_buttons():
     voices = [{"id": "amy", "label": "Amy", "accent": "US", "gender": "Female"}]
     rows = vp.build_options_components("job1", voices)
-    # 3 selects + 1 button row (generate + back)
-    assert len(rows) == 4
+    # 4 selects + 1 button row (generate + back)
+    assert len(rows) == 5
     last_ids = [c["custom_id"] for c in rows[-1]["components"]]
     assert last_ids == ["aiuivid:generate:job1", "aiuivid:optionsback:job1"]
-    select_ids = [rows[i]["components"][0]["custom_id"] for i in range(3)]
-    assert select_ids == ["aiuivid:style:job1", "aiuivid:voice:job1", "aiuivid:mode:job1"]
+    select_ids = [rows[i]["components"][0]["custom_id"] for i in range(4)]
+    assert select_ids == [
+        "aiuivid:style:job1",
+        "aiuivid:voice:job1",
+        "aiuivid:mode:job1",
+        "aiuivid:animation:job1",
+    ]
 
 def test_new_predicates_round_trip():
     assert vp.is_vid_src_url("aiuivid:srcurl:j") and vp.job_from_src_url("aiuivid:srcurl:j") == "j"

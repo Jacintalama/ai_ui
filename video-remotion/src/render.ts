@@ -1,6 +1,7 @@
 export const MAX_DURATION_S = 40;
 export type RenderRequest = { jobDir: string; theme: string; fps: number;
   width: number; height: number; host: string; title: string; outFile?: string;
+  animationPreset?: string;
   scenes: { kind: string; screenshot?: string; headline?: string;
     subtext?: string; motion?: string; durationS: number }[] };
 
@@ -21,6 +22,7 @@ export function buildRenderConfig(req: RenderRequest) {
   const screenshotUrl = (p?: string) => (p ? p : undefined);
   const inputProps = { theme: req.theme, host: req.host, title: req.title,
     fps, width, height,
+    animationPreset: req.animationPreset || "cursor_click",
     scenes: scenes.map((s) => ({ kind: s.kind, screenshot: screenshotUrl(s.screenshot),
       headline: s.headline ?? "", subtext: s.subtext ?? "", motion: s.motion ?? "fade",
       durInFrames: s.durInFrames })) };

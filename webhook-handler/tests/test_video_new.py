@@ -32,7 +32,8 @@ async def test_open_video_studio_with_screenshots_creates_draft_and_adds_urls():
         title="My Demo", prompt="walk the dashboard",
         screenshot_urls=["http://cdn/1.png", "http://cdn/2.png"])
     router._tasks_client.create_video_draft.assert_awaited_once_with(
-        "u@x.com", "My Demo", "walk the dashboard", "clean_product_demo", "amy")
+        "u@x.com", "My Demo", "walk the dashboard", "clean_product_demo", "amy",
+        render_mode="remotion", animation_preset="cursor_click")
     router._tasks_client.add_video_screenshots_urls.assert_awaited_once_with(
         "u@x.com", "job1", ["http://cdn/1.png", "http://cdn/2.png"])
     discord.post_channel_message.assert_awaited_once()

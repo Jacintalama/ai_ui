@@ -38,7 +38,8 @@ class VideoJob(Base):
     pending_summary = Column(Text, nullable=True)
     style = Column(Text, nullable=False, default="clean_product_demo")
     voice = Column(Text, nullable=True)
-    render_mode = Column(Text, nullable=False, default="slideshow")
+    render_mode = Column(Text, nullable=False, default="remotion")
+    animation_preset = Column(Text, nullable=False, default="cursor_click")
 
 
 class VideoJobVersion(Base):

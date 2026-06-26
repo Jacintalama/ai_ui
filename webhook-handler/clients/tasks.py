@@ -250,10 +250,14 @@ class TasksClient:
         return resp.json()
 
     async def create_video_draft(self, user_email: str, title: str, prompt: str,
-                                 style: str, voice: str) -> dict[str, Any]:
+                                 style: str, voice: str, *,
+                                 render_mode: str = "remotion",
+                                 animation_preset: str = "cursor_click") -> dict[str, Any]:
         resp = await self._request("POST", "/api/video-jobs/draft", user_email,
                                    json={"title": title, "prompt": prompt,
-                                         "style": style, "voice": voice})
+                                         "style": style, "voice": voice,
+                                         "render_mode": render_mode,
+                                         "animation_preset": animation_preset})
         return resp.json()
 
     async def get_current_video_draft(self, user_email: str) -> dict[str, Any] | None:
@@ -268,7 +272,8 @@ class TasksClient:
     async def set_video_draft_fields(self, user_email: str, job_id: str, *,
                                      style: str | None = None, voice: str | None = None,
                                      title: str | None = None, prompt: str | None = None,
-                                     render_mode: str | None = None) -> dict[str, Any]:
+                                     render_mode: str | None = None,
+                                     animation_preset: str | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if style is not None:
             body["style"] = style
@@ -280,6 +285,8 @@ class TasksClient:
             body["prompt"] = prompt
         if render_mode is not None:
             body["render_mode"] = render_mode
+        if animation_preset is not None:
+            body["animation_preset"] = animation_preset
         resp = await self._request("POST", f"/api/video-jobs/{job_id}/draft-set", user_email, json=body)
         return resp.json()
 

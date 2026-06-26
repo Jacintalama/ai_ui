@@ -65,3 +65,43 @@ async def test_render_remotion_job_passes_narration_to_mux(tmp_path, monkeypatch
          "motion": "zoom-in", "duration_s": 3.0}]}
     await vrr.render_remotion_job(str(tmp_path), slug, jid, plan, voice="amy")
     assert seen["audio_path"] and seen["audio_path"].endswith("narration.wav")
+
+
+async def test_render_remotion_job_uses_headlines_for_empty_narration_and_animation(tmp_path, monkeypatch):
+    slug, jid = "vid-b", "33333333-3333-3333-3333-333333333333"
+    base = tmp_path / slug / ".video" / jid
+    (base / "screenshots").mkdir(parents=True)
+    (base / "screenshots" / "screenshot-1.png").write_bytes(b"x")
+    seen = {}
+
+    async def fake_client(job_dir, **kw):
+        seen["animationPreset"] = kw.get("animationPreset")
+        open(os.path.join(job_dir, "remotion-video.mp4"), "wb").write(b"vid")
+        return os.path.join(job_dir, "remotion-video.mp4")
+
+    async def fake_synth(text, voice, out_wav):
+        seen["text"] = text
+        seen["voice"] = voice
+        open(out_wav, "wb").write(b"RIFF")
+        return out_wav
+
+    async def fake_mux(video_in, out_path, audio_path):
+        seen["audio_path"] = audio_path
+        open(out_path, "wb").write(b"final")
+        return out_path
+
+    monkeypatch.setattr(vrr, "render_remotion", fake_client)
+    monkeypatch.setattr(vrr, "_synthesize_narration", fake_synth)
+    monkeypatch.setattr(vrr, "_run_audio_mux", fake_mux)
+    plan = {"narration_script": "", "scenes": [
+        {"kind": "screenshot", "screenshot": "screenshot-1.png",
+         "headline": "Open the dashboard", "subtext": "Click into the reports",
+         "motion": "zoom-in", "duration_s": 3.0}]}
+
+    await vrr.render_remotion_job(
+        str(tmp_path), slug, jid, plan, voice="ryan", animation_preset="cursor_click")
+
+    assert seen["animationPreset"] == "cursor_click"
+    assert "Open the dashboard" in seen["text"]
+    assert seen["voice"] == "ryan"
+    assert seen["audio_path"] and seen["audio_path"].endswith("narration.wav")

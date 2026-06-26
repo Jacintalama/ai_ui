@@ -7,7 +7,9 @@ _DEFAULT_TIMEOUT = 240.0  # wall-clock cap, mirrors the in-process render cap
 
 async def render_remotion(job_dir: str, *, theme: str, fps: int, width: int,
                           height: int, host: str, title: str,
-                          scenes: list[dict], base_url: str | None = None,
+                          scenes: list[dict],
+                          animationPreset: str = "cursor_click",
+                          base_url: str | None = None,
                           _transport: httpx.AsyncBaseTransport | None = None) -> str:
     """POST a render request to the video-remotion service and return the output
     mp4 path it wrote. Raises RuntimeError on a non-200 response or an ok:false
@@ -15,7 +17,8 @@ async def render_remotion(job_dir: str, *, theme: str, fps: int, width: int,
     url = (base_url or os.environ.get("VIDEO_REMOTION_URL",
                                       "http://video-remotion:8090")).rstrip("/") + "/render"
     payload = {"jobDir": job_dir, "theme": theme, "fps": fps, "width": width,
-               "height": height, "host": host, "title": title, "scenes": scenes}
+               "height": height, "host": host, "title": title, "scenes": scenes,
+               "animationPreset": animationPreset}
     kwargs: dict = {"timeout": _DEFAULT_TIMEOUT}
     if _transport is not None:
         kwargs["transport"] = _transport

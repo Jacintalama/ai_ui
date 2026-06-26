@@ -73,7 +73,8 @@ async def test_new_button_opens_studio_deferred():
     assert resp["data"]["flags"] == 64
     await _drain()
     tc.create_video_draft.assert_awaited_once_with(
-        "u@x.com", "Untitled video", "", "clean_product_demo", "amy")
+        "u@x.com", "Untitled video", "", "clean_product_demo", "amy",
+        render_mode="remotion", animation_preset="cursor_click")
     assert discord.post_channel_message.await_args.args[0] == "thread-n"
 
 
@@ -168,6 +169,23 @@ async def test_mode_select_sets_render_mode():
     args = router.run_video_set_field.await_args
     assert args.args[1] == "j1"
     assert args.kwargs == {"render_mode": "animated"}
+
+
+@pytest.mark.asyncio
+async def test_animation_select_sets_animation_preset():
+    router = _router()
+    handler = _handler(router)
+    payload = {
+        "type": 3, "id": "i", "token": "t", "channel_id": "c",
+        "member": {"user": {"id": "100", "username": "alice"}},
+        "data": {"custom_id": f"{vid.ANIMATION_PREFIX}j1", "values": ["spotlight"]},
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == DEFERRED_UPDATE_MESSAGE
+    await _drain()
+    args = router.run_video_set_field.await_args
+    assert args.args[1] == "j1"
+    assert args.kwargs == {"animation_preset": "spotlight"}
 
 
 @pytest.mark.asyncio
@@ -344,7 +362,8 @@ async def test_options_acks_deferred_and_edits_options_card():
     router._resolve_email = AsyncMock(return_value="u@x.com")
     tc = MagicMock()
     tc.get_current_video_draft = AsyncMock(return_value={
-        "style": "cinematic", "voice": "amy"})
+        "style": "cinematic", "voice": "amy",
+        "render_mode": "remotion", "animation_preset": "spotlight"})
     tc.get_video_voices = AsyncMock(return_value={"voices": []})
     router._tasks_client = tc
     handler = _handler(router)
@@ -362,6 +381,7 @@ async def test_options_acks_deferred_and_edits_options_card():
            handler.discord.edit_original.await_args.kwargs["components"]
            for c in row["components"]]
     assert f"{vid.STYLE_PREFIX}j1" in ids
+    assert f"{vid.ANIMATION_PREFIX}j1" in ids
     assert f"{vid.OPTIONS_BACK_PREFIX}j1" in ids
 
 

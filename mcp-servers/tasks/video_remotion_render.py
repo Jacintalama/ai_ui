@@ -5,6 +5,7 @@ import os
 
 from video_remotion_client import render_remotion
 from video_anim import _synthesize_narration, _build_audio_mux_args
+from video_plan import DEFAULT_ANIMATION_PRESET, ensure_anim_narration
 
 
 async def _run_audio_mux(video_in: str, out_path: str, audio_path: str | None) -> str:
@@ -34,6 +35,7 @@ async def render_remotion_job(
     *,
     fps: int = 24,
     voice: str | None = None,
+    animation_preset: str = DEFAULT_ANIMATION_PRESET,
 ) -> str:
     """Render a video job via the remotion service and mux audio locally.
 
@@ -52,6 +54,7 @@ async def render_remotion_job(
             ctx = {}
     host = str(ctx.get("host") or "")
     title = str(ctx.get("title") or "")
+    plan = ensure_anim_narration(plan, "")
 
     # Build scene list for the remotion service, converting duration_s -> durationS
     # and resolving screenshot filenames to absolute paths.
@@ -88,6 +91,7 @@ async def render_remotion_job(
         host=host,
         title=title,
         scenes=scenes,
+        animationPreset=animation_preset,
     )
 
     # Mux ambient bed + optional narration onto the video.

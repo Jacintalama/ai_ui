@@ -60,6 +60,8 @@ async def test_create_draft_returns_201_collecting(db_session):
     # No style/voice sent -> defaults are stored.
     assert job.style == "clean_product_demo"
     assert job.voice == "amy"
+    assert job.render_mode == "remotion"
+    assert job.animation_preset == "cursor_click"
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
@@ -110,7 +112,8 @@ async def test_draft_set_updates_style_and_voice(db_session, tmp_path, monkeypat
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post(
             f"/api/video-jobs/{job_id}/draft-set",
-            json={"style": "cinematic", "voice": "ryan", "render_mode": "animated"},
+            json={"style": "cinematic", "voice": "ryan",
+                  "render_mode": "animated", "animation_preset": "spotlight"},
             headers=HEAD,
         )
     assert r.status_code == 200
@@ -118,6 +121,7 @@ async def test_draft_set_updates_style_and_voice(db_session, tmp_path, monkeypat
     assert body["status"] == "ok"
     assert body["style"] == "cinematic"
     assert body["voice"] == "ryan"
+    assert body["animation_preset"] == "spotlight"
 
     # Verify the update is visible via current-draft (incl. render_mode so the
     # Discord wizard's Style & voice card can pre-select the output mode).
@@ -128,6 +132,7 @@ async def test_draft_set_updates_style_and_voice(db_session, tmp_path, monkeypat
     assert body["style"] == "cinematic"
     assert body["voice"] == "ryan"
     assert body["render_mode"] == "animated"
+    assert body["animation_preset"] == "spotlight"
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
@@ -271,3 +276,8 @@ def test_draft_request_accepts_remotion_render_mode():
 def test_draft_patch_accepts_remotion_render_mode():
     from routes_video import DraftPatch
     assert DraftPatch(render_mode="remotion").render_mode == "remotion"
+
+
+def test_draft_patch_accepts_animation_preset():
+    from routes_video import DraftPatch
+    assert DraftPatch(animation_preset="zoom_pan").animation_preset == "zoom_pan"

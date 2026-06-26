@@ -265,6 +265,13 @@ def test_anim_fallback_plan_is_valid():
             assert s["screenshot"] in shots
 
 
+def test_anim_fallback_plan_narrates_empty_prompt():
+    from video_plan import _anim_fallback_plan
+    p = _anim_fallback_plan("", ["screenshot-1.png"])
+    assert p["narration_script"].strip()
+    assert "quick look" in p["narration_script"].lower()
+
+
 def test_validate_anim_plan_rejects_bad():
     from video_plan import validate_anim_plan, PlanInvalid
     with pytest.raises(PlanInvalid):
@@ -334,6 +341,19 @@ async def test_generate_anim_plan_sends_images(tmp_path, monkeypatch):
     assert isinstance(content, list)
     assert any(b.get("type") == "image" for b in content)
     assert sent["max_tokens"] >= 4096
+
+
+async def test_generate_anim_plan_includes_animation_preference(monkeypatch):
+    import anthropic, json as _json
+    from video_plan import generate_anim_plan
+    canned = {"title": "t", "narration_script": "voice",
+              "scenes": [{"kind": "screenshot", "screenshot": "a.png", "headline": "h",
+                          "motion": "zoom-in", "duration_s": 3.0}]}
+    fake = _FakeClient(_json.dumps(canned))
+    monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
+    await generate_anim_plan("x", ["a.png"], attempts=1, animation_preset="spotlight")
+    sent = fake.messages.calls[0]
+    assert "Animation preference: spotlight" in sent["messages"][0]["content"]
 
 
 async def test_generate_anim_plan_falls_back_on_api_error(tmp_path, monkeypatch):

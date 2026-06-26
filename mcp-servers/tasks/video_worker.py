@@ -119,6 +119,7 @@ async def _process_job(job_id) -> None:
             style = job.style
             voice = job.voice
             render_mode = job.render_mode
+            animation_preset = getattr(job, "animation_preset", "cursor_click")
 
         # Stage 1: scripting (idempotent — reuse an existing plan).
         if not plan:
@@ -131,7 +132,8 @@ async def _process_job(job_id) -> None:
             screenshots, screenshot_paths, site_context = _planner_inputs(slug, str(job_id))
             plan = await (
                 generate_anim_plan(prompt, screenshots, site_context=site_context,
-                                   screenshot_paths=screenshot_paths)
+                                   screenshot_paths=screenshot_paths,
+                                   animation_preset=animation_preset)
                 if render_mode in ("animated", "remotion")
                 else generate_plan(prompt, screenshots, site_context=site_context,
                                    screenshot_paths=screenshot_paths)
@@ -151,9 +153,13 @@ async def _process_job(job_id) -> None:
             )
             await s.commit()
         if render_mode == "animated":
-            out = await render_animated_job(APPS_DIR, slug, str(job_id), plan, voice=voice)
+            out = await render_animated_job(
+                APPS_DIR, slug, str(job_id), plan,
+                voice=voice, animation_preset=animation_preset)
         elif render_mode == "remotion":
-            out = await render_remotion_job(APPS_DIR, slug, str(job_id), plan, voice=voice)
+            out = await render_remotion_job(
+                APPS_DIR, slug, str(job_id), plan,
+                voice=voice, animation_preset=animation_preset)
         else:
             out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
 

@@ -415,7 +415,12 @@ class DiscordCommandHandler:
             return await self._handle_video_route(
                 payload, lambda ctx: self.router.run_video_list(ctx),
                 raw_text="video list")
-        if vid.is_vid_style(custom_id) or vid.is_vid_voice(custom_id) or vid.is_vid_mode(custom_id):
+        if (
+            vid.is_vid_style(custom_id)
+            or vid.is_vid_voice(custom_id)
+            or vid.is_vid_mode(custom_id)
+            or vid.is_vid_animation(custom_id)
+        ):
             values = data.get("values") or []
             if not values:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -424,6 +429,8 @@ class DiscordCommandHandler:
                     job_id, field = vid.job_from_style(custom_id), {"style": values[0]}
                 elif vid.is_vid_voice(custom_id):
                     job_id, field = vid.job_from_voice(custom_id), {"voice": values[0]}
+                elif vid.is_vid_animation(custom_id):
+                    job_id, field = vid.job_from_animation(custom_id), {"animation_preset": values[0]}
                 else:
                     job_id, field = vid.job_from_mode(custom_id), {"render_mode": values[0]}
             except ValueError:
@@ -516,7 +523,7 @@ class DiscordCommandHandler:
             except ValueError:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return {"type": UPDATE_MESSAGE, "data": {
-                "content": "Ready. Generate when you are. Style and voice are optional.",
+                "content": "Ready. Generate when you are. Style, voice, and animation are optional.",
                 "components": vid.build_generate_step_components(job_id)}}
 
         if not is_panel_button(custom_id):
@@ -971,20 +978,18 @@ class DiscordCommandHandler:
             email = await self.router._resolve_email(user.get("id", ""))
             if email is None:
                 return
-            # Use current-draft to read style/voice (GET /api/video-jobs/{job_id}
-            # does not return style, voice, or render_mode fields).
+            # Use current-draft to read style/voice/mode/animation for the picker defaults.
             draft = await self.router._tasks_client.get_current_video_draft(email) or {}
             voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
-            # render_mode is not returned by the current-draft endpoint;
-            # defaults to "slideshow" until the backend exposes it.
             await self.discord.edit_original(
                 interaction_token=interaction_token,
-                content="Style and voice (optional). Pick, then Generate or go Back.",
+                content="Style, voice, output, and animation. Pick, then Generate or go Back.",
                 components=vid.build_options_components(
                     job_id, voices,
                     current_style=draft.get("style", "clean_product_demo"),
                     current_voice=draft.get("voice", "amy"),
-                    current_mode="slideshow"),
+                    current_mode=draft.get("render_mode", "remotion"),
+                    current_animation=draft.get("animation_preset", "cursor_click")),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("video options open failed job=%s: %s", job_id, exc)
@@ -1060,7 +1065,8 @@ class DiscordCommandHandler:
                 )
                 return
             draft = await self.router._tasks_client.create_video_draft(
-                email, title, prompt, "clean_product_demo", "amy")
+                email, title, prompt, "clean_product_demo", "amy",
+                render_mode="remotion", animation_preset="cursor_click")
             job_id = draft["id"]
             thread_id = await self._get_or_make_thread(
                 user_id, channel_id, user_name, kind="video")

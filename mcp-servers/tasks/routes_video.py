@@ -53,7 +53,11 @@ from video_voices import DEFAULT_VOICE_ID, is_valid_voice, voice_catalog
 from heavy_lock import enough_free_disk
 from video_capability import mint_video_capability, verify_video_capability
 from video_models import VideoJob
-from video_plan import validate_plan
+from video_plan import (
+    ANIMATION_PRESETS,
+    DEFAULT_ANIMATION_PRESET,
+    validate_plan,
+)
 from video_refine import (
     RefineUnavailable,
     append_turn,
@@ -181,7 +185,11 @@ class DraftRequest(BaseModel):
     prompt: str = Field("", max_length=2000)
     style: str = Field("clean_product_demo", max_length=50)
     voice: str = Field(DEFAULT_VOICE_ID, max_length=50)
-    render_mode: str = Field("slideshow", pattern="^(slideshow|animated|remotion)$")
+    render_mode: str = Field("remotion", pattern="^(slideshow|animated|remotion)$")
+    animation_preset: str = Field(
+        DEFAULT_ANIMATION_PRESET,
+        pattern=f"^({'|'.join(ANIMATION_PRESETS)})$",
+    )
 
 
 @router.post("/draft", status_code=201)
@@ -200,7 +208,9 @@ async def create_draft(body: DraftRequest, user: CurrentUser = Depends(current_u
     async with session() as s:
         s.add(VideoJob(id=job_id, slug=slug, user_email=user.email, prompt=body.prompt,
                        title=body.title, style=body.style, voice=body.voice,
-                       render_mode=body.render_mode, status="collecting"))
+                       render_mode=body.render_mode,
+                       animation_preset=body.animation_preset,
+                       status="collecting"))
         await s.commit()
     return {"id": str(job_id), "slug": slug, "status": "collecting"}
 
@@ -211,7 +221,11 @@ async def upload(
     prompt: str = Form(..., min_length=1, max_length=2000),
     style: str = Form("clean_product_demo", max_length=50),
     voice: str = Form(DEFAULT_VOICE_ID, max_length=50),
-    render_mode: str = Form("slideshow", pattern="^(slideshow|animated|remotion)$"),
+    render_mode: str = Form("remotion", pattern="^(slideshow|animated|remotion)$"),
+    animation_preset: str = Form(
+        DEFAULT_ANIMATION_PRESET,
+        pattern=f"^({'|'.join(ANIMATION_PRESETS)})$",
+    ),
     files: list[UploadFile] = File(default_factory=list),
     user: CurrentUser = Depends(current_user),
 ) -> dict:
@@ -286,6 +300,7 @@ async def upload(
                 style=style,
                 voice=voice,
                 render_mode=render_mode,
+                animation_preset=animation_preset,
                 status="queued",
             )
         )
@@ -347,6 +362,7 @@ async def current_draft(user: CurrentUser = Depends(current_user)) -> dict:
     return {"id": str(job.id), "slug": job.slug, "title": job.title,
             "style": job.style, "voice": job.voice,
             "render_mode": job.render_mode,
+            "animation_preset": job.animation_preset,
             "screenshot_count": len(_list_screenshots(job.slug, str(job.id)))}
 
 
@@ -417,6 +433,8 @@ async def job_status(
             "conversation": job.conversation or [],
             "current_version_no": job.current_version_no,
             "pending": latest_pending_proposal(job.conversation or []) is not None,
+            "render_mode": job.render_mode,
+            "animation_preset": job.animation_preset,
             "plan": job.plan_json,
         }
 
@@ -938,6 +956,10 @@ class DraftPatch(BaseModel):
     title: str | None = Field(None, max_length=200)
     prompt: str | None = Field(None, max_length=2000)
     render_mode: str | None = Field(None, pattern="^(slideshow|animated|remotion)$")
+    animation_preset: str | None = Field(
+        None,
+        pattern=f"^({'|'.join(ANIMATION_PRESETS)})$",
+    )
 
 
 @router.post("/{job_id}/queue")
@@ -1011,6 +1033,8 @@ async def update_draft(job_id: str, body: DraftPatch, user: CurrentUser = Depend
             vals["prompt"] = body.prompt
         if body.render_mode is not None:
             vals["render_mode"] = body.render_mode
+        if body.animation_preset is not None:
+            vals["animation_preset"] = body.animation_preset
         if vals:
             await s.execute(update(VideoJob).where(VideoJob.id == jid).values(**vals))
             await s.commit()
