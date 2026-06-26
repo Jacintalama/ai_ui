@@ -446,9 +446,12 @@ async def fetch_skill_best_practices(
                 )
             ).first()
         if row and (row[0] or "").strip():
-            return row[0].strip()
+            content = row[0].strip()
+            logger.info("video plan: using editable skill %r (%d chars)", skill_id, len(content))
+            return content
+        logger.info("video plan: skill %r not found/empty - using built-in best practices", skill_id)
     except Exception as e:  # noqa: BLE001 - generation must never fail on skill lookup
-        logger.warning("fetch_skill_best_practices(%s) failed: %s", skill_id, e)
+        logger.warning("fetch_skill_best_practices(%s) failed - using built-in: %s", skill_id, e)
     return None
 
 

@@ -4,6 +4,7 @@ in the authoring prompt, with a safe fallback to the built-in when the skill is
 missing/empty/inactive or the DB read fails. (2026-06-26.)
 """
 import base64
+import logging
 import os
 
 os.environ.setdefault("AIUI_FERNET_KEY", base64.urlsafe_b64encode(b"0" * 32).decode())
@@ -92,3 +93,18 @@ async def test_fetch_skill_none_on_db_error_never_raises():
 
 def test_remotion_skill_id_is_the_website_skill():
     assert REMOTION_SKILL_ID == "remotion-best-practices"
+
+
+# --- observability: each generation logs which guidance it used ----------------
+async def test_logs_when_editable_skill_is_used(caplog):
+    with caplog.at_level(logging.INFO, logger="video_plan"):
+        out = await fetch_skill_best_practices(session_factory=_factory(rows=[("body text",)]))
+    assert out == "body text"
+    assert any("using editable skill" in r.getMessage() for r in caplog.records)
+
+
+async def test_logs_when_falling_back_to_builtin(caplog):
+    with caplog.at_level(logging.INFO, logger="video_plan"):
+        out = await fetch_skill_best_practices(session_factory=_factory(rows=[]))
+    assert out is None
+    assert any("built-in" in r.getMessage() for r in caplog.records)
