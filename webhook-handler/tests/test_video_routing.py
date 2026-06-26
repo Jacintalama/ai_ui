@@ -172,23 +172,6 @@ async def test_mode_select_sets_render_mode():
 
 
 @pytest.mark.asyncio
-async def test_animation_select_sets_animation_preset():
-    router = _router()
-    handler = _handler(router)
-    payload = {
-        "type": 3, "id": "i", "token": "t", "channel_id": "c",
-        "member": {"user": {"id": "100", "username": "alice"}},
-        "data": {"custom_id": f"{vid.ANIMATION_PREFIX}j1", "values": ["spotlight"]},
-    }
-    resp = await handler.handle_interaction(payload)
-    assert resp["type"] == DEFERRED_UPDATE_MESSAGE
-    await _drain()
-    args = router.run_video_set_field.await_args
-    assert args.args[1] == "j1"
-    assert args.kwargs == {"animation_preset": "spotlight"}
-
-
-@pytest.mark.asyncio
 async def test_empty_select_is_noop():
     router = _router()
     handler = _handler(router)
@@ -381,7 +364,6 @@ async def test_options_acks_deferred_and_edits_options_card():
            handler.discord.edit_original.await_args.kwargs["components"]
            for c in row["components"]]
     assert f"{vid.STYLE_PREFIX}j1" in ids
-    assert f"{vid.ANIMATION_PREFIX}j1" in ids
     assert f"{vid.OPTIONS_BACK_PREFIX}j1" in ids
 
 

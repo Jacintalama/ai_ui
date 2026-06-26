@@ -419,7 +419,6 @@ class DiscordCommandHandler:
             vid.is_vid_style(custom_id)
             or vid.is_vid_voice(custom_id)
             or vid.is_vid_mode(custom_id)
-            or vid.is_vid_animation(custom_id)
         ):
             values = data.get("values") or []
             if not values:
@@ -429,8 +428,6 @@ class DiscordCommandHandler:
                     job_id, field = vid.job_from_style(custom_id), {"style": values[0]}
                 elif vid.is_vid_voice(custom_id):
                     job_id, field = vid.job_from_voice(custom_id), {"voice": values[0]}
-                elif vid.is_vid_animation(custom_id):
-                    job_id, field = vid.job_from_animation(custom_id), {"animation_preset": values[0]}
                 else:
                     job_id, field = vid.job_from_mode(custom_id), {"render_mode": values[0]}
             except ValueError:
@@ -983,13 +980,12 @@ class DiscordCommandHandler:
             voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
             await self.discord.edit_original(
                 interaction_token=interaction_token,
-                content="Style, voice, output, and animation. Pick, then Generate or go Back.",
+                content="Style, voice, and output. Pick, then Generate or go Back.",
                 components=vid.build_options_components(
                     job_id, voices,
                     current_style=draft.get("style", "clean_product_demo"),
                     current_voice=draft.get("voice", "amy"),
-                    current_mode=draft.get("render_mode", "remotion"),
-                    current_animation=draft.get("animation_preset", "cursor_click")),
+                    current_mode=draft.get("render_mode", "remotion")),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("video options open failed job=%s: %s", job_id, exc)
