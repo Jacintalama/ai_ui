@@ -17,6 +17,7 @@ export const Video: React.FC<VideoProps> = ({host, title, scenes, animationPrese
             scene={s}
             host={host}
             title={title}
+            sceneIndex={i}
             animationPreset={animationPreset || "cursor_click"}
           />
         </Series.Sequence>

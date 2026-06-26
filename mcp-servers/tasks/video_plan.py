@@ -286,6 +286,11 @@ ANIM_MAX_TOTAL_SECONDS = 40.0
 ANIMATION_PRESETS = ["cursor_click", "smooth_scroll", "spotlight", "zoom_pan"]
 DEFAULT_ANIMATION_PRESET = "cursor_click"
 
+# The editable Open WebUI skill that steers animated/remotion generation. Its
+# content (when present + active) REPLACES ANIM_BEST_PRACTICES in the authoring
+# prompt, so users tune the motion direction by editing the skill on the website.
+REMOTION_SKILL_ID = "remotion-best-practices"
+
 ANIM_PLAN_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -404,14 +409,47 @@ def ensure_anim_narration(plan: dict, prompt: str = "") -> dict:
     return plan
 
 
-def build_anim_system_prompt() -> str:
+def build_anim_system_prompt(best_practices: str | None = None) -> str:
+    """System prompt for animated/remotion plan authoring.
+
+    ``best_practices`` (the editable remotion-best-practices skill content) is
+    injected in place of the built-in ANIM_BEST_PRACTICES when provided and
+    non-blank; otherwise the built-in guidance is used."""
+    guidance = best_practices if (best_practices and best_practices.strip()) else ANIM_BEST_PRACTICES
     return (
         "You produce a JSON plan for a short ANIMATED motion video built from the "
         "given screenshots. kind 'title'/'outro' scenes show kinetic text only; "
         "kind 'screenshot' scenes animate one provided screenshot with a headline. "
         "Use ONLY the provided screenshot filenames. Keep total duration under "
-        f"{ANIM_MAX_TOTAL_SECONDS:.0f}s.\n\n" + ANIM_BEST_PRACTICES
+        f"{ANIM_MAX_TOTAL_SECONDS:.0f}s.\n\n" + guidance
     )
+
+
+async def fetch_skill_best_practices(
+    skill_id: str = REMOTION_SKILL_ID, *, session_factory=None
+) -> str | None:
+    """Return the active Open WebUI skill's content for ``skill_id``, else None.
+
+    Lets users steer animated/remotion generation by editing the skill on the
+    website. Never raises — a missing/empty/inactive skill or any DB error
+    yields None so generation falls back to the built-in ANIM_BEST_PRACTICES.
+    ``session_factory`` is injectable for tests."""
+    try:
+        from sqlalchemy import text
+        if session_factory is None:
+            from db import session as session_factory
+        async with session_factory() as s:
+            row = (
+                await s.execute(
+                    text("SELECT content FROM skill WHERE id = :id AND is_active"),
+                    {"id": skill_id},
+                )
+            ).first()
+        if row and (row[0] or "").strip():
+            return row[0].strip()
+    except Exception as e:  # noqa: BLE001 - generation must never fail on skill lookup
+        logger.warning("fetch_skill_best_practices(%s) failed: %s", skill_id, e)
+    return None
 
 
 def validate_anim_plan(plan: dict, available: list[str]) -> None:
@@ -469,7 +507,9 @@ async def generate_anim_plan(
     mirroring generate_plan. Motion best-practices injected via build_anim_system_prompt.
     When screenshot_paths are provided, sends images as vision content for richer context."""
     client = anthropic.Anthropic()
-    sys = build_anim_system_prompt()
+    # The editable remotion-best-practices skill (when set) steers the motion
+    # direction; falls back to the built-in guidance on miss/error.
+    sys = build_anim_system_prompt(await fetch_skill_best_practices())
     use_vision = bool(screenshot_paths)
     if use_vision:
         try:

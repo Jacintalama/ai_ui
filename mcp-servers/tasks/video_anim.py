@@ -393,10 +393,15 @@ async def _synthesize_narration(text: str, voice: str | None, out_wav: str) -> s
     """Piper TTS narration.txt -> wav (text via stdin; no shell). Returns the wav
     path, or None if Piper/the model is unavailable or fails — so animated renders
     degrade to silent video rather than crashing."""
-    from video_voices import resolve_model
-    model = resolve_model(voice)  # allowlisted path; never user input
-    if not (text or "").strip() or not os.path.exists(_PIPER_BIN) or not os.path.exists(model):
+    from video_voices import resolve_model, resolve_model_on_disk
+    # Prefer the chosen voice, but fall back to the default voice's model when the
+    # chosen one was never provisioned on the render host — otherwise a valid pick
+    # (e.g. lessac) silently produces a voiceless video.
+    model = resolve_model_on_disk(voice)  # allowlisted path; never user input
+    if not (text or "").strip() or not os.path.exists(_PIPER_BIN) or model is None:
         return None
+    if model != resolve_model(voice):
+        logger.warning("voice %r model not installed; narrating with the default voice instead", voice)
     try:
         proc = await asyncio.create_subprocess_exec(
             _PIPER_BIN, "-m", model, "-f", out_wav,

@@ -17,13 +17,26 @@ RUN pip install --no-cache-dir -r requirements.txt
 # build time so runtime only pays a transient, serialized memory spike.
 RUN python -m playwright install --with-deps chromium
 # Piper TTS for in-container animated-video narration. Best-effort: a download
-# blip must NOT break the build, and render_animated_job falls back to silent
-# video if /opt/piper/piper or the voice model is missing.
+# blip must NOT break the build, and the render falls back to silent video if
+# /opt/piper/piper or the voice model is missing. ALL curated voices are baked
+# in (the ids/stems MUST match video_voices.py + provision_piper_voices.sh) —
+# else picking a non-default voice yields a silent video. Each voice is fetched
+# independently so one bad download only drops that voice, not the whole set.
 RUN mkdir -p /opt/piper/voices && \
     ( curl -fsSL "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_$(uname -m).tar.gz" -o /tmp/piper.tgz \
       && tar -xzf /tmp/piper.tgz -C /opt && rm -f /tmp/piper.tgz \
-      && curl -fsSL "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx" -o /opt/piper/voices/en_US-amy-medium.onnx \
-      && curl -fsSL "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json" -o /opt/piper/voices/en_US-amy-medium.onnx.json \
+      && for spec in \
+           "en/en_US/amy/medium|en_US-amy-medium" \
+           "en/en_US/ryan/high|en_US-ryan-high" \
+           "en/en_US/lessac/medium|en_US-lessac-medium" \
+           "en/en_US/joe/medium|en_US-joe-medium" \
+           "en/en_GB/alan/medium|en_GB-alan-medium" \
+           "en/en_GB/alba/medium|en_GB-alba-medium" ; do \
+             rel="${spec%|*}" ; stem="${spec#*|}" ; \
+             ( curl -fsSL "https://huggingface.co/rhasspy/piper-voices/resolve/main/$rel/$stem.onnx" -o "/opt/piper/voices/$stem.onnx" \
+               && curl -fsSL "https://huggingface.co/rhasspy/piper-voices/resolve/main/$rel/$stem.onnx.json" -o "/opt/piper/voices/$stem.onnx.json" ) \
+               || echo "voice $stem skipped" ; \
+           done \
       && echo "piper installed" ) \
     || echo "piper install skipped (animated narration disabled)"
 COPY . .

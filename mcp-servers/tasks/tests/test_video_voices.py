@@ -86,3 +86,52 @@ def test_preview_clip_committed_for_every_voice():
         clip = os.path.join(static_dir, c["id"] + ".mp3")
         assert os.path.exists(clip), "missing preview clip: " + clip
         assert os.path.getsize(clip) > 1000, "suspiciously tiny clip: " + clip
+
+
+# --- resolve_model_on_disk: never let a chosen voice render silently ----------
+# resolve_model() returns the nominal path without checking the file exists, so a
+# valid voice whose .onnx was never provisioned (e.g. lessac) yields a silent
+# video. resolve_model_on_disk() prefers the requested voice but falls back to the
+# default voice when the requested model is missing on the render host.
+
+
+def test_resolve_model_on_disk_prefers_requested_when_present():
+    from video_voices import resolve_model_on_disk
+
+    m = resolve_model_on_disk("lessac", exists=lambda p: True)
+    assert m.endswith("en_US-lessac-medium.onnx")
+
+
+def test_resolve_model_on_disk_falls_back_to_default_when_requested_missing():
+    from video_voices import resolve_model_on_disk
+
+    amy = resolve_model("amy")
+    # lessac model absent, amy present -> fall back to amy (never silent).
+    m = resolve_model_on_disk("lessac", exists=lambda p: p == amy)
+    assert m == amy
+
+
+def test_resolve_model_on_disk_none_when_nothing_installed():
+    from video_voices import resolve_model_on_disk
+
+    assert resolve_model_on_disk("lessac", exists=lambda p: False) is None
+
+
+def test_resolve_model_on_disk_unknown_id_uses_default():
+    from video_voices import resolve_model_on_disk
+
+    amy = resolve_model("amy")
+    assert resolve_model_on_disk("nope", exists=lambda p: p == amy) == amy
+
+
+def test_dockerfile_provisions_every_catalog_voice():
+    # Every selectable voice's .onnx model MUST be baked into the tasks image,
+    # else picking it yields a silent video (the model is absent on the render
+    # host). Guards the UI-offers-voice vs not-provisioned drift that made every
+    # non-default voice silent.
+    tasks_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(tasks_dir, "Dockerfile"), encoding="utf-8") as fh:
+        dockerfile = fh.read()
+    for v in VOICES:
+        stem = os.path.splitext(os.path.basename(v.model))[0]  # e.g. en_US-lessac-medium
+        assert stem in dockerfile, f"Dockerfile does not provision voice model {stem}"

@@ -2,6 +2,7 @@ import React from "react";
 import {AbsoluteFill, Img, useCurrentFrame} from "remotion";
 import {loadFont} from "@remotion/google-fonts/Inter";
 import type {Scene} from "./Video";
+import {cursorTrajectory} from "./cursor";
 
 const {fontFamily: interFamily} = loadFont();
 const fontFamily = `${interFamily}, Inter, Segoe UI, system-ui, sans-serif`;
@@ -20,7 +21,8 @@ export const SceneParity: React.FC<{
   host: string;
   title: string;
   animationPreset?: string;
-}> = ({scene, host, title, animationPreset = "cursor_click"}) => {
+  sceneIndex?: number;
+}> = ({scene, host, title, animationPreset = "cursor_click", sceneIndex = 0}) => {
   const frame = useCurrentFrame();
   const p = clamp(frame / Math.max(1, scene.durInFrames));
 
@@ -57,11 +59,14 @@ export const SceneParity: React.FC<{
 
   const frameOpacity = hasShot ? env : 0;
   const frameTransform = `translate(calc(-50% + ${dx}px), ${dy}px) translate(${kx}%, ${ky}%) scale(${kb * mz})`;
-  const cursorX = lerp(430, 820, ease2(clamp((p - 0.12) / 0.52)));
-  const cursorY = lerp(530, 300, ease2(clamp((p - 0.12) / 0.52)));
+  // Per-scene cursor path + click timing so the cursor varies scene-to-scene
+  // instead of replaying one identical sweep every scene.
+  const traj = cursorTrajectory(sceneIndex);
+  const cursorX = lerp(traj.x0, traj.x1, ease2(clamp((p - 0.12) / 0.52)));
+  const cursorY = lerp(traj.y0, traj.y1, ease2(clamp((p - 0.12) / 0.52)));
   const clickPulse =
-    ease2(clamp((p - 0.48) / 0.1)) *
-    (1 - ease2(clamp((p - 0.68) / 0.18)));
+    ease2(clamp((p - traj.clickStart) / 0.1)) *
+    (1 - ease2(clamp((p - traj.clickFall) / 0.18)));
   const showCursor = hasShot && preset === "cursor_click";
 
   // --- Eyebrow ---

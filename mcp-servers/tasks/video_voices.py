@@ -13,6 +13,7 @@ The voice ids and model filenames MUST match
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 # Directory where the Piper .onnx models live on the render host.
@@ -58,6 +59,24 @@ def resolve_model(voice_id: str | None) -> str:
     default voice so a render never fails on a missing or legacy voice.
     """
     return _BY_ID.get(voice_id or "", _BY_ID[DEFAULT_VOICE_ID]).model
+
+
+def resolve_model_on_disk(voice_id: str | None, *, exists=os.path.exists) -> str | None:
+    """Resolve ``voice_id`` to an *installed* ``.onnx`` model path.
+
+    Prefers the requested voice, but falls back to the default voice's model
+    when the requested one is not provisioned on the render host — so picking a
+    voice whose model was never installed produces narration in the default
+    voice instead of a silent video. Returns ``None`` only when no model exists
+    at all (TTS then degrades to silent rather than crashing). ``exists`` is
+    injectable for tests."""
+    requested = _BY_ID.get(voice_id or "", _BY_ID[DEFAULT_VOICE_ID])
+    if exists(requested.model):
+        return requested.model
+    default = _BY_ID[DEFAULT_VOICE_ID]
+    if requested.id != default.id and exists(default.model):
+        return default.model
+    return None
 
 
 def voice_catalog() -> list[dict]:
