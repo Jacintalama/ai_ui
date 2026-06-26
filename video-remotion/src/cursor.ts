@@ -1,55 +1,34 @@
-// Per-scene cursor trajectories for the cursor_click preset.
-//
-// The original composition hardcoded one cursor path (430,530 -> 820,300) with a
-// fixed click window, and every scene resets to frame 0 — so the SAME sweep
-// replayed every scene and looked copy-pasted. cursorTrajectory() returns a
-// distinct, deterministic path + click timing per scene index so the cursor
-// varies scene-to-scene. Coordinates are in the 1280x720 canvas space.
+// Smart cursor-click: the planning AI marks the most relevant clickable element
+// in a screenshot as { x, y } image fractions; the composition draws a mouse
+// that slides to that point and clicks. All motion is a pure function of the
+// scene progress, so the render stays deterministic.
 
-export type CursorTrajectory = {
-  x0: number; // start x
-  y0: number; // start y
-  x1: number; // end x (where the click lands)
-  y1: number; // end y
-  clickStart: number; // progress fraction the click pulse ramps up at
-  clickFall: number; // progress fraction the click pulse ramps down at
+export type ClickTarget = {x: number; y: number; label?: string};
+export type ClickCursorState = {x: number; y: number; pulse: number};
+
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+const smooth = (x: number) => {
+  const t = clamp01(x);
+  return t * t * (3 - 2 * t); // smoothstep
 };
 
-// Distinct sweeps: different start corners, end targets, and click timing. Kept
-// well inside the 1280x720 frame so the cursor never drifts off-canvas.
-const CURSOR_TARGETS: CursorTrajectory[] = [
-  {x0: 430, y0: 530, x1: 820, y1: 300, clickStart: 0.48, clickFall: 0.68},
-  {x0: 880, y0: 300, x1: 470, y1: 560, clickStart: 0.44, clickFall: 0.66},
-  {x0: 360, y0: 300, x1: 760, y1: 540, clickStart: 0.52, clickFall: 0.72},
-  {x0: 840, y0: 560, x1: 420, y1: 320, clickStart: 0.40, clickFall: 0.62},
-  {x0: 520, y0: 240, x1: 900, y1: 520, clickStart: 0.50, clickFall: 0.70},
-  {x0: 300, y0: 520, x1: 700, y1: 300, clickStart: 0.46, clickFall: 0.66},
-];
+// Only the top ~72% of a screenshot is on screen — the browser frame's
+// maxHeight + title bar clip the bottom. Targets below this should be skipped
+// (no cursor) rather than rendered into the hidden region.
+export const CURSOR_VISIBLE_MAX_Y = 0.72;
 
-export function cursorTrajectory(sceneIndex: number): CursorTrajectory {
-  const len = CURSOR_TARGETS.length;
-  const i = ((Math.floor(sceneIndex) % len) + len) % len;
-  return CURSOR_TARGETS[i];
-}
+// The cursor slides in from a small offset toward the target (kept small so the
+// move-in stays inside the frame's overflow:hidden box).
+const START_DX = 0.06;
+const START_DY = 0.08;
 
-// The canvas the CURSOR_TARGETS coordinates above are authored in. Cursor
-// positions are absolute px, so they must be scaled to the actual composition
-// size (read from useVideoConfig) to stay correct if width/height ever change.
-export const CURSOR_BASE_W = 1280;
-export const CURSOR_BASE_H = 720;
-
-export function scaleCursorTrajectory(
-  t: CursorTrajectory,
-  width: number,
-  height: number,
-): CursorTrajectory {
-  const sx = width / CURSOR_BASE_W;
-  const sy = height / CURSOR_BASE_H;
-  return {
-    ...t,
-    x0: t.x0 * sx,
-    y0: t.y0 * sy,
-    x1: t.x1 * sx,
-    y1: t.y1 * sy,
-  };
+export function clickCursor(p: number, target: ClickTarget): ClickCursorState {
+  const moveIn = smooth(clamp01((p - 0.05) / 0.45)); // 0 -> 1 over [0.05, 0.5]
+  const x = clamp01(target.x + START_DX * (1 - moveIn));
+  const y = clamp01(target.y + START_DY * (1 - moveIn));
+  // Click pulse: ramps up at ~0.5, fades by ~0.82.
+  const up = smooth(clamp01((p - 0.5) / 0.08));
+  const down = smooth(clamp01((p - 0.66) / 0.16));
+  const pulse = up * (1 - down);
+  return {x, y, pulse};
 }

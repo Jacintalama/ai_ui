@@ -312,6 +312,19 @@ ANIM_PLAN_SCHEMA = {
                     "subtext": {"type": "string"},
                     "motion": {"type": "string", "enum": ANIM_MOTIONS},
                     "duration_s": {"type": "number"},
+                    # OPTIONAL smart-cursor target: the most relevant clickable
+                    # element in THIS screenshot, as image fractions. NOTE: do NOT
+                    # add minimum/maximum here (unsupported like maxItems -> 400);
+                    # the [0,1] range is enforced by sanitize_anim_clicks().
+                    "click": {
+                        "type": "object", "additionalProperties": False,
+                        "required": ["x", "y", "label"],
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "label": {"type": "string"},
+                        },
+                    },
                 },
             },
         },
@@ -354,32 +367,6 @@ def _resolve_brief(prompt: str) -> str:
     )
 
 
-def _animation_instruction(animation_preset: str | None) -> str:
-    preset = animation_preset if animation_preset in ANIMATION_PRESETS else DEFAULT_ANIMATION_PRESET
-    notes = {
-        "cursor_click": (
-            "show a visible mouse cursor moving across screenshot scenes with a "
-            "click pulse on the important area"
-        ),
-        "smooth_scroll": "make screenshots feel like a smooth page scroll or guided vertical reveal",
-        "spotlight": "use a focus spotlight/highlight on the most important UI area",
-        "zoom_pan": "use stronger zoom and pan movement without a cursor overlay",
-    }
-    return f"Animation preference: {preset} - {notes[preset]}."
-
-
-def _with_animation_preference(content, animation_preset: str | None):
-    instruction = _animation_instruction(animation_preset)
-    if isinstance(content, list) and content:
-        first = content[0]
-        if isinstance(first, dict) and first.get("type") == "text":
-            first["text"] = (str(first.get("text") or "").strip() + "\n\n" + instruction).strip()
-            return content
-    if isinstance(content, str):
-        return (content.strip() + "\n" + instruction).strip()
-    return instruction
-
-
 def ensure_anim_narration(plan: dict, prompt: str = "") -> dict:
     """Ensure animated/remotion plans always have speakable narration.
 
@@ -409,20 +396,68 @@ def ensure_anim_narration(plan: dict, prompt: str = "") -> dict:
     return plan
 
 
+# Smart-cursor instruction. Lives in the FIXED prompt wrapper (NOT in the
+# editable skill) so a user editing remotion-best-practices can't delete the
+# feature. The composition draws a mouse that clicks the marked element.
+CLICK_INSTRUCTION = (
+    "SMART CURSOR: For each 'screenshot' scene, if the screenshot shows a clear "
+    "clickable element (a button, navbar link, call-to-action, or link), add a "
+    "'click' object: x and y are the CENTER of that element as fractions of the "
+    "screenshot image (x from the left, y from the top, each 0.0-1.0), and label "
+    "is a short name (e.g. 'Contact'). Only the top ~70% of each screenshot is "
+    "visible on screen, so choose a target with y <= 0.7. OMIT 'click' entirely "
+    "when there is no clear clickable element or you are unsure - never guess a "
+    "location, and never add click to title/outro scenes."
+)
+
+
 def build_anim_system_prompt(best_practices: str | None = None) -> str:
     """System prompt for animated/remotion plan authoring.
 
     ``best_practices`` (the editable remotion-best-practices skill content) is
     injected in place of the built-in ANIM_BEST_PRACTICES when provided and
-    non-blank; otherwise the built-in guidance is used."""
+    non-blank; otherwise the built-in guidance is used. The smart-cursor
+    CLICK_INSTRUCTION is always included (outside the editable skill)."""
     guidance = best_practices if (best_practices and best_practices.strip()) else ANIM_BEST_PRACTICES
     return (
         "You produce a JSON plan for a short ANIMATED motion video built from the "
         "given screenshots. kind 'title'/'outro' scenes show kinetic text only; "
         "kind 'screenshot' scenes animate one provided screenshot with a headline. "
         "Use ONLY the provided screenshot filenames. Keep total duration under "
-        f"{ANIM_MAX_TOTAL_SECONDS:.0f}s.\n\n" + guidance
+        f"{ANIM_MAX_TOTAL_SECONDS:.0f}s.\n\n" + CLICK_INSTRUCTION + "\n\n" + guidance
     )
+
+
+def sanitize_anim_clicks(plan: dict) -> dict:
+    """Keep only valid smart-cursor click targets; drop the rest in place.
+
+    A ``click`` survives only on a ``screenshot`` scene with numeric ``x,y`` in
+    [0,1]; ``label`` is coerced to a short string. Anything else (wrong kind,
+    out-of-range, missing coords, garbage) is removed so a bad/hallucinated
+    target can never reach the renderer."""
+    if not isinstance(plan, dict):
+        return plan
+    for sc in plan.get("scenes") or []:
+        click = sc.get("click")
+        if click is None:
+            continue
+        ok = (
+            sc.get("kind") == "screenshot"
+            and isinstance(click, dict)
+            and isinstance(click.get("x"), (int, float))
+            and isinstance(click.get("y"), (int, float))
+            and 0.0 <= float(click["x"]) <= 1.0
+            and 0.0 <= float(click["y"]) <= 1.0
+        )
+        if ok:
+            sc["click"] = {
+                "x": float(click["x"]),
+                "y": float(click["y"]),
+                "label": str(click.get("label") or "")[:60],
+            }
+        else:
+            sc.pop("click", None)
+    return plan
 
 
 async def fetch_skill_best_practices(
@@ -517,15 +552,12 @@ async def generate_anim_plan(
     if use_vision:
         try:
             content = build_vision_content(screenshot_paths, site_context or {}, _resolve_brief(prompt))
-            content = _with_animation_preference(content, animation_preset)
         except Exception:  # noqa: BLE001 - never let content-build sink the planner
             logger.warning("build_vision_content failed; using text prompt")
             content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
-            content = _with_animation_preference(content, animation_preset)
             use_vision = False
     else:
         content = f"Prompt: {prompt}\nScreenshots: {screenshots}"
-        content = _with_animation_preference(content, animation_preset)
     last_err: Exception | None = None
     for i in range(max(1, attempts)):
         try:
@@ -545,6 +577,7 @@ async def generate_anim_plan(
             # Enforce the scene cap here (schema can't express maxItems).
             plan["scenes"] = (plan.get("scenes") or [])[:ANIM_MAX_SCENES]
             ensure_anim_narration(plan, prompt)
+            sanitize_anim_clicks(plan)  # drop invalid/hallucinated click targets
             validate_anim_plan(plan, screenshots)
             return plan
         except Exception as e:  # noqa: BLE001 - retry on bad plan / API hiccup

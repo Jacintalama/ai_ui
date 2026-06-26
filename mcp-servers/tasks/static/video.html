@@ -603,17 +603,6 @@
             </div>
 
             <div class="field">
-              <label class="form-label" for="animation-preset">Animation</label>
-              <select class="form-input" id="animation-preset" name="animation_preset">
-                <option value="cursor_click" selected>Cursor click (recommended)</option>
-                <option value="smooth_scroll">Smooth scroll</option>
-                <option value="spotlight">Spotlight focus</option>
-                <option value="zoom_pan">Zoom and pan</option>
-              </select>
-              <span class="form-hint">Controls how screenshots move in the generated video.</span>
-            </div>
-
-            <div class="field">
               <label class="form-label">Voice</label>
               <div class="voice-list" id="voice-list" role="radiogroup" aria-label="Narration voice">
                 <div class="voice-loading">Loading voices...</div>
@@ -757,7 +746,6 @@
     const shotError = document.getElementById("shot-error");
     const promptInput = document.getElementById("prompt");
     const styleSelect = document.getElementById("style");
-    const animationPresetSelect = document.getElementById("animation-preset");
     const voiceList = document.getElementById("voice-list");
     let selectedVoice = null;   // chosen voice id, set once voices load
     let defaultVoiceId = "amy"; // updated from the catalog's default flag on load
@@ -1773,10 +1761,6 @@
       return (!t || t.checked) ? "remotion" : "slideshow";
     }
 
-    function _animationPreset() {
-      return animationPresetSelect ? animationPresetSelect.value : "cursor_click";
-    }
-
     async function uploadAndOpen(title, prompt) {
       const fd = new FormData();
       fd.append("title", title);
@@ -1784,7 +1768,6 @@
       fd.append("style", styleSelect ? styleSelect.value : "clean_product_demo");
       fd.append("voice", selectedVoice || defaultVoiceId);
       fd.append("render_mode", _renderMode());
-      fd.append("animation_preset", _animationPreset());
       stopVoicePreview();
       for (const s of shots) fd.append("files", s.file, s.file.name);
       const resp = await fetch(API + "/upload", {
@@ -1824,7 +1807,6 @@
               style: styleSelect ? styleSelect.value : "clean_product_demo",
               voice: selectedVoice || defaultVoiceId,
               render_mode: _renderMode(),
-              animation_preset: _animationPreset(),
             }),
           });
           if (!draftResp.ok) {

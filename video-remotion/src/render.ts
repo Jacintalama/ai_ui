@@ -11,7 +11,8 @@ export type RenderRequest = { jobDir: string; theme: string; fps: number;
   width: number; height: number; host: string; title: string; outFile?: string;
   animationPreset?: string;
   scenes: { kind: string; screenshot?: string; headline?: string;
-    subtext?: string; motion?: string; durationS: number }[] };
+    subtext?: string; motion?: string; durationS: number;
+    click?: { x: number; y: number; label: string } }[] };
 
 export function buildRenderConfig(req: RenderRequest) {
   const fps = req.fps || 24;  // match the animated path's fps for parity
@@ -33,7 +34,7 @@ export function buildRenderConfig(req: RenderRequest) {
     animationPreset: req.animationPreset || "cursor_click",
     scenes: scenes.map((s) => ({ kind: s.kind, screenshot: screenshotUrl(s.screenshot),
       headline: s.headline ?? "", subtext: s.subtext ?? "", motion: s.motion ?? "fade",
-      durInFrames: s.durInFrames })) };
+      durInFrames: s.durInFrames, click: s.click })) };
   return { fps, width, height, durationInFrames, inputProps,
     outFile: req.outFile || (req.jobDir + "/remotion-video.mp4") };
 }

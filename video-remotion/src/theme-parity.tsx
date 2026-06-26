@@ -1,8 +1,8 @@
 import React from "react";
-import {AbsoluteFill, Img, useCurrentFrame, useVideoConfig} from "remotion";
+import {AbsoluteFill, Img, useCurrentFrame} from "remotion";
 import {loadFont} from "@remotion/google-fonts/Inter";
 import type {Scene} from "./Video";
-import {cursorTrajectory, scaleCursorTrajectory} from "./cursor";
+import {clickCursor, CURSOR_VISIBLE_MAX_Y} from "./cursor";
 
 // Load only the weights/subset actually used (600/700/800, latin) to cut the
 // font download. loadFont() at module top level auto-blocks the render until ready.
@@ -26,10 +26,8 @@ export const SceneParity: React.FC<{
   host: string;
   title: string;
   animationPreset?: string;
-  sceneIndex?: number;
-}> = ({scene, host, title, animationPreset = "cursor_click", sceneIndex = 0}) => {
+}> = ({scene, host, title, animationPreset = "cursor_click"}) => {
   const frame = useCurrentFrame();
-  const {width, height} = useVideoConfig();
   const p = clamp(frame / Math.max(1, scene.durInFrames));
 
   const hasShot = Boolean(scene.screenshot);
@@ -65,16 +63,15 @@ export const SceneParity: React.FC<{
 
   const frameOpacity = hasShot ? env : 0;
   const frameTransform = `translate(calc(-50% + ${dx}px), ${dy}px) translate(${kx}%, ${ky}%) scale(${kb * mz})`;
-  // Per-scene cursor path + click timing so the cursor varies scene-to-scene
-  // instead of replaying one identical sweep every scene. Scaled to the actual
-  // composition size so positions stay correct at any resolution.
-  const traj = scaleCursorTrajectory(cursorTrajectory(sceneIndex), width, height);
-  const cursorX = lerp(traj.x0, traj.x1, ease2(clamp((p - 0.12) / 0.52)));
-  const cursorY = lerp(traj.y0, traj.y1, ease2(clamp((p - 0.12) / 0.52)));
-  const clickPulse =
-    ease2(clamp((p - traj.clickStart) / 0.1)) *
-    (1 - ease2(clamp((p - traj.clickFall) / 0.18)));
-  const showCursor = hasShot && preset === "cursor_click";
+  // Smart cursor-click: the AI marked a clickable element on this screenshot.
+  // Draw a mouse that slides to it and clicks, rendered INSIDE the frame (over
+  // the image) so it tracks the Ken-Burns transform. Skip targets below the
+  // visible region (clipped by the frame). The frame's opacity already fades it.
+  const clickTarget = scene.click;
+  const clickCur =
+    hasShot && clickTarget && clickTarget.y <= CURSOR_VISIBLE_MAX_Y
+      ? clickCursor(p, clickTarget)
+      : null;
 
   // --- Eyebrow ---
   const eyebrowOpacity = hasShot ? 0 : env;
@@ -183,15 +180,53 @@ export const SceneParity: React.FC<{
             {host}
           </div>
         </div>
-        {/* #img (screenshot) */}
+        {/* #img (screenshot) + smart cursor (positioned over the image) */}
         {scene.screenshot ? (
-          <Img
-            src={scene.screenshot}
-            style={{display: "block", width: "100%"}}
-            // Keep rendering if a screenshot fails to decode rather than
-            // stalling the whole render until the frame times out.
-            onError={() => {}}
-          />
+          <div style={{position: "relative", display: "block"}}>
+            <Img
+              src={scene.screenshot}
+              style={{display: "block", width: "100%"}}
+              // Keep rendering if a screenshot fails to decode rather than
+              // stalling the whole render until the frame times out.
+              onError={() => {}}
+            />
+            {clickCur ? (
+              <>
+                {/* cursor arrow (tip lands ~ on the target) */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: `${clickCur.x * 100}%`,
+                    top: `${clickCur.y * 100}%`,
+                    width: 0,
+                    height: 0,
+                    borderTop: "18px solid #f7f5ef",
+                    borderRight: "11px solid transparent",
+                    filter: "drop-shadow(0 2px 1px rgba(0,0,0,.55))",
+                    transform: "rotate(-12deg)",
+                    pointerEvents: "none",
+                  }}
+                />
+                {/* click pulse ring centered on the target */}
+                <div
+                  style={{
+                    position: "absolute",
+                    left: `${clickCur.x * 100}%`,
+                    top: `${clickCur.y * 100}%`,
+                    width: 46,
+                    height: 46,
+                    marginLeft: -23,
+                    marginTop: -23,
+                    border: "3px solid rgba(154,166,255,.95)",
+                    borderRadius: "50%",
+                    opacity: clickCur.pulse,
+                    transform: `scale(${lerp(0.35, 1.2, clickCur.pulse)})`,
+                    pointerEvents: "none",
+                  }}
+                />
+              </>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -275,42 +310,6 @@ export const SceneParity: React.FC<{
             pointerEvents: "none",
           }}
         />
-      ) : null}
-
-      {showCursor ? (
-        <>
-          <div
-            style={{
-              position: "absolute",
-              left: cursorX,
-              top: cursorY,
-              width: 0,
-              height: 0,
-              borderTop: "24px solid #f7f5ef",
-              borderRight: "15px solid transparent",
-              filter: "drop-shadow(0 2px 1px rgba(0,0,0,.55))",
-              transform: "rotate(-12deg)",
-              opacity: env,
-              pointerEvents: "none",
-            }}
-          />
-          <div
-            style={{
-              position: "absolute",
-              left: cursorX,
-              top: cursorY,
-              width: 82,
-              height: 82,
-              marginLeft: -41,
-              marginTop: -41,
-              border: "4px solid rgba(154,166,255,.9)",
-              borderRadius: "50%",
-              opacity: clickPulse,
-              transform: `scale(${lerp(0.35, 1.2, clickPulse)})`,
-              pointerEvents: "none",
-            }}
-          />
-        </>
       ) : null}
 
       <div

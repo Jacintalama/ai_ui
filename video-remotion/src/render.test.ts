@@ -19,6 +19,19 @@ describe("buildRenderConfig", () => {
       scenes: [{kind: "screenshot", durationS: 3}]});
     expect(c.inputProps.animationPreset).toBe("cursor_click");
   });
+  it("forwards the smart-cursor click target into inputProps", () => {
+    const c = buildRenderConfig({jobDir: "/j", theme: "parity", fps: 30,
+      width: 1280, height: 720, host: "x.com", title: "X",
+      scenes: [{kind: "screenshot", screenshot: "/j/s/s1.png", headline: "Hi",
+        motion: "zoom-in", durationS: 3, click: {x: 0.4, y: 0.2, label: "Buy"}}]});
+    expect(c.inputProps.scenes[0].click).toEqual({x: 0.4, y: 0.2, label: "Buy"});
+  });
+  it("leaves click undefined when the scene has no target", () => {
+    const c = buildRenderConfig({jobDir: "/j", theme: "parity", fps: 30,
+      width: 1280, height: 720, host: "", title: "",
+      scenes: [{kind: "screenshot", durationS: 3}]});
+    expect(c.inputProps.scenes[0].click).toBeUndefined();
+  });
   it("clamps total duration to MAX_DURATION_S", () => {
     const scenes = Array.from({length: 30}, () => ({kind: "screenshot", durationS: 5}));
     const c = buildRenderConfig({jobDir: "/j", theme: "parity", fps: 30,

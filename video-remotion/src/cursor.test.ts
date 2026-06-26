@@ -1,48 +1,44 @@
 import {describe, expect, it} from "vitest";
-import {cursorTrajectory, scaleCursorTrajectory, CURSOR_BASE_W, CURSOR_BASE_H} from "./cursor";
+import {clickCursor, CURSOR_VISIBLE_MAX_Y} from "./cursor";
 
-describe("cursorTrajectory", () => {
-  it("is deterministic for the same scene index", () => {
-    expect(cursorTrajectory(2)).toEqual(cursorTrajectory(2));
+describe("clickCursor", () => {
+  const target = {x: 0.5, y: 0.3, label: "Contact"};
+
+  it("is deterministic for the same progress + target", () => {
+    expect(clickCursor(0.4, target)).toEqual(clickCursor(0.4, target));
   });
 
-  it("varies the cursor path between consecutive scenes", () => {
-    // The bug: every scene replayed one identical sweep. Consecutive scenes must
-    // differ in both start and end so it no longer looks copy-pasted.
-    const a = cursorTrajectory(0);
-    const b = cursorTrajectory(1);
-    expect([a.x0, a.y0]).not.toEqual([b.x0, b.y0]);
-    expect([a.x1, a.y1]).not.toEqual([b.x1, b.y1]);
+  it("ends on the target once the move-in completes", () => {
+    const c = clickCursor(0.6, target); // move-in done by ~0.5
+    expect(c.x).toBeCloseTo(target.x, 5);
+    expect(c.y).toBeCloseTo(target.y, 5);
   });
 
-  it("keeps the cursor within the 1280x720 canvas", () => {
-    for (let i = 0; i < 12; i++) {
-      const t = cursorTrajectory(i);
-      for (const x of [t.x0, t.x1]) expect(x).toBeGreaterThanOrEqual(0), expect(x).toBeLessThanOrEqual(1280);
-      for (const y of [t.y0, t.y1]) expect(y).toBeGreaterThanOrEqual(0), expect(y).toBeLessThanOrEqual(720);
-      expect(t.clickStart).toBeGreaterThan(0);
-      expect(t.clickFall).toBeGreaterThan(t.clickStart);
+  it("starts offset from the target (cursor approaches it)", () => {
+    const c = clickCursor(0.0, target);
+    expect(c.x).not.toBeCloseTo(target.x, 3);
+  });
+
+  it("fires a click pulse mid-scene, not at the start or end", () => {
+    expect(clickCursor(0.15, target).pulse).toBeLessThan(0.2);
+    expect(clickCursor(0.57, target).pulse).toBeGreaterThan(0.4);
+    expect(clickCursor(0.95, target).pulse).toBeLessThan(0.2);
+  });
+
+  it("keeps the cursor inside the image box [0,1]", () => {
+    for (const p of [0, 0.25, 0.5, 0.75, 1]) {
+      for (const t of [{x: 0.02, y: 0.02, label: ""}, {x: 0.98, y: 0.7, label: ""}]) {
+        const c = clickCursor(p, t);
+        expect(c.x).toBeGreaterThanOrEqual(0);
+        expect(c.x).toBeLessThanOrEqual(1);
+        expect(c.y).toBeGreaterThanOrEqual(0);
+        expect(c.y).toBeLessThanOrEqual(1);
+      }
     }
   });
 
-  it("handles out-of-range indices without throwing (cycles)", () => {
-    expect(() => cursorTrajectory(99)).not.toThrow();
-    expect(cursorTrajectory(99)).toEqual(cursorTrajectory(99 % 6));
-  });
-});
-
-describe("scaleCursorTrajectory", () => {
-  it("is identity at the base 1280x720 canvas", () => {
-    const t = cursorTrajectory(0);
-    expect(scaleCursorTrajectory(t, CURSOR_BASE_W, CURSOR_BASE_H)).toEqual(t);
-  });
-
-  it("scales coordinates to a larger canvas, leaving click timing intact", () => {
-    const t = cursorTrajectory(0);
-    const s = scaleCursorTrajectory(t, CURSOR_BASE_W * 2, CURSOR_BASE_H * 2);
-    expect(s.x0).toBe(t.x0 * 2);
-    expect(s.y1).toBe(t.y1 * 2);
-    expect(s.clickStart).toBe(t.clickStart); // timing is a progress fraction, not px
-    expect(s.clickFall).toBe(t.clickFall);
+  it("exposes a visible-region cap for skipping below-fold targets", () => {
+    expect(CURSOR_VISIBLE_MAX_Y).toBeGreaterThan(0.6);
+    expect(CURSOR_VISIBLE_MAX_Y).toBeLessThan(0.8);
   });
 });

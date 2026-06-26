@@ -54,6 +54,15 @@ Remove the Animation `<select id="animation-preset">` and its `_animationPreset(
 - Pixel-perfect element detection (accepted approximate AI coords + omit-on-uncertain).
 - Migrating the rest of the composition's easing to `interpolate` (separate, deferred item).
 
+## Review fixes (incorporated)
+- **Visible region (HIGH):** the `.frame` (maxHeight 58% + 36px bar) shows only ~top 74% of a 1280×800 capture. The prompt steers the LLM to targets in the visible top region; the composition skips the cursor when `click.y` exceeds `VISIBLE_MAX` (~0.72). Below-fold targets → no cursor (graceful).
+- The click instruction lives in `build_anim_system_prompt`'s fixed preamble, **not** in the editable skill (a user editing the skill can't delete the feature).
+- `click` schema object: `additionalProperties:false`, `required:[x,y,label]`, **no** `minimum/maximum` (unsupported like `maxItems`; range-validate in code, with a comment).
+- A `sanitize_anim_clicks(plan)` step runs after JSON parse: drops `click` unless `kind=="screenshot"` and `x,y ∈ [0,1]`; truncates `label`. The composition also defends (skips out-of-range).
+- Plumbing drop-points fixed: `video_remotion_render.py` scene dict **and** `render.ts` `inputProps.scenes.map` both add `click`.
+- Cursor lives **inside** the frame over the image (relative wrapper); move-in is clamped within the visible box (`overflow:hidden` would clip an outside start); no per-cursor opacity (inherits frame `env`, avoiding env²); cursor/pulse sizes re-picked for the 64%-wide frame; tip offset so the pointer tip lands on `(x,y)`.
+- Old `cursor.ts` (`cursorTrajectory`/`scaleCursorTrajectory`) removed; replaced by pure `clickCursor(progress, target)`.
+
 ## Testing
 - `video_plan`: schema carries optional `click`; `validate_anim_plan` keeps valid clicks and drops out-of-range/garbage; prompt contains the smart-click instruction.
 - `render.ts`: `buildRenderConfig` forwards `click` into scene inputProps.

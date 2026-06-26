@@ -2,7 +2,8 @@ import React from "react";
 import {AbsoluteFill, Series} from "remotion";
 import {SceneParity} from "./theme-parity";
 export type Scene = { kind: string; screenshot?: string; headline?: string;
-  subtext?: string; motion?: string; durInFrames: number };
+  subtext?: string; motion?: string; durInFrames: number;
+  click?: { x: number; y: number; label: string } };
 export type VideoProps = { theme: string; host: string; title: string;
   fps: number; width: number; height: number; animationPreset?: string;
   scenes: Scene[] };
@@ -17,7 +18,6 @@ export const Video: React.FC<VideoProps> = ({host, title, scenes, animationPrese
             scene={s}
             host={host}
             title={title}
-            sceneIndex={i}
             animationPreset={animationPreset || "cursor_click"}
           />
         </Series.Sequence>

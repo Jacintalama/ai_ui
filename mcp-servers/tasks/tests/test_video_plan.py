@@ -343,7 +343,7 @@ async def test_generate_anim_plan_sends_images(tmp_path, monkeypatch):
     assert sent["max_tokens"] >= 4096
 
 
-async def test_generate_anim_plan_includes_animation_preference(monkeypatch):
+async def test_generate_anim_plan_includes_smart_cursor_instruction(monkeypatch):
     import anthropic, json as _json
     from video_plan import generate_anim_plan
     canned = {"title": "t", "narration_script": "voice",
@@ -351,9 +351,10 @@ async def test_generate_anim_plan_includes_animation_preference(monkeypatch):
                           "motion": "zoom-in", "duration_s": 3.0}]}
     fake = _FakeClient(_json.dumps(canned))
     monkeypatch.setattr(anthropic, "Anthropic", lambda *a, **k: fake)
-    await generate_anim_plan("x", ["a.png"], attempts=1, animation_preset="spotlight")
+    await generate_anim_plan("x", ["a.png"], attempts=1)
     sent = fake.messages.calls[0]
-    assert "Animation preference: spotlight" in sent["messages"][0]["content"]
+    # The smart-cursor instruction is always in the SYSTEM prompt (not preset-gated).
+    assert "clickable" in sent["system"].lower()
 
 
 async def test_generate_anim_plan_falls_back_on_api_error(tmp_path, monkeypatch):
