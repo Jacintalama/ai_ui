@@ -26,5 +26,10 @@ Return **exactly one** fenced ` ```tsx ` code block — the whole composition. N
 - CSS `transition` / `animation` / `@keyframes` / Tailwind `animate-*` — ALL motion comes from the frame.
 - `fetch`/network, file I/O, external images, any import outside the allow-list.
 
-## Quality
-- ≥ 3 seconds, with real motion: entrances that settle, varied movement, a clear beat arc (title → content → outro). Make it look intentional and clean — never one static card.
+## Quality / craft (make it look professionally designed, not a default)
+- **Type:** a strong scale — one display size (~110-170px, weight 800, tight negative letter-spacing) and one supporting size (~26-46px). Use at most two weights. Be consistent.
+- **Color:** a deliberate palette that fits the brief — one background (use a subtle gradient + depth, not flat black), 1-2 text colors, ONE accent. High contrast. Cohesive mood.
+- **Motion:** ease-OUT entrances that arrive and settle (`Easing.bezier(0.16, 1, 0.3, 1)` or `spring`); STAGGER reveals (each word/element a few frames after the last); vary the motion per scene; never move everything at once; HOLD each beat long enough to read; add a subtle continuous drift/scale so no frame is dead-static.
+- **Pacing:** ~2-4s per beat, clear arc (hook → 2-3 content beats → outro/CTA). Don't cram.
+- **Layout:** use the whole 1280×720 frame — try off-center / asymmetric layouts, a baseline grid, generous margins. Add ONE distinctive element (an underline that draws on, an animated shape, a progress bar, a simple device/card frame, a number count-up) so it isn't just centered text on a box.
+- `Math.sin`/`Math.cos`/`Math.PI`/`Math.min/max` are deterministic and encouraged for organic motion. Only `Math.random` is banned.
