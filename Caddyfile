@@ -158,6 +158,22 @@
 		reverse_proxy tasks:8210
 	}
 
+	# Clean public URL for the video generator page.
+	handle /video-generator {
+		rewrite * /tasks/static/video.html
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+	handle /video-generator/ {
+		rewrite * /tasks/static/video.html
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+
 	# Liveness probe — used by scripts/deploy_orchestrator.sh post-deploy smoke.
 	# Without this handler, /tasks/healthz would fall through to the Open WebUI
 	# SPA catch-all (returns 200 + HTML), giving a false positive in deploys.
