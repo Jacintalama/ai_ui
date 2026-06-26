@@ -1,5 +1,5 @@
 import {describe, expect, it} from "vitest";
-import {cursorTrajectory} from "./cursor";
+import {cursorTrajectory, scaleCursorTrajectory, CURSOR_BASE_W, CURSOR_BASE_H} from "./cursor";
 
 describe("cursorTrajectory", () => {
   it("is deterministic for the same scene index", () => {
@@ -28,5 +28,21 @@ describe("cursorTrajectory", () => {
   it("handles out-of-range indices without throwing (cycles)", () => {
     expect(() => cursorTrajectory(99)).not.toThrow();
     expect(cursorTrajectory(99)).toEqual(cursorTrajectory(99 % 6));
+  });
+});
+
+describe("scaleCursorTrajectory", () => {
+  it("is identity at the base 1280x720 canvas", () => {
+    const t = cursorTrajectory(0);
+    expect(scaleCursorTrajectory(t, CURSOR_BASE_W, CURSOR_BASE_H)).toEqual(t);
+  });
+
+  it("scales coordinates to a larger canvas, leaving click timing intact", () => {
+    const t = cursorTrajectory(0);
+    const s = scaleCursorTrajectory(t, CURSOR_BASE_W * 2, CURSOR_BASE_H * 2);
+    expect(s.x0).toBe(t.x0 * 2);
+    expect(s.y1).toBe(t.y1 * 2);
+    expect(s.clickStart).toBe(t.clickStart); // timing is a progress fraction, not px
+    expect(s.clickFall).toBe(t.clickFall);
   });
 });

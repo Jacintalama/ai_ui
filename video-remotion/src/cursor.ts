@@ -31,3 +31,25 @@ export function cursorTrajectory(sceneIndex: number): CursorTrajectory {
   const i = ((Math.floor(sceneIndex) % len) + len) % len;
   return CURSOR_TARGETS[i];
 }
+
+// The canvas the CURSOR_TARGETS coordinates above are authored in. Cursor
+// positions are absolute px, so they must be scaled to the actual composition
+// size (read from useVideoConfig) to stay correct if width/height ever change.
+export const CURSOR_BASE_W = 1280;
+export const CURSOR_BASE_H = 720;
+
+export function scaleCursorTrajectory(
+  t: CursorTrajectory,
+  width: number,
+  height: number,
+): CursorTrajectory {
+  const sx = width / CURSOR_BASE_W;
+  const sy = height / CURSOR_BASE_H;
+  return {
+    ...t,
+    x0: t.x0 * sx,
+    y0: t.y0 * sy,
+    x1: t.x1 * sx,
+    y1: t.y1 * sy,
+  };
+}

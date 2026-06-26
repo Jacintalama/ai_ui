@@ -3,7 +3,7 @@ import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { selectComposition, renderMedia } from "@remotion/renderer";
-import { buildRenderConfig, RenderRequest } from "./render.js";
+import { buildRenderConfig, renderConcurrency, RenderRequest } from "./render.js";
 
 // ---- MIME helper ----
 
@@ -93,6 +93,8 @@ async function doRender(
     inputProps,
     pixelFormat: "yuv420p",
     imageFormat: "jpeg",
+    // Bound peak RAM on the memory-constrained host (default 1 tab/core → OOM).
+    concurrency: renderConcurrency(),
   });
 
   return { outPath: cfg.outFile, frames: composition.durationInFrames };

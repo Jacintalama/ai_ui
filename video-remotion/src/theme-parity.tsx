@@ -1,10 +1,15 @@
 import React from "react";
-import {AbsoluteFill, Img, useCurrentFrame} from "remotion";
+import {AbsoluteFill, Img, useCurrentFrame, useVideoConfig} from "remotion";
 import {loadFont} from "@remotion/google-fonts/Inter";
 import type {Scene} from "./Video";
-import {cursorTrajectory} from "./cursor";
+import {cursorTrajectory, scaleCursorTrajectory} from "./cursor";
 
-const {fontFamily: interFamily} = loadFont();
+// Load only the weights/subset actually used (600/700/800, latin) to cut the
+// font download. loadFont() at module top level auto-blocks the render until ready.
+const {fontFamily: interFamily} = loadFont("normal", {
+  weights: ["600", "700", "800"],
+  subsets: ["latin"],
+});
 const fontFamily = `${interFamily}, Inter, Segoe UI, system-ui, sans-serif`;
 
 // Easing helpers (ported exactly from the reference)
@@ -24,6 +29,7 @@ export const SceneParity: React.FC<{
   sceneIndex?: number;
 }> = ({scene, host, title, animationPreset = "cursor_click", sceneIndex = 0}) => {
   const frame = useCurrentFrame();
+  const {width, height} = useVideoConfig();
   const p = clamp(frame / Math.max(1, scene.durInFrames));
 
   const hasShot = Boolean(scene.screenshot);
@@ -60,8 +66,9 @@ export const SceneParity: React.FC<{
   const frameOpacity = hasShot ? env : 0;
   const frameTransform = `translate(calc(-50% + ${dx}px), ${dy}px) translate(${kx}%, ${ky}%) scale(${kb * mz})`;
   // Per-scene cursor path + click timing so the cursor varies scene-to-scene
-  // instead of replaying one identical sweep every scene.
-  const traj = cursorTrajectory(sceneIndex);
+  // instead of replaying one identical sweep every scene. Scaled to the actual
+  // composition size so positions stay correct at any resolution.
+  const traj = scaleCursorTrajectory(cursorTrajectory(sceneIndex), width, height);
   const cursorX = lerp(traj.x0, traj.x1, ease2(clamp((p - 0.12) / 0.52)));
   const cursorY = lerp(traj.y0, traj.y1, ease2(clamp((p - 0.12) / 0.52)));
   const clickPulse =
@@ -181,6 +188,9 @@ export const SceneParity: React.FC<{
           <Img
             src={scene.screenshot}
             style={{display: "block", width: "100%"}}
+            // Keep rendering if a screenshot fails to decode rather than
+            // stalling the whole render until the frame times out.
+            onError={() => {}}
           />
         ) : null}
       </div>

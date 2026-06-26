@@ -1,4 +1,12 @@
 export const MAX_DURATION_S = 40;
+
+// renderMedia defaults to one Chromium tab per CPU core, which can OOM the
+// memory-constrained render host. Cap it (env-overridable) to bound peak RAM.
+export function renderConcurrency(): number {
+  const n = Number.parseInt(process.env.REMOTION_CONCURRENCY ?? "", 10);
+  if (!Number.isFinite(n)) return 2; // safe default for the small box
+  return Math.max(1, n);
+}
 export type RenderRequest = { jobDir: string; theme: string; fps: number;
   width: number; height: number; host: string; title: string; outFile?: string;
   animationPreset?: string;
