@@ -76,6 +76,23 @@ def friendly_name(description: str, *, max_len: int = 60) -> str:
     return (text[:1].upper() + text[1:]) if text else ""
 
 
+_BUILD_FILLER = {
+    "a", "an", "the", "me", "my", "build", "make", "create", "please", "for",
+    "website", "site", "app", "page", "webpage", "web", "application", "thing",
+    "something", "new", "to",
+}
+
+
+def is_vague_build(detail: str) -> bool:
+    """True when a build request names no specifics beyond generic filler
+    ('a website', 'an app'); 'a portfolio', 'a flower shop site' are NOT vague."""
+    meaningful = [
+        w for w in (detail or "").lower().replace("-", " ").split()
+        if w.strip(".,!?'\"():") and w.strip(".,!?'\"():") not in _BUILD_FILLER
+    ]
+    return len(meaningful) == 0
+
+
 DAILY_BRIEFING_NAME = "Daily briefing"
 DAILY_BRIEFING_CRON = "0 8 * * *"  # 8am daily; tz defaults to Asia/Manila
 
@@ -212,6 +229,10 @@ class CommandRouter:
 
         # token -> {"intent", "detail"} for a parked just-chat confirmation.
         self._pending_intents: dict[str, dict] = {}
+        # discord user id -> their current app slug (in-memory; set on each build)
+        self._user_app_slug: dict[str, str] = {}
+        # user id -> the vague build detail awaiting a "what kind?" reply in-thread
+        self._pending_build_clarify: dict[str, str] = {}
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -406,7 +427,18 @@ class CommandRouter:
             await ctx.respond("That request expired — just type it again and I'll pick it up.")
             return
         if data["intent"] == "build_app":
-            await self.run_panel_build(ctx, None, data["detail"])
+            detail = data["detail"]
+            # Vague build ("a website") on Discord -> ask one question in the thread,
+            # then build from the reply (handle_builder_thread_message completes it).
+            if ctx.platform == "discord" and ctx.user_id and is_vague_build(detail):
+                self._pending_build_clarify[ctx.user_id] = detail
+                await ctx.respond(
+                    "Happy to build it. What kind of site is it, and what's it for? "
+                    "For example: a portfolio for a photographer, an online shop, or a "
+                    "landing page for an event."
+                )
+                return
+            await self.run_panel_build(ctx, None, detail)
             return
         if data["intent"] == "schedule_task":
             await self.run_scheduled_from_chat(ctx, data)
@@ -456,7 +488,8 @@ class CommandRouter:
         result = await intent_router.classify(text, self.openwebui, self.ai_model)
         action = intent_router.decide(result, threshold=threshold)
         if action.kind == "answer":
-            return False  # silent on non-requests
+            await self._handle_ask(ctx)  # answer general chat instead of staying silent
+            return True
         if action.kind == "confirm":
             if not ctx.respond_components:
                 return False
@@ -468,6 +501,32 @@ class CommandRouter:
         # suggest: name the understood intent and point at the tool
         await ctx.respond(intent_cards.suggest_line(action.intent))
         return True
+
+    async def handle_builder_thread_message(self, ctx: CommandContext, text: str) -> None:
+        """A message in the user's private app thread (aiui-apps-<user>): complete a
+        pending vague-build clarification, refine the current app, or answer."""
+        uid = ctx.user_id or ""
+        ctx.arguments = text
+        # 1) The user is answering our "what kind?" question -> build from the reply.
+        if uid in self._pending_build_clarify:
+            result = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if result.intent == "question":
+                await self._handle_ask(ctx)  # answer, keep waiting for the description
+                return
+            self._pending_build_clarify.pop(uid, None)
+            await self.run_panel_build(ctx, None, text)
+            return
+        # 2) Refine the current app by chat (questions are answered).
+        slug = self._user_app_slug.get(uid)
+        if slug:
+            result = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if result.intent == "question":
+                await self._handle_ask(ctx)
+                return
+            await self.run_panel_enhance(ctx, slug, text)
+            return
+        # 3) No app yet — just answer (the user can ask to build).
+        await self._handle_ask(ctx)
 
     async def _handle_briefing(self, ctx: CommandContext) -> None:
         """/aiui briefing — set up a daily morning briefing; `off` turns it off."""
@@ -1859,6 +1918,8 @@ class CommandRouter:
             return None
         slug = result["slug"]
         task_id = result["task_id"]
+        if ctx.user_id:  # remember this user's current app for thread-chat refining
+            self._user_app_slug[ctx.user_id] = slug
         display = name or slug
         tnote = f" (from the {template_label} template)" if template_label else ""
         await ctx.respond(

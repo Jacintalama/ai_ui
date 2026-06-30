@@ -123,22 +123,26 @@ async def test_chat_message_build_posts_card(monkeypatch):
     assert len(r._pending_intents) == 1
 
 
-async def test_chat_message_question_is_silent(monkeypatch):
+async def test_chat_message_question_answers(monkeypatch):
     monkeypatch.setattr(cmd.settings, "intent_router_enabled", True)
     monkeypatch.setattr(ir, "classify",
                         AsyncMock(return_value=ir.IntentResult("question", 0.9, "hi")))
     r = _router()
+    r._handle_ask = AsyncMock()
     ctx = _ctx("how is everyone doing today")
-    assert await r.handle_chat_message(ctx) is False
-    ctx.respond.assert_not_awaited()
-    ctx.respond_components.assert_not_awaited()
+    assert await r.handle_chat_message(ctx) is True
+    r._handle_ask.assert_awaited_once()
+    ctx.respond_components.assert_not_awaited()  # no build card, just an answer
 
 
-async def test_chat_message_below_higher_bar_is_silent(monkeypatch):
-    # 0.6 would pass the slash/Slack default but not the gateway's 0.75 bar.
+async def test_chat_message_below_higher_bar_answers(monkeypatch):
+    # 0.6 is below the gateway's 0.75 bar -> not a build card; answered as chat.
     monkeypatch.setattr(cmd.settings, "intent_router_enabled", True)
     monkeypatch.setattr(ir, "classify",
                         AsyncMock(return_value=ir.IntentResult("build_app", 0.6, "x")))
     r = _router()
+    r._handle_ask = AsyncMock()
     ctx = _ctx("maybe build something idk")
-    assert await r.handle_chat_message(ctx) is False
+    assert await r.handle_chat_message(ctx) is True
+    r._handle_ask.assert_awaited_once()
+    ctx.respond_components.assert_not_awaited()

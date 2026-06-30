@@ -118,6 +118,7 @@ def extract_chat_message(message) -> dict | None:
         "author_id": str(author.id),
         "author_name": getattr(author, "display_name", None) or getattr(author, "name", "unknown"),
         "channel_id": str(channel.id),
+        "channel_name": getattr(channel, "name", None),
         "is_thread": parent_id is not None,
         "text": content.strip(),
     }
@@ -162,11 +163,16 @@ class VideoThreadIntake:
             await self._router.run_video_capture(ctx, url)
 
     async def handle_chat(self, *, author_id, author_name, channel_id,
-                          is_thread, text) -> None:
-        """A plain-English message in any non-thread channel -> the intent router,
-        which stays silent unless it detects a real request. Threads are owned by
-        the build/video/schedule flows, so they are skipped here."""
+                          is_thread, text, channel_name=None) -> None:
+        """A plain-English message. In the user's private app thread (aiui-apps-*)
+        it's a conversation about that app (answer + refine); in a channel it goes
+        to the intent router. Other private threads (schedules-* / aiui-video-*) are
+        owned by their own flows, so chat there is ignored."""
         if is_thread:
+            if (channel_name or "").lower().startswith("aiui-apps-"):
+                ctx = self._app_thread_ctx(author_id, author_name, channel_id)
+                ctx.arguments = text
+                await self._router.handle_builder_thread_message(ctx, text)
             return
         ctx = self._thread_ctx(author_id, author_name, channel_id)
         ctx.arguments = text
@@ -186,4 +192,22 @@ class VideoThreadIntake:
             raw_text="video add", subcommand="video", arguments="",
             platform="discord", respond=respond,
             respond_components=respond_components,
+        )
+
+    def _app_thread_ctx(self, author_id, author_name, channel_id) -> CommandContext:
+        """Thread ctx for the private app conversation. Like _thread_ctx but also
+        sets notify_channel, so a build/enhance started from the thread delivers its
+        result back into the thread."""
+        async def respond(msg):
+            await self._discord.post_channel_message(channel_id, msg)
+
+        async def respond_components(msg, components, embeds=None):
+            await self._discord.post_channel_message(channel_id, msg, components=components)
+
+        return CommandContext(
+            user_id=author_id, user_name=author_name, channel_id=channel_id,
+            raw_text="app chat", subcommand="aiuibuilder", arguments="",
+            platform="discord", respond=respond,
+            respond_components=respond_components,
+            notify_channel=respond,
         )
