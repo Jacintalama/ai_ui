@@ -10,6 +10,7 @@ from clients import connectors
 from config import settings
 from handlers.commands import CommandRouter, CommandContext
 from handlers import connector_intent
+from handlers import intent_cards
 from handlers.schedule_parse import parse_when
 from handlers import schedule_picker
 from datetime import datetime, timedelta, timezone
@@ -331,6 +332,16 @@ class DiscordCommandHandler:
                 pass
             return {"type": UPDATE_MESSAGE,
                     "data": {"content": "Cancelled.", "components": []}}
+        if custom_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
+            token = custom_id[len(intent_cards.INTENT_CONFIRM_PREFIX):]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_confirmed_intent(ctx, token),
+                raw_text="intent confirm")
+        if custom_id.startswith(intent_cards.INTENT_CANCEL_PREFIX):
+            token = custom_id[len(intent_cards.INTENT_CANCEL_PREFIX):]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.answer_intent(ctx, token),
+                raw_text="intent answer")
         for pred, extract, action in (
             (is_sched_run, id_from_run, "run"),
             (is_sched_pause, id_from_pause, "pause"),
