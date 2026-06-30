@@ -22,9 +22,11 @@ def test_aiuibuilder_status_with_slug():
     )
 
 
-def test_unknown_still_falls_to_ask():
-    """Existing behavior must not regress."""
-    assert CommandRouter.parse_command("what is MCP")[0] == "ask"
+def test_unknown_text_becomes_natural_language():
+    """Plain English (not a known subcommand, not 'ask') routes to the intent
+    router via the NATURAL marker; with the flag off it still answers normally."""
+    from handlers.commands import NATURAL
+    assert CommandRouter.parse_command("what is MCP")[0] == NATURAL
 
 
 def test_existing_status_subcommand_still_works():

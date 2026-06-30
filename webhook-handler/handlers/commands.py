@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional, Any
 import logging
 import os
+import uuid
 
 from clients.tasks import TasksClient, TasksAPIError
 from handlers.app_builder_panel import (
@@ -18,6 +19,7 @@ from handlers.app_builder_panel import (
     build_schedule_card,
 )
 from handlers import onboarding
+from handlers import intent_router, intent_cards
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -42,6 +44,11 @@ OUTREACH_MAX_CONSECUTIVE_ERRORS = 5
 # Public host for building preview links (matches the tasks service's
 # AIUI_PUBLIC_DOMAIN default; the domain is otherwise hardcoded elsewhere here).
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
+
+# Marker subcommand for plain-English input that matched no known command.
+# Routed to the intent router in execute(); with the flag off it falls back to
+# a normal /aiui ask answer, exactly as before.
+NATURAL = "__natural__"
 
 
 @dataclass
@@ -160,6 +167,9 @@ class CommandRouter:
         # watcher could be GC'd mid-flight. Each task removes itself on done.
         self._background_tasks: set = set()
 
+        # token -> {"intent", "detail"} for a parked just-chat confirmation.
+        self._pending_intents: dict[str, dict] = {}
+
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
         """
@@ -190,8 +200,10 @@ class CommandRouter:
         if subcommand in known_commands:
             return (subcommand, arguments)
 
-        # Unknown subcommand — treat entire text as an ask query
-        return ("ask", text)
+        # Unknown first word — plain English. Mark it NATURAL so execute() can
+        # offer the intent router; falls back to a normal answer when the flag
+        # is off (see _handle_natural).
+        return (NATURAL, text)
 
     async def execute(self, ctx: CommandContext) -> None:
         """Dispatch a command to the appropriate handler."""
@@ -230,6 +242,8 @@ class CommandRouter:
                 await self._handle_web_search(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
+            elif ctx.subcommand == NATURAL:
+                await self._handle_natural(ctx)
             else:
                 await ctx.respond(f"Unknown command: `{ctx.subcommand}`. Try `/aiui help`.")
         except Exception as e:
@@ -298,6 +312,58 @@ class CommandRouter:
             response = response[: limit - 20] + "\n\n... (truncated)"
 
         await ctx.respond(response)
+
+    async def _handle_natural(self, ctx: CommandContext) -> None:
+        """Plain-English /aiui input. Flag off -> behave exactly like ask.
+        Flag on -> classify and route: build_app -> a confirm card; other
+        actionable intents -> a suggest message; question/unsure -> answer."""
+        text = ctx.arguments or ctx.raw_text or ""
+        ctx.arguments = text  # _handle_ask reads ctx.arguments
+        if not settings.intent_router_enabled:
+            await self._handle_ask(ctx)
+            return
+        result = await intent_router.classify(text, self.openwebui, self.ai_model)
+        action = intent_router.decide(result)
+        if action.kind == "answer":
+            await self._handle_ask(ctx)
+            return
+        if action.kind == "confirm":
+            token = self.park_intent(action.intent, action.detail)
+            line = intent_cards.confirm_line(action.intent, action.detail)
+            if ctx.respond_components:  # Discord can show buttons
+                await ctx.respond_components(
+                    line, intent_cards.confirm_components_discord(token))
+            else:  # platform without components: answer normally instead
+                await self._handle_ask(ctx)
+            return
+        # suggest: name what we understood and point at the right tool
+        await ctx.respond(intent_cards.suggest_line(action.intent))
+
+    def park_intent(self, intent: str, detail: str) -> str:
+        token = uuid.uuid4().hex[:16]
+        self._pending_intents[token] = {"intent": intent, "detail": detail}
+        return token
+
+    def cancel_intent(self, token: str) -> None:
+        self._pending_intents.pop(token, None)
+
+    async def run_confirmed_intent(self, ctx: CommandContext, token: str) -> None:
+        """The user tapped 'Yes, do it'. Build runs for real; other intents fall
+        back to a suggest message (extended per-intent in later tasks)."""
+        data = self._pending_intents.pop(token, None)
+        if not data:
+            await ctx.respond("That request expired — just type it again and I'll pick it up.")
+            return
+        if data["intent"] == "build_app":
+            await self.run_panel_build(ctx, None, data["detail"])
+            return
+        await ctx.respond(intent_cards.suggest_line(data["intent"]))
+
+    async def answer_intent(self, ctx: CommandContext, token: str) -> None:
+        """The user tapped 'Just answer'. Answer their original text normally."""
+        data = self._pending_intents.pop(token, None)
+        ctx.arguments = (data or {}).get("detail", "") or ctx.arguments
+        await self._handle_ask(ctx)
 
     async def _handle_workflow(self, ctx: CommandContext) -> None:
         """Trigger an n8n workflow by name (looks up ID via API, then executes)."""
