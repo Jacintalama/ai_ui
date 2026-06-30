@@ -96,6 +96,15 @@ async def test_answer_intent_uses_parked_detail():
     assert tok not in r._pending_intents
 
 
+async def test_run_confirmed_daily_briefing_creates():
+    r = _router()
+    r.create_daily_briefing = AsyncMock()
+    tok = r.park_intent("daily_briefing", "brief me every morning")
+    await r.run_confirmed_intent(_ctx(), tok)
+    r.create_daily_briefing.assert_awaited_once()
+    assert tok not in r._pending_intents
+
+
 # --- Slack message classify wiring (slack.py _try_intent) ---
 from handlers import slack as slackmod
 

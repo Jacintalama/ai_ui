@@ -19,6 +19,7 @@ _VERB = {
     "find_engineers": "find engineers to hire",
     "summarize_email": "summarize your email",
     "web_research": "research that for you",
+    "daily_briefing": "set up a daily morning briefing",
 }
 
 

@@ -76,6 +76,24 @@ def friendly_name(description: str, *, max_len: int = 60) -> str:
     return (text[:1].upper() + text[1:]) if text else ""
 
 
+DAILY_BRIEFING_NAME = "Daily briefing"
+DAILY_BRIEFING_CRON = "0 8 * * *"  # 8am daily; tz defaults to Asia/Manila
+
+
+def daily_briefing_prompt() -> str:
+    """The prompt the daily-briefing schedule runs each morning."""
+    return (
+        "Give me my morning briefing. Be warm but brief — under 120 words, no "
+        "preamble, no sign-off. Include each item only if there is something to "
+        "say: (1) Unread email: the 3-5 most important, one short line each "
+        "(sender then gist); if you cannot access email, say one line: 'Email "
+        "summary unavailable — connect Gmail to enable.' (2) Today: anything "
+        "scheduled or due today. (3) Since yesterday: any app or video that "
+        "finished, with its link. If everything is quiet, say so in one cheerful "
+        "line."
+    )
+
+
 @dataclass
 class CommandContext:
     """Platform-agnostic command context."""
@@ -220,7 +238,7 @@ class CommandRouter:
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
             "email", "sheets", "rebuild", "web-search",
             "health", "security", "deps", "license",
-            "cronjob", "aiuibuilder",
+            "cronjob", "aiuibuilder", "briefing",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -267,6 +285,8 @@ class CommandRouter:
                 await self._handle_web_search(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
+            elif ctx.subcommand == "briefing":
+                await self._handle_briefing(ctx)
             elif ctx.subcommand == NATURAL:
                 await self._handle_natural(ctx)
             else:
@@ -382,6 +402,9 @@ class CommandRouter:
         if data["intent"] == "build_app":
             await self.run_panel_build(ctx, None, data["detail"])
             return
+        if data["intent"] == "daily_briefing":
+            await self.create_daily_briefing(ctx)
+            return
         await ctx.respond(intent_cards.suggest_line(data["intent"]))
 
     async def answer_intent(self, ctx: CommandContext, token: str) -> None:
@@ -389,6 +412,72 @@ class CommandRouter:
         data = self._pending_intents.pop(token, None)
         ctx.arguments = (data or {}).get("detail", "") or ctx.arguments
         await self._handle_ask(ctx)
+
+    async def _handle_briefing(self, ctx: CommandContext) -> None:
+        """/aiui briefing — set up a daily morning briefing; `off` turns it off."""
+        arg = (ctx.arguments or "").strip().lower()
+        if arg in ("off", "stop", "cancel", "disable"):
+            await self.remove_daily_briefing(ctx)
+        else:
+            await self.create_daily_briefing(ctx)
+
+    async def create_daily_briefing(self, ctx: CommandContext) -> None:
+        """Create the recurring daily-briefing schedule, delivered to this channel.
+        Reuses the normal schedule machinery (the scheduler runs the prompt and
+        posts the result back), so there's no new delivery path."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.create_schedule(
+                email, name=DAILY_BRIEFING_NAME, cron=DAILY_BRIEFING_CRON,
+                prompt=daily_briefing_prompt(),
+                delivery_channel_id=ctx.channel_id or None,
+                delivery_platform=ctx.platform,
+            )
+        except TasksAPIError as e:
+            logger.warning("create daily briefing failed for %s: %s", ctx.user_name, e)
+            await ctx.respond(
+                "Couldn't set up your daily briefing right now. Please try again in a bit."
+            )
+            return
+        await ctx.respond(
+            "Done — I'll send your daily briefing every morning at 8am "
+            "(Asia/Manila): unread email, today's schedule, and anything that "
+            "finished overnight. Turn it off any time with `/aiui briefing off`. "
+            "(For the email part, make sure Gmail is connected.)"
+        )
+
+    async def remove_daily_briefing(self, ctx: CommandContext) -> None:
+        """Delete the user's daily-briefing schedule(s), found by name."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError:
+            await ctx.respond("Couldn't reach your schedules right now. Try again shortly.")
+            return
+        targets = [s for s in schedules if (s.get("name") or "") == DAILY_BRIEFING_NAME]
+        if not targets:
+            await ctx.respond("You don't have a daily briefing set up.")
+            return
+        removed = 0
+        for s in targets:
+            sid = s.get("id") or s.get("schedule_id")
+            if not sid:
+                continue
+            try:
+                await self._tasks_client.delete_schedule(email, str(sid))
+                removed += 1
+            except TasksAPIError:
+                pass
+        await ctx.respond(
+            "Turned off your daily briefing." if removed
+            else "Couldn't turn it off — manage it in Scheduled tasks."
+        )
 
     async def _handle_workflow(self, ctx: CommandContext) -> None:
         """Trigger an n8n workflow by name (looks up ID via API, then executes)."""

@@ -51,6 +51,10 @@ def test_decide_other_actionable_is_suggest():
     assert ir.decide(ir.IntentResult("make_video", 0.8, "x")).kind == "suggest"
 
 
+def test_decide_daily_briefing_is_confirm():
+    assert ir.decide(ir.IntentResult("daily_briefing", 0.9, "x")).kind == "confirm"
+
+
 class _FakeLLM:
     def __init__(self, reply):
         self._reply = reply

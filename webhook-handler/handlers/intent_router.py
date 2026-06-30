@@ -12,7 +12,8 @@ from dataclasses import dataclass
 # Actionable intents the bot can route, plus the safe default "question".
 INTENTS = (
     "build_app", "schedule_task", "make_video", "find_jobs",
-    "find_engineers", "summarize_email", "web_research", "question",
+    "find_engineers", "summarize_email", "web_research", "daily_briefing",
+    "question",
 )
 
 
@@ -42,6 +43,8 @@ def build_classify_messages(text: str) -> list[dict]:
         "schedule_task = anything recurring or time-based. make_video = a video. "
         "find_jobs = the user is job hunting. find_engineers = the user wants to "
         "hire. summarize_email = inbox/email. web_research = look something up. "
+        "daily_briefing = a recurring morning summary/briefing/digest (prefer it "
+        "over schedule_task when they ask for a daily briefing or morning update). "
         'If it is just a question, small talk, or you are unsure, use "question" '
         "with a low confidence. Output JSON only."
     )
@@ -81,7 +84,7 @@ def decide(result: IntentResult, threshold: float = 0.6) -> Action:
     question or anything below the confidence threshold -> answer."""
     if result.intent == "question" or result.confidence < threshold:
         return Action("answer", "question", result.detail)
-    if result.intent == "build_app":
+    if result.intent in ("build_app", "daily_briefing"):
         return Action("confirm", result.intent, result.detail)
     return Action("suggest", result.intent, result.detail)
 

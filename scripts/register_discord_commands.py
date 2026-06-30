@@ -21,7 +21,7 @@ SUB_COMMAND = 1
 STRING = 3
 ATTACHMENT = 11
 
-# All 20 /aiui subcommands. Each is one Discord SUB_COMMAND.
+# All 21 /aiui subcommands. Each is one Discord SUB_COMMAND.
 SUBCOMMANDS = [
     ("ask",         "Ask the AI a question",                     [("question",  "What to ask",            True)]),
     ("pr-review",   "AI review of a GitHub PR",                  [("number",    "PR number",              True)]),
@@ -41,6 +41,7 @@ SUBCOMMANDS = [
     ("security",    "Security audit",                            [("repo",      "owner/repo",             False)]),
     ("deps",        "Dependency report",                         [("repo",      "owner/repo",             False)]),
     ("license",     "License compliance",                        [("repo",      "owner/repo",             False)]),
+    ("briefing",    "Set up (or turn off) a daily morning briefing", [("args", "blank to set up, or 'off' to stop", False)]),
     ("cronjob",     "Manage scheduled prompts",                  [("args",      'e.g. list | create "0 8 * * *" "summarize emails" | delete <id>', True)]),
     ("aiuibuilder", "Manage App Builder projects",               [
         ("args", "e.g. build <desc> | enhance <slug> <change> | list | status <slug>", True),
