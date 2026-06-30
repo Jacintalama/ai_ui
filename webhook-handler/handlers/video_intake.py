@@ -89,6 +89,40 @@ def extract_url_message(message) -> dict | None:
     }
 
 
+def looks_like_chat_request(text: str) -> bool:
+    """True only for substantive plain text worth classifying — not a command, a
+    bare URL, the voice-diag word, or a one/two-word chatter message."""
+    t = (text or "").strip()
+    if not t or t.lower() == "!voice diag":
+        return False
+    if t[0] in "!/":
+        return False
+    if _URL_RE.search(t):
+        return False
+    return len(t.split()) >= 3 and len(t) >= 12
+
+
+def extract_chat_message(message) -> dict | None:
+    """Plain primitives from an ordinary text message (no attachment, not a bare
+    URL, substantive enough to classify), or None. Mirrors extract_url_message's
+    attribute reads so it works on real discord.py messages and test fakes."""
+    if getattr(message, "attachments", None):
+        return None
+    content = getattr(message, "content", "") or ""
+    if not looks_like_chat_request(content):
+        return None
+    channel = message.channel
+    parent_id = getattr(channel, "parent_id", None)
+    author = message.author
+    return {
+        "author_id": str(author.id),
+        "author_name": getattr(author, "display_name", None) or getattr(author, "name", "unknown"),
+        "channel_id": str(channel.id),
+        "is_thread": parent_id is not None,
+        "text": content.strip(),
+    }
+
+
 class VideoThreadIntake:
     """Decide what to do with an image-drop in #video-generation or its threads,
     and act (reusing CommandRouter.run_video_add for the thread case)."""
@@ -126,6 +160,17 @@ class VideoThreadIntake:
         if is_thread and self._is_video_channel(parent_channel_id, parent_channel_name):
             ctx = self._thread_ctx(author_id, author_name, channel_id)
             await self._router.run_video_capture(ctx, url)
+
+    async def handle_chat(self, *, author_id, author_name, channel_id,
+                          is_thread, text) -> None:
+        """A plain-English message in any non-thread channel -> the intent router,
+        which stays silent unless it detects a real request. Threads are owned by
+        the build/video/schedule flows, so they are skipped here."""
+        if is_thread:
+            return
+        ctx = self._thread_ctx(author_id, author_name, channel_id)
+        ctx.arguments = text
+        await self._router.handle_chat_message(ctx)
 
     def _thread_ctx(self, author_id, author_name, channel_id) -> CommandContext:
         """A CommandContext whose responders post NEW messages into the thread

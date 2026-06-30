@@ -413,6 +413,32 @@ class CommandRouter:
         ctx.arguments = (data or {}).get("detail", "") or ctx.arguments
         await self._handle_ask(ctx)
 
+    async def handle_chat_message(self, ctx: CommandContext, *, threshold: float = 0.75) -> bool:
+        """Gateway plain-text entry (Discord, any channel — no slash). Classify the
+        message and act ONLY on a real request: a confirm card for build/briefing,
+        a suggestion for other actionable intents. Stay SILENT on questions or
+        chatter (returns False). Flag-gated; the higher confidence bar (vs the 0.6
+        slash/Slack default) avoids misfiring on casual messages in shared
+        channels."""
+        if not settings.intent_router_enabled:
+            return False
+        text = ctx.arguments or ""
+        result = await intent_router.classify(text, self.openwebui, self.ai_model)
+        action = intent_router.decide(result, threshold=threshold)
+        if action.kind == "answer":
+            return False  # silent on non-requests
+        if action.kind == "confirm":
+            if not ctx.respond_components:
+                return False
+            token = self.park_intent(action.intent, action.detail)
+            await ctx.respond_components(
+                intent_cards.confirm_line(action.intent, action.detail),
+                intent_cards.confirm_components_discord(token))
+            return True
+        # suggest: name the understood intent and point at the tool
+        await ctx.respond(intent_cards.suggest_line(action.intent))
+        return True
+
     async def _handle_briefing(self, ctx: CommandContext) -> None:
         """/aiui briefing — set up a daily morning briefing; `off` turns it off."""
         arg = (ctx.arguments or "").strip().lower()

@@ -506,6 +506,18 @@ class ConversationalVoiceBot(discord.Client):
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("video url intake failed: %s", exc)
 
+        # Plain-English request in any channel -> the intent router. It stays
+        # silent unless it detects a real request (build, schedule, briefing...).
+        # Best-effort; an error here must never crash the gateway loop.
+        if self._video_intake is not None:
+            from handlers.video_intake import extract_chat_message
+            info = extract_chat_message(message)
+            if info is not None:
+                try:
+                    await self._video_intake.handle_chat(**info)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("chat intent routing failed: %s", exc)
+
     def _pick_text_channel(self, voice_channel):
         """Transcripts and build links go where the user is looking: the text
         channel named like the voice channel (General -> #general). Fallback:
