@@ -121,6 +121,10 @@ class Settings(BaseSettings):
             )
         return self._discord_map_cache
 
+    # Just-chat intent router. Off by default; flip with env INTENT_ROUTER=1.
+    # Off = exactly today's behavior (plain text -> generic answer).
+    intent_router_enabled: bool = Field(default=False, alias="INTENT_ROUTER")
+
     # Voice (ElevenLabs)
     voice_webhook_secret: str = ""
     elevenlabs_api_key: str = ""
