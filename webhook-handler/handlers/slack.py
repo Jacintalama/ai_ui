@@ -38,7 +38,7 @@ class SlackWebhookHandler:
         if action.kind == "answer":
             return False
         if action.kind == "confirm":
-            token = self.router.park_intent(action.intent, action.detail)
+            token = self.router.park_intent(action.intent, action.detail, when=result.when, task=result.task)
             line = intent_cards.confirm_line(action.intent, action.detail)
             await self.slack.post_message(
                 channel=channel, text=line,

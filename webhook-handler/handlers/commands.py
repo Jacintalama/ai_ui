@@ -373,7 +373,7 @@ class CommandRouter:
             await self._handle_ask(ctx)
             return
         if action.kind == "confirm":
-            token = self.park_intent(action.intent, action.detail)
+            token = self.park_intent(action.intent, action.detail, when=result.when, task=result.task)
             line = intent_cards.confirm_line(action.intent, action.detail)
             if ctx.respond_components:  # Discord can show buttons
                 await ctx.respond_components(
@@ -384,10 +384,16 @@ class CommandRouter:
         # suggest: name what we understood and point at the right tool
         await ctx.respond(intent_cards.suggest_line(action.intent))
 
-    def park_intent(self, intent: str, detail: str) -> str:
+    def park_intent(self, intent: str, detail: str, *, when: str = "", task: str = "") -> str:
         token = uuid.uuid4().hex[:16]
-        self._pending_intents[token] = {"intent": intent, "detail": detail}
+        self._pending_intents[token] = {
+            "intent": intent, "detail": detail, "when": when, "task": task}
         return token
+
+    def peek_intent(self, token: str) -> dict | None:
+        """Read a parked intent WITHOUT removing it, so a confirm handler can pick
+        the right private-thread flow before run_confirmed_intent pops it."""
+        return self._pending_intents.get(token)
 
     def cancel_intent(self, token: str) -> None:
         self._pending_intents.pop(token, None)
@@ -402,10 +408,34 @@ class CommandRouter:
         if data["intent"] == "build_app":
             await self.run_panel_build(ctx, None, data["detail"])
             return
+        if data["intent"] == "schedule_task":
+            await self.run_scheduled_from_chat(ctx, data)
+            return
         if data["intent"] == "daily_briefing":
             await self.create_daily_briefing(ctx)
             return
         await ctx.respond(intent_cards.suggest_line(data["intent"]))
+
+    async def run_scheduled_from_chat(self, ctx: CommandContext, data: dict) -> None:
+        """Create a schedule from a plain-English request. The classifier split the
+        message into `when` (time phrase) and `task` (what to do); parse_when turns
+        the phrase into cron, then run_schedule_create makes it (delivering runs to
+        the ctx's private thread). On a missing/garbled time, ask for what + when."""
+        from handlers.schedule_parse import parse_when
+        when = (data.get("when") or "").strip()
+        task = (data.get("task") or data.get("detail") or "").strip()
+        parsed = parse_when(when) if when else None
+        if not parsed or not task:
+            await ctx.respond(
+                "I can set that up — tell me what to do and when, e.g. "
+                "*summarize my emails every morning at 8am*."
+            )
+            return
+        cron, human = parsed
+        await self.run_schedule_create(
+            ctx, name=f"{human}: {task[:60]}", cron=cron, prompt=task,
+            delivery_channel_id=ctx.channel_id or None, run_once=False,
+        )
 
     async def answer_intent(self, ctx: CommandContext, token: str) -> None:
         """The user tapped 'Just answer'. Answer their original text normally."""
@@ -430,7 +460,7 @@ class CommandRouter:
         if action.kind == "confirm":
             if not ctx.respond_components:
                 return False
-            token = self.park_intent(action.intent, action.detail)
+            token = self.park_intent(action.intent, action.detail, when=result.when, task=result.task)
             await ctx.respond_components(
                 intent_cards.confirm_line(action.intent, action.detail),
                 intent_cards.confirm_components_discord(token))

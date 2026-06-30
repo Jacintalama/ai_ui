@@ -105,6 +105,41 @@ async def test_run_confirmed_daily_briefing_creates():
     assert tok not in r._pending_intents
 
 
+async def test_peek_intent_does_not_pop():
+    r = _router()
+    tok = r.park_intent("build_app", "a site")
+    assert r.peek_intent(tok)["intent"] == "build_app"
+    assert tok in r._pending_intents
+
+
+async def test_run_confirmed_schedule_routes():
+    r = _router()
+    r.run_scheduled_from_chat = AsyncMock()
+    tok = r.park_intent("schedule_task", "d", when="0 8 * * *", task="summarize")
+    await r.run_confirmed_intent(_ctx(), tok)
+    r.run_scheduled_from_chat.assert_awaited_once()
+
+
+async def test_run_scheduled_from_chat_creates():
+    r = _router()
+    r.run_schedule_create = AsyncMock()
+    await r.run_scheduled_from_chat(_ctx(), {
+        "intent": "schedule_task", "detail": "d",
+        "when": "0 8 * * *", "task": "summarize my emails"})
+    r.run_schedule_create.assert_awaited_once()
+    assert r.run_schedule_create.call_args.kwargs["prompt"] == "summarize my emails"
+
+
+async def test_run_scheduled_from_chat_missing_when_asks():
+    r = _router()
+    r.run_schedule_create = AsyncMock()
+    ctx = _ctx()
+    await r.run_scheduled_from_chat(ctx, {
+        "intent": "schedule_task", "detail": "d", "when": "", "task": "summarize"})
+    r.run_schedule_create.assert_not_awaited()
+    ctx.respond.assert_awaited_once()
+
+
 # --- Slack message classify wiring (slack.py _try_intent) ---
 from handlers import slack as slackmod
 

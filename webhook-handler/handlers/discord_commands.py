@@ -334,9 +334,7 @@ class DiscordCommandHandler:
                     "data": {"content": "Cancelled.", "components": []}}
         if custom_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
             token = custom_id[len(intent_cards.INTENT_CONFIRM_PREFIX):]
-            return await self._handle_panel_route(
-                payload, lambda ctx: self.router.run_confirmed_intent(ctx, token),
-                raw_text="intent confirm")
+            return await self._handle_intent_confirm(payload, token)
         if custom_id.startswith(intent_cards.INTENT_CANCEL_PREFIX):
             token = custom_id[len(intent_cards.INTENT_CANCEL_PREFIX):]
             return await self._handle_panel_route(
@@ -887,6 +885,76 @@ class DiscordCommandHandler:
             },
         )
         self._spawn(run(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_intent_confirm(self, payload: dict[str, Any], token: str) -> dict[str, Any]:
+        """A just-chat 'Yes, do it' click. Build and schedule run in the user's
+        private thread (so the result is actually delivered there, like the panel);
+        other intents reply ephemerally."""
+        pending = self.router.peek_intent(token)
+        intent = (pending or {}).get("intent")
+        if intent == "build_app":
+            return await self._handle_intent_thread_route(
+                payload, token, kind="builder", raw_text="intent build")
+        if intent == "schedule_task":
+            return await self._handle_intent_thread_route(
+                payload, token, kind="schedules", raw_text="intent schedule")
+        return await self._handle_panel_route(
+            payload, lambda ctx: self.router.run_confirmed_intent(ctx, token),
+            raw_text="intent confirm")
+
+    async def _handle_intent_thread_route(
+        self, payload: dict[str, Any], token: str, *, kind: str, raw_text: str,
+    ) -> dict[str, Any]:
+        """Open/reuse the user's private thread (builder or schedules), wire result
+        delivery to it, and run the confirmed intent there. ACK ephemeral-deferred
+        within 3s; the thread work + run happen in the background. Mirrors the
+        proven _handle_build_modal_submit pattern."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _open_and_run() -> None:
+            try:
+                target = channel_id
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind=kind)
+                if thread_id:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"Opening your private space → <#{thread_id}>",
+                    )
+                    target = thread_id
+
+                    async def respond(msg: str) -> None:
+                        await self.discord.post_channel_message(target, msg)
+                else:
+                    async def respond(msg: str) -> None:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token, content=msg,
+                        )
+
+                notify_channel, notify_channel_rich = self._channel_notifiers(target)
+                ctx = CommandContext(
+                    user_id=user_id, user_name=user_name, channel_id=target,
+                    raw_text=raw_text, subcommand="aiuibuilder", arguments="",
+                    platform="discord", respond=respond,
+                    metadata={
+                        "interaction_id": payload.get("id", ""),
+                        "interaction_token": interaction_token,
+                        "guild_id": payload.get("guild_id", ""),
+                    },
+                    notify_channel=notify_channel,
+                    notify_channel_rich=notify_channel_rich,
+                )
+                await self.router.run_confirmed_intent(ctx, token)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("intent thread route failed: %s", exc, exc_info=exc)
+
+        self._spawn(_open_and_run())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_video_route(

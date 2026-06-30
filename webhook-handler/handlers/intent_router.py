@@ -22,6 +22,8 @@ class IntentResult:
     intent: str
     confidence: float
     detail: str  # the request restated as a short instruction (carried forward)
+    when: str = ""  # schedule_task only: the time/recurrence phrase ("every morning at 8am")
+    task: str = ""  # schedule_task only: what to do ("summarize my emails")
 
 
 @dataclass
@@ -38,7 +40,9 @@ def build_classify_messages(text: str) -> list[dict]:
         "message and decide what they want. Reply with ONLY a JSON object, no "
         'prose: {"intent": <one of: ' + ", ".join(INTENTS) + ">, "
         '"confidence": <number 0..1>, "detail": <the request restated as a short '
-        'instruction, no greeting>}. '
+        'instruction, no greeting>, "when": <for schedule_task only: the time or '
+        'recurrence phrase, e.g. "every morning at 8am"; else "">, "task": <for '
+        'schedule_task only: what to do, e.g. "summarize my emails"; else "">}. '
         "Guidance: build_app = make a website/app/form/landing page. "
         "schedule_task = anything recurring or time-based. make_video = a video. "
         "find_jobs = the user is job hunting. find_engineers = the user wants to "
@@ -73,7 +77,9 @@ def parse_classification(raw: str, fallback_detail: str = "") -> IntentResult:
             return IntentResult("question", 0.0, fallback_detail)
         conf = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
         detail = str(data.get("detail") or fallback_detail).strip()
-        return IntentResult(intent, conf, detail)
+        when = str(data.get("when") or "").strip()
+        task = str(data.get("task") or "").strip()
+        return IntentResult(intent, conf, detail, when=when, task=task)
     except Exception:  # noqa: BLE001 - any malformed reply degrades to a question
         return IntentResult("question", 0.0, fallback_detail)
 
@@ -84,7 +90,7 @@ def decide(result: IntentResult, threshold: float = 0.6) -> Action:
     question or anything below the confidence threshold -> answer."""
     if result.intent == "question" or result.confidence < threshold:
         return Action("answer", "question", result.detail)
-    if result.intent in ("build_app", "daily_briefing"):
+    if result.intent in ("build_app", "daily_briefing", "schedule_task"):
         return Action("confirm", result.intent, result.detail)
     return Action("suggest", result.intent, result.detail)
 

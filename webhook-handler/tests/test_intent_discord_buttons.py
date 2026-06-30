@@ -45,3 +45,26 @@ async def test_intent_cancel_button_runs_answer_intent():
         _component_payload(intent_cards.INTENT_CANCEL_PREFIX + "tok1"))
     await asyncio.sleep(0)
     router.answer_intent.assert_awaited_once()
+
+
+async def test_intent_confirm_build_opens_private_thread():
+    """A confirmed build opens/reuses the user's private builder thread and runs
+    there, so the result is delivered (the fix for the broken inline build)."""
+    router = MagicMock()
+    router.peek_intent = MagicMock(return_value={"intent": "build_app", "detail": "a site"})
+    router.get_user_builder_thread = AsyncMock(return_value=None)
+    router.set_user_builder_thread = AsyncMock()
+    router.run_confirmed_intent = AsyncMock()
+    discord = MagicMock()
+    discord.edit_original = AsyncMock(return_value=True)
+    discord.post_channel_message = AsyncMock(return_value=True)
+    discord.create_private_thread = AsyncMock(return_value="T1")
+    discord.add_thread_member = AsyncMock(return_value=True)
+    handler = DiscordCommandHandler(discord_client=discord, command_router=router)
+    resp = await handler.handle_interaction(
+        _component_payload(intent_cards.INTENT_CONFIRM_PREFIX + "tok1"))
+    assert resp["type"] == 5  # deferred ephemeral ACK
+    for _ in range(12):
+        await asyncio.sleep(0)
+    discord.create_private_thread.assert_awaited()      # private thread opened
+    router.run_confirmed_intent.assert_awaited_once()   # build runs in it

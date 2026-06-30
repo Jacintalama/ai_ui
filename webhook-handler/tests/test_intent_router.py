@@ -55,6 +55,20 @@ def test_decide_daily_briefing_is_confirm():
     assert ir.decide(ir.IntentResult("daily_briefing", 0.9, "x")).kind == "confirm"
 
 
+def test_decide_schedule_task_is_confirm():
+    r = ir.IntentResult("schedule_task", 0.9, "x", when="every morning", task="summarize email")
+    assert ir.decide(r).kind == "confirm"
+
+
+def test_parse_reads_when_and_task():
+    r = ir.parse_classification(
+        '{"intent":"schedule_task","confidence":0.9,"detail":"d",'
+        '"when":"every morning at 8am","task":"summarize my emails"}')
+    assert r.intent == "schedule_task"
+    assert r.when == "every morning at 8am"
+    assert r.task == "summarize my emails"
+
+
 class _FakeLLM:
     def __init__(self, reply):
         self._reply = reply
