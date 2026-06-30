@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from clients.slack import SlackClient
 from handlers.commands import CommandRouter, CommandContext
+from handlers import intent_cards
 from handlers.slack_app_builder_panel import (
     PANEL_NEW_ID,
     PANEL_MYAPPS_ID,
@@ -142,6 +143,15 @@ class SlackInteractionsHandler:
         action_id = actions[0].get("action_id", "") if actions else ""
         trigger_id = payload.get("trigger_id", "")
         channel_id = (payload.get("channel") or {}).get("id", "")
+
+        if action_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
+            return self._spawn_intent_action(
+                payload, channel_id,
+                action_id[len(intent_cards.INTENT_CONFIRM_PREFIX):], confirm=True)
+        if action_id.startswith(intent_cards.INTENT_CANCEL_PREFIX):
+            return self._spawn_intent_action(
+                payload, channel_id,
+                action_id[len(intent_cards.INTENT_CANCEL_PREFIX):], confirm=False)
 
         if action_id == TEMPLATE_SELECT_ACTION_ID:
             # C8: dropdown select — read the chosen option value
@@ -679,6 +689,33 @@ class SlackInteractionsHandler:
                 text=self.router._not_linked_text(self._slack_ctx(user_id)),
             )
         return None
+
+    def _spawn_intent_action(self, payload: dict[str, Any], channel_id: str,
+                             token: str, *, confirm: bool) -> dict[str, Any]:
+        """Build a DM-targeted ctx and run the parked intent (confirm) or answer
+        it (cancel) in the background; ACK immediately. Mirrors the build flow."""
+        user = payload.get("user", {})
+        uid = user.get("id", "")
+        uname = user.get("username") or user.get("name", "unknown")
+
+        async def _run() -> None:
+            try:
+                dm_id = await self.slack.open_dm(uid)
+                ctx = self._dm_context(
+                    payload, dm_id=dm_id, origin_channel=channel_id,
+                    user_id=uid, user_name=uname,
+                    subcommand="aiuibuilder", raw_text="intent")
+                if confirm:
+                    await self.router.run_confirmed_intent(ctx, token)
+                else:
+                    await self.router.answer_intent(ctx, token)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Slack intent action failed user=%s: %s", uid, exc)
+
+        task = asyncio.create_task(_run())
+        self.router._background_tasks.add(task)
+        task.add_done_callback(self.router._background_tasks.discard)
+        return {}
 
     def _dm_context(
         self,
