@@ -6,6 +6,8 @@ import logging
 from clients.openwebui import OpenWebUIClient
 from clients.slack import SlackClient
 from handlers import onboarding
+from handlers import intent_router, intent_cards
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,30 @@ class SlackWebhookHandler:
         self.slack = slack_client
         self.ai_model = ai_model
         self.ai_system_prompt = ai_system_prompt
+        self.router = None  # set in main.py to the shared CommandRouter
+
+    async def _try_intent(self, text: str, channel: str, thread_ts=None) -> bool:
+        """Flag-gated. build_app -> confirm card; other actionable -> suggest;
+        question/unsure -> not handled (caller gives the normal answer)."""
+        if not settings.intent_router_enabled or self.router is None:
+            return False
+        result = await intent_router.classify(text, self.openwebui, self.ai_model)
+        action = intent_router.decide(result)
+        if action.kind == "answer":
+            return False
+        if action.kind == "confirm":
+            token = self.router.park_intent(action.intent, action.detail)
+            line = intent_cards.confirm_line(action.intent, action.detail)
+            await self.slack.post_message(
+                channel=channel, text=line,
+                blocks=intent_cards.confirm_blocks_slack(token, line),
+                thread_ts=thread_ts)
+            return True
+        # suggest: name what we understood and point at the right tool
+        await self.slack.post_message(
+            channel=channel, text=intent_cards.suggest_line(action.intent),
+            thread_ts=thread_ts)
+        return True
 
     async def handle_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
@@ -87,6 +113,9 @@ class SlackWebhookHandler:
             )
             return {"success": True, "message": "Welcome card sent"}
 
+        if await self._try_intent(clean_text, channel, thread_ts=thread_ts):
+            return {"success": True, "message": "Intent handled"}
+
         system_prompt = self.ai_system_prompt or (
             "You are a helpful AI assistant responding in Slack. "
             "Be concise and use Slack markdown formatting."
@@ -147,6 +176,9 @@ class SlackWebhookHandler:
                 blocks=onboarding.welcome_blocks_slack(),
             )
             return {"success": True, "message": "Welcome card sent"}
+
+        if await self._try_intent(text, channel):
+            return {"success": True, "message": "Intent handled"}
 
         system_prompt = self.ai_system_prompt or (
             "You are a helpful AI assistant responding to direct messages in Slack. "
