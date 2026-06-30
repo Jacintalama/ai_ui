@@ -58,8 +58,9 @@ async def test_happy_path_starts_build():
     tc = MagicMock()
     tc.start_build = AsyncMock(return_value={"slug": "port-ab12", "task_id": "t1"})
     await _router({"100": "a@x.com"}, tc).run_panel_build(_ctx("100", captured), "portfolio", "a portfolio")
-    tc.start_build.assert_awaited_once_with("a@x.com", "a portfolio", template_key="portfolio")
-    assert any("Building `port-ab12`" in m for m in captured)
+    tc.start_build.assert_awaited_once_with(
+        "a@x.com", "a portfolio", name="Portfolio", template_key="portfolio")
+    assert any("Building" in m and "port-ab12" in m for m in captured)
 
 
 @pytest.mark.asyncio
@@ -68,7 +69,8 @@ async def test_blank_build_passes_none_template():
     tc = MagicMock()
     tc.start_build = AsyncMock(return_value={"slug": "s", "task_id": "t1"})
     await _router({"100": "a@x.com"}, tc).run_panel_build(_ctx("100", captured), None, "a blank app")
-    tc.start_build.assert_awaited_once_with("a@x.com", "a blank app", template_key=None)
+    tc.start_build.assert_awaited_once_with(
+        "a@x.com", "a blank app", name="Blank app", template_key=None)
 
 
 @pytest.mark.asyncio
@@ -84,7 +86,7 @@ async def test_build_error_surfaced():
 async def test_watcher_wired_when_notify_channel_set(monkeypatch):
     watched = {}
 
-    async def fake_watch(self, ctx, email, task_id, slug):
+    async def fake_watch(self, ctx, email, task_id, slug, **kw):
         watched["args"] = (email, task_id, slug)
 
     monkeypatch.setattr(CommandRouter, "_watch_build", fake_watch)

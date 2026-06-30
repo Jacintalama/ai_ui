@@ -62,7 +62,7 @@ async def test_build_happy_path_starts_and_acks(monkeypatch):
     tc.list_templates = AsyncMock(return_value=[])
     tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "todo-a1b2", "status": "running"})
     watched = {}
-    async def fake_watch(self, ctx, email, task_id, slug):
+    async def fake_watch(self, ctx, email, task_id, slug, **kw):
         watched["args"] = (email, task_id, slug)
     monkeypatch.setattr(CommandRouter, "_watch_build", fake_watch)
 

@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 BUILD_POLL_SECONDS = 12
 BUILD_MAX_POLLS = 150  # ~30 min at 12s
 BUILD_MAX_CONSECUTIVE_ERRORS = 5
+BUILD_REASSURE_AFTER_POLLS = 3  # one "still building" ping after ~36s of silence
 
 VIDEO_POLL_SECONDS = 6
 VIDEO_MAX_POLLS = 120  # ~12 min, > render timeout (600s) + queue wait
@@ -49,6 +50,30 @@ PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
 # Routed to the intent router in execute(); with the flag off it falls back to
 # a normal /aiui ask answer, exactly as before.
 NATURAL = "__natural__"
+
+
+def friendly_name(description: str, *, max_len: int = 60) -> str:
+    """A human title for an app, derived from its description, e.g.
+    'A simple feedback form for my shop' -> 'Simple feedback form for my shop'.
+    Returns '' when nothing usable (callers then fall back to the slug)."""
+    text = " ".join((description or "").split())
+    if not text:
+        return ""
+    for sep in (". ", "! ", "? ", " - ", " — ", ", "):
+        i = text.find(sep)
+        if 0 < i <= max_len:
+            text = text[:i]
+            break
+    text = text.strip(" .!?,;:-—").strip()
+    low = text.lower()
+    for art in ("a ", "an ", "the "):
+        if low.startswith(art):
+            text = text[len(art):]
+            break
+    if len(text) > max_len:
+        text = text[:max_len].rsplit(" ", 1)[0]
+    text = text.strip()
+    return (text[:1].upper() + text[1:]) if text else ""
 
 
 @dataclass
@@ -1679,23 +1704,27 @@ class CommandRouter:
         att_text, att_name = await self._attachment_text_for_ctx(ctx)
         extra = ({"attachment_text": att_text, "attachment_name": att_name}
                  if att_text else {})
+        name = friendly_name(description)
         try:
             result = await self._tasks_client.start_build(
-                email, description, template_key=template_key, **extra)
+                email, description, name=name or None,
+                template_key=template_key, **extra)
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
             return None
         slug = result["slug"]
         task_id = result["task_id"]
+        display = name or slug
         tnote = f" (from the {template_label} template)" if template_label else ""
         await ctx.respond(
-            f"Building `{slug}`{tnote} … I'll post the link here when it's ready "
-            "(usually a few minutes)."
+            f"Building **{display}** (`{slug}`){tnote} … I'll post the link here "
+            "when it's ready (usually a few minutes)."
         )
         if ctx.notify_channel is not None:
-            watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            watcher = asyncio.create_task(
+                self._watch_build(ctx, email, task_id, slug, display_name=display))
             self._background_tasks.add(watcher)
-            watcher.add_done_callback(self._background_tasks.discard)
+            watcher.add_done_callback(self._on_build_watcher_done)
         return result
 
     async def run_panel_build(
@@ -2347,14 +2376,19 @@ class CommandRouter:
 
     async def _watch_build(
         self, ctx: CommandContext, email: str, task_id: str, slug: str,
-        *, poll_seconds: int | None = None, max_polls: int | None = None,
+        *, display_name: str | None = None,
+        poll_seconds: int | None = None, max_polls: int | None = None,
     ) -> None:
         """Poll the build until it terminates, then post the result to the
         channel — on success via ctx.notify_channel_rich (a Publish button) when
         set, else ctx.notify_channel (both bot-token messages that outlive the
-        interaction window). Defensive: transient errors don't kill the loop."""
+        interaction window). Reliability: transient errors don't kill the loop, an
+        unexpected crash still posts a final message, and one mid-build ping breaks
+        the long silence. `display_name` is the friendly app title (falls back to
+        the slug)."""
         if ctx.notify_channel is None:
             return
+        display = display_name or slug
 
         async def _notify(msg: str) -> None:
             # Never let a notify failure crash the watcher (it runs as a
@@ -2367,50 +2401,79 @@ class CommandRouter:
         poll_seconds = BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
         max_polls = BUILD_MAX_POLLS if max_polls is None else max_polls
         errors = 0
-        for _ in range(max_polls):
-            await asyncio.sleep(poll_seconds)
-            try:
-                st = await self._tasks_client.get_build_status(email, task_id)
-                errors = 0
-            except TasksAPIError as e:
-                errors += 1
-                logger.warning("watch_build status error (%s) task=%s", e.status, task_id)
-                if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
+        reassured = False
+        try:
+            for i in range(max_polls):
+                await asyncio.sleep(poll_seconds)
+                try:
+                    st = await self._tasks_client.get_build_status(email, task_id)
+                    errors = 0
+                except (TasksAPIError, httpx.HTTPError) as e:
+                    errors += 1
+                    logger.warning("watch_build status error task=%s: %s", task_id, e)
+                    if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
+                        await _notify(
+                            f"Lost track of **{display}** — check "
+                            f"`/aiui aiuibuilder status {slug}`."
+                        )
+                        return
+                    continue
+                status = st.get("status")
+                if status == "completed":
+                    url = st.get("preview_url") or ""
+                    msg = f"**{display}** is ready (preview): {url}".rstrip()
+                    if ctx.notify_channel_rich is not None:
+                        try:
+                            await ctx.notify_channel_rich(msg, slug, url, email)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
+                            await _notify(msg)
+                    else:
+                        await _notify(msg)
+                    return
+                if status == "needs_input":
+                    detail = (st.get("error") or "").strip()
+                    ask = f" It needs to know: {detail}" if detail else ""
                     await _notify(
-                        f"Lost track of `{slug}` — check `/aiui aiuibuilder status {slug}`."
+                        f"**{display}** needs more detail to finish.{ask} "
+                        "Continue it in the App Builder, or run `build` again with a "
+                        "more specific description."
                     )
                     return
-                continue
-            status = st.get("status")
-            if status == "completed":
-                url = st.get("preview_url") or ""
-                msg = f"`{slug}` is ready (preview): {url}".rstrip()
-                if ctx.notify_channel_rich is not None:
-                    try:
-                        await ctx.notify_channel_rich(msg, slug, url, email)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
-                        await _notify(msg)
-                else:
-                    await _notify(msg)
-                return
-            if status == "needs_input":
-                detail = (st.get("error") or "").strip()
-                ask = f" It needs to know: {detail}" if detail else ""
-                await _notify(
-                    f"`{slug}` needs more detail to finish.{ask} "
-                    "Continue it in the App Builder, or run `build` again with a "
-                    "more specific description."
-                )
-                return
-            if status == "failed":
-                await _notify(
-                    f"Build failed for `{slug}`. Open the App Builder to retry."
-                )
-                return
-        await _notify(
-            f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
-        )
+                if status == "failed":
+                    await _notify(
+                        f"Build failed for **{display}**. Open the App Builder to retry."
+                    )
+                    return
+                # still building: one reassurance ping so it never feels dead
+                if not reassured and i >= BUILD_REASSURE_AFTER_POLLS:
+                    reassured = True
+                    await _notify(
+                        f"Still building **{display}** — writing your pages. "
+                        "I'll post the link here as soon as it's ready."
+                    )
+            await _notify(
+                f"**{display}** is still building — check "
+                f"`/aiui aiuibuilder status {slug}`."
+            )
+        except Exception as exc:  # noqa: BLE001 - never leave the user hanging
+            logger.error("watch_build crashed task=%s: %s", task_id, exc, exc_info=exc)
+            await _notify(
+                f"I lost track of **{display}** while building. Check "
+                f"`/aiui aiuibuilder status {slug}`."
+            )
+
+    def _on_build_watcher_done(self, task: "asyncio.Task") -> None:
+        """Done-callback for the build watcher: drop the strong ref and log any
+        crash. The watcher's own try/except should have notified the user; this
+        guarantees a crash is never swallowed silently."""
+        self._background_tasks.discard(task)
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc:
+            logger.error("build watcher task crashed: %s", exc, exc_info=exc)
 
     async def run_video_add(self, ctx: CommandContext, urls: list[str]) -> None:
         """`/video add`: push Discord CDN screenshot URLs onto the caller's current
