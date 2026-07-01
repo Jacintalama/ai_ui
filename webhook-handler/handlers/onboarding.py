@@ -34,8 +34,10 @@ __all__ = [
 
 # --- Discord copy ---
 WELCOME_TEXT_DISCORD = (
-    "\U0001f44b Hi! I can **build you a website** or **run a task on a "
-    "schedule** — no coding needed. Tap a button to start:"
+    "Hi! Just tell me what you want in plain English and I'll take care of it, "
+    "no commands needed. I can build a website or app, set up a scheduled task, "
+    "send a daily briefing, make a video, find jobs, find engineers to hire, "
+    "summarize your email, or research something. Or tap a button below."
 )
 
 
@@ -63,8 +65,10 @@ def welcome_components_discord() -> list[dict]:
 
 # --- Slack copy ---
 WELCOME_TEXT_SLACK = (
-    ":wave: Hi! I can *build you a website* or *run a task on a schedule* "
-    "— no coding needed. Tap a button to start:"
+    "Hi! Just tell me what you want in plain English and I'll take care of it, "
+    "no commands needed. I can build a website or app, set up a scheduled task, "
+    "send a daily briefing, make a video, find jobs, find engineers to hire, "
+    "summarize your email, or research something. Or tap a button below."
 )
 
 

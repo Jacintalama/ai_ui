@@ -84,3 +84,11 @@ def test_approval_dm_rejected_is_polite_and_buttonless():
     assert components is None
     assert "wasn't approved" in text.lower()
     assert "Lukas" not in text
+
+
+def test_welcome_text_advertises_all_capabilities():
+    for t in (ob.WELCOME_TEXT_DISCORD, ob.WELCOME_TEXT_SLACK):
+        low = t.lower()
+        for cap in ("build", "schedul", "video", "job", "engineer", "email", "research", "briefing"):
+            assert cap in low, (cap, t)
+        assert "plain english" in low  # tells users they can just type
