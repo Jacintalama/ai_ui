@@ -27,3 +27,23 @@ def test_suggest_line_names_the_intent():
 def test_lines_handle_unknown_intent_gracefully():
     assert isinstance(ic.confirm_line("weird", ""), str)
     assert isinstance(ic.suggest_line("weird"), str)
+
+
+def test_recap_line_build_includes_detail():
+    line = ic.recap_line("build_app", "a portfolio for a photographer")
+    assert "a portfolio for a photographer" in line
+    assert line.endswith("?")
+
+
+def test_recap_line_schedule_includes_when():
+    line = ic.recap_line(
+        "schedule_task", "summarize my emails",
+        when="every weekday at 8am", task="summarize my emails")
+    assert "summarize my emails" in line
+    assert "every weekday at 8am" in line
+
+
+def test_recap_line_schedule_without_when_ok():
+    line = ic.recap_line("schedule_task", "water reminder", task="water reminder")
+    assert "water reminder" in line
+    assert line.endswith("?")

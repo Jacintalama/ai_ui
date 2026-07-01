@@ -27,6 +27,17 @@ def confirm_line(intent: str, detail: str) -> str:
     return f"Sounds like you want me to {_VERB.get(intent, 'help with that')}. Want me to start?"
 
 
+def recap_line(intent: str, detail: str, when: str = "", task: str = "") -> str:
+    """Restate exactly what will happen, then ask to go ahead. Shown after the
+    user answers the clarifying question, so a misread is caught before running."""
+    if intent == "schedule_task":
+        what = (task or detail or "that").strip()
+        body = f"{what}, {when.strip()}" if when.strip() else what
+        return f"Here's what I've got: {body}. Want me to set it up?"
+    what = (detail or "that").strip()
+    return f"Here's what I've got: {what}. Want me to go ahead and build it?"
+
+
 def suggest_line(intent: str) -> str:
     return (
         f"Sounds like you want me to {_VERB.get(intent, 'help with that')}. "
