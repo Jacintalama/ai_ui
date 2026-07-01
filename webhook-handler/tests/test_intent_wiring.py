@@ -153,29 +153,36 @@ def _slack_handler():
                                      slack_client=MagicMock(), ai_model="m")
     h.slack.post_message = AsyncMock()
     h.router = MagicMock()
-    h.router.park_intent = MagicMock(return_value="tok")
     return h
 
 
 async def test_slack_try_intent_off_returns_false(monkeypatch):
     monkeypatch.setattr(slackmod.settings, "intent_router_enabled", False)
     h = _slack_handler()
-    assert await h._try_intent("build me a form", "c") is False
+    assert await h._try_intent("build me a form", "c", user_id="U1") is False
 
 
-async def test_slack_try_intent_build_posts_confirm(monkeypatch):
+async def test_slack_try_intent_clarify_posts_question(monkeypatch):
     monkeypatch.setattr(slackmod.settings, "intent_router_enabled", True)
-    monkeypatch.setattr(slackmod.intent_router, "classify",
-                        AsyncMock(return_value=ir.IntentResult("build_app", 0.9, "a form")))
     h = _slack_handler()
-    assert await h._try_intent("build me a form", "c") is True
+    h.router.plan_chat_step = AsyncMock(return_value=cmd.ChatStep("clarify", "What kind?"))
+    assert await h._try_intent("build me a form", "c", user_id="U1") is True
     h.slack.post_message.assert_awaited_once()
-    h.router.park_intent.assert_called_once()
 
 
-async def test_slack_try_intent_question_returns_false(monkeypatch):
+async def test_slack_try_intent_confirm_posts_blocks(monkeypatch):
     monkeypatch.setattr(slackmod.settings, "intent_router_enabled", True)
-    monkeypatch.setattr(slackmod.intent_router, "classify",
-                        AsyncMock(return_value=ir.IntentResult("question", 0.9, "hi")))
     h = _slack_handler()
-    assert await h._try_intent("how are you", "c") is False
+    h.router.plan_chat_step = AsyncMock(
+        return_value=cmd.ChatStep("confirm", "Here's what I've got: a form. Want me to go ahead?", "tok"))
+    assert await h._try_intent("a feedback form", "c", user_id="U1") is True
+    h.slack.post_message.assert_awaited_once()
+    # posted with confirm blocks (not just text)
+    assert h.slack.post_message.call_args.kwargs.get("blocks")
+
+
+async def test_slack_try_intent_answer_returns_false(monkeypatch):
+    monkeypatch.setattr(slackmod.settings, "intent_router_enabled", True)
+    h = _slack_handler()
+    h.router.plan_chat_step = AsyncMock(return_value=cmd.ChatStep("answer", ""))
+    assert await h._try_intent("how are you", "c", user_id="U1") is False

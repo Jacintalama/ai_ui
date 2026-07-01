@@ -28,27 +28,26 @@ class SlackWebhookHandler:
         self.ai_system_prompt = ai_system_prompt
         self.router = None  # set in main.py to the shared CommandRouter
 
-    async def _try_intent(self, text: str, channel: str, thread_ts=None) -> bool:
-        """Flag-gated. build_app -> confirm card; other actionable -> suggest;
-        question/unsure -> not handled (caller gives the normal answer)."""
+    async def _try_intent(self, text: str, channel: str, thread_ts=None,
+                          user_id: str = "") -> bool:
+        """Flag-gated. Runs the shared clarify->recap->confirm loop and renders it
+        in Slack. Returns True when handled; False for a plain answer so the caller's
+        normal AI reply runs."""
         if not settings.intent_router_enabled or self.router is None:
             return False
-        result = await intent_router.classify(text, self.openwebui, self.ai_model)
-        action = intent_router.decide(result)
-        if action.kind == "answer":
+        step = await self.router.plan_chat_step(
+            user_id or channel, text, threshold=0.6)
+        if step.kind == "answer":
             return False
-        if action.kind == "confirm":
-            token = self.router.park_intent(action.intent, action.detail, when=result.when, task=result.task)
-            line = intent_cards.confirm_line(action.intent, action.detail)
+        if step.kind == "confirm":
             await self.slack.post_message(
-                channel=channel, text=line,
-                blocks=intent_cards.confirm_blocks_slack(token, line),
+                channel=channel, text=step.text,
+                blocks=intent_cards.confirm_blocks_slack(step.token, step.text),
                 thread_ts=thread_ts)
             return True
-        # suggest: name what we understood and point at the right tool
+        # clarify or suggest -> a plain message
         await self.slack.post_message(
-            channel=channel, text=intent_cards.suggest_line(action.intent),
-            thread_ts=thread_ts)
+            channel=channel, text=step.text, thread_ts=thread_ts)
         return True
 
     async def handle_event(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -113,7 +112,7 @@ class SlackWebhookHandler:
             )
             return {"success": True, "message": "Welcome card sent"}
 
-        if await self._try_intent(clean_text, channel, thread_ts=thread_ts):
+        if await self._try_intent(clean_text, channel, thread_ts=thread_ts, user_id=user):
             return {"success": True, "message": "Intent handled"}
 
         system_prompt = self.ai_system_prompt or (
@@ -177,7 +176,7 @@ class SlackWebhookHandler:
             )
             return {"success": True, "message": "Welcome card sent"}
 
-        if await self._try_intent(text, channel):
+        if await self._try_intent(text, channel, user_id=user):
             return {"success": True, "message": "Intent handled"}
 
         system_prompt = self.ai_system_prompt or (
