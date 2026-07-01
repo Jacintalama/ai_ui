@@ -61,7 +61,9 @@ async def test_flag_on_question_answers(monkeypatch):
     r._handle_ask.assert_awaited_once()
 
 
-async def test_flag_on_video_suggests(monkeypatch):
+async def test_flag_on_video_confirms(monkeypatch):
+    # make_video is now confirm-class: a real confirm card (token parked), whose
+    # Yes opens the video form at the platform layer.
     monkeypatch.setattr(cmd.settings, "intent_router_enabled", True)
     monkeypatch.setattr(
         ir, "classify",
@@ -69,8 +71,8 @@ async def test_flag_on_video_suggests(monkeypatch):
     r = _router()
     ctx = _ctx()
     await r._handle_natural(ctx)
-    ctx.respond.assert_awaited_once()
-    assert len(r._pending_intents) == 0  # suggest parks nothing
+    ctx.respond_components.assert_awaited_once()  # confirm card with a button
+    assert len(r._pending_intents) == 1
 
 
 async def test_run_confirmed_build_calls_run_panel_build():

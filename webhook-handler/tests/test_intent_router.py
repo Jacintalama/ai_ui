@@ -49,8 +49,13 @@ def test_decide_build_is_confirm():
     assert a.kind == "confirm" and a.intent == "build_app" and a.detail == "a form"
 
 
-def test_decide_other_actionable_is_suggest():
-    assert ir.decide(ir.IntentResult("make_video", 0.8, "x")).kind == "suggest"
+def test_decide_other_actionable_is_confirm():
+    # Every actionable intent now gets a real confirm button (no more "suggest").
+    for intent in ("make_video", "find_jobs", "find_engineers",
+                   "summarize_email", "web_research"):
+        assert ir.decide(ir.IntentResult(intent, 0.8, "x")).kind == "confirm", intent
+    assert ir.decide(ir.IntentResult("question", 0.9, "x")).kind == "answer"
+    assert ir.decide(ir.IntentResult("make_video", 0.3, "x")).kind == "answer"  # low conf
 
 
 def test_decide_daily_briefing_is_confirm():

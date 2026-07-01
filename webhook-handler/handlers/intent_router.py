@@ -19,6 +19,11 @@ INTENTS = (
 # Intents the bot runs end-to-end from chat -> these get a clarify question first.
 EXECUTABLE = ("build_app", "schedule_task")
 
+# Actionable intents whose confirm opens a form (modal / studio) rather than
+# running directly. The platform confirm handlers open these; everything else
+# actionable runs on confirm.
+FORM = ("make_video", "find_jobs", "find_engineers")
+
 # What the bot is about to do, phrased for the clarify prompt.
 _CLARIFY_VERB = {
     "build_app": "build a website or app",
@@ -139,14 +144,12 @@ async def clarify_question(intent: str, text: str, openwebui, model: str) -> str
 
 
 def decide(result: IntentResult, threshold: float = 0.6) -> Action:
-    """Pure routing decision. build_app -> confirm (we run it, so ask first);
-    other actionable intents -> suggest (point at the right tool); a plain
-    question or anything below the confidence threshold -> answer."""
+    """Pure routing decision. A plain question or anything below the confidence
+    threshold -> answer. Every actionable intent -> confirm (a real button):
+    build/schedule are clarified first, the rest run or open their form on Yes."""
     if result.intent == "question" or result.confidence < threshold:
         return Action("answer", "question", result.detail)
-    if result.intent in ("build_app", "daily_briefing", "schedule_task"):
-        return Action("confirm", result.intent, result.detail)
-    return Action("suggest", result.intent, result.detail)
+    return Action("confirm", result.intent, result.detail)
 
 
 async def classify(text: str, openwebui, model: str) -> IntentResult:

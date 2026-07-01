@@ -561,9 +561,7 @@ class CommandRouter:
         action = intent_router.decide(result, threshold=threshold)
         if action.kind == "answer":
             return ChatStep("answer", "")
-        if action.kind == "suggest":
-            return ChatStep("suggest", intent_cards.suggest_line(action.intent))
-        # confirm-class intent (build_app, schedule_task, daily_briefing)
+        # every other actionable intent is confirm-class
         if result.intent in intent_router.EXECUTABLE:
             question = await intent_router.clarify_question(
                 result.intent, text, self.openwebui, self.ai_model)

@@ -89,13 +89,16 @@ async def test_fresh_question_answers(monkeypatch):
     assert step.kind == "answer"
 
 
-async def test_fresh_suggest(monkeypatch):
+async def test_fresh_form_intent_confirms(monkeypatch):
+    # A form intent (find_jobs) is now confirm-class with a real button (not a
+    # dead "suggest"); it parks a token and does not clarify.
     monkeypatch.setattr(ir, "classify",
                         AsyncMock(return_value=ir.IntentResult("find_jobs", 0.9, "find me a job")))
     r = _router()
     step = await r.plan_chat_step("u1", "help me find a job", threshold=0.6)
-    assert step.kind == "suggest"
-    assert not r._pending_clarify
+    assert step.kind == "confirm"
+    assert step.token
+    assert not r._pending_clarify  # form intents don't clarify
 
 
 async def test_daily_briefing_confirms_without_clarify(monkeypatch):
