@@ -161,3 +161,25 @@ async def test_chat_message_below_higher_bar_answers(monkeypatch):
     assert await r.handle_chat_message(ctx) is True
     r._handle_ask.assert_awaited_once()
     ctx.respond_components.assert_not_awaited()
+
+
+import asyncio
+
+
+async def test_handle_chat_message_bounded_concurrency(monkeypatch):
+    monkeypatch.setattr(cmd.settings, "intent_router_enabled", True)
+    monkeypatch.setattr(cmd, "_CHAT_SEMAPHORE", asyncio.Semaphore(1))
+    state = {"cur": 0, "max": 0}
+
+    async def slow_classify(text, ow, model):
+        state["cur"] += 1
+        state["max"] = max(state["max"], state["cur"])
+        await asyncio.sleep(0.03)
+        state["cur"] -= 1
+        return ir.IntentResult("question", 0.9, "hi")
+
+    monkeypatch.setattr(ir, "classify", slow_classify)
+    r = _router()
+    r._handle_ask = AsyncMock()
+    await asyncio.gather(*(r.handle_chat_message(_ctx("hello there friend")) for _ in range(4)))
+    assert state["max"] == 1  # the semaphore serialized them

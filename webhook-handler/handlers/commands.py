@@ -52,6 +52,11 @@ PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
 # a normal /aiui ask answer, exactly as before.
 NATURAL = "__natural__"
 
+# Caps concurrent gateway classifications so a chatty channel can't spawn
+# unbounded simultaneous LLM calls (the intent router runs on every 3+ word
+# message in a visible channel). Queued messages wait for a slot.
+_CHAT_SEMAPHORE = asyncio.Semaphore(8)
+
 
 def friendly_name(description: str, *, max_len: int = 60) -> str:
     """A human title for an app, derived from its description, e.g.
@@ -533,12 +538,14 @@ class CommandRouter:
     async def handle_chat_message(self, ctx: CommandContext, *, threshold: float = 0.75) -> bool:
         """Gateway plain-text entry (Discord, any channel -- no slash). Flag-gated;
         the higher confidence bar (vs the 0.6 slash/Slack default) avoids misfiring
-        in shared channels. Delegates the decision to plan_chat_step and renders it."""
+        in shared channels. Delegates the decision to plan_chat_step and renders it.
+        Bounded by _CHAT_SEMAPHORE so a burst can't spawn unbounded LLM calls."""
         if not settings.intent_router_enabled:
             return False
-        step = await self.plan_chat_step(
-            ctx.user_id or "", ctx.arguments or "", threshold=threshold)
-        return await self._render_chat_step(ctx, step)
+        async with _CHAT_SEMAPHORE:
+            step = await self.plan_chat_step(
+                ctx.user_id or "", ctx.arguments or "", threshold=threshold)
+            return await self._render_chat_step(ctx, step)
 
     async def handle_builder_thread_message(self, ctx: CommandContext, text: str) -> None:
         """A message in the user's private app thread (aiui-apps-<user>): complete a
