@@ -13,7 +13,7 @@ from dataclasses import dataclass
 INTENTS = (
     "build_app", "schedule_task", "make_video", "find_jobs",
     "find_engineers", "summarize_email", "web_research", "daily_briefing",
-    "question",
+    "my_workspace", "question",
 )
 
 # Intents the bot runs end-to-end from chat -> these get a clarify question first.
@@ -69,6 +69,9 @@ def build_classify_messages(text: str) -> list[dict]:
         "hire. summarize_email = inbox/email. web_research = look something up. "
         "daily_briefing = a recurring morning summary/briefing/digest (prefer it "
         "over schedule_task when they ask for a daily briefing or morning update). "
+        "my_workspace = the user wants to see or manage their own stuff (their "
+        "apps, schedules, videos; e.g. 'my workspace', 'my apps', 'what have I "
+        "made', 'show my stuff'). "
         'If it is just a question, small talk, or you are unsure, use "question" '
         "with a low confidence. Output JSON only."
     )

@@ -39,6 +39,18 @@ class SlackWebhookHandler:
             user_id or channel, text, threshold=0.6)
         if step.kind == "answer":
             return False
+        if step.kind == "workspace":
+            from handlers.commands import CommandContext
+
+            async def _post(msg: str) -> None:
+                await self.slack.post_message(
+                    channel=channel, text=msg, thread_ts=thread_ts)
+
+            await self.router.run_workspace(CommandContext(
+                user_id=user_id or "", user_name="user", channel_id=channel,
+                raw_text=text, subcommand="my", arguments=text, platform="slack",
+                respond=_post, metadata={}))
+            return True
         if step.kind == "confirm":
             await self.slack.post_message(
                 channel=channel, text=step.text,

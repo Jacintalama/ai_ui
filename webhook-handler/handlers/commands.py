@@ -95,6 +95,36 @@ _BUILD_FILLER = {
 }
 
 
+def build_workspace_summary(apps, schedules, videos) -> str:
+    """Plain-text 'one place to see everything' summary of a user's apps,
+    schedules, and videos. Pure -- tested directly. Tolerates list or {..:[]}
+    shapes and shows up to 5 of each with a '+N more' tail. No emoji."""
+    vids = videos.get("videos", []) if isinstance(videos, dict) else (videos or [])
+    apps = apps or []
+    schedules = schedules or []
+    out = ["Your workspace:", ""]
+
+    def _section(title, items, render):
+        out.append(f"{title} ({len(items)}):")
+        if not items:
+            out.append("- none yet")
+        else:
+            for it in items[:5]:
+                out.append("- " + render(it))
+            if len(items) > 5:
+                out.append(f"...and {len(items) - 5} more")
+        out.append("")
+
+    _section("Apps", apps, lambda a: (a.get("name") or a.get("slug") or "app")
+             + (f" - {a['public_url']}" if a.get("public_url") else ""))
+    _section("Schedules", schedules,
+             lambda s: s.get("name") or (s.get("prompt") or "task")[:60])
+    _section("Videos", vids, lambda v: (v.get("title") or "video")
+             + (f" [{v['status']}]" if v.get("status") else ""))
+    out.append("Just tell me what to do next - build, schedule, a video, and more.")
+    return "\n".join(out)
+
+
 def is_vague_build(detail: str) -> bool:
     """True when a build request names no specifics beyond generic filler
     ('a website', 'an app'); 'a portfolio', 'a flower shop site' are NOT vague."""
@@ -336,6 +366,8 @@ class CommandRouter:
                 await self._handle_help(ctx)
             elif ctx.subcommand == "briefing":
                 await self._handle_briefing(ctx)
+            elif ctx.subcommand == "my":
+                await self.run_workspace(ctx)
             elif ctx.subcommand == NATURAL:
                 await self._handle_natural(ctx)
             else:
@@ -570,6 +602,8 @@ class CommandRouter:
         action = intent_router.decide(result, threshold=threshold)
         if action.kind == "answer":
             return ChatStep("answer", "")
+        if result.intent == "my_workspace":
+            return ChatStep("workspace", "")  # a read, not an action -> run it now
         # every other actionable intent is confirm-class
         if result.intent in intent_router.EXECUTABLE:
             question = await intent_router.clarify_question(
@@ -587,6 +621,9 @@ class CommandRouter:
         """Post a ChatStep on Discord (gateway/slash). Returns True (handled)."""
         if step.kind == "answer":
             await self._handle_ask(ctx)
+            return True
+        if step.kind == "workspace":
+            await self.run_workspace(ctx)
             return True
         if step.kind == "confirm" and ctx.respond_components:
             await ctx.respond_components(
@@ -2051,6 +2088,27 @@ class CommandRouter:
             self._background_tasks.add(watcher)
             watcher.add_done_callback(self._on_build_watcher_done)
         return result
+
+    async def run_workspace(self, ctx: CommandContext) -> None:
+        """Show the user's whole workspace (apps + schedules + videos) in one
+        message. Requires a linked account; each fetch degrades to empty so one
+        failing service never blanks the view."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+
+        async def _safe(coro, default):
+            try:
+                return await coro
+            except Exception:  # noqa: BLE001 - one service down shouldn't blank the view
+                return default
+
+        apps = await _safe(self._tasks_client.list_projects(email), [])
+        scheds = await _safe(
+            self._tasks_client.list_schedules(email, platform=ctx.platform), [])
+        vids = await _safe(self._tasks_client.list_videos(email), [])
+        await ctx.respond(build_workspace_summary(apps, scheds, vids))
 
     async def run_panel_build(
         self, ctx: CommandContext, template_key: str | None, description: str,
