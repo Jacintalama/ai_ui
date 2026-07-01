@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, MagicMock
+
 from handlers import intent_router as ir
 
 
@@ -96,3 +98,43 @@ class _BoomLLM:
 async def test_classify_model_error_is_question():
     r = await ir.classify("anything", _BoomLLM(), "m")
     assert r.intent == "question" and r.detail == "anything"
+
+
+# --- clarify question generation ---
+
+def test_build_clarify_messages_shape():
+    msgs = ir.build_clarify_messages("build_app", "build me a website")
+    assert msgs[0]["role"] == "system"
+    assert "one" in msgs[0]["content"].lower()  # asks for ONE question
+    assert msgs[1] == {"role": "user", "content": "build me a website"}
+
+
+def test_parse_clarify_takes_first_line_strips_quotes():
+    assert ir.parse_clarify('"What kind of site is it?"\nextra', "build_app") == \
+        "What kind of site is it?"
+
+
+def test_parse_clarify_empty_falls_back():
+    assert ir.parse_clarify("", "build_app") == ir._CLARIFY_FALLBACK["build_app"]
+    assert ir.parse_clarify("   ", "schedule_task") == ir._CLARIFY_FALLBACK["schedule_task"]
+
+
+async def test_clarify_question_uses_model():
+    ow = MagicMock()
+    ow.chat_completion = AsyncMock(return_value="How many projects, and any colors you like?")
+    q = await ir.clarify_question("build_app", "a portfolio", ow, "m")
+    assert q == "How many projects, and any colors you like?"
+
+
+async def test_clarify_question_falls_back_on_error():
+    ow = MagicMock()
+    ow.chat_completion = AsyncMock(side_effect=RuntimeError("down"))
+    q = await ir.clarify_question("build_app", "x", ow, "m")
+    assert q == ir._CLARIFY_FALLBACK["build_app"]
+
+
+async def test_clarify_question_falls_back_on_empty():
+    ow = MagicMock()
+    ow.chat_completion = AsyncMock(return_value="")
+    q = await ir.clarify_question("schedule_task", "x", ow, "m")
+    assert q == ir._CLARIFY_FALLBACK["schedule_task"]
