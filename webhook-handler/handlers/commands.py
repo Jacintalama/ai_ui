@@ -112,6 +112,16 @@ def daily_briefing_prompt() -> str:
 
 
 @dataclass
+class ChatStep:
+    """One decision from plan_chat_step; the platform layer renders it.
+    kind: "clarify" (ask the question) | "confirm" (recap + Yes button) |
+          "answer" (hand to the normal AI answer) | "suggest" (point at a tool)."""
+    kind: str
+    text: str
+    token: str = ""
+
+
+@dataclass
 class CommandContext:
     """Platform-agnostic command context."""
     user_id: str
@@ -476,6 +486,46 @@ class CommandRouter:
         data = self._pending_intents.pop(token, None)
         ctx.arguments = (data or {}).get("detail", "") or ctx.arguments
         await self._handle_ask(ctx)
+
+    async def plan_chat_step(self, uid: str, text: str, *, threshold: float) -> ChatStep:
+        """Decide the next chat beat for a plain-English message. Platform-agnostic:
+        mutates the shared pending-clarify state and parks confirm tokens, but does
+        NOT post -- the caller renders the returned ChatStep. Assumes the router flag
+        is already on (the entry points gate on it)."""
+        uid = uid or ""
+        pending = self._pending_clarify.get(uid)
+        if pending:
+            # This message answers our clarifying question.
+            reply = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if reply.intent == "question":
+                return ChatStep("answer", "")  # they asked back; keep waiting
+            self._pending_clarify.pop(uid, None)
+            intent = pending.get("intent", "")
+            merged = f"{pending.get('text', '')} {text}".strip()
+            refined = await intent_router.classify(merged, self.openwebui, self.ai_model)
+            detail = refined.detail or merged
+            token = self.park_intent(intent, detail, when=refined.when, task=refined.task)
+            return ChatStep(
+                "confirm",
+                intent_cards.recap_line(intent, detail, refined.when, refined.task),
+                token)
+        # Fresh message.
+        result = await intent_router.classify(text, self.openwebui, self.ai_model)
+        action = intent_router.decide(result, threshold=threshold)
+        if action.kind == "answer":
+            return ChatStep("answer", "")
+        if action.kind == "suggest":
+            return ChatStep("suggest", intent_cards.suggest_line(action.intent))
+        # confirm-class intent (build_app, schedule_task, daily_briefing)
+        if result.intent in intent_router.EXECUTABLE:
+            question = await intent_router.clarify_question(
+                result.intent, text, self.openwebui, self.ai_model)
+            self._pending_clarify[uid] = {"intent": result.intent, "text": text}
+            return ChatStep("clarify", question)
+        # daily_briefing: fixed content, nothing to clarify -> straight to confirm
+        token = self.park_intent(
+            result.intent, action.detail, when=result.when, task=result.task)
+        return ChatStep("confirm", intent_cards.confirm_line(result.intent, action.detail), token)
 
     async def handle_chat_message(self, ctx: CommandContext, *, threshold: float = 0.75) -> bool:
         """Gateway plain-text entry (Discord, any channel — no slash). Classify the
