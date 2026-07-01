@@ -28,6 +28,9 @@ def _component_payload(custom_id):
 
 async def test_intent_confirm_button_runs_confirmed_intent():
     router = MagicMock()
+    # A non-thread intent (daily_briefing) takes the direct run path, not the
+    # build/schedule private-thread route (which needs thread mocks).
+    router.peek_intent = AsyncMock(return_value={"intent": "daily_briefing"})
     router.run_confirmed_intent = AsyncMock()
     handler = _handler(router)
     resp = await handler.handle_interaction(
@@ -51,7 +54,7 @@ async def test_intent_confirm_build_opens_private_thread():
     """A confirmed build opens/reuses the user's private builder thread and runs
     there, so the result is delivered (the fix for the broken inline build)."""
     router = MagicMock()
-    router.peek_intent = MagicMock(return_value={"intent": "build_app", "detail": "a site"})
+    router.peek_intent = AsyncMock(return_value={"intent": "build_app", "detail": "a site"})
     router.get_user_builder_thread = AsyncMock(return_value=None)
     router.set_user_builder_thread = AsyncMock()
     router.run_confirmed_intent = AsyncMock()

@@ -21,6 +21,7 @@ from handlers.app_builder_panel import (
 from handlers import onboarding
 from handlers import intent_router, intent_cards
 from handlers.url_guard import is_safe_public_url
+from handlers.state_store import StateStore
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -56,6 +57,11 @@ NATURAL = "__natural__"
 # unbounded simultaneous LLM calls (the intent router runs on every 3+ word
 # message in a visible channel). Queued messages wait for a slot.
 _CHAT_SEMAPHORE = asyncio.Semaphore(8)
+
+# TTLs for durable conversational state (seconds). Pending confirm/clarify are
+# short-lived; the current-app pointer is long-lived (no expiry).
+_INTENT_TTL = 1800   # 30 min
+_CLARIFY_TTL = 1800  # 30 min
 
 
 def friendly_name(description: str, *, max_len: int = 60) -> str:
@@ -249,8 +255,12 @@ class CommandRouter:
         self._user_app_slug: dict[str, str] = {}
         # user id -> {"intent","text"} of a request awaiting a clarify reply.
         # Shared by the channel/DM/slash flow (plan_chat_step) and the private
-        # app thread (handle_builder_thread_message). In-memory; lost on restart.
+        # app thread (handle_builder_thread_message).
         self._pending_clarify: dict[str, dict] = {}
+        # Durable, cache-backed mirror of the three dicts above so a webhook-handler
+        # redeploy doesn't wipe in-flight chats. The dicts act as the fast cache;
+        # writes persist (best-effort) and reads hydrate on a cache miss.
+        self._state = StateStore(self._tasks_client)
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -412,24 +422,56 @@ class CommandRouter:
         step = await self.plan_chat_step(ctx.user_id or "", text, threshold=0.6)
         await self._render_chat_step(ctx, step)
 
+    def _persist(self, key: str, value, ttl_seconds: int | None = None) -> None:
+        """Best-effort background write-through to the durable state store. Safe to
+        call from sync code and outside a running loop (a no-op then; the cache
+        still holds the value)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._state.set(key, value, ttl_seconds=ttl_seconds))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _forget(self, key: str) -> None:
+        """Best-effort background delete from the durable state store."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._state.delete(key))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
     def park_intent(self, intent: str, detail: str, *, when: str = "", task: str = "") -> str:
         token = uuid.uuid4().hex[:16]
-        self._pending_intents[token] = {
-            "intent": intent, "detail": detail, "when": when, "task": task}
+        data = {"intent": intent, "detail": detail, "when": when, "task": task}
+        self._pending_intents[token] = data
+        self._persist(f"pending_intent:{token}", data, ttl_seconds=_INTENT_TTL)
         return token
 
-    def peek_intent(self, token: str) -> dict | None:
+    async def peek_intent(self, token: str) -> dict | None:
         """Read a parked intent WITHOUT removing it, so a confirm handler can pick
-        the right private-thread flow before run_confirmed_intent pops it."""
+        the right private-thread flow before run_confirmed_intent pops it. Hydrates
+        from the durable store on a cache miss (e.g. after a redeploy)."""
+        if token not in self._pending_intents:
+            val = await self._state.get(f"pending_intent:{token}")
+            if val is not None:
+                self._pending_intents[token] = val
         return self._pending_intents.get(token)
 
     def cancel_intent(self, token: str) -> None:
         self._pending_intents.pop(token, None)
+        self._forget(f"pending_intent:{token}")
 
     async def run_confirmed_intent(self, ctx: CommandContext, token: str) -> None:
         """The user tapped 'Yes, do it'. Build runs for real; other intents fall
         back to a suggest message (extended per-intent in later tasks)."""
         data = self._pending_intents.pop(token, None)
+        if data is None:  # cache miss (e.g. after a redeploy) — hydrate from store
+            data = await self._state.get(f"pending_intent:{token}")
+        self._forget(f"pending_intent:{token}")
         if not data:
             await ctx.respond("That request expired — just type it again and I'll pick it up.")
             return
@@ -438,7 +480,9 @@ class CommandRouter:
             # Vague build ("a website") on Discord -> ask one question in the thread,
             # then build from the reply (handle_builder_thread_message completes it).
             if ctx.platform == "discord" and ctx.user_id and is_vague_build(detail):
-                self._pending_clarify[ctx.user_id] = {"intent": "build_app", "text": detail}
+                entry = {"intent": "build_app", "text": detail}
+                self._pending_clarify[ctx.user_id] = entry
+                self._persist(f"pending_clarify:{ctx.user_id}", entry, ttl_seconds=_CLARIFY_TTL)
                 await ctx.respond(
                     "Happy to build it. What kind of site is it, and what's it for? "
                     "For example: a portfolio for a photographer, an online shop, or a "
@@ -479,6 +523,9 @@ class CommandRouter:
     async def answer_intent(self, ctx: CommandContext, token: str) -> None:
         """The user tapped 'Just answer'. Answer their original text normally."""
         data = self._pending_intents.pop(token, None)
+        if data is None:
+            data = await self._state.get(f"pending_intent:{token}")
+        self._forget(f"pending_intent:{token}")
         ctx.arguments = (data or {}).get("detail", "") or ctx.arguments
         await self._handle_ask(ctx)
 
@@ -489,12 +536,17 @@ class CommandRouter:
         is already on (the entry points gate on it)."""
         uid = uid or ""
         pending = self._pending_clarify.get(uid)
+        if pending is None:  # cache miss (e.g. after a redeploy) — hydrate
+            pending = await self._state.get(f"pending_clarify:{uid}")
+            if pending is not None:
+                self._pending_clarify[uid] = pending
         if pending:
             # This message answers our clarifying question.
             reply = await intent_router.classify(text, self.openwebui, self.ai_model)
             if reply.intent == "question":
                 return ChatStep("answer", "")  # they asked back; keep waiting
             self._pending_clarify.pop(uid, None)
+            self._forget(f"pending_clarify:{uid}")
             intent = pending.get("intent", "")
             merged = f"{pending.get('text', '')} {text}".strip()
             refined = await intent_router.classify(merged, self.openwebui, self.ai_model)
@@ -515,7 +567,9 @@ class CommandRouter:
         if result.intent in intent_router.EXECUTABLE:
             question = await intent_router.clarify_question(
                 result.intent, text, self.openwebui, self.ai_model)
-            self._pending_clarify[uid] = {"intent": result.intent, "text": text}
+            entry = {"intent": result.intent, "text": text}
+            self._pending_clarify[uid] = entry
+            self._persist(f"pending_clarify:{uid}", entry, ttl_seconds=_CLARIFY_TTL)
             return ChatStep("clarify", question)
         # daily_briefing: fixed content, nothing to clarify -> straight to confirm
         token = self.park_intent(
@@ -552,18 +606,29 @@ class CommandRouter:
         pending vague-build clarification, refine the current app, or answer."""
         uid = ctx.user_id or ""
         ctx.arguments = text
+        # Hydrate the two per-user stores on a cache miss (e.g. after a redeploy).
+        pending = self._pending_clarify.get(uid)
+        if pending is None:
+            pending = await self._state.get(f"pending_clarify:{uid}")
+            if pending is not None:
+                self._pending_clarify[uid] = pending
         # 1) The user is answering our "what kind?" question -> build from the reply.
-        if uid in self._pending_clarify:
+        if pending:
             result = await intent_router.classify(text, self.openwebui, self.ai_model)
             if result.intent == "question":
                 await self._handle_ask(ctx)  # answer, keep waiting for the description
                 return
-            pending = self._pending_clarify.pop(uid, None)
+            self._pending_clarify.pop(uid, None)
+            self._forget(f"pending_clarify:{uid}")
             merged = f"{(pending or {}).get('text', '')} {text}".strip()
             await self.run_panel_build(ctx, None, merged or text)
             return
         # 2) Refine the current app by chat (questions are answered).
         slug = self._user_app_slug.get(uid)
+        if not slug:
+            slug = await self._state.get(f"current_app:{uid}")
+            if slug:
+                self._user_app_slug[uid] = slug
         if slug:
             result = await intent_router.classify(text, self.openwebui, self.ai_model)
             if result.intent == "question":
@@ -1966,6 +2031,7 @@ class CommandRouter:
         task_id = result["task_id"]
         if ctx.user_id:  # remember this user's current app for thread-chat refining
             self._user_app_slug[ctx.user_id] = slug
+            self._persist(f"current_app:{ctx.user_id}", slug)  # durable across restarts
         display = name or slug
         tnote = f" (from the {template_label} template)" if template_label else ""
         await ctx.respond(

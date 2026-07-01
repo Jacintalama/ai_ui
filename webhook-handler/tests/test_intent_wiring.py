@@ -112,7 +112,7 @@ async def test_run_confirmed_daily_briefing_creates():
 async def test_peek_intent_does_not_pop():
     r = _router()
     tok = r.park_intent("build_app", "a site")
-    assert r.peek_intent(tok)["intent"] == "build_app"
+    assert (await r.peek_intent(tok))["intent"] == "build_app"
     assert tok in r._pending_intents
 
 

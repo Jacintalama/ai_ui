@@ -18,6 +18,7 @@ from routes_preview import router as preview_router
 from routes_projects import router as projects_router
 from routes_schedules import router as schedules_router
 from routes_discord_links import router as discord_links_router
+from routes_state import router as state_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
@@ -102,6 +103,7 @@ app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Sec
 # (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
 app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(discord_links_router)  # /discord-links — system path (X-Internal-Secret)
+app.include_router(state_router)  # /state — system KV for bot conversational state
 app.include_router(tasks_router)
 app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload
 app.include_router(execution_router)

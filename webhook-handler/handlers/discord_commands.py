@@ -891,7 +891,7 @@ class DiscordCommandHandler:
         """A just-chat 'Yes, do it' click. Build and schedule run in the user's
         private thread (so the result is actually delivered there, like the panel);
         other intents reply ephemerally."""
-        pending = self.router.peek_intent(token)
+        pending = await self.router.peek_intent(token)
         intent = (pending or {}).get("intent")
         if intent == "build_app":
             return await self._handle_intent_thread_route(
