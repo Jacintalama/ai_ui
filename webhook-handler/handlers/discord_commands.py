@@ -1569,7 +1569,16 @@ class DiscordCommandHandler:
         if needs & {"gmail", "drive"}:
             member = payload.get("member", {})
             user = member.get("user", payload.get("user", {}))
-            owner = await self.router._resolve_email_auto(user.get("id", ""))
+            owner = await self.router._resolve_email(user.get("id", ""))
+            if owner is None:
+                # Require a real linked account so the connector token binds to the
+                # user's real email (not a synthetic one) — otherwise a later status
+                # check under the real email loops forever on "still not connected".
+                return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                    "content": onboarding.not_linked_text_discord(),
+                    "components": onboarding.link_button_row(),
+                    "flags": 64,
+                }}
             linked: set[str] = set()
             if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
                 linked.add("gmail")
@@ -1753,7 +1762,14 @@ class DiscordCommandHandler:
                         components=[],
                     )
                     return
-                owner = await self.router._resolve_email_auto(user_id)
+                owner = await self.router._resolve_email(user_id)
+                if owner is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
                 needs = connector_intent.detect(pending["prompt"])
                 linked: set[str] = set()
                 if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
@@ -1835,7 +1851,17 @@ class DiscordCommandHandler:
 
         async def _do() -> None:
             try:
-                email = await self.router._resolve_email_auto(user_id)
+                email = await self.router._resolve_email(user_id)
+                if email is None:
+                    # Gate the build behind a real link up front (no synthetic
+                    # identity), so a user is never walked through template-pick +
+                    # describe only to be bounced at build time.
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
                 templates = await self.router._tasks_client.list_templates(email)
                 components = build_template_picker_components(templates)
                 thread_id = await self._get_or_make_thread(

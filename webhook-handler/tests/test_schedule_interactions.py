@@ -7,6 +7,7 @@ from handlers.discord_commands import DiscordCommandHandler
 from handlers.app_builder_panel import (
     SCHED_NEW_ID, SCHED_LIST_ID, SCHED_MODAL_ID,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT, SCHED_CONFIRM_PREFIX, CONNECT_RESUME_PREFIX,
+    LINK_START_ID,
 )
 import clients.connectors as _connectors
 
@@ -63,7 +64,7 @@ async def test_modal_submit_parseable_shows_confirm_card(monkeypatch):
     # Gmail intent ("emails") but the user is already connected -> confirm card.
     monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=True))
     router = MagicMock()
-    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
+    router._resolve_email = AsyncMock(return_value="alice@x.com")
     handler = _handler(router)
     resp = await handler.handle_interaction(_sched_submit("summarize emails", "every morning"))
     assert resp["type"] == 4  # CHANNEL_MESSAGE_WITH_SOURCE
@@ -76,7 +77,7 @@ async def test_modal_submit_parseable_shows_confirm_card(monkeypatch):
 @pytest.mark.asyncio
 async def test_modal_submit_no_connector_intent_skips_gate():
     # No Gmail/Drive intent -> the connector gate never runs (no email resolution).
-    router = MagicMock()  # _resolve_email_auto deliberately NOT provided
+    router = MagicMock()  # _resolve_email deliberately NOT provided
     handler = _handler(router)
     resp = await handler.handle_interaction(_sched_submit("write my focus list", "every morning"))
     assert resp["type"] == 4
@@ -110,7 +111,7 @@ async def test_confirm_creates_schedule_with_thread_delivery(monkeypatch):
     router.run_schedule_create = fake_create
     router.get_user_thread = AsyncMock(return_value=None)
     router.set_user_thread = AsyncMock(return_value=True)
-    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
+    router._resolve_email = AsyncMock(return_value="alice@x.com")
     handler = _handler(router)
 
     card = await handler.handle_interaction(_sched_submit("summarize emails", "every morning"))
@@ -186,7 +187,7 @@ async def test_modal_submit_gmail_unconnected_shows_connect_card(monkeypatch):
     # NOT the confirm card. The schedule is parked until the user connects.
     monkeypatch.setattr(_connectors, "is_connected", AsyncMock(return_value=False))
     router = MagicMock()
-    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
+    router._resolve_email = AsyncMock(return_value="alice@x.com")
     handler = _handler(router)
     resp = await handler.handle_interaction(_sched_submit("summarize my emails", "every morning"))
     assert resp["type"] == 4 and resp["data"]["flags"] == 64
@@ -206,7 +207,7 @@ async def test_connect_resume_creates_after_connecting(monkeypatch):
     router.run_schedule_create = fake_create
     router.get_user_thread = AsyncMock(return_value=None)
     router.set_user_thread = AsyncMock(return_value=True)
-    router._resolve_email_auto = AsyncMock(return_value="alice@x.com")
+    router._resolve_email = AsyncMock(return_value="alice@x.com")
     handler = _handler(router)
 
     # 1) Not connected yet -> connect card, schedule parked under a token.
@@ -225,3 +226,22 @@ async def test_connect_resume_creates_after_connecting(monkeypatch):
     assert captured["cron"] == "0 8 * * *"
     assert captured["prompt"] == "summarize my emails"
     assert captured["delivery"] == "thread-9"
+
+
+@pytest.mark.asyncio
+async def test_modal_submit_gmail_unlinked_shows_link_card(monkeypatch):
+    # Gmail intent but the user has NO real linked account -> require linking
+    # first (so the connector token can't bind to a synthetic identity). We must
+    # get the Link card, NOT a confirm card, and is_connected is never reached.
+    is_conn = AsyncMock(return_value=True)
+    monkeypatch.setattr(_connectors, "is_connected", is_conn)
+    router = MagicMock()
+    router._resolve_email = AsyncMock(return_value=None)  # unlinked
+    resp = await _handler(router).handle_interaction(
+        _sched_submit("summarize emails", "every morning"))
+    assert resp["type"] == 4  # ephemeral message
+    buttons = [b for row in resp["data"]["components"] for b in row["components"]]
+    ids = [b.get("custom_id", "") for b in buttons]
+    assert not any(i.startswith(SCHED_CONFIRM_PREFIX) for i in ids)  # not a confirm card
+    assert any(i == LINK_START_ID for i in ids)                      # the Link card
+    is_conn.assert_not_awaited()                                     # gated before connector check
