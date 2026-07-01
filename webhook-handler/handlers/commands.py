@@ -231,8 +231,10 @@ class CommandRouter:
         self._pending_intents: dict[str, dict] = {}
         # discord user id -> their current app slug (in-memory; set on each build)
         self._user_app_slug: dict[str, str] = {}
-        # user id -> the vague build detail awaiting a "what kind?" reply in-thread
-        self._pending_build_clarify: dict[str, str] = {}
+        # user id -> {"intent","text"} of a request awaiting a clarify reply.
+        # Shared by the channel/DM/slash flow (plan_chat_step) and the private
+        # app thread (handle_builder_thread_message). In-memory; lost on restart.
+        self._pending_clarify: dict[str, dict] = {}
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -431,7 +433,7 @@ class CommandRouter:
             # Vague build ("a website") on Discord -> ask one question in the thread,
             # then build from the reply (handle_builder_thread_message completes it).
             if ctx.platform == "discord" and ctx.user_id and is_vague_build(detail):
-                self._pending_build_clarify[ctx.user_id] = detail
+                self._pending_clarify[ctx.user_id] = {"intent": "build_app", "text": detail}
                 await ctx.respond(
                     "Happy to build it. What kind of site is it, and what's it for? "
                     "For example: a portfolio for a photographer, an online shop, or a "
@@ -508,13 +510,14 @@ class CommandRouter:
         uid = ctx.user_id or ""
         ctx.arguments = text
         # 1) The user is answering our "what kind?" question -> build from the reply.
-        if uid in self._pending_build_clarify:
+        if uid in self._pending_clarify:
             result = await intent_router.classify(text, self.openwebui, self.ai_model)
             if result.intent == "question":
                 await self._handle_ask(ctx)  # answer, keep waiting for the description
                 return
-            self._pending_build_clarify.pop(uid, None)
-            await self.run_panel_build(ctx, None, text)
+            pending = self._pending_clarify.pop(uid, None)
+            merged = f"{(pending or {}).get('text', '')} {text}".strip()
+            await self.run_panel_build(ctx, None, merged or text)
             return
         # 2) Refine the current app by chat (questions are answered).
         slug = self._user_app_slug.get(uid)

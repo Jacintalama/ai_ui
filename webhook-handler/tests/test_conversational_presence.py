@@ -54,10 +54,10 @@ async def test_builder_thread_pending_statement_builds(monkeypatch):
                         AsyncMock(return_value=ir.IntentResult("build_app", 0.9, "x")))
     r = _router()
     r.run_panel_build = AsyncMock()
-    r._pending_build_clarify["100"] = "a website"
+    r._pending_clarify["100"] = {"intent": "build_app", "text": "a website"}
     await r.handle_builder_thread_message(_ctx(), "a portfolio for a photographer")
     r.run_panel_build.assert_awaited_once()
-    assert "100" not in r._pending_build_clarify
+    assert "100" not in r._pending_clarify
 
 
 async def test_builder_thread_pending_question_keeps_pending(monkeypatch):
@@ -66,11 +66,11 @@ async def test_builder_thread_pending_question_keeps_pending(monkeypatch):
     r = _router()
     r.run_panel_build = AsyncMock()
     r._handle_ask = AsyncMock()
-    r._pending_build_clarify["100"] = "a website"
+    r._pending_clarify["100"] = {"intent": "build_app", "text": "a website"}
     await r.handle_builder_thread_message(_ctx(), "are you there?")
     r._handle_ask.assert_awaited_once()
     r.run_panel_build.assert_not_awaited()
-    assert "100" in r._pending_build_clarify
+    assert "100" in r._pending_clarify
 
 
 async def test_builder_thread_app_statement_enhances(monkeypatch):
@@ -115,7 +115,7 @@ async def test_run_confirmed_vague_build_asks():
     ctx = _ctx()
     await r.run_confirmed_intent(ctx, tok)
     r.run_panel_build.assert_not_awaited()
-    assert "100" in r._pending_build_clarify
+    assert "100" in r._pending_clarify
     ctx.respond.assert_awaited_once()
 
 
