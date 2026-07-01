@@ -41,3 +41,31 @@ def test_unresolvable_host_is_blocked(monkeypatch):
         raise OSError("nxdomain")
     monkeypatch.setattr("handlers.url_guard.socket.getaddrinfo", boom)
     assert is_safe_public_url("https://nope.invalid/") is False
+
+
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from handlers import commands as cmd
+from handlers.commands import CommandRouter, CommandContext
+
+
+def _router():
+    return CommandRouter(openwebui_client=MagicMock(), n8n_client=MagicMock(api_key=""),
+                         discord_user_email_map={"1": "a@x.com"}, tasks_client=MagicMock())
+
+
+def _ctx():
+    return CommandContext(user_id="1", user_name="t", channel_id="c", raw_text="",
+                          subcommand="video", arguments="", platform="discord",
+                          respond=AsyncMock(), metadata={})
+
+
+async def test_run_video_capture_blocks_unsafe_url(monkeypatch):
+    r = _router()
+    r._resolve_email_for_ctx = AsyncMock(return_value="a@x.com")
+    r._tasks_client.get_current_video_draft = AsyncMock(return_value={"id": "d1"})
+    r._tasks_client.capture_video_screenshots = AsyncMock()
+    ctx = _ctx()
+    await r.run_video_capture(ctx, "http://169.254.169.254/latest/meta-data")
+    r._tasks_client.capture_video_screenshots.assert_not_awaited()
+    ctx.respond.assert_awaited()  # a friendly refusal was sent

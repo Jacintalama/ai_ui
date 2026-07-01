@@ -20,6 +20,7 @@ from handlers.app_builder_panel import (
 )
 from handlers import onboarding
 from handlers import intent_router, intent_cards
+from handlers.url_guard import is_safe_public_url
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -2772,6 +2773,11 @@ class CommandRouter:
             return
         if not draft:
             await ctx.respond("No video in progress — click **New video** first.")
+            return
+        if not is_safe_public_url(url):
+            await ctx.respond(
+                "I can only capture public web pages (http/https). That address "
+                "looks internal or unreachable — try a public site URL.")
             return
         from urllib.parse import urlparse
         host = urlparse(url).hostname or "your site"

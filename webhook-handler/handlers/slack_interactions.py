@@ -13,6 +13,7 @@ from typing import Any, Optional
 from clients.slack import SlackClient
 from handlers.commands import CommandRouter, CommandContext
 from handlers import intent_cards
+from handlers.url_guard import is_safe_public_url
 from handlers.slack_app_builder_panel import (
     PANEL_NEW_ID,
     PANEL_MYAPPS_ID,
@@ -1250,6 +1251,11 @@ class SlackInteractionsHandler:
             await tasks.set_video_draft_fields(
                 email, job_id, render_mode=fields.get("mode") or svp.DEFAULT_MODE)
             url = fields.get("url") or ""
+            if not is_safe_public_url(url):
+                await self._post_video_error(
+                    user_id, origin_channel,
+                    "that URL isn't a public web page. Try a public https site.")
+                return
             host = urlsplit(url).netloc or "the site"
             await self._video_dm(
                 user_id, origin_channel,
