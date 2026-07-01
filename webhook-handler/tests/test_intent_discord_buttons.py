@@ -71,3 +71,27 @@ async def test_intent_confirm_build_opens_private_thread():
         await asyncio.sleep(0)
     discord.create_private_thread.assert_awaited()      # private thread opened
     router.run_confirmed_intent.assert_awaited_once()   # build runs in it
+
+
+async def test_intent_confirm_find_jobs_returns_modal():
+    router = MagicMock()
+    router.peek_intent = AsyncMock(return_value={"intent": "find_jobs", "detail": "python devs"})
+    router.cancel_intent = MagicMock()
+    handler = _handler(router)
+    resp = await handler.handle_interaction(
+        _component_payload(intent_cards.INTENT_CONFIRM_PREFIX + "tok1"))
+    assert resp["type"] == 9  # MODAL
+    router.cancel_intent.assert_called_once()
+
+
+async def test_intent_confirm_make_video_opens_studio():
+    router = MagicMock()
+    router.peek_intent = AsyncMock(return_value={"intent": "make_video", "detail": "a launch promo"})
+    router.cancel_intent = MagicMock()
+    handler = _handler(router)
+    handler._open_video_studio = AsyncMock()
+    resp = await handler.handle_interaction(
+        _component_payload(intent_cards.INTENT_CONFIRM_PREFIX + "tok1"))
+    assert resp["type"] == 5  # deferred ephemeral ACK
+    await asyncio.sleep(0)
+    handler._open_video_studio.assert_awaited_once()

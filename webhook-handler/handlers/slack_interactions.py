@@ -146,9 +146,22 @@ class SlackInteractionsHandler:
         channel_id = (payload.get("channel") or {}).get("id", "")
 
         if action_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
-            return self._spawn_intent_action(
-                payload, channel_id,
-                action_id[len(intent_cards.INTENT_CONFIRM_PREFIX):], confirm=True)
+            token = action_id[len(intent_cards.INTENT_CONFIRM_PREFIX):]
+            pending = await self.router.peek_intent(token)
+            intent = (pending or {}).get("intent")
+            if intent in ("make_video", "find_jobs", "find_engineers"):
+                # Open the matching form; a Slack modal needs the (short-lived)
+                # trigger_id synchronously, so open it here rather than in the bg.
+                self.router.cancel_intent(token)
+                if intent == "make_video":
+                    view = svp.build_video_modal(channel_id)
+                elif intent == "find_jobs":
+                    view = srp.build_reverse_view(channel_id)
+                else:
+                    view = srp.build_outreach_view(channel_id)
+                await self.slack.open_modal(trigger_id, view)
+                return {}
+            return self._spawn_intent_action(payload, channel_id, token, confirm=True)
         if action_id.startswith(intent_cards.INTENT_CANCEL_PREFIX):
             return self._spawn_intent_action(
                 payload, channel_id,

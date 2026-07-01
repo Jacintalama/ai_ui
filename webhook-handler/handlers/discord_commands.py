@@ -899,9 +899,38 @@ class DiscordCommandHandler:
         if intent == "schedule_task":
             return await self._handle_intent_thread_route(
                 payload, token, kind="schedules", raw_text="intent schedule")
+        if intent in ("find_jobs", "find_engineers"):
+            # Open the recruiting form (a modal must be the synchronous response).
+            self.router.cancel_intent(token)
+            builder = (recruiting_panel.build_reverse_modal if intent == "find_jobs"
+                       else recruiting_panel.build_outreach_modal)
+            return {"type": MODAL, "data": builder()}
+        if intent == "make_video":
+            # Open the video studio (draft + private thread + wizard) in the bg.
+            self.router.cancel_intent(token)
+            return await self._handle_intent_video_route(
+                payload, (pending or {}).get("detail", ""))
         return await self._handle_panel_route(
             payload, lambda ctx: self.router.run_confirmed_intent(ctx, token),
             raw_text="intent confirm")
+
+    async def _handle_intent_video_route(
+        self, payload: dict[str, Any], detail: str,
+    ) -> dict[str, Any]:
+        """A confirmed 'make a video' -> open the video studio (create a draft +
+        private video thread + the wizard) in the background, seeded with the
+        chat detail as the title/description. ACK ephemeral-deferred within 3s."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+        title = (detail or "Untitled video").strip()[:80] or "Untitled video"
+        self._spawn(self._open_video_studio(
+            interaction_token=interaction_token, user_id=user_id,
+            user_name=user_name, channel_id=channel_id, title=title, prompt=detail))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_intent_thread_route(
         self, payload: dict[str, Any], token: str, *, kind: str, raw_text: str,
