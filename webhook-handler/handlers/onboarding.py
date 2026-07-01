@@ -74,9 +74,10 @@ WELCOME_TEXT_SLACK = (
 
 def not_linked_text_slack() -> str:
     return (
-        "I can't see your email yet. Ask whoever set up this Slack workspace "
-        "to turn on email access for the bot (the `users:read.email` "
-        "permission), then try again."
+        "I can't tell which account is yours yet, so I can't do that one. Ask "
+        "whoever runs this Slack to turn on email access for the bot (the "
+        "`users:read.email` permission), then try again. Once it's on, "
+        "everything here just works, no setup for you."
     )
 
 
