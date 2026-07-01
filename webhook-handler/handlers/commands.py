@@ -2220,6 +2220,7 @@ class CommandRouter:
             await self._tasks_client.create_schedule(
                 email, name=name, cron=cron, prompt=prompt,
                 delivery_channel_id=delivery_channel_id, run_once=run_once,
+                delivery_platform=ctx.platform,
             )
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))

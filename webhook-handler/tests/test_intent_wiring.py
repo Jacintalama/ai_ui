@@ -186,3 +186,16 @@ async def test_slack_try_intent_answer_returns_false(monkeypatch):
     h = _slack_handler()
     h.router.plan_chat_step = AsyncMock(return_value=cmd.ChatStep("answer", ""))
     assert await h._try_intent("how are you", "c", user_id="U1") is False
+
+
+async def test_run_schedule_create_passes_platform():
+    r = _router()
+    r._resolve_email_for_ctx = AsyncMock(return_value="a@x.com")
+    r._tasks_client = MagicMock()
+    r._tasks_client.create_schedule = AsyncMock()
+    ctx = CommandContext(
+        user_id="U1", user_name="t", channel_id="D1", raw_text="", subcommand="x",
+        arguments="", platform="slack", respond=AsyncMock(), metadata={})
+    await r.run_schedule_create(ctx, name="n", cron="0 8 * * *", prompt="p",
+                                delivery_channel_id="D1")
+    assert r._tasks_client.create_schedule.call_args.kwargs["delivery_platform"] == "slack"
