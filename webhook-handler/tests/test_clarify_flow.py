@@ -109,3 +109,10 @@ async def test_daily_briefing_confirms_without_clarify(monkeypatch):
     assert step.token
     clarify.assert_not_awaited()
     assert "u1" not in r._pending_clarify
+
+
+def test_ask_prompt_mentions_build_and_schedule():
+    r = _router()
+    prompt = r._build_ask_system_prompt()
+    low = prompt.lower()
+    assert "build" in low and "schedule" in low and "briefing" in low

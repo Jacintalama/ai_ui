@@ -333,6 +333,9 @@ class CommandRouter:
         capabilities = [
             "You are AIUI, an AI assistant for a software team. Be concise and actionable.",
             "You are responding to a slash command from a chat platform.",
+            "You can also DO things for the user, not just answer: build a website "
+            "or app, schedule a recurring task, and send a daily morning briefing. "
+            "If the user clearly wants one of these, offer to do it in one short line.",
             "",
             "The user has access to these commands via /aiui:",
             "- `/aiui pr-review <number>` — AI-powered review of a GitHub PR",
