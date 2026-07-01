@@ -497,6 +497,15 @@ class CommandRouter:
         if data["intent"] == "daily_briefing":
             await self.create_daily_briefing(ctx)
             return
+        if data["intent"] == "summarize_email":
+            await self._handle_email(ctx)
+            return
+        if data["intent"] == "web_research":
+            ctx.arguments = data.get("detail") or ctx.arguments
+            await self._handle_web_search(ctx)
+            return
+        # make_video / find_jobs / find_engineers open a form at the platform confirm
+        # layer (Discord modal / Slack views.open), so they don't normally reach here.
         await ctx.respond(intent_cards.suggest_line(data["intent"]))
 
     async def run_scheduled_from_chat(self, ctx: CommandContext, data: dict) -> None:

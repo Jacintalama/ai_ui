@@ -201,3 +201,21 @@ async def test_run_schedule_create_passes_platform():
     await r.run_schedule_create(ctx, name="n", cron="0 8 * * *", prompt="p",
                                 delivery_channel_id="D1")
     assert r._tasks_client.create_schedule.call_args.kwargs["delivery_platform"] == "slack"
+
+
+async def test_run_confirmed_email_runs():
+    r = _router()
+    r._handle_email = AsyncMock()
+    tok = r.park_intent("summarize_email", "my inbox")
+    await r.run_confirmed_intent(_ctx(), tok)
+    r._handle_email.assert_awaited_once()
+
+
+async def test_run_confirmed_research_runs():
+    r = _router()
+    r._handle_web_search = AsyncMock()
+    tok = r.park_intent("web_research", "bitcoin price today")
+    ctx = _ctx()
+    await r.run_confirmed_intent(ctx, tok)
+    r._handle_web_search.assert_awaited_once()
+    assert ctx.arguments == "bitcoin price today"
