@@ -112,14 +112,29 @@ async def test_chat_message_flag_off(monkeypatch):
     ctx.respond_components.assert_not_awaited()
 
 
-async def test_chat_message_build_posts_card(monkeypatch):
+async def test_chat_message_build_asks_clarify(monkeypatch):
     monkeypatch.setattr(cmd.settings, "intent_router_enabled", True)
     monkeypatch.setattr(ir, "classify",
                         AsyncMock(return_value=ir.IntentResult("build_app", 0.9, "a site")))
+    monkeypatch.setattr(ir, "clarify_question",
+                        AsyncMock(return_value="What kind of site, and who's it for?"))
     r = _router()
     ctx = _ctx("build me a site")
     assert await r.handle_chat_message(ctx) is True
-    ctx.respond_components.assert_awaited_once()
+    ctx.respond.assert_awaited_once()             # the clarify question
+    ctx.respond_components.assert_not_awaited()    # no card yet
+    assert "1" in r._pending_clarify
+
+
+async def test_chat_message_pending_reply_posts_card(monkeypatch):
+    monkeypatch.setattr(cmd.settings, "intent_router_enabled", True)
+    monkeypatch.setattr(ir, "classify",
+                        AsyncMock(return_value=ir.IntentResult("build_app", 0.9, "a photographer portfolio")))
+    r = _router()
+    r._pending_clarify["1"] = {"intent": "build_app", "text": "build me a site"}
+    ctx = _ctx("a photographer portfolio")
+    assert await r.handle_chat_message(ctx) is True
+    ctx.respond_components.assert_awaited_once()    # recap + Yes button
     assert len(r._pending_intents) == 1
 
 

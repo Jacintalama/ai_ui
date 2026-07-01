@@ -400,22 +400,8 @@ class CommandRouter:
         if not settings.intent_router_enabled:
             await self._handle_ask(ctx)
             return
-        result = await intent_router.classify(text, self.openwebui, self.ai_model)
-        action = intent_router.decide(result)
-        if action.kind == "answer":
-            await self._handle_ask(ctx)
-            return
-        if action.kind == "confirm":
-            token = self.park_intent(action.intent, action.detail, when=result.when, task=result.task)
-            line = intent_cards.confirm_line(action.intent, action.detail)
-            if ctx.respond_components:  # Discord can show buttons
-                await ctx.respond_components(
-                    line, intent_cards.confirm_components_discord(token))
-            else:  # platform without components: answer normally instead
-                await self._handle_ask(ctx)
-            return
-        # suggest: name what we understood and point at the right tool
-        await ctx.respond(intent_cards.suggest_line(action.intent))
+        step = await self.plan_chat_step(ctx.user_id or "", text, threshold=0.6)
+        await self._render_chat_step(ctx, step)
 
     def park_intent(self, intent: str, detail: str, *, when: str = "", task: str = "") -> str:
         token = uuid.uuid4().hex[:16]
@@ -527,32 +513,28 @@ class CommandRouter:
             result.intent, action.detail, when=result.when, task=result.task)
         return ChatStep("confirm", intent_cards.confirm_line(result.intent, action.detail), token)
 
+    async def _render_chat_step(self, ctx: CommandContext, step: ChatStep) -> bool:
+        """Post a ChatStep on Discord (gateway/slash). Returns True (handled)."""
+        if step.kind == "answer":
+            await self._handle_ask(ctx)
+            return True
+        if step.kind == "confirm" and ctx.respond_components:
+            await ctx.respond_components(
+                step.text, intent_cards.confirm_components_discord(step.token))
+            return True
+        # clarify / suggest / (confirm with no component support) -> plain text
+        await ctx.respond(step.text)
+        return True
+
     async def handle_chat_message(self, ctx: CommandContext, *, threshold: float = 0.75) -> bool:
-        """Gateway plain-text entry (Discord, any channel — no slash). Classify the
-        message and act ONLY on a real request: a confirm card for build/briefing,
-        a suggestion for other actionable intents. Stay SILENT on questions or
-        chatter (returns False). Flag-gated; the higher confidence bar (vs the 0.6
-        slash/Slack default) avoids misfiring on casual messages in shared
-        channels."""
+        """Gateway plain-text entry (Discord, any channel -- no slash). Flag-gated;
+        the higher confidence bar (vs the 0.6 slash/Slack default) avoids misfiring
+        in shared channels. Delegates the decision to plan_chat_step and renders it."""
         if not settings.intent_router_enabled:
             return False
-        text = ctx.arguments or ""
-        result = await intent_router.classify(text, self.openwebui, self.ai_model)
-        action = intent_router.decide(result, threshold=threshold)
-        if action.kind == "answer":
-            await self._handle_ask(ctx)  # answer general chat instead of staying silent
-            return True
-        if action.kind == "confirm":
-            if not ctx.respond_components:
-                return False
-            token = self.park_intent(action.intent, action.detail, when=result.when, task=result.task)
-            await ctx.respond_components(
-                intent_cards.confirm_line(action.intent, action.detail),
-                intent_cards.confirm_components_discord(token))
-            return True
-        # suggest: name the understood intent and point at the tool
-        await ctx.respond(intent_cards.suggest_line(action.intent))
-        return True
+        step = await self.plan_chat_step(
+            ctx.user_id or "", ctx.arguments or "", threshold=threshold)
+        return await self._render_chat_step(ctx, step)
 
     async def handle_builder_thread_message(self, ctx: CommandContext, text: str) -> None:
         """A message in the user's private app thread (aiui-apps-<user>): complete a

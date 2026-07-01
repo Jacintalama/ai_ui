@@ -34,16 +34,20 @@ async def test_flag_off_falls_back_to_ask(monkeypatch):
     r._handle_ask.assert_awaited_once()
 
 
-async def test_flag_on_build_shows_confirm_card(monkeypatch):
+async def test_flag_on_build_asks_clarify(monkeypatch):
     monkeypatch.setattr(cmd.settings, "intent_router_enabled", True)
     monkeypatch.setattr(
         ir, "classify",
         AsyncMock(return_value=ir.IntentResult("build_app", 0.9, "a form")))
+    monkeypatch.setattr(
+        ir, "clarify_question",
+        AsyncMock(return_value="What kind of form, and who fills it out?"))
     r = _router()
     ctx = _ctx()
     await r._handle_natural(ctx)
-    ctx.respond_components.assert_awaited_once()
-    assert len(r._pending_intents) == 1
+    ctx.respond.assert_awaited_once()               # clarify question
+    ctx.respond_components.assert_not_awaited()      # no card yet
+    assert "100" in r._pending_clarify
 
 
 async def test_flag_on_question_answers(monkeypatch):
