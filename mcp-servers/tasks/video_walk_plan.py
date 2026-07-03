@@ -8,7 +8,7 @@ from video_plan import sanitize_anim_clicks
 _MOTIONS = ["zoom-in", "fade", "pan-up", "zoom-out"]
 _CARD_S = 2.6
 _PAGE_S = 4.0
-_SEP = (" | ", " - ", " -- ", " :: ", " . ")
+_SEP = (" | ", " - ", " \u2013 ", " :: ", " \u00b7 ")
 
 
 def _clean_headline(title: str) -> str:
@@ -26,7 +26,14 @@ def _subtext(url: str) -> str:
     return path.split("/")[0].replace("-", " ").title() if path else "Home"
 
 
-def build_walk_plan(walk, screenshot_names, site_context, *, fps=24, max_duration_s=40.0):
+def build_walk_plan(
+    walk: list[dict],
+    screenshot_names: list[str],
+    site_context: dict,
+    *,
+    fps: int = 24,
+    max_duration_s: float = 40.0,
+) -> dict:
     """Intro card + one screenshot scene per walked page (with its real click) +
     outro card. Drops trailing page scenes so the total fits max_duration_s."""
     host = (site_context or {}).get("host") or "your site"
