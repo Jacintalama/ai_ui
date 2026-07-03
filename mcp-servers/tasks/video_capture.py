@@ -17,6 +17,24 @@ import os
 from urllib.parse import urlparse
 
 
+def _registrable_host(host: str) -> str:
+    """Lowercased host with a leading 'www.' stripped, for same-site comparison."""
+    host = (host or "").lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def same_origin(base_url: str, href: str) -> bool:
+    """True when href is an http(s) link on the same host as base_url."""
+    try:
+        b = urlparse(base_url)
+        h = urlparse(href)
+    except ValueError:
+        return False
+    if h.scheme not in ("http", "https"):
+        return False
+    return bool(h.netloc) and _registrable_host(h.hostname or "") == _registrable_host(b.hostname or "")
+
+
 class CaptureError(Exception):
     """Capture could not be performed (bad/blocked URL, timeout, nav failure)."""
 

@@ -144,3 +144,28 @@ async def test_extract_site_context_never_raises():
     ctx = await extract_site_context(_FakePage(fail=True))
     assert ctx == {"title": "", "headings": [], "meta_description": ""}
 
+
+# ---- same_origin --------------------------------------------------------
+
+from video_capture import same_origin  # noqa: E402
+
+
+def test_same_origin_matches_same_host():
+    assert same_origin("https://animepahe.ch/", "https://animepahe.ch/az-list/") is True
+
+
+def test_same_origin_rejects_external_host():
+    assert same_origin("https://animepahe.ch/", "https://google.com/") is False
+
+
+def test_same_origin_rejects_non_http_schemes():
+    base = "https://animepahe.ch/"
+    assert same_origin(base, "mailto:a@b.com") is False
+    assert same_origin(base, "tel:+123") is False
+    assert same_origin(base, "javascript:void(0)") is False
+    assert same_origin(base, "#top") is False
+
+
+def test_same_origin_treats_www_as_same():
+    assert same_origin("https://example.com/", "https://www.example.com/x") is True
+
