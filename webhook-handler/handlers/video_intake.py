@@ -89,6 +89,41 @@ def extract_url_message(message) -> dict | None:
     }
 
 
+def looks_like_chat_request(text: str) -> bool:
+    """True only for substantive plain text worth classifying — not a command, a
+    bare URL, the voice-diag word, or a one/two-word chatter message."""
+    t = (text or "").strip()
+    if not t or t.lower() == "!voice diag":
+        return False
+    if t[0] in "!/":
+        return False
+    if _URL_RE.search(t):
+        return False
+    return len(t.split()) >= 3 and len(t) >= 12
+
+
+def extract_chat_message(message) -> dict | None:
+    """Plain primitives from an ordinary text message (no attachment, not a bare
+    URL, substantive enough to classify), or None. Mirrors extract_url_message's
+    attribute reads so it works on real discord.py messages and test fakes."""
+    if getattr(message, "attachments", None):
+        return None
+    content = getattr(message, "content", "") or ""
+    if not looks_like_chat_request(content):
+        return None
+    channel = message.channel
+    parent_id = getattr(channel, "parent_id", None)
+    author = message.author
+    return {
+        "author_id": str(author.id),
+        "author_name": getattr(author, "display_name", None) or getattr(author, "name", "unknown"),
+        "channel_id": str(channel.id),
+        "channel_name": getattr(channel, "name", None),
+        "is_thread": parent_id is not None,
+        "text": content.strip(),
+    }
+
+
 class VideoThreadIntake:
     """Decide what to do with an image-drop in #video-generation or its threads,
     and act (reusing CommandRouter.run_video_add for the thread case)."""
@@ -127,6 +162,22 @@ class VideoThreadIntake:
             ctx = self._thread_ctx(author_id, author_name, channel_id)
             await self._router.run_video_capture(ctx, url)
 
+    async def handle_chat(self, *, author_id, author_name, channel_id,
+                          is_thread, text, channel_name=None) -> None:
+        """A plain-English message. In the user's private app thread (aiui-apps-*)
+        it's a conversation about that app (answer + refine); in a channel it goes
+        to the intent router. Other private threads (schedules-* / aiui-video-*) are
+        owned by their own flows, so chat there is ignored."""
+        if is_thread:
+            if (channel_name or "").lower().startswith("aiui-apps-"):
+                ctx = self._app_thread_ctx(author_id, author_name, channel_id)
+                ctx.arguments = text
+                await self._router.handle_builder_thread_message(ctx, text)
+            return
+        ctx = self._thread_ctx(author_id, author_name, channel_id)
+        ctx.arguments = text
+        await self._router.handle_chat_message(ctx)
+
     def _thread_ctx(self, author_id, author_name, channel_id) -> CommandContext:
         """A CommandContext whose responders post NEW messages into the thread
         (no interaction token exists for a gateway message)."""
@@ -141,4 +192,22 @@ class VideoThreadIntake:
             raw_text="video add", subcommand="video", arguments="",
             platform="discord", respond=respond,
             respond_components=respond_components,
+        )
+
+    def _app_thread_ctx(self, author_id, author_name, channel_id) -> CommandContext:
+        """Thread ctx for the private app conversation. Like _thread_ctx but also
+        sets notify_channel, so a build/enhance started from the thread delivers its
+        result back into the thread."""
+        async def respond(msg):
+            await self._discord.post_channel_message(channel_id, msg)
+
+        async def respond_components(msg, components, embeds=None):
+            await self._discord.post_channel_message(channel_id, msg, components=components)
+
+        return CommandContext(
+            user_id=author_id, user_name=author_name, channel_id=channel_id,
+            raw_text="app chat", subcommand="aiuibuilder", arguments="",
+            platform="discord", respond=respond,
+            respond_components=respond_components,
+            notify_channel=respond,
         )

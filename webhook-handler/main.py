@@ -172,6 +172,11 @@ async def lifespan(app: FastAPI):
         loki_client=loki_client,
     )
 
+    # Let the Slack events handler offer the intent router (it parks/builds via
+    # the shared router). Mirrors how the Discord client is attached below.
+    if settings.slack_bot_token:
+        slack_handler.router = command_router
+
     # Wire Slack command handler if Slack is configured
     if slack_client:
         slack_command_handler = SlackCommandHandler(

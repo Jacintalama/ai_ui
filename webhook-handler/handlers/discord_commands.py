@@ -10,6 +10,7 @@ from clients import connectors
 from config import settings
 from handlers.commands import CommandRouter, CommandContext
 from handlers import connector_intent
+from handlers import intent_cards
 from handlers.schedule_parse import parse_when
 from handlers import schedule_picker
 from datetime import datetime, timedelta, timezone
@@ -331,6 +332,14 @@ class DiscordCommandHandler:
                 pass
             return {"type": UPDATE_MESSAGE,
                     "data": {"content": "Cancelled.", "components": []}}
+        if custom_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
+            token = custom_id[len(intent_cards.INTENT_CONFIRM_PREFIX):]
+            return await self._handle_intent_confirm(payload, token)
+        if custom_id.startswith(intent_cards.INTENT_CANCEL_PREFIX):
+            token = custom_id[len(intent_cards.INTENT_CANCEL_PREFIX):]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.answer_intent(ctx, token),
+                raw_text="intent answer")
         for pred, extract, action in (
             (is_sched_run, id_from_run, "run"),
             (is_sched_pause, id_from_pause, "pause"),
@@ -873,6 +882,105 @@ class DiscordCommandHandler:
             },
         )
         self._spawn(run(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_intent_confirm(self, payload: dict[str, Any], token: str) -> dict[str, Any]:
+        """A just-chat 'Yes, do it' click. Build and schedule run in the user's
+        private thread (so the result is actually delivered there, like the panel);
+        other intents reply ephemerally."""
+        pending = await self.router.peek_intent(token)
+        intent = (pending or {}).get("intent")
+        if intent == "build_app":
+            return await self._handle_intent_thread_route(
+                payload, token, kind="builder", raw_text="intent build")
+        if intent == "schedule_task":
+            return await self._handle_intent_thread_route(
+                payload, token, kind="schedules", raw_text="intent schedule")
+        if intent in ("find_jobs", "find_engineers"):
+            # Open the recruiting form (a modal must be the synchronous response).
+            self.router.cancel_intent(token)
+            builder = (recruiting_panel.build_reverse_modal if intent == "find_jobs"
+                       else recruiting_panel.build_outreach_modal)
+            return {"type": MODAL, "data": builder()}
+        if intent == "make_video":
+            # Open the video studio (draft + private thread + wizard) in the bg.
+            self.router.cancel_intent(token)
+            return await self._handle_intent_video_route(
+                payload, (pending or {}).get("detail", ""))
+        return await self._handle_panel_route(
+            payload, lambda ctx: self.router.run_confirmed_intent(ctx, token),
+            raw_text="intent confirm")
+
+    async def _handle_intent_video_route(
+        self, payload: dict[str, Any], detail: str,
+    ) -> dict[str, Any]:
+        """A confirmed 'make a video' -> open the video studio (create a draft +
+        private video thread + the wizard) in the background, seeded with the
+        chat detail as the title/description. ACK ephemeral-deferred within 3s."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+        title = (detail or "Untitled video").strip()[:80] or "Untitled video"
+        self._spawn(self._open_video_studio(
+            interaction_token=interaction_token, user_id=user_id,
+            user_name=user_name, channel_id=channel_id, title=title, prompt=detail))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_intent_thread_route(
+        self, payload: dict[str, Any], token: str, *, kind: str, raw_text: str,
+    ) -> dict[str, Any]:
+        """Open/reuse the user's private thread (builder or schedules), wire result
+        delivery to it, and run the confirmed intent there. ACK ephemeral-deferred
+        within 3s; the thread work + run happen in the background. Mirrors the
+        proven _handle_build_modal_submit pattern."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _open_and_run() -> None:
+            try:
+                target = channel_id
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind=kind)
+                if thread_id:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"Opening your private space → <#{thread_id}>",
+                    )
+                    target = thread_id
+
+                    async def respond(msg: str) -> None:
+                        await self.discord.post_channel_message(target, msg)
+                else:
+                    async def respond(msg: str) -> None:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token, content=msg,
+                        )
+
+                notify_channel, notify_channel_rich = self._channel_notifiers(target)
+                ctx = CommandContext(
+                    user_id=user_id, user_name=user_name, channel_id=target,
+                    raw_text=raw_text, subcommand="aiuibuilder", arguments="",
+                    platform="discord", respond=respond,
+                    metadata={
+                        "interaction_id": payload.get("id", ""),
+                        "interaction_token": interaction_token,
+                        "guild_id": payload.get("guild_id", ""),
+                    },
+                    notify_channel=notify_channel,
+                    notify_channel_rich=notify_channel_rich,
+                )
+                await self.router.run_confirmed_intent(ctx, token)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("intent thread route failed: %s", exc, exc_info=exc)
+
+        self._spawn(_open_and_run())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_video_route(
@@ -1486,7 +1594,16 @@ class DiscordCommandHandler:
         if needs & {"gmail", "drive"}:
             member = payload.get("member", {})
             user = member.get("user", payload.get("user", {}))
-            owner = await self.router._resolve_email_auto(user.get("id", ""))
+            owner = await self.router._resolve_email(user.get("id", ""))
+            if owner is None:
+                # Require a real linked account so the connector token binds to the
+                # user's real email (not a synthetic one) — otherwise a later status
+                # check under the real email loops forever on "still not connected".
+                return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                    "content": onboarding.not_linked_text_discord(),
+                    "components": onboarding.link_button_row(),
+                    "flags": 64,
+                }}
             linked: set[str] = set()
             if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
                 linked.add("gmail")
@@ -1670,7 +1787,14 @@ class DiscordCommandHandler:
                         components=[],
                     )
                     return
-                owner = await self.router._resolve_email_auto(user_id)
+                owner = await self.router._resolve_email(user_id)
+                if owner is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
                 needs = connector_intent.detect(pending["prompt"])
                 linked: set[str] = set()
                 if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
@@ -1752,7 +1876,17 @@ class DiscordCommandHandler:
 
         async def _do() -> None:
             try:
-                email = await self.router._resolve_email_auto(user_id)
+                email = await self.router._resolve_email(user_id)
+                if email is None:
+                    # Gate the build behind a real link up front (no synthetic
+                    # identity), so a user is never walked through template-pick +
+                    # describe only to be bounced at build time.
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
                 templates = await self.router._tasks_client.list_templates(email)
                 components = build_template_picker_components(templates)
                 thread_id = await self._get_or_make_thread(

@@ -205,6 +205,22 @@ class TasksClient:
                                      json={"thread_id": thread_id})
         return True
 
+    # --- Generic bot state KV (system calls, X-Internal-Secret) ---
+    async def get_state(self, key: str) -> Any:
+        resp = await self._internal_request("GET", f"/state/{key}")
+        return resp.json().get("value")
+
+    async def set_state(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
+        body: dict[str, Any] = {"value": value}
+        if ttl_seconds is not None:
+            body["ttl_seconds"] = ttl_seconds
+        await self._internal_request("PUT", f"/state/{key}", json=body)
+        return True
+
+    async def delete_state(self, key: str) -> bool:
+        await self._internal_request("DELETE", f"/state/{key}")
+        return True
+
     async def list_projects(self, user_email: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", "/api/projects", user_email)
         return resp.json()

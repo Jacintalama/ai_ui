@@ -383,33 +383,33 @@
     .chat-welcome .cw-text { color: var(--text-2); font-size: 13.5px; max-width: 260px; line-height: 1.5; }
     .chat-welcome .cw-hint { font-size: 12px; max-width: 260px; line-height: 1.5; }
 
-    .chat-bubble { display: flex; flex-direction: column; gap: 4px; font-size: 13px; margin-bottom: 12px; }
+    .chat-bubble { display: flex; flex-direction: column; gap: 4px; font-size: 14px; margin-bottom: 16px; }
     .chat-bubble.user { align-items: flex-end; }
     .chat-bubble.user .body {
       background: var(--accent-soft);
       border: 1px solid rgba(124,140,255,0.3);
       border-radius: 14px 14px 4px 14px;
-      padding: 8px 12px; color: var(--text);
-      white-space: pre-wrap; max-width: 86%; line-height: 1.5;
+      padding: 10px 14px; color: var(--text);
+      white-space: pre-wrap; max-width: 88%; line-height: 1.55; text-wrap: pretty;
     }
     .chat-bubble.ai .body, .chat-bubble.proposal .body {
       background: var(--surface-2);
       border: 1px solid var(--border);
       border-radius: 14px 14px 14px 4px;
-      padding: 10px 12px; color: var(--text); line-height: 1.55; max-width: 94%;
+      padding: 12px 15px; color: var(--text); line-height: 1.62; max-width: 92%; text-wrap: pretty;
     }
     .chat-bubble.proposal .body { border-color: rgba(124,140,255,0.35); }
     .chat-bubble.thinking .body::after { content: "thinking..."; color: var(--muted); font-style: italic; }
     .chat-bubble.failed .body { background: var(--danger-soft); color: var(--danger); border-color: rgba(248,113,113,0.4); }
-    .chat-bubble .markdown p { margin: 0 0 6px 0; }
+    .chat-bubble .markdown p { margin: 0 0 10px 0; }
     .chat-bubble .markdown p:last-child { margin-bottom: 0; }
     .chat-bubble .markdown strong { color: var(--text); font-weight: 600; }
     .chat-bubble .markdown code {
       background: var(--surface-3); padding: 1px 5px; border-radius: 3px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--accent);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--accent);
     }
-    .chat-bubble .markdown ul { margin: 4px 0; padding-left: 18px; }
-    .chat-bubble .markdown li { margin: 2px 0; color: var(--text-2); }
+    .chat-bubble .markdown ul { margin: 8px 0; padding-left: 20px; }
+    .chat-bubble .markdown li { margin: 5px 0; color: var(--text); }
     .apply-row { margin-top: 10px; }
 
     /* Composer */

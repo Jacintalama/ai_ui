@@ -90,6 +90,13 @@ MIC_FORWARD_MAX_PER_SEC = 100
 # timeout. 20 ms of 16 kHz mono s16le zeros per chunk; 1.5 s total per turn.
 SILENCE_CHUNK_16K = b"\x00" * 640
 TRAILING_SILENCE_CHUNKS = 75  # 75 x 20 ms = 1.5 s
+# Keep the mic muted for this long AFTER the agent's last audio frame — not just
+# while the queue/has_content is set. A mid-reply TTS gap can drain the playback
+# queue for >600 ms (has_content -> False); without this grace the mute gate would
+# open MID-REPLY and the user's mic echoing the agent's own audio would trigger a
+# spurious ElevenLabs interruption that cuts the agent off (observed: replies cut
+# ~10 s in). Must exceed the 600 ms playback-drain window.
+AGENT_MUTE_GRACE_S = 1.5
 
 
 def is_silence(pcm: bytes) -> bool:
@@ -103,6 +110,18 @@ def is_silence(pcm: bytes) -> bool:
         except Exception:
             pass
     return not pcm.strip(b"\x00")
+
+
+def should_mute_mic(queue_nonempty: bool, has_content: bool,
+                    last_agent_frame_age: float,
+                    grace_s: float = AGENT_MUTE_GRACE_S) -> bool:
+    """Whether to drop a user mic frame because the agent is (or was just) speaking.
+
+    Muting while the agent speaks stops the user's mic — which picks up the agent's
+    own audio (acoustic echo) — from reaching ElevenLabs and triggering a spurious
+    interruption that cuts the reply. The grace keeps the gate closed through brief
+    mid-reply TTS gaps that drain the playback queue (has_content -> False)."""
+    return queue_nonempty or has_content or last_agent_frame_age < grace_s
 
 
 class MicForwardLimiter:
@@ -177,12 +196,14 @@ class AudioOutputSource(discord.AudioSource):
         self._on_drained = on_drained
         self._reads = 0  # diagnostic: proves the AudioPlayer thread is alive
         self._dropped = 0  # frames lost to overflow == audibly cut speech
+        self._last_agent_frame_time = 0.0  # monotonic ts of the last agent frame fed
 
     def feed(self, pcm_48k_stereo: bytes):
         with self._lock:
             self._buffer.extend(pcm_48k_stereo)
             self._has_content = True
             self._empty_count = 0
+            self._last_agent_frame_time = time.monotonic()
             while len(self._buffer) >= DISCORD_FRAME_SIZE:
                 frame = bytes(self._buffer[:DISCORD_FRAME_SIZE])
                 self._buffer = self._buffer[DISCORD_FRAME_SIZE:]
@@ -304,8 +325,18 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
                         logger.warning(f"[ConvAI] play-on-demand failed: {e}")
 
         async def interrupt(self):
+            # Diagnostic: an interruption right after the agent spoke, with no
+            # recent REAL forwarded mic frame, is almost certainly acoustic echo
+            # (the mute grace should now prevent it) — log the timing so a live
+            # session confirms genuine vs spurious interruptions.
+            ao = self._audio_output
+            agent_age = time.monotonic() - ao._last_agent_frame_time
+            fwd_age = (time.monotonic() - self._last_fwd) if self._last_fwd > 0 else -1.0
             self._audio_output.clear()
-            logger.info("[ConvAI] User interrupted agent")
+            logger.info(
+                "[ConvAI] interrupt() — agent_frame_age=%.2fs last_mic_fwd_age=%.2fs "
+                "(echo-suspect if mic-fwd age is high)", agent_age, fwd_age,
+            )
 
         def feed_discord_audio(self, pcm_48k_stereo: bytes, dedup_key=None):
             """Called from audio sink thread with raw Discord PCM.
@@ -338,8 +369,14 @@ if HAS_VOICE_RECV and HAS_ELEVENLABS_CONV:
                         "dropped (voice-recv spinning?)", self._mic_limiter.dropped,
                     )
                 return
-            # 4) Mute while agent audio is playing — prevents noise interruption
-            if not self._audio_output._queue.empty() or self._audio_output._has_content:
+            # 4) Mute while (or just after) the agent is speaking — prevents the
+            #    user's mic echoing the agent's OWN audio from triggering a
+            #    spurious interruption. The grace bridges mid-reply TTS gaps that
+            #    briefly drain the queue (has_content -> False), which used to open
+            #    the gate mid-reply and cut the agent off (~10 s in).
+            ao = self._audio_output
+            if should_mute_mic(not ao._queue.empty(), ao._has_content,
+                               time.monotonic() - ao._last_agent_frame_time):
                 self._gated += 1
                 now = time.monotonic()
                 if now - self._last_gate_log > 5.0:
@@ -505,6 +542,18 @@ class ConversationalVoiceBot(discord.Client):
                     await self._video_intake.handle_url_paste(**info)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("video url intake failed: %s", exc)
+
+        # Plain-English request in any channel -> the intent router. It stays
+        # silent unless it detects a real request (build, schedule, briefing...).
+        # Best-effort; an error here must never crash the gateway loop.
+        if self._video_intake is not None:
+            from handlers.video_intake import extract_chat_message
+            info = extract_chat_message(message)
+            if info is not None:
+                try:
+                    await self._video_intake.handle_chat(**info)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("chat intent routing failed: %s", exc)
 
     def _pick_text_channel(self, voice_channel):
         """Transcripts and build links go where the user is looking: the text

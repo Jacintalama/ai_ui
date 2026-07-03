@@ -157,9 +157,18 @@ async def _process_job(job_id) -> None:
                 APPS_DIR, slug, str(job_id), plan,
                 voice=voice, animation_preset=animation_preset)
         elif render_mode == "remotion":
-            out = await render_remotion_job(
-                APPS_DIR, slug, str(job_id), plan,
-                voice=voice, animation_preset=animation_preset)
+            # AI-writes-the-video path is flag-gated (AI_VIDEO_CODEGEN); the template
+            # render_remotion_job is the default and the guaranteed fallback. Planner
+            # inputs are only needed (and read) for the AI path.
+            from video_codegen import render_remotion_or_ai, ai_codegen_enabled
+            ss, ss_paths, ctx = (
+                _planner_inputs(slug, str(job_id)) if ai_codegen_enabled() else (None, None, None)
+            )
+            out = await render_remotion_or_ai(
+                APPS_DIR, slug, str(job_id), plan, prompt,
+                voice=voice, animation_preset=animation_preset,
+                screenshots=ss, screenshot_paths=ss_paths, site_context=ctx,
+                _template_job=render_remotion_job)
         else:
             out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
 

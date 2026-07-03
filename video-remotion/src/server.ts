@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import { renderJob } from "./render-job.js";
+import { renderAiComposition } from "./ai-render.js";
 import type { RenderRequest } from "./render.js";
 
 export function buildServer() {
@@ -30,6 +31,40 @@ export function buildServer() {
       const message = err instanceof Error ? err.message : String(err);
       return { ok: false, error: message };
     }
+  });
+
+  // Hardened path: render an AI-AUTHORED composition. Static gate + bundler import
+  // allow-list + bounded render happen inside renderAiComposition; here we only
+  // validate the request shape and map the structured result to HTTP.
+  app.post("/render-ai", async (req, reply) => {
+    const body = req.body as Record<string, unknown>;
+
+    if (!body?.jobDir || typeof body.jobDir !== "string" || body.jobDir.trim() === "") {
+      reply.code(400);
+      return { ok: false, error: "jobDir is required and must be a non-empty string" };
+    }
+    if (!body?.source || typeof body.source !== "string" || body.source.trim() === "") {
+      reply.code(400);
+      return { ok: false, error: "source is required and must be a non-empty string" };
+    }
+
+    const assets = Array.isArray(body.assets)
+      ? (body.assets as unknown[]).filter((a): a is string => typeof a === "string")
+      : [];
+
+    const result = await renderAiComposition({
+      jobDir: body.jobDir,
+      source: body.source,
+      assets,
+      outFile: typeof body.outFile === "string" ? body.outFile : undefined,
+    });
+
+    if (result.ok) {
+      return { ok: true, outPath: result.outPath, frames: result.frames };
+    }
+    // gate failures (lint/caps/bundle) = bad composition -> 400; render error -> 500
+    reply.code(result.stage === "render" ? 500 : 400);
+    return { ok: false, error: result.error, stage: result.stage };
   });
 
   return app;

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional, Any
 import logging
 import os
+import uuid
 
 from clients.tasks import TasksClient, TasksAPIError
 from handlers.app_builder_panel import (
@@ -18,6 +19,9 @@ from handlers.app_builder_panel import (
     build_schedule_card,
 )
 from handlers import onboarding
+from handlers import intent_router, intent_cards
+from handlers.url_guard import is_safe_public_url
+from handlers.state_store import StateStore
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -30,6 +34,7 @@ logger = logging.getLogger(__name__)
 BUILD_POLL_SECONDS = 12
 BUILD_MAX_POLLS = 150  # ~30 min at 12s
 BUILD_MAX_CONSECUTIVE_ERRORS = 5
+BUILD_REASSURE_AFTER_POLLS = 3  # one "still building" ping after ~36s of silence
 
 VIDEO_POLL_SECONDS = 6
 VIDEO_MAX_POLLS = 120  # ~12 min, > render timeout (600s) + queue wait
@@ -42,6 +47,120 @@ OUTREACH_MAX_CONSECUTIVE_ERRORS = 5
 # Public host for building preview links (matches the tasks service's
 # AIUI_PUBLIC_DOMAIN default; the domain is otherwise hardcoded elsewhere here).
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
+
+# Marker subcommand for plain-English input that matched no known command.
+# Routed to the intent router in execute(); with the flag off it falls back to
+# a normal /aiui ask answer, exactly as before.
+NATURAL = "__natural__"
+
+# Caps concurrent gateway classifications so a chatty channel can't spawn
+# unbounded simultaneous LLM calls (the intent router runs on every 3+ word
+# message in a visible channel). Queued messages wait for a slot.
+_CHAT_SEMAPHORE = asyncio.Semaphore(8)
+
+# TTLs for durable conversational state (seconds). Pending confirm/clarify are
+# short-lived; the current-app pointer is long-lived (no expiry).
+_INTENT_TTL = 1800   # 30 min
+_CLARIFY_TTL = 1800  # 30 min
+
+
+def friendly_name(description: str, *, max_len: int = 60) -> str:
+    """A human title for an app, derived from its description, e.g.
+    'A simple feedback form for my shop' -> 'Simple feedback form for my shop'.
+    Returns '' when nothing usable (callers then fall back to the slug)."""
+    text = " ".join((description or "").split())
+    if not text:
+        return ""
+    for sep in (". ", "! ", "? ", " - ", " — ", ", "):
+        i = text.find(sep)
+        if 0 < i <= max_len:
+            text = text[:i]
+            break
+    text = text.strip(" .!?,;:-—").strip()
+    low = text.lower()
+    for art in ("a ", "an ", "the "):
+        if low.startswith(art):
+            text = text[len(art):]
+            break
+    if len(text) > max_len:
+        text = text[:max_len].rsplit(" ", 1)[0]
+    text = text.strip()
+    return (text[:1].upper() + text[1:]) if text else ""
+
+
+_BUILD_FILLER = {
+    "a", "an", "the", "me", "my", "build", "make", "create", "please", "for",
+    "website", "site", "app", "page", "webpage", "web", "application", "thing",
+    "something", "new", "to",
+}
+
+
+def build_workspace_summary(apps, schedules, videos) -> str:
+    """Plain-text 'one place to see everything' summary of a user's apps,
+    schedules, and videos. Pure -- tested directly. Tolerates list or {..:[]}
+    shapes and shows up to 5 of each with a '+N more' tail. No emoji."""
+    vids = videos.get("videos", []) if isinstance(videos, dict) else (videos or [])
+    apps = apps or []
+    schedules = schedules or []
+    out = ["Your workspace:", ""]
+
+    def _section(title, items, render):
+        out.append(f"{title} ({len(items)}):")
+        if not items:
+            out.append("- none yet")
+        else:
+            for it in items[:5]:
+                out.append("- " + render(it))
+            if len(items) > 5:
+                out.append(f"...and {len(items) - 5} more")
+        out.append("")
+
+    _section("Apps", apps, lambda a: (a.get("name") or a.get("slug") or "app")
+             + (f" - {a['public_url']}" if a.get("public_url") else ""))
+    _section("Schedules", schedules,
+             lambda s: s.get("name") or (s.get("prompt") or "task")[:60])
+    _section("Videos", vids, lambda v: (v.get("title") or "video")
+             + (f" [{v['status']}]" if v.get("status") else ""))
+    out.append("Just tell me what to do next - build, schedule, a video, and more.")
+    return "\n".join(out)
+
+
+def is_vague_build(detail: str) -> bool:
+    """True when a build request names no specifics beyond generic filler
+    ('a website', 'an app'); 'a portfolio', 'a flower shop site' are NOT vague."""
+    meaningful = [
+        w for w in (detail or "").lower().replace("-", " ").split()
+        if w.strip(".,!?'\"():") and w.strip(".,!?'\"():") not in _BUILD_FILLER
+    ]
+    return len(meaningful) == 0
+
+
+DAILY_BRIEFING_NAME = "Daily briefing"
+DAILY_BRIEFING_CRON = "0 8 * * *"  # 8am daily; tz defaults to Asia/Manila
+
+
+def daily_briefing_prompt() -> str:
+    """The prompt the daily-briefing schedule runs each morning."""
+    return (
+        "Give me my morning briefing. Be warm but brief — under 120 words, no "
+        "preamble, no sign-off. Include each item only if there is something to "
+        "say: (1) Unread email: the 3-5 most important, one short line each "
+        "(sender then gist); if you cannot access email, say one line: 'Email "
+        "summary unavailable — connect Gmail to enable.' (2) Today: anything "
+        "scheduled or due today. (3) Since yesterday: any app or video that "
+        "finished, with its link. If everything is quiet, say so in one cheerful "
+        "line."
+    )
+
+
+@dataclass
+class ChatStep:
+    """One decision from plan_chat_step; the platform layer renders it.
+    kind: "clarify" (ask the question) | "confirm" (recap + Yes button) |
+          "answer" (hand to the normal AI answer) | "suggest" (point at a tool)."""
+    kind: str
+    text: str
+    token: str = ""
 
 
 @dataclass
@@ -160,6 +279,19 @@ class CommandRouter:
         # watcher could be GC'd mid-flight. Each task removes itself on done.
         self._background_tasks: set = set()
 
+        # token -> {"intent", "detail"} for a parked just-chat confirmation.
+        self._pending_intents: dict[str, dict] = {}
+        # discord user id -> their current app slug (in-memory; set on each build)
+        self._user_app_slug: dict[str, str] = {}
+        # user id -> {"intent","text"} of a request awaiting a clarify reply.
+        # Shared by the channel/DM/slash flow (plan_chat_step) and the private
+        # app thread (handle_builder_thread_message).
+        self._pending_clarify: dict[str, dict] = {}
+        # Durable, cache-backed mirror of the three dicts above so a webhook-handler
+        # redeploy doesn't wipe in-flight chats. The dicts act as the fast cache;
+        # writes persist (best-effort) and reads hydrate on a cache miss.
+        self._state = StateStore(self._tasks_client)
+
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
         """
@@ -185,13 +317,15 @@ class CommandRouter:
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
             "email", "sheets", "rebuild", "web-search",
             "health", "security", "deps", "license",
-            "cronjob", "aiuibuilder",
+            "cronjob", "aiuibuilder", "briefing",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
 
-        # Unknown subcommand — treat entire text as an ask query
-        return ("ask", text)
+        # Unknown first word — plain English. Mark it NATURAL so execute() can
+        # offer the intent router; falls back to a normal answer when the flag
+        # is off (see _handle_natural).
+        return (NATURAL, text)
 
     async def execute(self, ctx: CommandContext) -> None:
         """Dispatch a command to the appropriate handler."""
@@ -230,6 +364,12 @@ class CommandRouter:
                 await self._handle_web_search(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
+            elif ctx.subcommand == "briefing":
+                await self._handle_briefing(ctx)
+            elif ctx.subcommand == "my":
+                await self.run_workspace(ctx)
+            elif ctx.subcommand == NATURAL:
+                await self._handle_natural(ctx)
             else:
                 await ctx.respond(f"Unknown command: `{ctx.subcommand}`. Try `/aiui help`.")
         except Exception as e:
@@ -241,6 +381,9 @@ class CommandRouter:
         capabilities = [
             "You are AIUI, an AI assistant for a software team. Be concise and actionable.",
             "You are responding to a slash command from a chat platform.",
+            "You can also DO things for the user, not just answer: build a website "
+            "or app, schedule a recurring task, and send a daily morning briefing. "
+            "If the user clearly wants one of these, offer to do it in one short line.",
             "",
             "The user has access to these commands via /aiui:",
             "- `/aiui pr-review <number>` — AI-powered review of a GitHub PR",
@@ -298,6 +441,313 @@ class CommandRouter:
             response = response[: limit - 20] + "\n\n... (truncated)"
 
         await ctx.respond(response)
+
+    async def _handle_natural(self, ctx: CommandContext) -> None:
+        """Plain-English /aiui input. Flag off -> behave exactly like ask.
+        Flag on -> classify and route: build_app -> a confirm card; other
+        actionable intents -> a suggest message; question/unsure -> answer."""
+        text = ctx.arguments or ctx.raw_text or ""
+        ctx.arguments = text  # _handle_ask reads ctx.arguments
+        if not settings.intent_router_enabled:
+            await self._handle_ask(ctx)
+            return
+        step = await self.plan_chat_step(ctx.user_id or "", text, threshold=0.6)
+        await self._render_chat_step(ctx, step)
+
+    def _persist(self, key: str, value, ttl_seconds: int | None = None) -> None:
+        """Best-effort background write-through to the durable state store. Safe to
+        call from sync code and outside a running loop (a no-op then; the cache
+        still holds the value)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._state.set(key, value, ttl_seconds=ttl_seconds))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _forget(self, key: str) -> None:
+        """Best-effort background delete from the durable state store."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._state.delete(key))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def park_intent(self, intent: str, detail: str, *, when: str = "", task: str = "") -> str:
+        token = uuid.uuid4().hex[:16]
+        data = {"intent": intent, "detail": detail, "when": when, "task": task}
+        self._pending_intents[token] = data
+        self._persist(f"pending_intent:{token}", data, ttl_seconds=_INTENT_TTL)
+        return token
+
+    async def peek_intent(self, token: str) -> dict | None:
+        """Read a parked intent WITHOUT removing it, so a confirm handler can pick
+        the right private-thread flow before run_confirmed_intent pops it. Hydrates
+        from the durable store on a cache miss (e.g. after a redeploy)."""
+        if token not in self._pending_intents:
+            val = await self._state.get(f"pending_intent:{token}")
+            if val is not None:
+                self._pending_intents[token] = val
+        return self._pending_intents.get(token)
+
+    def cancel_intent(self, token: str) -> None:
+        self._pending_intents.pop(token, None)
+        self._forget(f"pending_intent:{token}")
+
+    async def run_confirmed_intent(self, ctx: CommandContext, token: str) -> None:
+        """The user tapped 'Yes, do it'. Build runs for real; other intents fall
+        back to a suggest message (extended per-intent in later tasks)."""
+        data = self._pending_intents.pop(token, None)
+        if data is None:  # cache miss (e.g. after a redeploy) — hydrate from store
+            data = await self._state.get(f"pending_intent:{token}")
+        self._forget(f"pending_intent:{token}")
+        if not data:
+            await ctx.respond("That request expired — just type it again and I'll pick it up.")
+            return
+        if data["intent"] == "build_app":
+            detail = data["detail"]
+            # Vague build ("a website") on Discord -> ask one question in the thread,
+            # then build from the reply (handle_builder_thread_message completes it).
+            if ctx.platform == "discord" and ctx.user_id and is_vague_build(detail):
+                entry = {"intent": "build_app", "text": detail}
+                self._pending_clarify[ctx.user_id] = entry
+                self._persist(f"pending_clarify:{ctx.user_id}", entry, ttl_seconds=_CLARIFY_TTL)
+                await ctx.respond(
+                    "Happy to build it. What kind of site is it, and what's it for? "
+                    "For example: a portfolio for a photographer, an online shop, or a "
+                    "landing page for an event."
+                )
+                return
+            await self.run_panel_build(ctx, None, detail)
+            return
+        if data["intent"] == "schedule_task":
+            await self.run_scheduled_from_chat(ctx, data)
+            return
+        if data["intent"] == "daily_briefing":
+            await self.create_daily_briefing(ctx)
+            return
+        if data["intent"] == "summarize_email":
+            await self._handle_email(ctx)
+            return
+        if data["intent"] == "web_research":
+            ctx.arguments = data.get("detail") or ctx.arguments
+            await self._handle_web_search(ctx)
+            return
+        # make_video / find_jobs / find_engineers open a form at the platform confirm
+        # layer (Discord modal / Slack views.open), so they don't normally reach here.
+        await ctx.respond(intent_cards.suggest_line(data["intent"]))
+
+    async def run_scheduled_from_chat(self, ctx: CommandContext, data: dict) -> None:
+        """Create a schedule from a plain-English request. The classifier split the
+        message into `when` (time phrase) and `task` (what to do); parse_when turns
+        the phrase into cron, then run_schedule_create makes it (delivering runs to
+        the ctx's private thread). On a missing/garbled time, ask for what + when."""
+        from handlers.schedule_parse import parse_when
+        when = (data.get("when") or "").strip()
+        task = (data.get("task") or data.get("detail") or "").strip()
+        parsed = parse_when(when) if when else None
+        if not parsed or not task:
+            await ctx.respond(
+                "I can set that up — tell me what to do and when, e.g. "
+                "*summarize my emails every morning at 8am*."
+            )
+            return
+        cron, human = parsed
+        await self.run_schedule_create(
+            ctx, name=f"{human}: {task[:60]}", cron=cron, prompt=task,
+            delivery_channel_id=ctx.channel_id or None, run_once=False,
+        )
+
+    async def answer_intent(self, ctx: CommandContext, token: str) -> None:
+        """The user tapped 'Just answer'. Answer their original text normally."""
+        data = self._pending_intents.pop(token, None)
+        if data is None:
+            data = await self._state.get(f"pending_intent:{token}")
+        self._forget(f"pending_intent:{token}")
+        ctx.arguments = (data or {}).get("detail", "") or ctx.arguments
+        await self._handle_ask(ctx)
+
+    async def plan_chat_step(self, uid: str, text: str, *, threshold: float) -> ChatStep:
+        """Decide the next chat beat for a plain-English message. Platform-agnostic:
+        mutates the shared pending-clarify state and parks confirm tokens, but does
+        NOT post -- the caller renders the returned ChatStep. Assumes the router flag
+        is already on (the entry points gate on it)."""
+        uid = uid or ""
+        pending = self._pending_clarify.get(uid)
+        if pending is None:  # cache miss (e.g. after a redeploy) — hydrate
+            pending = await self._state.get(f"pending_clarify:{uid}")
+            if pending is not None:
+                self._pending_clarify[uid] = pending
+        if pending:
+            # This message answers our clarifying question.
+            reply = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if reply.intent == "question":
+                return ChatStep("answer", "")  # they asked back; keep waiting
+            self._pending_clarify.pop(uid, None)
+            self._forget(f"pending_clarify:{uid}")
+            intent = pending.get("intent", "")
+            merged = f"{pending.get('text', '')} {text}".strip()
+            refined = await intent_router.classify(merged, self.openwebui, self.ai_model)
+            detail = refined.detail or merged
+            token = self.park_intent(intent, detail, when=refined.when, task=refined.task)
+            return ChatStep(
+                "confirm",
+                intent_cards.recap_line(intent, detail, refined.when, refined.task),
+                token)
+        # Fresh message.
+        result = await intent_router.classify(text, self.openwebui, self.ai_model)
+        action = intent_router.decide(result, threshold=threshold)
+        if action.kind == "answer":
+            return ChatStep("answer", "")
+        if result.intent == "my_workspace":
+            return ChatStep("workspace", "")  # a read, not an action -> run it now
+        # every other actionable intent is confirm-class
+        if result.intent in intent_router.EXECUTABLE:
+            question = await intent_router.clarify_question(
+                result.intent, text, self.openwebui, self.ai_model)
+            entry = {"intent": result.intent, "text": text}
+            self._pending_clarify[uid] = entry
+            self._persist(f"pending_clarify:{uid}", entry, ttl_seconds=_CLARIFY_TTL)
+            return ChatStep("clarify", question)
+        # daily_briefing: fixed content, nothing to clarify -> straight to confirm
+        token = self.park_intent(
+            result.intent, action.detail, when=result.when, task=result.task)
+        return ChatStep("confirm", intent_cards.confirm_line(result.intent, action.detail), token)
+
+    async def _render_chat_step(self, ctx: CommandContext, step: ChatStep) -> bool:
+        """Post a ChatStep on Discord (gateway/slash). Returns True (handled)."""
+        if step.kind == "answer":
+            await self._handle_ask(ctx)
+            return True
+        if step.kind == "workspace":
+            await self.run_workspace(ctx)
+            return True
+        if step.kind == "confirm" and ctx.respond_components:
+            await ctx.respond_components(
+                step.text, intent_cards.confirm_components_discord(step.token))
+            return True
+        # clarify / suggest / (confirm with no component support) -> plain text
+        await ctx.respond(step.text)
+        return True
+
+    async def handle_chat_message(self, ctx: CommandContext, *, threshold: float = 0.75) -> bool:
+        """Gateway plain-text entry (Discord, any channel -- no slash). Flag-gated;
+        the higher confidence bar (vs the 0.6 slash/Slack default) avoids misfiring
+        in shared channels. Delegates the decision to plan_chat_step and renders it.
+        Bounded by _CHAT_SEMAPHORE so a burst can't spawn unbounded LLM calls."""
+        if not settings.intent_router_enabled:
+            return False
+        async with _CHAT_SEMAPHORE:
+            step = await self.plan_chat_step(
+                ctx.user_id or "", ctx.arguments or "", threshold=threshold)
+            return await self._render_chat_step(ctx, step)
+
+    async def handle_builder_thread_message(self, ctx: CommandContext, text: str) -> None:
+        """A message in the user's private app thread (aiui-apps-<user>): complete a
+        pending vague-build clarification, refine the current app, or answer."""
+        uid = ctx.user_id or ""
+        ctx.arguments = text
+        # Hydrate the two per-user stores on a cache miss (e.g. after a redeploy).
+        pending = self._pending_clarify.get(uid)
+        if pending is None:
+            pending = await self._state.get(f"pending_clarify:{uid}")
+            if pending is not None:
+                self._pending_clarify[uid] = pending
+        # 1) The user is answering our "what kind?" question -> build from the reply.
+        if pending:
+            result = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if result.intent == "question":
+                await self._handle_ask(ctx)  # answer, keep waiting for the description
+                return
+            self._pending_clarify.pop(uid, None)
+            self._forget(f"pending_clarify:{uid}")
+            merged = f"{(pending or {}).get('text', '')} {text}".strip()
+            await self.run_panel_build(ctx, None, merged or text)
+            return
+        # 2) Refine the current app by chat (questions are answered).
+        slug = self._user_app_slug.get(uid)
+        if not slug:
+            slug = await self._state.get(f"current_app:{uid}")
+            if slug:
+                self._user_app_slug[uid] = slug
+        if slug:
+            result = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if result.intent == "question":
+                await self._handle_ask(ctx)
+                return
+            await self.run_panel_enhance(ctx, slug, text)
+            return
+        # 3) No app yet — just answer (the user can ask to build).
+        await self._handle_ask(ctx)
+
+    async def _handle_briefing(self, ctx: CommandContext) -> None:
+        """/aiui briefing — set up a daily morning briefing; `off` turns it off."""
+        arg = (ctx.arguments or "").strip().lower()
+        if arg in ("off", "stop", "cancel", "disable"):
+            await self.remove_daily_briefing(ctx)
+        else:
+            await self.create_daily_briefing(ctx)
+
+    async def create_daily_briefing(self, ctx: CommandContext) -> None:
+        """Create the recurring daily-briefing schedule, delivered to this channel.
+        Reuses the normal schedule machinery (the scheduler runs the prompt and
+        posts the result back), so there's no new delivery path."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.create_schedule(
+                email, name=DAILY_BRIEFING_NAME, cron=DAILY_BRIEFING_CRON,
+                prompt=daily_briefing_prompt(),
+                delivery_channel_id=ctx.channel_id or None,
+                delivery_platform=ctx.platform,
+            )
+        except TasksAPIError as e:
+            logger.warning("create daily briefing failed for %s: %s", ctx.user_name, e)
+            await ctx.respond(
+                "Couldn't set up your daily briefing right now. Please try again in a bit."
+            )
+            return
+        await ctx.respond(
+            "Done — I'll send your daily briefing every morning at 8am "
+            "(Asia/Manila): unread email, today's schedule, and anything that "
+            "finished overnight. Turn it off any time with `/aiui briefing off`. "
+            "(For the email part, make sure Gmail is connected.)"
+        )
+
+    async def remove_daily_briefing(self, ctx: CommandContext) -> None:
+        """Delete the user's daily-briefing schedule(s), found by name."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError:
+            await ctx.respond("Couldn't reach your schedules right now. Try again shortly.")
+            return
+        targets = [s for s in schedules if (s.get("name") or "") == DAILY_BRIEFING_NAME]
+        if not targets:
+            await ctx.respond("You don't have a daily briefing set up.")
+            return
+        removed = 0
+        for s in targets:
+            sid = s.get("id") or s.get("schedule_id")
+            if not sid:
+                continue
+            try:
+                await self._tasks_client.delete_schedule(email, str(sid))
+                removed += 1
+            except TasksAPIError:
+                pass
+        await ctx.respond(
+            "Turned off your daily briefing." if removed
+            else "Couldn't turn it off — manage it in Scheduled tasks."
+        )
 
     async def _handle_workflow(self, ctx: CommandContext) -> None:
         """Trigger an n8n workflow by name (looks up ID via API, then executes)."""
@@ -1613,24 +2063,52 @@ class CommandRouter:
         att_text, att_name = await self._attachment_text_for_ctx(ctx)
         extra = ({"attachment_text": att_text, "attachment_name": att_name}
                  if att_text else {})
+        name = friendly_name(description)
         try:
             result = await self._tasks_client.start_build(
-                email, description, template_key=template_key, **extra)
+                email, description, name=name or None,
+                template_key=template_key, **extra)
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
             return None
         slug = result["slug"]
         task_id = result["task_id"]
+        if ctx.user_id:  # remember this user's current app for thread-chat refining
+            self._user_app_slug[ctx.user_id] = slug
+            self._persist(f"current_app:{ctx.user_id}", slug)  # durable across restarts
+        display = name or slug
         tnote = f" (from the {template_label} template)" if template_label else ""
         await ctx.respond(
-            f"Building `{slug}`{tnote} … I'll post the link here when it's ready "
-            "(usually a few minutes)."
+            f"Building **{display}** (`{slug}`){tnote} … I'll post the link here "
+            "when it's ready (usually a few minutes)."
         )
         if ctx.notify_channel is not None:
-            watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            watcher = asyncio.create_task(
+                self._watch_build(ctx, email, task_id, slug, display_name=display))
             self._background_tasks.add(watcher)
-            watcher.add_done_callback(self._background_tasks.discard)
+            watcher.add_done_callback(self._on_build_watcher_done)
         return result
+
+    async def run_workspace(self, ctx: CommandContext) -> None:
+        """Show the user's whole workspace (apps + schedules + videos) in one
+        message. Requires a linked account; each fetch degrades to empty so one
+        failing service never blanks the view."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+
+        async def _safe(coro, default):
+            try:
+                return await coro
+            except Exception:  # noqa: BLE001 - one service down shouldn't blank the view
+                return default
+
+        apps = await _safe(self._tasks_client.list_projects(email), [])
+        scheds = await _safe(
+            self._tasks_client.list_schedules(email, platform=ctx.platform), [])
+        vids = await _safe(self._tasks_client.list_videos(email), [])
+        await ctx.respond(build_workspace_summary(apps, scheds, vids))
 
     async def run_panel_build(
         self, ctx: CommandContext, template_key: str | None, description: str,
@@ -1884,6 +2362,7 @@ class CommandRouter:
             await self._tasks_client.create_schedule(
                 email, name=name, cron=cron, prompt=prompt,
                 delivery_channel_id=delivery_channel_id, run_once=run_once,
+                delivery_platform=ctx.platform,
             )
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
@@ -2281,14 +2760,19 @@ class CommandRouter:
 
     async def _watch_build(
         self, ctx: CommandContext, email: str, task_id: str, slug: str,
-        *, poll_seconds: int | None = None, max_polls: int | None = None,
+        *, display_name: str | None = None,
+        poll_seconds: int | None = None, max_polls: int | None = None,
     ) -> None:
         """Poll the build until it terminates, then post the result to the
         channel — on success via ctx.notify_channel_rich (a Publish button) when
         set, else ctx.notify_channel (both bot-token messages that outlive the
-        interaction window). Defensive: transient errors don't kill the loop."""
+        interaction window). Reliability: transient errors don't kill the loop, an
+        unexpected crash still posts a final message, and one mid-build ping breaks
+        the long silence. `display_name` is the friendly app title (falls back to
+        the slug)."""
         if ctx.notify_channel is None:
             return
+        display = display_name or slug
 
         async def _notify(msg: str) -> None:
             # Never let a notify failure crash the watcher (it runs as a
@@ -2301,50 +2785,79 @@ class CommandRouter:
         poll_seconds = BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
         max_polls = BUILD_MAX_POLLS if max_polls is None else max_polls
         errors = 0
-        for _ in range(max_polls):
-            await asyncio.sleep(poll_seconds)
-            try:
-                st = await self._tasks_client.get_build_status(email, task_id)
-                errors = 0
-            except TasksAPIError as e:
-                errors += 1
-                logger.warning("watch_build status error (%s) task=%s", e.status, task_id)
-                if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
+        reassured = False
+        try:
+            for i in range(max_polls):
+                await asyncio.sleep(poll_seconds)
+                try:
+                    st = await self._tasks_client.get_build_status(email, task_id)
+                    errors = 0
+                except (TasksAPIError, httpx.HTTPError) as e:
+                    errors += 1
+                    logger.warning("watch_build status error task=%s: %s", task_id, e)
+                    if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
+                        await _notify(
+                            f"Lost track of **{display}** — check "
+                            f"`/aiui aiuibuilder status {slug}`."
+                        )
+                        return
+                    continue
+                status = st.get("status")
+                if status == "completed":
+                    url = st.get("preview_url") or ""
+                    msg = f"**{display}** is ready (preview): {url}".rstrip()
+                    if ctx.notify_channel_rich is not None:
+                        try:
+                            await ctx.notify_channel_rich(msg, slug, url, email)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
+                            await _notify(msg)
+                    else:
+                        await _notify(msg)
+                    return
+                if status == "needs_input":
+                    detail = (st.get("error") or "").strip()
+                    ask = f" It needs to know: {detail}" if detail else ""
                     await _notify(
-                        f"Lost track of `{slug}` — check `/aiui aiuibuilder status {slug}`."
+                        f"**{display}** needs more detail to finish.{ask} "
+                        "Continue it in the App Builder, or run `build` again with a "
+                        "more specific description."
                     )
                     return
-                continue
-            status = st.get("status")
-            if status == "completed":
-                url = st.get("preview_url") or ""
-                msg = f"`{slug}` is ready (preview): {url}".rstrip()
-                if ctx.notify_channel_rich is not None:
-                    try:
-                        await ctx.notify_channel_rich(msg, slug, url, email)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
-                        await _notify(msg)
-                else:
-                    await _notify(msg)
-                return
-            if status == "needs_input":
-                detail = (st.get("error") or "").strip()
-                ask = f" It needs to know: {detail}" if detail else ""
-                await _notify(
-                    f"`{slug}` needs more detail to finish.{ask} "
-                    "Continue it in the App Builder, or run `build` again with a "
-                    "more specific description."
-                )
-                return
-            if status == "failed":
-                await _notify(
-                    f"Build failed for `{slug}`. Open the App Builder to retry."
-                )
-                return
-        await _notify(
-            f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
-        )
+                if status == "failed":
+                    await _notify(
+                        f"Build failed for **{display}**. Open the App Builder to retry."
+                    )
+                    return
+                # still building: one reassurance ping so it never feels dead
+                if not reassured and i >= BUILD_REASSURE_AFTER_POLLS:
+                    reassured = True
+                    await _notify(
+                        f"Still building **{display}** — writing your pages. "
+                        "I'll post the link here as soon as it's ready."
+                    )
+            await _notify(
+                f"**{display}** is still building — check "
+                f"`/aiui aiuibuilder status {slug}`."
+            )
+        except Exception as exc:  # noqa: BLE001 - never leave the user hanging
+            logger.error("watch_build crashed task=%s: %s", task_id, exc, exc_info=exc)
+            await _notify(
+                f"I lost track of **{display}** while building. Check "
+                f"`/aiui aiuibuilder status {slug}`."
+            )
+
+    def _on_build_watcher_done(self, task: "asyncio.Task") -> None:
+        """Done-callback for the build watcher: drop the strong ref and log any
+        crash. The watcher's own try/except should have notified the user; this
+        guarantees a crash is never swallowed silently."""
+        self._background_tasks.discard(task)
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc:
+            logger.error("build watcher task crashed: %s", exc, exc_info=exc)
 
     async def run_video_add(self, ctx: CommandContext, urls: list[str]) -> None:
         """`/video add`: push Discord CDN screenshot URLs onto the caller's current
@@ -2398,6 +2911,11 @@ class CommandRouter:
             return
         if not draft:
             await ctx.respond("No video in progress — click **New video** first.")
+            return
+        if not is_safe_public_url(url):
+            await ctx.respond(
+                "I can only capture public web pages (http/https). That address "
+                "looks internal or unreachable — try a public site URL.")
             return
         from urllib.parse import urlparse
         host = urlparse(url).hostname or "your site"

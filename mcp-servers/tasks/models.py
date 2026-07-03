@@ -163,3 +163,17 @@ class DiscordLink(Base):
     builder_thread_id = Column(Text, nullable=True)
     # The user's private Discord thread for the video studio (created/reused by the bot).
     video_thread_id = Column(Text, nullable=True)
+
+
+class BotState(Base):
+    """Generic per-key state for the chat bots (webhook-handler): pending intents,
+    clarify replies, and each user's current app slug. Persisted here so a
+    webhook-handler redeploy doesn't wipe in-flight conversations. Written/read via
+    the system /state endpoints (X-Internal-Secret)."""
+    __tablename__ = "bot_state"
+    __table_args__ = {"schema": "tasks"}
+
+    state_key = Column(Text, primary_key=True)
+    value = Column(JSONB, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at = Column(DateTime(timezone=True), nullable=True)

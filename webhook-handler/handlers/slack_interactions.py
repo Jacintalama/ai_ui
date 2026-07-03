@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 from clients.slack import SlackClient
 from handlers.commands import CommandRouter, CommandContext
+from handlers import intent_cards
+from handlers.url_guard import is_safe_public_url
 from handlers.slack_app_builder_panel import (
     PANEL_NEW_ID,
     PANEL_MYAPPS_ID,
@@ -142,6 +144,28 @@ class SlackInteractionsHandler:
         action_id = actions[0].get("action_id", "") if actions else ""
         trigger_id = payload.get("trigger_id", "")
         channel_id = (payload.get("channel") or {}).get("id", "")
+
+        if action_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
+            token = action_id[len(intent_cards.INTENT_CONFIRM_PREFIX):]
+            pending = await self.router.peek_intent(token)
+            intent = (pending or {}).get("intent")
+            if intent in ("make_video", "find_jobs", "find_engineers"):
+                # Open the matching form; a Slack modal needs the (short-lived)
+                # trigger_id synchronously, so open it here rather than in the bg.
+                self.router.cancel_intent(token)
+                if intent == "make_video":
+                    view = svp.build_video_modal(channel_id)
+                elif intent == "find_jobs":
+                    view = srp.build_reverse_view(channel_id)
+                else:
+                    view = srp.build_outreach_view(channel_id)
+                await self.slack.open_modal(trigger_id, view)
+                return {}
+            return self._spawn_intent_action(payload, channel_id, token, confirm=True)
+        if action_id.startswith(intent_cards.INTENT_CANCEL_PREFIX):
+            return self._spawn_intent_action(
+                payload, channel_id,
+                action_id[len(intent_cards.INTENT_CANCEL_PREFIX):], confirm=False)
 
         if action_id == TEMPLATE_SELECT_ACTION_ID:
             # C8: dropdown select — read the chosen option value
@@ -680,6 +704,33 @@ class SlackInteractionsHandler:
             )
         return None
 
+    def _spawn_intent_action(self, payload: dict[str, Any], channel_id: str,
+                             token: str, *, confirm: bool) -> dict[str, Any]:
+        """Build a DM-targeted ctx and run the parked intent (confirm) or answer
+        it (cancel) in the background; ACK immediately. Mirrors the build flow."""
+        user = payload.get("user", {})
+        uid = user.get("id", "")
+        uname = user.get("username") or user.get("name", "unknown")
+
+        async def _run() -> None:
+            try:
+                dm_id = await self.slack.open_dm(uid)
+                ctx = self._dm_context(
+                    payload, dm_id=dm_id, origin_channel=channel_id,
+                    user_id=uid, user_name=uname,
+                    subcommand="aiuibuilder", raw_text="intent")
+                if confirm:
+                    await self.router.run_confirmed_intent(ctx, token)
+                else:
+                    await self.router.answer_intent(ctx, token)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Slack intent action failed user=%s: %s", uid, exc)
+
+        task = asyncio.create_task(_run())
+        self.router._background_tasks.add(task)
+        task.add_done_callback(self.router._background_tasks.discard)
+        return {}
+
     def _dm_context(
         self,
         payload: dict[str, Any],
@@ -1213,6 +1264,11 @@ class SlackInteractionsHandler:
             await tasks.set_video_draft_fields(
                 email, job_id, render_mode=fields.get("mode") or svp.DEFAULT_MODE)
             url = fields.get("url") or ""
+            if not is_safe_public_url(url):
+                await self._post_video_error(
+                    user_id, origin_channel,
+                    "that URL isn't a public web page. Try a public https site.")
+                return
             host = urlsplit(url).netloc or "the site"
             await self._video_dm(
                 user_id, origin_channel,

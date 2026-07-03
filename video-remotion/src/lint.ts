@@ -1,0 +1,72 @@
+// Determinism + import + asset heuristic for an AI-authored single-file Remotion
+// composition. A crude PRE-FILTER, NOT a guarantee: it catches obvious
+// non-deterministic / non-frame-based / network patterns before we spend a
+// bundle+render. The real guarantees live downstream — the import allow-list is
+// enforced at the bundler (import-guard.ts) and determinism is proven by rendering
+// the same frame twice (the spike harness).
+
+const ALLOWED_EXACT = new Set(["remotion", "react", "react/jsx-runtime"]);
+
+type Rule = {name: string; re: RegExp; msg: string};
+
+const RULES: Rule[] = [
+  {name: "Math.random", re: /\bMath\.random\s*\(/, msg: "Math.random() is non-deterministic — use random('seed') from remotion."},
+  {name: "Date.now", re: /\bDate\.now\s*\(/, msg: "Date.now() is non-deterministic."},
+  {name: "new Date", re: /\bnew\s+Date\s*\(/, msg: "new Date() is non-deterministic."},
+  {name: "Date()", re: /\bDate\s*\(\s*\)/, msg: "Date() is non-deterministic."},
+  {name: "performance.now", re: /\bperformance\.now\s*\(/, msg: "performance.now() is non-deterministic."},
+  {name: "crypto.random", re: /\bcrypto\.(getRandomValues|randomUUID)\s*\(/, msg: "crypto randomness is non-deterministic."},
+  {name: "setTimeout", re: /\bsetTimeout\s*\(/, msg: "setTimeout is not frame-based."},
+  {name: "setInterval", re: /\bsetInterval\s*\(/, msg: "setInterval is not frame-based."},
+  {name: "requestAnimationFrame", re: /\brequestAnimationFrame\s*\(/, msg: "requestAnimationFrame is not frame-based — animate from useCurrentFrame()."},
+  {name: "fetch", re: /\bfetch\s*\(/, msg: "fetch() — a composition must not do network I/O."},
+  {name: "XMLHttpRequest", re: /\bXMLHttpRequest\b/, msg: "XMLHttpRequest — no network I/O in a composition."},
+  {name: "dynamic-import", re: /\bimport\s*\(/, msg: "dynamic import() is not allowed — only static top-level imports from the allow-list."},
+  {name: "require", re: /\brequire\s*\(/, msg: "require() is not allowed — only static top-level imports from the allow-list."},
+  {name: "useState", re: /\buseState\s*\(/, msg: "useState — animation must derive from useCurrentFrame(), not React state."},
+  {name: "useEffect", re: /\buseEffect\s*\(/, msg: "useEffect — effects don't run deterministically per frame."},
+  {name: "css-animation-shorthand", re: /\b(animation|transition)\s*:/, msg: "CSS animation/transition runs on wall-clock time — not deterministic. Animate from useCurrentFrame()."},
+  {name: "css-animation-camel", re: /\b(animationName|animationDuration|animationTimingFunction|animationDelay|animationIterationCount|transitionProperty|transitionDuration|transitionTimingFunction|transitionDelay)\b/, msg: "CSS animation/transition runs on wall-clock time — not deterministic."},
+  {name: "keyframes", re: /@keyframes\b/, msg: "@keyframes runs on wall-clock time — not deterministic."},
+  {name: "animate-class", re: /\banimate-[a-z]/, msg: "Tailwind animate-* utilities are not deterministic."},
+];
+
+const IMPORT_RE = /(?:import[^'"]*from\s*|import\s*|require\s*\(\s*)['"]([^'"]+)['"]/g;
+
+function importAllowed(mod: string): boolean {
+  return mod.startsWith("@remotion/") || mod.startsWith("react/") || ALLOWED_EXACT.has(mod);
+}
+
+const STATICFILE_RE = /staticFile\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
+
+// A composition may only reference screenshots that were actually provided. Flags
+// any staticFile('X') whose X isn't in `allowed`.
+export function lintAssets(src: string, allowed: string[]): string[] {
+  const set = new Set(allowed);
+  const errs: string[] = [];
+  let m: RegExpExecArray | null;
+  STATICFILE_RE.lastIndex = 0;
+  while ((m = STATICFILE_RE.exec(src))) {
+    const ref = m[1].replace(/^\.?\//, "");
+    if (!set.has(ref)) {
+      errs.push(`[asset] staticFile('${m[1]}') references a file that wasn't provided (available: ${allowed.join(", ") || "none"}).`);
+    }
+  }
+  return errs;
+}
+
+export function lintComposition(src: string): string[] {
+  const errs: string[] = [];
+  for (const r of RULES) {
+    if (r.re.test(src)) errs.push(`[${r.name}] ${r.msg}`);
+  }
+  let m: RegExpExecArray | null;
+  IMPORT_RE.lastIndex = 0;
+  while ((m = IMPORT_RE.exec(src))) {
+    const mod = m[1];
+    if (!importAllowed(mod)) {
+      errs.push(`[import] disallowed import '${mod}' (allowed: remotion, @remotion/*, react).`);
+    }
+  }
+  return errs;
+}

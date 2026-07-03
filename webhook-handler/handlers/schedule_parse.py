@@ -141,6 +141,21 @@ def parse_when(text: str) -> tuple[str, str] | None:
             f"every {_DAY_NAME[day]} at {_fmt_time(hour, minute)}",
         )
 
+    # "every weekday at 9am" / "weekdays at 9am" -> Mon-Fri at that time.
+    m = re.fullmatch(
+        r"(?:every )?weekdays? at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?", low)
+    if m:
+        hour = _to_24h(int(m.group(1)), m.group(3))
+        minute = int(m.group(2)) if m.group(2) else 0
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return (
+            f"{minute} {hour} * * 1-5",
+            f"every weekday at {_fmt_time(hour, minute)}",
+        )
+    if low in ("every weekday", "weekday", "weekdays", "every weekdays"):
+        return "0 8 * * 1-5", "every weekday at 8:00 AM"
+
     if low in ("daily", "every day"):
         return "0 8 * * *", "every day at 8:00 AM"
     if low in ("weekly", "every week"):
