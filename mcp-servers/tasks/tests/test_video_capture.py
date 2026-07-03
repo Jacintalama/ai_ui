@@ -284,3 +284,22 @@ async def test_walk_dedupes_and_respects_max_pages():
     assert len(frames) == 2                     # home, x, then x's only link is visited -> stop
     assert walk[1]["click"] is None
 
+
+async def test_walk_truncated_by_max_pages_has_no_dangling_click():
+    # Unbroken chain of 5 distinct same-origin pages, but max_pages=3 cuts it
+    # short. The last shown page's click must be forced to None, since the
+    # page it would point at was never captured.
+    anchors = {
+        "https://s.com/": [{"href": "https://s.com/a", "x": 100, "y": 300, "w": 300, "h": 200, "text": "A"}],
+        "https://s.com/a": [{"href": "https://s.com/b", "x": 100, "y": 300, "w": 300, "h": 200, "text": "B"}],
+        "https://s.com/b": [{"href": "https://s.com/c", "x": 100, "y": 300, "w": 300, "h": 200, "text": "C"}],
+        "https://s.com/c": [{"href": "https://s.com/d", "x": 100, "y": 300, "w": 300, "h": 200, "text": "D"}],
+        "https://s.com/d": [],   # dead end (never reached at max_pages=3)
+    }
+    page = _FakeWalkPage(anchors)
+    frames, walk, ctx = await _walk_with_page(
+        page, "https://s.com/", max_pages=3, guard=_noop_guard, vw=1280, vh=800, settle_ms=0)
+    assert len(frames) == 3
+    assert walk[0]["click"] is not None
+    assert walk[-1]["click"] is None
+

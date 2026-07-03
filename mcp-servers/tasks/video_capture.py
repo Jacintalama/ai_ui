@@ -286,7 +286,9 @@ async def capture_site(
     return frames, site_context
 
 
-async def _walk_with_page(page, start_url, *, max_pages, guard, vw, vh, settle_ms):
+async def _walk_with_page(
+    page, start_url: str, *, max_pages: int, guard, vw: int, vh: int, settle_ms: int
+) -> tuple[list[bytes], list[dict], dict]:
     """Browser-agnostic walk: goto -> screenshot(top) -> pick next same-origin
     link -> record its click coord -> goto it. Stops on no target, revisit, or
     max_pages. Returns (frames, walk, site_context)."""
@@ -303,6 +305,9 @@ async def _walk_with_page(page, start_url, *, max_pages, guard, vw, vh, settle_m
         await page.evaluate("window.scrollTo(0, 0)")
         frames.append(await page.screenshot())
         real_url = page.url or cur
+        # A redirect may have landed somewhere internal, so re-check (mirrors
+        # capture_site's post-goto assert_capturable(page.url)).
+        await guard(real_url)
         visited.add(normalize_url(real_url))
         if i == 0:
             site_context = await extract_site_context(page)
@@ -317,6 +322,8 @@ async def _walk_with_page(page, start_url, *, max_pages, guard, vw, vh, settle_m
         if not target:
             break
         cur = target["href"]
+    if walk:
+        walk[-1]["click"] = None  # the last shown page has no next page in the video
     return frames, walk, site_context
 
 
@@ -339,36 +346,43 @@ async def capture_walk(
     vw, vh = viewport
     resolve_cache: dict[str, bool] = {}
     async with _CAPTURE_LOCK:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-            )
-            try:
-                context = await browser.new_context(
-                    viewport={"width": vw, "height": vh},
-                    user_agent="Mozilla/5.0 (compatible; AIUI-VideoCapture)",
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
                 )
-                page = await context.new_page()
-                page.set_default_navigation_timeout(nav_timeout_ms)
+                try:
+                    context = await browser.new_context(
+                        viewport={"width": vw, "height": vh},
+                        user_agent="Mozilla/5.0 (compatible; AIUI-VideoCapture)",
+                    )
+                    page = await context.new_page()
+                    page.set_default_navigation_timeout(nav_timeout_ms)
 
-                async def _route(route):
-                    # Same SSRF guard as capture_site: abort any request whose
-                    # host is internal, so a followed link can't pull an
-                    # internal Docker service into the walk.
-                    host = urlparse(route.request.url).hostname or ""
-                    try:
-                        if await _host_blocked(host, resolve_cache):
+                    async def _route(route):
+                        # Same SSRF guard as capture_site: abort any request whose
+                        # host is internal, so a followed link can't pull an
+                        # internal Docker service into the walk.
+                        host = urlparse(route.request.url).hostname or ""
+                        try:
+                            if await _host_blocked(host, resolve_cache):
+                                await route.abort()
+                            else:
+                                await route.continue_()
+                        except Exception:  # noqa: BLE001 - never wedge the route
                             await route.abort()
-                        else:
-                            await route.continue_()
-                    except Exception:  # noqa: BLE001 - never wedge the route
-                        await route.abort()
 
-                await page.route("**/*", _route)
-                frames, walk, ctx = await _walk_with_page(
-                    page, url, max_pages=max_pages, guard=assert_capturable,
-                    vw=vw, vh=vh, settle_ms=2500)
-            finally:
-                await browser.close()
+                    await page.route("**/*", _route)
+                    frames, walk, ctx = await _walk_with_page(
+                        page, url, max_pages=max_pages, guard=assert_capturable,
+                        vw=vw, vh=vh, settle_ms=2500)
+                finally:
+                    await browser.close()
+        except CaptureError:
+            raise
+        except Exception as e:  # noqa: BLE001 - launch/engine failure -> clean error
+            raise CaptureError(f"capture failed: {e}") from e
+    if not frames:
+        raise CaptureError("no frames captured")
     return frames, walk, ctx
