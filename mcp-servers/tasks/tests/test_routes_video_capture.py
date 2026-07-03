@@ -156,3 +156,60 @@ async def test_capture_from_url_writes_walk_json(db_session, tmp_path, monkeypat
     walk_path = Path(str(tmp_path)) / slug / ".video" / str(jid) / "walk.json"
     assert walk_path.exists()
     assert json.loads(walk_path.read_text())[0]["click"]["label"] == "A"
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_capture_from_url_recapture_clears_stale_screenshots(db_session, tmp_path, monkeypatch):
+    """A recapture of the same job must not leave stale screenshot-N.png files
+    behind: walk.json is overwritten on every capture, so on-disk screenshots
+    must also restart at 1..N, or the worker's positional walk[i] <->
+    screenshot-(i+1) pairing silently drifts against frames left over from the
+    previous capture."""
+    import json
+    from pathlib import Path
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+
+    first_walk = [
+        {"url": "https://s.com/", "title": "Home", "click": {"x": 0.1, "y": 0.2, "label": "A"}},
+        {"url": "https://s.com/a", "title": "A", "click": {"x": 0.3, "y": 0.4, "label": "B"}},
+        {"url": "https://s.com/b", "title": "B", "click": None},
+    ]
+    second_walk = [
+        {"url": "https://s.com/", "title": "Home", "click": {"x": 0.5, "y": 0.6, "label": "C"}},
+    ]
+
+    async def fake_first(url, **kw):
+        return [b"PNG1", b"PNG2", b"PNG3"], first_walk, {"title": "Home"}
+
+    async def fake_second(url, **kw):
+        return [b"PNG-NEW"], second_walk, {"title": "Home"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        draft = await c.post("/api/video-jobs/draft",
+                             json={"title": "t", "prompt": "", "style": "clean_product_demo",
+                                   "voice": "amy"}, headers=HEAD)
+        jid = draft.json()["id"]
+        slug = draft.json()["slug"]
+
+        monkeypatch.setattr(routes_video, "capture_walk", fake_first)
+        r1 = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
+                          json={"url": "https://s.com/", "max_frames": 3}, headers=HEAD)
+        assert r1.status_code == 200
+        assert r1.json()["count"] == 3
+
+        monkeypatch.setattr(routes_video, "capture_walk", fake_second)
+        r2 = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
+                          json={"url": "https://s.com/", "max_frames": 1}, headers=HEAD)
+    assert r2.status_code == 200
+    body = r2.json()
+    assert body["count"] == 1
+    assert body["screenshots"] == ["screenshot-1.png"]
+
+    shots_dir = Path(str(tmp_path)) / slug / ".video" / str(jid) / "screenshots"
+    on_disk = sorted(p.name for p in shots_dir.iterdir())
+    assert on_disk == ["screenshot-1.png"]
+
+    walk_path = Path(str(tmp_path)) / slug / ".video" / str(jid) / "walk.json"
+    walk = json.loads(walk_path.read_text())
+    assert len(walk) == len(on_disk) == 1
+    assert walk[0]["click"]["label"] == "C"

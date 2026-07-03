@@ -853,6 +853,16 @@ async def capture_from_url(
         logger.warning("capture failed: job=%s: %s", jid, e)
         raise HTTPException(502, "couldn't capture that site")
     host = urlparse(body.url).hostname or "site"
+    # A recapture rewrites walk.json below, so on-disk screenshots must also
+    # restart at 1..N or the worker's positional walk[i] <-> screenshot-(i+1)
+    # pairing silently drifts against stale/manually-added frames left over
+    # from a prior capture. Clear before storing so numbering starts fresh.
+    shots_dir = _apps_dir() / slug / ".video" / str(jid) / "screenshots"
+    try:
+        for stale in shots_dir.glob("screenshot-*.png"):
+            stale.unlink()
+    except OSError as e:
+        logger.warning("could not clear stale screenshots for job=%s: %s", jid, e)
     blobs = [(f"{host}-{i + 1}.png", data) for i, data in enumerate(captured)]
     shots = await _store_screenshot_blobs(slug, str(jid), blobs)
     try:
