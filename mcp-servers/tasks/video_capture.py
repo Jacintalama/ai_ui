@@ -284,3 +284,91 @@ async def capture_site(
     if not frames:
         raise CaptureError("no frames captured")
     return frames, site_context
+
+
+async def _walk_with_page(page, start_url, *, max_pages, guard, vw, vh, settle_ms):
+    """Browser-agnostic walk: goto -> screenshot(top) -> pick next same-origin
+    link -> record its click coord -> goto it. Stops on no target, revisit, or
+    max_pages. Returns (frames, walk, site_context)."""
+    frames: list[bytes] = []
+    walk: list[dict] = []
+    visited: set[str] = set()
+    site_context: dict = {}
+    cur = start_url
+    for i in range(max_pages):
+        await guard(cur)
+        await page.goto(cur, wait_until="domcontentloaded", timeout=None)
+        if settle_ms:
+            await page.wait_for_timeout(settle_ms)
+        await page.evaluate("window.scrollTo(0, 0)")
+        frames.append(await page.screenshot())
+        real_url = page.url or cur
+        visited.add(normalize_url(real_url))
+        if i == 0:
+            site_context = await extract_site_context(page)
+        candidates = await page.evaluate(COLLECT_ANCHORS_JS)
+        target = pick_walk_target(candidates or [], real_url, visited, vw=vw, vh=vh)
+        walk.append({
+            "url": real_url,
+            "title": await page.title(),
+            "click": (None if not target
+                      else {"x": target["x"], "y": target["y"], "label": target["label"]}),
+        })
+        if not target:
+            break
+        cur = target["href"]
+    return frames, walk, site_context
+
+
+async def capture_walk(
+    url: str,
+    *,
+    max_pages: int = 4,
+    viewport: tuple[int, int] = (1280, 800),
+    nav_timeout_ms: int = 30000,
+) -> tuple[list[bytes], list[dict], dict]:
+    """Navigate up to max_pages same-origin pages, screenshotting each and
+    recording the click that leads to the next. Falls back to a single page when
+    the site has no followable link."""
+    await assert_capturable(url)
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as e:
+        raise CaptureError("capture engine unavailable") from e
+
+    vw, vh = viewport
+    resolve_cache: dict[str, bool] = {}
+    async with _CAPTURE_LOCK:
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            )
+            try:
+                context = await browser.new_context(
+                    viewport={"width": vw, "height": vh},
+                    user_agent="Mozilla/5.0 (compatible; AIUI-VideoCapture)",
+                )
+                page = await context.new_page()
+                page.set_default_navigation_timeout(nav_timeout_ms)
+
+                async def _route(route):
+                    # Same SSRF guard as capture_site: abort any request whose
+                    # host is internal, so a followed link can't pull an
+                    # internal Docker service into the walk.
+                    host = urlparse(route.request.url).hostname or ""
+                    try:
+                        if await _host_blocked(host, resolve_cache):
+                            await route.abort()
+                        else:
+                            await route.continue_()
+                    except Exception:  # noqa: BLE001 - never wedge the route
+                        await route.abort()
+
+                await page.route("**/*", _route)
+                frames, walk, ctx = await _walk_with_page(
+                    page, url, max_pages=max_pages, guard=assert_capturable,
+                    vw=vw, vh=vh, settle_ms=2500)
+            finally:
+                await browser.close()
+    return frames, walk, ctx

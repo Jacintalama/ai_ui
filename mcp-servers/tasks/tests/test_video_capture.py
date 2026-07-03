@@ -223,3 +223,64 @@ def test_pick_skips_denylisted_hrefs():
 def test_pick_returns_none_when_no_candidates():
     assert pick_walk_target([], "https://site.com/", set()) is None
 
+
+from video_capture import _walk_with_page
+
+
+class _FakeWalkPage:
+    """Minimal page stub: programmed anchors per URL; goto follows them."""
+    def __init__(self, anchors_by_url):
+        self._anchors = anchors_by_url
+        self.url = ""
+
+    async def goto(self, url, **kw):
+        self.url = url
+
+    async def evaluate(self, script, *args):
+        if "scrollTo" in script:
+            return None
+        if "a[href]" in script:                # COLLECT_ANCHORS_JS
+            return self._anchors.get(self.url, [])
+        return {}                              # extract_site_context internals
+
+    async def screenshot(self, **kw):
+        return b"PNG:" + self.url.encode()
+
+    async def title(self):
+        return "Title " + self.url
+
+    async def wait_for_timeout(self, ms):
+        return None
+
+
+async def _noop_guard(url):
+    return None
+
+
+async def test_walk_follows_links_until_no_target():
+    anchors = {
+        "https://s.com/": [{"href": "https://s.com/a", "x": 100, "y": 300, "w": 300, "h": 200, "text": "A"}],
+        "https://s.com/a": [{"href": "https://s.com/b", "x": 100, "y": 300, "w": 300, "h": 200, "text": "B"}],
+        "https://s.com/b": [],   # dead end
+    }
+    page = _FakeWalkPage(anchors)
+    frames, walk, ctx = await _walk_with_page(
+        page, "https://s.com/", max_pages=4, guard=_noop_guard, vw=1280, vh=800, settle_ms=0)
+    assert len(frames) == 3
+    assert [w["url"] for w in walk] == ["https://s.com/", "https://s.com/a", "https://s.com/b"]
+    assert walk[0]["click"]["label"] == "A"
+    assert walk[2]["click"] is None            # last page has no onward click
+
+
+async def test_walk_dedupes_and_respects_max_pages():
+    # Every page links back to home -> must stop via visited-dedupe, not loop.
+    anchors = {
+        "https://s.com/": [{"href": "https://s.com/x", "x": 100, "y": 300, "w": 300, "h": 200, "text": "X"}],
+        "https://s.com/x": [{"href": "https://s.com/", "x": 100, "y": 300, "w": 300, "h": 200, "text": "Home"}],
+    }
+    page = _FakeWalkPage(anchors)
+    frames, walk, ctx = await _walk_with_page(
+        page, "https://s.com/", max_pages=4, guard=_noop_guard, vw=1280, vh=800, settle_ms=0)
+    assert len(frames) == 2                     # home, x, then x's only link is visited -> stop
+    assert walk[1]["click"] is None
+
