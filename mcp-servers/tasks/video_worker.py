@@ -30,6 +30,7 @@ from video_remotion_render import render_remotion_job
 from video_models import VideoJob
 from video_plan import generate_anim_plan, generate_plan
 from video_versions import next_version_no, record_version
+from video_walk_plan import build_walk_plan
 
 logger = logging.getLogger("video_worker")
 MIN_RAM_MB = int(os.environ.get("VIDEO_MIN_FREE_RAM_MB", "1200"))
@@ -52,6 +53,17 @@ def _planner_inputs(slug: str, job_id: str):
         except Exception:  # noqa: BLE001
             ctx = {}
     return names, paths, ctx
+
+
+def _load_walk(slug: str, job_id: str) -> list | None:
+    """Read the persisted page walk for a job, or None if absent/unreadable."""
+    path = os.path.join(APPS_DIR, slug, ".video", job_id, "walk.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) and data else None
+    except (OSError, ValueError):
+        return None
 
 
 def _should_run() -> bool:
@@ -120,8 +132,9 @@ async def _process_job(job_id) -> None:
             voice = job.voice
             render_mode = job.render_mode
             animation_preset = getattr(job, "animation_preset", "cursor_click")
+            is_default = not (prompt or "").strip()
 
-        # Stage 1: scripting (idempotent — reuse an existing plan).
+        # Stage 1: scripting (idempotent, reuse an existing plan).
         if not plan:
             async with session() as s:
                 await s.execute(
@@ -130,14 +143,20 @@ async def _process_job(job_id) -> None:
                 )
                 await s.commit()
             screenshots, screenshot_paths, site_context = _planner_inputs(slug, str(job_id))
-            plan = await (
-                generate_anim_plan(prompt, screenshots, site_context=site_context,
-                                   screenshot_paths=screenshot_paths,
-                                   animation_preset=animation_preset)
-                if render_mode in ("animated", "remotion")
-                else generate_plan(prompt, screenshots, site_context=site_context,
-                                   screenshot_paths=screenshot_paths)
-            )
+            walk = _load_walk(slug, str(job_id)) if is_default else None
+            if render_mode == "remotion" and walk:
+                # Default flow with a captured page walk: build the deterministic
+                # intro/pages/outro plan from the real click coords, skip the model call.
+                names = [name for name, _ in screenshot_paths]
+                plan = build_walk_plan(walk, names, site_context)
+            elif render_mode in ("animated", "remotion"):
+                plan = await generate_anim_plan(
+                    prompt, screenshots, site_context=site_context,
+                    screenshot_paths=screenshot_paths, animation_preset=animation_preset)
+            else:
+                plan = await generate_plan(
+                    prompt, screenshots, site_context=site_context,
+                    screenshot_paths=screenshot_paths)
             async with session() as s:
                 await s.execute(
                     update(VideoJob).where(VideoJob.id == job_id)
@@ -159,16 +178,19 @@ async def _process_job(job_id) -> None:
         elif render_mode == "remotion":
             # AI-writes-the-video path is flag-gated (AI_VIDEO_CODEGEN); the template
             # render_remotion_job is the default and the guaranteed fallback. Planner
-            # inputs are only needed (and read) for the AI path.
+            # inputs are only needed (and read) for the AI path. The Default flow
+            # (empty prompt) always forces the template+cursor path, regardless of
+            # the global flag, so its walk-plan cursor clicks always render.
             from video_codegen import render_remotion_or_ai, ai_codegen_enabled
+            ai_enabled = (not is_default) and ai_codegen_enabled()
             ss, ss_paths, ctx = (
-                _planner_inputs(slug, str(job_id)) if ai_codegen_enabled() else (None, None, None)
+                _planner_inputs(slug, str(job_id)) if ai_enabled else (None, None, None)
             )
             out = await render_remotion_or_ai(
                 APPS_DIR, slug, str(job_id), plan, prompt,
                 voice=voice, animation_preset=animation_preset,
                 screenshots=ss, screenshot_paths=ss_paths, site_context=ctx,
-                _template_job=render_remotion_job)
+                ai_enabled=ai_enabled, _template_job=render_remotion_job)
         else:
             out = await VideoRenderExecutor().render(slug, str(job_id), plan, style=style, voice=voice)
 

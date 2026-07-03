@@ -120,3 +120,115 @@ async def test_process_job_remotion_uses_remotion_engine(tmp_path, monkeypatch):
 
     mock_remotion.assert_called_once()
     mock_animated.assert_not_called()
+
+
+def _fake_job_session(fake_job):
+    """Build a fake `session()` context manager whose lookup returns fake_job
+    and whose execute/commit are AsyncMocks, matching the pattern used by
+    test_process_job_remotion_uses_remotion_engine above."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    fake_result = MagicMock()
+    fake_result.scalar_one_or_none.return_value = fake_job
+    fake_s = AsyncMock()
+    fake_s.execute = AsyncMock(return_value=fake_result)
+
+    @asynccontextmanager
+    async def fake_session():
+        yield fake_s
+
+    return fake_session
+
+
+async def test_default_flow_uses_walk_plan(tmp_path, monkeypatch):
+    """Default flow (empty prompt) with a walk.json on disk must build the plan
+    via build_walk_plan and force ai_enabled=False on render dispatch, so the
+    template+cursor path renders it regardless of AI_VIDEO_CODEGEN."""
+    import json
+    import video_worker
+    from unittest.mock import AsyncMock, MagicMock
+
+    job_id = uuid.uuid4()
+    job_dir = tmp_path / "alpha" / ".video" / str(job_id)
+    job_dir.mkdir(parents=True)
+    (job_dir / "walk.json").write_text(json.dumps([
+        {"url": "https://s.com/", "title": "Home", "click": {"x": 0.1, "y": 0.4, "label": "A"}},
+    ]))
+    out_mp4 = job_dir / "out.mp4"
+    out_mp4.write_bytes(b"remotion-video")
+
+    fake_job = MagicMock()
+    fake_job.slug = "alpha"
+    fake_job.prompt = ""
+    fake_job.plan_json = None
+    fake_job.pending_summary = None
+    fake_job.style = "cinematic"
+    fake_job.voice = None
+    fake_job.render_mode = "remotion"
+
+    monkeypatch.setattr(video_worker, "session", _fake_job_session(fake_job))
+    monkeypatch.setattr(video_worker, "APPS_DIR", str(tmp_path))
+    monkeypatch.setattr(video_worker, "next_version_no", AsyncMock(return_value=1))
+    monkeypatch.setattr(video_worker, "record_version", AsyncMock())
+
+    calls = {}
+
+    def fake_build_walk_plan(walk, names, ctx, **kw):
+        calls["walk_plan"] = True
+        return {"scenes": [{"kind": "intro", "duration_s": 2.6}]}
+
+    async def fake_render_or_ai(*a, ai_enabled=None, **kw):
+        calls["ai_enabled"] = ai_enabled
+        return str(out_mp4)
+
+    monkeypatch.setattr(video_worker, "build_walk_plan", fake_build_walk_plan)
+    monkeypatch.setattr("video_codegen.render_remotion_or_ai", fake_render_or_ai)
+
+    await video_worker._process_job(job_id)
+
+    assert calls.get("walk_plan") is True
+    assert calls.get("ai_enabled") is False
+
+
+async def test_custom_flow_skips_walk_plan(tmp_path, monkeypatch):
+    """Custom flow (non-empty prompt) must never build the walk plan, even when
+    a walk.json happens to be present on disk."""
+    import json
+    import video_worker
+    from unittest.mock import AsyncMock, MagicMock
+
+    job_id = uuid.uuid4()
+    job_dir = tmp_path / "alpha" / ".video" / str(job_id)
+    job_dir.mkdir(parents=True)
+    (job_dir / "walk.json").write_text(json.dumps([
+        {"url": "https://s.com/", "title": "Home", "click": None},
+    ]))
+    out_mp4 = job_dir / "out.mp4"
+    out_mp4.write_bytes(b"remotion-video")
+
+    fake_job = MagicMock()
+    fake_job.slug = "alpha"
+    fake_job.prompt = "make it punchy"
+    fake_job.plan_json = None
+    fake_job.pending_summary = None
+    fake_job.style = "cinematic"
+    fake_job.voice = None
+    fake_job.render_mode = "remotion"
+
+    monkeypatch.setattr(video_worker, "session", _fake_job_session(fake_job))
+    monkeypatch.setattr(video_worker, "APPS_DIR", str(tmp_path))
+    monkeypatch.setattr(video_worker, "next_version_no", AsyncMock(return_value=1))
+    monkeypatch.setattr(video_worker, "record_version", AsyncMock())
+    monkeypatch.setattr(video_worker, "generate_anim_plan", AsyncMock(return_value=PLAN))
+
+    calls = {}
+    monkeypatch.setattr(
+        video_worker, "build_walk_plan",
+        lambda *a, **k: calls.setdefault("walk_plan", True))
+    monkeypatch.setattr(
+        "video_codegen.render_remotion_or_ai", AsyncMock(return_value=str(out_mp4)))
+
+    await video_worker._process_job(job_id)
+
+    assert "walk_plan" not in calls
