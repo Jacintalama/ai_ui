@@ -169,3 +169,57 @@ def test_same_origin_rejects_non_http_schemes():
 def test_same_origin_treats_www_as_same():
     assert same_origin("https://example.com/", "https://www.example.com/x") is True
 
+
+# ---- pick_walk_target, normalize_url, COLLECT_ANCHORS_JS ----
+
+from video_capture import pick_walk_target, normalize_url, COLLECT_ANCHORS_JS  # noqa: E402
+
+
+def _cand(href, x=100, y=300, w=200, h=120, text="link"):
+    return {"href": href, "x": x, "y": y, "w": w, "h": h, "text": text}
+
+
+def test_collect_anchors_js_is_a_function_expression():
+    assert "querySelectorAll" in COLLECT_ANCHORS_JS
+    assert "getBoundingClientRect" in COLLECT_ANCHORS_JS
+
+
+def test_normalize_url_strips_fragment_and_trailing_slash():
+    assert normalize_url("https://A.com/x/#frag") == "https://a.com/x"
+    assert normalize_url("https://a.com/") == "https://a.com"
+
+
+def test_pick_prefers_largest_same_origin_link():
+    base = "https://site.com/"
+    cands = [
+        _cand("https://site.com/small", w=50, h=50, text="tiny"),
+        _cand("https://site.com/big", w=300, h=200, text="Big Poster"),
+    ]
+    t = pick_walk_target(cands, base, set())
+    assert t["href"] == "https://site.com/big"
+    assert t["label"] == "Big Poster"
+    assert 0.0 <= t["x"] <= 1.0 and 0.0 <= t["y"] <= 1.0
+
+
+def test_pick_skips_external_and_visited_and_below_fold():
+    base = "https://site.com/"
+    cands = [
+        _cand("https://other.com/x", w=400, h=400, text="external"),
+        _cand("https://site.com/seen", w=400, h=400, text="seen"),
+        _cand("https://site.com/low", y=760, w=400, h=100, text="below fold"),
+        _cand("https://site.com/good", y=300, w=120, h=90, text="good"),
+    ]
+    visited = {normalize_url("https://site.com/seen")}
+    t = pick_walk_target(cands, base, visited)
+    assert t["href"] == "https://site.com/good"
+
+
+def test_pick_skips_denylisted_hrefs():
+    base = "https://site.com/"
+    cands = [_cand("https://site.com/logout", w=400, h=400, text="Logout")]
+    assert pick_walk_target(cands, base, set()) is None
+
+
+def test_pick_returns_none_when_no_candidates():
+    assert pick_walk_target([], "https://site.com/", set()) is None
+

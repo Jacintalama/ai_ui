@@ -35,6 +35,73 @@ def same_origin(base_url: str, href: str) -> bool:
     return bool(h.netloc) and _registrable_host(h.hostname or "") == _registrable_host(b.hostname or "")
 
 
+COLLECT_ANCHORS_JS = """() => {
+  const out = [];
+  document.querySelectorAll('a[href]').forEach((a) => {
+    const r = a.getBoundingClientRect();
+    if (r.width < 10 || r.height < 10) return;
+    out.push({
+      href: a.href || "",
+      x: r.x + r.width / 2,
+      y: r.y + r.height / 2,
+      w: r.width,
+      h: r.height,
+      text: (a.innerText || "").trim().slice(0, 48),
+    });
+  });
+  return out;
+}"""
+
+# Hrefs whose path/text suggest a state-changing or dead-end action. Never walk into these.
+_WALK_DENY = ("logout", "signout", "sign-out", "log-out", "delete", "remove", "/wp-admin")
+
+# Visible band for a walk target: keep the eventual cursor inside the rendered frame.
+_WALK_Y_MIN = 0.03
+_WALK_Y_MAX = 0.72
+
+
+def normalize_url(url: str) -> str:
+    """URL without fragment or trailing slash, host lowercased (for dedupe)."""
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    netloc = host + (f":{p.port}" if p.port else "")
+    path = p.path.rstrip("/")
+    base = f"{p.scheme}://{netloc}{path}"
+    return base + (f"?{p.query}" if p.query else "")
+
+
+def pick_walk_target(
+    candidates: list[dict],
+    base_url: str,
+    visited: set[str],
+    *,
+    vw: int = 1280,
+    vh: int = 800,
+) -> dict | None:
+    """Largest visible same-origin, unvisited, non-denied link in the top 72%."""
+    best = None
+    best_area = 0.0
+    for c in candidates:
+        href = c.get("href") or ""
+        if not same_origin(base_url, href):
+            continue
+        if normalize_url(href) in visited:
+            continue
+        low = href.lower()
+        if any(word in low for word in _WALK_DENY):
+            continue
+        yf = c["y"] / vh
+        xf = c["x"] / vw
+        if not (_WALK_Y_MIN <= yf <= _WALK_Y_MAX and 0.0 <= xf <= 1.0):
+            continue
+        area = float(c.get("w", 0)) * float(c.get("h", 0))
+        if area > best_area:
+            best_area = area
+            best = {"href": href, "x": round(xf, 3), "y": round(yf, 3),
+                    "label": (c.get("text") or "").strip()}
+    return best
+
+
 class CaptureError(Exception):
     """Capture could not be performed (bad/blocked URL, timeout, nav failure)."""
 
