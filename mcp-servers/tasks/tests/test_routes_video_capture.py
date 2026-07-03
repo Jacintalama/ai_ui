@@ -84,10 +84,10 @@ async def test_capture_endpoint_stores_frames(db_session, tmp_path, monkeypatch)
     the returned frames are stored as screenshots on the job."""
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
 
-    async def fake_capture(url, *, max_frames=5):
-        return [_png(), _png(), _png()], {"title": "Example"}
+    async def fake_capture_walk(url, **kw):
+        return [_png(), _png(), _png()], [], {"title": "Example"}
 
-    monkeypatch.setattr(routes_video, "capture_site", fake_capture)
+    monkeypatch.setattr(routes_video, "capture_walk", fake_capture_walk)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         draft = await c.post("/api/video-jobs/draft",
@@ -107,10 +107,10 @@ async def test_capture_persists_host_in_site_context(db_session, tmp_path, monke
     from pathlib import Path
     monkeypatch.setenv("APPS_DIR", str(tmp_path))
 
-    async def fake_capture(url, *, max_frames=5):
-        return [_png()], {"title": "Example"}
+    async def fake_capture_walk(url, **kw):
+        return [_png()], [], {"title": "Example"}
 
-    monkeypatch.setattr(routes_video, "capture_site", fake_capture)
+    monkeypatch.setattr(routes_video, "capture_walk", fake_capture_walk)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         draft = await c.post("/api/video-jobs/draft",
@@ -124,3 +124,35 @@ async def test_capture_persists_host_in_site_context(db_session, tmp_path, monke
     ctx = json.loads(
         (Path(str(tmp_path)) / slug / ".video" / str(jid) / "site_context.json").read_text())
     assert ctx["host"] == "example.com"
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_capture_from_url_writes_walk_json(db_session, tmp_path, monkeypatch):
+    """capture-from-url walks multiple pages and persists the walk plan next to
+    site_context.json so the worker can build a cursor-driven video."""
+    import json
+    from pathlib import Path
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+
+    fake_walk = [
+        {"url": "https://s.com/", "title": "Home", "click": {"x": 0.1, "y": 0.4, "label": "A"}},
+        {"url": "https://s.com/a", "title": "A", "click": None},
+    ]
+
+    async def fake_capture_walk(url, **kw):
+        return [b"PNG1", b"PNG2"], fake_walk, {"title": "Home"}
+
+    monkeypatch.setattr(routes_video, "capture_walk", fake_capture_walk)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        draft = await c.post("/api/video-jobs/draft",
+                             json={"title": "t", "prompt": "", "style": "clean_product_demo",
+                                   "voice": "amy"}, headers=HEAD)
+        jid = draft.json()["id"]
+        slug = draft.json()["slug"]
+        r = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
+                         json={"url": "https://s.com/", "max_frames": 4}, headers=HEAD)
+    assert r.status_code == 200
+    walk_path = Path(str(tmp_path)) / slug / ".video" / str(jid) / "walk.json"
+    assert walk_path.exists()
+    assert json.loads(walk_path.read_text())[0]["click"]["label"] == "A"

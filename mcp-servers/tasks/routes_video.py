@@ -66,7 +66,7 @@ from video_refine import (
     mark_proposal_applied,
     refine_plan,
 )
-from video_capture import CaptureError, assert_capturable, capture_enabled, capture_site
+from video_capture import CaptureError, assert_capturable, capture_enabled, capture_walk
 from video_validation import ScreenshotRejected, validate_screenshot
 from video_versions import find_version, list_versions
 
@@ -838,14 +838,14 @@ async def capture_from_url(
         str(_apps_dir()), int(os.environ.get("VIDEO_MIN_FREE_DISK_MB", "2000"))
     ):
         raise HTTPException(507, "Insufficient storage; try again later")
-    frames = max(1, min(body.max_frames or 5, MAX_FILES))
     try:
-        # Hard overall wall-clock cap (below the bot's 45s client timeout) so a
-        # capture — including time queued behind another behind _CAPTURE_LOCK —
-        # never outlives the caller and orphans stored work. Cancellation unwinds
-        # capture_site's finally (browser closed) before anything is stored.
-        captured, site_context = await asyncio.wait_for(
-            capture_site(body.url, max_frames=frames), timeout=40.0)
+        # Hard overall wall-clock cap so a capture (including time queued behind
+        # another behind _CAPTURE_LOCK, plus the extra page navigations a walk
+        # does) never outlives the caller and orphans stored work. Cancellation
+        # unwinds capture_walk's finally (browser closed) before anything is
+        # stored.
+        captured, walk, site_context = await asyncio.wait_for(
+            capture_walk(body.url, max_pages=min(body.max_frames or 4, 4)), timeout=90.0)
     except asyncio.TimeoutError:
         logger.warning("capture timed out: job=%s url=%s", jid, body.url)
         raise HTTPException(504, "site capture timed out — try again")
@@ -857,8 +857,11 @@ async def capture_from_url(
     shots = await _store_screenshot_blobs(slug, str(jid), blobs)
     try:
         site_context = {**(site_context or {}), "host": host, "url": body.url}
-        ctx_path = _apps_dir() / slug / ".video" / str(jid) / "site_context.json"
+        job_video_dir = _apps_dir() / slug / ".video" / str(jid)
+        ctx_path = job_video_dir / "site_context.json"
         ctx_path.write_text(json.dumps(site_context))
+        walk_path = job_video_dir / "walk.json"
+        walk_path.write_text(json.dumps(walk))
     except Exception:  # noqa: BLE001 - context is best-effort
         logger.warning("could not write site_context for job=%s", jid)
     return {"screenshots": shots, "count": len(shots)}
