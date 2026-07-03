@@ -8,7 +8,7 @@ import json
 import anthropic
 import pytest
 
-from video_plan import PlanInvalid, generate_plan, validate_plan
+from video_plan import PlanInvalid, ensure_anim_narration, generate_plan, validate_plan
 
 
 def test_rejects_unknown_template():
@@ -372,3 +372,15 @@ async def test_generate_anim_plan_falls_back_on_api_error(tmp_path, monkeypatch)
     plan = await generate_anim_plan(
         "hi there", ["a.png"], screenshot_paths=[("a.png", str(p))], attempts=2)
     assert plan["scenes"]  # deterministic fallback, valid by construction
+
+
+def test_ensure_anim_narration_derives_script_when_missing():
+    # Backward compatibility: without narration_mode, empty narration_script is
+    # still derived from scene copy (existing behavior for non-walk flows).
+    plan = ensure_anim_narration({"scenes": [{"headline": "Hi there"}]})
+    assert (plan.get("narration_script") or "").strip()
+
+
+def test_ensure_anim_narration_respects_off_mode():
+    plan = ensure_anim_narration({"narration_mode": "off", "scenes": [{"headline": "Hi"}]})
+    assert not (plan.get("narration_script") or "").strip()

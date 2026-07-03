@@ -63,4 +63,5 @@ def build_walk_plan(
         "kind": "outro", "headline": host, "subtext": "Watch anytime",
         "motion": "fade", "duration_s": _CARD_S,
     })
-    return sanitize_anim_clicks({"scenes": scenes})
+    plan = {"scenes": scenes, "narration_mode": "off"}
+    return sanitize_anim_clicks(plan)

@@ -30,6 +30,8 @@ def test_build_walk_plan_shape():
     assert page_scenes[0]["click"] == {"x": 0.09, "y": 0.47, "label": "Show"}
     assert "click" not in page_scenes[2]           # None click omitted
     assert page_scenes[0]["headline"] == "Home"
+    # Walk plans are music-bed only: no derived voiceover.
+    assert plan["narration_mode"] == "off"
 
 
 def test_build_walk_plan_respects_duration_cap():

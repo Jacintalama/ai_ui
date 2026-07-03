@@ -376,6 +376,10 @@ def ensure_anim_narration(plan: dict, prompt: str = "") -> dict:
     """
     if not isinstance(plan, dict):
         return plan
+    # Explicit opt-out: the Default-flow walk plan wants music-bed only, no
+    # derived voiceover. Leave narration_script empty so the TTS layer stays silent.
+    if plan.get("narration_mode") == "off":
+        return plan
     if (plan.get("narration_script") or "").strip():
         return plan
     lines: list[str] = []
