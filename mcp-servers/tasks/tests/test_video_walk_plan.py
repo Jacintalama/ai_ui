@@ -5,8 +5,8 @@ def test_clean_headline_strips_site_suffix():
     assert _clean_headline("Home | Animepahe") == "Home"
     assert _clean_headline("Watch X Episode 1 - Animepahe") == "Watch X Episode 1"
     assert _clean_headline("") == ""
-    assert _clean_headline("Page Title – Site Name") == "Page Title"
-    assert _clean_headline("Watch X · Site") == "Watch X"
+    assert _clean_headline("Page Title \u2013 Site Name") == "Page Title"
+    assert _clean_headline("Watch X \u00b7 Site") == "Watch X"
 
 
 def _walk():
