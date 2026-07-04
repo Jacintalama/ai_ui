@@ -1092,6 +1092,10 @@
     const NAV_ENTRIES = [
       {
         attr: "data-aiui-build-website",
+        // Visible to ALL signed-in users, not just admins. The build APIs
+        // already authorize with current_user (owner-scoped), so any logged-in
+        // user may create and manage their own apps.
+        allUsers: true,
         label: "App Builder",
         title: "App Builder — create and manage AI-built apps",
         href: "/Aiuibuilder",
