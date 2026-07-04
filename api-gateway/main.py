@@ -73,6 +73,36 @@ async def close_db_pool():
         logger.info("Database pool closed")
 
 
+_pool_retry_lock: asyncio.Lock = asyncio.Lock()
+_pool_last_attempt: float = 0.0
+
+
+async def ensure_db_pool() -> Optional[asyncpg.Pool]:
+    """Return the pool, lazily (re)creating it if startup init failed.
+
+    On 2026-07-02 the gateway restarted before postgres was ready; init failed
+    once, db_pool stayed None forever, and every real session 401'd (JWTs
+    carry only the user id, so the email lookup needs the DB) while admin
+    checks silently read admin=False. Retry at most once per 10s so a down
+    database cannot stampede connection attempts."""
+    global _pool_last_attempt
+    if db_pool:
+        return db_pool
+    if not DATABASE_URL:
+        return None
+    async with _pool_retry_lock:
+        if db_pool:
+            return db_pool
+        now = time.time()
+        if now - _pool_last_attempt < 10:
+            return None
+        _pool_last_attempt = now
+        await init_db_pool()
+        if db_pool:
+            logger.info("Database pool recovered by lazy re-init")
+        return db_pool
+
+
 # =============================================================================
 # Rate Limiting
 # =============================================================================
@@ -120,10 +150,11 @@ def validate_jwt(token: str) -> Optional[dict]:
 
 
 async def lookup_user_email(user_id: str) -> Optional[str]:
-    if not db_pool:
+    pool = await ensure_db_pool()
+    if not pool:
         return None
     try:
-        async with db_pool.acquire() as conn:
+        async with pool.acquire() as conn:
             row = await conn.fetchrow('SELECT email FROM "user" WHERE id = $1', user_id)
             return row["email"] if row else None
     except Exception as e:
@@ -132,10 +163,11 @@ async def lookup_user_email(user_id: str) -> Optional[str]:
 
 
 async def get_user_groups(email: str) -> List[str]:
-    if not db_pool:
+    pool = await ensure_db_pool()
+    if not pool:
         return []
     try:
-        async with db_pool.acquire() as conn:
+        async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT group_name FROM mcp_proxy.user_group_membership WHERE user_email = $1",
                 email.lower()
@@ -147,10 +179,11 @@ async def get_user_groups(email: str) -> List[str]:
 
 
 async def is_user_admin(email: str) -> bool:
-    if not db_pool:
+    pool = await ensure_db_pool()
+    if not pool:
         return False
     try:
-        async with db_pool.acquire() as conn:
+        async with pool.acquire() as conn:
             row = await conn.fetchrow('SELECT role FROM "user" WHERE email = $1', email.lower())
             return row and row["role"] == "admin"
     except Exception as e:
