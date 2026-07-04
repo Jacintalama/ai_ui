@@ -23,10 +23,15 @@ STYLE_SUCCESS = 3    # green
 STYLE_LINK = 5       # link button (opens a URL; carries `url`, not custom_id)
 STYLE_DANGER = 4     # red (destructive action, e.g. Unpublish)
 
+# Terminal/console-styled embed accent for the channel panels.
+ROBOTIC_CYAN = 0x00E5FF
+
 # Text input styles
 TEXT_PARAGRAPH = 2
 
 # custom_id schemes
+PANEL_NEW_ID = "aiuibuild:new"        # entry panel "Build an app" button
+PANEL_MYAPPS_ID = "aiuibuild:myapps"  # entry panel "My apps" button
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button -> aiuibuild:tpl:<key>  ("" = Blank)
 BUILD_PREFIX = "aiuibuild:build:"    # modal  -> aiuibuild:build:<key>
 TEMPLATE_SELECT_ID = "aiuibuild:tplselect"  # "Pick a template" dropdown (value=key)
@@ -38,9 +43,9 @@ _MAX_BUTTONS = _MAX_PER_ROW * _MAX_ROWS  # 25
 
 PANEL_CONTENT = (
     "\U0001f680 **AIUI App Builder**\n"
-    "Pick a template and I'll open a **private space** just for you to build, "
-    "preview, and publish your app — only you and the bot see it. Or hit "
-    "**Blank** to start from scratch."
+    "Hit **\U0001f680 Build an app** and I'll open a **private space** just for "
+    "you to build, preview, and publish your app — only you and the bot see it. "
+    "Or hit **\U0001f4c2 My apps** to revisit what you've already made."
 )
 
 
@@ -48,32 +53,24 @@ def _button(label: str, custom_id: str, style: int) -> dict:
     return {"type": BUTTON, "style": style, "label": label[:80], "custom_id": custom_id}
 
 
-# Robotic/terminal theme: electric-cyan accent bar on the panel embeds.
-ROBOTIC_CYAN = 0x00E5FF
-
-
-def build_panel_embed() -> dict:
-    """Terminal/console-styled embed for the #app-builder channel panel."""
-    return {
-        "title": "🤖 AIUI · APP BUILDER",
-        "color": ROBOTIC_CYAN,
-        "description": (
-            "```\n"
-            "> build unit online\n"
-            "> select a template to deploy\n"
-            "> a private space opens — only you + the bot\n"
-            "> or run  BLANK  for an empty project\n"
-            "```"
-        ),
-        "footer": {"text": "AIUI · automated build unit"},
-    }
-
-
 def build_panel_payload(templates: list[dict]) -> dict:
-    """Pinned panel: a single 'Pick a template…' dropdown (one option per
-    template, with a 1-line description) plus a Blank button. Replaces the old
-    25-button grid — far less visual clutter, same build flow on selection.
-    Caps at 25 options (Discord's select limit)."""
+    """Pinned entry panel: two buttons — '\U0001f680 Build an app' (opens a
+    private build space) and '\U0001f4c2 My apps' (revisit existing apps). The
+    template dropdown + Blank now live in build_template_picker_components(),
+    posted into the user's private thread once they click Build. The `templates`
+    arg is unused here but kept so the setup script's call signature is stable."""
+    return {"content": PANEL_CONTENT, "components": [
+        {"type": ACTION_ROW, "components": [
+            _button("\U0001f680 Build an app", PANEL_NEW_ID, STYLE_SUCCESS),
+            _button("\U0001f4c2 My apps", PANEL_MYAPPS_ID, STYLE_PRIMARY),
+        ]},
+    ]}
+
+
+def build_template_picker_components(templates: list[dict]) -> list[dict]:
+    """Template picker rows: a single 'Pick a template…' dropdown (one option
+    per template, with a 1-line description) plus a Blank button. Posted into
+    the user's private thread. Caps at 25 options (Discord's select limit)."""
     options: list[dict] = []
     for t in templates[:_MAX_SELECT_OPTIONS]:
         key = t.get("key")
@@ -92,10 +89,10 @@ def build_panel_payload(templates: list[dict]) -> dict:
         "options": options,
     }
     blank = _button("⬜ Blank", TEMPLATE_PREFIX, STYLE_SECONDARY)
-    return {"content": "", "embeds": [build_panel_embed()], "components": [
+    return [
         {"type": ACTION_ROW, "components": [select]},
         {"type": ACTION_ROW, "components": [blank]},
-    ]}
+    ]
 
 
 def build_modal_payload(template_key: str | None, template_label: str | None = None) -> dict:
@@ -123,6 +120,14 @@ def build_modal_payload(template_key: str | None, template_label: str | None = N
             }
         ],
     }
+
+
+def is_panel_new(custom_id: str) -> bool:
+    return custom_id == PANEL_NEW_ID
+
+
+def is_panel_myapps(custom_id: str) -> bool:
+    return custom_id == PANEL_MYAPPS_ID
 
 
 def is_panel_button(custom_id: str) -> bool:
@@ -157,16 +162,36 @@ UNPUBLISH_PREFIX = "aiuibuild:unpublish:"
 ENHANCE_MODAL_PREFIX = "aiuibuild:enhancemodal:"
 
 
-def build_ready_components(slug: str, preview_url: str = "") -> list[dict]:
+def _visual_editor_button(slug: str, owner: str) -> dict | None:
+    """Link button that deep-links into the web Visual Editor for `slug`, signed
+    for `owner` (a fresh short-lived token per render). None if owner is unknown."""
+    if not owner:
+        return None
+    from config import settings
+    from handlers.visual_edit_token import sign_edit_token
+    token = sign_edit_token(slug, owner)
+    url = f"{settings.tasks_public_url.rstrip('/')}/tasks/edit/{slug}?token={token}"
+    return {"type": BUTTON, "style": STYLE_LINK, "label": "🎨 Visual Editor",
+            "url": url}
+
+
+def build_ready_components(slug: str, preview_url: str = "", *, owner: str) -> list[dict]:
     """Action row for the build-ready message: green Publish + blurple Enhance,
-    plus an 'Open preview' link button when preview_url is set."""
+    plus an 'Open preview' link button when preview_url is set, plus a
+    'Visual edit' link button that deep-links into the tasks editor with a
+    slug-bound signed token."""
+    from config import settings  # local import — avoid top-level cycle
+    from handlers.visual_edit_token import sign_edit_token
+
     buttons: list[dict] = [
         _button("\U0001f7e2 Publish", f"{PUBLISH_PREFIX}{slug}", STYLE_SUCCESS),
-        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
     ]
     if preview_url:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
                         "label": "\U0001f517 Open preview", "url": preview_url})
+    ve = _visual_editor_button(slug, owner)
+    if ve:
+        buttons.append(ve)
     return [{"type": ACTION_ROW, "components": buttons}]
 
 
@@ -205,13 +230,16 @@ def slug_from_publish_button(custom_id: str) -> str:
     return slug
 
 
-def build_published_components(slug: str, public_url: str = "") -> list[dict]:
-    """Buttons on the 'Published!' message: blurple Enhance + red Unpublish,
+def build_published_components(slug: str, public_url: str = "", *,
+                               owner: str = "") -> list[dict]:
+    """Buttons on the 'Published!' message: 🎨 Visual Editor + red Unpublish,
     plus an 'Open live' link button."""
-    buttons: list[dict] = [
-        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
-        _button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}", STYLE_DANGER),
-    ]
+    buttons: list[dict] = []
+    ve = _visual_editor_button(slug, owner)
+    if ve:
+        buttons.append(ve)
+    buttons.append(_button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}",
+                           STYLE_DANGER))
     if public_url:
         buttons.append({"type": BUTTON, "style": STYLE_LINK,
                         "label": "\U0001f517 Open live", "url": public_url})
@@ -276,6 +304,9 @@ SELECT_MENU = 3  # Discord string-select component type
 
 APP_SELECT_ID = "aiuibuild:appselect"  # the dropdown's custom_id (exact match)
 STATUS_PREFIX = "aiuibuild:status:"     # status button -> aiuibuild:status:<slug>
+DELETE_PREFIX = "aiuibuild:del:"         # delete button -> aiuibuild:del:<slug>
+DEL_CONFIRM_PREFIX = "aiuibuild:del-confirm:"  # confirm-delete -> :<slug>
+DEL_CANCEL_PREFIX = "aiuibuild:del-cancel:"    # cancel-delete  -> :<slug>
 _MAX_SELECT_OPTIONS = 25                 # Discord hard limit
 
 
@@ -289,6 +320,40 @@ def is_status_button(custom_id: str) -> bool:
 
 def slug_from_status_button(custom_id: str) -> str:
     return _slug_after(custom_id, STATUS_PREFIX)
+
+
+def is_app_delete(custom_id: str) -> bool:
+    return custom_id.startswith(DELETE_PREFIX)
+
+
+def slug_from_delete_button(custom_id: str) -> str:
+    return _slug_after(custom_id, DELETE_PREFIX)
+
+
+def is_del_confirm(custom_id: str) -> bool:
+    return custom_id.startswith(DEL_CONFIRM_PREFIX)
+
+
+def slug_from_del_confirm(custom_id: str) -> str:
+    return _slug_after(custom_id, DEL_CONFIRM_PREFIX)
+
+
+def is_del_cancel(custom_id: str) -> bool:
+    return custom_id.startswith(DEL_CANCEL_PREFIX)
+
+
+def slug_from_del_cancel(custom_id: str) -> str:
+    return _slug_after(custom_id, DEL_CANCEL_PREFIX)
+
+
+def build_delete_confirm_components(slug: str) -> list[dict]:
+    """Confirmation-card buttons for deleting an app: a red Confirm (carries the
+    slug) + a grey Cancel. Mirrors build_confirm_components but slug-bound and
+    danger-styled, since delete is destructive."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("🗑 Delete it", f"{DEL_CONFIRM_PREFIX}{slug}", STYLE_DANGER),
+        _button("✖ Cancel", f"{DEL_CANCEL_PREFIX}{slug}", STYLE_SECONDARY),
+    ]}]
 
 
 def build_apps_select_components(projects: list[dict]) -> list[dict]:
@@ -319,13 +384,17 @@ def build_apps_select_components(projects: list[dict]) -> list[dict]:
 
 def build_project_menu_components(
     slug: str, *, published: bool, public_url: str = "", preview_url: str = "",
+    owner: str = "",
 ) -> list[dict]:
-    """State-aware action row for a selected app:
-    Enhance + (Publish | Unpublish) + an Open link (only when its URL is set) + Status.
-    Max 5 buttons per row; we emit at most 4."""
-    buttons: list[dict] = [
-        _button("✏️ Enhance", f"{ENHANCE_PREFIX}{slug}", STYLE_PRIMARY),
-    ]
+    """State-aware action buttons for a selected app:
+    🎨 Visual Editor + (Publish | Unpublish) + an Open/Preview link (only when
+    its URL is set) + Status + Delete. Discord allows at most 5 buttons per action
+    row, so the buttons overflow into a second action row when needed (a published
+    app with its 'Open live' link reaches 5, pushing Delete to row 2)."""
+    buttons: list[dict] = []
+    ve = _visual_editor_button(slug, owner)
+    if ve:
+        buttons.append(ve)
     if published:
         buttons.append(_button("\U0001f50c Unpublish", f"{UNPUBLISH_PREFIX}{slug}", STYLE_DANGER))
         if public_url:
@@ -337,7 +406,10 @@ def build_project_menu_components(
             buttons.append({"type": BUTTON, "style": STYLE_LINK,
                             "label": "\U0001f517 Open preview", "url": preview_url})
     buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
-    return [{"type": ACTION_ROW, "components": buttons}]
+    buttons.append(_button("🗑 Delete", f"{DELETE_PREFIX}{slug}", STYLE_DANGER))
+    # Chunk into action rows of at most 5 buttons (Discord's per-row limit).
+    return [{"type": ACTION_ROW, "components": buttons[i:i + _MAX_PER_ROW]}
+            for i in range(0, len(buttons), _MAX_PER_ROW)]
 
 
 # --- Schedules (Discord cron jobs): panel, modal, confirm card, list ---
@@ -360,39 +432,22 @@ SCHED_WHEN_INPUT = "when"
 
 SCHEDULES_PANEL_CONTENT = (
     "⏰ **Scheduled tasks**\n"
-    "Set up a recurring task in plain English — e.g. *write my daily focus "
-    "list* / *every morning*. Results land in your private thread. "
-    "Times are **Manila time (GMT+8)**. No coding, no cron syntax."
+    "Set up a recurring task in plain English — e.g. *summarize my unread "
+    "emails* / *every morning*. Results land in your private thread. "
+    "No coding, no cron syntax."
 )
 
 _MAX_SCHED_ROWS = 5  # Discord allows at most 5 action rows per message
 
 
-def build_schedules_embed() -> dict:
-    """Terminal/console-styled embed for the #cron-job channel panel."""
-    return {
-        "title": "⏰ AIUI · SCHEDULER",
-        "color": ROBOTIC_CYAN,
-        "description": (
-            "```\n"
-            "> describe a task in plain english\n"
-            "> set the cycle — e.g. every morning\n"
-            "> times run in Manila · GMT+8\n"
-            "> results -> your private thread\n"
-            "```"
-        ),
-        "footer": {"text": "AIUI · scheduler unit"},
-    }
-
-
 def build_schedules_panel() -> dict:
-    """Pinned channel panel: 'Open my schedules' → the user's private thread,
-    where everything (New / list / per-schedule actions) lives. Access is
-    automatic for anyone who can see the channel — no account-linking step."""
+    """Pinned channel panel: 'Open my schedules' (→ private thread) + Link.
+    Everything else (New / list / per-schedule actions) lives in the thread."""
     row = {"type": ACTION_ROW, "components": [
         _button("⏰ Open my schedules", SCHED_OPEN_ID, STYLE_SUCCESS),
+        _button("\U0001f517 Link my account", LINK_START_ID, STYLE_PRIMARY),
     ]}
-    return {"content": "", "embeds": [build_schedules_embed()], "components": [row]}
+    return {"content": SCHEDULES_PANEL_CONTENT, "components": [row]}
 
 
 def build_schedules_dashboard(schedules: list[dict]) -> dict:
@@ -437,24 +492,20 @@ def build_schedule_card(s: dict) -> dict:
     when = cron_to_human(s.get("cron_expr", ""))
     prompt = (s.get("prompt") or "").strip() or "(no description)"
     embed = {
-        "author": {"name": "AIUI · Scheduler"},
         "title": f"📅 {prompt}"[:256],
         "color": schedule_color(s),
         "fields": [
             {"name": "When", "value": (when or "—")[:1024], "inline": True},
             {"name": "Status", "value": schedule_status_label(s), "inline": True},
         ],
-        "footer": {"text": "Manila · GMT+8"},
     }
-    # Intent-coded button hierarchy: green = go, blurple = primary edit,
-    # red = destructive, grey = neutral toggle.
-    buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SUCCESS)]
+    buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SECONDARY)]
     if s.get("enabled", True):
-        buttons.append(_button("⏸️ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
+        buttons.append(_button("⏸ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
     else:
         buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
     buttons.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", STYLE_PRIMARY))
-    buttons.append(_button("🗑️ Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
+    buttons.append(_button("\U0001f5d1 Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
     return {"embeds": [embed], "components": [{"type": ACTION_ROW, "components": buttons}]}
 
 
@@ -480,11 +531,11 @@ def build_schedule_modal() -> dict:
                 "type": TEXT_INPUT, "custom_id": SCHED_WHAT_INPUT,
                 "label": "What should it do?", "style": TEXT_PARAGRAPH,
                 "required": True, "max_length": 2000,
-                "placeholder": "e.g. write a short daily motivation message and 3 focus tips",
+                "placeholder": "e.g. summarize my unread emails and list the top 3",
             }]},
             {"type": ACTION_ROW, "components": [{
                 "type": TEXT_INPUT, "custom_id": SCHED_WHEN_INPUT,
-                "label": "How often? (Manila time, GMT+8)", "style": TEXT_SHORT,
+                "label": "How often?", "style": TEXT_SHORT,
                 "required": True, "max_length": 60,
                 "placeholder": "every morning  /  every Monday 9am  /  every 30 minutes",
             }]},
@@ -524,6 +575,40 @@ def token_from_connect_resume(custom_id: str) -> str:
     return custom_id[len(CONNECT_RESUME_PREFIX):]
 
 
+def build_panel_embed() -> dict:
+    """Terminal/console-styled embed for the #app-builder channel panel."""
+    return {
+        "title": "🤖 AIUI · APP BUILDER",
+        "color": ROBOTIC_CYAN,
+        "description": (
+            "```\n"
+            "> build unit online\n"
+            "> select a template to deploy\n"
+            "> a private space opens — only you + the bot\n"
+            "> or run  BLANK  for an empty project\n"
+            "```"
+        ),
+        "footer": {"text": "AIUI · automated build unit"},
+    }
+
+
+def build_schedules_embed() -> dict:
+    """Terminal/console-styled embed for the #cron-job channel panel."""
+    return {
+        "title": "⏰ AIUI · SCHEDULER",
+        "color": ROBOTIC_CYAN,
+        "description": (
+            "```\n"
+            "> describe a task in plain english\n"
+            "> set the cycle — e.g. every morning\n"
+            "> times run in Manila · GMT+8\n"
+            "> results -> your private thread\n"
+            "```"
+        ),
+        "footer": {"text": "AIUI · scheduler unit"},
+    }
+
+
 def build_schedule_list(schedules: list[dict]) -> dict:
     """Ephemeral 'My schedules' message: a text summary + up to 5 rows of
     Run / Pause-or-Resume / Delete buttons (one row per schedule)."""
@@ -542,13 +627,13 @@ def build_schedule_list(schedules: list[dict]) -> dict:
         state = "active" if enabled else "paused"
         tail = f", last run: {status}" if status else ""
         lines.append(f"• {name}  *({state}{tail})*")
-        buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SUCCESS)]
+        buttons = [_button("▶️ Run now", f"{SCHED_RUN_PREFIX}{sid}", STYLE_SECONDARY)]
         if enabled:
-            buttons.append(_button("⏸️ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
+            buttons.append(_button("⏸ Pause", f"{SCHED_PAUSE_PREFIX}{sid}", STYLE_SECONDARY))
         else:
             buttons.append(_button("▶️ Resume", f"{SCHED_RESUME_PREFIX}{sid}", STYLE_SUCCESS))
         buttons.append(_button("✏️ Edit", f"{SCHED_EDIT_PREFIX}{sid}", STYLE_PRIMARY))
-        buttons.append(_button("🗑️ Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
+        buttons.append(_button("\U0001f5d1 Delete", f"{SCHED_DEL_PREFIX}{sid}", STYLE_DANGER))
         rows.append({"type": ACTION_ROW, "components": buttons})
     if len(schedules) > _MAX_SCHED_ROWS:
         lines.append(f"…and {len(schedules) - _MAX_SCHED_ROWS} more.")

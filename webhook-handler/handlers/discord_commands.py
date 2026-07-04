@@ -8,15 +8,25 @@ from typing import Any, Awaitable, Callable
 from clients.discord import DiscordClient
 from clients import connectors
 from config import settings
-from handlers import connector_intent
 from handlers.commands import CommandRouter, CommandContext
+from handlers import connector_intent
+from handlers import intent_cards
 from handlers.schedule_parse import parse_when
+from handlers import schedule_picker
+from datetime import datetime, timedelta, timezone
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _valid_email(email: str) -> bool:
     return bool(_EMAIL_RE.match((email or "").strip()))
+
+
+def _manila_now() -> datetime:
+    """Current wall-clock time in Manila as a naive datetime. Manila is a fixed
+    UTC+8 with no DST, so a constant offset avoids depending on the IANA tz
+    database (tzdata) being present in the webhook-handler container."""
+    return (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
 
 
 def _needs_connect(needs: set[str], *, linked: set[str]) -> list[str]:
@@ -40,6 +50,10 @@ from handlers.app_builder_panel import (
     is_enhance_modal, slug_from_enhance_modal,
     is_app_select,
     is_status_button, slug_from_status_button,
+    is_app_delete, slug_from_delete_button,
+    is_del_confirm, slug_from_del_confirm,
+    is_del_cancel, slug_from_del_cancel,
+    build_delete_confirm_components,
     build_schedule_modal, build_confirm_components, build_connect_components,
     is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
@@ -59,7 +73,16 @@ from handlers.app_builder_panel import (
     is_sched_editmodal, id_from_editmodal,
     is_sched_open, is_sched_select,
     is_template_select,
+    is_panel_new,
+    is_panel_myapps,
+    build_template_picker_components,
+    build_apps_select_components,
 )
+from handlers import cronjob_panel as cron
+from handlers import onboarding
+from handlers import recruiting_panel
+from handlers import recruiting_review as rr
+from handlers import video_panel as vid
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +100,9 @@ DEFERRED_CHANNEL_MESSAGE = 5
 DEFERRED_UPDATE_MESSAGE = 6
 UPDATE_MESSAGE = 7  # edit the component message in place (used for Cancel)
 MODAL = 9
+CHANNEL_MESSAGE = 4        # CHANNEL_MESSAGE_WITH_SOURCE — new (ephemeral) message
+UPDATE_MESSAGE = 7         # edit the message the component is attached to
+EPHEMERAL = 64             # message flag
 
 
 class DiscordCommandHandler:
@@ -89,6 +115,29 @@ class DiscordCommandHandler:
         # on Confirm/Cancel. In-memory and per-process (matches the rest of the
         # Discord flow); abandoned entries are tiny and harmless.
         self._pending_schedules: dict[str, dict] = {}
+        # token -> accumulating picker selections (kind/freq/hour/weekday/date)
+        # for the click date/time picker; resolved to a schedule on task-modal submit.
+        self._pending_picks: dict[str, dict] = {}
+        # Strong refs to fire-and-forget background tasks so they can't be
+        # garbage-collected mid-flight; cleared by the done-callback.
+        self._bg_tasks: set = set()
+
+    def _spawn(self, coro) -> "asyncio.Task":
+        """Launch a background task, keep a strong reference, and log any
+        exception (a bare create_task drops the ref and swallows failures, so
+        a button/modal/slash action could silently vanish)."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._on_bg_task_done)
+        return task
+
+    def _on_bg_task_done(self, task: "asyncio.Task") -> None:
+        self._bg_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("Discord background task failed: %r", exc, exc_info=exc)
 
     async def handle_interaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
@@ -125,6 +174,8 @@ class DiscordCommandHandler:
     async def _handle_application_command(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle a slash command interaction."""
         data = payload.get("data", {})
+        if data.get("name") == "video":
+            return await self._handle_video_command(payload)
         options = data.get("options", [])
         interaction_token = payload.get("token", "")
 
@@ -139,6 +190,7 @@ class DiscordCommandHandler:
         # Discord sends options as: [{"name": "ask", "options": [{"name": "question", "value": "..."}]}]
         # or for simple text: [{"name": "ask", "value": "..."}]
         subcommand, arguments = self._parse_options(options)
+        attachment = self._first_attachment(data)
 
         logger.info(f"Discord command from {user_name}: {subcommand} {arguments[:80]}")
 
@@ -172,10 +224,11 @@ class DiscordCommandHandler:
             },
             notify_channel=notify_channel if channel_id else None,
             notify_channel_rich=notify_channel_rich if channel_id else None,
+            attachment=attachment,
         )
 
         # Fire-and-forget: process in background, edit deferred response
-        asyncio.create_task(self.router.execute(ctx))
+        self._spawn(self.router.execute(ctx))
 
         # Immediate ACK — tells Discord we'll follow up (type 5 = DEFERRED)
         return {"type": DEFERRED_CHANNEL_MESSAGE}
@@ -188,10 +241,10 @@ class DiscordCommandHandler:
         async def notify_channel(msg: str) -> None:
             await self.discord.post_channel_message(channel_id, msg)
 
-        async def notify_channel_rich(msg: str, slug: str, preview_url: str) -> None:
+        async def notify_channel_rich(msg: str, slug: str, preview_url: str, owner: str) -> None:
             await self.discord.post_channel_message(
                 channel_id, "", embeds=[build_ready_embed(slug, preview_url, msg)],
-                components=build_ready_components(slug, preview_url),
+                components=build_ready_components(slug, preview_url, owner=owner),
             )
         return notify_channel, notify_channel_rich
 
@@ -201,6 +254,8 @@ class DiscordCommandHandler:
         other component is a harmless no-op (never a 500)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if cron.is_cron(custom_id):
+            return await self._handle_cron_component(payload, custom_id)
         # All aiuibuild:* component ids are routed by their distinct second
         # segment (enhance/unpublish/publish/appselect/status/tpl), so check
         # order doesn't matter — but any NEW prefix added here must stay disjoint.
@@ -226,9 +281,32 @@ class DiscordCommandHandler:
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_panel_status(ctx, slug),
                 raw_text=f"aiuibuilder status {slug}")
+        # Delete confirm/cancel checked before the bare delete button: their ids
+        # ("aiuibuild:del-confirm:" / "aiuibuild:del-cancel:") are disjoint from
+        # the delete prefix ("aiuibuild:del:"), but order keeps intent explicit.
+        if is_del_confirm(custom_id):
+            return await self._handle_delete_confirm_component(payload, custom_id)
+        if is_del_cancel(custom_id):
+            return {"type": UPDATE_MESSAGE,
+                    "data": {"content": "Cancelled.", "components": []}}
+        if is_app_delete(custom_id):
+            try:
+                slug = slug_from_delete_button(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed delete custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return self._ephemeral_components(
+                f"Delete `{slug}`? This can't be undone.",
+                build_delete_confirm_components(slug), update=False)
         # --- Schedules (aiuisched:*) ---
         if is_sched_new(custom_id):
-            return {"type": MODAL, "data": build_schedule_modal()}
+            token = uuid.uuid4().hex[:16]
+            self._pending_picks[token] = {}
+            card = schedule_picker.build_kind_card(token)
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": card["content"], "components": card["components"], "flags": 64}}
+        if custom_id.startswith(schedule_picker.PICK_PREFIX):
+            return await self._handle_pick_component(payload, custom_id)
         if is_sched_list(custom_id):
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_schedule_list(ctx),
@@ -243,10 +321,10 @@ class DiscordCommandHandler:
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_schedule_card(ctx, sid),
                 raw_text=f"schedules card {sid}")
-        if is_sched_confirm(custom_id):
-            return await self._handle_schedule_confirm(payload, custom_id)
         if is_connect_resume(custom_id):
             return await self._handle_connect_resume(payload, custom_id)
+        if is_sched_confirm(custom_id):
+            return await self._handle_schedule_confirm(payload, custom_id)
         if is_sched_cancel(custom_id):
             try:
                 self._pending_schedules.pop(token_from_cancel(custom_id), None)
@@ -254,6 +332,14 @@ class DiscordCommandHandler:
                 pass
             return {"type": UPDATE_MESSAGE,
                     "data": {"content": "Cancelled.", "components": []}}
+        if custom_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
+            token = custom_id[len(intent_cards.INTENT_CONFIRM_PREFIX):]
+            return await self._handle_intent_confirm(payload, token)
+        if custom_id.startswith(intent_cards.INTENT_CANCEL_PREFIX):
+            token = custom_id[len(intent_cards.INTENT_CANCEL_PREFIX):]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.answer_intent(ctx, token),
+                raw_text="intent answer")
         for pred, extract, action in (
             (is_sched_run, id_from_run, "run"),
             (is_sched_pause, id_from_pause, "pause"),
@@ -286,6 +372,166 @@ class DiscordCommandHandler:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return {"type": MODAL, "data": build_modal_payload(values[0])}
 
+        if is_panel_new(custom_id):
+            return await self._handle_build_new(payload)
+
+        if is_panel_myapps(custom_id):
+            return await self._handle_my_apps(payload)
+
+        # --- Recruiting outreach (aiuiout:*) ---
+        if recruiting_panel.is_out_find(custom_id):
+            return {"type": MODAL, "data": recruiting_panel.build_outreach_modal()}
+
+        if recruiting_panel.is_rev_find(custom_id):
+            return {"type": MODAL, "data": recruiting_panel.build_reverse_modal()}
+
+        if rr.is_out_send(custom_id):
+            return await self._handle_outreach_send(payload, custom_id)
+        if rr.is_out_refresh(custom_id):
+            return await self._handle_outreach_refresh(payload, custom_id)
+        if rr.is_out_sel(custom_id):
+            return await self._handle_outreach_select(payload, custom_id, data)
+        if rr.is_out_edit(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_outreach_edit_open(payload, custom_id, values[0])
+
+        # --- Video studio (aiuivid:*) ---
+        if vid.is_vid_new(custom_id):
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            self._spawn(self._open_video_studio(
+                interaction_token=payload.get("token", ""),
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=payload.get("channel_id", ""),
+                title="Untitled video", prompt="", screenshot_urls=None))
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+        if vid.is_vid_details(custom_id):
+            try:
+                job_id = vid.job_from_details(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_details_modal(job_id)}
+        if vid.is_vid_capture(custom_id):
+            try:
+                job_id = vid.job_from_capture(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_capture_modal(job_id)}
+        if vid.is_vid_list(custom_id):
+            return await self._handle_video_route(
+                payload, lambda ctx: self.router.run_video_list(ctx),
+                raw_text="video list")
+        if (
+            vid.is_vid_style(custom_id)
+            or vid.is_vid_voice(custom_id)
+            or vid.is_vid_mode(custom_id)
+        ):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            try:
+                if vid.is_vid_style(custom_id):
+                    job_id, field = vid.job_from_style(custom_id), {"style": values[0]}
+                elif vid.is_vid_voice(custom_id):
+                    job_id, field = vid.job_from_voice(custom_id), {"voice": values[0]}
+                else:
+                    job_id, field = vid.job_from_mode(custom_id), {"render_mode": values[0]}
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            self._spawn(self._run_video_set(payload, job_id, field))
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        if vid.is_vid_generate(custom_id):
+            try:
+                job_id = vid.job_from_generate(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_generate(ctx, j),
+                raw_text="video generate")
+        if vid.is_vid_gennow(custom_id):
+            try:
+                job_id = vid.job_from_gennow(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_gennow(ctx, j),
+                raw_text="video gennow")
+        if vid.is_vid_refine(custom_id):
+            try:
+                job_id = vid.job_from_refine(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_refine_modal(job_id)}
+        if vid.is_vid_apply(custom_id):
+            try:
+                job_id = vid.job_from_apply(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_apply(ctx, j),
+                raw_text="video apply")
+        if vid.is_vid_version(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            try:
+                job_id = vid.job_from_version(custom_id)
+                version_no = int(values[0])
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload,
+                lambda ctx, j=job_id, n=version_no: self.router.run_video_revert(ctx, j, n),
+                raw_text="video revert")
+        if vid.is_vid_src_url(custom_id):
+            try:
+                job_id = vid.job_from_src_url(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": vid.build_capture_modal(job_id)}
+        if vid.is_vid_src_shots(custom_id):
+            try:
+                job_id = vid.job_from_src_shots(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": (
+                    "**Add your screenshots right here in this thread** (up to 12).\n"
+                    "Three ways to do it:\n"
+                    "1. **Paste** a copied screenshot with **Ctrl+V** (or Cmd+V), then press Enter.\n"
+                    "2. Click the **+** next to the message box, choose **Upload a File**, pick your images.\n"
+                    "3. **Drag** image files from your computer onto this thread.\n"
+                    "On phone: tap the **+** or image icon by the message box and pick from your gallery.\n"
+                    "I will continue automatically once I see them, or tap **Continue** below."
+                ),
+                "components": vid.build_upload_components(job_id)}}
+        if vid.is_vid_src_shots_continue(custom_id):
+            try:
+                job_id = vid.job_from_src_shots_continue(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            self._spawn(self._post_video_describe(payload.get("channel_id", ""), job_id))
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": "Screenshots added.", "components": []}}
+        if vid.is_vid_options(custom_id):
+            try:
+                job_id = vid.job_from_options(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            self._spawn(self._open_video_options(payload, job_id))
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        if vid.is_vid_options_back(custom_id):
+            try:
+                job_id = vid.job_from_options_back(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": "Ready. Generate when you are. Style, voice, and animation are optional.",
+                "components": vid.build_generate_step_components(job_id)}}
+
         if not is_panel_button(custom_id):
             logger.info(f"Ignoring unknown component custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
@@ -314,10 +560,12 @@ class DiscordCommandHandler:
             )
 
         async def on_published(public_url: str) -> None:
+            owner = await self.router._resolve_email_auto(user_id)
             await self.discord.edit_original(
                 interaction_token=interaction_token, content="",
                 embeds=[build_published_embed(slug, public_url)],
-                components=build_published_components(slug, public_url),
+                components=build_published_components(
+                    slug, public_url, owner=owner),
             )
 
         ctx = CommandContext(
@@ -336,8 +584,82 @@ class DiscordCommandHandler:
             },
             on_published=on_published,
         )
-        asyncio.create_task(self.router.run_panel_publish(ctx, slug))
+        self._spawn(self.router.run_panel_publish(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
+
+    def _out_ctx(self, payload: dict[str, Any]) -> CommandContext:
+        """Build a CommandContext for an outreach review component interaction.
+        Its ``edit_message``/``respond`` edit the component's own message in
+        place via the interaction token."""
+        token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def edit_message(msg: dict) -> None:
+            await self.discord.edit_original(
+                interaction_token=token, content=msg.get("content", ""),
+                embeds=msg.get("embeds", []), components=msg.get("components", []))
+
+        async def respond(text: str) -> None:
+            await self.discord.edit_original(interaction_token=token, content=text)
+
+        return CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="outreach",
+            subcommand="outreach", arguments="", platform="discord",
+            respond=respond, edit_message=edit_message,
+            metadata={"interaction_id": payload.get("id", ""), "interaction_token": token,
+                      "guild_id": payload.get("guild_id", "")})
+
+    async def _handle_outreach_select(
+        self, payload: dict[str, Any], custom_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Recipient multi-select changed → patch the selection, re-render in place."""
+        task_id = rr.task_id_from_sel(custom_id)
+        selected = data.get("values") or []
+        ctx = self._out_ctx(payload)
+        self._spawn(self.router.run_outreach_select(ctx, task_id, selected, "", ""))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _handle_outreach_refresh(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Refresh button → re-fetch candidates (no patch), re-render in place."""
+        task_id = rr.task_id_from_refresh(custom_id)
+        ctx = self._out_ctx(payload)
+        self._spawn(self.router.run_outreach_select(ctx, task_id, None, "", ""))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _handle_outreach_edit_open(
+        self, payload: dict[str, Any], custom_id: str, cid: str) -> dict[str, Any]:
+        """Edit dropdown picked a candidate → open a prefilled edit modal. Must
+        respond with the modal synchronously (Discord can't defer-then-modal)."""
+        task_id = rr.task_id_from_edit(custom_id)
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        try:
+            email = await self.router._resolve_email_auto(user.get("id", ""))
+            st = await self.router._tasks_client.get_outreach_candidates(email, task_id)
+        except Exception:  # noqa: BLE001
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        cand = next((c for c in st.get("candidates", []) if c.get("id") == cid), None)
+        if cand is None:
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        return {"type": MODAL, "data": rr.build_edit_modal(task_id, cand)}
+
+    async def _handle_outreach_editmodal(
+        self, payload: dict[str, Any], custom_id: str, values: dict[str, str]) -> dict[str, Any]:
+        """Edit modal submit → save the edited candidate, re-render in place."""
+        task_id, cid = rr.ids_from_editmodal(custom_id)
+        ctx = self._out_ctx(payload)
+        self._spawn(self.router.run_outreach_edit_submit(
+            ctx, task_id, cid, values.get("email", ""), values.get("subject", ""),
+            values.get("body", ""), "", ""))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _handle_outreach_send(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Send button → email the selected candidates, lock the message in place."""
+        task_id = rr.task_id_from_send(custom_id)
+        ctx = self._out_ctx(payload)
+        self._spawn(self.router.run_outreach_send(ctx, task_id))
+        return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_unpublish_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """An Unpublish button click → run_panel_unpublish in the background, ACK deferred."""
@@ -370,7 +692,41 @@ class DiscordCommandHandler:
                 "guild_id": payload.get("guild_id", ""),
             },
         )
-        asyncio.create_task(self.router.run_panel_unpublish(ctx, slug))
+        self._spawn(self.router.run_panel_unpublish(ctx, slug))
+        return {"type": DEFERRED_CHANNEL_MESSAGE}
+
+    async def _handle_delete_confirm_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """A delete-confirm button click → run_panel_delete in the background, ACK deferred."""
+        try:
+            slug = slug_from_del_confirm(custom_id)
+        except ValueError:
+            logger.info(f"Ignoring malformed delete-confirm custom_id: {custom_id}")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""),
+            raw_text=f"aiuibuilder delete {slug}",
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+        )
+        self._spawn(self.router.run_panel_delete(ctx, slug))
         return {"type": DEFERRED_CHANNEL_MESSAGE}
 
     async def _handle_app_select_component(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -386,29 +742,107 @@ class DiscordCommandHandler:
             payload, lambda ctx: self.router.run_panel_menu(ctx, slug),
             raw_text=f"aiuibuilder menu {slug}")
 
-    async def _run_guarded(
-        self,
-        run: Callable[[CommandContext], Awaitable[None]],
-        ctx: CommandContext,
-        interaction_token: str,
-    ) -> None:
-        """Run a deferred background task, guaranteeing a terminal follow-up.
+    async def _handle_cron_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        values = data.get("values") or []
 
-        A deferred ACK leaves the interaction "thinking" until something edits
-        the original message. If ``run`` raises an unexpected error (anything a
-        handler didn't already turn into a user-facing message), edit the
-        message with a friendly error so the button never silently hangs."""
-        try:
-            await run(ctx)
-        except Exception:  # noqa: BLE001 — last line of defense for a deferred ACK
-            logger.exception("deferred interaction task failed")
+        if cron.is_new(custom_id):
+            return self._ephemeral_components(
+                "How often should it run?", cron.build_frequency_components(), update=False)
+
+        if cron.is_freq_button(custom_id):
+            freq = cron.freq_from_button(custom_id)
+            if freq == "hourly":
+                return {"type": MODAL, "data": cron.build_create_modal("0 * * * *")}
+            if freq == "custom":
+                return {"type": MODAL, "data": cron.build_custom_cron_modal()}
+            if freq == "weekly":
+                return self._ephemeral_components(
+                    "Which day?", cron.build_dow_select(), update=True)
+            return self._ephemeral_components(
+                "At what time? (Asia/Manila)", cron.build_hour_select(freq), update=True)
+
+        if cron.is_dow_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return self._ephemeral_components(
+                "At what time? (Asia/Manila)",
+                cron.build_hour_select("weekly", dow=values[0]), update=True)
+
+        if cron.is_hour_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
             try:
-                await self.discord.edit_original(
-                    interaction_token=interaction_token,
-                    content="⚠️ Something went wrong — please try again.",
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("failed to deliver error follow-up")
+                freq, dow = cron.hour_context_from_select(custom_id)
+                cron_expr = cron.cron_from_choice(freq, hour=int(values[0]), dow=dow)
+            except ValueError:
+                logger.info(f"Ignoring malformed cron hour custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return {"type": MODAL, "data": cron.build_create_modal(cron_expr)}
+
+        return await self._handle_cron_manage_component(payload, custom_id)
+
+    async def _handle_cron_manage_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        values = data.get("values") or []
+
+        if cron.is_list(custom_id):
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_list(ctx),
+                raw_text="cronjob list")
+
+        if cron.is_schedule_select(custom_id):
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            sid = values[0]
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_menu(ctx, sid),
+                raw_text=f"cronjob menu {sid}")
+
+        if cron.is_action(custom_id, "runnow"):
+            sid = cron.id_from_action(custom_id, "runnow")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_runnow(ctx, sid),
+                raw_text="cronjob runnow")
+
+        if cron.is_action(custom_id, "pause"):
+            sid = cron.id_from_action(custom_id, "pause")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_pause(ctx, sid),
+                raw_text="cronjob pause")
+
+        if cron.is_action(custom_id, "resume"):
+            sid = cron.id_from_action(custom_id, "resume")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_resume(ctx, sid),
+                raw_text="cronjob resume")
+
+        if cron.is_action(custom_id, "delete"):
+            sid = cron.id_from_action(custom_id, "delete")
+            return self._ephemeral_components(
+                "Delete this schedule? This can't be undone.",
+                cron.build_delete_confirm(sid), update=True)
+
+        if cron.is_action(custom_id, "delconfirm"):
+            sid = cron.id_from_action(custom_id, "delconfirm")
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_cron_delete(ctx, sid),
+                raw_text="cronjob delete")
+
+        if custom_id == cron.DELCANCEL:
+            return self._ephemeral_components("Cancelled.", [], update=True)
+
+        logger.info(f"Ignoring unknown cron custom_id: {custom_id}")
+        return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    @staticmethod
+    def _ephemeral_components(content: str, components: list[dict], *, update: bool) -> dict[str, Any]:
+        """Synchronous component response. update=True edits the current (ephemeral)
+        message (type 7); update=False posts a new ephemeral message (type 4)."""
+        return {
+            "type": UPDATE_MESSAGE if update else CHANNEL_MESSAGE,
+            "data": {"content": content, "components": components, "flags": EPHEMERAL},
+        }
 
     async def _handle_panel_route(
         self, payload: dict[str, Any], run: Callable[[CommandContext], Awaitable[None]],
@@ -447,7 +881,426 @@ class DiscordCommandHandler:
                 "guild_id": payload.get("guild_id", ""),
             },
         )
-        asyncio.create_task(self._run_guarded(run, ctx, interaction_token))
+        self._spawn(run(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_intent_confirm(self, payload: dict[str, Any], token: str) -> dict[str, Any]:
+        """A just-chat 'Yes, do it' click. Build and schedule run in the user's
+        private thread (so the result is actually delivered there, like the panel);
+        other intents reply ephemerally."""
+        pending = await self.router.peek_intent(token)
+        intent = (pending or {}).get("intent")
+        if intent == "build_app":
+            return await self._handle_intent_thread_route(
+                payload, token, kind="builder", raw_text="intent build")
+        if intent == "schedule_task":
+            return await self._handle_intent_thread_route(
+                payload, token, kind="schedules", raw_text="intent schedule")
+        if intent in ("find_jobs", "find_engineers"):
+            # Open the recruiting form (a modal must be the synchronous response).
+            self.router.cancel_intent(token)
+            builder = (recruiting_panel.build_reverse_modal if intent == "find_jobs"
+                       else recruiting_panel.build_outreach_modal)
+            return {"type": MODAL, "data": builder()}
+        if intent == "make_video":
+            # Open the video studio (draft + private thread + wizard) in the bg.
+            self.router.cancel_intent(token)
+            return await self._handle_intent_video_route(
+                payload, (pending or {}).get("detail", ""))
+        return await self._handle_panel_route(
+            payload, lambda ctx: self.router.run_confirmed_intent(ctx, token),
+            raw_text="intent confirm")
+
+    async def _handle_intent_video_route(
+        self, payload: dict[str, Any], detail: str,
+    ) -> dict[str, Any]:
+        """A confirmed 'make a video' -> open the video studio (create a draft +
+        private video thread + the wizard) in the background, seeded with the
+        chat detail as the title/description. ACK ephemeral-deferred within 3s."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+        title = (detail or "Untitled video").strip()[:80] or "Untitled video"
+        self._spawn(self._open_video_studio(
+            interaction_token=interaction_token, user_id=user_id,
+            user_name=user_name, channel_id=channel_id, title=title, prompt=detail))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_intent_thread_route(
+        self, payload: dict[str, Any], token: str, *, kind: str, raw_text: str,
+    ) -> dict[str, Any]:
+        """Open/reuse the user's private thread (builder or schedules), wire result
+        delivery to it, and run the confirmed intent there. ACK ephemeral-deferred
+        within 3s; the thread work + run happen in the background. Mirrors the
+        proven _handle_build_modal_submit pattern."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _open_and_run() -> None:
+            try:
+                target = channel_id
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind=kind)
+                if thread_id:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"Opening your private space → <#{thread_id}>",
+                    )
+                    target = thread_id
+
+                    async def respond(msg: str) -> None:
+                        await self.discord.post_channel_message(target, msg)
+                else:
+                    async def respond(msg: str) -> None:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token, content=msg,
+                        )
+
+                notify_channel, notify_channel_rich = self._channel_notifiers(target)
+                ctx = CommandContext(
+                    user_id=user_id, user_name=user_name, channel_id=target,
+                    raw_text=raw_text, subcommand="aiuibuilder", arguments="",
+                    platform="discord", respond=respond,
+                    metadata={
+                        "interaction_id": payload.get("id", ""),
+                        "interaction_token": interaction_token,
+                        "guild_id": payload.get("guild_id", ""),
+                    },
+                    notify_channel=notify_channel,
+                    notify_channel_rich=notify_channel_rich,
+                )
+                await self.router.run_confirmed_intent(ctx, token)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("intent thread route failed: %s", exc, exc_info=exc)
+
+        self._spawn(_open_and_run())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_video_route(
+        self, payload: dict[str, Any], run: Callable[[CommandContext], Awaitable[None]],
+        *, raw_text: str = "video",
+    ) -> dict[str, Any]:
+        """Build an ephemeral CommandContext for a video-studio component/modal
+        interaction, schedule `run(ctx)` in the background, and ACK
+        ephemeral-deferred (flags=64).
+
+        Unlike `_handle_panel_route`, this binds the channel notifiers
+        (`notify_channel` / `notify_channel_rich`) AND a channel-message poster
+        (`notify_channel_msg`): generate/apply/revert gate their render watcher
+        on `notify_channel` (and `_deliver_video` posts the finished MP4 to
+        `channel_id` + the Refine/version controls via `notify_channel_msg`),
+        and refine posts its proposal via `notify_channel_msg`. The interaction
+        happens inside the user's private video thread, so `channel_id` is that
+        thread and results land there."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        channel_id = payload.get("channel_id", "")
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg, components=components, embeds=embeds,
+            )
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg.get("content", ""),
+                embeds=msg.get("embeds"), components=msg.get("components"),
+            )
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=channel_id,
+            raw_text=raw_text,
+            subcommand="video",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            respond_components=respond_components,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+            notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None,
+            notify_channel_msg=notify_channel_msg if channel_id else None,
+        )
+        self._spawn(run(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _run_video_set(self, payload: dict[str, Any], job_id: str, field: dict) -> None:
+        """Persist a style/voice pick on the draft. The select interaction is
+        ACK'd with DEFERRED_UPDATE_MESSAGE (no message edit), so this needs no
+        responder — the runner saves the field and logs any failure."""
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="video set",
+            subcommand="video", arguments="", platform="discord",
+            respond=lambda m: asyncio.sleep(0))
+        await self.router.run_video_set_field(ctx, job_id, **field)
+
+    async def _post_video_describe(self, channel_id: str, job_id: str) -> None:
+        """Post the Describe-step card into the thread. Used after the screenshots
+        upload step resolves (the Continue button or auto-advance), since that
+        component interaction can only edit/strip its own card, not advance."""
+        if not channel_id:
+            return
+        try:
+            await self.discord.post_channel_message(
+                channel_id,
+                "Screenshots ready. Generate now and I will direct it, or add your own direction.",
+                components=vid.build_choice_components(job_id),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("video describe-step post failed job=%s: %s", job_id, exc)
+
+    async def _open_video_options(self, payload: dict[str, Any], job_id: str) -> None:
+        """Reveal the Style & voice options card by editing the component message
+        in place. The interaction was ACK'd DEFERRED_UPDATE_MESSAGE, so this reads
+        the draft (current style/voice/mode) + voices catalog off the 3s path,
+        then edit_original's the options view onto the same message."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        try:
+            email = await self.router._resolve_email(user.get("id", ""))
+            if email is None:
+                return
+            # Use current-draft to read style/voice/mode/animation for the picker defaults.
+            draft = await self.router._tasks_client.get_current_video_draft(email) or {}
+            voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
+            await self.discord.edit_original(
+                interaction_token=interaction_token,
+                content="Style, voice, and output. Pick, then Generate or go Back.",
+                components=vid.build_options_components(
+                    job_id, voices,
+                    current_style=draft.get("style", "clean_product_demo"),
+                    current_voice=draft.get("voice", "amy"),
+                    current_mode=draft.get("render_mode", "remotion")),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("video options open failed job=%s: %s", job_id, exc)
+            try:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't load Style & voice, please try again.")
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _handle_video_command(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """`/video new` (one-shot: describe + attach screenshots), `/video add`
+        (push the attached screenshots onto the current draft) and `/video list`.
+        ACK ephemeral-deferred."""
+        data = payload.get("data", {})
+        options = data.get("options", [])
+        sub = options[0].get("name") if options else "list"
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        channel_id = payload.get("channel_id", "")
+
+        if sub == "new":
+            title, prompt, urls = self._parse_video_new(data)
+            self._spawn(self._open_video_studio(
+                interaction_token=interaction_token,
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=channel_id, title=title, prompt=prompt,
+                screenshot_urls=urls))
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg, components=components)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=channel_id, raw_text=f"video {sub}", subcommand="video",
+            arguments="", platform="discord", respond=respond,
+            respond_components=respond_components,
+            metadata={"interaction_token": interaction_token, "guild_id": payload.get("guild_id", "")},
+            notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None)
+
+        if sub == "add":
+            urls = [a["url"] for a in self._all_attachments(data) if a.get("url")]
+            self._spawn(self.router.run_video_add(ctx, urls))
+        else:
+            self._spawn(self.router.run_video_list(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _open_video_studio(self, *, interaction_token: str, user_id: str,
+                                 user_name: str, channel_id: str, title: str,
+                                 prompt: str, screenshot_urls: "list[str] | None" = None) -> None:
+        """Create a video draft, open the user's private video thread, point the
+        ephemeral ACK at it, and post the wizard's Step 1 (source choice) card.
+        When screenshot_urls is given (/video new), push those screenshots onto
+        the new draft and skip straight to the Describe step. Shared by the
+        'New video' modal submit and `/video new`."""
+        try:
+            email = await self.router._resolve_email(user_id)
+            if email is None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content=onboarding.not_linked_text_discord(),
+                    components=onboarding.link_button_row(),
+                )
+                return
+            draft = await self.router._tasks_client.create_video_draft(
+                email, title, prompt, "clean_product_demo", "amy",
+                render_mode="remotion", animation_preset="cursor_click")
+            job_id = draft["id"]
+            thread_id = await self._get_or_make_thread(
+                user_id, channel_id, user_name, kind="video")
+            target = thread_id or channel_id
+            if thread_id:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content=f"Your video studio is ready → <#{thread_id}>",
+                )
+            else:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Your video studio is ready below.",
+                )
+            # Push any screenshots attached up-front (/video new). Best-effort: a
+            # failure must not block the studio — the user can still drop images
+            # in the thread or use /video add.
+            added = 0
+            if screenshot_urls:
+                try:
+                    res = await self.router._tasks_client.add_video_screenshots_urls(
+                        email, job_id, screenshot_urls)
+                    added = res.get("count", 0)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("video new: screenshot add failed user=%s: %s", user_id, exc)
+            if added:
+                # Pre-attached screenshots (/video new): the source choice is moot
+                # because screenshots already exist, so skip Step 1 (source) and go
+                # straight to the Describe step.
+                await self.discord.post_channel_message(
+                    target,
+                    f"Screenshots added: {added}/12. "
+                    "Now add a short description of what the walkthrough should show.",
+                    components=vid.build_choice_components(job_id),
+                )
+            else:
+                # Step 1 of the wizard: choose a source (website or screenshots).
+                # Style/voice/output-mode now live behind the optional Style & voice
+                # button at the Generate step, so nothing else is posted up-front.
+                await self.discord.post_channel_message(
+                    target,
+                    "Let's make a video. How do you want to start?\n"
+                    "- **From a website**: paste a link and I screenshot the pages for you.\n"
+                    "- **From my screenshots**: you upload your own images in this thread.",
+                    components=vid.build_source_components(job_id),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_open_video_studio failed user=%s: %s", user_id, exc)
+            try:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't open the video studio — please try again.",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _handle_video_details_modal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'Add title & description' modal submit → patch the draft's title/prompt.
+        ACK ephemeral-deferred within 3s."""
+        data = payload.get("data", {})
+        custom_id = data.get("custom_id", "")
+        try:
+            job_id = vid.job_from_details_modal(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+        title = self._extract_modal_value(data, vid.TITLE_INPUT) or None
+        prompt = self._extract_modal_value(data, vid.PROMPT_INPUT)
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        channel_id = payload.get("channel_id", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg, embeds=embeds, components=components)
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg.get("content", ""),
+                embeds=msg.get("embeds"), components=msg.get("components"))
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=channel_id, raw_text="video details",
+            subcommand="video", arguments="", platform="discord", respond=respond,
+            respond_components=respond_components if channel_id else None,
+            notify_channel_msg=notify_channel_msg if channel_id else None)
+        self._spawn(self.router.run_video_set_details(ctx, job_id, title=title, prompt=prompt))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_video_capture_modal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'Capture from website' modal submit → drive server-side capture of the
+        submitted URL onto the current draft. ACK ephemeral-deferred within 3s;
+        the runner edits the original with progress/result."""
+        data = payload.get("data", {})
+        custom_id = data.get("custom_id", "")
+        try:
+            vid.job_from_capture_modal(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+        url = (self._extract_modal_value(data, vid.URL_INPUT) or "").strip()
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        channel_id = payload.get("channel_id", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg, embeds=embeds, components=components)
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg.get("content", ""),
+                embeds=msg.get("embeds"), components=msg.get("components"))
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=channel_id, raw_text="video capture",
+            subcommand="video", arguments="", platform="discord", respond=respond,
+            respond_components=respond_components if channel_id else None,
+            notify_channel_msg=notify_channel_msg if channel_id else None)
+        self._spawn(self.router.run_video_capture(ctx, url))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -456,6 +1309,8 @@ class DiscordCommandHandler:
         deferred pattern (the watcher posts the link via the bot token later)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if cron.is_create_modal(custom_id) or cron.is_custom_cron_modal(custom_id):
+            return await self._handle_cron_modal_submit(payload, custom_id)
         if is_enhance_modal(custom_id):
             try:
                 slug = slug_from_enhance_modal(custom_id)
@@ -491,18 +1346,148 @@ class DiscordCommandHandler:
                 notify_channel=notify_channel if channel_id else None,
                 notify_channel_rich=notify_channel_rich if channel_id else None,
             )
-            asyncio.create_task(self.router.run_panel_enhance(ctx, slug, change))
+            self._spawn(self.router.run_panel_enhance(ctx, slug, change))
             return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if recruiting_panel.is_out_modal(custom_id):
+            values = {c["custom_id"]: c.get("value", "")
+                      for row in data.get("components", [])
+                      for c in row.get("components", [])}
+            role, location, jobdesc, count = recruiting_panel.parse_outreach_modal(values)
+            interaction_token = payload.get("token", "")
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            channel_id = payload.get("channel_id", "")
+            notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+            async def respond(msg: str) -> None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=msg,
+                )
+
+            async def notify_channel_msg(msg: dict) -> None:
+                await self.discord.post_channel_message(
+                    channel_id, content=msg.get("content", ""),
+                    embeds=msg.get("embeds"), components=msg.get("components"),
+                )
+
+            ctx = CommandContext(
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=channel_id,
+                raw_text="outreach find",
+                subcommand="outreach",
+                arguments="",
+                platform="discord",
+                respond=respond,
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
+                notify_channel=notify_channel if channel_id else None,
+                notify_channel_rich=notify_channel_rich if channel_id else None,
+                notify_channel_msg=notify_channel_msg if channel_id else None,
+            )
+            self._spawn(self.router.run_panel_outreach(ctx, role, location, jobdesc, count))
+            return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if recruiting_panel.is_rev_modal(custom_id):
+            values = {c["custom_id"]: c.get("value", "")
+                      for row in data.get("components", [])
+                      for c in row.get("components", [])}
+            role, location, jobdesc, count = recruiting_panel.parse_outreach_modal(values)
+            interaction_token = payload.get("token", "")
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            channel_id = payload.get("channel_id", "")
+            notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+            async def respond(msg: str) -> None:
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=msg,
+                )
+
+            async def notify_channel_msg(msg: dict) -> None:
+                await self.discord.post_channel_message(
+                    channel_id, content=msg.get("content", ""),
+                    embeds=msg.get("embeds"), components=msg.get("components"),
+                )
+
+            ctx = CommandContext(
+                user_id=user.get("id", ""),
+                user_name=user.get("username", "unknown"),
+                channel_id=channel_id,
+                raw_text="reverse find",
+                subcommand="outreach",
+                arguments="",
+                platform="discord",
+                respond=respond,
+                metadata={
+                    "interaction_id": payload.get("id", ""),
+                    "interaction_token": interaction_token,
+                    "guild_id": payload.get("guild_id", ""),
+                },
+                notify_channel=notify_channel if channel_id else None,
+                notify_channel_rich=notify_channel_rich if channel_id else None,
+                notify_channel_msg=notify_channel_msg if channel_id else None,
+            )
+            self._spawn(self.router.run_panel_reverse(ctx, role, location, jobdesc, count))
+            return {"type": DEFERRED_CHANNEL_MESSAGE}
+        if rr.is_out_editmodal(custom_id):
+            values = {c["custom_id"]: c.get("value", "")
+                      for row in data.get("components", [])
+                      for c in row.get("components", [])}
+            return await self._handle_outreach_editmodal(payload, custom_id, values)
+        if custom_id.startswith(schedule_picker.TASK_MODAL_PREFIX):
+            return await self._handle_pick_task_submit(payload, custom_id)
         if is_sched_modal(custom_id):
             return await self._handle_schedule_modal_submit(payload)
         if is_sched_editmodal(custom_id):
             return self._handle_sched_edit_submit(payload, custom_id)
         if is_link_modal(custom_id):
             return self._handle_link_modal_submit(payload)
+        if vid.is_vid_details_modal(custom_id):
+            return await self._handle_video_details_modal(payload)
+        if vid.is_vid_capture_modal(custom_id):
+            return await self._handle_video_capture_modal(payload)
+        if vid.is_vid_refine_modal(custom_id):
+            try:
+                job_id = vid.job_from_refine_modal(custom_id)
+            except ValueError:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            change = self._extract_modal_value(data, vid.REFINE_INPUT)
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id, ch=change: self.router.run_video_refine(ctx, j, ch),
+                raw_text="video refine")
         if not is_panel_modal(custom_id):
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
         return await self._handle_build_modal_submit(payload, custom_id)
+
+    async def _handle_cron_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        data = payload.get("data", {})
+        name = self._extract_modal_value(data, "name") or ""
+        prompt = self._extract_modal_value(data, "prompt") or ""
+        if cron.is_custom_cron_modal(custom_id):
+            cron_expr = (self._extract_modal_value(data, "cron") or "").strip()
+        else:
+            cron_expr = cron.cron_from_create_modal(custom_id)
+
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="cronjob create",
+            subcommand="cronjob", arguments="", platform="discord",
+            respond=respond,
+        )
+        self._spawn(
+            self.router.run_cron_create(ctx, cron_expr=cron_expr, name=name, prompt=prompt))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": EPHEMERAL}}
 
     async def _handle_build_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """Build-template modal submit. Open a PRIVATE THREAD for the user, post
@@ -525,11 +1510,12 @@ class DiscordCommandHandler:
             # not silently swallowed (it does two API calls before the build).
             try:
                 target = channel_id
-                thread_id = await self.discord.create_private_thread(
-                    channel_id, f"{template_key or 'app'}-{user_name}"[:90]
-                )
+                # App Builder delivery goes to the user's BUILDER thread
+                # (reused across builds), kept separate from the cron
+                # scheduler's schedules thread.
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="builder")
                 if thread_id:
-                    await self.discord.add_thread_member(thread_id, user_id)
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
                         content=f"✅ Opening your private build space → <#{thread_id}>",
@@ -566,7 +1552,7 @@ class DiscordCommandHandler:
             except Exception as exc:  # noqa: BLE001
                 logger.error("_open_and_build failed user=%s: %s", user_id, exc)
 
-        asyncio.create_task(_open_and_build())
+        self._spawn(_open_and_build())
         # Ephemeral deferred ACK (flags=64) — only the clicking user sees it.
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
@@ -581,83 +1567,177 @@ class DiscordCommandHandler:
         if not what or parsed is None:
             return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
                 "content": (
-                    "I couldn't read the timing. Try a casual phrase like "
-                    "*every 8pm*, *9am everyday*, *every morning*, *every Monday 9am*, "
-                    "*every weekday at 8am*, or *every 30 minutes* — all times are Manila (GMT+8)."
+                    "I couldn't read that. Tell me **what** to do and **when** — "
+                    "e.g. *every morning*, *every Monday 9am*, or *every 30 minutes*."
                 ),
                 "flags": 64,
             }}
         cron, human = parsed
         name = f"{human}: {what[:60]}"
+        return await self._offer_schedule_confirm(
+            payload, name=name, cron=cron, prompt=what, human=human, run_once=False)
+
+    async def _offer_schedule_confirm(
+        self, payload: dict[str, Any], *, name: str, cron: str, prompt: str,
+        human: str, run_once: bool = False,
+    ) -> dict[str, Any]:
+        """Park a resolved (name, cron, prompt, run_once) under a token, then show
+        either a Connect-your-account card (when the prompt needs Gmail/Drive and
+        the owner hasn't connected) or the Confirm card. Shared by the text-`when`
+        path and the date/time picker path."""
         token = uuid.uuid4().hex[:16]
-        self._pending_schedules[token] = {"name": name, "cron": cron, "prompt": what}
+        self._pending_schedules[token] = {
+            "name": name, "cron": cron, "prompt": prompt, "run_once": run_once}
         # Gate on connector intent: if the task needs Gmail/Drive and the owner
         # hasn't connected it, show Connect buttons instead of the confirm card.
-        # The schedule is parked under `token` until they connect + resume.
-        member = payload.get("member", {})
-        user = member.get("user", payload.get("user", {}))
-        owner = await self.router._resolve_email_auto(user.get("id", ""))
-        needs = connector_intent.detect(what)
-        linked: set[str] = set()
-        if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
-            linked.add("gmail")
-        if "drive" in needs and await connectors.is_connected("drive", owner, base_url=settings.gdrive_url):
-            linked.add("drive")
-        missing = _needs_connect(needs, linked=linked)
-        if missing:
-            links: list[tuple[str, str]] = []
-            if "gmail" in missing:
-                links.append(("Gmail", connectors.connect_url(
-                    "gmail", owner, public_base=settings.gmail_public_url)))
-            if "drive" in missing:
-                links.append(("Drive", connectors.connect_url(
-                    "drive", owner, public_base=settings.gdrive_public_url)))
-            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
-                "content": (
-                    f"📅 **{human}** — {what[:150]}\n"
-                    "This task needs access to your account. Connect below (link is valid "
-                    "10 min), then hit **✅ I've connected — create it**."
-                ),
-                "components": build_connect_components(token=token, links=links),
-                "flags": 64,
-            }}
+        needs = connector_intent.detect(prompt)
+        if needs & {"gmail", "drive"}:
+            member = payload.get("member", {})
+            user = member.get("user", payload.get("user", {}))
+            owner = await self.router._resolve_email(user.get("id", ""))
+            if owner is None:
+                # Require a real linked account so the connector token binds to the
+                # user's real email (not a synthetic one) — otherwise a later status
+                # check under the real email loops forever on "still not connected".
+                return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                    "content": onboarding.not_linked_text_discord(),
+                    "components": onboarding.link_button_row(),
+                    "flags": 64,
+                }}
+            linked: set[str] = set()
+            if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
+                linked.add("gmail")
+            if "drive" in needs and await connectors.is_connected("drive", owner, base_url=settings.gdrive_url):
+                linked.add("drive")
+            missing = _needs_connect(needs, linked=linked)
+            if missing:
+                links: list[tuple[str, str]] = []
+                if "gmail" in missing:
+                    links.append(("Gmail", connectors.connect_url(
+                        "gmail", owner, public_base=settings.gmail_public_url)))
+                if "drive" in missing:
+                    links.append(("Drive", connectors.connect_url(
+                        "drive", owner, public_base=settings.gdrive_public_url)))
+                return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                    "content": (
+                        f"📅 **{human}** — {prompt[:150]}\n"
+                        "This task needs access to your account. Connect below (link is valid "
+                        "10 min), then hit **✅ I've connected — create it**."
+                    ),
+                    "components": build_connect_components(token=token, links=links),
+                    "flags": 64,
+                }}
         return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
-            "content": f"📅 **{human}** — {what[:200]}\nLook right?",
+            "content": f"📅 **{human}** — {prompt[:200]}\nLook right?",
             "components": build_confirm_components(token),
             "flags": 64,
         }}
+
+    async def _handle_pick_component(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """A picker button/select click: accumulate the choice and re-render the
+        card. 'Set the task' opens the task modal; 'Type it instead' falls back to
+        the original text modal."""
+        try:
+            field, token = schedule_picker.parse_pick_cid(custom_id)
+        except ValueError:
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        if field == "typeit":
+            return {"type": MODAL, "data": build_schedule_modal()}
+        if field == "settask":
+            return {"type": MODAL, "data": schedule_picker.build_task_modal(token)}
+        picks = self._pending_picks.get(token)
+        if picks is None:
+            return {"type": UPDATE_MESSAGE, "data": {
+                "content": "That setup expired — hit **➕ New schedule** to start over.",
+                "components": []}}
+        now = _manila_now()
+        if field == "kindrep":
+            picks.clear(); picks["kind"] = "rep"
+        elif field == "kindonce":
+            picks.clear(); picks["kind"] = "once"
+        elif field in ("qtoday", "qtomorrow", "qnextmon"):
+            picks["date"] = schedule_picker.quick_date_iso(field, now)
+        else:
+            values = (payload.get("data") or {}).get("values") or []
+            if values:
+                picks[field] = values[0]
+                if field == "freq":
+                    picks.pop("weekday", None)  # weekday is weekly-only
+        return self._render_pick_card(token, picks, now)
+
+    def _render_pick_card(self, token: str, picks: dict, now) -> dict[str, Any]:
+        if picks.get("kind") == "once":
+            card = schedule_picker.build_onetime_card(token, picks, now)
+        else:
+            card = schedule_picker.build_repeating_card(token, picks)
+        return {"type": UPDATE_MESSAGE, "data": {
+            "content": card["content"], "components": card["components"]}}
+
+    async def _handle_pick_task_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """The 'Set the task' modal submit: resolve the accumulated picks into a
+        cron + run_once, then hand to the shared confirm path."""
+        token = custom_id[len(schedule_picker.TASK_MODAL_PREFIX):]
+        data = payload.get("data", {})
+        what = self._extract_modal_value(data, schedule_picker.TASK_INPUT_ID)
+        picks = self._pending_picks.pop(token, None)
+        if not what or not picks:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "That setup expired — hit **➕ New schedule** to start over.",
+                "flags": 64}}
+        now = _manila_now()
+        try:
+            cron, run_once, label = schedule_picker.picks_to_cron(picks, now=now)
+        except schedule_picker.PastTimeError:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "⏰ That time is already past — pick a future time.",
+                "flags": 64}}
+        name = f"{label}: {what[:60]}"
+        return await self._offer_schedule_confirm(
+            payload, name=name, cron=cron, prompt=what, human=label, run_once=run_once)
+
+    async def _handle_schedule_confirm(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
+        """Confirm button: create the parked schedule in the background, delivering
+        its results to a private thread. ACK ephemeral-deferred within 3s."""
+        try:
+            token = token_from_confirm(custom_id)
+        except ValueError:
+            token = ""
+        interaction_token = payload.get("token", "")
+        self._spawn(
+            self._create_pending_schedule(payload, token, interaction_token)
+        )
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _create_pending_schedule(
         self, payload: dict[str, Any], token: str, interaction_token: str,
     ) -> None:
         """Shared create path for Confirm + 'I've connected' resume: pop the parked
-        schedule, resolve the user's private thread, create the schedule, and edit
-        the card. Guarantees a terminal follow-up even on failure."""
-        pending = self._pending_schedules.pop(token, None)
+        schedule, deliver results to the user's private thread (created/reused),
+        create the schedule, and edit the card. Guarantees a terminal follow-up."""
         member = payload.get("member", {})
         user = member.get("user", payload.get("user", {}))
         user_id = user.get("id", "")
         user_name = user.get("username", "unknown")
         channel_id = payload.get("channel_id", "")
         try:
+            pending = self._pending_schedules.pop(token, None)
             if not pending:
                 await self.discord.edit_original(
                     interaction_token=interaction_token,
                     content="That schedule request expired — please set it up again.",
-                    components=[],
                 )
                 return
-            # Each schedule gets its OWN private thread, named after the
-            # schedule, so its results stay in one place instead of mixing with
-            # other schedules in a shared thread. Discord can't nest threads, so
-            # if this came from inside a thread (e.g. the schedules dashboard
-            # thread), create it on the parent channel. Fall back to the current
-            # channel if thread creation fails.
+            # Results land in a private thread (created/reused) so they stay
+            # visible only to this user. Fall back to the channel if thread
+            # creation fails.
             target = channel_id
-            parent_channel = await self.discord.resolve_thread_parent(channel_id)
-            thread_id = await self.discord.create_private_thread(
-                parent_channel, pending["name"][:90]
-            )
+            thread_id = await self.router.get_user_thread(user_id)
+            if not thread_id:
+                thread_id = await self.discord.create_private_thread(
+                    channel_id, f"schedules-{user_name}"[:90]
+                )
+                if thread_id:
+                    await self.router.set_user_thread(user_id, thread_id)
             if thread_id:
                 await self.discord.add_thread_member(thread_id, user_id)
                 target = thread_id
@@ -665,7 +1745,6 @@ class DiscordCommandHandler:
             async def respond(msg: str) -> None:
                 await self.discord.edit_original(
                     interaction_token=interaction_token, content=msg,
-                    components=[],  # drop the buttons
                 )
 
             ctx = CommandContext(
@@ -681,29 +1760,10 @@ class DiscordCommandHandler:
             await self.router.run_schedule_create(
                 ctx, name=pending["name"], cron=pending["cron"],
                 prompt=pending["prompt"], delivery_channel_id=target,
+                run_once=pending.get("run_once", False),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("_create_pending_schedule failed user=%s: %s", user_id, exc)
-            try:
-                await self.discord.edit_original(
-                    interaction_token=interaction_token,
-                    content="⚠️ Couldn't save that schedule — please try again.",
-                    components=[],
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("failed to deliver schedule-create error follow-up")
-
-    async def _handle_schedule_confirm(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
-        """Confirm button: create the parked schedule in the background. ACK
-        ephemeral-deferred (type 6) so the follow-up edits the card in place and
-        clears its buttons — preventing a second Confirm on a stale card."""
-        try:
-            token = token_from_confirm(custom_id)
-        except ValueError:
-            token = ""
-        interaction_token = payload.get("token", "")
-        asyncio.create_task(self._create_pending_schedule(payload, token, interaction_token))
-        return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_connect_resume(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         """'I've connected — create it' → re-check connection; if satisfied, create
@@ -727,7 +1787,14 @@ class DiscordCommandHandler:
                         components=[],
                     )
                     return
-                owner = await self.router._resolve_email_auto(user_id)
+                owner = await self.router._resolve_email(user_id)
+                if owner is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
                 needs = connector_intent.detect(pending["prompt"])
                 linked: set[str] = set()
                 if "gmail" in needs and await connectors.is_connected("gmail", owner, base_url=settings.gmail_url):
@@ -753,8 +1820,166 @@ class DiscordCommandHandler:
                 except Exception:  # noqa: BLE001
                     logger.exception("failed to deliver connect-resume error follow-up")
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_UPDATE_MESSAGE}
+
+    async def _get_or_make_thread(
+        self, user_id: str, channel_id: str, user_name: str, *, kind: str,
+    ) -> str | None:
+        """Reuse the user's private thread or create one. Returns the thread id
+        (and adds the user as a member) or None if a thread couldn't be opened.
+
+        ``kind`` selects which per-user thread slot is used so the App Builder
+        and the cron scheduler keep separate threads:
+          - ``"builder"``   → builder-thread slot, new threads ``aiui-apps-<user>``
+          - ``"schedules"`` → schedules-thread slot, new threads ``schedules-<user>``
+        """
+        if kind == "builder":
+            get_thread = self.router.get_user_builder_thread
+            set_thread = self.router.set_user_builder_thread
+            name = f"aiui-apps-{user_name}"
+        elif kind == "schedules":
+            get_thread = self.router.get_user_thread
+            set_thread = self.router.set_user_thread
+            name = f"schedules-{user_name}"
+        elif kind == "video":
+            get_thread = self.router.get_user_video_thread
+            set_thread = self.router.set_user_video_thread
+            name = f"aiui-video-{user_name}"
+        else:  # pragma: no cover - defensive
+            raise ValueError(f"unknown thread kind: {kind!r}")
+        thread_id = await get_thread(user_id)
+        # A stored thread the user deleted (or that the bot can no longer reach)
+        # would otherwise be reused and rendered as a dead "#unknown" link.
+        # add_thread_member returns False for a gone thread (404), so treat that
+        # as "stale" and recreate. Doubles as adding the user to a live thread.
+        if thread_id and not await self.discord.add_thread_member(thread_id, user_id):
+            thread_id = None
+        if not thread_id:
+            thread_id = await self.discord.create_private_thread(
+                channel_id, name[:90]
+            )
+            if thread_id:
+                await set_thread(user_id, thread_id)
+                await self.discord.add_thread_member(thread_id, user_id)
+        return thread_id
+
+    async def _handle_build_new(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'🚀 Build an app' (in #app-builder) → post the template picker into the
+        user's private thread (create/reuse), and point the ephemeral ACK at it."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _do() -> None:
+            try:
+                email = await self.router._resolve_email(user_id)
+                if email is None:
+                    # Gate the build behind a real link up front (no synthetic
+                    # identity), so a user is never walked through template-pick +
+                    # describe only to be bounced at build time.
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
+                templates = await self.router._tasks_client.list_templates(email)
+                components = build_template_picker_components(templates)
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="builder")
+                if thread_id:
+                    await self.discord.post_channel_message(
+                        thread_id,
+                        "Pick a template — or **Blank** to start from scratch:",
+                        components=components,
+                    )
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"🚀 Your builder is ready in <#{thread_id}>",
+                    )
+                else:
+                    # Couldn't open a thread — fall back to an ephemeral picker.
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content="Pick a template — or **Blank** to start from scratch:",
+                        components=components,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_build_new failed user=%s: %s", user_id, exc)
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't open the builder — please try again.",
+                )
+
+        self._spawn(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_my_apps(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'📂 My apps' (in #app-builder) → post the user's existing apps as a
+        dropdown into their private thread (create/reuse), or an empty-state
+        message if they have none. Requires a linked account."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _do() -> None:
+            try:
+                email = await self.router._resolve_email(user_id)
+                if email is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
+                    )
+                    return
+                projects = await self.router._tasks_client.list_projects(email)
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="builder")
+                if thread_id:
+                    if projects:
+                        await self.discord.post_channel_message(
+                            thread_id,
+                            "Your apps:",
+                            components=build_apps_select_components(projects),
+                        )
+                    else:
+                        await self.discord.post_channel_message(
+                            thread_id,
+                            "📂 No apps yet — hit 🚀 Build an app",
+                        )
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=f"📂 Your apps are in <#{thread_id}>",
+                    )
+                else:
+                    # Couldn't open a thread — fall back to an ephemeral reply.
+                    if projects:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token,
+                            content="Your apps:",
+                            components=build_apps_select_components(projects),
+                        )
+                    else:
+                        await self.discord.edit_original(
+                            interaction_token=interaction_token,
+                            content="📂 No apps yet — hit 🚀 Build an app",
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_my_apps failed user=%s: %s", user_id, exc)
+                await self.discord.edit_original(
+                    interaction_token=interaction_token,
+                    content="Couldn't open your apps — please try again.",
+                )
+
+        self._spawn(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_sched_open(self, payload: dict[str, Any]) -> dict[str, Any]:
         """'Open my schedules' (in #app-builder) → post the dashboard into the
@@ -772,31 +1997,15 @@ class DiscordCommandHandler:
                 if dash is None:
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
-                        content="Your Discord account isn't linked yet. Hit **🔗 Link my account** first.",
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row(),
                     )
                     return
-                async def _post_dashboard(tid: str) -> bool:
-                    """Add the user to `tid` and post the dashboard there.
-                    Returns True only if the post actually landed — a deleted
-                    thread makes post_channel_message return False."""
-                    await self.discord.add_thread_member(tid, user_id)
-                    return await self.discord.post_channel_message(
-                        tid, dash["content"], components=dash["components"])
-
-                # Try the stored thread first. If the user deleted it the post
-                # fails (False), so fall through and create a fresh one rather
-                # than pointing them at a dead thread (renders as #unknown).
-                thread_id = await self.router.get_user_thread(user_id)
-                posted = bool(thread_id) and await _post_dashboard(thread_id)
-                if not posted:
-                    thread_id = await self.discord.create_private_thread(
-                        channel_id, f"schedules-{user_name}"[:90]
-                    )
-                    if thread_id:
-                        await self.router.set_user_thread(user_id, thread_id)
-                        posted = await _post_dashboard(thread_id)
-
-                if posted and thread_id:
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="schedules")
+                if thread_id:
+                    await self.discord.post_channel_message(
+                        thread_id, dash["content"], components=dash["components"])
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
                         content=f"📅 Your schedules are in <#{thread_id}>",
@@ -814,7 +2023,7 @@ class DiscordCommandHandler:
                     content="Couldn't open your schedules — please try again.",
                 )
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     def _handle_link_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -854,7 +2063,7 @@ class DiscordCommandHandler:
                     content="Couldn't send your request — please try again.",
                 )
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
     async def _handle_link_decision(
@@ -881,10 +2090,15 @@ class DiscordCommandHandler:
                 await self.discord.edit_original(
                     interaction_token=interaction_token, content=text, components=[],
                 )
+                # Notify the requester (best-effort — never block the admin action).
+                dm_text, dm_components = onboarding.approval_dm_discord(approve)
+                await self.discord.send_dm(
+                    discord_id, content=dm_text, components=dm_components,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error("link decision failed id=%s: %s", discord_id, exc)
 
-        asyncio.create_task(_do())
+        self._spawn(_do())
         return {"type": DEFERRED_UPDATE_MESSAGE}
 
     async def _handle_sched_edit_open(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
@@ -938,7 +2152,7 @@ class DiscordCommandHandler:
                       "interaction_token": interaction_token,
                       "guild_id": payload.get("guild_id", "")},
         )
-        asyncio.create_task(self.router.run_schedule_edit(
+        self._spawn(self.router.run_schedule_edit(
             ctx, schedule_id, name=name, cron=cron, prompt=what))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
 
@@ -951,6 +2165,45 @@ class DiscordCommandHandler:
                 if comp.get("custom_id") == input_custom_id:
                     return (comp.get("value") or "").strip()
         return ""
+
+    @staticmethod
+    def _first_attachment(data: dict) -> dict | None:
+        """Pull the first resolved slash-command attachment (Discord option
+        type 11) as {url, filename, content_type, size}, or None. The
+        aiuibuilder subcommand has at most one file option, so first wins."""
+        atts = (data.get("resolved") or {}).get("attachments") or {}
+        for a in atts.values():
+            return {
+                "url": a.get("url"),
+                "filename": a.get("filename"),
+                "content_type": a.get("content_type"),
+                "size": a.get("size"),
+            }
+        return None
+
+    @staticmethod
+    def _all_attachments(data: dict) -> list[dict]:
+        """All resolved slash-command attachments (Discord option type 11), in
+        resolved-map order, as {url, filename, content_type, size}."""
+        atts = (data.get("resolved") or {}).get("attachments") or {}
+        return [{"url": a.get("url"), "filename": a.get("filename"),
+                 "content_type": a.get("content_type"), "size": a.get("size")}
+                for a in atts.values()]
+
+    @staticmethod
+    def _parse_video_new(data: dict) -> "tuple[str, str, list[str]]":
+        """Parse the `/video new` payload → (title, prompt, screenshot_urls).
+        Title falls back to the first 60 chars of the description, then to
+        'Untitled video' when the description is blank too."""
+        sub_opts = ((data.get("options") or [{}])[0].get("options")) or []
+
+        def _opt(name: str) -> str:
+            return next((o.get("value", "") for o in sub_opts if o.get("name") == name), "")
+
+        prompt = (_opt("description") or "").strip()
+        title = (_opt("title") or "").strip() or prompt[:60].strip() or "Untitled video"
+        urls = [a["url"] for a in DiscordCommandHandler._all_attachments(data) if a.get("url")]
+        return title, prompt, urls
 
     @staticmethod
     def _parse_options(options: list[dict]) -> tuple[str, str]:
@@ -972,10 +2225,14 @@ class DiscordCommandHandler:
         if first.get("type") == 1:
             subcommand = first.get("name", "status")
             sub_options = first.get("options", [])
-            if sub_options:
-                arguments = sub_options[0].get("value", "")
-            else:
-                arguments = ""
+            # Take the first STRING option by TYPE, not position — a type-11
+            # ATTACHMENT option (the build/enhance file) may arrive in any order,
+            # and its value is a snowflake id, not the command text.
+            arguments = ""
+            for o in sub_options:
+                if o.get("type", 3) == 3:  # STRING
+                    arguments = o.get("value", "")
+                    break
             return (subcommand, arguments)
 
         # Direct string option (type 3)

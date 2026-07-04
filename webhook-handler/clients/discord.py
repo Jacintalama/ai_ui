@@ -1,5 +1,6 @@
 """Discord API client for interaction followups and Ed25519 verification."""
 import httpx
+import json
 import logging
 from typing import Optional
 
@@ -139,6 +140,72 @@ class DiscordClient:
             logger.error(f"Error posting Discord channel message: {e}")
             return False
 
+    async def post_channel_file(
+        self, channel_id: str, files: list[tuple[str, bytes, str]],
+        content: str = "", components: list | None = None,
+    ) -> bool:
+        """Post a message with one or more file attachments (bot token, multipart).
+        `files` = list of (filename, data, content_type). Discord allows <=10
+        files. Never raises. Do NOT set Content-Type — httpx sets the multipart
+        boundary itself."""
+        url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
+        body: dict = {"content": (content or "")[:2000],
+                      "attachments": [{"id": i, "filename": fn}
+                                      for i, (fn, _, _) in enumerate(files)]}
+        if components:
+            body["components"] = components
+        multipart = {f"files[{i}]": (fn, data, ctype)
+                     for i, (fn, data, ctype) in enumerate(files)}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bot {self.bot_token}"},
+                    data={"payload_json": json.dumps(body)},
+                    files=multipart,
+                )
+                if response.status_code in (200, 201):
+                    return True
+                logger.error(
+                    f"Discord file post error: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error posting Discord file: {e}")
+            return False
+
+    async def open_dm(self, user_id: str) -> str | None:
+        """Open (or fetch) the bot↔user DM channel. Returns the DM channel id,
+        or None on failure (never raises). Works when the user shares a server
+        with the bot."""
+        url = f"{DISCORD_API_BASE}/users/@me/channels"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url,
+                    headers={"Authorization": f"Bot {self.bot_token}"},
+                    json={"recipient_id": user_id},
+                )
+                if response.status_code in (200, 201):
+                    return response.json().get("id")
+                logger.error(
+                    f"Discord open_dm error: {response.status_code} {response.text}"
+                )
+                return None
+        except Exception as e:
+            logger.error(f"Error opening Discord DM: {e}")
+            return None
+
+    async def send_dm(self, user_id: str, content: str = "",
+                      components: list | None = None) -> bool:
+        """DM a user: open the DM channel then post. Best-effort — returns False
+        (never raises) so a failed DM never breaks the caller's main action."""
+        dm_id = await self.open_dm(user_id)
+        if not dm_id:
+            return False
+        return await self.post_channel_message(
+            dm_id, content=content, components=components
+        )
+
     async def create_private_thread(self, parent_channel_id: str, name: str) -> str | None:
         """Create a private thread (type 12) under a text channel using the bot
         token. Returns the new thread id, or None on failure (never raises) so
@@ -167,30 +234,6 @@ class DiscordClient:
         except Exception as e:
             logger.error(f"Error creating Discord private thread: {e}")
             return None
-
-    async def resolve_thread_parent(self, channel_id: str) -> str:
-        """If `channel_id` is a thread, return its parent text-channel id;
-        otherwise return `channel_id` unchanged. Discord can't nest threads, so
-        a new thread must be created on the parent. Never raises — on any lookup
-        failure returns `channel_id` so callers degrade to the original channel.
-        Thread channel types: 10 (announcement), 11 (public), 12 (private)."""
-        url = f"{DISCORD_API_BASE}/channels/{channel_id}"
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.get(
-                    url, headers={"Authorization": f"Bot {self.bot_token}"},
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get("type") in (10, 11, 12) and data.get("parent_id"):
-                        return data["parent_id"]
-                else:
-                    logger.error(
-                        f"Discord get channel error: {response.status_code} {response.text}"
-                    )
-        except Exception as e:
-            logger.error(f"Error resolving Discord thread parent: {e}")
-        return channel_id
 
     async def add_thread_member(self, thread_id: str, user_id: str) -> bool:
         """Add a user to a thread (so they see the private thread). Bot token.

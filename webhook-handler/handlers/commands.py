@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Callable, Awaitable, Optional, Any
 import logging
 import os
+import uuid
 
 from clients.tasks import TasksClient, TasksAPIError
 from handlers.app_builder_panel import (
@@ -17,6 +18,10 @@ from handlers.app_builder_panel import (
     build_schedules_dashboard,
     build_schedule_card,
 )
+from handlers import onboarding
+from handlers import intent_router, intent_cards
+from handlers.url_guard import is_safe_public_url
+from handlers.state_store import StateStore
 
 from clients.openwebui import OpenWebUIClient
 from clients.n8n import N8NClient
@@ -29,9 +34,133 @@ logger = logging.getLogger(__name__)
 BUILD_POLL_SECONDS = 12
 BUILD_MAX_POLLS = 150  # ~30 min at 12s
 BUILD_MAX_CONSECUTIVE_ERRORS = 5
+BUILD_REASSURE_AFTER_POLLS = 3  # one "still building" ping after ~36s of silence
+
+VIDEO_POLL_SECONDS = 6
+VIDEO_MAX_POLLS = 120  # ~12 min, > render timeout (600s) + queue wait
+VIDEO_MAX_CONSECUTIVE_ERRORS = 5
+VIDEO_ATTACH_MAX_MB = int(os.environ.get("VIDEO_DISCORD_ATTACH_MAX_MB", "24"))
+
+OUTREACH_POLL_SECONDS = 12
+OUTREACH_MAX_POLLS = 80   # ~16 min, > agent EXECUTION_TIMEOUT_SECONDS (600s) + n8n
+OUTREACH_MAX_CONSECUTIVE_ERRORS = 5
 # Public host for building preview links (matches the tasks service's
 # AIUI_PUBLIC_DOMAIN default; the domain is otherwise hardcoded elsewhere here).
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
+
+# Marker subcommand for plain-English input that matched no known command.
+# Routed to the intent router in execute(); with the flag off it falls back to
+# a normal /aiui ask answer, exactly as before.
+NATURAL = "__natural__"
+
+# Caps concurrent gateway classifications so a chatty channel can't spawn
+# unbounded simultaneous LLM calls (the intent router runs on every 3+ word
+# message in a visible channel). Queued messages wait for a slot.
+_CHAT_SEMAPHORE = asyncio.Semaphore(8)
+
+# TTLs for durable conversational state (seconds). Pending confirm/clarify are
+# short-lived; the current-app pointer is long-lived (no expiry).
+_INTENT_TTL = 1800   # 30 min
+_CLARIFY_TTL = 1800  # 30 min
+
+
+def friendly_name(description: str, *, max_len: int = 60) -> str:
+    """A human title for an app, derived from its description, e.g.
+    'A simple feedback form for my shop' -> 'Simple feedback form for my shop'.
+    Returns '' when nothing usable (callers then fall back to the slug)."""
+    text = " ".join((description or "").split())
+    if not text:
+        return ""
+    for sep in (". ", "! ", "? ", " - ", " — ", ", "):
+        i = text.find(sep)
+        if 0 < i <= max_len:
+            text = text[:i]
+            break
+    text = text.strip(" .!?,;:-—").strip()
+    low = text.lower()
+    for art in ("a ", "an ", "the "):
+        if low.startswith(art):
+            text = text[len(art):]
+            break
+    if len(text) > max_len:
+        text = text[:max_len].rsplit(" ", 1)[0]
+    text = text.strip()
+    return (text[:1].upper() + text[1:]) if text else ""
+
+
+_BUILD_FILLER = {
+    "a", "an", "the", "me", "my", "build", "make", "create", "please", "for",
+    "website", "site", "app", "page", "webpage", "web", "application", "thing",
+    "something", "new", "to",
+}
+
+
+def build_workspace_summary(apps, schedules, videos) -> str:
+    """Plain-text 'one place to see everything' summary of a user's apps,
+    schedules, and videos. Pure -- tested directly. Tolerates list or {..:[]}
+    shapes and shows up to 5 of each with a '+N more' tail. No emoji."""
+    vids = videos.get("videos", []) if isinstance(videos, dict) else (videos or [])
+    apps = apps or []
+    schedules = schedules or []
+    out = ["Your workspace:", ""]
+
+    def _section(title, items, render):
+        out.append(f"{title} ({len(items)}):")
+        if not items:
+            out.append("- none yet")
+        else:
+            for it in items[:5]:
+                out.append("- " + render(it))
+            if len(items) > 5:
+                out.append(f"...and {len(items) - 5} more")
+        out.append("")
+
+    _section("Apps", apps, lambda a: (a.get("name") or a.get("slug") or "app")
+             + (f" - {a['public_url']}" if a.get("public_url") else ""))
+    _section("Schedules", schedules,
+             lambda s: s.get("name") or (s.get("prompt") or "task")[:60])
+    _section("Videos", vids, lambda v: (v.get("title") or "video")
+             + (f" [{v['status']}]" if v.get("status") else ""))
+    out.append("Just tell me what to do next - build, schedule, a video, and more.")
+    return "\n".join(out)
+
+
+def is_vague_build(detail: str) -> bool:
+    """True when a build request names no specifics beyond generic filler
+    ('a website', 'an app'); 'a portfolio', 'a flower shop site' are NOT vague."""
+    meaningful = [
+        w for w in (detail or "").lower().replace("-", " ").split()
+        if w.strip(".,!?'\"():") and w.strip(".,!?'\"():") not in _BUILD_FILLER
+    ]
+    return len(meaningful) == 0
+
+
+DAILY_BRIEFING_NAME = "Daily briefing"
+DAILY_BRIEFING_CRON = "0 8 * * *"  # 8am daily; tz defaults to Asia/Manila
+
+
+def daily_briefing_prompt() -> str:
+    """The prompt the daily-briefing schedule runs each morning."""
+    return (
+        "Give me my morning briefing. Be warm but brief — under 120 words, no "
+        "preamble, no sign-off. Include each item only if there is something to "
+        "say: (1) Unread email: the 3-5 most important, one short line each "
+        "(sender then gist); if you cannot access email, say one line: 'Email "
+        "summary unavailable — connect Gmail to enable.' (2) Today: anything "
+        "scheduled or due today. (3) Since yesterday: any app or video that "
+        "finished, with its link. If everything is quiet, say so in one cheerful "
+        "line."
+    )
+
+
+@dataclass
+class ChatStep:
+    """One decision from plan_chat_step; the platform layer renders it.
+    kind: "clarify" (ask the question) | "confirm" (recap + Yes button) |
+          "answer" (hand to the normal AI answer) | "suggest" (point at a tool)."""
+    kind: str
+    text: str
+    token: str = ""
 
 
 @dataclass
@@ -49,7 +178,7 @@ class CommandContext:
     notify_channel: Optional[Callable[[str], Awaitable[None]]] = None
     # (message, slug, preview_url) -> post a rich channel message (e.g. with a
     # Publish button). Set by the Discord layer; None on other platforms.
-    notify_channel_rich: Optional[Callable[[str, str, str], Awaitable[None]]] = None
+    notify_channel_rich: Optional[Callable[[str, str, str, str], Awaitable[None]]] = None
     # (public_url) -> edit the publish reply to show the live URL + Enhance/Unpublish
     # buttons. Set by the Discord layer; None elsewhere.
     on_published: Optional[Callable[[str], Awaitable[None]]] = None
@@ -57,6 +186,20 @@ class CommandContext:
     # components (the apps dropdown or a per-project menu). Set by the Discord
     # layer; None on other platforms.
     respond_components: Optional[Callable[[str, list], Awaitable[None]]] = None
+    # (msg_dict) -> post a full message dict (content/embeds/components) to the
+    # channel as a fresh bot-token message that outlives the interaction window.
+    # Used to land the outreach review overview. Set by the Discord layer; None
+    # on other platforms.
+    notify_channel_msg: Optional[Callable[[dict], Awaitable[None]]] = None
+    # (msg_dict) -> edit the interactive message in place (content/embeds/
+    # components). Used by the outreach select/edit/send handlers so the review
+    # overview updates without spawning a new message. Set by the Discord layer
+    # (Task 8 wires an UPDATE_MESSAGE closure); None on other platforms.
+    edit_message: Optional[Callable[[dict], Awaitable[None]]] = None
+    # Uploaded file metadata from a Discord slash-command attachment option:
+    # {"url", "filename", "content_type", "size"}. Set by the Discord layer when
+    # the user attaches a file to a build/enhance; None otherwise.
+    attachment: Optional[dict] = None
 
 
 class VoiceResponseCollector:
@@ -104,6 +247,7 @@ class CommandRouter:
         loki_client=None,
         discord_user_email_map: Optional[dict] = None,
         tasks_client: Optional[TasksClient] = None,
+        discord_client=None,
     ):
         self.openwebui = openwebui_client
         self.n8n = n8n_client
@@ -112,6 +256,7 @@ class CommandRouter:
         self._github_client = github_client
         self._mcp_client = mcp_client
         self._loki_client = loki_client
+        self._discord = discord_client
 
         # New collaborators — read from settings only when not injected.
         if discord_user_email_map is None or tasks_client is None:
@@ -133,6 +278,19 @@ class CommandRouter:
         # asyncio only weak-references running tasks, so without this a long
         # watcher could be GC'd mid-flight. Each task removes itself on done.
         self._background_tasks: set = set()
+
+        # token -> {"intent", "detail"} for a parked just-chat confirmation.
+        self._pending_intents: dict[str, dict] = {}
+        # discord user id -> their current app slug (in-memory; set on each build)
+        self._user_app_slug: dict[str, str] = {}
+        # user id -> {"intent","text"} of a request awaiting a clarify reply.
+        # Shared by the channel/DM/slash flow (plan_chat_step) and the private
+        # app thread (handle_builder_thread_message).
+        self._pending_clarify: dict[str, dict] = {}
+        # Durable, cache-backed mirror of the three dicts above so a webhook-handler
+        # redeploy doesn't wipe in-flight chats. The dicts act as the fast cache;
+        # writes persist (best-effort) and reads hydrate on a cache miss.
+        self._state = StateStore(self._tasks_client)
 
     @staticmethod
     def parse_command(text: str) -> tuple[str, str]:
@@ -159,13 +317,15 @@ class CommandRouter:
             "report", "pr-review", "pr", "mcp", "diagnose", "analyze",
             "email", "sheets", "rebuild", "web-search",
             "health", "security", "deps", "license",
-            "cronjob", "aiuibuilder",
+            "cronjob", "aiuibuilder", "briefing",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
 
-        # Unknown subcommand — treat entire text as an ask query
-        return ("ask", text)
+        # Unknown first word — plain English. Mark it NATURAL so execute() can
+        # offer the intent router; falls back to a normal answer when the flag
+        # is off (see _handle_natural).
+        return (NATURAL, text)
 
     async def execute(self, ctx: CommandContext) -> None:
         """Dispatch a command to the appropriate handler."""
@@ -204,6 +364,12 @@ class CommandRouter:
                 await self._handle_web_search(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
+            elif ctx.subcommand == "briefing":
+                await self._handle_briefing(ctx)
+            elif ctx.subcommand == "my":
+                await self.run_workspace(ctx)
+            elif ctx.subcommand == NATURAL:
+                await self._handle_natural(ctx)
             else:
                 await ctx.respond(f"Unknown command: `{ctx.subcommand}`. Try `/aiui help`.")
         except Exception as e:
@@ -215,6 +381,9 @@ class CommandRouter:
         capabilities = [
             "You are AIUI, an AI assistant for a software team. Be concise and actionable.",
             "You are responding to a slash command from a chat platform.",
+            "You can also DO things for the user, not just answer: build a website "
+            "or app, schedule a recurring task, and send a daily morning briefing. "
+            "If the user clearly wants one of these, offer to do it in one short line.",
             "",
             "The user has access to these commands via /aiui:",
             "- `/aiui pr-review <number>` — AI-powered review of a GitHub PR",
@@ -272,6 +441,313 @@ class CommandRouter:
             response = response[: limit - 20] + "\n\n... (truncated)"
 
         await ctx.respond(response)
+
+    async def _handle_natural(self, ctx: CommandContext) -> None:
+        """Plain-English /aiui input. Flag off -> behave exactly like ask.
+        Flag on -> classify and route: build_app -> a confirm card; other
+        actionable intents -> a suggest message; question/unsure -> answer."""
+        text = ctx.arguments or ctx.raw_text or ""
+        ctx.arguments = text  # _handle_ask reads ctx.arguments
+        if not settings.intent_router_enabled:
+            await self._handle_ask(ctx)
+            return
+        step = await self.plan_chat_step(ctx.user_id or "", text, threshold=0.6)
+        await self._render_chat_step(ctx, step)
+
+    def _persist(self, key: str, value, ttl_seconds: int | None = None) -> None:
+        """Best-effort background write-through to the durable state store. Safe to
+        call from sync code and outside a running loop (a no-op then; the cache
+        still holds the value)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._state.set(key, value, ttl_seconds=ttl_seconds))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _forget(self, key: str) -> None:
+        """Best-effort background delete from the durable state store."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._state.delete(key))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def park_intent(self, intent: str, detail: str, *, when: str = "", task: str = "") -> str:
+        token = uuid.uuid4().hex[:16]
+        data = {"intent": intent, "detail": detail, "when": when, "task": task}
+        self._pending_intents[token] = data
+        self._persist(f"pending_intent:{token}", data, ttl_seconds=_INTENT_TTL)
+        return token
+
+    async def peek_intent(self, token: str) -> dict | None:
+        """Read a parked intent WITHOUT removing it, so a confirm handler can pick
+        the right private-thread flow before run_confirmed_intent pops it. Hydrates
+        from the durable store on a cache miss (e.g. after a redeploy)."""
+        if token not in self._pending_intents:
+            val = await self._state.get(f"pending_intent:{token}")
+            if val is not None:
+                self._pending_intents[token] = val
+        return self._pending_intents.get(token)
+
+    def cancel_intent(self, token: str) -> None:
+        self._pending_intents.pop(token, None)
+        self._forget(f"pending_intent:{token}")
+
+    async def run_confirmed_intent(self, ctx: CommandContext, token: str) -> None:
+        """The user tapped 'Yes, do it'. Build runs for real; other intents fall
+        back to a suggest message (extended per-intent in later tasks)."""
+        data = self._pending_intents.pop(token, None)
+        if data is None:  # cache miss (e.g. after a redeploy) — hydrate from store
+            data = await self._state.get(f"pending_intent:{token}")
+        self._forget(f"pending_intent:{token}")
+        if not data:
+            await ctx.respond("That request expired — just type it again and I'll pick it up.")
+            return
+        if data["intent"] == "build_app":
+            detail = data["detail"]
+            # Vague build ("a website") on Discord -> ask one question in the thread,
+            # then build from the reply (handle_builder_thread_message completes it).
+            if ctx.platform == "discord" and ctx.user_id and is_vague_build(detail):
+                entry = {"intent": "build_app", "text": detail}
+                self._pending_clarify[ctx.user_id] = entry
+                self._persist(f"pending_clarify:{ctx.user_id}", entry, ttl_seconds=_CLARIFY_TTL)
+                await ctx.respond(
+                    "Happy to build it. What kind of site is it, and what's it for? "
+                    "For example: a portfolio for a photographer, an online shop, or a "
+                    "landing page for an event."
+                )
+                return
+            await self.run_panel_build(ctx, None, detail)
+            return
+        if data["intent"] == "schedule_task":
+            await self.run_scheduled_from_chat(ctx, data)
+            return
+        if data["intent"] == "daily_briefing":
+            await self.create_daily_briefing(ctx)
+            return
+        if data["intent"] == "summarize_email":
+            await self._handle_email(ctx)
+            return
+        if data["intent"] == "web_research":
+            ctx.arguments = data.get("detail") or ctx.arguments
+            await self._handle_web_search(ctx)
+            return
+        # make_video / find_jobs / find_engineers open a form at the platform confirm
+        # layer (Discord modal / Slack views.open), so they don't normally reach here.
+        await ctx.respond(intent_cards.suggest_line(data["intent"]))
+
+    async def run_scheduled_from_chat(self, ctx: CommandContext, data: dict) -> None:
+        """Create a schedule from a plain-English request. The classifier split the
+        message into `when` (time phrase) and `task` (what to do); parse_when turns
+        the phrase into cron, then run_schedule_create makes it (delivering runs to
+        the ctx's private thread). On a missing/garbled time, ask for what + when."""
+        from handlers.schedule_parse import parse_when
+        when = (data.get("when") or "").strip()
+        task = (data.get("task") or data.get("detail") or "").strip()
+        parsed = parse_when(when) if when else None
+        if not parsed or not task:
+            await ctx.respond(
+                "I can set that up — tell me what to do and when, e.g. "
+                "*summarize my emails every morning at 8am*."
+            )
+            return
+        cron, human = parsed
+        await self.run_schedule_create(
+            ctx, name=f"{human}: {task[:60]}", cron=cron, prompt=task,
+            delivery_channel_id=ctx.channel_id or None, run_once=False,
+        )
+
+    async def answer_intent(self, ctx: CommandContext, token: str) -> None:
+        """The user tapped 'Just answer'. Answer their original text normally."""
+        data = self._pending_intents.pop(token, None)
+        if data is None:
+            data = await self._state.get(f"pending_intent:{token}")
+        self._forget(f"pending_intent:{token}")
+        ctx.arguments = (data or {}).get("detail", "") or ctx.arguments
+        await self._handle_ask(ctx)
+
+    async def plan_chat_step(self, uid: str, text: str, *, threshold: float) -> ChatStep:
+        """Decide the next chat beat for a plain-English message. Platform-agnostic:
+        mutates the shared pending-clarify state and parks confirm tokens, but does
+        NOT post -- the caller renders the returned ChatStep. Assumes the router flag
+        is already on (the entry points gate on it)."""
+        uid = uid or ""
+        pending = self._pending_clarify.get(uid)
+        if pending is None:  # cache miss (e.g. after a redeploy) — hydrate
+            pending = await self._state.get(f"pending_clarify:{uid}")
+            if pending is not None:
+                self._pending_clarify[uid] = pending
+        if pending:
+            # This message answers our clarifying question.
+            reply = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if reply.intent == "question":
+                return ChatStep("answer", "")  # they asked back; keep waiting
+            self._pending_clarify.pop(uid, None)
+            self._forget(f"pending_clarify:{uid}")
+            intent = pending.get("intent", "")
+            merged = f"{pending.get('text', '')} {text}".strip()
+            refined = await intent_router.classify(merged, self.openwebui, self.ai_model)
+            detail = refined.detail or merged
+            token = self.park_intent(intent, detail, when=refined.when, task=refined.task)
+            return ChatStep(
+                "confirm",
+                intent_cards.recap_line(intent, detail, refined.when, refined.task),
+                token)
+        # Fresh message.
+        result = await intent_router.classify(text, self.openwebui, self.ai_model)
+        action = intent_router.decide(result, threshold=threshold)
+        if action.kind == "answer":
+            return ChatStep("answer", "")
+        if result.intent == "my_workspace":
+            return ChatStep("workspace", "")  # a read, not an action -> run it now
+        # every other actionable intent is confirm-class
+        if result.intent in intent_router.EXECUTABLE:
+            question = await intent_router.clarify_question(
+                result.intent, text, self.openwebui, self.ai_model)
+            entry = {"intent": result.intent, "text": text}
+            self._pending_clarify[uid] = entry
+            self._persist(f"pending_clarify:{uid}", entry, ttl_seconds=_CLARIFY_TTL)
+            return ChatStep("clarify", question)
+        # daily_briefing: fixed content, nothing to clarify -> straight to confirm
+        token = self.park_intent(
+            result.intent, action.detail, when=result.when, task=result.task)
+        return ChatStep("confirm", intent_cards.confirm_line(result.intent, action.detail), token)
+
+    async def _render_chat_step(self, ctx: CommandContext, step: ChatStep) -> bool:
+        """Post a ChatStep on Discord (gateway/slash). Returns True (handled)."""
+        if step.kind == "answer":
+            await self._handle_ask(ctx)
+            return True
+        if step.kind == "workspace":
+            await self.run_workspace(ctx)
+            return True
+        if step.kind == "confirm" and ctx.respond_components:
+            await ctx.respond_components(
+                step.text, intent_cards.confirm_components_discord(step.token))
+            return True
+        # clarify / suggest / (confirm with no component support) -> plain text
+        await ctx.respond(step.text)
+        return True
+
+    async def handle_chat_message(self, ctx: CommandContext, *, threshold: float = 0.75) -> bool:
+        """Gateway plain-text entry (Discord, any channel -- no slash). Flag-gated;
+        the higher confidence bar (vs the 0.6 slash/Slack default) avoids misfiring
+        in shared channels. Delegates the decision to plan_chat_step and renders it.
+        Bounded by _CHAT_SEMAPHORE so a burst can't spawn unbounded LLM calls."""
+        if not settings.intent_router_enabled:
+            return False
+        async with _CHAT_SEMAPHORE:
+            step = await self.plan_chat_step(
+                ctx.user_id or "", ctx.arguments or "", threshold=threshold)
+            return await self._render_chat_step(ctx, step)
+
+    async def handle_builder_thread_message(self, ctx: CommandContext, text: str) -> None:
+        """A message in the user's private app thread (aiui-apps-<user>): complete a
+        pending vague-build clarification, refine the current app, or answer."""
+        uid = ctx.user_id or ""
+        ctx.arguments = text
+        # Hydrate the two per-user stores on a cache miss (e.g. after a redeploy).
+        pending = self._pending_clarify.get(uid)
+        if pending is None:
+            pending = await self._state.get(f"pending_clarify:{uid}")
+            if pending is not None:
+                self._pending_clarify[uid] = pending
+        # 1) The user is answering our "what kind?" question -> build from the reply.
+        if pending:
+            result = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if result.intent == "question":
+                await self._handle_ask(ctx)  # answer, keep waiting for the description
+                return
+            self._pending_clarify.pop(uid, None)
+            self._forget(f"pending_clarify:{uid}")
+            merged = f"{(pending or {}).get('text', '')} {text}".strip()
+            await self.run_panel_build(ctx, None, merged or text)
+            return
+        # 2) Refine the current app by chat (questions are answered).
+        slug = self._user_app_slug.get(uid)
+        if not slug:
+            slug = await self._state.get(f"current_app:{uid}")
+            if slug:
+                self._user_app_slug[uid] = slug
+        if slug:
+            result = await intent_router.classify(text, self.openwebui, self.ai_model)
+            if result.intent == "question":
+                await self._handle_ask(ctx)
+                return
+            await self.run_panel_enhance(ctx, slug, text)
+            return
+        # 3) No app yet — just answer (the user can ask to build).
+        await self._handle_ask(ctx)
+
+    async def _handle_briefing(self, ctx: CommandContext) -> None:
+        """/aiui briefing — set up a daily morning briefing; `off` turns it off."""
+        arg = (ctx.arguments or "").strip().lower()
+        if arg in ("off", "stop", "cancel", "disable"):
+            await self.remove_daily_briefing(ctx)
+        else:
+            await self.create_daily_briefing(ctx)
+
+    async def create_daily_briefing(self, ctx: CommandContext) -> None:
+        """Create the recurring daily-briefing schedule, delivered to this channel.
+        Reuses the normal schedule machinery (the scheduler runs the prompt and
+        posts the result back), so there's no new delivery path."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.create_schedule(
+                email, name=DAILY_BRIEFING_NAME, cron=DAILY_BRIEFING_CRON,
+                prompt=daily_briefing_prompt(),
+                delivery_channel_id=ctx.channel_id or None,
+                delivery_platform=ctx.platform,
+            )
+        except TasksAPIError as e:
+            logger.warning("create daily briefing failed for %s: %s", ctx.user_name, e)
+            await ctx.respond(
+                "Couldn't set up your daily briefing right now. Please try again in a bit."
+            )
+            return
+        await ctx.respond(
+            "Done — I'll send your daily briefing every morning at 8am "
+            "(Asia/Manila): unread email, today's schedule, and anything that "
+            "finished overnight. Turn it off any time with `/aiui briefing off`. "
+            "(For the email part, make sure Gmail is connected.)"
+        )
+
+    async def remove_daily_briefing(self, ctx: CommandContext) -> None:
+        """Delete the user's daily-briefing schedule(s), found by name."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            schedules = await self._tasks_client.list_schedules(email)
+        except TasksAPIError:
+            await ctx.respond("Couldn't reach your schedules right now. Try again shortly.")
+            return
+        targets = [s for s in schedules if (s.get("name") or "") == DAILY_BRIEFING_NAME]
+        if not targets:
+            await ctx.respond("You don't have a daily briefing set up.")
+            return
+        removed = 0
+        for s in targets:
+            sid = s.get("id") or s.get("schedule_id")
+            if not sid:
+                continue
+            try:
+                await self._tasks_client.delete_schedule(email, str(sid))
+                removed += 1
+            except TasksAPIError:
+                pass
+        await ctx.respond(
+            "Turned off your daily briefing." if removed
+            else "Couldn't turn it off — manage it in Scheduled tasks."
+        )
 
     async def _handle_workflow(self, ctx: CommandContext) -> None:
         """Trigger an n8n workflow by name (looks up ID via API, then executes)."""
@@ -392,31 +868,26 @@ class CommandRouter:
         lines = ["*Service Status*\n"] + list(results)
         await ctx.respond("\n".join(lines))
 
+    @staticmethod
+    def _help_text() -> str:
+        return (
+            "**Here's what I can do**\n"
+            "• \U0001f680 **Build an app** — describe a website and I'll build it.\n"
+            "• ⏰ **Schedule a task** — run something on a repeat (e.g. "
+            "*summarize my emails every morning*).\n"
+            "• \U0001f4ac **Ask a question** — just type `/aiui ask <your question>`.\n"
+            "\nTip: tap a button in the **AIUI App Builder** panel — no commands needed.\n"
+            "\n_Advanced (for technical users):_ `/aiui aiuibuilder`, `/aiui mcp`, `/aiui pr-review`, "
+            "`/aiui analyze`, `/aiui security`, `/aiui web-search`."
+        )
+
     async def _handle_help(self, ctx: CommandContext) -> None:
         """Show available commands."""
-        help_text = (
-            "*Available Commands*\n"
-            "`/aiui ask <question>` — Ask the AI a question\n"
-            "`/aiui pr-review <number>` — AI review of a GitHub PR\n"
-            "`/aiui mcp <server> <tool> [json_args]` — Execute an MCP tool\n"
-            "`/aiui workflow <name>` — Trigger an n8n workflow\n"
-            "`/aiui workflows` — List active n8n workflows\n"
-            "`/aiui report` — Generate end-of-day activity report\n"
-            "`/aiui status` — Check service health\n"
-            "`/aiui diagnose [container]` \u2014 AI diagnosis of recent errors\n"
-            "`/aiui analyze [owner/repo]` \u2014 AI analysis of a GitHub codebase\n"
-            "`/aiui email` \u2014 Summarize recent emails (via n8n Gmail)\n"
-            "`/aiui sheets [daily|errors]` \u2014 Generate report to Google Sheets\n"
-            "`/aiui rebuild [owner/repo]` \u2014 Research solutions & generate rebuild plan\n"
-            "`/aiui health [owner/repo]` \u2014 Code quality & architecture health assessment\n"
-            "`/aiui security [owner/repo]` \u2014 Deep security audit (OWASP Top 10)\n"
-            "`/aiui deps [owner/repo]` \u2014 Check for outdated/vulnerable dependencies\n"
-            "`/aiui license [owner/repo]` \u2014 License compliance check\n"
-            "`/aiui cronjob <list|create|delete>` — Manage scheduled prompts\n"
-            "`/aiui aiuibuilder <build|templates|list|status|open>` — Build, then **Publish** from the build message to go live\n"
-            "`/aiui help` — Show this help message"
-        )
-        await ctx.respond(help_text)
+        text = self._help_text()
+        if ctx.platform != "slack" and ctx.respond_components is not None:
+            await ctx.respond_components(text, onboarding.welcome_components_discord())
+            return
+        await ctx.respond(text)
 
     async def _handle_diagnose(self, ctx: CommandContext) -> None:
         """Query Loki for error logs and run AI diagnosis."""
@@ -1284,11 +1755,9 @@ class CommandRouter:
 
     async def _handle_cronjob(self, ctx: CommandContext) -> None:
         """Discord → user-scoped cron schedule CRUD via tasks service."""
-        email = await self._resolve_email_auto(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await self._respond_not_linked(ctx)
             return
 
         try:
@@ -1305,7 +1774,7 @@ class CommandRouter:
 
         try:
             if action == "list":
-                schedules = await self._tasks_client.list_schedules(email)
+                schedules = await self._tasks_client.list_schedules(email, platform="discord")
                 if not schedules:
                     await ctx.respond(
                         "**Your schedules**\n"
@@ -1359,12 +1828,10 @@ class CommandRouter:
             await ctx.respond(self._format_tasks_error(e))
 
     async def _handle_aiuibuilder(self, ctx: CommandContext) -> None:
-        """Discord → App Builder project list / status / open URL."""
-        email = await self._resolve_email(ctx.user_id)
+        """Discord/Slack → App Builder project list / status / open URL."""
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await self._respond_not_linked(ctx)
             return
 
         # Action is the first word; the remainder is parsed per-action so a
@@ -1437,6 +1904,22 @@ class CommandRouter:
             )
             return
 
+        if action == "enhance":
+            # Slash enhance: `aiuibuilder enhance <slug> <change>` (+ optional
+            # file attachment). The panel/modal flow can't carry a file, so this
+            # is the only Discord path that reads a document into an enhance.
+            sub = (remainder or "").strip().split(None, 1)
+            slug = (sub[0] if sub else "").strip().strip('"')
+            change = sub[1].strip().strip('"').strip() if len(sub) > 1 else ""
+            if not slug or not change:
+                await ctx.respond(
+                    "Usage: `aiuibuilder enhance <slug> <what to change>` — "
+                    "attach a PDF/Word/text file to feed it a document."
+                )
+                return
+            await self.run_panel_enhance(ctx, slug, change)
+            return
+
         try:
             rest = shlex.split(remainder) if remainder else []
         except ValueError:
@@ -1503,32 +1986,129 @@ class CommandRouter:
             else:
                 await ctx.respond(f"Tasks API error ({e.status}).")
 
+    async def _attachment_text_for_ctx(
+        self, ctx: CommandContext
+    ) -> tuple[str | None, str | None]:
+        """Download + extract text from ctx.attachment (PDF/Word/text) so a
+        Discord build/enhance can read an attached document. Best-effort:
+        returns (None, None) when there's no attachment or it can't be read
+        (oversized, unsupported, corrupt) — the build still proceeds on text."""
+        att = getattr(ctx, "attachment", None)
+        if not att or not att.get("url"):
+            return None, None
+        import httpx
+        from urllib.parse import urlparse
+        from document_extract import classify_document, extract_text
+        max_bytes = 5 * 1024 * 1024
+        # Pre-reject by declared size before downloading anything.
+        if att.get("size") and att["size"] > max_bytes:
+            logger.info("attachment too large (declared), skipping: %s", att.get("filename"))
+            return None, None
+        # The url is Ed25519-verified interaction data, but allowlist the
+        # Discord CDN host as defense-in-depth against SSRF.
+        parsed = urlparse(att["url"] or "")
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (
+            host == "cdn.discordapp.com"
+            or host.endswith(".discordapp.com") or host.endswith(".discordapp.net")
+        ):
+            logger.warning("attachment url host not allowed: %s", host)
+            return None, None
+
+        async def _download() -> bytes | None:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                async with client.stream("GET", att["url"]) as r:
+                    r.raise_for_status()
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in r.aiter_bytes():
+                        total += len(chunk)
+                        if total > max_bytes:
+                            logger.info("attachment exceeded cap mid-stream: %s",
+                                        att.get("filename"))
+                            return None
+                        chunks.append(chunk)
+            return b"".join(chunks)
+
+        try:
+            data = await asyncio.wait_for(_download(), timeout=30)
+        except Exception as e:
+            logger.warning("attachment download failed: %s", e)
+            return None, None
+        if not data:
+            return None, None
+        kind = classify_document(att.get("content_type"), data[:8], att.get("filename"))
+        if kind is None:
+            return None, None
+        try:
+            # CPU-bound parse off the event loop — the voice pipeline shares
+            # this process and its timing is sensitive.
+            text = await asyncio.to_thread(extract_text, data, kind)
+        except Exception as e:
+            logger.warning("attachment extraction failed: %s", e)
+            return None, None
+        return (text or None), att.get("filename")
+
     async def _start_build(
         self, ctx: CommandContext, email: str, template_key: str | None,
         description: str, *, template_label: str | None = None,
-    ) -> None:
+    ) -> dict | None:
         """Start a one-shot build and wire the result watcher.
 
-        Shared by the `/aiui aiuibuilder build` text path and the App Builder
-        channel button/modal path. `description` must be non-empty (callers
-        validate). `template_label`, when given, is named in the ack."""
+        Shared by the `/aiui aiuibuilder build` text path, the App Builder
+        channel button/modal path, and the voice flow. `description` must be
+        non-empty (callers validate). `template_label`, when given, is named
+        in the ack. Returns the tasks-service result ({"slug", "task_id"}) on
+        success, None on failure."""
+        att_text, att_name = await self._attachment_text_for_ctx(ctx)
+        extra = ({"attachment_text": att_text, "attachment_name": att_name}
+                 if att_text else {})
+        name = friendly_name(description)
         try:
             result = await self._tasks_client.start_build(
-                email, description, template_key=template_key)
+                email, description, name=name or None,
+                template_key=template_key, **extra)
         except TasksAPIError as e:
             await ctx.respond(self._format_build_error(e))
-            return
+            return None
         slug = result["slug"]
         task_id = result["task_id"]
+        if ctx.user_id:  # remember this user's current app for thread-chat refining
+            self._user_app_slug[ctx.user_id] = slug
+            self._persist(f"current_app:{ctx.user_id}", slug)  # durable across restarts
+        display = name or slug
         tnote = f" (from the {template_label} template)" if template_label else ""
         await ctx.respond(
-            f"Building `{slug}`{tnote} … I'll post the link here when it's ready "
-            "(usually a few minutes)."
+            f"Building **{display}** (`{slug}`){tnote} … I'll post the link here "
+            "when it's ready (usually a few minutes)."
         )
         if ctx.notify_channel is not None:
-            watcher = asyncio.create_task(self._watch_build(ctx, email, task_id, slug))
+            watcher = asyncio.create_task(
+                self._watch_build(ctx, email, task_id, slug, display_name=display))
             self._background_tasks.add(watcher)
-            watcher.add_done_callback(self._background_tasks.discard)
+            watcher.add_done_callback(self._on_build_watcher_done)
+        return result
+
+    async def run_workspace(self, ctx: CommandContext) -> None:
+        """Show the user's whole workspace (apps + schedules + videos) in one
+        message. Requires a linked account; each fetch degrades to empty so one
+        failing service never blanks the view."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+
+        async def _safe(coro, default):
+            try:
+                return await coro
+            except Exception:  # noqa: BLE001 - one service down shouldn't blank the view
+                return default
+
+        apps = await _safe(self._tasks_client.list_projects(email), [])
+        scheds = await _safe(
+            self._tasks_client.list_schedules(email, platform=ctx.platform), [])
+        vids = await _safe(self._tasks_client.list_videos(email), [])
+        await ctx.respond(build_workspace_summary(apps, scheds, vids))
 
     async def run_panel_build(
         self, ctx: CommandContext, template_key: str | None, description: str,
@@ -1538,11 +2118,9 @@ class CommandRouter:
         explicit (from the clicked button), so — unlike the free-text `build`
         path — a Blank build whose first word matches a template key is never
         misread as a template build."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await self._respond_not_linked(ctx)
             return
         description = (description or "").strip()
         if not description:
@@ -1550,15 +2128,87 @@ class CommandRouter:
             return
         await self._start_build(ctx, email, template_key, description)
 
+    async def run_voice_build(
+        self, ctx: CommandContext, template_key: str | None, description: str,
+    ) -> dict | None:
+        """Voice entry: explicit template key (or None for blank) + spoken
+        description. Unknown keys are a spoken error, never a silent blank
+        build — the user explicitly picked a template. Returns
+        {"slug", "task_id"} on success so the voice layer can remember the
+        last build for the build_status tool."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await ctx.respond(
+                "Voice builds aren't linked to an account yet — the operator "
+                "needs to set VOICE_USER_EMAIL on the server."
+            )
+            return None
+        description = (description or "").strip()
+        if not description:
+            await ctx.respond("Please describe the app you want to build.")
+            return None
+        template_key = (template_key or "").strip().lower() or None
+        template_label = None
+        if template_key:
+            try:
+                catalog = await self._tasks_client.list_templates(email)
+            except TasksAPIError:
+                catalog = []
+            labels = {
+                t["key"]: t.get("label", t["key"])
+                for t in catalog if t.get("key")
+            }
+            if template_key not in labels:
+                await ctx.respond(
+                    f"I don't know a template called {template_key}. "
+                    "Ask me to list templates, or build without one."
+                )
+                return None
+            template_label = labels[template_key]
+        return await self._start_build(
+            ctx, email, template_key, description,
+            template_label=template_label,
+        )
+
+    async def run_voice_build_status(
+        self, ctx: CommandContext, email: str, task_id: str, slug: str = "",
+    ) -> None:
+        """Speak the state of a build. The voice layer picks the task_id
+        (explicit from the agent, else the remembered last voice build)."""
+        name = slug or "your app"
+        try:
+            st = await self._tasks_client.get_build_status(email, task_id)
+        except TasksAPIError:
+            await ctx.respond(
+                "I couldn't reach the builder to check — try again in a moment."
+            )
+            return
+        status = st.get("status")
+        if status == "completed":
+            url = (st.get("preview_url") or "").strip()
+            tail = f" The preview link is in the text channel: {url}" if url else ""
+            await ctx.respond(f"Good news — {name} is ready.{tail}")
+        elif status == "failed":
+            await ctx.respond(
+                f"The build for {name} failed. You can ask me to build it again."
+            )
+        elif status == "needs_input":
+            detail = (st.get("error") or "").strip()
+            tail = f" It needs to know: {detail}" if detail else ""
+            await ctx.respond(f"The build for {name} is paused.{tail}")
+        else:
+            await ctx.respond(
+                f"{name} is still building — I'll post the link in the text "
+                "channel the moment it's ready."
+            )
+
     async def run_panel_publish(self, ctx: CommandContext, slug: str) -> None:
         """App Builder channel entry for the Publish button. Resolves the
         caller's email and publishes their built app, then posts the live URL.
         Ownership is enforced server-side (only the app's owner can publish)."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(
-                "Your Discord account isn't linked. Ask Lukas to add you."
-            )
+            await self._respond_not_linked(ctx)
             return
         try:
             result = await self._tasks_client.publish_app(email, slug)
@@ -1578,16 +2228,19 @@ class CommandRouter:
     async def run_panel_enhance(self, ctx: CommandContext, slug: str, prompt: str) -> None:
         """App Builder Enhance: edit an existing app from a typed change, then
         watch it like a build and post the updated preview."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         prompt = (prompt or "").strip()
         if not prompt:
             await ctx.respond("Tell me what to change.")
             return
+        att_text, att_name = await self._attachment_text_for_ctx(ctx)
+        extra = ({"attachment_text": att_text, "attachment_name": att_name}
+                 if att_text else {})
         try:
-            result = await self._tasks_client.enhance_app(email, slug, prompt)
+            result = await self._tasks_client.enhance_app(email, slug, prompt, **extra)
         except TasksAPIError as e:
             await ctx.respond(self._format_enhance_error(e))
             return
@@ -1602,9 +2255,9 @@ class CommandRouter:
 
     async def run_panel_unpublish(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Unpublish: take a live app offline."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.unpublish_app(email, slug)
@@ -1613,12 +2266,25 @@ class CommandRouter:
             return
         await ctx.respond(f"`{slug}` is offline now (unpublished).")
 
+    async def run_panel_delete(self, ctx: CommandContext, slug: str) -> None:
+        """App Builder Delete: permanently remove an app (after confirm)."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.delete_app(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_delete_error(e))
+            return
+        await ctx.respond(f"`{slug}` has been deleted.")
+
     async def run_panel_menu(self, ctx: CommandContext, slug: str) -> None:
         """App Builder dropdown selection → post that app's ephemeral action menu.
         Fetches fresh status so the menu reflects current publish state."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             status = await self._tasks_client.get_project_status(email, slug)
@@ -1632,8 +2298,10 @@ class CommandRouter:
         # rather than emit a broken "https:///..." URL.
         preview_url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/" if PUBLIC_DOMAIN else ""
         header = f"**{name}** (`{slug}`) — {'published' if published else 'not published'}"
+        owner = await self._resolve_email_for_ctx(ctx) or ""
         components = build_project_menu_components(
-            slug, published=published, public_url=public_url, preview_url=preview_url,
+            slug, published=published, public_url=public_url,
+            preview_url=preview_url, owner=owner,
         )
         if ctx.respond_components is not None:
             await ctx.respond_components(header, components)
@@ -1643,9 +2311,9 @@ class CommandRouter:
     async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Status button → post the app's status text (same shape as
         the `aiuibuilder status <slug>` text action)."""
-        email = await self._resolve_email(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             status = await self._tasks_client.get_project_status(email, slug)
@@ -1665,12 +2333,12 @@ class CommandRouter:
 
     async def run_schedule_list(self, ctx: CommandContext) -> None:
         """My-schedules button → render the user's schedules + action buttons."""
-        email = await self._resolve_email_auto(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
             return
@@ -1682,18 +2350,19 @@ class CommandRouter:
 
     async def run_schedule_create(
         self, ctx: CommandContext, *, name: str, cron: str, prompt: str,
-        delivery_channel_id: str | None = None,
+        delivery_channel_id: str | None = None, run_once: bool = False,
     ) -> None:
         """Confirm button → create the schedule for the user, delivering results
         to their private thread."""
-        email = await self._resolve_email_auto(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.create_schedule(
                 email, name=name, cron=cron, prompt=prompt,
-                delivery_channel_id=delivery_channel_id,
+                delivery_channel_id=delivery_channel_id, run_once=run_once,
+                delivery_platform=ctx.platform,
             )
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
@@ -1706,9 +2375,9 @@ class CommandRouter:
         self, ctx: CommandContext, action: str, schedule_id: str,
     ) -> None:
         """Run-now / Pause / Resume / Delete for a single schedule."""
-        email = await self._resolve_email_auto(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond("Your Discord account isn't linked. Ask Lukas to add you.")
+            await self._respond_not_linked(ctx)
             return
         try:
             if action == "run":
@@ -1741,25 +2410,56 @@ class CommandRouter:
         except TasksAPIError:
             return None
 
+    async def _resolve_email_for_ctx(self, ctx: CommandContext) -> str | None:
+        """Platform-aware email resolution for build/connector flows. Slack reads
+        the caller's profile email via the Web API (needs the users:read.email
+        scope); voice uses the operator-set VOICE_USER_EMAIL (single identity);
+        Discord keeps the static-map + DB-link-store path unchanged."""
+        if ctx.platform == "voice":
+            return (settings.voice_user_email or "").strip().lower() or None
+        if ctx.platform == "slack":
+            if self._slack_client is None:
+                return None
+            try:
+                return await self._slack_client.get_user_email(ctx.user_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("slack get_user_email failed user=%s: %s", ctx.user_id, e)
+                return None
+        return await self._resolve_email(ctx.user_id)
+
     async def _resolve_email_auto(self, discord_id: str) -> str:
-        """Identity for the schedule flow, which is open to anyone who can see
-        the channel. A real email when mapped/linked (so connector-backed tasks
-        keep working), else a stable synthetic identity — no linking step."""
+        """Identity for the schedule/connector flow, which is open to anyone who
+        can see the channel: a real email when mapped/linked (so connector-backed
+        tasks keep working), else a stable synthetic identity — no linking step."""
         return await self._resolve_email(discord_id) or f"discord-{discord_id}@aiui.local"
 
     @staticmethod
-    def _not_linked_msg() -> str:
-        return ("Your Discord account isn't linked yet. Hit **🔗 Link my account** "
-                "on the Schedules panel to get set up.")
+    def _not_linked_text(ctx: CommandContext) -> str:
+        """The 'no email' message, worded for the caller's platform."""
+        if ctx.platform == "slack":
+            return onboarding.not_linked_text_slack()
+        return onboarding.not_linked_text_discord()
+
+    async def _respond_not_linked(self, ctx: CommandContext) -> None:
+        """Friendly, self-service not-linked response. On Discord, render the
+        Link button inline when the context supports components; otherwise send
+        plain text. On Slack, send the plain-language wording (auto-read; no
+        button to offer)."""
+        if ctx.platform != "slack" and ctx.respond_components is not None:
+            await ctx.respond_components(
+                onboarding.not_linked_text_discord(), onboarding.link_button_row(),
+            )
+            return
+        await ctx.respond(self._not_linked_text(ctx))
 
     async def run_schedule_edit(
         self, ctx: CommandContext, schedule_id: str, *,
         name: str, cron: str, prompt: str,
     ) -> None:
         """Edit-modal submit → update the schedule's time/prompt for this user."""
-        email = await self._resolve_email_auto(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(self._not_linked_msg())
+            await self._respond_not_linked(ctx)
             return
         try:
             await self._tasks_client.update_schedule(
@@ -1772,11 +2472,11 @@ class CommandRouter:
     async def get_schedule_for_edit(self, discord_id: str, schedule_id: str) -> dict | None:
         """Return {what, when} for the Edit-modal prefill, or None if not found /
         not linked. The schedule's name is '<when-in-English>: <what>'."""
-        email = await self._resolve_email_auto(discord_id)
+        email = await self._resolve_email(discord_id)
         if not email:
             return None
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError:
             return None
         for s in schedules:
@@ -1791,23 +2491,23 @@ class CommandRouter:
     async def dashboard_payload(self, discord_id: str) -> dict | None:
         """The Schedules dashboard message payload for a user's private thread,
         or None if they're not linked."""
-        email = await self._resolve_email_auto(discord_id)
+        email = await self._resolve_email(discord_id)
         if not email:
             return None
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError:
             schedules = []
         return build_schedules_dashboard(schedules)
 
     async def run_schedule_card(self, ctx: CommandContext, schedule_id: str) -> None:
         """Dropdown select → render a single schedule's clean card."""
-        email = await self._resolve_email_auto(ctx.user_id)
+        email = await self._resolve_email_for_ctx(ctx)
         if not email:
-            await ctx.respond(self._not_linked_msg())
+            await self._respond_not_linked(ctx)
             return
         try:
-            schedules = await self._tasks_client.list_schedules(email)
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
             return
@@ -1827,6 +2527,18 @@ class CommandRouter:
     async def set_user_thread(self, discord_id: str, thread_id: str) -> bool:
         return await self._tasks_client.set_user_thread(discord_id, thread_id)
 
+    async def get_user_builder_thread(self, discord_id: str) -> str | None:
+        return await self._tasks_client.get_user_builder_thread(discord_id)
+
+    async def set_user_builder_thread(self, discord_id: str, thread_id: str) -> bool:
+        return await self._tasks_client.set_user_builder_thread(discord_id, thread_id)
+
+    async def get_user_video_thread(self, discord_id: str) -> str | None:
+        return await self._tasks_client.get_user_video_thread(discord_id)
+
+    async def set_user_video_thread(self, discord_id: str, thread_id: str) -> bool:
+        return await self._tasks_client.set_user_video_thread(discord_id, thread_id)
+
     async def request_link(self, discord_id: str, username: str, email: str) -> dict:
         return await self._tasks_client.request_link(discord_id, username, email)
 
@@ -1835,6 +2547,126 @@ class CommandRouter:
 
     async def reject_link(self, discord_id: str) -> bool:
         return await self._tasks_client.reject_link(discord_id)
+
+    # ------------------------------------------------------------------ #
+    # Cron-job management methods                                          #
+    # ------------------------------------------------------------------ #
+
+    def _cron_email_or_none(self, ctx: CommandContext) -> str | None:
+        return self._discord_user_email_map.get(ctx.user_id)
+
+    async def run_cron_create(self, ctx: CommandContext, *, cron_expr: str,
+                              name: str, prompt: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        prompt = (prompt or "").strip()
+        if not prompt:
+            await ctx.respond("Please include a prompt — what should the job do?")
+            return
+        name = (name or "").strip() or f"discord-{ctx.user_name}-{cron_expr[:20]}"
+        try:
+            result = await self._tasks_client.create_schedule(
+                email, name=name, cron=cron_expr, prompt=prompt,
+            )
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        from handlers import cronjob_panel as cp
+        await ctx.respond(
+            f"✅ Scheduled **{name}** — {cp.describe_cron(cron_expr)}\n"
+            f"`{result.get('id','?')}` · {prompt[:200]}"
+        )
+
+    async def run_cron_list(self, ctx: CommandContext) -> None:
+        from handlers import cronjob_panel as cp
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            schedules = await self._tasks_client.list_schedules(email, platform="discord")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        if not schedules:
+            await ctx.respond("You have no schedules yet. Click **⏰ Schedule a task** to make one.")
+            return
+        if ctx.respond_components:
+            await ctx.respond_components("**Your schedules** — pick one to manage:",
+                                         cp.build_schedules_select(schedules))
+        else:
+            await ctx.respond("\n".join(cp.format_schedule_line(s) for s in schedules))
+
+    async def _cron_menu_for(self, ctx: CommandContext, email: str,
+                             schedule_id: str, prefix: str = "") -> None:
+        from handlers import cronjob_panel as cp
+        schedules = await self._tasks_client.list_schedules(email, platform="discord")
+        match = next((s for s in schedules if str(s["id"]) == str(schedule_id)), None)
+        if not match:
+            await ctx.respond("That schedule no longer exists.")
+            return
+        if ctx.respond_components:
+            await ctx.respond_components(prefix + cp.format_schedule_line(match),
+                                         cp.build_schedule_menu(match))
+        else:
+            await ctx.respond(prefix + cp.format_schedule_line(match))
+
+    async def run_cron_menu(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._cron_menu_for(ctx, email, schedule_id)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_runnow(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.run_now_schedule(email, schedule_id)
+            await ctx.respond("▶️ Triggered — it will run shortly.")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_pause(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.disable_schedule(email, schedule_id)
+            await self._cron_menu_for(ctx, email, schedule_id, prefix="⏸ Paused.\n")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_resume(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.enable_schedule(email, schedule_id)
+            await self._cron_menu_for(ctx, email, schedule_id, prefix="▶ Resumed.\n")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
+    async def run_cron_delete(self, ctx: CommandContext, schedule_id: str) -> None:
+        email = self._cron_email_or_none(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.delete_schedule(email, schedule_id)
+            await ctx.respond("🗑 Schedule deleted.")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+
 
     @staticmethod
     def _format_status_error(e: TasksAPIError) -> str:
@@ -1868,12 +2700,22 @@ class CommandRouter:
             return "It's not live right now."
         return f"Couldn't unpublish (error {e.status})."
 
+    def _format_delete_error(self, e: TasksAPIError) -> str:
+        """Delete-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status in (401, 403):
+            return "Only the app's owner can delete it."
+        if e.status == 404:
+            return "That app doesn't exist (already deleted?)."
+        return f"Couldn't delete (error {e.status})."
+
     def _format_publish_error(self, e: TasksAPIError) -> str:
         """Publish-flavored error text."""
         if e.status == 0:
             return "Tasks service unreachable, try again."
         if e.status == 401:
-            return "Tasks service couldn't identify you — ask Lukas to check your link."
+            return "I couldn't verify your account — tap 🔗 Link my account and try again."
         if e.status == 403:
             return "Only the app's owner can publish it."
         if e.status == 404:
@@ -1911,21 +2753,26 @@ class CommandRouter:
         if e.status == 429:
             return "A build is already running — try again in a few minutes."
         if e.status in (401, 403):
-            return "Your Discord account isn't linked. Ask Lukas to add you."
+            return onboarding.not_linked_text_discord()
         if e.status in (400, 422):
             return "Couldn't start the build — check your description and try again."
         return f"Couldn't start the build (error {e.status})."
 
     async def _watch_build(
         self, ctx: CommandContext, email: str, task_id: str, slug: str,
-        *, poll_seconds: int | None = None, max_polls: int | None = None,
+        *, display_name: str | None = None,
+        poll_seconds: int | None = None, max_polls: int | None = None,
     ) -> None:
         """Poll the build until it terminates, then post the result to the
         channel — on success via ctx.notify_channel_rich (a Publish button) when
         set, else ctx.notify_channel (both bot-token messages that outlive the
-        interaction window). Defensive: transient errors don't kill the loop."""
+        interaction window). Reliability: transient errors don't kill the loop, an
+        unexpected crash still posts a final message, and one mid-build ping breaks
+        the long silence. `display_name` is the friendly app title (falls back to
+        the slug)."""
         if ctx.notify_channel is None:
             return
+        display = display_name or slug
 
         async def _notify(msg: str) -> None:
             # Never let a notify failure crash the watcher (it runs as a
@@ -1938,50 +2785,656 @@ class CommandRouter:
         poll_seconds = BUILD_POLL_SECONDS if poll_seconds is None else poll_seconds
         max_polls = BUILD_MAX_POLLS if max_polls is None else max_polls
         errors = 0
+        reassured = False
+        try:
+            for i in range(max_polls):
+                await asyncio.sleep(poll_seconds)
+                try:
+                    st = await self._tasks_client.get_build_status(email, task_id)
+                    errors = 0
+                except (TasksAPIError, httpx.HTTPError) as e:
+                    errors += 1
+                    logger.warning("watch_build status error task=%s: %s", task_id, e)
+                    if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
+                        await _notify(
+                            f"Lost track of **{display}** — check "
+                            f"`/aiui aiuibuilder status {slug}`."
+                        )
+                        return
+                    continue
+                status = st.get("status")
+                if status == "completed":
+                    url = st.get("preview_url") or ""
+                    msg = f"**{display}** is ready (preview): {url}".rstrip()
+                    if ctx.notify_channel_rich is not None:
+                        try:
+                            await ctx.notify_channel_rich(msg, slug, url, email)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
+                            await _notify(msg)
+                    else:
+                        await _notify(msg)
+                    return
+                if status == "needs_input":
+                    detail = (st.get("error") or "").strip()
+                    ask = f" It needs to know: {detail}" if detail else ""
+                    await _notify(
+                        f"**{display}** needs more detail to finish.{ask} "
+                        "Continue it in the App Builder, or run `build` again with a "
+                        "more specific description."
+                    )
+                    return
+                if status == "failed":
+                    await _notify(
+                        f"Build failed for **{display}**. Open the App Builder to retry."
+                    )
+                    return
+                # still building: one reassurance ping so it never feels dead
+                if not reassured and i >= BUILD_REASSURE_AFTER_POLLS:
+                    reassured = True
+                    await _notify(
+                        f"Still building **{display}** — writing your pages. "
+                        "I'll post the link here as soon as it's ready."
+                    )
+            await _notify(
+                f"**{display}** is still building — check "
+                f"`/aiui aiuibuilder status {slug}`."
+            )
+        except Exception as exc:  # noqa: BLE001 - never leave the user hanging
+            logger.error("watch_build crashed task=%s: %s", task_id, exc, exc_info=exc)
+            await _notify(
+                f"I lost track of **{display}** while building. Check "
+                f"`/aiui aiuibuilder status {slug}`."
+            )
+
+    def _on_build_watcher_done(self, task: "asyncio.Task") -> None:
+        """Done-callback for the build watcher: drop the strong ref and log any
+        crash. The watcher's own try/except should have notified the user; this
+        guarantees a crash is never swallowed silently."""
+        self._background_tasks.discard(task)
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc:
+            logger.error("build watcher task crashed: %s", exc, exc_info=exc)
+
+    async def run_video_add(self, ctx: CommandContext, urls: list[str]) -> None:
+        """`/video add`: push Discord CDN screenshot URLs onto the caller's current
+        draft. Replies (ephemeral) with the running count + a Generate button."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        if not urls:
+            await ctx.respond("Attach 1-10 screenshots to `/video add`.")
+            return
+        try:
+            draft = await self._tasks_client.get_current_video_draft(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't load your draft: {e.message}")
+            return
+        if not draft:
+            await ctx.respond("No video in progress — click **New video** first.")
+            return
+        prior_count = draft.get("screenshot_count", 0)
+        try:
+            res = await self._tasks_client.add_video_screenshots_urls(email, draft["id"], urls)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't add screenshots: {e.message}")
+            return
+        count = res.get("count", 0)
+        msg = f"Added - {count}/12 screenshots. Next: add a description, then click **Generate video**."
+        if prior_count == 0 and ctx.respond_components is not None:
+            # First add: advance wizard to the Describe step.
+            # NOTE: benign TOCTOU - dropping images across multiple separate messages in
+            # quick succession can each read screenshot_count==0 and post Describe more
+            # than once; acceptable for auto-advance.
+            from handlers.video_panel import build_choice_components
+            await ctx.respond_components(msg, build_choice_components(draft["id"]))
+        else:
+            # Subsequent add: just echo the running count; no new wizard card.
+            await ctx.respond(msg)
+
+    async def run_video_capture(self, ctx: CommandContext, url: str) -> None:
+        """Paste-a-URL / Capture-from-website: drive server-side headless-browser
+        capture of `url` onto the caller's current draft, then reply with the
+        running count + a Generate button. Mirrors run_video_add."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            draft = await self._tasks_client.get_current_video_draft(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't load your draft: {e.message}")
+            return
+        if not draft:
+            await ctx.respond("No video in progress — click **New video** first.")
+            return
+        if not is_safe_public_url(url):
+            await ctx.respond(
+                "I can only capture public web pages (http/https). That address "
+                "looks internal or unreachable — try a public site URL.")
+            return
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or "your site"
+        await ctx.respond(f"Capturing screenshots from {host} - this takes a few seconds.")
+        try:
+            res = await self._tasks_client.capture_video_screenshots(email, draft["id"], url)
+        except TasksAPIError as e:
+            await ctx.respond(
+                f"Couldn't capture that site: {e.message}. "
+                "You can drag screenshots into this thread instead.")
+            return
+        count = res.get("count", 0)
+        msg = (f"Added {count}/12 screenshots from {host}. "
+               "Next: add a description, then click **Generate video**.")
+        if ctx.respond_components is not None:
+            from handlers.video_panel import build_choice_components
+            await ctx.respond_components(msg, build_choice_components(draft["id"]))
+        else:
+            await ctx.respond(msg)
+
+    async def run_video_set_field(self, ctx: CommandContext, job_id: str, *,
+                                  style: str | None = None, voice: str | None = None,
+                                  render_mode: str | None = None,
+                                  animation_preset: str | None = None) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.set_video_draft_fields(
+                email, job_id, style=style, voice=voice, render_mode=render_mode,
+                animation_preset=animation_preset)
+        except TasksAPIError as e:
+            logger.warning("video set field failed job=%s: %s", job_id, e)
+
+    async def run_video_set_details(self, ctx: CommandContext, job_id: str, *,
+                                    title: str | None = None, prompt: str | None = None) -> None:
+        """Add-title-&-description submit: patch the draft's title/prompt."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.set_video_draft_fields(
+                email, job_id, title=title, prompt=prompt)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't save: {e.message}")
+            return
+        confirm = "Description saved. Click Generate video when you're ready."
+        await ctx.respond(confirm)  # resolve the deferred ephemeral spinner
+        if ctx.respond_components is not None:
+            from handlers.video_panel import build_generate_step_components
+            await ctx.respond_components("", build_generate_step_components(job_id))
+
+    async def run_video_generate(self, ctx: CommandContext, job_id: str) -> None:
+        """Generate button: queue the draft + spawn the watcher."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.queue_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't start the render: {e.message}")
+            return
+        qp = res.get("queue_position", 0)
+        tail = f" (queue position {qp}; renders queue behind app builds)" if qp else ""
+        await ctx.respond(f"Rendering your video…{tail} I'll post it here when it's done.")
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_video_watcher_done)
+
+    async def run_video_gennow(self, ctx: CommandContext, job_id: str) -> None:
+        """Default path: force Remotion animated, then queue and watch and deliver. The
+        brain scripts the whole video from an empty prompt."""
+        await self.run_video_set_field(
+            ctx, job_id, render_mode="remotion", animation_preset="cursor_click")
+        await self.run_video_generate(ctx, job_id)
+
+    async def run_video_refine(self, ctx: CommandContext, job_id: str, message: str) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.refine_video(email, job_id, message)
+        except TasksAPIError as e:
+            await ctx.respond(f"Refine failed: {e.message}")
+            return
+        text = res.get("message", "")
+        if res.get("can_apply") and ctx.notify_channel_msg is not None:
+            from handlers.video_panel import build_proposal_components
+            await ctx.notify_channel_msg({"content": text or "Here's the proposed change.",
+                                          "components": build_proposal_components(job_id)})
+        else:
+            await ctx.respond(text or "Okay.")
+
+    async def run_video_apply(self, ctx: CommandContext, job_id: str) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.apply_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(f"Apply failed: {e.message}")
+            return
+        await ctx.respond("Applying the change and re-rendering…")
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_video_watcher_done)
+
+    async def run_video_revert(self, ctx: CommandContext, job_id: str, version_no: int) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.revert_video(email, job_id, version_no)
+        except TasksAPIError as e:
+            await ctx.respond(f"Revert failed: {e.message}")
+            return
+        if res.get("status") == "reverted":
+            await self._deliver_video(ctx, email, job_id)
+        else:
+            await ctx.respond("Re-rendering that version…")
+            if ctx.notify_channel is not None:
+                watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+                self._background_tasks.add(watcher)
+                watcher.add_done_callback(self._on_video_watcher_done)
+
+    async def run_video_list(self, ctx: CommandContext) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            res = await self._tasks_client.list_videos(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't list your videos: {e.message}")
+            return
+        vids = res.get("videos", [])
+        if not vids:
+            await ctx.respond("You have no videos yet. Click **New video** to make one.")
+            return
+        lines = [f"- **{v.get('title') or v['id']}** — {v.get('status')}"
+                 + (" (ready)" if v.get("output_available") else "")
+                 for v in vids[:25]]
+        await ctx.respond("Your videos:\n" + "\n".join(lines))
+
+    def _on_video_watcher_done(self, task: "asyncio.Task") -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("video watcher failed: %r", exc, exc_info=exc)
+
+    async def _deliver_video(self, ctx: CommandContext, email: str, job_id: str) -> None:
+        """Post the finished MP4 to the thread: attach when small enough, else a
+        capability link. Then post Refine + version controls."""
+        try:
+            data = await self._tasks_client.get_video(email, job_id)
+        except TasksAPIError:
+            return
+        title = data.get("title") or "your video"
+        share_url = data.get("share_url")
+        versions = []
+        try:
+            versions = (await self._tasks_client.video_versions(email, job_id)).get("versions", [])
+        except TasksAPIError:
+            pass
+        from handlers.video_panel import build_done_components
+        components = build_done_components(job_id, versions)
+        attached = False
+        if self._discord is not None:
+            try:
+                blob = await self._tasks_client.download_video_bytes(email, job_id)
+                if len(blob) <= VIDEO_ATTACH_MAX_MB * 1024 * 1024:
+                    attached = await self._discord.post_channel_file(
+                        ctx.channel_id, [(f"{title[:60]}.mp4", blob, "video/mp4")],
+                        content=f"**{title}** is ready.", components=components)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("video attach failed job=%s: %s", job_id, e)
+        if not attached and ctx.notify_channel is not None:
+            if share_url:
+                await ctx.notify_channel(f"**{title}** is ready: {share_url}")
+            else:
+                await ctx.notify_channel(
+                    f"**{title}** is ready, but it's too large to attach here. "
+                    "Open it in the web Video Studio.")
+            if ctx.notify_channel_msg is not None:
+                await ctx.notify_channel_msg({"content": "Refine or revert:",
+                                              "components": components})
+
+    async def _watch_video(self, ctx: CommandContext, email: str, job_id: str,
+                           *, poll_seconds: int | None = None, max_polls: int | None = None) -> None:
+        """Poll a video job until it terminates, then deliver it. Modeled on
+        _watch_build: detached task, transient errors tolerated."""
+        if ctx.notify_channel is None:
+            return
+
+        async def _notify(msg: str) -> None:
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_video notify failed job=%s: %s", job_id, exc)
+
+        poll_seconds = VIDEO_POLL_SECONDS if poll_seconds is None else poll_seconds
+        max_polls = VIDEO_MAX_POLLS if max_polls is None else max_polls
+        errors = 0
         for _ in range(max_polls):
             await asyncio.sleep(poll_seconds)
             try:
-                st = await self._tasks_client.get_build_status(email, task_id)
+                st = await self._tasks_client.get_video(email, job_id)
+                errors = 0
+            except (TasksAPIError, httpx.HTTPError) as e:
+                errors += 1
+                logger.warning("watch_video status error (%s) job=%s", getattr(e, "status", "?"), job_id)
+                if errors >= VIDEO_MAX_CONSECUTIVE_ERRORS:
+                    await _notify("Lost track of your video — check **My videos**.")
+                    return
+                continue
+            status = st.get("status")
+            if status == "done":
+                await self._deliver_video(ctx, email, job_id)
+                return
+            if status == "failed":
+                err = (st.get("error") or "").strip()
+                await _notify(f"Video render failed.{(' ' + err) if err else ''}")
+                return
+        await _notify("Your video is still rendering — check **My videos** shortly.")
+
+    async def run_panel_outreach(
+        self, ctx: CommandContext, role: str, location: str,
+        jobdesc: str, count: int,
+    ) -> None:
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        if not (jobdesc or "").strip():
+            await ctx.respond("Please paste the job description so I know what to send.")
+            return
+        # Both Discord and Slack now review-before-send (the Slack review layer
+        # exists as of this feature). Reverse always uses run_panel_reverse.
+        manual = True
+        try:
+            result = await self._tasks_client.start_outreach(email, {
+                "role": role, "location": location, "jobdesc": jobdesc,
+                "count": count, "mode": "manual" if manual else "auto"})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        task_id = result["task_id"]
+        where = f"{role}" + (f" · {location}" if location else "")
+        if manual:
+            await ctx.respond(
+                f"\U0001f50e Searching GitHub for **{where}** … I'll post the list "
+                "here to review when it's ready (usually a minute or two).")
+        else:
+            await ctx.respond(
+                f"\U0001f50e Searching GitHub for **{where}** … I'll post the results "
+                "in your thread when it's done (usually a minute or two).")
+        if ctx.notify_channel is not None:
+            coro = (self._watch_outreach_review(ctx, email, task_id, role, location)
+                    if manual else self._watch_outreach(ctx, email, task_id))
+            w = asyncio.create_task(coro)
+            self._background_tasks.add(w)
+            w.add_done_callback(self._background_tasks.discard)
+
+    @staticmethod
+    def _review_builder(ctx: CommandContext):
+        """Resolve the review-message builder module for ``ctx.platform``:
+        Discord embeds (handlers.recruiting_review) vs Slack Block Kit
+        (handlers.slack_recruiting_review, added in Phase 3). Lazy-imported so
+        Phase 2 (Discord) does not require the Slack module to exist yet."""
+        if ctx.platform == "discord":
+            from handlers import recruiting_review as rr
+        else:
+            from handlers import slack_recruiting_review as rr
+        return rr
+
+    async def run_panel_reverse(
+        self, ctx: CommandContext, role: str, location: str,
+        jobdesc: str, count: int,
+    ) -> None:
+        """Reverse recruiting ('Find Jobs'): find COMPANIES hiring for the
+        seeker's target role and draft a tailored application to each, for review
+        before send. Mirrors run_panel_outreach but sends direction='reverse' and
+        is ALWAYS manual (review-before-send) on every platform — unlike
+        run_panel_outreach, whose ``manual`` is Discord-only today."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        if not (jobdesc or "").strip():
+            await ctx.respond(
+                "Please paste your background / skills so I can tailor each application.")
+            return
+        try:
+            result = await self._tasks_client.start_outreach(email, {
+                "role": role, "location": location, "jobdesc": jobdesc,
+                "count": count, "mode": "manual", "direction": "reverse"})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        task_id = result["task_id"]
+        where = f"{role}" + (f" · {location}" if location else "")
+        await ctx.respond(
+            f"\U0001f50e Searching for companies hiring for **{where}** … I'll post "
+            "the list here to review when it's ready (usually a minute or two).")
+        if ctx.notify_channel is not None:
+            w = asyncio.create_task(self._watch_outreach_review(
+                ctx, email, task_id, role, location, direction="reverse"))
+            self._background_tasks.add(w)
+            w.add_done_callback(self._background_tasks.discard)
+
+    async def _watch_outreach(
+        self, ctx: CommandContext, email: str, task_id: str,
+        *, poll_seconds: int | None = None, max_polls: int | None = None,
+    ) -> None:
+        if ctx.notify_channel is None:
+            return
+
+        async def _notify(msg: str) -> None:
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_outreach notify failed task=%s: %s", task_id, exc)
+
+        poll_seconds = OUTREACH_POLL_SECONDS if poll_seconds is None else poll_seconds
+        max_polls = OUTREACH_MAX_POLLS if max_polls is None else max_polls
+        errors = 0
+        for _ in range(max_polls):
+            await asyncio.sleep(poll_seconds)
+            try:
+                st = await self._tasks_client.get_outreach_status(email, task_id)
                 errors = 0
             except TasksAPIError as e:
                 errors += 1
-                logger.warning("watch_build status error (%s) task=%s", e.status, task_id)
-                if errors >= BUILD_MAX_CONSECUTIVE_ERRORS:
-                    await _notify(
-                        f"Lost track of `{slug}` — check `/aiui aiuibuilder status {slug}`."
-                    )
+                logger.warning("watch_outreach status error (%s) task=%s", e.status, task_id)
+                if errors >= OUTREACH_MAX_CONSECUTIVE_ERRORS:
+                    await _notify("Lost track of the outreach run — try again.")
                     return
                 continue
             status = st.get("status")
             if status == "completed":
-                url = st.get("preview_url") or ""
-                msg = f"`{slug}` is ready (preview): {url}".rstrip()
-                if ctx.notify_channel_rich is not None:
-                    try:
-                        await ctx.notify_channel_rich(msg, slug, url)
-                    except Exception as exc:  # noqa: BLE001
-                        logger.error("watch_build rich notify failed task=%s: %s", task_id, exc)
-                        await _notify(msg)
-                else:
-                    await _notify(msg)
-                return
-            if status == "needs_input":
-                detail = (st.get("error") or "").strip()
-                ask = f" It needs to know: {detail}" if detail else ""
-                await _notify(
-                    f"`{slug}` needs more detail to finish.{ask} "
-                    "Continue it in the App Builder, or run `build` again with a "
-                    "more specific description."
-                )
+                text = (st.get("text") or "").strip() or "Outreach complete."
+                url = st.get("sheet_url") or ""
+                await _notify(f"✅ {text}" + (f"\n\U0001f449 {url}" if url else ""))
                 return
             if status == "failed":
-                await _notify(
-                    f"Build failed for `{slug}`. Open the App Builder to retry."
-                )
+                text = (st.get("text") or "").strip()
+                await _notify("⚠️ Outreach didn't complete. "
+                              + (text or "Try a broader role or remove the location."))
                 return
-        await _notify(
-            f"`{slug}` is still building — check `/aiui aiuibuilder status {slug}`."
-        )
+        await _notify("Outreach is still running — check back shortly.")
+
+    async def _watch_outreach_review(
+        self, ctx: CommandContext, email: str, task_id: str,
+        role: str, location: str, *, direction: str = "hire",
+    ) -> None:
+        """Manual mode: poll the find until it reaches ``review``, then post the
+        interactive overview to the channel as a fresh message that outlives the
+        interaction window. The builder is chosen by ``ctx.platform`` (Discord
+        embeds vs Slack Block Kit, Phase 3) and copy by ``direction`` (hire vs
+        reverse). All platforms now use this review path."""
+        from handlers import recruiting_labels
+        rr = self._review_builder(ctx)
+        lab = recruiting_labels.labels_for(direction)
+        if ctx.notify_channel is None:
+            return
+
+        async def _notify_text(msg: str) -> None:
+            try:
+                await ctx.notify_channel(msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_outreach_review notify failed task=%s: %s", task_id, exc)
+
+        async def _notify_msg(msg: dict) -> None:
+            try:
+                if ctx.notify_channel_msg is not None:
+                    await ctx.notify_channel_msg(msg)
+                else:
+                    # No rich poster wired — degrade to the embed's text summary
+                    # so the result still lands somewhere.
+                    embeds = msg.get("embeds") or []
+                    desc = embeds[0].get("description", "") if embeds else ""
+                    await ctx.notify_channel(desc or lab["ready"])
+            except Exception as exc:  # noqa: BLE001
+                logger.error("watch_outreach_review rich notify failed task=%s: %s", task_id, exc)
+
+        for _ in range(OUTREACH_MAX_POLLS):
+            await asyncio.sleep(OUTREACH_POLL_SECONDS)
+            try:
+                st = await self._tasks_client.get_outreach_candidates(email, task_id)
+            except TasksAPIError as e:
+                logger.warning("watch_outreach_review status error (%s) task=%s", e.status, task_id)
+                continue
+            status = st.get("status")
+            if status == "running":
+                continue
+            if status == "review":
+                msg = rr.build_review_message(
+                    task_id, st.get("candidates", []),
+                    role=st.get("role", role), location=st.get("location", location),
+                    kind=st.get("direction", direction))
+                await _notify_msg(msg)
+                return
+            await _notify_text((st.get("text") or "").strip() or lab["none_found"])
+            return
+        await _notify_text("Outreach search timed out — try again.")
+
+    async def run_outreach_select(
+        self, ctx: CommandContext, task_id: str,
+        selected_ids: Optional[list[str]], role: str = "", location: str = "",
+    ) -> None:
+        """Apply a recipient selection (``selected_ids``) or just refresh
+        (``selected_ids is None``), then re-render the overview in place. Builder
+        is resolved by ``ctx.platform`` and copy by the ``direction`` returned in
+        the response (the ``role``/``location`` args are legacy and ignored —
+        labels/title are restored from backend state, §5)."""
+        rr = self._review_builder(ctx)
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            if selected_ids is None:
+                st = await self._tasks_client.get_outreach_candidates(email, task_id)
+            else:
+                st = await self._tasks_client.patch_outreach_candidate(
+                    email, task_id, "_", {"selected_ids": selected_ids})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        msg = rr.build_review_message(
+            task_id, st.get("candidates", []), role=st.get("role", ""),
+            location=st.get("location", ""), kind=st.get("direction", "hire"))
+        if ctx.edit_message is not None:
+            await ctx.edit_message(msg)
+
+    async def run_outreach_edit_submit(
+        self, ctx: CommandContext, task_id: str, cid: str, email_val: str,
+        subject: str, body: str, role: str = "", location: str = "",
+    ) -> None:
+        """Save an edited candidate (email/subject/body) then re-render the
+        overview in place. Platform-/direction-aware (see run_outreach_select)."""
+        rr = self._review_builder(ctx)
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        from handlers.discord_commands import _valid_email
+        ev = (email_val or "").strip()
+        if ev and not _valid_email(ev):
+            # bounce invalid email without mutating the candidate
+            try:
+                st = await self._tasks_client.get_outreach_candidates(email, task_id)
+            except TasksAPIError:
+                return
+            if ctx.edit_message is not None:
+                msg = rr.build_review_message(
+                    task_id, st.get("candidates", []), role=st.get("role", ""),
+                    location=st.get("location", ""), kind=st.get("direction", "hire"))
+                msg = {**msg, "content": f"⚠️ `{ev}` doesn't look like a valid email — not saved."}
+                await ctx.edit_message(msg)
+            return
+        try:
+            st = await self._tasks_client.patch_outreach_candidate(
+                email, task_id, cid,
+                {"email": email_val, "subject": subject, "body": body})
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        msg = rr.build_review_message(
+            task_id, st.get("candidates", []), role=st.get("role", ""),
+            location=st.get("location", ""), kind=st.get("direction", "hire"))
+        if ctx.edit_message is not None:
+            await ctx.edit_message(msg)
+
+    async def run_outreach_send(self, ctx: CommandContext, task_id: str) -> None:
+        """Send to the selected candidates. On success, lock the message with the
+        backend's (already direction-aware) sent summary; otherwise surface why
+        nothing went out. Platform-/direction-aware (see run_outreach_select)."""
+        from handlers import recruiting_labels
+        rr = self._review_builder(ctx)
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            st = await self._tasks_client.send_outreach(email, task_id)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        kind = st.get("direction", "hire")
+        if st.get("status") == "sent":
+            msg = rr.build_sent_message(
+                st.get("text", "Sent."), st.get("sheet_url", ""), kind=kind)
+            if ctx.edit_message is not None:
+                await ctx.edit_message(msg)
+            else:
+                await ctx.respond(msg.get("content", "✅ Sent."))
+            return
+        # not sent (e.g. nothing selected / transient send error): keep the
+        # interactive overview intact and show the reason as a content line.
+        lab = recruiting_labels.labels_for(kind)
+        if ctx.edit_message is not None:
+            msg = rr.build_review_message(
+                task_id, st.get("candidates", []), role=st.get("role", ""),
+                location=st.get("location", ""), kind=kind)
+            msg = {**msg, "content": "⚠️ " + (st.get("text") or lab["pick_one"])}
+            await ctx.edit_message(msg)
+        else:
+            await ctx.respond(st.get("text") or lab["pick_one"])
 
     async def _handle_workflows(self, ctx: CommandContext) -> None:
         """List active n8n workflows."""

@@ -71,7 +71,7 @@ def test_build_enhance_prompt_no_attachments_omits_stanza():
         has_db_uri=False,
         user_email="r@x.com",
     )
-    assert "Attached images" not in out
+    assert "Attached files" not in out
 
 
 def test_build_enhance_prompt_with_attachments_includes_stanza():
@@ -89,8 +89,9 @@ def test_build_enhance_prompt_with_attachments_includes_stanza():
             "apps/meeting-notes/.attachments/abc-123/mockup.jpg",
         ],
     )
-    assert "Attached images" in out
+    assert "Attached files" in out
     assert "Read them with your Read tool" in out
+    assert "untrusted" in out.lower()  # prompt-injection framing
     assert "apps/meeting-notes/.attachments/abc-123/shot.png" in out
     assert "apps/meeting-notes/.attachments/abc-123/mockup.jpg" in out
 
@@ -117,3 +118,46 @@ def test_attachments_stanza_uses_slugged_paths_not_bare_attachments():
     assert "apps/meeting-notes/.attachments/abc/shot.png" in out
     # And the bare form must NOT appear (would resolve wrong from agent CWD)
     assert "\n- .attachments/" not in out
+
+
+def test_build_enhance_prompt_includes_selection_block_at_top():
+    """When the parent passes a SELECTED ELEMENT block from the picker, it
+    should land at the very top of the prompt so the agent's first read
+    or grep is scoped to that element."""
+    from claude_executor import build_enhance_prompt
+
+    sel_block = (
+        "SELECTED ELEMENT\n"
+        "  user sees:  heading: \"Where Every Cup Tells a Story\"\n"
+        "  selector:   main > section > h1\n"
+    )
+    out = build_enhance_prompt(
+        slug="cafe",
+        user_request="make it bigger",
+        attempt_count=0,
+        max_attempts=3,
+        selection_block=sel_block,
+    )
+    # The block must appear before the rest of the enhance template.
+    sel_idx = out.find("SELECTED ELEMENT")
+    rest_idx = out.find("You are enhancing")
+    assert sel_idx >= 0, "selection_block missing from enhance prompt"
+    assert rest_idx > sel_idx, (
+        "selection_block must come BEFORE the body of the enhance template; "
+        f"got sel_idx={sel_idx} rest_idx={rest_idx}"
+    )
+    # Specific content survives.
+    assert 'heading: "Where Every Cup Tells a Story"' in out
+
+
+def test_build_enhance_prompt_omits_block_when_no_selection():
+    """No selection passed → no SELECTED ELEMENT phrase in the prompt."""
+    from claude_executor import build_enhance_prompt
+
+    out = build_enhance_prompt(
+        slug="cafe",
+        user_request="make it bigger",
+        attempt_count=0,
+        max_attempts=3,
+    )
+    assert "SELECTED ELEMENT" not in out

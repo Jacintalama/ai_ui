@@ -18,11 +18,14 @@ from routes_preview import router as preview_router
 from routes_projects import router as projects_router
 from routes_schedules import router as schedules_router
 from routes_discord_links import router as discord_links_router
+from routes_state import router as state_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
 from routes_templates import router as templates_router
 from routes_upload import router as upload_router
+from routes_outreach import router as outreach_router
+from routes_video import router as video_router
 from routes_webhook import router as webhook_router
 
 logging.basicConfig(level=logging.INFO)
@@ -71,10 +74,25 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("schedule_tick_loop NOT started: %s", exc)
 
+    try:
+        from video_worker import video_worker_loop
+        asyncio.create_task(video_worker_loop())
+        logger.info("video_worker_loop scheduled")
+    except Exception as exc:
+        logger.warning("video_worker_loop NOT started: %s", exc)
+
+    try:
+        from video_cleanup import video_cleanup_loop
+        asyncio.create_task(video_cleanup_loop())
+        logger.info("video_cleanup_loop scheduled")
+    except Exception as exc:
+        logger.warning("video_cleanup_loop NOT started: %s", exc)
+
     yield
 
 
 app = FastAPI(title="Tasks Service", version="0.1.0", lifespan=lifespan)
+app.include_router(outreach_router)  # bare /outreach — matches bot's TasksClient paths
 app.include_router(webhook_router)
 app.include_router(aiuibuilder_router)
 # Schedules MUST be registered before tasks_router (which has a catch-all
@@ -85,7 +103,9 @@ app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Sec
 # (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
 app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(discord_links_router)  # /discord-links — system path (X-Internal-Secret)
+app.include_router(state_router)  # /state — system KV for bot conversational state
 app.include_router(tasks_router)
+app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload
 app.include_router(execution_router)
 app.include_router(cron_router)
 app.include_router(preview_router)
@@ -137,9 +157,11 @@ async def app_builder_page() -> FileResponse:
 
 
 # ---------------------------------------------------------------------------
-# Public hosting for published apps. Caddy rewrites
-#   <slug>.ai-ui.coolestdomain.win/<path>  →  /__public/<slug>/<path>
-# and proxies into this service. We serve files directly from the
+# Public hosting for published apps. Caddy/gateway route
+#   ai-ui.coolestdomain.win/apps/<slug>/<path>  ->  /apps/<slug>/<path>
+# and the legacy Caddy wildcard rewrites
+#   <slug>.ai-ui.coolestdomain.win/<path>  ->  /__public/<slug>/<path>
+# before proxying into this service. We serve files directly from the
 # /workspace/ai_ui/apps/<slug>/ directory if (and only if) the slug has a
 # row in tasks.published_apps. Strict path validation prevents traversal.
 # ---------------------------------------------------------------------------
@@ -151,6 +173,8 @@ from sqlalchemy import select as _select
 
 from db import session as _db_session
 from models import PublishedApp as _PublishedApp
+from edit_capability import mint_capability as _mint_capability
+from visual_edit_token import verify_edit_token as _verify_edit_token
 
 _APP_ROOT_FS = "/workspace/ai_ui/apps"
 _SLUG_ROUTE_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{1,80}$")
@@ -458,6 +482,17 @@ async def serve_published_app(
     )
 
 
+@app.get("/apps/{slug}", include_in_schema=False)
+@app.get("/apps/{slug}/", include_in_schema=False)
+@app.get("/apps/{slug}/{file_path:path}", include_in_schema=False)
+async def serve_published_app_on_apex(
+    slug: str,
+    file_path: str = "",
+    request: Request = None,
+):
+    return await serve_published_app(slug=slug, file_path=file_path, request=request)
+
+
 # ---------------------------------------------------------------------------
 # Per-slug preview hosting. Caddy proxies /tasks/preview-app/* into this
 # service. We support two flavors of preview:
@@ -475,6 +510,87 @@ async def serve_published_app(
 # kill any other user's preview.
 # ---------------------------------------------------------------------------
 import app_runner as _app_runner
+
+
+async def _resolve_edit_task(slug: str, owner: str) -> str | None:
+    """Latest task_id for `slug` if `owner` may edit it (editor+), else None.
+
+    Reuses routes_projects._require_role so the deep-link path enforces the same
+    authorization as the logged-in web path."""
+    from routes_projects import _require_role
+    from models import TaskItem
+    async with _db_session() as s:
+        try:
+            await _require_role(s, slug, owner, "editor")
+        except HTTPException:
+            return None
+        row = (
+            await s.execute(
+                _select(TaskItem.id)
+                .where(TaskItem.built_app_slug == slug)
+                .order_by(TaskItem.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    return str(row) if row else None
+
+
+def _render_preview_edit_mode(task_id: str, cap: str) -> str:
+    """Serve preview.html with a JSON-encoded, XSS-safe edit-context seed so the
+    editor opens scoped to one task without a web login."""
+    import json as _json
+    path = _os.path.join(_os.path.dirname(__file__), "static", "preview.html")
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    payload = _json.dumps({"task_id": task_id, "cap": cap})
+    # Defense-in-depth: neutralize </script> / tag-breakout in the JSON literal.
+    payload = (payload.replace("<", "\\u003c")
+                      .replace(">", "\\u003e")
+                      .replace("&", "\\u0026"))
+    seed = "<script>window.__EDIT_CTX__ = " + payload + ";</script>"
+    idx = html.lower().find("</head>")
+    return seed + html if idx == -1 else html[:idx] + seed + html[idx:]
+
+
+def _edit_error_page(message: str, status: int = 403) -> Response:
+    """Friendly HTML page instead of raw JSON when an edit link can't be opened.
+    `message` is a fixed, developer-controlled string (never user input)."""
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Visual Editor</title></head>"
+        "<body style='font:16px system-ui,-apple-system,sans-serif;background:#0b0b0c;"
+        "color:#eee;display:flex;min-height:100vh;align-items:center;"
+        "justify-content:center;text-align:center;margin:0'>"
+        "<div style='max-width:440px;padding:24px'>"
+        "<div style='font-size:44px'>🎨</div>"
+        f"<h2 style='margin:12px 0;font-weight:600'>{message}</h2>"
+        "<p style='color:#9aa'>Open <b>🎨 Visual Editor</b> again from Discord or "
+        "Slack to get a fresh link.</p></div></body></html>"
+    )
+    return Response(content=html, status_code=status, media_type="text/html",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/tasks/edit/{slug}", include_in_schema=False)
+async def tasks_edit(slug: str, token: str = ""):
+    """Token-authenticated deep link into the visual editor (no web login).
+
+    Verifies the signed edit token, resolves the owner's task, mints a
+    single-task capability, and serves preview.html in edit mode. Never depends
+    on current_admin (the gateway forwards this with X-User-Admin: false)."""
+    if not _SLUG_ROUTE_RE.match(slug):
+        return _edit_error_page("That editor link looks malformed.", 400)
+    owner = _verify_edit_token(token, slug)
+    if not owner:
+        return _edit_error_page("This editor link has expired.", 403)
+    task_id = await _resolve_edit_task(slug, owner)
+    if not task_id:
+        return _edit_error_page("We couldn't find that app for your account.", 403)
+    cap = _mint_capability(owner, slug, task_id)
+    html = _render_preview_edit_mode(task_id, cap)
+    return Response(content=html, media_type="text/html",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.get("/tasks/preview-app/{slug}", include_in_schema=False)

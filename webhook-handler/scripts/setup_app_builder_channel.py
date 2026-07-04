@@ -31,7 +31,7 @@ import httpx
 # /app/scripts/... and `handlers` is /app/handlers).
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, ".."))
-from handlers.app_builder_panel import build_panel_payload  # noqa: E402
+from handlers.app_builder_panel import build_panel_payload, build_schedules_panel  # noqa: E402
 
 DISCORD_API = "https://discord.com/api/v10"
 TEXT_CHANNEL = 0  # Discord guild text-channel type
@@ -135,6 +135,9 @@ def main() -> int:
             print(f"Created channel #{channel_name} ({channel_id})")
         message_id = _post_panel(channel_id, payload, headers)
         _pin(channel_id, message_id, headers)
+        # Second pinned panel: the Schedules (cron jobs) entry point.
+        sched_message_id = _post_panel(channel_id, build_schedules_panel(), headers)
+        _pin(channel_id, sched_message_id, headers)
     except httpx.HTTPStatusError as e:
         print(f"ERROR: Discord API {e.response.status_code}: {e.response.text}", file=sys.stderr)
         return 3

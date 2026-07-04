@@ -1737,6 +1737,11 @@
       width: 40px; height: 40px;
       object-fit: cover; border-radius: 4px; flex: 0 0 auto;
     }
+    .attachment-chip .thumb-file {
+      display: flex; align-items: center; justify-content: center;
+      background: var(--surface-2); color: var(--muted);
+      font-size: 10px; font-weight: 600; letter-spacing: .03em;
+    }
     .attachment-chip .meta {
       display: flex; flex-direction: column; gap: 0; min-width: 0;
     }
@@ -1878,19 +1883,34 @@
       color: var(--muted);
       font-style: italic;
     }
-    .chat-bubble.user .chat-attachments {
+    .chat-bubble.user .chat-attachments,
+    .enhance-bubble.user .chat-attachments {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
       margin-bottom: 8px;
     }
-    .chat-bubble.user .chat-attachments img {
+    .chat-bubble.user .chat-attachments img,
+    .enhance-bubble.user .chat-attachments img {
       max-width: 220px;
       max-height: 180px;
       border-radius: 8px;
       border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
       object-fit: cover;
       display: block;
+    }
+    .chat-bubble.user .chat-attachments .chat-attachment-file,
+    .enhance-bubble.user .chat-attachments .chat-attachment-file {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
+      background: var(--surface-2);
+      font-size: 12px;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .chat-bubble.user .chat-attachments + .chat-text:empty { display: none; }
     .chat-bubble.user .chat-selection {
@@ -2196,34 +2216,6 @@
         <div class="pub-dns-note" style="margin-top:6px;">
           To stop using your custom domain, click <strong>Unpublish</strong> below.
         </div>
-      </div>
-    </div>
-
-    <!-- ─── Supabase backend section ─── -->
-    <div class="pub-section-divider"></div>
-    <div class="pub-section-title">
-      <span>Supabase backend</span>
-      <span class="badge-soft" id="pub-sb-badge">Optional</span>
-    </div>
-    <div class="body" id="pub-sb-body">
-      Connect a Supabase project for auth, database, and file storage.
-      Your anon key is encrypted at rest and injected into the live app
-      at runtime (<code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_URL</code> /
-      <code style="font-family:var(--font-mono);font-size:11px;">window.SUPABASE_ANON_KEY</code>).
-      The AIUI Agent is told how to use it on every build.
-    </div>
-    <div class="pub-domain-input-row">
-      <input type="url" class="pub-domain-input" id="pub-sb-url"
-             placeholder="https://xxxxx.supabase.co" autocomplete="off" spellcheck="false">
-      <button type="button" class="btn btn-primary" id="pub-sb-save">Save</button>
-    </div>
-    <input type="text" class="pub-domain-input" id="pub-sb-anon"
-           placeholder="anon public key (eyJ…)" autocomplete="off" spellcheck="false"
-           style="margin-top:6px;">
-    <div id="pub-sb-attached" hidden>
-      <div class="pub-url-pill">
-        <span style="flex:1;" id="pub-sb-current"></span>
-        <button type="button" class="copy" id="pub-sb-clear">Disconnect</button>
       </div>
     </div>
 
@@ -2890,7 +2882,7 @@
                 </button>
               </div>
               <input type="file" id="attach-input" multiple
-                     accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+                     accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,text/plain,.txt,.md,.csv" hidden>
             </div>
             <button type="button" class="btn btn-ghost chat-toolbar-btn" id="picker-toggle"
                     aria-pressed="false" title="Click an element in the preview to scope your prompt">
@@ -2913,8 +2905,8 @@
                 <span class="sub">Make changes directly</span>
               </button>
               <button role="menuitem" data-mode="chat" type="button">
-                <span class="title">Ask</span>
-                <span class="sub">Ask questions, no changes made</span>
+                <span class="title">Plan</span>
+                <span class="sub">Discuss before building</span>
               </button>
               <div class="menu-foot">Toggle with <kbd>Alt</kbd><kbd>P</kbd></div>
             </div>
@@ -2963,7 +2955,11 @@
   "use strict";
 
   const API_BASE = "/api/tasks";
-  const taskId = new URLSearchParams(window.location.search).get("task");
+  // Edit-mode deep link (Visual Editor): the server injects __EDIT_CTX__ with a
+  // task id and a single-task capability so the editor works without a web login.
+  const _EDIT_CTX = (window.__EDIT_CTX__ || null);
+  const taskId = (_EDIT_CTX && _EDIT_CTX.task_id)
+    || new URLSearchParams(window.location.search).get("task");
 
   if (!taskId) {
     document.body.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Missing ?task= parameter</div><div class="empty-sub">Open this page with a task id: <code>/tasks/static/preview.html?task=&lt;id&gt;</code></div></div>';
@@ -3530,13 +3526,28 @@
       const token = localStorage.getItem("token");
       if (token) h.Authorization = "Bearer " + token;
     } catch (_) {}
+    // Edit-mode: send the single-task capability so the backend authorizes this
+    // one task without admin gateway headers.
+    if (_EDIT_CTX && _EDIT_CTX.cap) h["X-Edit-Capability"] = _EDIT_CTX.cap;
     return h;
+  }
+  let _editExpiredShown = false;
+  function _showEditExpired() {
+    if (_editExpiredShown || !_EDIT_CTX) return;
+    _editExpiredShown = true;
+    const d = document.createElement("div");
+    d.textContent = "This edit session expired. Reopen Visual Editor from the bot.";
+    d.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;"
+      + "background:#b91c1c;color:#fff;padding:10px 16px;text-align:center;"
+      + "font:14px system-ui,sans-serif";
+    document.body.appendChild(d);
   }
   async function apiFetch(method, path, body) {
     const opts = { method, credentials: "include", headers: authHeaders() };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const r = await fetch(API_BASE + path, opts);
     if (!r.ok) {
+      if (r.status === 401 || r.status === 403) _showEditExpired();
       const text = await r.text().catch(() => r.statusText);
       const err = new Error(r.status + " " + text);
       err.status = r.status;
@@ -5171,7 +5182,7 @@
   function _renderPubButton(state, custom) {
     // Tri-state badge:
     //   "Publish" (grey)  — nothing published anywhere
-    //   "Preview" (amber) — published only at the generic auto subdomain
+    //   "Preview" (amber) — published only at the generic managed URL
     //                       (visible URL but not yet on the user's real domain)
     //   "Live"    (green) — a custom domain is attached AND verified;
     //                       the app is live at the user's real URL.
@@ -5241,112 +5252,6 @@
       if ($renameBlock) $renameBlock.hidden = true;
     }
   }
-
-  // ── Supabase config ──
-  const $sbUrl      = document.getElementById("pub-sb-url");
-  const $sbAnon     = document.getElementById("pub-sb-anon");
-  const $sbSave     = document.getElementById("pub-sb-save");
-  const $sbClear    = document.getElementById("pub-sb-clear");
-  const $sbAttached = document.getElementById("pub-sb-attached");
-  const $sbCurrent  = document.getElementById("pub-sb-current");
-  const $sbBadge    = document.getElementById("pub-sb-badge");
-
-  let _sbState = null;
-
-  async function refreshSupabase() {
-    if (!slug) return;
-    try {
-      const token = localStorage.getItem("token");
-      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
-        headers: token ? { Authorization: "Bearer " + token } : {},
-        credentials: "include",
-      });
-      if (r.ok) _sbState = await r.json();
-    } catch (_) {}
-    _renderSupabase();
-  }
-
-  function _renderSupabase() {
-    const cfg = _sbState || {};
-    if (cfg.configured) {
-      $sbBadge.textContent = "Connected";
-      $sbBadge.classList.add("verified");
-      $sbAttached.hidden = false;
-      $sbCurrent.textContent = cfg.supabase_url || "";
-      $sbUrl.value = cfg.supabase_url || "";
-      $sbAnon.value = "";
-      $sbAnon.placeholder = "(saved — paste again only to change)";
-    } else {
-      $sbBadge.textContent = "Optional";
-      $sbBadge.classList.remove("verified");
-      $sbAttached.hidden = true;
-      $sbAnon.placeholder = "anon public key (eyJ…)";
-    }
-  }
-
-  $sbSave.addEventListener("click", async () => {
-    const url = ($sbUrl.value || "").trim();
-    const key = ($sbAnon.value || "").trim();
-    if (!url) { $sbUrl.focus(); return; }
-    if (!key) {
-      if (!(_sbState && _sbState.configured)) {
-        $sbAnon.focus();
-        toast("Paste your anon public key.", "error", 4000);
-        return;
-      }
-      toast("Paste your anon key again to change the config (we don't store it in plaintext).", "error", 5000);
-      return;
-    }
-    $sbSave.disabled = true;
-    $sbSave.textContent = "Saving…";
-    try {
-      const token = localStorage.getItem("token");
-      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) },
-        credentials: "include",
-        body: JSON.stringify({ supabase_url: url, anon_key: key }),
-      });
-      if (!r.ok) {
-        const txt = await r.text();
-        toast("Save failed: " + txt.slice(0, 240), "error", 6000);
-        return;
-      }
-      _sbState = await r.json();
-      _renderSupabase();
-      toast("Supabase saved. Future builds + the live app will use it.", "success", 4000);
-    } catch (err) {
-      toast("Network error: " + err.message, "error", 6000);
-    } finally {
-      $sbSave.disabled = false;
-      $sbSave.textContent = "Save";
-    }
-  });
-
-  $sbClear.addEventListener("click", async () => {
-    if (!confirm("Disconnect Supabase from this project? The live app will lose access immediately.")) return;
-    try {
-      const token = localStorage.getItem("token");
-      const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/supabase`, {
-        method: "DELETE",
-        headers: token ? { Authorization: "Bearer " + token } : {},
-        credentials: "include",
-      });
-      if (!r.ok && r.status !== 204) {
-        const txt = await r.text();
-        toast("Disconnect failed: " + txt.slice(0, 240), "error", 6000);
-        return;
-      }
-      _sbState = { configured: false };
-      _renderSupabase();
-      toast("Supabase disconnected.", "success", 3000);
-    } catch (err) { toast("Network error: " + err.message, "error", 6000); }
-  });
-
-  // Refresh Supabase config every time the publish modal opens.
-  $btnPub.addEventListener("click", () => {
-    setTimeout(refreshSupabase, 100);
-  });
 
   // ── Rename project ──
   const $renameInput  = document.getElementById("pub-rename-input");
@@ -5568,7 +5473,7 @@
     if (!hasDomain) {
       $cdInputRow.hidden = false;
       $cdAttached.hidden = true;
-      // Verified-only UI hidden; auto subdomain section visible.
+      // Verified-only UI hidden; managed URL section visible.
       if ($autoSection) $autoSection.hidden = false;
     } else {
       $cdInputRow.hidden = true;
@@ -5578,9 +5483,9 @@
       $cdOpen.href = url;
 
       if (cd.verified) {
-        // Verified state: hide DNS block + auto-subdomain section. The
+        // Verified state: hide DNS block + managed URL section. The
         // custom domain is now the canonical URL — no point showing the
-        // backup auto subdomain or DNS instructions any more.
+        // backup managed URL or DNS instructions any more.
         $cdDnsBlock.hidden = true;
         $cdVerifiedMsg.hidden = false;
         $cdVerifiedUrl.textContent = url;
@@ -5626,8 +5531,8 @@
       const token = localStorage.getItem("token");
       const auth = { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}) };
 
-      // If the app isn't published yet, publish to the auto subdomain
-      // first — the custom-domain endpoint requires a publish row.
+      // If the app isn't published yet, publish to the managed URL first —
+      // the custom-domain endpoint requires a publish row.
       if (!_publishedState || !_publishedState.published) {
         $cdAttach.textContent = "Publishing…";
         const pubResp = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish`, {
@@ -5831,16 +5736,7 @@
       // poll tick catches the running state.
       if (activeTab === "preview") refreshPreviewFrame();
     } catch (err) {
-      const msg = (err && err.message) ? err.message : String(err);
-      // "No built app for this task" fires when the page loads BEFORE the
-      // build pipeline has set built_app_slug (i.e. the agent is still
-      // running). It's not a real failure — the completion handler in
-      // updateAiBubble will retry maybeAutoStartPreview once the task
-      // finishes. Silence the toast for this transient case.
-      const isTransient = /no built app/i.test(msg) || /404/.test(msg);
-      if (!isTransient) {
-        toast("Preview couldn't auto-start: " + msg, "error", 6000);
-      }
+      toast("Preview couldn't auto-start: " + (err.message || err), "error", 6000);
       setStatus("idle", "Not running");
       $btnRun.disabled = false;
     } finally {
@@ -5996,9 +5892,9 @@
     $modeMenu.querySelectorAll("button[role='menuitem']").forEach((b) => {
       b.classList.toggle("active", b.dataset.mode === m);
     });
-    $modeLabel.textContent = m === "build" ? "Build" : "Ask";
+    $modeLabel.textContent = m === "build" ? "Build" : "Plan";
     $prompt.placeholder = m === "chat"
-      ? "Ask about this app — what is it? how does X work?"
+      ? "Ask about the app, brainstorm, or just chat…"
       : "Type the change you want built…";
     $send.textContent = m === "chat" ? "Ask" : "Send";
   }
@@ -6075,7 +5971,23 @@
   });
 
   // ── Attachment chips: file-input + paste + drag-drop, with validation ──
-  const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  // Mirror the server (document_extract.classify_document): images, plus
+  // PDF/Word/text accepted by MIME OR filename extension (browsers often
+  // report empty/odd MIME for .md/.csv).
+  const ALLOWED_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  const ALLOWED_DOC_MIME = new Set([
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain", "text/markdown", "text/csv", "text/x-markdown", "application/json",
+  ]);
+  const ALLOWED_DOC_EXT = [".pdf", ".docx", ".txt", ".md", ".markdown", ".csv", ".log", ".text", ".json"];
+  function isImageFile(f) { return ALLOWED_IMAGE_MIME.has((f.type || "").toLowerCase()); }
+  function isAcceptedFile(f) {
+    const t = (f.type || "").toLowerCase();
+    if (ALLOWED_IMAGE_MIME.has(t) || ALLOWED_DOC_MIME.has(t) || t.startsWith("text/")) return true;
+    const name = (f.name || "").toLowerCase();
+    return ALLOWED_DOC_EXT.some(ext => name.endsWith(ext));
+  }
   const MAX_FILE_BYTES = 5 * 1024 * 1024;
   const MAX_FILES = 5;
 
@@ -6097,11 +6009,18 @@
       const chip = document.createElement("div");
       chip.className = "attachment-chip";
 
-      const img = document.createElement("img");
-      img.className = "thumb";
-      img.src = a.previewUrl;
-      img.alt = "";
-      chip.appendChild(img);
+      if (a.isImage && a.previewUrl) {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = a.previewUrl;
+        img.alt = "";
+        chip.appendChild(img);
+      } else {
+        const icon = document.createElement("div");
+        icon.className = "thumb thumb-file";
+        icon.textContent = ((a.file.name.split(".").pop() || "FILE").toUpperCase()).slice(0, 4);
+        chip.appendChild(icon);
+      }
 
       const meta = document.createElement("div");
       meta.className = "meta";
@@ -6147,7 +6066,7 @@
     let rejectedSizeSampleName = null; // first oversized file's name for the toast
 
     for (const f of fileList) {
-      if (!ALLOWED_MIME.has(f.type)) {
+      if (!isAcceptedFile(f)) {
         rejectedMime++;
         continue;
       }
@@ -6160,18 +6079,20 @@
         rejectedCount = true;
         break;
       }
+      const isImage = isImageFile(f);
       pendingAttachments.push({
         id: "att_" + Math.random().toString(36).slice(2, 10),
         file: f,
-        previewUrl: URL.createObjectURL(f),
+        isImage,
+        previewUrl: isImage ? URL.createObjectURL(f) : null,
       });
     }
 
     if (rejectedMime > 0) {
       toast(
         rejectedMime === 1
-          ? "Only PNG / JPEG / WebP / GIF images are supported."
-          : rejectedMime + " files skipped (only PNG / JPEG / WebP / GIF images are supported).",
+          ? "Unsupported file. Use an image (PNG/JPEG/WebP/GIF), PDF, Word (.docx), or text (.txt/.md/.csv)."
+          : rejectedMime + " files skipped (use images, PDF, Word, or text files).",
         "error",
         4000
       );
@@ -6204,12 +6125,13 @@
     $attachInput.value = ""; // allow same-file reselect
   });
 
-  // Paste image into textarea
+  // Paste image/document into textarea (addFiles validates the type; pasted
+  // plain text is kind "string", not "file", so normal text paste is untouched)
   $promptTa.addEventListener("paste", (e) => {
     if (!e.clipboardData) return;
     const files = [];
     for (const item of e.clipboardData.items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
+      if (item.kind === "file") {
         const f = item.getAsFile();
         if (f) files.push(f);
       }
@@ -6437,6 +6359,28 @@
     if (kind === "user") {
       el.innerHTML = '<div class="body">' + selChip + '<div class="user-text"></div></div>';
       el.querySelector(".user-text").textContent = content || "";
+      // Show attached files (images + PDF/Word/text) so the bubble reflects
+      // what was actually sent, not just the typed text.
+      const atts = opts.attachments || [];
+      if (atts.length) {
+        const bodyEl = el.querySelector(".body");
+        const row = document.createElement("div");
+        row.className = "chat-attachments";
+        for (const a of atts) {
+          if (a.isImage && a.previewUrl) {
+            const img = document.createElement("img");
+            img.src = a.previewUrl;
+            img.alt = (a.file && a.file.name) || "attachment";
+            row.appendChild(img);
+          } else {
+            const f = document.createElement("span");
+            f.className = "chat-attachment-file";
+            f.textContent = (a.file && a.file.name) || "file";
+            row.appendChild(f);
+          }
+        }
+        bodyEl.insertBefore(row, bodyEl.querySelector(".user-text"));
+      }
     } else {
       el.innerHTML =
         '<div class="body">' +
@@ -6565,37 +6509,6 @@
         contentEl.innerHTML = question
           ? renderMarkdown("**The AI is asking:**\n\n" + question)
           : renderMarkdown("**Waiting for your reply.** The AI needs more info before it can continue.");
-        // Escape hatch: many "Needs input" prompts fire because the user
-        // asked a question that the Build executor interpreted as an
-        // ambiguous edit request. Offer a one-click switch to Ask mode so
-        // they can step out of the trap without typing a fake answer.
-        if (!contentEl.querySelector(".just-asking-btn")) {
-          const escape = document.createElement("div");
-          escape.style.cssText = "margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;";
-          escape.innerHTML =
-            '<button type="button" class="btn btn-ghost just-asking-btn" ' +
-            'style="font-size:12px;padding:6px 10px;">' +
-            'Just asking a question? Switch to Ask mode' +
-            '</button>' +
-            '<span style="font-size:11px;color:var(--muted);">No edit will be made.</span>';
-          contentEl.appendChild(escape);
-          escape.querySelector(".just-asking-btn").addEventListener("click", function () {
-            // Clear the reply-mode trap so the next Send no longer POSTs to /answer.
-            setReplyMode(null);
-            // Switch the composer mode to Ask (chat) so the next message
-            // goes to the Q&A endpoint instead of the edit executor.
-            setMode("chat");
-            // Cancel the server-side task that's blocking on awaiting_input
-            // so it doesn't sit there forever. Fire-and-forget; UI doesn't
-            // depend on the result.
-            if (task.id) {
-              apiFetch("POST", "/" + task.id + "/cancel").catch(() => {});
-            }
-            // Focus the composer so the user can type their question.
-            $prompt.focus();
-            toast("Switched to Ask mode — type your question.", "info", 3500);
-          });
-        }
         // Activate reply mode so the input submits via /answer for this task
         if (awaitingReplyTo !== task.id) setReplyMode(task.id);
         // Allow a new answer to be sent — otherwise Send stays disabled from
@@ -6697,10 +6610,18 @@
         const row = document.createElement("div");
         row.className = "chat-attachments";
         for (const a of atts) {
-          const img = document.createElement("img");
-          img.src = a.previewUrl;
-          img.alt = (a.file && a.file.name) || "attachment";
-          row.appendChild(img);
+          if (a.isImage && a.previewUrl) {
+            const img = document.createElement("img");
+            img.src = a.previewUrl;
+            img.alt = (a.file && a.file.name) || "attachment";
+            row.appendChild(img);
+          } else {
+            // Non-image (PDF/Word/text): show the filename, not a broken <img>.
+            const f = document.createElement("span");
+            f.className = "chat-attachment-file";
+            f.textContent = (a.file && a.file.name) || "file";
+            row.appendChild(f);
+          }
         }
         body.appendChild(row);
       }
@@ -6904,7 +6825,11 @@
     // Snapshot selection up front so a chip change mid-flight (or the
     // finally{} clear) doesn't lose the indicator on either bubble.
     const selectionForThisBuild = pendingSelection;
-    renderBubble("user", text, { selection: selectionForThisBuild });
+    const attachmentsForThisBuild = pendingAttachments.slice();
+    renderBubble("user", text, {
+      selection: selectionForThisBuild,
+      attachments: attachmentsForThisBuild,
+    });
     const aiBubble = renderBubble("ai", "", {
       taskId: "pending",
       selection: selectionForThisBuild,
@@ -6914,7 +6839,7 @@
       const fd = new FormData();
       fd.append("source_task_id", taskId);
       fd.append("prompt", text);
-      for (const a of pendingAttachments) {
+      for (const a of attachmentsForThisBuild) {
         fd.append("files", a.file, a.file.name);
       }
       if (selectionForThisBuild) {
@@ -6949,16 +6874,6 @@
       renderSelectionChip();
     }
   }
-  // Heuristic: does the user's text look like a question rather than an edit
-  // request? If so, Build mode will likely trigger NEEDS_INPUT ("what would
-  // you like me to change?") instead of answering — so offer Ask mode first.
-  function _looksLikeQuestion(text) {
-    const t = text.trim().toLowerCase();
-    if (!t) return false;
-    if (/[?]\s*$/.test(t)) return true;
-    return /^(what|why|how|who|where|when|which|is|are|do|does|did|can|could|should|would|will|explain|tell me|show me)\b/.test(t);
-  }
-
   async function handleSend() {
     const text = $prompt.value.trim();
     if (!text) return;
@@ -6966,14 +6881,6 @@
     // clarifying question, submitEnhance routes it to /answer for us.
     if (awaitingReplyTo) return submitEnhance();
     if (chatMode === "chat") {
-      $prompt.value = "";
-      return submitChat(text);
-    }
-    // Build mode + question-shaped text: silently route this single message
-    // through the Q&A endpoint so the user gets an answer instead of being
-    // trapped in NEEDS_INPUT. The composer mode stays on Build for the NEXT
-    // message — only this one is reinterpreted. No popup.
-    if (_looksLikeQuestion(text)) {
       $prompt.value = "";
       return submitChat(text);
     }

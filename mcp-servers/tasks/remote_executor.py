@@ -174,20 +174,29 @@ class RemoteExecutor:
     #   wipes /root/.ssh/known_hosts, and BatchMode=yes refuses unknown hosts
     #   without this. UserKnownHostsFile keeps the cache in /tmp so we don't
     #   need /root/.ssh to exist.
+    # ConnectTimeout caps the connect phase; ServerAlive* drops a connection
+    # that stalls mid-transfer after ~60s (4 x 15s). Without these, a wedged
+    # agent VM could hang any transport call — and the build worker — forever.
     _SSH_OPTS = (
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "UserKnownHostsFile=/tmp/agent_known_hosts",
+        "-o", "ConnectTimeout=10",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=4",
     )
     _RSYNC_SSH = (
         "ssh -o BatchMode=yes "
         "-o StrictHostKeyChecking=accept-new "
-        "-o UserKnownHostsFile=/tmp/agent_known_hosts"
+        "-o UserKnownHostsFile=/tmp/agent_known_hosts "
+        "-o ConnectTimeout=10 "
+        "-o ServerAliveInterval=15 "
+        "-o ServerAliveCountMax=4"
     )
 
     async def _ssh_ok(self, host: str, user: str, key: str) -> bool:
         proc = await asyncio.create_subprocess_exec(
-            "ssh", "-i", key, "-o", "ConnectTimeout=10",
+            "ssh", "-i", key,
             *self._SSH_OPTS,
             f"{user}@{host}", "true",
             stdout=asyncio.subprocess.DEVNULL,

@@ -1,5 +1,7 @@
 """Webhook Handler Service - Main FastAPI Application."""
 import asyncio
+import os
+import hmac
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -24,9 +26,9 @@ from handlers.generic import GenericWebhookHandler
 from handlers.automation import AutomationWebhookHandler
 from handlers.commands import CommandRouter, CommandContext, VoiceResponseCollector
 from handlers.slack_commands import SlackCommandHandler
+from handlers.slack_interactions import SlackInteractionsHandler
 from handlers.discord_commands import DiscordCommandHandler
-from schedule_format import build_schedule_embed, short_summary
-from voice_bot import start_voice_bot
+from voice_bot import start_voice_bot, current_text_channel_id, current_guild_id
 from scheduler import (
     init_scheduler, start_scheduler, shutdown_scheduler,
     list_jobs, trigger_job, register_default_jobs,
@@ -40,7 +42,25 @@ logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
+# Cap the gateway/HTTP DEBUG firehose: it logs every websocket event (full
+# GUILD_CREATE payloads) and rotates the container log past useful diagnostics
+# in minutes. Voice-layer loggers stay at the root level on purpose.
+for _noisy in ("discord.gateway", "discord.client", "discord.http", "websockets"):
+    logging.getLogger(_noisy).setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _log_voice_bot_exit(task: "asyncio.Task") -> None:
+    """Done-callback for the voice bot task so an early crash (e.g. ElevenLabs
+    quota) is logged instead of dying silently until shutdown retrieves it."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Voice bot task exited with error: %r", exc, exc_info=exc)
+    else:
+        logger.warning("Voice bot task exited unexpectedly without an error")
+
 
 # Global clients (initialized on startup)
 openwebui_client: Optional[OpenWebUIClient] = None
@@ -54,6 +74,7 @@ generic_handler: Optional[GenericWebhookHandler] = None
 automation_handler: Optional[AutomationWebhookHandler] = None
 command_router: Optional[CommandRouter] = None
 slack_command_handler: Optional[SlackCommandHandler] = None
+slack_interactions_handler: Optional[SlackInteractionsHandler] = None
 discord_client: Optional[DiscordClient] = None
 discord_command_handler: Optional[DiscordCommandHandler] = None
 loki_client: Optional[LokiClient] = None
@@ -81,7 +102,7 @@ async def lifespan(app: FastAPI):
     global openwebui_client, github_client, github_handler
     global mcp_handler, n8n_client
     global slack_client, slack_handler, generic_handler, automation_handler
-    global command_router, slack_command_handler
+    global command_router, slack_command_handler, slack_interactions_handler
     global discord_client, discord_command_handler
     global loki_client
 
@@ -151,13 +172,22 @@ async def lifespan(app: FastAPI):
         loki_client=loki_client,
     )
 
+    # Let the Slack events handler offer the intent router (it parks/builds via
+    # the shared router). Mirrors how the Discord client is attached below.
+    if settings.slack_bot_token:
+        slack_handler.router = command_router
+
     # Wire Slack command handler if Slack is configured
     if slack_client:
         slack_command_handler = SlackCommandHandler(
             slack_client=slack_client,
             command_router=command_router,
         )
-        logger.info("Slack slash commands enabled")
+        slack_interactions_handler = SlackInteractionsHandler(
+            slack_client=slack_client,
+            command_router=command_router,
+        )
+        logger.info("Slack slash commands + interactivity enabled")
 
     # Discord client (only if configured)
     if settings.discord_public_key:
@@ -165,6 +195,10 @@ async def lifespan(app: FastAPI):
             application_id=settings.discord_application_id,
             bot_token=settings.discord_bot_token,
         )
+        # Give the router a DiscordClient handle so video runners can attach
+        # finished MP4s to the thread (bot-token multipart, outlives interactions).
+        if command_router is not None:
+            command_router._discord = discord_client
         discord_command_handler = DiscordCommandHandler(
             discord_client=discord_client,
             command_router=command_router,
@@ -172,6 +206,18 @@ async def lifespan(app: FastAPI):
         logger.info("Discord slash commands enabled")
     else:
         logger.info("Discord integration disabled (no DISCORD_PUBLIC_KEY)")
+
+    # Video thread image-drop intake (drop screenshots into the video thread).
+    # Needs a DiscordClient to post replies; if Discord isn't configured the
+    # intake stays None and the voice bot simply won't ingest dropped images.
+    video_intake = None
+    if discord_client is not None and command_router is not None:
+        from handlers.video_intake import VideoThreadIntake
+        video_intake = VideoThreadIntake(
+            command_router, discord_client,
+            video_channel_id=os.environ.get("VIDEO_CHANNEL_ID"),
+            video_channel_name=os.environ.get("VIDEO_CHANNEL_NAME", "video-generation"),
+        )
 
     # Generic handler
     generic_handler = GenericWebhookHandler(
@@ -201,7 +247,9 @@ async def lifespan(app: FastAPI):
             bot_token=settings.discord_bot_token,
             elevenlabs_api_key=settings.elevenlabs_api_key,
             agent_id=settings.elevenlabs_agent_id,
+            video_intake=video_intake,
         ))
+        voice_bot_task.add_done_callback(_log_voice_bot_exit)
         logger.info("Voice bot starting as background task")
     else:
         logger.info("Voice bot disabled (no DISCORD_BOT_TOKEN or ELEVENLABS_API_KEY)")
@@ -255,15 +303,17 @@ async def github_webhook(
     # Get raw body for signature verification
     body = await request.body()
 
-    # Verify signature if secret is configured
-    if settings.github_webhook_secret:
-        if not x_hub_signature_256:
-            logger.warning(f"Missing signature for delivery {x_github_delivery}")
-            raise HTTPException(status_code=401, detail="Missing signature")
-
-        if not verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
-            logger.warning(f"Invalid signature for delivery {x_github_delivery}")
-            raise HTTPException(status_code=401, detail="Invalid signature")
+    # Fail closed: never process an unverified webhook. A missing secret is a
+    # server misconfiguration, not a reason to skip verification.
+    if not settings.github_webhook_secret:
+        logger.error("GitHub webhook secret not configured — refusing unverified webhook")
+        raise HTTPException(status_code=503, detail="GitHub signature verification not configured")
+    if not x_hub_signature_256:
+        logger.warning(f"Missing signature for delivery {x_github_delivery}")
+        raise HTTPException(status_code=401, detail="Missing signature")
+    if not verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
+        logger.warning(f"Invalid signature for delivery {x_github_delivery}")
+        raise HTTPException(status_code=401, detail="Invalid signature")
 
     # Parse JSON payload
     try:
@@ -363,15 +413,18 @@ async def slack_webhook(
 
     body = await request.body()
 
-    # Verify signature if signing secret is configured
-    if settings.slack_signing_secret:
-        if not verify_slack_signature(
-            body=body,
-            timestamp=x_slack_request_timestamp or "",
-            signature=x_slack_signature or "",
-            signing_secret=settings.slack_signing_secret
-        ):
-            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    # Fail closed: the integration is active (slack_handler set), so a missing
+    # signing secret is a misconfiguration — reject rather than skip.
+    if not settings.slack_signing_secret:
+        logger.error("Slack signing secret not configured — refusing unverified request")
+        raise HTTPException(status_code=503, detail="Slack signature verification not configured")
+    if not verify_slack_signature(
+        body=body,
+        timestamp=x_slack_request_timestamp or "",
+        signature=x_slack_signature or "",
+        signing_secret=settings.slack_signing_secret
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
 
     try:
         payload = await request.json()
@@ -409,21 +462,65 @@ async def slack_commands_webhook(
 
     body = await request.body()
 
-    # Verify Slack signature
-    if settings.slack_signing_secret:
-        if not verify_slack_signature(
-            body=body,
-            timestamp=x_slack_request_timestamp or "",
-            signature=x_slack_signature or "",
-            signing_secret=settings.slack_signing_secret,
-        ):
-            raise HTTPException(status_code=401, detail="Invalid Slack signature")
+    # Fail closed: reject when the signing secret is missing.
+    if not settings.slack_signing_secret:
+        logger.error("Slack signing secret not configured — refusing unverified command")
+        raise HTTPException(status_code=503, detail="Slack signature verification not configured")
+    if not verify_slack_signature(
+        body=body,
+        timestamp=x_slack_request_timestamp or "",
+        signature=x_slack_signature or "",
+        signing_secret=settings.slack_signing_secret,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
 
     form_data = dict(await request.form())
     logger.info(f"Slack slash command: {form_data.get('command')} {form_data.get('text', '')}")
 
     result = await slack_command_handler.handle_command(form_data)
     return JSONResponse(content=result, status_code=200)
+
+
+@app.post("/webhook/slack/interactions")
+async def slack_interactions_webhook(
+    request: Request,
+    x_slack_request_timestamp: str = Header(None, alias="X-Slack-Request-Timestamp"),
+    x_slack_signature: str = Header(None, alias="X-Slack-Signature"),
+):
+    """
+    Handle Slack interactivity (App Builder panel buttons + modal submits).
+
+    Slack sends application/x-www-form-urlencoded with a single `payload` field
+    holding the JSON. Button clicks open a modal; modal submits start a build.
+    Must ACK within 3 seconds; the build runs in the background.
+    """
+    if not slack_interactions_handler:
+        raise HTTPException(status_code=503, detail="Slack integration not configured")
+
+    body = await request.body()
+
+    # Fail closed: reject when the signing secret is missing.
+    if not settings.slack_signing_secret:
+        logger.error("Slack signing secret not configured — refusing unverified interaction")
+        raise HTTPException(status_code=503, detail="Slack signature verification not configured")
+    if not verify_slack_signature(
+        body=body,
+        timestamp=x_slack_request_timestamp or "",
+        signature=x_slack_signature or "",
+        signing_secret=settings.slack_signing_secret,
+    ):
+        raise HTTPException(status_code=401, detail="Invalid Slack signature")
+
+    form_data = dict(await request.form())
+    import json
+    try:
+        payload = json.loads(form_data.get("payload", "{}"))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid interaction payload")
+
+    logger.info(f"Slack interaction: {payload.get('type')}")
+    result = await slack_interactions_handler.handle_interaction(payload)
+    return JSONResponse(content=result or {}, status_code=200)
 
 
 @app.post("/webhook/discord")
@@ -466,36 +563,145 @@ async def discord_webhook(
     return JSONResponse(content=result, status_code=200)
 
 
+# Last voice-started build (single voice identity by design). Lets the agent's
+# build_status tool answer "is my build done?" even after a session reconnect.
+_last_voice_build: dict = {}
+
+
+async def _post_to_discord_channel(
+    channel_id: str, content: str, components: list | None = None,
+) -> None:
+    """Plain bot-token channel message (same pattern as the alert forwarder)."""
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    headers = {
+        "Authorization": f"Bot {settings.discord_bot_token}",
+        "Content-Type": "application/json",
+    }
+    payload: dict = {"content": content[:1990]}
+    if components:
+        payload["components"] = components
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+
+
+def _voice_discord_id() -> str | None:
+    """Discord id of the voice user (reverse lookup of the email map)."""
+    email = (settings.voice_user_email or "").strip().lower()
+    if not email:
+        return None
+    for did, mapped in settings.discord_user_email_map.items():
+        if mapped == email:
+            return did
+    return None
+
+
+def _thread_link_components(guild_id: str, thread_id: str) -> list:
+    """A link button that jumps to the user's private App Builder thread."""
+    return [{
+        "type": 1,
+        "components": [{
+            "type": 2, "style": 5, "label": "Open my App Builder thread",
+            "url": f"https://discord.com/channels/{guild_id}/{thread_id}",
+        }],
+    }]
+
+
+def _voice_notify_channel():
+    """notify_channel for voice-started builds. The target is resolved at
+    NOTIFY time (builds finish minutes later): the active voice session's
+    text channel when one exists, else the alert channel. Messages carry a
+    link button to the user's App Builder thread when resolvable."""
+    if not settings.discord_bot_token:
+        return None
+
+    async def notify(msg: str) -> None:
+        channel_id = current_text_channel_id() or settings.discord_alert_channel_id
+        if not channel_id:
+            logger.warning("voice notify dropped (no channel configured): %s", msg[:80])
+            return
+        components = None
+        try:
+            did = _voice_discord_id()
+            gid = current_guild_id()
+            if did and gid and command_router is not None:
+                tid = await command_router.get_user_builder_thread(did)
+                if tid:
+                    components = _thread_link_components(gid, str(tid))
+        except Exception as exc:  # noqa: BLE001 — button is best-effort
+            logger.debug(f"voice notify thread button skipped: {exc}")
+        await _post_to_discord_channel(channel_id, msg, components)
+
+    return notify
+
+
 @app.post("/webhook/voice/{command}")
 async def voice_webhook(
     command: str,
     request: Request,
     x_voice_secret: str = Header(None, alias="X-Voice-Secret"),
 ):
-    """Handle tool calls from ElevenLabs voice agent."""
-    if not settings.voice_webhook_secret or x_voice_secret != settings.voice_webhook_secret:
+    """Handle tool calls from ElevenLabs voice agent.
+
+    Three App Builder commands are special-cased (explicit body fields, build
+    memory); everything else is the generic command-router passthrough.
+    """
+    if (not settings.voice_webhook_secret or not x_voice_secret
+            or not hmac.compare_digest(x_voice_secret, settings.voice_webhook_secret)):
         raise HTTPException(status_code=401, detail="Invalid voice webhook secret")
 
     body = await request.json()
-    arguments = body.get("arguments", "")
-    if body.get("owner") and body.get("repo"):
-        arguments = f"{body['owner']}/{body['repo']} {arguments}".strip()
-
     collector = VoiceResponseCollector()
 
-    ctx = CommandContext(
-        user_id="voice-agent",
-        user_name="Voice User",
-        channel_id=body.get("channel_id", "voice"),
-        raw_text=f"{command} {arguments}".strip(),
-        subcommand=command,
-        arguments=arguments,
-        platform="voice",
-        respond=collector.respond,
-        metadata={"source": "elevenlabs"},
-    )
+    def _ctx(subcommand: str, arguments: str) -> CommandContext:
+        return CommandContext(
+            user_id="voice-agent",
+            user_name="Voice User",
+            channel_id=body.get("channel_id", "voice"),
+            raw_text=f"{subcommand} {arguments}".strip(),
+            subcommand=subcommand,
+            arguments=arguments,
+            platform="voice",
+            respond=collector.respond,
+            metadata={"source": "elevenlabs"},
+            notify_channel=_voice_notify_channel(),
+        )
 
-    await command_router.execute(ctx)
+    if command == "list_templates":
+        await command_router.execute(_ctx("aiuibuilder", "templates"))
+    elif command == "start_build":
+        result = await command_router.run_voice_build(
+            _ctx("aiuibuilder", "build"),
+            body.get("template_key"),
+            body.get("description") or "",
+        )
+        if result:
+            _last_voice_build.clear()
+            _last_voice_build.update({
+                "task_id": result.get("task_id", ""),
+                "slug": result.get("slug", ""),
+                "email": (settings.voice_user_email or "").strip().lower(),
+            })
+    elif command == "build_status":
+        task_id = (body.get("task_id") or "").strip() or _last_voice_build.get("task_id", "")
+        if not task_id:
+            await collector.respond(
+                "I haven't started any build for you yet — ask me to build "
+                "something first."
+            )
+        else:
+            await command_router.run_voice_build_status(
+                _ctx("aiuibuilder", "build-status"),
+                _last_voice_build.get("email")
+                or (settings.voice_user_email or "").strip().lower(),
+                task_id,
+                slug=_last_voice_build.get("slug", ""),
+            )
+    else:
+        arguments = body.get("arguments", "")
+        if body.get("owner") and body.get("repo"):
+            arguments = f"{body['owner']}/{body['repo']} {arguments}".strip()
+        await command_router.execute(_ctx(command, arguments))
 
     return {
         "spoken_summary": collector.spoken_summary,
@@ -510,6 +716,55 @@ class ScheduleResultIn(BaseModel):
     status: str = ""
     result: str = ""
     schedule_id: str = ""
+    platform: str = "discord"
+
+
+def _to_slack_mrkdwn(text: str) -> str:
+    """Convert common Markdown to Slack mrkdwn so AI output renders correctly.
+
+    Slack uses *bold* (single asterisk), not Markdown's **bold**, and
+    <url|label> links, not [label](url). Without this, **bold** shows literal
+    asterisks. Discord renders standard Markdown natively, so this is Slack-only.
+    """
+    # [label](url) -> <url|label> (do links first so their parens are untouched).
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r"<\2|\1>", text)
+    # Markdown headings at line start -> a bold line.
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$", r"*\1*", text)
+    # **bold** / __bold__ -> *bold*
+    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text)
+    text = re.sub(r"__(.+?)__", r"*\1*", text)
+    return text
+
+
+def _format_schedule_result(
+    name: str, status: str, result: str, platform: str = "discord"
+) -> str:
+    """Format a finished scheduled-task result as a clean, quiet message (<=1990).
+
+    `name` is platform-specific: Discord passes ``"<when>: <prompt>"`` while Slack
+    passes the bare prompt. Only Discord names carry a ``"<when>: <prompt>"``
+    structure, so the ``": "`` split is gated on ``platform == "discord"``. For
+    any other platform (e.g. Slack) the whole name is the title with no footer,
+    so a prompt that happens to contain ``": "`` (e.g. ``"remind me: drink water"``)
+    renders intact.
+    """
+    try:
+        if platform == "discord" and ": " in name:
+            _when, title = name.split(": ", 1)
+        else:
+            title = name
+    except Exception:
+        title = name
+    body = (result or "").strip() or "_(no output)_"
+    if status == "completed":
+        # Successful runs deliver ONLY the output, no prompt echo, no footer.
+        text = body
+    else:
+        # Failed/skipped runs still name the schedule so the user knows what broke.
+        text = f"⚠️ **{title}** — {status}\n\n{body}"
+    if platform == "slack":
+        text = _to_slack_mrkdwn(text)
+    return text[:1990]
 
 
 @app.post("/internal/schedule-result")
@@ -525,17 +780,39 @@ async def schedule_result(
     expected = settings.internal_callback_secret
     if not expected or x_internal_secret != expected:
         raise HTTPException(status_code=403, detail="Invalid internal secret")
+    if body.platform == "slack":
+        if slack_client is None:
+            raise HTTPException(status_code=503, detail="Slack not configured")
+        text = _format_schedule_result(
+            body.schedule_name, body.status, body.result, platform="slack"
+        )
+        blocks = None
+        if body.schedule_id and body.status not in ("completed", "skipped"):
+            from handlers.slack_schedule_panel import build_retry_blocks
+            blocks = build_retry_blocks(body.schedule_id)
+        ts = await slack_client.post_message(
+            channel=body.channel_id, text=text, blocks=blocks
+        )
+        if not ts:
+            logger.error(
+                "Slack schedule-result delivery failed schedule_id=%s channel=%s status=%s",
+                body.schedule_id,
+                body.channel_id,
+                body.status,
+            )
+            raise HTTPException(status_code=502, detail="Slack delivery failed")
+        return {"status": "delivered"}
     if discord_client is None:
         raise HTTPException(status_code=503, detail="Discord not configured")
-    embed = build_schedule_embed(body.schedule_name, body.status, body.result)
-    content = short_summary(body.schedule_name, body.status)
+    message = _format_schedule_result(
+        body.schedule_name, body.status, body.result, platform="discord"
+    )
     # On a failed run, attach a one-click Retry (reuses the run-now handler).
     components = None
     if body.schedule_id and body.status not in ("completed", "skipped"):
         from handlers.app_builder_panel import build_retry_components
         components = build_retry_components(body.schedule_id)
-    await discord_client.post_channel_message(
-        body.channel_id, content, components=components, embeds=[embed])
+    await discord_client.post_channel_message(body.channel_id, message, components=components)
     return {"status": "delivered"}
 
 

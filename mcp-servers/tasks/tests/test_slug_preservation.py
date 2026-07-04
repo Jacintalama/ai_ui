@@ -19,27 +19,43 @@ from models import TaskItem
 HDR = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
 
 
+class _FakeExecutor:
+    """BaseExecutor-shaped stub that yields a scripted output stream."""
+
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+
+    async def run(self, prompt, slug=None, execution_id=""):
+        for c in self._chunks:
+            yield c
+
+    async def stop(self):
+        return None
+
+
 # Fake claude output that COMPLETES without any `apps/<slug>/` pattern —
 # mimics what Claude says for a typical enhancement tweak.
-async def _fake_completed_no_slug(prompt, proc_holder=None):
-    yield "Read public/index.html\n"
-    yield "Updated footer text\n"
-    yield "COMPLETED: Updated the footer in public/index.html (commit abc1234).\n"
+def _fake_completed_no_slug_executor():
+    return _FakeExecutor([
+        "Read public/index.html\n",
+        "Updated footer text\n",
+        "COMPLETED: Updated the footer in public/index.html (commit abc1234).\n",
+    ])
 
 
 # Fake output that DOES mention `apps/<slug>/` — mimics fresh one-shot build.
-async def _fake_completed_with_slug(prompt, proc_holder=None):
-    yield "Creating files under apps/hello-world/\n"
-    yield "COMPLETED: Built the hello world app at apps/hello-world/ (commit def5678).\n"
+def _fake_completed_with_slug_executor():
+    return _FakeExecutor([
+        "Creating files under apps/hello-world/\n",
+        "COMPLETED: Built the hello world app at apps/hello-world/ (commit def5678).\n",
+    ])
 
 
 async def test_enhance_preserves_slug_when_claude_output_omits_apps_path(db_session, monkeypatch):
     """After the fix: enhancement whose completion message has no apps/<slug>/
     must leave the existing built_app_slug intact."""
-    import claude_executor
     import routes_execution
-    monkeypatch.setattr(claude_executor, "run_claude_subprocess", _fake_completed_no_slug)
-    monkeypatch.setattr(routes_execution, "run_claude_subprocess", _fake_completed_no_slug)
+    monkeypatch.setattr(routes_execution, "get_executor", _fake_completed_no_slug_executor)
 
     # Seed a completed source BUILD with slug set
     source = TaskItem(
@@ -93,10 +109,8 @@ async def test_enhance_preserves_slug_when_claude_output_omits_apps_path(db_sess
 async def test_fresh_build_still_extracts_slug_from_claude_output(db_session, monkeypatch):
     """Negative case: fresh BUILD task with no pre-set slug — Claude's
     output mentions apps/<slug>/ — slug should be extracted and set."""
-    import claude_executor
     import routes_execution
-    monkeypatch.setattr(claude_executor, "run_claude_subprocess", _fake_completed_with_slug)
-    monkeypatch.setattr(routes_execution, "run_claude_subprocess", _fake_completed_with_slug)
+    monkeypatch.setattr(routes_execution, "get_executor", _fake_completed_with_slug_executor)
 
     task = TaskItem(
         meeting_id=uuid.uuid4(),

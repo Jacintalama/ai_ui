@@ -23,13 +23,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select
 
-from auth import AdminUser, current_admin, CurrentUser, current_user
+from auth import AdminUser, current_admin, current_admin_or_capability_for_slug, CurrentUser, current_user
 from db import session
 from models import ChatMessage, ProjectMember, ProjectSupabase, PublishedApp, TaskItem
 from schemas import InviteRequest, MemberOut, RoleUpdate
 
 # Domain that wildcard-published apps live under. Override via env if needed.
 PUBLIC_DOMAIN = os.environ.get("AIUI_PUBLIC_DOMAIN", "ai-ui.coolestdomain.win")
+# Apex URL used for managed public app links. These links are returned to
+# Discord/Slack and must work through the Cloudflare-fronted main domain.
+PUBLIC_BASE_URL = (os.environ.get("AIUI_PUBLIC_BASE_URL") or f"https://{PUBLIC_DOMAIN}").rstrip("/")
 # Public IP that custom domains must point to. Override via env on the host.
 SERVER_IP = os.environ.get("AIUI_SERVER_IP", "46.224.193.25")
 # Reserved hostname suffix users cannot claim as a custom domain.
@@ -545,7 +548,7 @@ def _validate_slug(slug: str) -> None:
 
 
 @router.get("/{slug}/versions", response_model=list[VersionEntry])
-async def list_versions(slug: str, user: AdminUser = Depends(current_admin)):
+async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
     """List all commits that touched apps/<slug>/.
 
     Each commit is cross-referenced with the tasks table so we can mark:
@@ -701,7 +704,7 @@ async def rollback_project(
 
 
 # ---------------------------------------------------------------------------
-# Publish (host the app at <slug>.ai-ui.coolestdomain.win)
+# Publish (host the app at AIUI_PUBLIC_BASE_URL/apps/<slug>/)
 # ---------------------------------------------------------------------------
 
 class PublishStatus(BaseModel):
@@ -716,11 +719,11 @@ def _public_host_for(slug: str) -> str:
 
 
 def _public_url_for(slug: str) -> str:
-    return f"https://{_public_host_for(slug)}/"
+    return f"{PUBLIC_BASE_URL}/apps/{slug}/"
 
 
 @router.get("/{slug}/publish", response_model=PublishStatus)
-async def get_publish(slug: str, user: AdminUser = Depends(current_admin)):
+async def get_publish(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
@@ -785,10 +788,10 @@ async def _publish_slug(s, slug: str, email: str, *, is_admin: bool) -> PublishS
 
 @router.post("/{slug}/publish", response_model=PublishStatus)
 async def publish_app(slug: str, user: AdminUser = Depends(current_admin)):
-    """Publish apps/<slug>/ at https://<slug>.ai-ui.coolestdomain.win/.
+    """Publish apps/<slug>/ at AIUI_PUBLIC_BASE_URL/apps/<slug>/.
 
-    Owner/admin only. The Caddy wildcard handler reverse-proxies the
-    subdomain back into this service's /__public/<slug>/ static route.
+    Owner/admin only. The public app route reverse-proxies back into this
+    service's published static route.
     """
     async with session() as s:
         return await _publish_slug(s, slug, user.email, is_admin=user.is_admin)
@@ -990,7 +993,7 @@ async def set_custom_domain(
         if pub is None:
             raise HTTPException(
                 status_code=409,
-                detail="Publish the app to its subdomain first — then attach your custom domain",
+                detail="Publish the app first — then attach your custom domain",
             )
 
         # Custom domain is a parent — multiple apps may share one (each gets
@@ -1185,14 +1188,14 @@ async def rename_project(
         await _run_git("revert", "--no-edit", "HEAD")
         raise HTTPException(status_code=500, detail=f"DB rename failed: {exc}")
 
-    # Renaming changes the auto-subdomain URL and any custom-domain FQDN.
+    # Renaming changes the managed public URL and any custom-domain FQDN.
     # Custom domain mapping must be re-verified by the user since DNS now
     # needs to point at <new_slug>.<parent>.
     return {
         "ok": True,
         "old_slug": slug,
         "new_slug": new_slug,
-        "auto_url": f"https://{new_slug}.{PUBLIC_DOMAIN}/",
+        "auto_url": _public_url_for(new_slug),
     }
 
 
@@ -1240,26 +1243,27 @@ async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
     return None
 
 
-@router.delete("/{slug}", status_code=204)
-async def delete_project(slug: str, user: AdminUser = Depends(current_admin)):
-    """Owner-only hard delete: removes the app folder on disk and every DB
-    row that references this slug — items, executions (cascade), members,
-    chat history, supabase config, published mapping. There's no undo."""
+async def _delete_slug(s, slug: str, email: str, *, is_admin: bool) -> None:
+    """Core hard delete: removes the app folder on disk and every DB row that
+    references this slug — items, executions (cascade), members, chat history,
+    supabase config, published mapping. There's no undo. Owner-checked for
+    non-admins. Shared by the admin route and the user-scoped aiuibuilder
+    route (mirrors _unpublish_slug)."""
     from sqlalchemy import delete as _del
     import shutil
     _validate_slug(slug)
-    async with session() as s:
-        if not await _user_can_see_project(s, slug, user.email):
+    if not is_admin:
+        if not await _user_can_see_project(s, slug, email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
-        # DB cascade: items first (executions FK-cascade off items),
-        # then per-slug tables.
-        await s.execute(_del(TaskItem).where(TaskItem.built_app_slug == slug))
-        await s.execute(_del(ChatMessage).where(ChatMessage.slug == slug))
-        await s.execute(_del(ProjectSupabase).where(ProjectSupabase.slug == slug))
-        await s.execute(_del(PublishedApp).where(PublishedApp.slug == slug))
-        await s.execute(_del(ProjectMember).where(ProjectMember.slug == slug))
-        await s.commit()
+        await _require_role(s, slug, email, "owner", is_admin=False)
+    # DB cascade: items first (executions FK-cascade off items),
+    # then per-slug tables.
+    await s.execute(_del(TaskItem).where(TaskItem.built_app_slug == slug))
+    await s.execute(_del(ChatMessage).where(ChatMessage.slug == slug))
+    await s.execute(_del(ProjectSupabase).where(ProjectSupabase.slug == slug))
+    await s.execute(_del(PublishedApp).where(PublishedApp.slug == slug))
+    await s.execute(_del(ProjectMember).where(ProjectMember.slug == slug))
+    await s.commit()
     # Filesystem: remove the app's folder if present. Best-effort — DB is
     # already wiped, so we don't fail the whole call on rmtree errors.
     workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
@@ -1269,4 +1273,15 @@ async def delete_project(slug: str, user: AdminUser = Depends(current_admin)):
             shutil.rmtree(app_dir)
         except Exception:
             pass
+    return None
+
+
+@router.delete("/{slug}", status_code=204)
+async def delete_project(slug: str, user: AdminUser = Depends(current_admin)):
+    """Owner-only hard delete: removes the app folder on disk and every DB
+    row that references this slug — items, executions (cascade), members,
+    chat history, supabase config, published mapping. There's no undo."""
+    _validate_slug(slug)
+    async with session() as s:
+        await _delete_slug(s, slug, user.email, is_admin=True)
     return None

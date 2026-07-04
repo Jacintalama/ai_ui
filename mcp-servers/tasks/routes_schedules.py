@@ -15,7 +15,7 @@ import os
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 
@@ -58,11 +58,14 @@ class CreateScheduleIn(BaseModel):
     persona: str = ""
     prompt: str = Field(min_length=1)
     enabled: bool = True
+    run_once: bool = False
     delivery_channel_id: str | None = None
+    delivery_platform: str = "discord"
 
 
 @router.get("")
 async def list_schedules(
+    platform: str = Query(default=""),
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
 ) -> list[dict[str, Any]]:
@@ -71,6 +74,8 @@ async def list_schedules(
         stmt = select(Schedule)
         if not is_operator:
             stmt = stmt.where(Schedule.user_email == scoped_email)
+        if platform:
+            stmt = stmt.where(Schedule.delivery_platform == platform)
         rows = (await s.execute(stmt)).scalars().all()
     return [_serialize(r) for r in rows]
 
@@ -111,7 +116,9 @@ async def create_schedule(
             persona=body.persona,
             prompt=body.prompt,
             enabled=body.enabled,
+            run_once=body.run_once,
             delivery_channel_id=body.delivery_channel_id,
+            delivery_platform=body.delivery_platform,
         ))
         await s.commit()
     return {"id": str(sid)}
@@ -244,4 +251,5 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "last_run_at": sch.last_run_at.isoformat() if sch.last_run_at else None,
         "last_run_status": sch.last_run_status,
         "delivery_channel_id": sch.delivery_channel_id,
+        "delivery_platform": sch.delivery_platform,
     }

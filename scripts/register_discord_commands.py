@@ -19,6 +19,7 @@ import httpx
 # Discord option types
 SUB_COMMAND = 1
 STRING = 3
+ATTACHMENT = 11
 
 # All 20 /aiui subcommands. Each is one Discord SUB_COMMAND.
 SUBCOMMANDS = [
@@ -41,8 +42,25 @@ SUBCOMMANDS = [
     ("deps",        "Dependency report",                         [("repo",      "owner/repo",             False)]),
     ("license",     "License compliance",                        [("repo",      "owner/repo",             False)]),
     ("cronjob",     "Manage scheduled prompts",                  [("args",      'e.g. list | create "0 8 * * *" "summarize emails" | delete <id>', True)]),
-    ("aiuibuilder", "Manage App Builder projects",               [("args",      "e.g. list | status <slug> | open <slug>", True)]),
+    ("aiuibuilder", "Manage App Builder projects",               [
+        ("args", "e.g. build <desc> | enhance <slug> <change> | list | status <slug>", True),
+        # Optional file (PDF/Word/text) read into the build/enhance. Listed AFTER
+        # args (required-before-optional, and so the parser still reads args first).
+        ("file", "Optional PDF / Word / text file to read into the build", False, ATTACHMENT),
+    ]),
 ]
+
+
+def _build_option(opt: tuple) -> dict:
+    """An option tuple is (name, description, required[, type[, extra]]); type
+    defaults to STRING so existing 3-tuples are unchanged. `extra` (optional
+    dict) merges extra keys like max_length/min_length onto the option."""
+    opt_name, opt_desc, req = opt[0], opt[1], opt[2]
+    opt_type = opt[3] if len(opt) > 3 else STRING
+    out = {"name": opt_name, "description": opt_desc, "type": opt_type, "required": req}
+    if len(opt) > 4 and opt[4]:
+        out.update(opt[4])
+    return out
 
 
 def build_command_payload() -> dict:
@@ -54,12 +72,32 @@ def build_command_payload() -> dict:
                 "name": name,
                 "description": desc,
                 "type": SUB_COMMAND,
-                "options": [
-                    {"name": opt_name, "description": opt_desc, "type": STRING, "required": req}
-                    for opt_name, opt_desc, req in opts
-                ],
+                "options": [_build_option(o) for o in opts],
             }
             for name, desc, opts in SUBCOMMANDS
+        ],
+    }
+
+
+def build_video_command_payload() -> dict:
+    """A top-level /video command: `new` (one-shot create: describe + attach
+    screenshots), `add` (up to 12 screenshot attachments), and `list`.
+    Subcommands mirror the /aiui structure (type SUB_COMMAND)."""
+    shot_opts = [(f"shot{i}", f"Screenshot {i}", False, ATTACHMENT) for i in range(1, 13)]
+    new_opts = [
+        ("description", "What the narrated walkthrough should say", True, STRING, {"max_length": 2000}),
+        ("title", "Title (optional)", False, STRING, {"max_length": 200}),
+    ] + shot_opts
+    return {
+        "name": "video",
+        "description": "Generate narrated videos from screenshots",
+        "options": [
+            {"name": "new", "description": "Create a video: describe it + attach screenshots",
+             "type": SUB_COMMAND, "options": [_build_option(o) for o in new_opts]},
+            {"name": "add", "description": "Add screenshots to your current video",
+             "type": SUB_COMMAND, "options": [_build_option(o) for o in shot_opts]},
+            {"name": "list", "description": "List your videos",
+             "type": SUB_COMMAND, "options": []},
         ],
     }
 
@@ -81,10 +119,10 @@ def main() -> int:
         url = f"https://discord.com/api/v10/applications/{app_id}/commands"
         scope = "GLOBAL (may take up to 1 hour to propagate)"
 
-    payload = [build_command_payload()]  # PUT replaces the whole list
+    payload = [build_command_payload(), build_video_command_payload()]  # PUT replaces the whole list
     headers = {"Authorization": f"Bot {token}", "Content-Type": "application/json"}
 
-    print(f"Registering /aiui with {len(SUBCOMMANDS)} subcommands ({scope})...")
+    print(f"Registering /aiui ({len(SUBCOMMANDS)} subcommands) and /video ({scope})...")
     with httpx.Client(timeout=30.0) as client:
         r = client.put(url, headers=headers, json=payload)
     if r.status_code in (200, 201):

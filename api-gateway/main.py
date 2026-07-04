@@ -428,6 +428,10 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/api/tasks"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
         backend_path = full_path
+    # /api/video-jobs/* → Tasks service (video refine jobs API)
+    elif full_path.startswith("/api/video-jobs"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
     # /api/projects/* → Tasks service (per-project membership)
     elif full_path.startswith("/api/projects"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
@@ -442,6 +446,10 @@ async def proxy_handler(path: str, request: Request):
         backend_path = full_path
     # /api/supabase/* → Tasks service (Supabase OAuth callback + future endpoints)
     elif full_path.startswith("/api/supabase"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
+    # /apps/<slug>/* → published app static route on Tasks.
+    elif full_path.startswith("/apps/"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
         backend_path = full_path
     # /mcp/* → MCP Proxy (tool endpoints)
@@ -478,6 +486,19 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/excel-creator/"):
         backend_url = os.getenv("EXCEL_CREATOR_URL", "http://mcp-excel-creator:8000")
         backend_path = full_path[len("/excel-creator"):]
+    # /tasks/healthz → Tasks service root health. Host-level Caddy sends this
+    # through the gateway in production, while Tasks exposes /healthz at root.
+    elif full_path == "/tasks/healthz":
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = "/healthz"
+    # /tasks/* (preview-app, static assets, app-builder UI) → Tasks service.
+    # These are NOT under /api, so without this branch they fall through to
+    # Open WebUI and its SPA renders "404: Not Found" for built-app preview
+    # links. The tasks service mounts these routes WITH the /tasks prefix, so
+    # the path is forwarded intact.
+    elif full_path.startswith("/tasks/") or full_path == "/tasks":
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
     else:
         # Everything else goes to Open WebUI (including /admin/* for WebUI admin panel)
         backend_url = OPEN_WEBUI_URL

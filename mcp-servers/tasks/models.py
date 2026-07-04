@@ -129,11 +129,17 @@ class Schedule(Base):
     persona = Column(Text, nullable=False, default="")
     prompt = Column(Text, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
+    # One-time schedules fire once on the matching minute, then the scheduler
+    # flips enabled=False. Repeating rows leave this False.
+    run_once = Column(Boolean, nullable=False, server_default="false", default=False)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_run_status = Column(Text, nullable=True)
     # Discord channel/thread id to post each run's result into (set when the
     # schedule is created from Discord). NULL = no delivery (CLI/operator runs).
     delivery_channel_id = Column(Text, nullable=True)
+    # Which platform the run result is delivered to (discord|slack).
+    # Defaults to 'discord' so existing rows preserve current behavior.
+    delivery_platform = Column(Text, nullable=False, server_default="discord")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
@@ -153,3 +159,21 @@ class DiscordLink(Base):
     decided_by = Column(Text, nullable=True)
     # The user's private Discord thread for schedules (created/reused by the bot).
     schedules_thread_id = Column(Text, nullable=True)
+    # The user's private Discord thread for the App Builder (created/reused by the bot).
+    builder_thread_id = Column(Text, nullable=True)
+    # The user's private Discord thread for the video studio (created/reused by the bot).
+    video_thread_id = Column(Text, nullable=True)
+
+
+class BotState(Base):
+    """Generic per-key state for the chat bots (webhook-handler): pending intents,
+    clarify replies, and each user's current app slug. Persisted here so a
+    webhook-handler redeploy doesn't wipe in-flight conversations. Written/read via
+    the system /state endpoints (X-Internal-Secret)."""
+    __tablename__ = "bot_state"
+    __table_args__ = {"schema": "tasks"}
+
+    state_key = Column(Text, primary_key=True)
+    value = Column(JSONB, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at = Column(DateTime(timezone=True), nullable=True)

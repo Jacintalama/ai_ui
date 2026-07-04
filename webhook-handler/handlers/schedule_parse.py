@@ -65,51 +65,9 @@ def _is_valid_cron(s: str) -> bool:
     )
 
 
-# Named times-of-day → (hour, minute).
-_WORD_TIMES = {
-    "midnight": (0, 0), "morning": (8, 0), "noon": (12, 0),
-    "afternoon": (15, 0), "evening": (20, 0), "night": (21, 0),
-}
-
-
-def _extract_time(low: str) -> tuple[int, int] | None:
-    """Find a time anywhere in the phrase. Tries H:MM[(am|pm)], then H(am|pm),
-    then named times (morning/noon/evening/night/midnight/afternoon)."""
-    m = re.search(r"\b(\d{1,2}):(\d{2})\s*(am|pm)?\b", low)
-    if m:
-        hour = _to_24h(int(m.group(1)), m.group(3))
-        minute = int(m.group(2))
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return hour, minute
-    m = re.search(r"\b(\d{1,2})\s*(am|pm)\b", low)
-    if m:
-        hour = _to_24h(int(m.group(1)), m.group(2))
-        if 0 <= hour <= 23:
-            return hour, 0
-    for word, hm in _WORD_TIMES.items():
-        if re.search(rf"\b{word}\b", low):
-            return hm
-    return None
-
-
-def _extract_dow(low: str) -> tuple[str, str] | None:
-    """Find a day-of-week spec → (cron_dow_field, human_label). Handles single
-    days (+plural), 'weekday(s)' → Mon-Fri, and 'weekend(s)' → Sat/Sun."""
-    for name, num in _DAY_NUM.items():
-        if re.search(rf"\b{name}s?\b", low):
-            return str(num), _DAY_NAME[num]
-    if re.search(r"\bweekdays?\b", low):
-        return "1-5", "weekday"
-    if re.search(r"\bweekends?\b", low):
-        return "0,6", "weekend day"
-    return None
-
-
 def parse_when(text: str) -> tuple[str, str] | None:
     """Parse a human time phrase into ``(cron_expr, human_readable)``.
 
-    Forgiving of casual phrasing — "every 8pm", "8pm", "9am everyday",
-    "every monday 9am", "every weekday at 8am", "every 30 mins", "noon".
     Returns ``None`` when the phrase isn't a recognizable recurring time.
     """
     s = (text or "").strip()
@@ -120,35 +78,87 @@ def parse_when(text: str) -> tuple[str, str] | None:
     if re.fullmatch(r"[\d\*/,\-]+(?:\s+[\d\*/,\-]+){4}", s):
         return (s, f"on schedule `{s}`") if _is_valid_cron(s) else None
 
-    low = re.sub(r"\s+", " ", s.lower()).strip()
+    low = s.lower()
 
-    # --- Intervals (checked first so a number isn't read as a clock time) ---
-    m = re.search(r"every (\d+)\s*(?:minutes?|mins?|m)\b", low)
-    if m and int(m.group(1)) >= 1:
+    if low == "every morning":
+        return "0 8 * * *", "every day at 8:00 AM"
+    if low == "every evening":
+        return "0 20 * * *", "every day at 8:00 PM"
+
+    m = re.fullmatch(r"every (\d+) minutes?", low)
+    if m:
         n = int(m.group(1))
         return f"*/{n} * * * *", f"every {n} minutes"
-    m = re.search(r"every (\d+)\s*(?:hours?|hrs?|h)\b", low)
-    if m and int(m.group(1)) >= 1:
+
+    m = re.fullmatch(r"every (\d+) hours?", low)
+    if m:
         n = int(m.group(1))
         return f"0 */{n} * * *", f"every {n} hours"
-    if re.search(r"\b(?:hourly|every hour)\b", low):
+
+    if low in ("hourly", "every hour"):
         return "0 * * * *", "every hour"
-    if re.search(r"\bevery minute\b", low):
-        return "* * * * *", "every minute"
 
-    dow = _extract_dow(low)
-    tm = _extract_time(low)
+    # "every 9pm" / "every 9:26pm" / "every 21:00" -> daily at that time.
+    # Require am/pm or a colon so a bare "every 9" (ambiguous) is not matched.
+    m = re.fullmatch(r"every (\d{1,2})(?::(\d{2}))?\s*(am|pm)?", low)
+    if m and (m.group(2) is not None or m.group(3) is not None):
+        hour = _to_24h(int(m.group(1)), m.group(3))
+        minute = int(m.group(2)) if m.group(2) else 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{minute} {hour} * * *", f"every day at {_fmt_time(hour, minute)}"
 
-    if dow is not None:
-        field, label = dow
-        hour, minute = tm or (8, 0)
-        return f"{minute} {hour} * * {field}", f"every {label} at {_fmt_time(hour, minute)}"
+    # "at 9pm" / "9:30pm" -> daily at that time (am/pm required to avoid ambiguity).
+    m = re.fullmatch(r"(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", low)
+    if m:
+        hour = _to_24h(int(m.group(1)), m.group(3))
+        minute = int(m.group(2)) if m.group(2) else 0
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return f"{minute} {hour} * * *", f"every day at {_fmt_time(hour, minute)}"
 
-    if tm is not None or re.search(r"\b(?:daily|every ?day|each day)\b", low):
-        hour, minute = tm or (8, 0)
+    # "every day at 8pm" / "daily at 6:30am" / "every day at 20:30"
+    m = re.fullmatch(r"(?:every day|daily) at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?", low)
+    if m:
+        hour = _to_24h(int(m.group(1)), m.group(3))
+        minute = int(m.group(2)) if m.group(2) else 0
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
         return f"{minute} {hour} * * *", f"every day at {_fmt_time(hour, minute)}"
 
-    if re.search(r"\b(?:weekly|every week)\b", low):
+    # "every monday at 9am"
+    m = re.fullmatch(
+        r"every (sunday|monday|tuesday|wednesday|thursday|friday|saturday) "
+        r"at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?",
+        low,
+    )
+    if m:
+        day = _DAY_NUM[m.group(1)]
+        hour = _to_24h(int(m.group(2)), m.group(4))
+        minute = int(m.group(3)) if m.group(3) else 0
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return (
+            f"{minute} {hour} * * {day}",
+            f"every {_DAY_NAME[day]} at {_fmt_time(hour, minute)}",
+        )
+
+    # "every weekday at 9am" / "weekdays at 9am" -> Mon-Fri at that time.
+    m = re.fullmatch(
+        r"(?:every )?weekdays? at (\d{1,2})(?::(\d{2}))?\s*(am|pm)?", low)
+    if m:
+        hour = _to_24h(int(m.group(1)), m.group(3))
+        minute = int(m.group(2)) if m.group(2) else 0
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return (
+            f"{minute} {hour} * * 1-5",
+            f"every weekday at {_fmt_time(hour, minute)}",
+        )
+    if low in ("every weekday", "weekday", "weekdays", "every weekdays"):
+        return "0 8 * * 1-5", "every weekday at 8:00 AM"
+
+    if low in ("daily", "every day"):
+        return "0 8 * * *", "every day at 8:00 AM"
+    if low in ("weekly", "every week"):
         return "0 8 * * 1", "every Monday at 8:00 AM"
 
     return None

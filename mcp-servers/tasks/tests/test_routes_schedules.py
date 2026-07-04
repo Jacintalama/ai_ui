@@ -32,11 +32,103 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 
 def test_list_requires_secret():
-    """Without X-Cron-Secret, GET /schedules returns 403."""
+    """Without X-Cron-Secret OR X-User-Email, GET /schedules returns 403."""
     from main import app
     client = TestClient(app, raise_server_exceptions=False)
     r = client.get("/schedules")
     assert r.status_code == 403
+
+
+def test_create_with_user_email_scopes_owner(monkeypatch):
+    """End-user path: X-User-Email forces user_email even if body says otherwise.
+
+    This is how Open WebUI users will create schedules — the gateway
+    injects X-User-Email from the validated JWT.
+    """
+    from main import app
+    from models import Schedule
+
+    rows: list[Schedule] = []
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj):
+            if isinstance(obj, Schedule):
+                rows.append(obj)
+        async def commit(self): return None
+        async def execute(self, _stmt):
+            class _R:
+                def scalars(self):
+                    class _S:
+                        def all(self_): return list(rows)
+                    return _S()
+            return _R()
+
+    monkeypatch.setattr("routes_schedules.session", lambda: _FakeSession())
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-User-Email": "alice@example.com"},
+        json={
+            "user_email": "attacker@evil.com",  # MUST be ignored
+            "name": "alice-stocks",
+            "cron_expr": "0 20 * * *",
+            "persona": "stockbroker",
+            "prompt": "watch AAPL",
+        },
+    )
+    assert r.status_code == 201, r.text
+    # Schedule should be owned by the JWT-authenticated user, NOT the body claim
+    assert len(rows) == 1
+    assert rows[0].user_email == "alice@example.com"
+
+
+def test_user_cannot_see_other_users_schedules(monkeypatch):
+    """End-user GET /schedules only returns rows owned by X-User-Email."""
+    from main import app
+    from models import Schedule
+    import uuid
+
+    pre_rows = [
+        Schedule(id=uuid.uuid4(), user_email="alice@example.com", name="a",
+                 cron_expr="0 8 * * *", prompt="x"),
+        Schedule(id=uuid.uuid4(), user_email="bob@example.com", name="b",
+                 cron_expr="0 9 * * *", prompt="y"),
+    ]
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj): pass
+        async def commit(self): return None
+        async def execute(self, stmt):
+            # Inspect the WHERE clause to honor user_email filtering.
+            try:
+                compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            except Exception:
+                compiled = ""
+            class _R:
+                def __init__(self, rs): self._rs = rs
+                def scalars(self):
+                    class _S:
+                        def all(self_inner): return self._rs
+                    return _S()
+            if "alice@example.com" in compiled:
+                return _R([pre_rows[0]])
+            if "bob@example.com" in compiled:
+                return _R([pre_rows[1]])
+            return _R(pre_rows)
+
+    monkeypatch.setattr("routes_schedules.session", lambda: _FakeSession())
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules", headers={"X-User-Email": "alice@example.com"})
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 1
+    assert data[0]["user_email"] == "alice@example.com"
 
 
 def test_create_then_list(monkeypatch):
@@ -100,3 +192,172 @@ def test_create_then_list(monkeypatch):
     r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
     assert r.status_code == 200, r.text
     assert any(s["id"] == sched_id for s in r.json())
+
+
+def _make_capture_session(rows):
+    """A mocked db.session whose add() captures Schedule rows into `rows`."""
+    from models import Schedule
+
+    class _FakeResult:
+        def scalars(self):
+            class _S:
+                def all(self_inner): return list(rows)
+            return _S()
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj):
+            if isinstance(obj, Schedule):
+                rows.append(obj)
+        async def commit(self): return None
+        async def execute(self, _stmt):
+            return _FakeResult()
+
+    return lambda: _FakeSession()
+
+
+def test_create_with_delivery_platform_slack(monkeypatch):
+    """POST /schedules with delivery_platform='slack' persists 'slack' on the row."""
+    from main import app
+
+    rows = []
+    monkeypatch.setattr("routes_schedules.session", _make_capture_session(rows))
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-Cron-Secret": CRON_SECRET},
+        json={
+            "user_email": "x@y.com",
+            "name": "slack-sched",
+            "cron_expr": "*/5 * * * *",
+            "persona": "test",
+            "prompt": "say hi",
+            "delivery_platform": "slack",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert len(rows) == 1
+    assert rows[0].delivery_platform == "slack"
+
+
+def test_create_defaults_delivery_platform_discord(monkeypatch):
+    """Omitting delivery_platform defaults the inserted row to 'discord'."""
+    from main import app
+
+    rows = []
+    monkeypatch.setattr("routes_schedules.session", _make_capture_session(rows))
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-Cron-Secret": CRON_SECRET},
+        json={
+            "user_email": "x@y.com",
+            "name": "discord-sched",
+            "cron_expr": "*/5 * * * *",
+            "persona": "test",
+            "prompt": "say hi",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert len(rows) == 1
+    assert rows[0].delivery_platform == "discord"
+
+
+def test_serialize_includes_delivery_platform():
+    """The serialized schedule dict exposes delivery_platform so bots can
+    filter LIST output by platform."""
+    from routes_schedules import _serialize
+    from models import Schedule
+    import uuid
+
+    sch = Schedule(
+        id=uuid.uuid4(),
+        user_email="x@y.com",
+        name="s",
+        cron_expr="0 8 * * *",
+        prompt="hi",
+        delivery_platform="slack",
+    )
+    out = _serialize(sch)
+    assert "delivery_platform" in out
+    assert out["delivery_platform"] == "slack"
+
+
+def _make_platform_filter_session(all_rows):
+    """A mocked db.session whose execute() inspects the compiled WHERE clause
+    and returns only rows matching the delivery_platform literal (if any)."""
+
+    class _R:
+        def __init__(self, rs): self._rs = rs
+        def scalars(self):
+            class _S:
+                def all(self_inner): return self._rs
+            return _S()
+
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj): pass
+        async def commit(self): return None
+        async def execute(self, stmt):
+            try:
+                compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+            except Exception:
+                compiled = ""
+            # If the statement filters on a specific platform, honor it.
+            for plat in ("slack", "discord"):
+                if f"'{plat}'" in compiled:
+                    return _R([r for r in all_rows if r.delivery_platform == plat])
+            return _R(all_rows)
+
+    return lambda: _FakeSession()
+
+
+def test_list_filters_by_platform(monkeypatch):
+    """GET /schedules?platform=slack only returns rows whose
+    delivery_platform == 'slack'."""
+    from main import app
+    from models import Schedule
+    import uuid
+
+    all_rows = [
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="a",
+                 cron_expr="0 8 * * *", prompt="x", delivery_platform="slack"),
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="b",
+                 cron_expr="0 9 * * *", prompt="y", delivery_platform="discord"),
+    ]
+    monkeypatch.setattr(
+        "routes_schedules.session", _make_platform_filter_session(all_rows)
+    )
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules?platform=slack", headers={"X-Cron-Secret": CRON_SECRET})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert len(data) == 1
+    assert all(s["delivery_platform"] == "slack" for s in data)
+
+
+def test_list_no_platform_returns_all(monkeypatch):
+    """Omitting the platform param returns all rows (backward compatible)."""
+    from main import app
+    from models import Schedule
+    import uuid
+
+    all_rows = [
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="a",
+                 cron_expr="0 8 * * *", prompt="x", delivery_platform="slack"),
+        Schedule(id=uuid.uuid4(), user_email="x@y.com", name="b",
+                 cron_expr="0 9 * * *", prompt="y", delivery_platform="discord"),
+    ]
+    monkeypatch.setattr(
+        "routes_schedules.session", _make_platform_filter_session(all_rows)
+    )
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
+    assert r.status_code == 200, r.text
+    assert len(r.json()) == 2

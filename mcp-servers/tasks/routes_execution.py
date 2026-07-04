@@ -12,14 +12,15 @@ from sqlalchemy.exc import ProgrammingError
 from sse_starlette.sse import EventSourceResponse
 
 from agent_executor import get_executor
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, current_admin_or_capability
 from claude_executor import (
     build_prompt, build_clarify_prompt, build_plan_prompt,
     build_tdd_execute_prompt, build_verify_prompt,
-    extract_app_slug, extract_final_body, parse_outcome, parse_clarify_done,
+    extract_app_slug, parse_outcome, parse_clarify_done,
     parse_plan, parse_test_outcome,
 )
 from db import session
+from heavy_lock import heavy_lock
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
 from schemas import PlanReviewRequest, TaskOut
 
@@ -106,25 +107,35 @@ async def _stream_claude(
             )
             await s.commit()
 
-    try:
-        async for chunk in executor.run(
-            prompt, slug=slug, execution_id=str(execution_id),
-            user_jwt=user_jwt, schedule_id=schedule_id,
-        ):
-            full_log.append(chunk)
-            async with session() as s:
-                await s.execute(
-                    update(TaskExecution)
-                    .where(TaskExecution.id == execution_id)
-                    .values(log=TaskExecution.log + chunk)
-                )
-                await s.commit()
-    finally:
-        # Clear the executor handle but keep the rest of the entry — the
-        # outer _run_execution finally block pops the whole entry.
-        cur = _RUNNING.get(task_id)
-        if cur is not None and cur.get("executor") is executor:
-            cur.pop("executor", None)
+    # Render/build mutual exclusion on the shared box: hold the global
+    # `heavy_job` advisory lock for exactly the span of the agent
+    # subprocess/SSH run. BLOCKING acquire so a build queues behind an
+    # in-flight video render instead of failing (the render worker takes the
+    # same lock non-blocking and defers). A dedicated session scopes the lock
+    # to this heavy section only; heavy_lock's own try/finally guarantees the
+    # lock is released on every outcome (success, failure, timeout,
+    # cancellation). The per-slug build lock taken in the request handler is
+    # independent and left untouched.
+    async with session() as lock_s, heavy_lock(lock_s):
+        try:
+            async for chunk in executor.run(
+                prompt, slug=slug, execution_id=str(execution_id),
+                user_jwt=user_jwt, schedule_id=schedule_id,
+            ):
+                full_log.append(chunk)
+                async with session() as s:
+                    await s.execute(
+                        update(TaskExecution)
+                        .where(TaskExecution.id == execution_id)
+                        .values(log=TaskExecution.log + chunk)
+                    )
+                    await s.commit()
+        finally:
+            # Clear the executor handle but keep the rest of the entry — the
+            # outer _run_execution finally block pops the whole entry.
+            cur = _RUNNING.get(task_id)
+            if cur is not None and cur.get("executor") is executor:
+                cur.pop("executor", None)
 
     return "".join(full_log)
 
@@ -287,17 +298,10 @@ async def _run_execution(
         # and Claude's completion message for a tweak rarely repeats the
         # `apps/<slug>/` path — without this guard the slug gets clobbered to
         # NULL, breaking the Preview App button and sidebar polling).
-        # Scheduled tasks write their answer BEFORE the COMPLETED sentinel, so
-        # outcome.payload (text after the sentinel) is empty. Deliver the body.
-        result_payload = outcome.payload
-        if schedule_id and outcome.kind == "completed":
-            body = extract_final_body(full_output)
-            if body:
-                result_payload = body
         update_values = {
             "status": new_task_status,
             "mode": mode_val,
-            "result": result_payload,
+            "result": outcome.payload,
             "completed_at": datetime.utcnow() if outcome.kind == "completed" else None,
             **history_update,
         }
@@ -312,17 +316,7 @@ async def _run_execution(
             await s.execute(
                 update(TaskItem).where(TaskItem.id == task_id).values(**update_values)
             )
-            # Auto-add the creator as owner of this project (idempotent).
-            if slug:
-                await s.execute(
-                    text(
-                        "INSERT INTO tasks.project_members (slug, user_email, role, added_by) "
-                        "SELECT :slug, assignee_email, 'owner', assignee_email "
-                        "FROM tasks.items WHERE id = :task_id AND assignee_email IS NOT NULL "
-                        "ON CONFLICT (slug, user_email) DO NOTHING"
-                    ),
-                    {"slug": slug, "task_id": task_id},
-                )
+            await _grant_creator_membership(s, task_id, slug)
             await s.commit()
     except Exception as exc:
         logger.exception("Execution failed: %s", exc)
@@ -339,6 +333,33 @@ async def _run_execution(
             await s.commit()
     finally:
         _RUNNING.pop(task_id, None)
+
+
+async def _grant_creator_membership(s, task_id, parsed_slug) -> None:
+    """Auto-add the creator as owner of the built project (idempotent).
+
+    Uses the slug parsed from the execution OUTPUT when present, else the
+    slug bound at task creation. Ownership must not depend on the completion
+    prose mentioning ``apps/<slug>/`` — live 2026-06-12 a voice-built app
+    completed and previewed fine but never appeared in its creator's
+    "My apps" because the completion message omitted the path.
+    """
+    member_slug = parsed_slug
+    if not member_slug:
+        member_slug = (await s.execute(
+            select(TaskItem.built_app_slug).where(TaskItem.id == task_id)
+        )).scalar_one_or_none()
+    if not member_slug:
+        return
+    await s.execute(
+        text(
+            "INSERT INTO tasks.project_members (slug, user_email, role, added_by) "
+            "SELECT :slug, assignee_email, 'owner', assignee_email "
+            "FROM tasks.items WHERE id = :task_id AND assignee_email IS NOT NULL "
+            "ON CONFLICT (slug, user_email) DO NOTHING"
+        ),
+        {"slug": member_slug, "task_id": task_id},
+    )
 
 
 def _build_execute_prompt(
@@ -382,7 +403,7 @@ def _build_execute_prompt(
 
 
 @router.post("/{task_id}/execute", response_model=TaskOut)
-async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
+async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin_or_capability)):
     async with session() as s:
         item = (
             await s.execute(select(TaskItem).where(TaskItem.id == task_id))
@@ -453,7 +474,7 @@ async def resume(
     task_id: UUID,
     body: ResumeRequest,
     request: Request,
-    user: AdminUser = Depends(current_admin),
+    user: AdminUser = Depends(current_admin_or_capability),
 ):
     """Resume a build that's been gated waiting for Supabase.
 
@@ -571,7 +592,7 @@ async def _plan_bg(tid: UUID, eid: UUID, prompt: str, user_jwt: str | None = Non
 
 
 @router.post("/{task_id}/clarify", response_model=TaskOut)
-async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
+async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin_or_capability)):
     """Start the CLARIFY phase — Claude asks structured questions before planning."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -684,7 +705,7 @@ async def start_clarify(task_id: UUID, request: Request, user: AdminUser = Depen
 
 
 @router.post("/{task_id}/plan", response_model=TaskOut)
-async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin)):
+async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin_or_capability)):
     """Manually trigger the PLAN phase (can skip CLARIFY if task is clear)."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -725,7 +746,7 @@ async def start_plan(task_id: UUID, request: Request, user: AdminUser = Depends(
 
 
 @router.post("/{task_id}/review-plan", response_model=TaskOut)
-async def review_plan(task_id: UUID, body: PlanReviewRequest, user: AdminUser = Depends(current_admin)):
+async def review_plan(task_id: UUID, body: PlanReviewRequest, user: AdminUser = Depends(current_admin_or_capability)):
     """Admin approves or rejects a plan."""
     async with session() as s:
         item = (await s.execute(select(TaskItem).where(TaskItem.id == task_id))).scalar_one_or_none()
@@ -752,7 +773,7 @@ async def stream(
     task_id: UUID,
     request: Request,
     from_: int = 0,
-    user: AdminUser = Depends(current_admin),
+    user: AdminUser = Depends(current_admin_or_capability),
 ):
     """SSE stream of execution log. Pass `?from_=<line_no>` to resume after disconnect."""
 
@@ -788,7 +809,7 @@ async def stream(
 
 
 @router.post("/{task_id}/cancel", response_model=TaskOut)
-async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin)):
+async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
     entry = _RUNNING.pop(task_id, None)
     if entry:
         executor = entry.get("executor")
@@ -801,6 +822,21 @@ async def cancel(task_id: UUID, user: AdminUser = Depends(current_admin)):
         if task is not None:
             task.cancel()
     async with session() as s:
+        # Non-admin callers (edit-capability) must own/edit this task. The
+        # capability dependency already binds the call to this task_id; this is
+        # the ownership half (MF-2 — admins keep their broad cancel).
+        if not user.is_admin:
+            item = (
+                await s.execute(select(TaskItem).where(TaskItem.id == task_id))
+            ).scalar_one_or_none()
+            if item is None:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if item.built_app_slug:
+                from routes_projects import _require_role
+                await _require_role(s, item.built_app_slug, user.email, "editor",
+                                    is_admin=False)
+            elif item.assignee_email not in (user.email, TEAM_EMAIL):
+                raise HTTPException(status_code=403, detail="Not your task")
         # Put the task back to pending so admin can retry / manual-claim.
         await s.execute(
             update(TaskItem).where(TaskItem.id == task_id).values(status="pending", mode=None)

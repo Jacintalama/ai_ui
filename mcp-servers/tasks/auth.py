@@ -1,5 +1,6 @@
 """Read the trusted gateway headers and expose the current admin user."""
 from dataclasses import dataclass
+from uuid import UUID
 
 from fastapi import HTTPException, Request
 
@@ -27,15 +28,59 @@ def current_admin(request: Request) -> AdminUser:
 @dataclass(frozen=True)
 class CurrentUser:
     email: str
+    is_admin: bool = False
 
 
 def current_user(request: Request) -> CurrentUser:
     """FastAPI dep — like current_admin but no admin gate.
 
-    Used by list-my-* endpoints that any authenticated user should reach.
-    Email is lowercased to match the canonical form used in DB rows.
+    Used by list-my-* endpoints that any authenticated user should reach, and
+    by per-creator-owned resources (e.g. video jobs) that pair the email with
+    `is_admin` so an admin can act on anyone's row while a regular user is
+    confined to their own. Email is lowercased to match the canonical form used
+    in DB rows; `is_admin` reflects the gateway's X-User-Admin header (defaults
+    to False, so no header means a non-admin principal).
     """
     email = request.headers.get("x-user-email", "").strip().lower()
     if not email:
         raise HTTPException(status_code=401, detail="Missing X-User-Email")
-    return CurrentUser(email=email)
+    is_admin = request.headers.get("x-user-admin", "").strip().lower() == "true"
+    return CurrentUser(email=email, is_admin=is_admin)
+
+
+def current_admin_or_capability(task_id: UUID, request: Request) -> AdminUser:
+    """FastAPI dep for the Visual Editor: accept EITHER the admin gateway
+    headers OR a single-task edit capability (`X-Edit-Capability`).
+
+    When a capability is present it must be valid and bound to THIS exact
+    `task_id`; we then return the owner as a NON-admin principal so the
+    endpoint's `_require_role(..., is_admin=False)` still re-checks the owner's
+    live role on the app (least privilege — a stale or revoked role is caught).
+    A capability never falls back to `current_admin`, so it works behind the
+    gateway's `X-User-Admin: false`. With no capability header, behavior is the
+    unchanged admin path."""
+    cap = request.headers.get("x-edit-capability", "").strip()
+    if cap:
+        from edit_capability import verify_capability
+        data = verify_capability(cap)
+        if not data or data["task_id"] != str(task_id):
+            raise HTTPException(status_code=403, detail="Invalid edit capability")
+        return AdminUser(email=(data["owner"] or "").strip().lower(),
+                         is_admin=False)
+    return current_admin(request)
+
+
+def current_admin_or_capability_for_slug(slug: str, request: Request) -> AdminUser:
+    """Like current_admin_or_capability, but for endpoints keyed by project
+    slug rather than task_id. Used by /api/projects/{slug}/<read> endpoints
+    the Visual Editor needs at load time (chat history, dep graph, publish
+    status, versions). Cap must be valid and bound to this exact slug."""
+    cap = request.headers.get("x-edit-capability", "").strip()
+    if cap:
+        from edit_capability import verify_capability
+        data = verify_capability(cap)
+        if not data or data["slug"] != slug:
+            raise HTTPException(status_code=403, detail="Invalid edit capability")
+        return AdminUser(email=(data["owner"] or "").strip().lower(),
+                         is_admin=False)
+    return current_admin(request)

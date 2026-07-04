@@ -59,7 +59,10 @@ class SlackClient:
         self,
         channel: str,
         text: str,
-        thread_ts: Optional[str] = None
+        thread_ts: Optional[str] = None,
+        *,
+        blocks: Optional[list] = None,
+        attachments: Optional[list] = None,
     ) -> Optional[str]:
         """
         Post a message to a Slack channel.
@@ -68,6 +71,8 @@ class SlackClient:
             channel: Channel ID
             text: Message text (supports markdown)
             thread_ts: Thread timestamp to reply in thread
+            blocks: Block Kit blocks list (keyword-only)
+            attachments: Legacy attachments list (keyword-only)
 
         Returns:
             Message timestamp if successful, None on error
@@ -83,6 +88,10 @@ class SlackClient:
         }
         if thread_ts:
             payload["thread_ts"] = thread_ts
+        if blocks is not None:
+            payload["blocks"] = blocks
+        if attachments is not None:
+            payload["attachments"] = attachments
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -101,12 +110,133 @@ class SlackClient:
             logger.error(f"Error posting Slack message: {e}")
             return None
 
+    async def get_user_email(self, user_id: str) -> Optional[str]:
+        """Resolve a Slack user's profile email via users.info.
+
+        Requires the `users:read.email` scope. Returns the lowercased email,
+        or None if the call fails or the profile has no email. Never raises —
+        callers treat None as "couldn't link this user".
+        """
+        if not user_id:
+            return None
+        url = f"{self.base_url}/users.info"
+        headers = {"Authorization": f"Bearer {self.bot_token}"}
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(url, params={"user": user_id}, headers=headers)
+                data = response.json()
+            if not data.get("ok"):
+                logger.warning(f"Slack users.info error: {data.get('error')}")
+                return None
+            email = (
+                data.get("user", {}).get("profile", {}).get("email")
+                or ""
+            ).strip().lower()
+            return email or None
+        except Exception as e:
+            logger.error(f"Error resolving Slack user email: {e}")
+            return None
+
+    async def open_modal(self, trigger_id: str, view: dict) -> bool:
+        """Open a modal via views.open. The trigger_id comes from an
+        interaction payload (button click) and is valid for ~3 seconds.
+        Returns True on success; logs and returns False otherwise. Never raises.
+        """
+        url = f"{self.base_url}/views.open"
+        headers = {
+            "Authorization": f"Bearer {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url, json={"trigger_id": trigger_id, "view": view}, headers=headers
+                )
+                data = response.json()
+            if data.get("ok"):
+                logger.info("Slack modal opened")
+                return True
+            logger.error(f"Slack views.open error: {data.get('error')} {data.get('response_metadata')}")
+            return False
+        except Exception as e:
+            logger.error(f"Error opening Slack modal: {e}")
+            return False
+
+    async def open_dm(self, user_id: str) -> Optional[str]:
+        """Open a direct-message channel with a user via conversations.open.
+
+        Returns the DM channel id on success, or None on error/empty input.
+        Never raises. Requires the `im:write` scope at runtime.
+        """
+        if not user_id:
+            return None
+        url = f"{self.base_url}/conversations.open"
+        headers = {
+            "Authorization": f"Bearer {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                data = (
+                    await client.post(url, json={"users": user_id}, headers=headers)
+                ).json()
+            if data.get("ok"):
+                return data.get("channel", {}).get("id")
+            logger.error(f"Slack conversations.open error: {data.get('error')}")
+            return None
+        except Exception as e:
+            logger.error(f"Error opening Slack DM: {e}")
+            return None
+
+    async def post_ephemeral(
+        self,
+        channel: str,
+        user: str,
+        text: str,
+        *,
+        blocks: Optional[list] = None,
+    ) -> bool:
+        """Post an ephemeral message visible only to a specific user.
+
+        Args:
+            channel: Channel ID where the ephemeral appears
+            user: User ID who sees the message
+            text: Message text
+            blocks: Optional Block Kit blocks list (keyword-only)
+
+        Returns:
+            True if successful, False on error. Never raises.
+        """
+        url = f"{self.base_url}/chat.postEphemeral"
+        headers = {
+            "Authorization": f"Bearer {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        payload: dict = {"channel": channel, "user": user, "text": text}
+        if blocks is not None:
+            payload["blocks"] = blocks
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                data = (
+                    await client.post(url, json=payload, headers=headers)
+                ).json()
+            if data.get("ok"):
+                logger.info(f"Posted ephemeral to {channel} for {user}")
+                return True
+            logger.error(f"Slack chat.postEphemeral error: {data.get('error')}")
+            return False
+        except Exception as e:
+            logger.error(f"Error posting Slack ephemeral: {e}")
+            return False
+
     async def post_to_response_url(
         self,
         response_url: str,
         text: str,
         response_type: str = "ephemeral",
         replace_original: bool = False,
+        *,
+        blocks: Optional[list] = None,
     ) -> bool:
         """
         Post to a Slack response_url (slash command / interaction callback).
@@ -118,6 +248,7 @@ class SlackClient:
             text: Message text
             response_type: "ephemeral" (visible to invoker) or "in_channel"
             replace_original: Whether to replace the original message
+            blocks: Optional Block Kit blocks list (keyword-only)
 
         Returns:
             True if successful
@@ -127,6 +258,8 @@ class SlackClient:
             "response_type": response_type,
             "replace_original": replace_original,
         }
+        if blocks is not None:
+            payload["blocks"] = blocks
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

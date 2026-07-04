@@ -156,7 +156,7 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         "- Step 3: Your FINAL message is delivered to the user verbatim — so make it your COMPLETE answer to the task. Do NOT call any tools in that final message.\n"
         "- Step 4: End that SAME final message with the single word `COMPLETED` on its own last line (your full answer first, then `COMPLETED`). The orchestrator needs that exact sentinel in the same message as your answer.\n"
         "- Constraints: Do NOT use `/home/*/.claude/*` paths. Do NOT use Bash for file IO. Only `./MEMORY.md` via the Write/Edit/Read tools.\n"
-        "- OUTPUT STYLE: Produce clear, concise, professional, well-structured output (short paragraphs; bullet points where useful). Your final message is delivered inside a branded card, so write clean prose/markdown — do NOT add your own ASCII boxes, banners, or system glyphs. When the task is to send an EMAIL, compose a polished human business email: a clear Subject, a greeting, a well-organised body, and a courteous sign-off — no robotic symbols inside the email."
+        "- OUTPUT STYLE: Your final message is delivered inside a branded card, so write clean prose/markdown and format minimally — a short bold title, then the content, then at most one brief line of context; use minimal emoji and do NOT add your own ASCII boxes, banners, or system glyphs. When the task is to send an EMAIL, compose a polished human business email: a clear Subject, a greeting, a well-organised body, and a courteous sign-off — no robotic symbols inside the email."
     )
     # Append connector access (Gmail/Drive REST) if the owner has connected them,
     # so a task like "read my unread email" can actually reach the mailbox.
@@ -183,6 +183,22 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
         await s.commit()
         await s.refresh(item)
     return item
+
+
+def _deliverable_result(raw_log: str, fallback: str = "") -> str:
+    """The text to deliver for a finished scheduled run.
+
+    Scheduled-task agents are told to write their answer FIRST and end with a
+    bare ``COMPLETED`` line (see the persona in ``_create_task_from_schedule``).
+    ``parse_outcome`` returns the text *after* the sentinel, which is therefore
+    empty — and that empty payload is what gets persisted to ``TaskItem.result``.
+    So we recover the actual answer (everything *before* the final sentinel)
+    from the raw stream-json transcript via ``extract_final_body``. Falls back to
+    the stored result, then an empty string, when the transcript yields nothing.
+    """
+    from claude_executor import extract_final_body
+    body = extract_final_body(raw_log).strip() if raw_log else ""
+    return body or (fallback or "")
 
 
 async def _run_scheduled_task(sched: Schedule) -> str:
@@ -216,18 +232,25 @@ async def _run_scheduled_task(sched: Schedule) -> str:
         except Exception as exc:
             logger.exception("schedule %s run failed: %s", sched.id, scrub(str(exc)))
             return "failed", ""
-        # Re-read the task's final status + result (set by _run_execution)
+        # Re-read the task's final status + result (set by _run_execution).
+        # Also read the execution's raw transcript: scheduled agents put their
+        # answer BEFORE the COMPLETED sentinel, so TaskItem.result (the
+        # after-sentinel payload) is empty — recover the answer via the log.
         async with session() as s:
             row = (await s.execute(
                 select(TaskItem).where(TaskItem.id == item.id)
             )).scalar_one_or_none()
+            ex = (await s.execute(
+                select(TaskExecution).where(TaskExecution.id == execution_id)
+            )).scalar_one_or_none()
         status = (row.status if row else None) or "unknown"
-        result = (row.result if row else None) or ""
+        raw_log = (ex.log if ex else "") or ""
+        result = _deliverable_result(raw_log, (row.result if row else None) or "")
         return status, result
 
 
-async def _deliver_to_discord(
-    channel_id: str, schedule_name: str, status: str, result: str,
+async def _deliver_result(
+    channel_id: str, platform: str, schedule_name: str, status: str, result: str,
     schedule_id: str = "",
 ) -> None:
     """POST a finished run's result to the webhook-handler, which posts it into
@@ -239,35 +262,70 @@ async def _deliver_to_discord(
         return
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            await client.post(
+            response = await client.post(
                 f"{base.rstrip('/')}/internal/schedule-result",
                 headers={"X-Internal-Secret": secret},
                 json={
                     "channel_id": channel_id,
+                    "platform": platform,
                     "schedule_name": schedule_name,
                     "status": status,
                     "result": scrub(result or "")[:6000],
                     "schedule_id": schedule_id,
                 },
             )
+            if response.status_code >= 400:
+                logger.warning(
+                    "schedule delivery failed (%s): webhook returned %s %s",
+                    channel_id,
+                    response.status_code,
+                    scrub(getattr(response, "text", ""))[:500],
+                )
     except Exception as exc:  # noqa: BLE001
         logger.warning("schedule delivery failed (%s): %s", channel_id, scrub(str(exc)))
 
 
 async def _finalize_run(sched: Schedule) -> None:
-    """Background coroutine: run, record last_run_status, deliver to Discord."""
-    status, result = await _run_scheduled_task(sched)
-    async with session() as s:
-        await s.execute(
-            update(Schedule).where(Schedule.id == sched.id).values(
-                last_run_status=status,
+    """Background coroutine: run, record last_run_status, deliver to Discord.
+
+    Dispatched detached via create_task, so guard everything: an unhandled
+    raise would vanish into the discarded task and leave the schedule stuck
+    on the pre-dispatch last_run_status='running' (audit 2026-06-15)."""
+    try:
+        status, result = await _run_scheduled_task(sched)
+        async with session() as s:
+            await s.execute(
+                update(Schedule).where(Schedule.id == sched.id).values(
+                    last_run_status=status,
+                )
             )
-        )
-        await s.commit()
-    # Deliver the run's result into the user's Discord thread, if configured.
-    delivery_channel = getattr(sched, "delivery_channel_id", None)
-    if delivery_channel:
-        await _deliver_to_discord(delivery_channel, sched.name, status, result, str(sched.id))
+            await s.commit()
+        # Deliver the run's result into the user's Discord thread, if configured.
+        delivery_channel = getattr(sched, "delivery_channel_id", None)
+        if delivery_channel:
+            platform = getattr(sched, "delivery_platform", "discord") or "discord"
+            await _deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))
+    except Exception as exc:  # noqa: BLE001
+        logger.error("schedule run %s failed: %s", sched.id, scrub(str(exc)), exc_info=True)
+        try:
+            async with session() as s:
+                await s.execute(
+                    update(Schedule).where(Schedule.id == sched.id).values(
+                        last_run_status="failed",
+                    )
+                )
+                await s.commit()
+        except Exception:  # noqa: BLE001
+            logger.error("could not mark schedule %s failed", sched.id, exc_info=True)
+
+
+def fire_values(sched, now) -> dict:
+    """Pre-dispatch update values for a firing schedule. A one-time (`run_once`)
+    schedule also gets enabled=False so it fires exactly once, then stops."""
+    v = {"last_run_at": now, "last_run_status": "running"}
+    if getattr(sched, "run_once", False):
+        v["enabled"] = False
+    return v
 
 
 async def _tick_once() -> None:
@@ -301,8 +359,7 @@ async def _tick_once() -> None:
         async with session() as s:
             await s.execute(
                 update(Schedule).where(Schedule.id == sched.id).values(
-                    last_run_at=now,
-                    last_run_status="running",
+                    **fire_values(sched, now)
                 )
             )
             await s.commit()

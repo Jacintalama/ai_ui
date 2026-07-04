@@ -144,8 +144,55 @@
 	handle /api/supabase/* {
 		reverse_proxy api-gateway:8080
 	}
+	# Managed public app links returned by Publish in Discord/Slack.
+	# The tasks service enforces the published_apps access gate.
+	handle /apps/* {
+		header Cache-Control "public, max-age=120"
+		reverse_proxy tasks:8210
+	}
 	# Static frontend (panel JS + history page) — public, no auth on assets
 	handle /tasks/static/* {
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+
+	# Clean public URL for the video generator page.
+	handle /video-generator {
+		rewrite * /tasks/static/video.html
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+	handle /video-generator/ {
+		rewrite * /tasks/static/video.html
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+
+	# Friendly aliases for the App Builder page -> the real /tasks/app-builder
+	# route. Case-insensitive so /Aiuibuilder, /aiuibuilder, /app-builder all work;
+	# without this they fall through to the Open WebUI SPA, which shows its own 404.
+	@app_builder_alias path_regexp (?i)^/(ai-?ui-?builder|app-builder)/?$
+	handle @app_builder_alias {
+		redir * /tasks/app-builder 308
+	}
+
+	# Clean public URL for the Cron Jobs / Schedules page (the sidebar links here).
+	# Mirrors /video-generator; without this it falls through to the Open WebUI 404.
+	handle /cron-jobs {
+		rewrite * /tasks/static/cron.html
+		header Cache-Control "no-cache, no-store, must-revalidate"
+		header Pragma "no-cache"
+		header Expires "0"
+		reverse_proxy tasks:8210
+	}
+	handle /cron-jobs/ {
+		rewrite * /tasks/static/cron.html
 		header Cache-Control "no-cache, no-store, must-revalidate"
 		header Pragma "no-cache"
 		header Expires "0"
@@ -158,6 +205,22 @@
 	# The tasks service has /healthz at root (not /tasks/healthz), so strip prefix.
 	handle /tasks/healthz {
 		uri strip_prefix /tasks
+		reverse_proxy tasks:8210
+	}
+
+	# No-login video download deep links — the share_url the video bot posts in
+	# Discord. The tasks /download endpoint authorizes via a signed ?cap=
+	# capability bound to one (owner, slug, job_id), so it needs no gateway/JWT.
+	# SECURITY (same rationale as /tasks/schedules*): strip identity headers so
+	# this public route can ONLY be used with a valid capability — never to
+	# impersonate a user via a forged X-User-Email/X-User-Admin. Scoped by regex
+	# to the download path only; every other /api/video-jobs/* call still goes
+	# through the gateway (/api/tasks/* or the SPA's cookie-authed fetch).
+	@video_dl path_regexp ^/tasks/api/video-jobs/[^/]+/download$
+	handle @video_dl {
+		uri strip_prefix /tasks
+		request_header -X-User-Email
+		request_header -X-User-Admin
 		reverse_proxy tasks:8210
 	}
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete as _del
 from sqlalchemy import select
 
-from auth import AdminUser, current_admin
+from auth import AdminUser, current_admin, current_admin_or_capability_for_slug
 from db import session
 from models import ChatMessage
 from routes_projects import _require_role, _validate_slug
@@ -36,7 +36,7 @@ class ChatMessageOut(BaseModel):
 async def list_chat(
     slug: str,
     limit: int = 200,
-    user: AdminUser = Depends(current_admin),
+    user: AdminUser = Depends(current_admin_or_capability_for_slug),
 ):
     _validate_slug(slug)
     limit = max(1, min(limit, MAX_MESSAGES))

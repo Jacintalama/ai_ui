@@ -61,7 +61,12 @@ class Settings(BaseSettings):
 
     # AI Settings
     ai_model: str = "gpt-4-turbo"
-    ai_system_prompt: str = "You are a helpful AI assistant that analyzes GitHub issues and suggests solutions. Be concise and actionable."
+    ai_system_prompt: str = (
+        "You are AIUI, a friendly conversational assistant in Slack and Discord. "
+        "Chat naturally and concisely, and help with whatever the user asks. "
+        "Don't assume GitHub, coding, or any specific task unless the user brings it up. "
+        "Use light Slack/Discord markdown."
+    )
 
     # MCP Proxy
     mcp_proxy_url: str = "http://mcp-proxy:8000"
@@ -78,19 +83,24 @@ class Settings(BaseSettings):
 
     # Tasks service (user-scoped schedules + App Builder)
     tasks_url: str = "http://tasks:8210"
-    # Google connectors (Gmail/Drive). Internal URLs (backend network) for the
-    # /auth/status check; public URLs (via Caddy→api-gateway) for the browser
-    # connect link. Both services listen on :8000 internally.
-    gmail_url: str = "http://mcp-gmail:8000"
-    gdrive_url: str = "http://mcp-gdrive:8000"
-    gmail_public_url: str = "https://ai-ui.coolestdomain.win/gmail"
-    gdrive_public_url: str = "https://ai-ui.coolestdomain.win/gdrive"
     # Shared secret for the tasks→webhook-handler schedule-result callback.
     # The tasks scheduler sends this in X-Internal-Secret; we reject mismatches.
     internal_callback_secret: str = ""
 
     # Claude Analyzer (PR Review, BRE, Security, etc.)
     claude_analyzer_url: str = "http://claude-analyzer:3000"
+
+    # Tasks service public base URL (browser-visible). Used to deep-link into
+    # the visual editor from the Discord build-ready card.
+    tasks_public_url: str = "https://ai-ui.coolestdomain.win"
+
+    # Google connectors (Gmail/Drive). Internal URLs (backend network) for the
+    # /auth/status check; public URLs (via Caddy -> api-gateway) for the browser
+    # connect link the user opens.
+    gmail_url: str = "http://mcp-gmail:8000"
+    gdrive_url: str = "http://mcp-gdrive:8000"
+    gmail_public_url: str = "https://ai-ui.coolestdomain.win/gmail"
+    gdrive_public_url: str = "https://ai-ui.coolestdomain.win/gdrive"
 
     # Slack
     slack_bot_token: str = ""
@@ -111,12 +121,19 @@ class Settings(BaseSettings):
             )
         return self._discord_map_cache
 
+    # Just-chat intent router. Off by default; flip with env INTENT_ROUTER=1.
+    # Off = exactly today's behavior (plain text -> generic answer).
+    intent_router_enabled: bool = Field(default=False, alias="INTENT_ROUTER")
+
     # Voice (ElevenLabs)
     voice_webhook_secret: str = ""
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = "pFZP5JQG7iQjIQuC4Bku"
     elevenlabs_model_id: str = "eleven_multilingual_v2"
     elevenlabs_agent_id: str = ""
+    # Owner of voice-started App Builder builds (spoken flow has no per-user
+    # identity; single-operator by design).
+    voice_user_email: str = ""
 
     # Loki
     loki_url: str = "http://loki:3100"
