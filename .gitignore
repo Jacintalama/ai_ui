@@ -29,3 +29,23 @@ mcp-servers/gdrive/docker-compose.test.yml
 # local backups + python build artifacts (added 2026-05-19)
 *.bak
 *.egg-info/
+
+# --- snapshot hardening 2026-05-27 (from VPS live line) ---
+.env.bak*
+*.bak.*
+.deploy-state
+_tplpng/
+apps/alama-flight/
+apps/*smoke*/
+apps/caddy-auth-test-*/
+apps/create-me-*/
+apps/crudsimple/
+apps/diag-test/
+apps/landing-page-for-aiui-bot-*/
+apps/make-the-*/
+apps/me-a-*/
+apps/ralph-portfolio/
+apps/test-crud/
+apps/test-project/
+apps/testfly/
+apps/upload-*/

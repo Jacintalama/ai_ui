@@ -1,17 +1,13 @@
-# Portfolio — Jacint A. Alama
+# Jacint Alama — Portfolio
 
-A personal portfolio website for Jacint A. Alama, a software engineer. The site features a hero section, about/stats panel, a skills grid, a projects showcase, and a contact form — all built with semantic HTML5, Tailwind CSS (CDN), and Alpine.js. No build step or npm install required.
+A single-page personal portfolio for Jacint Alama, a software engineer. Built with static HTML, Tailwind CSS (CDN), Alpine.js, and vanilla ES modules — no build step required. Features a beige/cream colour scheme with warm-brown accents, monospace headings, subtle grid-line decoration, and smooth fade/hover animations. Sections: Hero, About, Skills, Projects, Contact.
 
 ## How to run
 
-Open `index.html` directly in a browser, or serve the directory with any static file server:
+Open `apps/portfolio/index.html` directly in a browser, or serve the folder with any static file server:
 
-```bash
-# Python
-python3 -m http.server 8080
-
-# Node.js
-npx serve .
 ```
-
-Then visit `http://localhost:8080`.
+npx serve apps/portfolio
+# or
+python3 -m http.server 8080 --directory apps/portfolio
+```
