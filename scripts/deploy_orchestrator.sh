@@ -42,8 +42,10 @@ echo "  current commit: ${CURRENT_SHA}"
 
 PREVIOUS_SHA=""
 if ${SSH} "test -f ${ORCH_PATH}/.deploy-state"; then
-  # Parse via python (universally available; avoids requiring jq on operator workstation)
-  PREVIOUS_SHA="$(${SSH} "cat ${ORCH_PATH}/.deploy-state" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["sha"])' 2>/dev/null || python -c 'import json,sys;print(json.loads(sys.stdin.read())["sha"])')"
+  # Parse ON THE SERVER (its python3 always exists). Workstation-side parsing
+  # broke on Windows Git Bash where python3 is absent: the pipe swallowed the
+  # JSON and the local fallback read empty stdin, aborting pre-flight.
+  PREVIOUS_SHA="$(${SSH} "python3 -c \"import json;print(json.load(open('${ORCH_PATH}/.deploy-state'))['sha'])\"")"
   echo "  last deployed: ${PREVIOUS_SHA}"
 elif [[ "${FIRST_DEPLOY}" -ne 1 ]]; then
   echo "ERROR: no .deploy-state on server. Re-run with --first-deploy if this is intentional."
