@@ -501,6 +501,58 @@
     }
     .video-card .vc-del:hover { color: #ef4444; background: rgba(239,68,68,0.12); }
     .list-empty { color: var(--muted); font-size: 13px; }
+    /* ---- Create flow: Template-vs-Custom chooser ---- */
+    .flow-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 6px; }
+    @media (max-width: 640px) { .flow-choice { grid-template-columns: 1fr; } }
+    .flow-card {
+      display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+      padding: 20px 18px; text-align: left;
+      background: var(--surface-2, rgba(255,255,255,0.02));
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+      transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+    }
+    .flow-card:hover {
+      border-color: var(--accent); transform: translateY(-2px);
+      box-shadow: 0 6px 18px rgba(93,108,255,0.15);
+    }
+    .flow-card .flow-icon {
+      width: 40px; height: 40px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, var(--accent-soft), rgba(124,140,255,0.25));
+      color: var(--accent); flex-shrink: 0;
+    }
+    .flow-card .flow-name { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+    .flow-card .flow-desc { font-size: 12.5px; color: var(--text-2); line-height: 1.45; }
+    .flow-back {
+      background: none; border: none; padding: 0; font-size: 13px;
+      color: var(--text-2); display: inline-flex; align-items: center; gap: 6px;
+      margin-bottom: 12px;
+    }
+    .flow-back:hover { color: var(--accent); }
+    .tpl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 16px; }
+    @media (max-width: 640px) { .tpl-grid { grid-template-columns: 1fr; } }
+    .tpl-card {
+      position: relative; display: flex; flex-direction: column; gap: 6px;
+      padding: 14px; text-align: left;
+      background: var(--surface-2, rgba(255,255,255,0.02));
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .tpl-card:hover { border-color: var(--accent); }
+    .tpl-card.selected {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(93,108,255,0.18);
+      background: var(--accent-soft);
+    }
+    .tpl-card .tpl-emoji { font-size: 20px; line-height: 1; }
+    .tpl-card .tpl-name { font-size: 13.5px; font-weight: 700; }
+    .tpl-card .tpl-desc { font-size: 12px; color: var(--text-2); line-height: 1.4; }
+    .tpl-card .tpl-badge {
+      position: absolute; top: 10px; right: 10px;
+      font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+      color: var(--success); background: var(--success-soft);
+      padding: 2px 7px; border-radius: 999px;
+    }
   </style>
 </head>
 <body data-state="list">
@@ -541,8 +593,54 @@
 
       <!-- CREATE STATE: upload form -->
       <div class="create-grid" data-show="create">
-      <section class="card create-form-card" data-show="create">
+
+      <!-- Step 1: choose Template or Custom -->
+      <section class="card create-form-card" id="flow-chooser" data-show="create">
         <div class="card-title">Generate a video</div>
+        <div class="card-sub">How do you want to start?</div>
+        <div class="flow-choice">
+          <button class="flow-card" type="button" id="choose-template-btn">
+            <span class="flow-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect></svg>
+            </span>
+            <span class="flow-name">Use a template</span>
+            <span class="flow-desc">Pick a ready-made video style, drop your website link, done. We handle the script and the visuals.</span>
+          </button>
+          <button class="flow-card" type="button" id="choose-custom-btn">
+            <span class="flow-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+            </span>
+            <span class="flow-name">Custom video</span>
+            <span class="flow-desc">Write your own prompt, add your link or images, and fine-tune style and voice yourself.</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Step 2a: template picker -->
+      <section class="card create-form-card" id="tpl-panel" data-show="create" hidden>
+        <button class="flow-back" type="button" id="tpl-back">&larr; Start over</button>
+        <div class="card-title">Pick a template</div>
+        <div class="card-sub">Every template captures your site automatically and renders it in that style.</div>
+        <div class="tpl-grid" id="tpl-grid"></div>
+        <div class="field">
+          <label class="form-label" for="tpl-url">Your website link</label>
+          <input type="url" class="form-input" id="tpl-url" placeholder="https://yoursite.com">
+          <span class="form-hint">We grab the screenshots for you — no upload needed.</span>
+        </div>
+        <div class="field">
+          <label class="form-label" for="tpl-prompt">The template's script direction <span style="opacity:.6">(tweak it if you like)</span></label>
+          <textarea class="form-textarea" id="tpl-prompt" maxlength="2000" rows="3"></textarea>
+        </div>
+        <div class="error box" id="tpl-error" hidden></div>
+        <div class="field" style="margin-top: 4px;">
+          <button class="btn primary" type="button" id="tpl-generate-btn">Make my video</button>
+        </div>
+      </section>
+
+      <!-- Step 2b: custom form -->
+      <section class="card create-form-card" id="custom-panel" data-show="create" hidden>
+        <button class="flow-back" type="button" id="custom-back">&larr; Start over</button>
+        <div class="card-title">Custom video</div>
         <div class="card-sub">Paste your website link and we make a narrated video. That's it.</div>
         <form id="video-form" autocomplete="off">
           <div class="field">
@@ -860,6 +958,9 @@
     // --- State switching ---
     function setState(s) {
       document.body.dataset.state = s;
+      // Entering the create screen always restarts at the Template/Custom
+      // chooser (function is hoisted; defined near the create-flow wiring).
+      if (s === "create") resetCreateFlow();
       const studio = s === "studio";
       newVideoBtn.hidden = !studio;
       statusPill.hidden = !studio;
@@ -1841,6 +1942,124 @@
     }
 
     form.addEventListener("submit", (e) => { e.preventDefault(); makeVideo(); });
+
+    // --- Create flow: Template vs Custom chooser ---
+    const VIDEO_TEMPLATES = [
+      {
+        key: "walkthrough", emoji: "🖱️", name: "Website Walkthrough", badge: "Recommended",
+        desc: "A cursor clicks through your pages like a guided tour.",
+        style: "clean_product_demo", remotion: true,
+        prompt: "Click through the site page by page like a guided tour. Introduce each page as it appears and highlight what a visitor can do there.",
+      },
+      {
+        key: "product", emoji: "📦", name: "Product Demo",
+        desc: "Crisp and confident. Features front and center.",
+        style: "clean_product_demo", remotion: true,
+        prompt: "A crisp product demo. Present the key features confidently and end with a clear call to action.",
+      },
+      {
+        key: "cinematic", emoji: "🎬", name: "Cinematic Showcase",
+        desc: "Dramatic pacing, sweeping visuals, big finish.",
+        style: "cinematic", remotion: true,
+        prompt: "A cinematic showcase with dramatic pacing. Build atmosphere, sweep through the visuals, and land on a memorable closing line.",
+      },
+      {
+        key: "social", emoji: "⚡", name: "Snappy Social",
+        desc: "Fast cuts and punchy lines, made for feeds.",
+        style: "snappy_social", remotion: true,
+        prompt: "A fast, punchy social clip. Short energetic lines, quick cuts, a hook in the first seconds, and a call to action at the end.",
+      },
+    ];
+    const flowChooser = document.getElementById("flow-chooser");
+    const tplPanel = document.getElementById("tpl-panel");
+    const customPanel = document.getElementById("custom-panel");
+    const tplGrid = document.getElementById("tpl-grid");
+    const tplUrl = document.getElementById("tpl-url");
+    const tplPrompt = document.getElementById("tpl-prompt");
+    const tplError = document.getElementById("tpl-error");
+    const tplGenerateBtn = document.getElementById("tpl-generate-btn");
+    let selectedTpl = null;
+
+    function renderTplGrid() {
+      tplGrid.innerHTML = "";
+      for (const t of VIDEO_TEMPLATES) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "tpl-card" + (selectedTpl === t.key ? " selected" : "");
+        b.innerHTML =
+          (t.badge ? '<span class="tpl-badge">' + t.badge + "</span>" : "") +
+          '<span class="tpl-emoji">' + t.emoji + "</span>" +
+          '<span class="tpl-name">' + t.name + "</span>" +
+          '<span class="tpl-desc">' + t.desc + "</span>";
+        b.addEventListener("click", () => {
+          selectedTpl = t.key;
+          tplPrompt.value = t.prompt;
+          renderTplGrid();
+        });
+        tplGrid.appendChild(b);
+      }
+    }
+
+    function showCreateStep(step) {
+      flowChooser.hidden = step !== "chooser";
+      tplPanel.hidden = step !== "template";
+      customPanel.hidden = step !== "custom";
+    }
+    function resetCreateFlow() {
+      selectedTpl = null;
+      tplUrl.value = "";
+      tplPrompt.value = "";
+      tplError.hidden = true;
+      renderTplGrid();
+      showCreateStep("chooser");
+    }
+    document.getElementById("choose-template-btn").addEventListener("click", () => {
+      // Preselect the recommended template so one click + a URL is enough.
+      if (!selectedTpl) {
+        selectedTpl = VIDEO_TEMPLATES[0].key;
+        tplPrompt.value = VIDEO_TEMPLATES[0].prompt;
+        renderTplGrid();
+      }
+      showCreateStep("template");
+    });
+    document.getElementById("choose-custom-btn").addEventListener("click", () => showCreateStep("custom"));
+    document.getElementById("tpl-back").addEventListener("click", resetCreateFlow);
+    document.getElementById("custom-back").addEventListener("click", resetCreateFlow);
+
+    async function tplGenerate() {
+      tplError.hidden = true;
+      const t = VIDEO_TEMPLATES.find((x) => x.key === selectedTpl) || VIDEO_TEMPLATES[0];
+      const url = (tplUrl.value || "").trim();
+      if (!url) {
+        tplError.textContent = "Add your website link so we can capture it.";
+        tplError.hidden = false;
+        return;
+      }
+      // Drive the existing pipeline: fill the custom form's fields, then reuse
+      // makeVideo() so capture, queue and error handling stay in one place.
+      createCaptureUrl.value = url;
+      promptInput.value = (tplPrompt.value || t.prompt).trim();
+      if (styleSelect) styleSelect.value = t.style;
+      const at = document.getElementById("anim-toggle");
+      if (at) at.checked = !!t.remotion;
+      tplGenerateBtn.disabled = true;
+      const orig = tplGenerateBtn.textContent;
+      tplGenerateBtn.textContent = "Making your video…";
+      try {
+        await makeVideo();
+        // makeVideo reports problems into the (hidden) custom form error box —
+        // mirror it here so the template panel shows the failure.
+        if (!formError.hidden) {
+          tplError.textContent = formError.textContent;
+          tplError.hidden = false;
+        }
+      } finally {
+        tplGenerateBtn.disabled = false;
+        tplGenerateBtn.textContent = orig;
+      }
+    }
+    tplGenerateBtn.addEventListener("click", tplGenerate);
+    renderTplGrid();
 
     // --- Boot ---
     // --- Voice picker: load the catalog, render selectable cards w/ previews --
