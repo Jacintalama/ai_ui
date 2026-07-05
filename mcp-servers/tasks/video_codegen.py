@@ -42,6 +42,11 @@ Return exactly one fenced ```tsx code block — the whole composition. No prose,
 
 ## Assets
 - Embed images ONLY with <Img src={staticFile("exact-name.png")} /> using ONLY the exact filenames provided. If none are provided, use no assets.
+
+## Fonts
+- These system font families are installed in the renderer and usable via the CSS fontFamily property: "Inter", "Roboto", "Open Sans", "Lato", "Bebas Neue", "EB Garamond", "Cantarell", "JetBrains Mono", "Fira Code".
+- Use ONLY those families (plus generic sans-serif/serif/monospace fallbacks). No @font-face, no font downloads, no other families - anything else silently falls back.
+- If the brief names one of these fonts, it is BINDING - use it for all display text.
 """
 
 

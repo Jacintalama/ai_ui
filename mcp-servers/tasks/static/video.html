@@ -682,6 +682,17 @@
           </div>
           <span class="form-hint">Pick from the voice library, or leave the default.</span>
         </div>
+        <div class="field" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div>
+            <label class="form-label" for="tpl-font">Font</label>
+            <select class="form-input" id="tpl-font"></select>
+          </div>
+          <div>
+            <label class="form-label" for="tpl-bg">Background</label>
+            <select class="form-input" id="tpl-bg"></select>
+          </div>
+          <span class="form-hint" style="grid-column:1 / -1;">Leave on None and the AI art-directs it.</span>
+        </div>
         <div class="error box" id="tpl-error" hidden></div>
         <div class="field" style="margin-top: 4px;">
           <button class="btn primary" type="button" id="tpl-generate-btn">Make my video</button>
@@ -749,6 +760,18 @@
                 <option value="cinematic">Cinematic</option>
                 <option value="snappy_social">Snappy social</option>
               </select>
+            </div>
+
+            <div class="field" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <label class="form-label" for="custom-font">Font</label>
+                <select class="form-input" id="custom-font"></select>
+              </div>
+              <div>
+                <label class="form-label" for="custom-bg">Background</label>
+                <select class="form-input" id="custom-bg"></select>
+              </div>
+              <span class="form-hint" style="grid-column:1 / -1;">Leave on None and the AI art-directs it.</span>
             </div>
 
             <div class="field">
@@ -1951,7 +1974,7 @@
       submitBtn.textContent = "Making your video…";
       try {
         if (url) {
-          const prompt = rawPrompt || ("A short walkthrough of " + host + ".");
+          const prompt = (rawPrompt || ("A short walkthrough of " + host + ".")) + _styleSteering();
           const draftResp = await fetch(API + "/draft", {
             method: "POST", headers: authHeaders(), credentials: "include",
             body: JSON.stringify({
@@ -1979,7 +2002,7 @@
         } else if (shots.length) {
           if (shots.length > MAX_FILES) throw new Error("You can add at most " + MAX_FILES + " images.");
           if (shotsTotalBytes() > MAX_TOTAL_BYTES) throw new Error("Total size is over 50 MB.");
-          const prompt = rawPrompt || "A short walkthrough.";
+          const prompt = (rawPrompt || "A short walkthrough.") + _styleSteering();
           await uploadAndOpen(title, prompt);
         } else {
           showFormError("Add your website link above (or upload images under More options).");
@@ -2092,6 +2115,11 @@
       tplUrl.value = "";
       tplPrompt.value = "";
       tplError.hidden = true;
+      // Style options back to None (the AI decides) for a fresh video.
+      ["tpl-font", "tpl-bg", "custom-font", "custom-bg"].forEach((id) => {
+        const s = document.getElementById(id);
+        if (s && s.options.length) s.value = "";
+      });
       renderTplGrid();
       showCreateStep("chooser");
     }
@@ -2142,6 +2170,64 @@
     }
     tplGenerateBtn.addEventListener("click", tplGenerate);
     renderTplGrid();
+
+    // --- Font & background choices (None = the AI art-directs) -------------
+    // Fonts must exist inside the render container; this list mirrors the
+    // families installed in video-remotion/Dockerfile.
+    const FONT_OPTIONS = [
+      { value: "", label: "None (AI picks)" },
+      { value: "Inter", label: "Inter (modern)" },
+      { value: "Roboto", label: "Roboto (neutral)" },
+      { value: "Open Sans", label: "Open Sans (friendly)" },
+      { value: "Lato", label: "Lato (warm)" },
+      { value: "Bebas Neue", label: "Bebas Neue (bold display)" },
+      { value: "EB Garamond", label: "EB Garamond (elegant serif)" },
+      { value: "Cantarell", label: "Cantarell (humanist)" },
+      { value: "JetBrains Mono", label: "JetBrains Mono (tech)" },
+    ];
+    const BG_OPTIONS = [
+      { value: "", label: "None (AI picks)" },
+      { value: "a deep midnight blue to black gradient", label: "Midnight" },
+      { value: "a near-black charcoal with a soft vignette", label: "Charcoal" },
+      { value: "a deep purple to indigo gradient", label: "Deep purple" },
+      { value: "a rich ocean blue gradient", label: "Ocean blue" },
+      { value: "a warm sunset gradient from deep orange to magenta", label: "Sunset" },
+      { value: "a dark forest green with a soft vignette", label: "Forest" },
+      { value: "a clean off-white studio background with dark text", label: "Studio light" },
+    ];
+    function _fillSelect(sel, options) {
+      if (!sel) return;
+      sel.innerHTML = "";
+      options.forEach((o) => {
+        const el = document.createElement("option");
+        el.value = o.value; el.textContent = o.label;
+        sel.appendChild(el);
+      });
+    }
+    function _pairSelects(a, b) {
+      if (!a || !b) return;
+      a.addEventListener("change", () => { b.value = a.value; });
+      b.addEventListener("change", () => { a.value = b.value; });
+    }
+    const tplFont = document.getElementById("tpl-font");
+    const tplBg = document.getElementById("tpl-bg");
+    const customFont = document.getElementById("custom-font");
+    const customBg = document.getElementById("custom-bg");
+    [tplFont, customFont].forEach((s) => _fillSelect(s, FONT_OPTIONS));
+    [tplBg, customBg].forEach((s) => _fillSelect(s, BG_OPTIONS));
+    _pairSelects(tplFont, customFont);
+    _pairSelects(tplBg, customBg);
+
+    // Steering lines appended to the creative brief. Empty selections add
+    // nothing, so "None" genuinely leaves the decision to the AI.
+    function _styleSteering() {
+      const parts = [];
+      const f = (tplFont && tplFont.value) || "";
+      const g = (tplBg && tplBg.value) || "";
+      if (f) parts.push("Typography: use the font family '" + f + "' for all text.");
+      if (g) parts.push("Background: " + g + ".");
+      return parts.length ? " " + parts.join(" ") : "";
+    }
 
     // --- Boot ---
     // --- Voice picker: load the catalog, render selectable cards w/ previews --
@@ -2253,13 +2339,21 @@
       const tv = document.getElementById("tpl-voice");
       if (!tv) return;
       tv.innerHTML = "";
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "None (default voice)";
+      tv.appendChild(none);
       voices.forEach((v) => {
         const o = document.createElement("option");
         o.value = v.id;
         o.textContent = v.label + " (" + v.accent + " " + v.gender + ")" + (v.default ? " (default)" : "");
         tv.appendChild(o);
       });
-      tv.addEventListener("change", () => { if (tv.value) setSelectedVoice(tv.value); });
+      tv.addEventListener("change", () => {
+        const chosen = tv.value;
+        setSelectedVoice(chosen || defaultVoiceId);
+        if (!chosen) tv.value = ""; // keep None displayed; the default applies underneath
+      });
       const playBtn = document.getElementById("tpl-voice-play");
       if (playBtn) playBtn.addEventListener("click", () => {
         const v = _voiceCatalog.find((x) => x.id === (tv.value || selectedVoice));

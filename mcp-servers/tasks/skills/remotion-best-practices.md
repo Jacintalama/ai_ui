@@ -9,6 +9,14 @@ caps) live in a locked contract outside this skill and always apply.
 Canonical copy: mcp-servers/tasks/skills/remotion-best-practices.md
 Install/update: scripts/install_video_skill.py (writes the skill DB row).
 
+## User choices are binding
+
+- If the brief names a font family, use it for all display text.
+- If the brief describes a background (a color, gradient, or mood), build the
+  video on that background.
+- If the brief names a narration voice or says no narration, respect it.
+- When the brief says nothing (the default), YOU decide all of the above.
+
 ## Look (Apple-grade restraint)
 
 - One deliberate palette per video: a deep, subtly graded background (never
