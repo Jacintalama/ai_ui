@@ -506,14 +506,17 @@
     @media (max-width: 640px) { .flow-choice { grid-template-columns: 1fr; } }
     .flow-card {
       display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
-      padding: 20px 18px; text-align: left;
-      background: var(--surface-2, rgba(255,255,255,0.02));
-      border: 1px solid var(--border); border-radius: var(--radius-lg);
-      transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+      padding: 22px 20px; text-align: left;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      transition: transform .35s cubic-bezier(.25,.1,.25,1),
+                  box-shadow .35s cubic-bezier(.25,.1,.25,1),
+                  border-color .35s ease;
     }
     .flow-card:hover {
-      border-color: var(--accent); transform: translateY(-2px);
-      box-shadow: 0 6px 18px rgba(93,108,255,0.15);
+      border-color: rgba(255,255,255,0.16); transform: translateY(-3px) scale(1.01);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.45);
     }
     .flow-card .flow-icon {
       width: 40px; height: 40px; border-radius: 10px;
@@ -529,30 +532,68 @@
       margin-bottom: 12px;
     }
     .flow-back:hover { color: var(--accent); }
-    .tpl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 4px 0 16px; }
+    /* Apple-style media cards: hairline borders, soft depth, restrained type,
+       a 16:9 preview on top that plays (muted, looping) on hover. */
+    .tpl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 6px 0 20px; }
     @media (max-width: 640px) { .tpl-grid { grid-template-columns: 1fr; } }
     .tpl-card {
-      position: relative; display: flex; flex-direction: column; gap: 6px;
-      padding: 14px; text-align: left;
-      background: var(--surface-2, rgba(255,255,255,0.02));
-      border: 1px solid var(--border); border-radius: var(--radius-lg);
-      transition: border-color .15s ease, box-shadow .15s ease;
+      position: relative; display: flex; flex-direction: column;
+      padding: 0; text-align: left; overflow: hidden;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      transition: transform .35s cubic-bezier(.25,.1,.25,1),
+                  box-shadow .35s cubic-bezier(.25,.1,.25,1),
+                  border-color .35s ease;
     }
-    .tpl-card:hover { border-color: var(--accent); }
+    .tpl-card:hover {
+      transform: translateY(-3px) scale(1.01);
+      border-color: rgba(255,255,255,0.16);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+    }
     .tpl-card.selected {
       border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(93,108,255,0.18);
-      background: var(--accent-soft);
+      box-shadow: 0 0 0 1.5px var(--accent), 0 14px 34px rgba(93,108,255,0.22);
     }
-    .tpl-card .tpl-emoji { font-size: 20px; line-height: 1; }
-    .tpl-card .tpl-name { font-size: 13.5px; font-weight: 700; }
-    .tpl-card .tpl-desc { font-size: 12px; color: var(--text-2); line-height: 1.4; }
+    .tpl-media {
+      position: relative; aspect-ratio: 16 / 9; width: 100%;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(140deg, #16182c 0%, #101120 55%, #0c0d16 100%);
+      overflow: hidden;
+    }
+    .tpl-media video {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; opacity: 0;
+      transition: opacity .45s ease;
+    }
+    .tpl-card:hover .tpl-media video.ready,
+    .tpl-card.selected .tpl-media video.ready { opacity: 1; }
+    .tpl-media .tpl-emoji {
+      font-size: 34px; line-height: 1; filter: saturate(.9);
+      transition: transform .35s cubic-bezier(.25,.1,.25,1), opacity .35s ease;
+    }
+    .tpl-card:hover .tpl-media .tpl-emoji { transform: scale(1.12); }
+    .tpl-card:hover .tpl-media video.ready ~ .tpl-emoji,
+    .tpl-card.selected .tpl-media video.ready ~ .tpl-emoji { opacity: 0; }
+    .tpl-body { display: flex; flex-direction: column; gap: 4px; padding: 13px 15px 15px; }
+    .tpl-card .tpl-name { font-size: 14px; font-weight: 600; letter-spacing: -0.015em; }
+    .tpl-card .tpl-desc { font-size: 12px; color: var(--text-2); line-height: 1.45; }
     .tpl-card .tpl-badge {
-      position: absolute; top: 10px; right: 10px;
-      font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
-      color: var(--success); background: var(--success-soft);
-      padding: 2px 7px; border-radius: 999px;
+      position: absolute; top: 10px; right: 10px; z-index: 2;
+      font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+      color: #fff; background: rgba(20,22,34,0.66);
+      -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.14);
+      padding: 3px 9px; border-radius: 999px;
     }
+    .tpl-card .tpl-check {
+      position: absolute; top: 10px; left: 10px; z-index: 2;
+      width: 22px; height: 22px; border-radius: 50%;
+      display: none; align-items: center; justify-content: center;
+      background: var(--accent); color: #fff; font-size: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .tpl-card.selected .tpl-check { display: flex; }
   </style>
 </head>
 <body data-state="list">
@@ -1980,6 +2021,18 @@
     const tplGenerateBtn = document.getElementById("tpl-generate-btn");
     let selectedTpl = null;
 
+    function _tplPreviewSrc(key) {
+      return "/tasks/static/tpl-previews/" + key + ".mp4?v=1";
+    }
+    function _syncTplPlayback() {
+      // Selected card keeps playing (covers touch devices with no hover).
+      tplGrid.querySelectorAll(".tpl-card").forEach((card) => {
+        const v = card.querySelector("video");
+        if (!v || !v.classList.contains("ready")) return;
+        if (card.classList.contains("selected")) { v.play().catch(() => {}); }
+        else if (!card.matches(":hover")) { v.pause(); v.currentTime = 0; }
+      });
+    }
     function renderTplGrid() {
       tplGrid.innerHTML = "";
       for (const t of VIDEO_TEMPLATES) {
@@ -1987,14 +2040,33 @@
         b.type = "button";
         b.className = "tpl-card" + (selectedTpl === t.key ? " selected" : "");
         b.innerHTML =
+          '<span class="tpl-check">&#10003;</span>' +
           (t.badge ? '<span class="tpl-badge">' + t.badge + "</span>" : "") +
-          '<span class="tpl-emoji">' + t.emoji + "</span>" +
-          '<span class="tpl-name">' + t.name + "</span>" +
-          '<span class="tpl-desc">' + t.desc + "</span>";
+          '<span class="tpl-media">' +
+            '<video muted loop playsinline preload="none" src="' + _tplPreviewSrc(t.key) + '"></video>' +
+            '<span class="tpl-emoji">' + t.emoji + "</span>" +
+          "</span>" +
+          '<span class="tpl-body">' +
+            '<span class="tpl-name">' + t.name + "</span>" +
+            '<span class="tpl-desc">' + t.desc + "</span>" +
+          "</span>";
+        const vid = b.querySelector("video");
+        // Only fade the video in once it can actually show frames; a missing
+        // preview file simply leaves the gradient + emoji placeholder.
+        vid.addEventListener("canplay", () => vid.classList.add("ready"));
+        vid.addEventListener("error", () => vid.remove());
+        b.addEventListener("mouseenter", () => {
+          if (vid.isConnected) vid.play().catch(() => {});
+        });
+        b.addEventListener("mouseleave", () => {
+          if (vid.isConnected && !b.classList.contains("selected")) { vid.pause(); vid.currentTime = 0; }
+        });
         b.addEventListener("click", () => {
           selectedTpl = t.key;
           tplPrompt.value = t.prompt;
-          renderTplGrid();
+          tplGrid.querySelectorAll(".tpl-card").forEach((c) => c.classList.remove("selected"));
+          b.classList.add("selected");
+          _syncTplPlayback();
         });
         tplGrid.appendChild(b);
       }
