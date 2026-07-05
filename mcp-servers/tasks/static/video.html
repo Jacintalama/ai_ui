@@ -672,6 +672,16 @@
           <label class="form-label" for="tpl-prompt">The template's script direction <span style="opacity:.6">(tweak it if you like)</span></label>
           <textarea class="form-textarea" id="tpl-prompt" maxlength="2000" rows="3"></textarea>
         </div>
+        <div class="field">
+          <label class="form-label" for="tpl-voice">Narration voice</label>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select class="form-input" id="tpl-voice" style="flex:1;">
+              <option value="">Loading voices…</option>
+            </select>
+            <button class="btn sm" type="button" id="tpl-voice-play" title="Hear a sample">▶ Sample</button>
+          </div>
+          <span class="form-hint">Pick from the voice library, or leave the default.</span>
+        </div>
         <div class="error box" id="tpl-error" hidden></div>
         <div class="field" style="margin-top: 4px;">
           <button class="btn primary" type="button" id="tpl-generate-btn">Make my video</button>
@@ -2142,6 +2152,9 @@
         el.classList.toggle("selected", on);
         el.setAttribute("aria-checked", on ? "true" : "false");
       });
+      // Keep the template panel's compact voice dropdown in step.
+      const tv = document.getElementById("tpl-voice");
+      if (tv && tv.value !== id && tv.querySelector('option[value="' + id + '"]')) tv.value = id;
     }
 
     function stopVoicePreview() {
@@ -2221,13 +2234,37 @@
         });
         const def = voices.find((v) => v.default) || voices[0];
         defaultVoiceId = (data && data.default) || def.id;
+        _voiceCatalog = voices;
+        _populateTplVoice(voices);
         setSelectedVoice(def.id);
       } catch (e) {
         // Degrade gracefully: the render falls back to the default voice anyway.
         selectedVoice = defaultVoiceId;
         voiceList.innerHTML =
           '<div class="voice-loading">Could not load voice previews. The default voice will be used.</div>';
+        const tv = document.getElementById("tpl-voice");
+        if (tv) tv.innerHTML = '<option value="">Default voice</option>';
       }
+    }
+
+    // --- Template panel voice dropdown (same catalog, same selection state) ---
+    let _voiceCatalog = [];
+    function _populateTplVoice(voices) {
+      const tv = document.getElementById("tpl-voice");
+      if (!tv) return;
+      tv.innerHTML = "";
+      voices.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v.id;
+        o.textContent = v.label + " (" + v.accent + " " + v.gender + ")" + (v.default ? " (default)" : "");
+        tv.appendChild(o);
+      });
+      tv.addEventListener("change", () => { if (tv.value) setSelectedVoice(tv.value); });
+      const playBtn = document.getElementById("tpl-voice-play");
+      if (playBtn) playBtn.addEventListener("click", () => {
+        const v = _voiceCatalog.find((x) => x.id === (tv.value || selectedVoice));
+        if (v && v.sample_url) { setSelectedVoice(v.id); playVoicePreview(v.sample_url, playBtn); }
+      });
     }
 
     (function init() {
