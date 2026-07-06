@@ -131,6 +131,91 @@ async def _connector_access_note(user_email: str) -> str:
 # the 3.8GB Hetzner VM OOMs. 3 is a conservative bound; tune via env later.
 _RUN_SEMAPHORE = asyncio.Semaphore(3)
 
+VIDEO_SCHEDULE_WAIT_SECONDS = int(os.environ.get("VIDEO_SCHEDULE_WAIT_SECONDS", "900"))
+VIDEO_SCHEDULE_POLL_SECONDS = 10
+
+
+async def _start_video_job(user, cfg: dict, title: str, prompt: str, style: str) -> str:
+    """Create + capture + queue a video job through the real route functions,
+    reusing every guard (kill switches, SSRF, daily limit, disk). Returns the
+    job id. Raises fastapi.HTTPException on any guard failure."""
+    from routes_video import (
+        CaptureUrlRequest, DraftRequest, capture_from_url, create_draft, queue_job,
+    )
+    draft = await create_draft(DraftRequest(title=title, prompt=prompt, style=style), user)
+    job_id = str(draft["id"])
+    await capture_from_url(job_id, CaptureUrlRequest(url=cfg["url"].strip()), user)
+    await queue_job(job_id, user)
+    return job_id
+
+
+async def _check_video_job(job_id: str) -> tuple[str, str, str]:
+    """One poll: (status, error, share_link). share_link only when done."""
+    import uuid as _u
+    from video_models import VideoJob
+    async with session() as s:
+        job = await s.get(VideoJob, _u.UUID(job_id))
+    if job is None:
+        return "missing", "the job disappeared", ""
+    link = ""
+    if job.status == "done":
+        base = os.environ.get("VIDEO_PUBLIC_BASE", "").rstrip("/")
+        if base:
+            try:
+                from video_capability import mint_video_capability
+                tok = mint_video_capability(job.user_email, job.slug, str(job.id))
+                link = f"{base}/api/video-jobs/{job.id}/download?cap={tok}"
+            except RuntimeError:
+                link = ""
+    return job.status, (job.error or ""), link
+
+
+async def _run_video_schedule(sched: Schedule) -> tuple[str, str, dict]:
+    """kind='video': render the configured walkthrough directly (no LLM).
+    Returns (status, result_message, delivery_extras)."""
+    from fastapi import HTTPException
+    from auth import CurrentUser
+    from video_templates import get_template
+
+    cfg = dict(getattr(sched, "video_config", None) or {})
+    url = (cfg.get("url") or "").strip()
+    if not url:
+        return "failed", "This video schedule has no website URL configured.", {}
+    tpl = get_template((cfg.get("template") or "").strip())
+    prompt = (cfg.get("prompt") or "").strip()
+    if not prompt and tpl:
+        prompt = tpl["prompt"]
+    style = (tpl or {}).get("style") or "clean_product_demo"
+    title = ((cfg.get("title") or sched.name) or "Scheduled video")[:200]
+    user = CurrentUser(email=sched.user_email, is_admin=False)
+    try:
+        job_id = await _start_video_job(user, cfg, title, prompt, style)
+    except HTTPException as exc:
+        return "failed", f"Could not start the video: {exc.detail}", {}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("video schedule %s start failed", sched.id)
+        return "failed", f"Could not start the video: {scrub(str(exc))[:300]}", {}
+
+    polls = max(1, VIDEO_SCHEDULE_WAIT_SECONDS // max(1, VIDEO_SCHEDULE_POLL_SECONDS or 1))
+    for _ in range(polls):
+        await asyncio.sleep(VIDEO_SCHEDULE_POLL_SECONDS)
+        try:
+            status, error, link = await _check_video_job(job_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("video schedule %s poll failed", sched.id)
+            continue
+        if status == "done":
+            extras = {"video_job_id": job_id, "video_user_email": sched.user_email}
+            if link:
+                return "completed", f"\U0001f3ac {title} is ready: {link}", extras
+            return "completed", (f"\U0001f3ac {title} is ready. "
+                                 "Open the web Video Studio to watch it."), extras
+        if status in ("failed", "missing"):
+            err = (error or "").strip()
+            return "failed", f"Video render failed.{(' ' + err) if err else ''}", {}
+    return "timeout", (f"\U0001f3ac {title} is still rendering. "
+                       "Check the web Video Studio shortly."), {}
+
 
 async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
     """Build a TaskItem row from a Schedule and persist it.
@@ -201,7 +286,7 @@ def _deliverable_result(raw_log: str, fallback: str = "") -> str:
     return body or (fallback or "")
 
 
-async def _run_scheduled_task(sched: Schedule) -> str:
+async def _run_scheduled_task(sched: Schedule) -> tuple[str, str, dict]:
     """Dispatch to existing execution flow. Returns final status string.
 
     Bounded by _RUN_SEMAPHORE so a burst of schedules at the same minute
@@ -210,6 +295,8 @@ async def _run_scheduled_task(sched: Schedule) -> str:
     models is imported here at module-top).
     """
     async with _RUN_SEMAPHORE:
+        if getattr(sched, "kind", "agent") == "video":
+            return await _run_video_schedule(sched)
         item = await _create_task_from_schedule(sched)
         # Create a TaskExecution row so _run_execution has something to update.
         from models import TaskExecution
@@ -231,7 +318,7 @@ async def _run_scheduled_task(sched: Schedule) -> str:
             )
         except Exception as exc:
             logger.exception("schedule %s run failed: %s", sched.id, scrub(str(exc)))
-            return "failed", ""
+            return "failed", "", {}
         # Re-read the task's final status + result (set by _run_execution).
         # Also read the execution's raw transcript: scheduled agents put their
         # answer BEFORE the COMPLETED sentinel, so TaskItem.result (the
@@ -246,12 +333,12 @@ async def _run_scheduled_task(sched: Schedule) -> str:
         status = (row.status if row else None) or "unknown"
         raw_log = (ex.log if ex else "") or ""
         result = _deliverable_result(raw_log, (row.result if row else None) or "")
-        return status, result
+        return status, result, {}
 
 
 async def _deliver_result(
     channel_id: str, platform: str, schedule_name: str, status: str, result: str,
-    schedule_id: str = "",
+    schedule_id: str = "", extras: dict | None = None,
 ) -> None:
     """POST a finished run's result to the webhook-handler, which posts it into
     the user's Discord thread. Best-effort — never raises into the tick loop.
@@ -272,6 +359,7 @@ async def _deliver_result(
                     "status": status,
                     "result": scrub(result or "")[:6000],
                     "schedule_id": schedule_id,
+                    **(extras or {}),
                 },
             )
             if response.status_code >= 400:
@@ -292,7 +380,7 @@ async def _finalize_run(sched: Schedule) -> None:
     raise would vanish into the discarded task and leave the schedule stuck
     on the pre-dispatch last_run_status='running' (audit 2026-06-15)."""
     try:
-        status, result = await _run_scheduled_task(sched)
+        status, result, extras = await _run_scheduled_task(sched)
         async with session() as s:
             await s.execute(
                 update(Schedule).where(Schedule.id == sched.id).values(
@@ -304,7 +392,8 @@ async def _finalize_run(sched: Schedule) -> None:
         delivery_channel = getattr(sched, "delivery_channel_id", None)
         if delivery_channel:
             platform = getattr(sched, "delivery_platform", "discord") or "discord"
-            await _deliver_result(delivery_channel, platform, sched.name, status, result, str(sched.id))
+            await _deliver_result(delivery_channel, platform, sched.name, status,
+                                  result, str(sched.id), extras=extras)
     except Exception as exc:  # noqa: BLE001
         logger.error("schedule run %s failed: %s", sched.id, scrub(str(exc)), exc_info=True)
         try:
