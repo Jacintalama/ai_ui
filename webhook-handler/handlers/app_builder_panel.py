@@ -307,6 +307,7 @@ STATUS_PREFIX = "aiuibuild:status:"     # status button -> aiuibuild:status:<slu
 DELETE_PREFIX = "aiuibuild:del:"         # delete button -> aiuibuild:del:<slug>
 DEL_CONFIRM_PREFIX = "aiuibuild:del-confirm:"  # confirm-delete -> :<slug>
 DEL_CANCEL_PREFIX = "aiuibuild:del-cancel:"    # cancel-delete  -> :<slug>
+WALKVIDEO_PREFIX = "aiuibuild:video:"    # walkthrough-video button -> :<slug>
 _MAX_SELECT_OPTIONS = 25                 # Discord hard limit
 
 
@@ -405,6 +406,8 @@ def build_project_menu_components(
         if preview_url:
             buttons.append({"type": BUTTON, "style": STYLE_LINK,
                             "label": "\U0001f517 Open preview", "url": preview_url})
+    buttons.append(_button("\U0001f3ac Walkthrough video",
+                           f"{WALKVIDEO_PREFIX}{slug}", STYLE_PRIMARY))
     buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
     buttons.append(_button("🗑 Delete", f"{DELETE_PREFIX}{slug}", STYLE_DANGER))
     # Chunk into action rows of at most 5 buttons (Discord's per-row limit).

@@ -55,6 +55,7 @@ from handlers.app_builder_panel import (
     is_del_confirm, slug_from_del_confirm,
     is_del_cancel, slug_from_del_cancel,
     build_delete_confirm_components,
+    WALKVIDEO_PREFIX,
     build_schedule_modal, build_confirm_components, build_connect_components,
     is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
@@ -303,6 +304,11 @@ class DiscordCommandHandler:
             return self._ephemeral_components(
                 f"Delete `{slug}`? This can't be undone.",
                 build_delete_confirm_components(slug), update=False)
+        if custom_id.startswith(WALKVIDEO_PREFIX):
+            slug = custom_id[len(WALKVIDEO_PREFIX):]
+            return await self._handle_video_route(
+                payload, lambda ctx, s=slug: self.router.run_app_walkthrough_video(ctx, s),
+                raw_text=f"aiuibuilder video {slug}")
         # --- Schedules (aiuisched:*) ---
         if is_sched_new(custom_id):
             token = uuid.uuid4().hex[:16]

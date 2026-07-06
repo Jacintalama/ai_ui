@@ -2308,6 +2308,45 @@ class CommandRouter:
         else:
             await ctx.respond(header)
 
+    async def run_app_walkthrough_video(self, ctx: CommandContext, slug: str) -> None:
+        """My apps 'Walkthrough video': render the default cursor walkthrough
+        of the app's live (or preview) URL and post the MP4 back here."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            status = await self._tasks_client.get_project_status(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_status_error(e))
+            return
+        name = status.get("name", slug)
+        url = (status.get("public_url") or "").strip()
+        if not url:
+            if not PUBLIC_DOMAIN:
+                await ctx.respond("No public domain is configured, so I can't reach the app preview.")
+                return
+            url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/"
+        try:
+            draft = await self._tasks_client.create_video_draft(
+                email, f"{name} walkthrough", "", "clean_product_demo", "amy",
+                render_mode="remotion", animation_preset="cursor_click")
+            job_id = str(draft.get("id") or "")
+            await ctx.respond(f"\U0001f3ac Filming a walkthrough of **{name}** - capturing pages now.")
+            await self._tasks_client.capture_video_screenshots(email, job_id, url)
+            res = await self._tasks_client.queue_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        qp = res.get("queue_position", 0)
+        tail = f" (queue position {qp})" if qp else ""
+        if ctx.notify_channel is not None:
+            await ctx.notify_channel(
+                f"Rendering the walkthrough{tail} - I'll post it here when it's done.")
+            watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_video_watcher_done)
+
     async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Status button → post the app's status text (same shape as
         the `aiuibuilder status <slug>` text action)."""
