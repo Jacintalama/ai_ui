@@ -44,8 +44,9 @@ def _video_router():
 
 
 def _block_actions_payload(action_id: str, user_id: str = "U1",
-                           channel: str = "C-vid") -> dict:
-    return {
+                           channel: str = "C-vid",
+                           view: dict | None = None) -> dict:
+    payload = {
         "type": "block_actions",
         "trigger_id": "trig-vid",
         "user": {"id": user_id, "username": "tester"},
@@ -53,6 +54,9 @@ def _block_actions_payload(action_id: str, user_id: str = "U1",
         "team": {"id": "T1"},
         "actions": [{"action_id": action_id}],
     }
+    if view is not None:
+        payload["view"] = view
+    return payload
 
 
 def _create_view_submission(url: str, *, channel: str = "C-vid",
@@ -380,3 +384,68 @@ async def test_vid_apply_spawns_apply_and_delivers():
             await asyncio.gather(*pending)
 
     router._tasks_client.apply_video.assert_awaited_once_with("u@x.com", "j9")
+
+
+# ---------------------------------------------------------------------------
+# block_actions: vid_template select (views.update prefill)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_template_select_prefills_when_prompt_empty():
+    router = _video_router()
+    handler, slack = _handler(router)
+    slack.update_modal = AsyncMock(return_value=True)
+    payload = _block_actions_payload("vid_template")
+    payload["view"] = {
+        "id": "V1", "private_metadata": "C-vid",
+        "state": {"values": {
+            "vid_template": {"vid_template": {
+                "type": "static_select",
+                "selected_option": {"value": "walkthrough"}}},
+            "prompt": {"prompt": {"type": "plain_text_input", "value": ""}},
+        }},
+    }
+    resp = await handler.handle_interaction(payload)
+    assert resp == {}
+    slack.update_modal.assert_awaited_once()
+    view_id, new_view = slack.update_modal.call_args.args
+    assert view_id == "V1"
+    prompt_block = next(b for b in new_view["blocks"] if b.get("block_id") == "prompt")
+    assert "guided tour" in prompt_block["element"]["initial_value"]
+
+
+@pytest.mark.asyncio
+async def test_template_select_never_clobbers_user_text():
+    router = _video_router()
+    handler, slack = _handler(router)
+    slack.update_modal = AsyncMock(return_value=True)
+    payload = _block_actions_payload("vid_template")
+    payload["view"] = {
+        "id": "V1", "private_metadata": "C-vid",
+        "state": {"values": {
+            "vid_template": {"vid_template": {
+                "type": "static_select",
+                "selected_option": {"value": "walkthrough"}}},
+            "prompt": {"prompt": {"type": "plain_text_input",
+                                   "value": "my own words"}},
+        }},
+    }
+    await handler.handle_interaction(payload)
+    slack.update_modal.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _run_slack_video: template submit fallback
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_submit_with_template_and_empty_prompt_uses_template_script():
+    router = _video_router()
+    handler, slack = _handler(router)
+    fields = {"url": "https://x.com", "prompt": "", "title": None,
+              "style": "clean_product_demo", "voice": "amy",
+              "mode": "remotion", "template": "social", "channel_id": "C1"}
+    await handler._run_slack_video("U1", fields)
+    call = router._tasks_client.create_video_draft.await_args
+    assert "punchy social clip" in call.args[2]      # prompt arg
+    assert call.args[3] == "snappy_social"            # style arg

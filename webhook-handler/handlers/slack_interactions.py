@@ -73,6 +73,7 @@ from handlers import connector_intent
 from handlers import slack_recruiting_panel as srp
 from handlers import slack_recruiting_review as srr
 from handlers import slack_video_panel as svp
+from handlers import video_templates as vtpl
 from clients import connectors
 from config import settings
 from urllib.parse import urlsplit
@@ -413,8 +414,31 @@ class SlackInteractionsHandler:
             # Open the create modal SYNCHRONOUSLY with no preceding I/O. The
             # trigger_id expires ~3s after the interaction, so any awaited
             # tasks/email call before open_modal risks the modal failing.
+            if not vtpl.cache_is_fresh():
+                task = asyncio.create_task(
+                    vtpl.refresh_templates(self.router._tasks_client))
+                self.router._background_tasks.add(task)
+                task.add_done_callback(self.router._background_tasks.discard)
             await self.slack.open_modal(
-                trigger_id, svp.build_video_modal(channel_id))
+                trigger_id, svp.build_video_modal(
+                    channel_id, templates=vtpl.cached_templates()))
+            return {}
+
+        if action_id == "vid_template" and payload.get("view"):
+            view = payload["view"] or {}
+            values = (view.get("state", {}) or {}).get("values", {}) or {}
+            sel = (values.get("vid_template", {}) or {}).get("vid_template", {}) or {}
+            key = (sel.get("selected_option") or {}).get("value", "")
+            tpl = vtpl.get_template(key)
+            current_prompt = svp._txt(values, "prompt", "prompt")
+            # Never clobber text the user typed: only prefill when the prompt
+            # is empty or still equals a known template script.
+            if tpl and (not current_prompt or current_prompt in vtpl.template_prompts()):
+                new_view = svp.build_video_modal(
+                    view.get("private_metadata") or "",
+                    templates=vtpl.cached_templates(),
+                    initial_prompt=tpl["prompt"], initial_template=key)
+                await self.slack.update_modal(view.get("id", ""), new_view)
             return {}
 
         if svp.is_vid_refine(action_id):
@@ -1248,6 +1272,11 @@ class SlackInteractionsHandler:
             email = await self._bail_if_not_linked(user_id)
             if not email:
                 return
+            tpl = vtpl.get_template((fields.get("template") or "").strip())
+            if tpl:
+                if not (fields.get("prompt") or "").strip():
+                    fields["prompt"] = tpl["prompt"]
+                fields["style"] = tpl["style"]
             tasks = self.router._tasks_client
             draft = await tasks.create_video_draft(
                 email,

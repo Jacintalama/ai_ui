@@ -162,6 +162,31 @@ class SlackClient:
             logger.error(f"Error opening Slack modal: {e}")
             return False
 
+    async def update_modal(self, view_id: str, view: dict) -> bool:
+        """views.update: replace an open modal's contents (template prefill).
+        Same transport as open_modal; returns True when Slack acks ok."""
+        if not view_id:
+            return False
+        url = f"{self.base_url}/views.update"
+        headers = {
+            "Authorization": f"Bearer {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    url, json={"view_id": view_id, "view": view}, headers=headers
+                )
+                data = response.json()
+            if data.get("ok"):
+                logger.info("Slack modal updated")
+                return True
+            logger.error(f"Slack views.update error: {data.get('error')} {data.get('response_metadata')}")
+            return False
+        except Exception as e:
+            logger.error(f"Error updating Slack modal: {e}")
+            return False
+
     async def open_dm(self, user_id: str) -> Optional[str]:
         """Open a direct-message channel with a user via conversations.open.
 

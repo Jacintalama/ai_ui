@@ -74,6 +74,7 @@ def _plain_input(
     multiline: bool = False,
     placeholder: str = "",
     optional: bool = False,
+    initial_value: str = "",
 ) -> dict:
     element: dict = {
         "type": "plain_text_input",
@@ -82,6 +83,8 @@ def _plain_input(
     }
     if placeholder:
         element["placeholder"] = {"type": "plain_text", "text": placeholder}
+    if initial_value:
+        element["initial_value"] = initial_value
     block: dict = {
         "type": "input",
         "block_id": block_id,
@@ -165,12 +168,89 @@ def build_video_panel() -> dict:
 # Create modal
 # ---------------------------------------------------------------------------
 
-def build_video_modal(channel_id: str) -> dict:
+def build_video_modal(channel_id: str, templates: list[dict] | None = None,
+                      initial_prompt: str = "", initial_template: str = "") -> dict:
     """Create-video modal (callback_id == CREATE_CALLBACK).
 
     channel_id is stashed in private_metadata so the submit handler knows
     where to post the result (modal submits do not carry the channel).
+
+    templates (optional) adds a "Template" static_select (block_id/action_id
+    "vid_template") between the url and prompt inputs; omit/empty to keep the
+    modal template-free. initial_prompt/initial_template prefill the prompt
+    text and the selected template option (used by the views.update prefill
+    round trip).
     """
+    template_block = None
+    if templates:
+        options = [_opt(f"{t.get('emoji', '')} {t.get('name', t['key'])}".strip()[:75],
+                        t["key"]) for t in templates if t.get("key")]
+        element = {"type": "static_select", "action_id": "vid_template",
+                   "placeholder": {"type": "plain_text", "text": "Custom (no template)"},
+                   "options": options}
+        if initial_template:
+            match = [o for o in options if o["value"] == initial_template]
+            if match:
+                element["initial_option"] = match[0]
+        template_block = {
+            "type": "input", "block_id": "vid_template", "optional": True,
+            "dispatch_action": True,
+            "label": {"type": "plain_text", "text": "Template"},
+            "element": element,
+        }
+
+    blocks = [
+        _plain_input(
+            "url",
+            "Website URL",
+            "url",
+            placeholder="https://yoursite.com",
+        ),
+    ]
+    if template_block:
+        blocks.append(template_block)
+    blocks.extend([
+        _plain_input(
+            "prompt",
+            "What should the walkthrough show?",
+            "prompt",
+            multiline=True,
+            placeholder="Leave blank to let the AI direct it.",
+            optional=True,
+            initial_value=initial_prompt,
+        ),
+        _plain_input(
+            "title",
+            "Title",
+            "title",
+            optional=True,
+        ),
+        _select_input(
+            "style",
+            "Style",
+            "style",
+            STYLES,
+            DEFAULT_STYLE,
+            optional=True,
+        ),
+        _select_input(
+            "voice",
+            "Voice",
+            "voice",
+            VOICES,
+            DEFAULT_VOICE,
+            optional=True,
+        ),
+        _select_input(
+            "mode",
+            "Output",
+            "mode",
+            MODES,
+            DEFAULT_MODE,
+            optional=True,
+        ),
+    ])
+
     return {
         "type": "modal",
         "callback_id": CREATE_CALLBACK,
@@ -178,52 +258,7 @@ def build_video_modal(channel_id: str) -> dict:
         "title": {"type": "plain_text", "text": "New video"},
         "submit": {"type": "plain_text", "text": "Generate"},
         "close": {"type": "plain_text", "text": "Cancel"},
-        "blocks": [
-            _plain_input(
-                "url",
-                "Website URL",
-                "url",
-                placeholder="https://yoursite.com",
-            ),
-            _plain_input(
-                "prompt",
-                "What should the walkthrough show?",
-                "prompt",
-                multiline=True,
-                placeholder="Leave blank to let the AI direct it.",
-                optional=True,
-            ),
-            _plain_input(
-                "title",
-                "Title",
-                "title",
-                optional=True,
-            ),
-            _select_input(
-                "style",
-                "Style",
-                "style",
-                STYLES,
-                DEFAULT_STYLE,
-                optional=True,
-            ),
-            _select_input(
-                "voice",
-                "Voice",
-                "voice",
-                VOICES,
-                DEFAULT_VOICE,
-                optional=True,
-            ),
-            _select_input(
-                "mode",
-                "Output",
-                "mode",
-                MODES,
-                DEFAULT_MODE,
-                optional=True,
-            ),
-        ],
+        "blocks": blocks,
     }
 
 
@@ -249,6 +284,7 @@ def parse_video_modal(view: dict) -> dict:
     style = _sel(state, "style", "style", DEFAULT_STYLE)
     voice = _sel(state, "voice", "voice", DEFAULT_VOICE)
     mode = _sel(state, "mode", "mode", DEFAULT_MODE)
+    template = _sel(state, "vid_template", "vid_template", "")
 
     return {
         "url": url,
@@ -258,6 +294,7 @@ def parse_video_modal(view: dict) -> dict:
         "voice": voice,
         "mode": mode,
         "channel_id": channel_id,
+        "template": template,
     }
 
 
