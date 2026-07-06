@@ -2951,6 +2951,27 @@ class CommandRouter:
         except TasksAPIError as e:
             logger.warning("video set field failed job=%s: %s", job_id, e)
 
+    async def run_video_apply_template(self, ctx: CommandContext, job_id: str,
+                                       template_key: str) -> None:
+        """Template pick from the options card: write the template's style and
+        script onto the draft. An explicit pick intentionally overwrites the
+        prompt (same behavior as picking a template card on the web)."""
+        if template_key == "custom":
+            return
+        from handlers import video_templates as vtpl
+        tpl = vtpl.get_template(template_key)
+        if tpl is None:
+            logger.warning("unknown video template pick: %s", template_key)
+            return
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            return
+        try:
+            await self._tasks_client.set_video_draft_fields(
+                email, job_id, style=tpl["style"], prompt=tpl["prompt"])
+        except TasksAPIError as e:
+            logger.warning("video apply template failed job=%s: %s", job_id, e)
+
     async def run_video_set_details(self, ctx: CommandContext, job_id: str, *,
                                     title: str | None = None, prompt: str | None = None) -> None:
         """Add-title-&-description submit: patch the draft's title/prompt."""

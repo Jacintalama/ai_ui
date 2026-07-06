@@ -83,6 +83,7 @@ from handlers import onboarding
 from handlers import recruiting_panel
 from handlers import recruiting_review as rr
 from handlers import video_panel as vid
+from handlers import video_templates as vtpl
 
 logger = logging.getLogger(__name__)
 
@@ -424,6 +425,13 @@ class DiscordCommandHandler:
             return await self._handle_video_route(
                 payload, lambda ctx: self.router.run_video_list(ctx),
                 raw_text="video list")
+        if vid.is_vid_tpl(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            job_id = vid.job_from_tpl(custom_id)
+            self._spawn(self._run_video_apply_template(payload, job_id, values[0]))
+            return {"type": DEFERRED_UPDATE_MESSAGE}
         if (
             vid.is_vid_style(custom_id)
             or vid.is_vid_voice(custom_id)
@@ -1056,6 +1064,18 @@ class DiscordCommandHandler:
             respond=lambda m: asyncio.sleep(0))
         await self.router.run_video_set_field(ctx, job_id, **field)
 
+    async def _run_video_apply_template(self, payload: dict[str, Any],
+                                        job_id: str, template_key: str) -> None:
+        """Background apply for a template pick (select ACK'd with no edit)."""
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="video template",
+            subcommand="video", arguments="", platform="discord",
+            respond=lambda m: asyncio.sleep(0))
+        await self.router.run_video_apply_template(ctx, job_id, template_key)
+
     async def _post_video_describe(self, channel_id: str, job_id: str) -> None:
         """Post the Describe-step card into the thread. Used after the screenshots
         upload step resolves (the Continue button or auto-advance), since that
@@ -1086,6 +1106,8 @@ class DiscordCommandHandler:
             # Use current-draft to read style/voice/mode/animation for the picker defaults.
             draft = await self.router._tasks_client.get_current_video_draft(email) or {}
             voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
+            if not vtpl.cache_is_fresh():
+                self._spawn(vtpl.refresh_templates(self.router._tasks_client))
             await self.discord.edit_original(
                 interaction_token=interaction_token,
                 content="Style, voice, and output. Pick, then Generate or go Back.",
@@ -1093,7 +1115,8 @@ class DiscordCommandHandler:
                     job_id, voices,
                     current_style=draft.get("style", "clean_product_demo"),
                     current_voice=draft.get("voice", "amy"),
-                    current_mode=draft.get("render_mode", "remotion")),
+                    current_mode=draft.get("render_mode", "remotion"),
+                    templates=vtpl.cached_templates()),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("video options open failed job=%s: %s", job_id, exc)
