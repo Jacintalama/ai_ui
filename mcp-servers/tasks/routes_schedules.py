@@ -61,6 +61,19 @@ class CreateScheduleIn(BaseModel):
     run_once: bool = False
     delivery_channel_id: str | None = None
     delivery_platform: str = "discord"
+    kind: str = "agent"
+    video_config: dict | None = None
+
+
+def _validate_kind(kind: str, video_config: dict | None) -> None:
+    """400 on an unknown kind or a video schedule without a usable URL."""
+    if kind not in ("agent", "video"):
+        raise HTTPException(status_code=400, detail="kind must be 'agent' or 'video'")
+    if kind == "video":
+        url = ((video_config or {}).get("url") or "").strip()
+        if not url.lower().startswith(("http://", "https://")):
+            raise HTTPException(status_code=400,
+                                detail="video_config.url must be an http(s) URL")
 
 
 @router.get("")
@@ -105,6 +118,8 @@ async def create_schedule(
     if not croniter.is_valid(body.cron_expr):
         raise HTTPException(status_code=400, detail="invalid cron_expr")
 
+    _validate_kind(body.kind, body.video_config)
+
     sid = uuid.uuid4()
     async with session() as s:
         s.add(Schedule(
@@ -119,6 +134,8 @@ async def create_schedule(
             run_once=body.run_once,
             delivery_channel_id=body.delivery_channel_id,
             delivery_platform=body.delivery_platform,
+            kind=body.kind,
+            video_config=body.video_config,
         ))
         await s.commit()
     return {"id": str(sid)}
@@ -252,4 +269,5 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "last_run_status": sch.last_run_status,
         "delivery_channel_id": sch.delivery_channel_id,
         "delivery_platform": sch.delivery_platform,
+        "kind": sch.kind,
     }
