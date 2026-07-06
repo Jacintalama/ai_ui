@@ -182,3 +182,79 @@ async def test_payload_without_video_fields_is_unchanged(monkeypatch):
     assert tasks_client.calls == []
     assert discord.posted_files == []
     assert len(discord.posted) == 1
+
+
+@pytest.mark.asyncio
+async def test_attach_false_falls_back_to_text_post(monkeypatch):
+    # Case 4: post_channel_file returns False -> falls through to
+    # post_channel_message text post instead of returning early.
+    blob = b"x" * (10 * 1024 * 1024)  # 10MB, under the 24MB limit
+    discord = _FakeDiscord(file_ok=False)
+    tasks_client = _FakeTasksClient(blob=blob)
+    main_mod = _wire(monkeypatch, "s3cret", discord, tasks_client)
+
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={
+                "channel_id": "456",
+                "schedule_name": "attach fails",
+                "status": "completed",
+                "result": "Video ready but upload failed.",
+                "video_job_id": "job-4",
+                "video_user_email": "user2@example.com",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert tasks_client.calls == [("user2@example.com", "job-4")]
+    # post_channel_file was attempted with the blob
+    assert len(discord.posted_files) == 1
+    file_channel_id, files, file_content = discord.posted_files[0]
+    assert file_channel_id == "456"
+    assert files == [("attach fails.mp4", blob, "video/mp4")]
+    # fallback text post was called
+    assert len(discord.posted) == 1
+    msg_channel_id, message, _components = discord.posted[0]
+    assert msg_channel_id == "456"
+    expected_message = main_mod._format_schedule_result(
+        "attach fails", "completed", "Video ready but upload failed.", platform="discord"
+    )
+    assert message == expected_message
+
+
+@pytest.mark.asyncio
+async def test_schedule_name_truncated_to_60_chars(monkeypatch):
+    # When schedule_name is longer than 60 chars, the attached filename
+    # is truncated to 60 chars + ".mp4".
+    long_name = "a" * 70
+    blob = b"small"
+    discord = _FakeDiscord(file_ok=True)
+    tasks_client = _FakeTasksClient(blob=blob)
+    main_mod = _wire(monkeypatch, "s3cret", discord, tasks_client)
+
+    transport = ASGITransport(app=main_mod.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/internal/schedule-result",
+            headers={"X-Internal-Secret": "s3cret"},
+            json={
+                "channel_id": "789",
+                "schedule_name": long_name,
+                "status": "completed",
+                "result": "Done.",
+                "video_job_id": "job-5",
+                "video_user_email": "user3@example.com",
+            },
+        )
+
+    assert resp.status_code == 200
+    assert len(discord.posted_files) == 1
+    _channel_id, files, _content = discord.posted_files[0]
+    filename, file_blob, file_type = files[0]
+    # Filename should be truncated name + ".mp4" = 60 + 4 = 64 chars
+    assert filename == "a" * 60 + ".mp4"
+    assert file_blob == blob
+    assert file_type == "video/mp4"
