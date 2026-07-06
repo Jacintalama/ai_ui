@@ -1,6 +1,6 @@
 """Tests for the Discord App Builder 'Walkthrough video' button (Task 11).
 
-Hermetic: no real network, no real sleeping — the tasks client is a mock and
+Hermetic: no real network, no real sleeping; the tasks client is a mock and
 the watcher is stubbed out on the router instance under test.
 """
 import pytest
