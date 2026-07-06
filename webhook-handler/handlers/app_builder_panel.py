@@ -429,6 +429,12 @@ SCHED_RESUME_PREFIX = "aiuisched:resume:"     # resume:<schedule_id>
 SCHED_DEL_PREFIX = "aiuisched:del:"           # del:<schedule_id>
 SCHED_WHAT_INPUT = "what"
 SCHED_WHEN_INPUT = "when"
+SCHED_NEWVID_ID = "aiuisched:newvid"      # Schedule-a-video button (exact match)
+SCHED_VIDMODAL_ID = "aiuisched:vidmodal"  # video schedule modal (exact match)
+SCHED_VIDTPL_PREFIX = "aiuisched:vidtpl:" # template select on confirm card :<token>
+SCHED_VID_URL_INPUT = "vid_url"
+SCHED_VID_WHAT_INPUT = "vid_what"
+SCHED_VID_WHEN_INPUT = "vid_when"
 
 SCHEDULES_PANEL_CONTENT = (
     "⏰ **Scheduled tasks**\n"
@@ -454,7 +460,8 @@ def build_schedules_dashboard(schedules: list[dict]) -> dict:
     """Posted inside the user's private thread: a New button + (if any) a
     dropdown to pick a schedule to manage."""
     rows = [{"type": ACTION_ROW, "components": [
-        _button("➕ New schedule", SCHED_NEW_ID, STYLE_SUCCESS)]}]
+        _button("➕ New schedule", SCHED_NEW_ID, STYLE_SUCCESS),
+        _button("\U0001f3ac Schedule a video", SCHED_NEWVID_ID, STYLE_PRIMARY)]}]
     if schedules:
         rows += build_schedule_select(schedules)
         content = "📅 **Your schedules** — pick one to manage, or add a new one."
@@ -549,6 +556,56 @@ def build_confirm_components(token: str) -> list[dict]:
         _button("✅ Confirm", f"{SCHED_CONFIRM_PREFIX}{token}", STYLE_SUCCESS),
         _button("✖ Cancel", f"{SCHED_CANCEL_PREFIX}{token}", STYLE_SECONDARY),
     ]}]
+
+
+def build_video_schedule_modal() -> dict:
+    """Type-9 MODAL: website URL + optional direction + natural-language when."""
+    return {
+        "title": "Schedule a video"[:45],
+        "custom_id": SCHED_VIDMODAL_ID,
+        "components": [
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_VID_URL_INPUT,
+                "label": "Website URL", "style": TEXT_SHORT, "required": True,
+                "max_length": 500, "placeholder": "https://yoursite.com",
+            }]},
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_VID_WHAT_INPUT,
+                "label": "What should the video show? (optional)",
+                "style": TEXT_PARAGRAPH, "required": False, "max_length": 2000,
+                "placeholder": "Leave blank for the guided cursor walkthrough.",
+            }]},
+            {"type": ACTION_ROW, "components": [{
+                "type": TEXT_INPUT, "custom_id": SCHED_VID_WHEN_INPUT,
+                "label": "How often?", "style": TEXT_SHORT, "required": True,
+                "max_length": 60,
+                "placeholder": "every Monday 9am  /  every morning",
+            }]},
+        ],
+    }
+
+
+def build_video_schedule_confirm_components(token: str, templates: list[dict]) -> list[dict]:
+    """Confirm card for a video schedule: optional template select above the
+    shared Confirm/Cancel buttons (Discord modals cannot hold selects)."""
+    options = [{"label": "No template (guided walkthrough)", "value": "none",
+                "default": True}]
+    for t in templates[:24]:
+        key = t.get("key")
+        if not key:
+            continue
+        options.append({"label": f"{t.get('emoji', '')} {t.get('name', key)}".strip()[:100],
+                        "value": key[:100],
+                        "description": (t.get("desc") or "")[:100]})
+    select = {"type": SELECT_MENU, "custom_id": f"{SCHED_VIDTPL_PREFIX}{token}",
+              "placeholder": "Template (optional)", "min_values": 1, "max_values": 1,
+              "options": options}
+    return [
+        {"type": ACTION_ROW, "components": [select]},
+        {"type": ACTION_ROW, "components": [
+            _button("✅ Create video schedule", f"{SCHED_CONFIRM_PREFIX}{token}", STYLE_SUCCESS),
+            _button("✖ Cancel", f"{SCHED_CANCEL_PREFIX}{token}", STYLE_SECONDARY)]},
+    ]
 
 
 def build_connect_components(*, token: str, links: list[tuple[str, str]]) -> list[dict]:

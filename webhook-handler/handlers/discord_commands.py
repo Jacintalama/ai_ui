@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from clients.discord import DiscordClient
 from clients import connectors
@@ -57,6 +58,9 @@ from handlers.app_builder_panel import (
     build_schedule_modal, build_confirm_components, build_connect_components,
     is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
+    SCHED_NEWVID_ID, SCHED_VIDMODAL_ID, SCHED_VIDTPL_PREFIX,
+    SCHED_VID_URL_INPUT, SCHED_VID_WHAT_INPUT, SCHED_VID_WHEN_INPUT,
+    build_video_schedule_modal, build_video_schedule_confirm_components,
     is_sched_new, is_sched_list, is_sched_modal,
     is_sched_confirm, token_from_confirm,
     is_sched_cancel, token_from_cancel,
@@ -306,6 +310,16 @@ class DiscordCommandHandler:
             card = schedule_picker.build_kind_card(token)
             return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
                 "content": card["content"], "components": card["components"], "flags": 64}}
+        if custom_id == SCHED_NEWVID_ID:
+            return {"type": MODAL, "data": build_video_schedule_modal()}
+        if custom_id.startswith(SCHED_VIDTPL_PREFIX):
+            token = custom_id[len(SCHED_VIDTPL_PREFIX):]
+            values = (data.get("values") or [])
+            pending = self._pending_schedules.get(token)
+            if pending and values and pending.get("video_config") is not None:
+                picked = values[0]
+                pending["video_config"]["template"] = "" if picked == "none" else picked
+            return {"type": DEFERRED_UPDATE_MESSAGE}
         if custom_id.startswith(schedule_picker.PICK_PREFIX):
             return await self._handle_pick_component(payload, custom_id)
         if is_sched_list(custom_id):
@@ -1464,6 +1478,8 @@ class DiscordCommandHandler:
             return await self._handle_pick_task_submit(payload, custom_id)
         if is_sched_modal(custom_id):
             return await self._handle_schedule_modal_submit(payload)
+        if custom_id == SCHED_VIDMODAL_ID:
+            return await self._handle_video_schedule_modal_submit(payload)
         if is_sched_editmodal(custom_id):
             return self._handle_sched_edit_submit(payload, custom_id)
         if is_link_modal(custom_id):
@@ -1599,6 +1615,46 @@ class DiscordCommandHandler:
         name = f"{human}: {what[:60]}"
         return await self._offer_schedule_confirm(
             payload, name=name, cron=cron, prompt=what, human=human, run_once=False)
+
+    async def _handle_video_schedule_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Video schedule modal submit: validate URL + parse the NL 'when',
+        then show a confirm card with an optional template select. The
+        schedule is only created when the user clicks Confirm."""
+        data = payload.get("data", {})
+        url = self._extract_modal_value(data, SCHED_VID_URL_INPUT)
+        what = self._extract_modal_value(data, SCHED_VID_WHAT_INPUT)
+        when = self._extract_modal_value(data, SCHED_VID_WHEN_INPUT)
+        if not url.lower().startswith(("http://", "https://")):
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "That URL doesn't look right. It must start with http:// or https://.",
+                "flags": 64}}
+        parsed = parse_when(when)
+        if parsed is None:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": ("I couldn't read that schedule. Try *every morning*, "
+                            "*every Monday 9am*, or *every 30 minutes*."),
+                "flags": 64}}
+        cron, human = parsed
+        host = urlparse(url).hostname or url
+        name = f"{human}: video of {host}"[:120]
+        token = uuid.uuid4().hex[:16]
+        self._pending_schedules[token] = {
+            "name": name, "cron": cron,
+            "prompt": f"Video walkthrough of {url}",
+            "human": human, "run_once": False,
+            "kind": "video",
+            "video_config": {"url": url, "prompt": what, "template": "",
+                             "title": f"{host} walkthrough"},
+        }
+        from handlers import video_templates as vtpl
+        if not vtpl.cache_is_fresh():
+            self._spawn(vtpl.refresh_templates(self.router._tasks_client))
+        return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+            "content": (f"\U0001f3ac **{human}** - a video of {host}.\n"
+                        "Pick a template (optional), then confirm."),
+            "components": build_video_schedule_confirm_components(
+                token, vtpl.cached_templates()),
+            "flags": 64}}
 
     async def _offer_schedule_confirm(
         self, payload: dict[str, Any], *, name: str, cron: str, prompt: str,
@@ -1784,6 +1840,8 @@ class DiscordCommandHandler:
                 ctx, name=pending["name"], cron=pending["cron"],
                 prompt=pending["prompt"], delivery_channel_id=target,
                 run_once=pending.get("run_once", False),
+                kind=pending.get("kind", "agent"),
+                video_config=pending.get("video_config"),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("_create_pending_schedule failed user=%s: %s", user_id, exc)

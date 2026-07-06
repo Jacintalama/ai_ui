@@ -87,6 +87,7 @@ class TasksClient:
         self, user_email: str, name: str, cron: str, prompt: str,
         tz: str = "Asia/Manila", delivery_channel_id: str | None = None,
         delivery_platform: str = "discord", run_once: bool = False,
+        kind: str = "agent", video_config: dict | None = None,
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "name": name, "cron_expr": cron, "prompt": prompt, "tz": tz,
@@ -101,6 +102,12 @@ class TasksClient:
             body["run_once"] = True
         if delivery_platform:
             body["delivery_platform"] = delivery_platform
+        # Only include non-default kinds so existing create payloads stay
+        # byte-identical for agent schedules.
+        if kind and kind != "agent":
+            body["kind"] = kind
+        if video_config is not None:
+            body["video_config"] = video_config
         resp = await self._request("POST", "/schedules", user_email, json=body)
         return resp.json()
 
