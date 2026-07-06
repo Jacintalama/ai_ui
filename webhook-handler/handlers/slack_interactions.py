@@ -45,6 +45,7 @@ from handlers.app_builder_panel import (
     SCHED_OPEN_ID,
     SCHED_NEW_ID,
     SCHED_MODAL_ID,
+    SCHED_NEWVID_ID,
     SCHED_EDITMODAL_PREFIX,
     SCHED_RUN_PREFIX,
     SCHED_PAUSE_PREFIX,
@@ -57,6 +58,7 @@ from handlers.slack_schedule_panel import (
     build_schedules_dashboard,
     build_schedule_modal,
     build_schedule_edit_modal,
+    build_video_schedule_modal,
     build_connect_blocks,
     slack_picks_from_view,
     SCHED_WHAT_BLOCK_ID,
@@ -65,6 +67,13 @@ from handlers.slack_schedule_panel import (
     SCHED_WHEN_INPUT_ID,
     SCHED_REPEAT_BLOCK_ID,
     SCHED_DATE_BLOCK_ID,
+    SCHED_VIDEO_MODAL_ID,
+    SCHED_VID_URL_BLOCK_ID,
+    SCHED_VID_URL_INPUT_ID,
+    SCHED_VID_TPL_BLOCK_ID,
+    SCHED_VID_TPL_ACTION_ID,
+    SCHED_VID_WHAT_BLOCK_ID,
+    SCHED_VID_WHAT_INPUT_ID,
 )
 from handlers.schedule_parse import parse_when
 from handlers import schedule_picker
@@ -322,6 +331,16 @@ class SlackInteractionsHandler:
 
         if action_id == SCHED_NEW_ID:
             await self.slack.open_modal(trigger_id, build_schedule_modal())
+            return {}
+
+        if action_id == SCHED_NEWVID_ID:
+            if not vtpl.cache_is_fresh():
+                task = asyncio.create_task(
+                    vtpl.refresh_templates(self.router._tasks_client))
+                self.router._background_tasks.add(task)
+                task.add_done_callback(self.router._background_tasks.discard)
+            await self.slack.open_modal(
+                trigger_id, build_video_schedule_modal(vtpl.cached_templates()))
             return {}
 
         for prefix, method_name in (
@@ -984,6 +1003,78 @@ class SlackInteractionsHandler:
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "Slack schedule create failed user=%s: %s", user_id, exc
+                    )
+
+            task = asyncio.create_task(_create())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        # ----- Cron scheduler: create VIDEO schedule modal -----
+        if callback_id == SCHED_VIDEO_MODAL_ID:
+            url = self._sched_value(view, SCHED_VID_URL_BLOCK_ID, SCHED_VID_URL_INPUT_ID)
+            if not url.lower().startswith(("http://", "https://")):
+                return {"response_action": "errors",
+                        "errors": {SCHED_VID_URL_BLOCK_ID: "Enter a valid http(s) URL"}}
+            what = self._sched_value(view, SCHED_VID_WHAT_BLOCK_ID, SCHED_VID_WHAT_INPUT_ID)
+            state = (view.get("state", {}) or {}).get("values", {}) or {}
+            sel = ((state.get(SCHED_VID_TPL_BLOCK_ID, {}) or {})
+                   .get(SCHED_VID_TPL_ACTION_ID, {}) or {})
+            tpl_key = (sel.get("selected_option") or {}).get("value", "")
+            picks = slack_picks_from_view(view)
+            now = (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
+            try:
+                cron, run_once, human = schedule_picker.picks_to_cron(picks, now=now)
+            except schedule_picker.PastTimeError:
+                return self._sched_pick_error(
+                    SCHED_DATE_BLOCK_ID, "That date/time is already past, pick a future one.")
+            except (KeyError, ValueError):
+                return self._sched_pick_error(
+                    SCHED_REPEAT_BLOCK_ID,
+                    "Please finish the schedule, pick a day for weekly, or a date for one-time.")
+            host = urlsplit(url).hostname or url
+            name = f"{human}: video of {host}"[:120]
+
+            async def _create() -> None:
+                try:
+                    email = await self._email_for(user_id)
+                    if not email:
+                        dm = await self.slack.open_dm(user_id)
+                        if dm:
+                            await self.slack.post_message(
+                                channel=dm,
+                                text=self.router._not_linked_text(
+                                    self._slack_ctx(user_id)
+                                ),
+                            )
+                        return
+                    dm = await self.slack.open_dm(user_id)
+                    if not dm:
+                        logger.error(
+                            "Slack video schedule create failed user=%s: could not open DM",
+                            user_id,
+                        )
+                        return
+                    # No connector-intent gating here: video schedules never
+                    # touch Gmail/Drive.
+                    await self.router._tasks_client.create_schedule(
+                        email,
+                        name=name,
+                        cron=cron,
+                        prompt=f"Video walkthrough of {url}",
+                        delivery_channel_id=dm,
+                        delivery_platform="slack",
+                        run_once=run_once,
+                        kind="video",
+                        video_config={"url": url, "template": tpl_key,
+                                      "prompt": what, "title": f"{host} walkthrough"},
+                    )
+                    await self.slack.post_message(
+                        channel=dm, text=f"✅ Scheduled - a video of {host} runs {human}"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Slack video schedule create failed user=%s: %s", user_id, exc
                     )
 
             task = asyncio.create_task(_create())
