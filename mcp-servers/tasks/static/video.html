@@ -2044,6 +2044,10 @@
         prompt: "A fast, punchy social clip. Short energetic lines, quick cuts, a hook in the first seconds, and a call to action at the end.",
       },
     ];
+    // Live list rendered by the grid. Starts as the baked-in fallback and is
+    // replaced by the server registry when /templates loads.
+    let videoTemplates = VIDEO_TEMPLATES;
+
     const flowChooser = document.getElementById("flow-chooser");
     const tplPanel = document.getElementById("tpl-panel");
     const customPanel = document.getElementById("custom-panel");
@@ -2068,7 +2072,7 @@
     }
     function renderTplGrid() {
       tplGrid.innerHTML = "";
-      for (const t of VIDEO_TEMPLATES) {
+      for (const t of videoTemplates) {
         const b = document.createElement("button");
         b.type = "button";
         b.className = "tpl-card" + (selectedTpl === t.key ? " selected" : "");
@@ -2126,8 +2130,8 @@
     document.getElementById("choose-template-btn").addEventListener("click", () => {
       // Preselect the recommended template so one click + a URL is enough.
       if (!selectedTpl) {
-        selectedTpl = VIDEO_TEMPLATES[0].key;
-        tplPrompt.value = VIDEO_TEMPLATES[0].prompt;
+        selectedTpl = videoTemplates[0].key;
+        tplPrompt.value = videoTemplates[0].prompt;
         renderTplGrid();
       }
       showCreateStep("template");
@@ -2138,7 +2142,7 @@
 
     async function tplGenerate() {
       tplError.hidden = true;
-      const t = VIDEO_TEMPLATES.find((x) => x.key === selectedTpl) || VIDEO_TEMPLATES[0];
+      const t = videoTemplates.find((x) => x.key === selectedTpl) || videoTemplates[0];
       const url = (tplUrl.value || "").trim();
       if (!url) {
         tplError.textContent = "Add your website link so we can capture it.";
@@ -2264,6 +2268,20 @@
       }).catch(() => stopVoicePreview());
     }
 
+    async function loadTemplates() {
+      try {
+        const res = await fetch(API + "/templates", { credentials: "same-origin" });
+        if (!res.ok) throw new Error("templates " + res.status);
+        const data = await res.json();
+        const list = (data && data.templates) || [];
+        if (!list.length) throw new Error("no templates");
+        videoTemplates = list;
+        renderTplGrid();
+      } catch (e) {
+        // Degrade gracefully: the baked-in VIDEO_TEMPLATES fallback stays.
+      }
+    }
+
     async function loadVoices() {
       if (!voiceList) return;
       try {
@@ -2364,6 +2382,7 @@
     (function init() {
       renderFromUrl();
       loadVoices();
+      loadTemplates();
     })();
   </script>
 </body>
