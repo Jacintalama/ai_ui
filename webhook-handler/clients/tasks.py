@@ -260,6 +260,11 @@ class TasksClient:
         return resp.json()
 
     # --- Video generation (user-scoped, X-User-Email) ---
+    async def get_video_templates(self) -> dict[str, Any]:
+        """Template preset catalog (static registry - not user-scoped)."""
+        resp = await self._request("GET", "/api/video-jobs/templates", "system@aiui.local")
+        return resp.json()
+
     async def get_video_voices(self) -> dict[str, Any]:
         # /voices is unauthenticated server-side; reuse _request (the header is harmless).
         resp = await self._request("GET", "/api/video-jobs/voices", "system@aiui.local")
