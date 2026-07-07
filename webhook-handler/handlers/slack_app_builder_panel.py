@@ -11,6 +11,7 @@ them as `action_id` (buttons) and `callback_id` (modal views).
 from __future__ import annotations
 
 from config import settings
+from handlers.app_builder_panel import WALKVIDEO_PREFIX
 
 # custom_id schemes (shared shape with the Discord panel)
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button action_id -> aiuibuild:tpl:<key>  ("" = Blank)
@@ -405,6 +406,7 @@ def build_apps_list_blocks(apps: list[dict], *, owner: str = "") -> list[dict]:
             row_buttons.insert(1, ve)  # right after Status
         if open_url:
             row_buttons.append(_link_button("Preview", open_url))
+        row_buttons.append(_button("Walkthrough video", f"{WALKVIDEO_PREFIX}{slug}"))
         row_buttons.append(_delete_button(slug, name))
 
         # Slack caps an actions block at 5 elements — split into a second

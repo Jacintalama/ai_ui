@@ -53,6 +53,7 @@ from handlers.app_builder_panel import (
     SCHED_DEL_PREFIX,
     SCHED_EDIT_PREFIX,
     CONNECT_RESUME_PREFIX,
+    WALKVIDEO_PREFIX,
 )
 from handlers.slack_schedule_panel import (
     build_schedules_dashboard,
@@ -196,6 +197,7 @@ class SlackInteractionsHandler:
         for prefix, handler in (
             (PUBLISH_PREFIX, self._do_publish),
             (UNPUBLISH_PREFIX, self._do_unpublish),
+            (WALKVIDEO_PREFIX, self._do_walkthrough_video),
             (DELETE_PREFIX, self._do_delete),
             (STATUS_PREFIX, self._do_status),
             (ENHANCE_PREFIX, self._do_open_enhance),
@@ -1493,6 +1495,44 @@ class SlackInteractionsHandler:
                     )
             except Exception as inner:  # noqa: BLE001
                 logger.error("_do_unpublish error DM failed: %s", inner)
+
+    async def _do_walkthrough_video(self, payload: dict[str, Any], slug: str) -> None:
+        """My apps 'Walkthrough video': render the default cursor walkthrough
+        of the app and DM the finished video link."""
+        user_id: str = payload.get("user", {}).get("id", "")
+        try:
+            email = await self._bail_if_not_linked(user_id)
+            if not email:
+                return
+            tasks = self.router._tasks_client
+            status = await tasks.get_project_status(email, slug)
+            name = status.get("name", slug)
+            url = (status.get("public_url") or "").strip()
+            if not url:
+                url = f"{settings.tasks_public_url.rstrip('/')}/tasks/preview-app/{slug}/"
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(
+                    channel=dm,
+                    text=f"\U0001f3ac Filming a walkthrough of {name}. I'll post the video here.")
+            draft = await tasks.create_video_draft(
+                email, f"{name} walkthrough", "", "clean_product_demo", "amy",
+                render_mode="remotion", animation_preset="cursor_click")
+            job_id = str(draft.get("id") or "")
+            await tasks.capture_video_screenshots(email, job_id, url)
+            await tasks.queue_video(email, job_id)
+            await self._watch_slack_video(email, job_id, user_id, "")
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_do_walkthrough_video failed slug=%s user=%s: %s",
+                         slug, user_id, exc)
+            try:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text="Something went wrong starting the walkthrough video. Try again shortly.")
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _do_delete(self, payload: dict[str, Any], slug: str) -> None:
         """Handle a Delete button click — resolves email, deletes, DMs result.
