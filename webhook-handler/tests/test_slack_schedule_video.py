@@ -159,7 +159,7 @@ async def test_c_happy_path_creates_video_schedule_and_confirms_dm():
     slack.post_message.assert_awaited()
     text = slack.post_message.call_args.kwargs.get("text", "")
     assert "example.com" in text
-    assert "—" not in text  # no em-dash in confirmation copy
+    assert "\u2014" not in text  # no em-dash in confirmation copy
 
 
 @pytest.mark.asyncio
