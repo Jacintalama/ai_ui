@@ -172,7 +172,13 @@ async def _check_video_job(job_id: str) -> tuple[str, str, str]:
 
 async def _run_video_schedule(sched: Schedule) -> tuple[str, str, dict]:
     """kind='video': render the configured walkthrough directly (no LLM).
-    Returns (status, result_message, delivery_extras)."""
+    Returns (status, result_message, delivery_extras).
+
+    Only the _start_video_job call below is bounded by _RUN_SEMAPHORE. The
+    poll loop that follows can run for up to VIDEO_SCHEDULE_WAIT_SECONDS
+    (default 900s), and holding a semaphore slot for that whole span would
+    let a few concurrent video schedules starve agent schedules of runners.
+    """
     from fastapi import HTTPException
     from auth import CurrentUser
     from video_templates import get_template
@@ -188,8 +194,11 @@ async def _run_video_schedule(sched: Schedule) -> tuple[str, str, dict]:
     style = (tpl or {}).get("style") or "clean_product_demo"
     title = ((cfg.get("title") or sched.name) or "Scheduled video")[:200]
     user = CurrentUser(email=sched.user_email, is_admin=False)
+    studio_base = os.environ.get("VIDEO_PUBLIC_BASE", "").rstrip("/")
+    studio_url = f"{studio_base}/video-generator" if studio_base else ""
     try:
-        job_id = await _start_video_job(user, cfg, title, prompt, style)
+        async with _RUN_SEMAPHORE:
+            job_id = await _start_video_job(user, cfg, title, prompt, style)
     except HTTPException as exc:
         return "failed", f"Could not start the video: {exc.detail}", {}
     except Exception as exc:  # noqa: BLE001
@@ -208,13 +217,23 @@ async def _run_video_schedule(sched: Schedule) -> tuple[str, str, dict]:
             extras = {"video_job_id": job_id, "video_user_email": sched.user_email}
             if link:
                 return "completed", f"\U0001f3ac {title} is ready: {link}", extras
-            return "completed", (f"\U0001f3ac {title} is ready. "
-                                 "Open the web Video Studio to watch it."), extras
+            if studio_url:
+                done_msg = (f"\U0001f3ac {title} is ready. "
+                            f"Open the web Video Studio to watch it: {studio_url}")
+            else:
+                done_msg = (f"\U0001f3ac {title} is ready. "
+                            "Open the web Video Studio to watch it.")
+            return "completed", done_msg, extras
         if status in ("failed", "missing"):
             err = (error or "").strip()
             return "failed", f"Video render failed.{(' ' + err) if err else ''}", {}
-    return "timeout", (f"\U0001f3ac {title} is still rendering. "
-                       "Check the web Video Studio shortly."), {}
+    if studio_url:
+        timeout_msg = (f"\U0001f3ac {title} is still rendering. "
+                       f"Check the web Video Studio shortly: {studio_url}")
+    else:
+        timeout_msg = (f"\U0001f3ac {title} is still rendering. "
+                       "Check the web Video Studio shortly.")
+    return "timeout", timeout_msg, {}
 
 
 async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
@@ -287,16 +306,23 @@ def _deliverable_result(raw_log: str, fallback: str = "") -> str:
 
 
 async def _run_scheduled_task(sched: Schedule) -> tuple[str, str, dict]:
-    """Dispatch to existing execution flow. Returns final status string.
+    """Dispatch to existing execution flow. Returns a (status, result, extras)
+    tuple.
 
     Bounded by _RUN_SEMAPHORE so a burst of schedules at the same minute
     can't OOM the orchestrator. Routes through routes_execution._run_execution
     (inline import to avoid an import cycle: routes_execution imports models,
     models is imported here at module-top).
+
+    Video schedules dispatch to _run_video_schedule BEFORE the semaphore is
+    acquired: that path polls for up to VIDEO_SCHEDULE_WAIT_SECONDS, and
+    holding a slot the whole time would let a few concurrent video schedules
+    starve agent schedules of runners. _run_video_schedule takes the
+    semaphore itself, only around the actual pipeline start.
     """
+    if getattr(sched, "kind", "agent") == "video":
+        return await _run_video_schedule(sched)
     async with _RUN_SEMAPHORE:
-        if getattr(sched, "kind", "agent") == "video":
-            return await _run_video_schedule(sched)
         item = await _create_task_from_schedule(sched)
         # Create a TaskExecution row so _run_execution has something to update.
         from models import TaskExecution

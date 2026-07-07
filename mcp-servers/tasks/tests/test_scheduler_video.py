@@ -66,6 +66,26 @@ async def test_video_schedule_timeout_points_to_studio(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_video_schedule_poll_loop_does_not_hold_semaphore(monkeypatch):
+    """The poll loop must run outside _RUN_SEMAPHORE: a probe inside
+    _check_video_job asserts a free slot is available while polling, which
+    would fail if _run_video_schedule held the semaphore across the wait."""
+    seen_free_slots = []
+    async def start(user, cfg, title, prompt, style):
+        return "job-1"
+    checks = iter([("rendering", "", ""), ("done", "", "https://dl/x.mp4?cap=t")])
+    async def check(job_id):
+        seen_free_slots.append(scheduler._RUN_SEMAPHORE._value)
+        return next(checks)
+    monkeypatch.setattr(scheduler, "_start_video_job", start)
+    monkeypatch.setattr(scheduler, "_check_video_job", check)
+    status, result, extras = await scheduler._run_video_schedule(
+        _Sched({"url": "https://site.com"}))
+    assert status == "completed"
+    assert seen_free_slots and all(v > 0 for v in seen_free_slots)
+
+
+@pytest.mark.asyncio
 async def test_video_schedule_start_httperror_is_clean(monkeypatch):
     from fastapi import HTTPException
     async def start(user, cfg, title, prompt, style):
