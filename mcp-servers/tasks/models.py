@@ -140,6 +140,11 @@ class Schedule(Base):
     # Which platform the run result is delivered to (discord|slack).
     # Defaults to 'discord' so existing rows preserve current behavior.
     delivery_platform = Column(Text, nullable=False, server_default="discord")
+    # 'agent' (default) = prompt via the remote executor; 'video' = direct
+    # video render of video_config (no LLM). See scheduler._run_video_schedule.
+    kind = Column(Text, nullable=False, server_default="agent", default="agent")
+    # For kind='video': {url, template, prompt, voice, title}. NULL otherwise.
+    video_config = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 

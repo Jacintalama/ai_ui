@@ -2308,6 +2308,45 @@ class CommandRouter:
         else:
             await ctx.respond(header)
 
+    async def run_app_walkthrough_video(self, ctx: CommandContext, slug: str) -> None:
+        """My apps 'Walkthrough video': render the default cursor walkthrough
+        of the app's live (or preview) URL and post the MP4 back here."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            status = await self._tasks_client.get_project_status(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_status_error(e))
+            return
+        name = status.get("name", slug)
+        url = (status.get("public_url") or "").strip()
+        if not url:
+            if not PUBLIC_DOMAIN:
+                await ctx.respond("No public domain is configured, so I can't reach the app preview.")
+                return
+            url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/"
+        try:
+            draft = await self._tasks_client.create_video_draft(
+                email, f"{name} walkthrough", "", "clean_product_demo", "amy",
+                render_mode="remotion", animation_preset="cursor_click")
+            job_id = str(draft.get("id") or "")
+            await ctx.respond(f"\U0001f3ac Filming a walkthrough of **{name}** - capturing pages now.")
+            await self._tasks_client.capture_video_screenshots(email, job_id, url)
+            res = await self._tasks_client.queue_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_tasks_error(e))
+            return
+        qp = res.get("queue_position", 0)
+        tail = f" (queue position {qp})" if qp else ""
+        if ctx.notify_channel is not None:
+            await ctx.notify_channel(
+                f"Rendering the walkthrough{tail} - I'll post it here when it's done.")
+            watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_video_watcher_done)
+
     async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Status button → post the app's status text (same shape as
         the `aiuibuilder status <slug>` text action)."""
@@ -2351,6 +2390,7 @@ class CommandRouter:
     async def run_schedule_create(
         self, ctx: CommandContext, *, name: str, cron: str, prompt: str,
         delivery_channel_id: str | None = None, run_once: bool = False,
+        kind: str = "agent", video_config: dict | None = None,
     ) -> None:
         """Confirm button → create the schedule for the user, delivering results
         to their private thread."""
@@ -2363,6 +2403,7 @@ class CommandRouter:
                 email, name=name, cron=cron, prompt=prompt,
                 delivery_channel_id=delivery_channel_id, run_once=run_once,
                 delivery_platform=ctx.platform,
+                kind=kind, video_config=video_config,
             )
         except TasksAPIError as e:
             await ctx.respond(self._format_tasks_error(e))
@@ -2950,6 +2991,27 @@ class CommandRouter:
                 animation_preset=animation_preset)
         except TasksAPIError as e:
             logger.warning("video set field failed job=%s: %s", job_id, e)
+
+    async def run_video_apply_template(self, ctx: CommandContext, job_id: str,
+                                       template_key: str) -> None:
+        """Template pick from the options card: write the template's style and
+        script onto the draft. An explicit pick intentionally overwrites the
+        prompt (same behavior as picking a template card on the web)."""
+        if template_key == "custom":
+            return
+        from handlers import video_templates as vtpl
+        tpl = vtpl.get_template(template_key)
+        if tpl is None:
+            logger.warning("unknown video template pick: %s", template_key)
+            return
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            return
+        try:
+            await self._tasks_client.set_video_draft_fields(
+                email, job_id, style=tpl["style"], prompt=tpl["prompt"])
+        except TasksAPIError as e:
+            logger.warning("video apply template failed job=%s: %s", job_id, e)
 
     async def run_video_set_details(self, ctx: CommandContext, job_id: str, *,
                                     title: str | None = None, prompt: str | None = None) -> None:

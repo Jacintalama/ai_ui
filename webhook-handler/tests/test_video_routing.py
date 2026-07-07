@@ -172,23 +172,6 @@ async def test_mode_select_sets_render_mode():
 
 
 @pytest.mark.asyncio
-async def test_animation_select_sets_animation_preset():
-    router = _router()
-    handler = _handler(router)
-    payload = {
-        "type": 3, "id": "i", "token": "t", "channel_id": "c",
-        "member": {"user": {"id": "100", "username": "alice"}},
-        "data": {"custom_id": f"{vid.ANIMATION_PREFIX}j1", "values": ["spotlight"]},
-    }
-    resp = await handler.handle_interaction(payload)
-    assert resp["type"] == DEFERRED_UPDATE_MESSAGE
-    await _drain()
-    args = router.run_video_set_field.await_args
-    assert args.args[1] == "j1"
-    assert args.kwargs == {"animation_preset": "spotlight"}
-
-
-@pytest.mark.asyncio
 async def test_empty_select_is_noop():
     router = _router()
     handler = _handler(router)
@@ -357,14 +340,17 @@ async def test_src_shots_continue_acks_update_and_posts_describe():
 @pytest.mark.asyncio
 async def test_options_acks_deferred_and_edits_options_card():
     """Style & voice acks DEFERRED_UPDATE_MESSAGE (it must hit the network first),
-    then edits the message in place with the options card."""
+    then edits the message in place with the options card. The card now leads
+    with a template select row (handlers/video_templates.cached_templates()
+    always has the FALLBACK_TEMPLATES, so the row is always present), followed
+    by style/voice/mode and the Generate/Back buttons: 5 rows total."""
     router = _router()
     router._resolve_email = AsyncMock(return_value="u@x.com")
     tc = MagicMock()
     tc.get_current_video_draft = AsyncMock(return_value={
-        "style": "cinematic", "voice": "amy",
-        "render_mode": "remotion", "animation_preset": "spotlight"})
+        "style": "cinematic", "voice": "amy", "render_mode": "remotion"})
     tc.get_video_voices = AsyncMock(return_value={"voices": []})
+    tc.get_video_templates = AsyncMock(return_value={"templates": []})
     router._tasks_client = tc
     handler = _handler(router)
     handler.discord.edit_original = AsyncMock(return_value=True)
@@ -377,11 +363,14 @@ async def test_options_acks_deferred_and_edits_options_card():
     tc.get_current_video_draft.assert_awaited_once_with("u@x.com")
     tc.get_video_voices.assert_awaited_once()
     handler.discord.edit_original.assert_awaited_once()
-    ids = [c.get("custom_id") for row in
-           handler.discord.edit_original.await_args.kwargs["components"]
-           for c in row["components"]]
+    rows = handler.discord.edit_original.await_args.kwargs["components"]
+    assert len(rows) == 5
+    assert rows[0]["components"][0]["custom_id"] == f"{vid.TPL_PREFIX}j1"
+    ids = [c.get("custom_id") for row in rows for c in row["components"]]
     assert f"{vid.STYLE_PREFIX}j1" in ids
-    assert f"{vid.ANIMATION_PREFIX}j1" in ids
+    assert f"{vid.VOICE_PREFIX}j1" in ids
+    assert f"{vid.MODE_PREFIX}j1" in ids
+    assert f"{vid.GENERATE_PREFIX}j1" in ids
     assert f"{vid.OPTIONS_BACK_PREFIX}j1" in ids
 
 

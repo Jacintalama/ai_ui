@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from clients.discord import DiscordClient
 from clients import connectors
@@ -54,9 +55,13 @@ from handlers.app_builder_panel import (
     is_del_confirm, slug_from_del_confirm,
     is_del_cancel, slug_from_del_cancel,
     build_delete_confirm_components,
+    WALKVIDEO_PREFIX,
     build_schedule_modal, build_confirm_components, build_connect_components,
     is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
+    SCHED_NEWVID_ID, SCHED_VIDMODAL_ID, SCHED_VIDTPL_PREFIX,
+    SCHED_VID_URL_INPUT, SCHED_VID_WHAT_INPUT, SCHED_VID_WHEN_INPUT,
+    build_video_schedule_modal, build_video_schedule_confirm_components,
     is_sched_new, is_sched_list, is_sched_modal,
     is_sched_confirm, token_from_confirm,
     is_sched_cancel, token_from_cancel,
@@ -83,6 +88,7 @@ from handlers import onboarding
 from handlers import recruiting_panel
 from handlers import recruiting_review as rr
 from handlers import video_panel as vid
+from handlers import video_templates as vtpl
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +304,11 @@ class DiscordCommandHandler:
             return self._ephemeral_components(
                 f"Delete `{slug}`? This can't be undone.",
                 build_delete_confirm_components(slug), update=False)
+        if custom_id.startswith(WALKVIDEO_PREFIX):
+            slug = custom_id[len(WALKVIDEO_PREFIX):]
+            return await self._handle_video_route(
+                payload, lambda ctx, s=slug: self.router.run_app_walkthrough_video(ctx, s),
+                raw_text=f"aiuibuilder video {slug}")
         # --- Schedules (aiuisched:*) ---
         if is_sched_new(custom_id):
             token = uuid.uuid4().hex[:16]
@@ -305,6 +316,16 @@ class DiscordCommandHandler:
             card = schedule_picker.build_kind_card(token)
             return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
                 "content": card["content"], "components": card["components"], "flags": 64}}
+        if custom_id == SCHED_NEWVID_ID:
+            return {"type": MODAL, "data": build_video_schedule_modal()}
+        if custom_id.startswith(SCHED_VIDTPL_PREFIX):
+            token = custom_id[len(SCHED_VIDTPL_PREFIX):]
+            values = (data.get("values") or [])
+            pending = self._pending_schedules.get(token)
+            if pending and values and pending.get("video_config") is not None:
+                picked = values[0]
+                pending["video_config"]["template"] = "" if picked == "none" else picked
+            return {"type": DEFERRED_UPDATE_MESSAGE}
         if custom_id.startswith(schedule_picker.PICK_PREFIX):
             return await self._handle_pick_component(payload, custom_id)
         if is_sched_list(custom_id):
@@ -424,6 +445,13 @@ class DiscordCommandHandler:
             return await self._handle_video_route(
                 payload, lambda ctx: self.router.run_video_list(ctx),
                 raw_text="video list")
+        if vid.is_vid_tpl(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            job_id = vid.job_from_tpl(custom_id)
+            self._spawn(self._run_video_apply_template(payload, job_id, values[0]))
+            return {"type": DEFERRED_UPDATE_MESSAGE}
         if (
             vid.is_vid_style(custom_id)
             or vid.is_vid_voice(custom_id)
@@ -1056,6 +1084,18 @@ class DiscordCommandHandler:
             respond=lambda m: asyncio.sleep(0))
         await self.router.run_video_set_field(ctx, job_id, **field)
 
+    async def _run_video_apply_template(self, payload: dict[str, Any],
+                                        job_id: str, template_key: str) -> None:
+        """Background apply for a template pick (select ACK'd with no edit)."""
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text="video template",
+            subcommand="video", arguments="", platform="discord",
+            respond=lambda m: asyncio.sleep(0))
+        await self.router.run_video_apply_template(ctx, job_id, template_key)
+
     async def _post_video_describe(self, channel_id: str, job_id: str) -> None:
         """Post the Describe-step card into the thread. Used after the screenshots
         upload step resolves (the Continue button or auto-advance), since that
@@ -1086,6 +1126,8 @@ class DiscordCommandHandler:
             # Use current-draft to read style/voice/mode/animation for the picker defaults.
             draft = await self.router._tasks_client.get_current_video_draft(email) or {}
             voices = (await self.router._tasks_client.get_video_voices()).get("voices", [])
+            if not vtpl.cache_is_fresh():
+                self._spawn(vtpl.refresh_templates(self.router._tasks_client))
             await self.discord.edit_original(
                 interaction_token=interaction_token,
                 content="Style, voice, and output. Pick, then Generate or go Back.",
@@ -1093,7 +1135,8 @@ class DiscordCommandHandler:
                     job_id, voices,
                     current_style=draft.get("style", "clean_product_demo"),
                     current_voice=draft.get("voice", "amy"),
-                    current_mode=draft.get("render_mode", "remotion")),
+                    current_mode=draft.get("render_mode", "remotion"),
+                    templates=vtpl.cached_templates()),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("video options open failed job=%s: %s", job_id, exc)
@@ -1441,6 +1484,8 @@ class DiscordCommandHandler:
             return await self._handle_pick_task_submit(payload, custom_id)
         if is_sched_modal(custom_id):
             return await self._handle_schedule_modal_submit(payload)
+        if custom_id == SCHED_VIDMODAL_ID:
+            return await self._handle_video_schedule_modal_submit(payload)
         if is_sched_editmodal(custom_id):
             return self._handle_sched_edit_submit(payload, custom_id)
         if is_link_modal(custom_id):
@@ -1576,6 +1621,46 @@ class DiscordCommandHandler:
         name = f"{human}: {what[:60]}"
         return await self._offer_schedule_confirm(
             payload, name=name, cron=cron, prompt=what, human=human, run_once=False)
+
+    async def _handle_video_schedule_modal_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Video schedule modal submit: validate URL + parse the NL 'when',
+        then show a confirm card with an optional template select. The
+        schedule is only created when the user clicks Confirm."""
+        data = payload.get("data", {})
+        url = self._extract_modal_value(data, SCHED_VID_URL_INPUT)
+        what = self._extract_modal_value(data, SCHED_VID_WHAT_INPUT)
+        when = self._extract_modal_value(data, SCHED_VID_WHEN_INPUT)
+        if not url.lower().startswith(("http://", "https://")):
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "That URL doesn't look right. It must start with http:// or https://.",
+                "flags": 64}}
+        parsed = parse_when(when)
+        if parsed is None:
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": ("I couldn't read that schedule. Try *every morning*, "
+                            "*every Monday 9am*, or *every 30 minutes*."),
+                "flags": 64}}
+        cron, human = parsed
+        host = urlparse(url).hostname or url
+        name = f"{human}: video of {host}"[:120]
+        token = uuid.uuid4().hex[:16]
+        self._pending_schedules[token] = {
+            "name": name, "cron": cron,
+            "prompt": f"Video walkthrough of {url}",
+            "human": human, "run_once": False,
+            "kind": "video",
+            "video_config": {"url": url, "prompt": what, "template": "",
+                             "title": f"{host} walkthrough"},
+        }
+        from handlers import video_templates as vtpl
+        if not vtpl.cache_is_fresh():
+            self._spawn(vtpl.refresh_templates(self.router._tasks_client))
+        return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+            "content": (f"\U0001f3ac **{human}** - a video of {host}.\n"
+                        "Pick a template (optional), then confirm."),
+            "components": build_video_schedule_confirm_components(
+                token, vtpl.cached_templates()),
+            "flags": 64}}
 
     async def _offer_schedule_confirm(
         self, payload: dict[str, Any], *, name: str, cron: str, prompt: str,
@@ -1761,6 +1846,8 @@ class DiscordCommandHandler:
                 ctx, name=pending["name"], cron=pending["cron"],
                 prompt=pending["prompt"], delivery_channel_id=target,
                 run_once=pending.get("run_once", False),
+                kind=pending.get("kind", "agent"),
+                video_config=pending.get("video_config"),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("_create_pending_schedule failed user=%s: %s", user_id, exc)

@@ -717,6 +717,8 @@ class ScheduleResultIn(BaseModel):
     result: str = ""
     schedule_id: str = ""
     platform: str = "discord"
+    video_job_id: str = ""
+    video_user_email: str = ""
 
 
 def _to_slack_mrkdwn(text: str) -> str:
@@ -807,6 +809,26 @@ async def schedule_result(
     message = _format_schedule_result(
         body.schedule_name, body.status, body.result, platform="discord"
     )
+    # A completed video schedule: try to attach the finished MP4 directly.
+    # Any problem (download failure, oversized blob, post failure) falls
+    # through to the plain text post below, so delivery never gets worse.
+    if body.video_job_id and body.video_user_email:
+        from handlers.commands import VIDEO_ATTACH_MAX_MB
+        tasks_client = getattr(command_router, "_tasks_client", None)
+        if tasks_client is not None:
+            try:
+                blob = await tasks_client.download_video_bytes(
+                    body.video_user_email, body.video_job_id)
+                if len(blob) <= VIDEO_ATTACH_MAX_MB * 1024 * 1024:
+                    ok = await discord_client.post_channel_file(
+                        body.channel_id,
+                        [(f"{(body.schedule_name or 'video')[:60]}.mp4", blob, "video/mp4")],
+                        content=message)
+                    if ok:
+                        return {"status": "delivered"}
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("schedule video attach failed job=%s: %s",
+                               body.video_job_id, exc)
     # On a failed run, attach a one-click Retry (reuses the run-now handler).
     components = None
     if body.schedule_id and body.status not in ("completed", "skipped"):

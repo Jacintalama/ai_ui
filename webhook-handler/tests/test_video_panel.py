@@ -6,19 +6,23 @@ from handlers.video_panel import (
     build_style_select, build_voice_select,
     build_done_components, build_proposal_components,
     build_video_embed,
+    build_template_select,
     # constants
     NEW_ID, LIST_ID,
     STYLE_PREFIX, VOICE_PREFIX, GENERATE_PREFIX, DETAILS_PREFIX, DETAILS_MODAL_PREFIX,
     REFINE_PREFIX, REFINE_MODAL_PREFIX, APPLY_PREFIX, VERSION_PREFIX,
     TITLE_INPUT, PROMPT_INPUT, REFINE_INPUT,
     STYLES,
+    TPL_PREFIX,
     # predicates
     is_vid_new, is_vid_list, is_vid_details, is_vid_details_modal,
     is_vid_style, is_vid_voice, is_vid_generate,
     is_vid_refine, is_vid_refine_modal, is_vid_apply, is_vid_version,
+    is_vid_tpl,
     # extractors
     job_from_style, job_from_voice, job_from_generate, job_from_details, job_from_details_modal,
     job_from_refine, job_from_refine_modal, job_from_apply, job_from_version,
+    job_from_tpl,
 )
 from handlers.app_builder_panel import ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT
 from handlers import video_panel as vp
@@ -319,17 +323,6 @@ def test_mode_select_options_and_predicates():
     assert vp.is_vid_mode("aiuivid:mode:j1") and vp.job_from_mode("aiuivid:mode:j1") == "j1"
 
 
-def test_animation_select_options_and_predicates():
-    from handlers import video_panel as vp
-    sel = vp.build_animation_select("j1")
-    vals = {o["value"] for o in sel["options"]}
-    assert vals == {"cursor_click", "smooth_scroll", "spotlight", "zoom_pan"}
-    defaults = [o["value"] for o in sel["options"] if o.get("default")]
-    assert defaults == ["cursor_click"]
-    assert vp.is_vid_animation("aiuivid:animation:j1")
-    assert vp.job_from_animation("aiuivid:animation:j1") == "j1"
-
-
 def test_capture_modal_has_url_input():
     from handlers import video_panel as vp
     modal = vp.build_capture_modal("job1")
@@ -400,16 +393,15 @@ def test_build_generate_step_components_generate_and_options():
 def test_build_options_components_three_selects_plus_buttons():
     voices = [{"id": "amy", "label": "Amy", "accent": "US", "gender": "Female"}]
     rows = vp.build_options_components("job1", voices)
-    # 4 selects + 1 button row (generate + back)
-    assert len(rows) == 5
+    # 3 selects + 1 button row (generate + back); no templates given.
+    assert len(rows) == 4
     last_ids = [c["custom_id"] for c in rows[-1]["components"]]
     assert last_ids == ["aiuivid:generate:job1", "aiuivid:optionsback:job1"]
-    select_ids = [rows[i]["components"][0]["custom_id"] for i in range(4)]
+    select_ids = [rows[i]["components"][0]["custom_id"] for i in range(3)]
     assert select_ids == [
         "aiuivid:style:job1",
         "aiuivid:voice:job1",
         "aiuivid:mode:job1",
-        "aiuivid:animation:job1",
     ]
 
 def test_new_predicates_round_trip():
@@ -444,3 +436,57 @@ def test_gennow_disjoint_from_generate_and_details():
     assert vp.is_vid_gennow("aiuivid:details:x") is False
     assert vp.is_vid_generate("aiuivid:gennow:x") is False
     assert vp.is_vid_details("aiuivid:gennow:x") is False
+
+
+# ---------------------------------------------------------------------------
+# Template picker (Task 4)
+# ---------------------------------------------------------------------------
+
+_TPLS = [
+    {"key": "walkthrough", "emoji": "X", "name": "Website Walkthrough",
+     "desc": "tour", "style": "clean_product_demo", "prompt": "p1"},
+    {"key": "social", "emoji": "Y", "name": "Snappy Social",
+     "desc": "feeds", "style": "snappy_social", "prompt": "p2"},
+]
+
+
+def test_template_select_has_custom_plus_templates():
+    sel = build_template_select("j1", _TPLS)
+    assert sel["custom_id"] == f"{TPL_PREFIX}j1"
+    values = [o["value"] for o in sel["options"]]
+    assert values == ["custom", "walkthrough", "social"]
+    assert sel["options"][0]["default"] is True  # no current -> Custom default
+
+
+def test_template_select_current_marks_default():
+    sel = build_template_select("j1", _TPLS, current="social")
+    by_val = {o["value"]: o for o in sel["options"]}
+    assert by_val["social"]["default"] is True
+    assert by_val["custom"]["default"] is False
+
+
+def test_template_select_skips_keyless_entries():
+    sel = build_template_select("j1", [{"name": "broken"}] + _TPLS)
+    assert [o["value"] for o in sel["options"]] == ["custom", "walkthrough", "social"]
+
+
+def test_tpl_predicates_round_trip():
+    cid = f"{TPL_PREFIX}job-9"
+    assert is_vid_tpl(cid)
+    assert job_from_tpl(cid) == "job-9"
+    assert not is_vid_tpl("aiuivid:style:job-9")
+
+
+def test_options_components_include_template_row_when_given():
+    from handlers.video_panel import build_options_components
+    rows = build_options_components("j1", [{"id": "amy", "label": "Amy"}],
+                                    templates=_TPLS)
+    assert len(rows) == 5  # template + style + voice + mode + buttons
+    first_ids = [c["custom_id"] for c in rows[0]["components"]]
+    assert first_ids == [f"{TPL_PREFIX}j1"]
+
+
+def test_options_components_no_template_row_when_absent():
+    from handlers.video_panel import build_options_components
+    rows = build_options_components("j1", [{"id": "amy", "label": "Amy"}])
+    assert len(rows) == 4

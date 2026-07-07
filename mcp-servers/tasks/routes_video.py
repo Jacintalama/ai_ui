@@ -50,6 +50,7 @@ from auth import CurrentUser, current_user
 from db import session
 from templates_video.style_config import STYLE_CONFIGS
 from video_voices import DEFAULT_VOICE_ID, is_valid_voice, voice_catalog
+from video_templates import DEFAULT_TEMPLATE_KEY, template_catalog
 from heavy_lock import enough_free_disk
 from video_capability import mint_video_capability, verify_video_capability
 from video_models import VideoJob
@@ -343,6 +344,15 @@ async def list_jobs(user: CurrentUser = Depends(current_user)) -> dict:
 async def voices() -> dict:
     """The selectable narration voices for the create-form picker."""
     return {"voices": voice_catalog(), "default": DEFAULT_VOICE_ID}
+
+
+# Registered BEFORE "/{job_id}" for the same reason as /voices: a literal
+# path after the param route would be captured as a job id. No auth: it is
+# a static, non-sensitive catalog shared by every surface.
+@router.get("/templates")
+async def templates() -> dict:
+    """The selectable template presets for the create-form pickers."""
+    return {"templates": template_catalog(), "default": DEFAULT_TEMPLATE_KEY}
 
 
 # Registered BEFORE "/{job_id}" so the literal "current-draft" path is not

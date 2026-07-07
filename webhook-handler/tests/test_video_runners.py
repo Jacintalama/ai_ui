@@ -372,3 +372,36 @@ async def test_run_video_capture_posts_choice_card():
     all_ids = [c.get("custom_id") for row in components for c in row.get("components", [])]
     # Choice card must have the Generate-now button (not just the describe/details button)
     assert any("aiuivid:gennow:job9" == cid for cid in all_ids)
+
+
+# --- run_video_apply_template ----------------------------------------------- #
+
+@pytest.mark.asyncio
+async def test_run_video_apply_template_sets_style_and_prompt():
+    tc = MagicMock()
+    tc.set_video_draft_fields = AsyncMock(return_value={"status": "ok"})
+    r = _router(tc)
+    ctx = _ctx()
+    await r.run_video_apply_template(ctx, "job1", "walkthrough")
+    tc.set_video_draft_fields.assert_awaited_once()
+    kwargs = tc.set_video_draft_fields.await_args.kwargs
+    assert kwargs["style"] == "clean_product_demo"
+    assert "guided tour" in kwargs["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_run_video_apply_template_custom_is_noop():
+    tc = MagicMock()
+    tc.set_video_draft_fields = AsyncMock()
+    r = _router(tc)
+    await r.run_video_apply_template(_ctx(), "job1", "custom")
+    tc.set_video_draft_fields.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_video_apply_template_unknown_key_is_noop():
+    tc = MagicMock()
+    tc.set_video_draft_fields = AsyncMock()
+    r = _router(tc)
+    await r.run_video_apply_template(_ctx(), "job1", "nope")
+    tc.set_video_draft_fields.assert_not_awaited()

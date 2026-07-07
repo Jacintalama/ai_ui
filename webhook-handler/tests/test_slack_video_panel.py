@@ -158,6 +158,48 @@ def test_video_modal_style_options_cover_all_styles():
 
 
 # ---------------------------------------------------------------------------
+# build_video_modal: template select
+# ---------------------------------------------------------------------------
+
+_TPLS = [
+    {"key": "walkthrough", "emoji": "X", "name": "Website Walkthrough",
+     "desc": "tour", "style": "clean_product_demo", "prompt": "tpl prompt one"},
+    {"key": "social", "emoji": "Y", "name": "Snappy Social",
+     "desc": "feeds", "style": "snappy_social", "prompt": "tpl prompt two"},
+]
+
+
+def _template_block(modal):
+    return next(b for b in modal["blocks"] if b.get("block_id") == "vid_template")
+
+
+def test_video_modal_has_optional_template_select_with_dispatch():
+    modal = build_video_modal("C42", templates=_TPLS)
+    block = _template_block(modal)
+    assert block["optional"] is True
+    assert block["dispatch_action"] is True
+    el = block["element"]
+    assert el["type"] == "static_select"
+    assert el["action_id"] == "vid_template"
+    assert [o["value"] for o in el["options"]] == ["walkthrough", "social"]
+
+
+def test_video_modal_without_templates_has_no_template_block():
+    modal = build_video_modal("C42")
+    assert not any(b.get("block_id") == "vid_template" for b in modal["blocks"])
+
+
+def test_video_modal_initial_prompt_and_template():
+    modal = build_video_modal("C42", templates=_TPLS,
+                              initial_prompt="tpl prompt two",
+                              initial_template="social")
+    prompt_block = next(b for b in modal["blocks"] if b.get("block_id") == "prompt")
+    assert prompt_block["element"]["initial_value"] == "tpl prompt two"
+    el = _template_block(modal)["element"]
+    assert el["initial_option"]["value"] == "social"
+
+
+# ---------------------------------------------------------------------------
 # parse_video_modal
 # ---------------------------------------------------------------------------
 
@@ -259,6 +301,19 @@ def test_parse_video_modal_channel_id_from_private_metadata():
     view = _make_view(channel_id="CCHANNEL")
     result = parse_video_modal(view)
     assert result["channel_id"] == "CCHANNEL"
+
+
+def test_parse_video_modal_reads_template():
+    view = _make_view()
+    view["state"]["values"]["vid_template"] = {
+        "vid_template": {"type": "static_select",
+                         "selected_option": {"value": "social"}}}
+    assert parse_video_modal(view)["template"] == "social"
+
+
+def test_parse_video_modal_template_defaults_empty():
+    view = _make_view()
+    assert parse_video_modal(view)["template"] == ""
 
 
 # ---------------------------------------------------------------------------

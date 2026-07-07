@@ -26,6 +26,7 @@ SRC_URL_PREFIX = "aiuivid:srcurl:"
 SRC_SHOTS_PREFIX = "aiuivid:srcshots:"
 SRC_SHOTS_CONTINUE_PREFIX = "aiuivid:srcshotsgo:"
 OPTIONS_PREFIX = "aiuivid:options:"
+TPL_PREFIX = "aiuivid:tpl:"
 OPTIONS_BACK_PREFIX = "aiuivid:optionsback:"
 REFINE_PREFIX = "aiuivid:refine:"
 REFINE_MODAL_PREFIX = "aiuivid:refinemodal:"
@@ -168,6 +169,27 @@ def build_mode_select(job_id: str, current: str = "remotion") -> dict:
             "options": options}
 
 
+def build_template_select(job_id: str, templates: list[dict], current: str = "") -> dict:
+    """Template picker: Custom (default when nothing picked) + the registry
+    entries. Values are template keys; 'custom' means no template."""
+    options = [{"label": "Custom (no template)", "value": "custom",
+                "description": "Write your own direction"[:100],
+                "default": not current}]
+    for t in templates[:24]:
+        key = t.get("key")
+        if not key:
+            continue
+        options.append({
+            "label": f"{t.get('emoji', '')} {t.get('name', key)}".strip()[:100],
+            "value": key[:100],
+            "description": (t.get("desc") or "")[:100],
+            "default": key == current,
+        })
+    return {"type": SELECT_MENU, "custom_id": f"{TPL_PREFIX}{job_id}",
+            "placeholder": "Pick a template…", "min_values": 1, "max_values": 1,
+            "options": options}
+
+
 def build_source_components(job_id: str) -> list[dict]:
     return [{"type": ACTION_ROW, "components": [
         _button("From a website", f"{SRC_URL_PREFIX}{job_id}", STYLE_PRIMARY),
@@ -200,8 +222,14 @@ def build_generate_step_components(job_id: str) -> list[dict]:
 def build_options_components(job_id: str, voices: list[dict],
                              current_style: str = "clean_product_demo",
                              current_voice: str = "amy",
-                             current_mode: str = "remotion") -> list[dict]:
-    return [
+                             current_mode: str = "remotion",
+                             templates: list[dict] | None = None,
+                             current_template: str = "") -> list[dict]:
+    rows: list[dict] = []
+    if templates:
+        rows.append({"type": ACTION_ROW, "components": [
+            build_template_select(job_id, templates, current_template)]})
+    rows += [
         {"type": ACTION_ROW, "components": [build_style_select(job_id, current_style)]},
         {"type": ACTION_ROW, "components": [build_voice_select(job_id, voices, current_voice)]},
         {"type": ACTION_ROW, "components": [build_mode_select(job_id, current_mode)]},
@@ -209,6 +237,7 @@ def build_options_components(job_id: str, voices: list[dict],
             _button("Generate video", f"{GENERATE_PREFIX}{job_id}", STYLE_SUCCESS),
             _button("Back", f"{OPTIONS_BACK_PREFIX}{job_id}", STYLE_SECONDARY)]},
     ]
+    return rows
 
 
 def build_done_components(job_id: str, versions: list[dict]) -> list[dict]:
@@ -270,9 +299,11 @@ def is_vid_src_shots(c: str) -> bool: return c.startswith(SRC_SHOTS_PREFIX)
 def is_vid_src_shots_continue(c: str) -> bool: return c.startswith(SRC_SHOTS_CONTINUE_PREFIX)
 def is_vid_options(c: str) -> bool: return c.startswith(OPTIONS_PREFIX)
 def is_vid_options_back(c: str) -> bool: return c.startswith(OPTIONS_BACK_PREFIX)
+def is_vid_tpl(c: str) -> bool: return c.startswith(TPL_PREFIX)
 
 def job_from_src_url(c: str) -> str: return _suffix_after(c, SRC_URL_PREFIX)
 def job_from_src_shots(c: str) -> str: return _suffix_after(c, SRC_SHOTS_PREFIX)
 def job_from_src_shots_continue(c: str) -> str: return _suffix_after(c, SRC_SHOTS_CONTINUE_PREFIX)
 def job_from_options(c: str) -> str: return _suffix_after(c, OPTIONS_PREFIX)
 def job_from_options_back(c: str) -> str: return _suffix_after(c, OPTIONS_BACK_PREFIX)
+def job_from_tpl(c: str) -> str: return _suffix_after(c, TPL_PREFIX)

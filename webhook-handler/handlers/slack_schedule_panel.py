@@ -16,6 +16,7 @@ from handlers.app_builder_panel import (
     SCHED_OPEN_ID,
     SCHED_NEW_ID,
     SCHED_MODAL_ID,
+    SCHED_NEWVID_ID,
     SCHED_EDITMODAL_PREFIX,
     SCHED_RUN_PREFIX,
     SCHED_PAUSE_PREFIX,
@@ -40,6 +41,15 @@ SCHED_WEEKDAY_BLOCK_ID = "sched_weekday"
 SCHED_WEEKDAY_ACTION_ID = "sched_weekday_input"
 SCHED_DATE_BLOCK_ID = "sched_date"
 SCHED_DATE_ACTION_ID = "sched_date_input"
+
+# "Schedule a video" modal (Slack mirror of Discord's SCHED_VIDMODAL_ID).
+SCHED_VIDEO_MODAL_ID = "aiuisched_vidmodal"
+SCHED_VID_URL_BLOCK_ID = "sched_vid_url"
+SCHED_VID_URL_INPUT_ID = "sched_vid_url_input"
+SCHED_VID_TPL_BLOCK_ID = "sched_vid_tpl"
+SCHED_VID_TPL_ACTION_ID = "sched_vid_tpl_input"
+SCHED_VID_WHAT_BLOCK_ID = "sched_vid_what"
+SCHED_VID_WHAT_INPUT_ID = "sched_vid_what_input"
 
 # value strings map 1:1 to schedule_picker picks (kind/freq), except one_time.
 REPEAT_OPTIONS = [
@@ -72,10 +82,14 @@ def _divider() -> dict:
 
 
 def _new_schedule_actions() -> dict:
-    """The '➕ New schedule' actions block, pinned at the bottom of the list."""
+    """The '➕ New schedule' / '🎬 Schedule a video' actions block, pinned at
+    the bottom of the list."""
     return {
         "type": "actions",
-        "elements": [_button("➕ New schedule", SCHED_NEW_ID, primary=True)],
+        "elements": [
+            _button("➕ New schedule", SCHED_NEW_ID, primary=True),
+            _button("\U0001f3ac Schedule a video", SCHED_NEWVID_ID),
+        ],
     }
 
 
@@ -169,14 +183,64 @@ def build_schedule_card(sched: dict) -> list[dict]:
     ]
 
 
+def _when_picker_blocks() -> list[dict]:
+    """The native Repeat / time / weekday / date picker blocks, shared verbatim
+    by build_schedule_modal and build_video_schedule_modal so both modals
+    resolve identically via slack_picks_from_view -> schedule_picker.picks_to_cron.
+    All picker blocks are present; the converter uses only the ones relevant to
+    the chosen Repeat (weekday for weekly, date for one-time)."""
+    repeat_opts = [_opt(label, val) for label, val in REPEAT_OPTIONS]
+    weekday_opts = [_opt(d.capitalize(), d) for d in _SLACK_WEEKDAYS]
+    return [
+        {
+            "type": "input",
+            "block_id": SCHED_REPEAT_BLOCK_ID,
+            "label": {"type": "plain_text", "text": "Repeat"},
+            "element": {
+                "type": "static_select",
+                "action_id": SCHED_REPEAT_ACTION_ID,
+                "initial_option": repeat_opts[1],  # Every day
+                "options": repeat_opts,
+            },
+        },
+        {
+            "type": "input",
+            "block_id": SCHED_TIME_BLOCK_ID,
+            "label": {"type": "plain_text", "text": "Time (Manila)"},
+            "element": {
+                "type": "timepicker",
+                "action_id": SCHED_TIME_ACTION_ID,
+                "initial_time": "09:00",
+            },
+        },
+        {
+            "type": "input",
+            "block_id": SCHED_WEEKDAY_BLOCK_ID,
+            "optional": True,
+            "label": {"type": "plain_text", "text": "Day of week (for weekly)"},
+            "element": {
+                "type": "static_select",
+                "action_id": SCHED_WEEKDAY_ACTION_ID,
+                "options": weekday_opts,
+            },
+        },
+        {
+            "type": "input",
+            "block_id": SCHED_DATE_BLOCK_ID,
+            "optional": True,
+            "label": {"type": "plain_text", "text": "Date (for one-time)"},
+            "element": {
+                "type": "datepicker",
+                "action_id": SCHED_DATE_ACTION_ID,
+            },
+        },
+    ]
+
+
 def build_schedule_modal() -> dict:
     """Create-schedule modal view (callback_id == SCHED_MODAL_ID): a 'what' input
     plus native Repeat / time / weekday / date pickers. The picker values are
-    resolved by slack_picks_from_view -> schedule_picker.picks_to_cron. All picker
-    blocks are present; the converter uses only the ones relevant to the chosen
-    Repeat (weekday for weekly, date for one-time)."""
-    repeat_opts = [_opt(label, val) for label, val in REPEAT_OPTIONS]
-    weekday_opts = [_opt(d.capitalize(), d) for d in _SLACK_WEEKDAYS]
+    resolved by slack_picks_from_view -> schedule_picker.picks_to_cron."""
     return {
         "type": "modal",
         "callback_id": SCHED_MODAL_ID,
@@ -199,49 +263,43 @@ def build_schedule_modal() -> dict:
                     },
                 },
             },
-            {
-                "type": "input",
-                "block_id": SCHED_REPEAT_BLOCK_ID,
-                "label": {"type": "plain_text", "text": "Repeat"},
-                "element": {
-                    "type": "static_select",
-                    "action_id": SCHED_REPEAT_ACTION_ID,
-                    "initial_option": repeat_opts[1],  # Every day
-                    "options": repeat_opts,
-                },
-            },
-            {
-                "type": "input",
-                "block_id": SCHED_TIME_BLOCK_ID,
-                "label": {"type": "plain_text", "text": "Time (Manila)"},
-                "element": {
-                    "type": "timepicker",
-                    "action_id": SCHED_TIME_ACTION_ID,
-                    "initial_time": "09:00",
-                },
-            },
-            {
-                "type": "input",
-                "block_id": SCHED_WEEKDAY_BLOCK_ID,
-                "optional": True,
-                "label": {"type": "plain_text", "text": "Day of week (for weekly)"},
-                "element": {
-                    "type": "static_select",
-                    "action_id": SCHED_WEEKDAY_ACTION_ID,
-                    "options": weekday_opts,
-                },
-            },
-            {
-                "type": "input",
-                "block_id": SCHED_DATE_BLOCK_ID,
-                "optional": True,
-                "label": {"type": "plain_text", "text": "Date (for one-time)"},
-                "element": {
-                    "type": "datepicker",
-                    "action_id": SCHED_DATE_ACTION_ID,
-                },
-            },
-        ],
+        ] + _when_picker_blocks(),
+    }
+
+
+def build_video_schedule_modal(templates: list[dict]) -> dict:
+    """Create-video-schedule modal: URL + optional template + optional
+    direction, plus the same native when-pickers as the agent modal."""
+    tpl_options = [_opt(f"{t.get('emoji', '')} {t.get('name', t['key'])}".strip()[:75],
+                        t["key"]) for t in templates if t.get("key")]
+    blocks = [
+        {"type": "input", "block_id": SCHED_VID_URL_BLOCK_ID,
+         "label": {"type": "plain_text", "text": "Website URL"},
+         "element": {"type": "plain_text_input",
+                     "action_id": SCHED_VID_URL_INPUT_ID, "max_length": 500,
+                     "placeholder": {"type": "plain_text",
+                                     "text": "https://yoursite.com"}}},
+        {"type": "input", "block_id": SCHED_VID_TPL_BLOCK_ID, "optional": True,
+         "label": {"type": "plain_text", "text": "Template"},
+         "element": {"type": "static_select",
+                     "action_id": SCHED_VID_TPL_ACTION_ID,
+                     "placeholder": {"type": "plain_text",
+                                     "text": "No template (guided walkthrough)"},
+                     "options": tpl_options}},
+        {"type": "input", "block_id": SCHED_VID_WHAT_BLOCK_ID, "optional": True,
+         "label": {"type": "plain_text", "text": "What should the video show?"},
+         "element": {"type": "plain_text_input",
+                     "action_id": SCHED_VID_WHAT_INPUT_ID, "multiline": True,
+                     "max_length": 2000,
+                     "placeholder": {"type": "plain_text",
+                                     "text": "Leave blank for the guided cursor walkthrough."}}},
+    ] + _when_picker_blocks()
+    return {
+        "type": "modal", "callback_id": SCHED_VIDEO_MODAL_ID,
+        "title": {"type": "plain_text", "text": "Schedule a video"[:_TITLE_MAX]},
+        "submit": {"type": "plain_text", "text": "Create"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": blocks,
     }
 
 
