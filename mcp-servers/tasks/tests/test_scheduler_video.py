@@ -70,6 +70,7 @@ async def test_video_schedule_poll_loop_does_not_hold_semaphore(monkeypatch):
     """The poll loop must run outside _RUN_SEMAPHORE: a probe inside
     _check_video_job asserts a free slot is available while polling, which
     would fail if _run_video_schedule held the semaphore across the wait."""
+    full_width = scheduler._RUN_SEMAPHORE._value
     seen_free_slots = []
     async def start(user, cfg, title, prompt, style):
         return "job-1"
@@ -82,7 +83,9 @@ async def test_video_schedule_poll_loop_does_not_hold_semaphore(monkeypatch):
     status, result, extras = await scheduler._run_video_schedule(
         _Sched({"url": "https://site.com"}))
     assert status == "completed"
-    assert seen_free_slots and all(v > 0 for v in seen_free_slots)
+    # Every slot must be free while polling; width-1 here would mean the
+    # poll loop is still holding the slot it took for the start call.
+    assert seen_free_slots and all(v == full_width for v in seen_free_slots)
 
 
 @pytest.mark.asyncio
