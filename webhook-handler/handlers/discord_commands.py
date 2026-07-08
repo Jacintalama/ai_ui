@@ -442,16 +442,13 @@ class DiscordCommandHandler:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
             return {"type": MODAL, "data": vid.build_capture_modal(job_id)}
         if vid.is_vid_list(custom_id):
-            return await self._handle_video_route(
-                payload, lambda ctx: self.router.run_video_list(ctx),
-                raw_text="video list")
+            return await self._handle_my_videos(payload)
         if vid.is_vid_pick(custom_id):
             values = data.get("values") or []
             if not values:
                 return {"type": DEFERRED_UPDATE_MESSAGE}
-            return await self._handle_video_route(
-                payload, lambda ctx, j=values[0]: self.router.run_video_menu(ctx, j),
-                raw_text="video menu")
+            self._spawn(self._handle_video_pick(payload, values[0]))
+            return {"type": DEFERRED_UPDATE_MESSAGE}
         if vid.is_vid_delok(custom_id):
             job_id = vid.job_from_delok(custom_id)
             return await self._handle_video_route(
@@ -2030,6 +2027,79 @@ class DiscordCommandHandler:
 
         self._spawn(_do())
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_my_videos(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """'My videos' -> post the list + manage select into the user's private
+        VIDEO thread (created/reused), mirroring App Builder's My apps. The
+        panel button ACKs ephemerally with a pointer to the thread."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        user_id = user.get("id", "")
+        user_name = user.get("username", "unknown")
+        channel_id = payload.get("channel_id", "")
+
+        async def _do() -> None:
+            try:
+                email = await self.router._resolve_email(user_id)
+                if email is None:
+                    await self.discord.edit_original(
+                        interaction_token=interaction_token,
+                        content=onboarding.not_linked_text_discord(),
+                        components=onboarding.link_button_row())
+                    return
+                thread_id = await self._get_or_make_thread(
+                    user_id, channel_id, user_name, kind="video")
+                target = thread_id or channel_id
+
+                async def respond(msg: str) -> None:
+                    await self.discord.post_channel_message(target, msg)
+
+                async def respond_components(msg: str, components: list) -> None:
+                    await self.discord.post_channel_message(
+                        target, msg, components=components)
+
+                ctx = CommandContext(
+                    user_id=user_id, user_name=user_name, channel_id=target,
+                    raw_text="video list", subcommand="video", arguments="",
+                    platform="discord", respond=respond,
+                    respond_components=respond_components)
+                await self.router.run_video_list(ctx)
+                pointer = (f"\U0001f3ac Your videos are in <#{thread_id}>"
+                           if thread_id else
+                           "Couldn't open your video thread, posted here instead.")
+                await self.discord.edit_original(
+                    interaction_token=interaction_token, content=pointer)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("_handle_my_videos failed user=%s: %s", user_id, exc)
+
+        self._spawn(_do())
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_video_pick(self, payload: dict[str, Any], job_id: str) -> None:
+        """A pick from the My-videos select: post that video's manage buttons
+        as a REGULAR message in the same (thread) channel, so the buttons
+        actually render (ephemeral edits swallowed them)."""
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        channel_id = payload.get("channel_id", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.post_channel_message(channel_id, msg)
+
+        async def respond_components(msg: str, components: list) -> None:
+            await self.discord.post_channel_message(
+                channel_id, msg, components=components)
+
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=channel_id, raw_text="video menu", subcommand="video",
+            arguments="", platform="discord", respond=respond,
+            respond_components=respond_components,
+            notify_channel=notify_channel,
+            notify_channel_rich=notify_channel_rich)
+        await self.router.run_video_menu(ctx, job_id)
 
     async def _handle_my_apps(self, payload: dict[str, Any]) -> dict[str, Any]:
         """'📂 My apps' (in #app-builder) → post the user's existing apps as a

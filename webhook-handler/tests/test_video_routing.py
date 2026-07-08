@@ -438,3 +438,53 @@ async def test_gennow_dispatches_and_binds_notify_channel():
     assert job_id == "j1"
     assert ctx.notify_channel is not None  # watcher gate
     assert ctx.notify_channel_msg is not None  # controls poster
+
+
+@pytest.mark.asyncio
+async def test_my_videos_posts_list_into_video_thread():
+    router = _router()
+    router._resolve_email = AsyncMock(return_value="u@x.com")
+    router.run_video_list = AsyncMock()
+    handler = _handler(router)
+    discord = handler.discord
+    discord.edit_original = AsyncMock(return_value=True)
+    discord.post_channel_message = AsyncMock(return_value=True)
+    handler._get_or_make_thread = AsyncMock(return_value="vid-thread")
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "chan",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": vid.LIST_ID}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == DEFERRED_CHANNEL_MESSAGE
+    assert resp["data"]["flags"] == 64
+    await _drain()
+    handler._get_or_make_thread.assert_awaited_once_with(
+        "100", "chan", "alice", kind="video")
+    router.run_video_list.assert_awaited_once()
+    ctx = router.run_video_list.await_args.args[0]
+    assert ctx.channel_id == "vid-thread"
+    assert ctx.respond_components is not None
+    # The ephemeral ACK points at the thread.
+    assert "vid-thread" in discord.edit_original.await_args.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_video_pick_posts_menu_in_same_channel():
+    router = _router()
+    router.run_video_menu = AsyncMock()
+    handler = _handler(router)
+    handler.discord.post_channel_message = AsyncMock(return_value=True)
+    payload = {"type": 3, "id": "i", "token": "t", "channel_id": "vid-thread",
+               "member": {"user": {"id": "100", "username": "alice"}},
+               "data": {"custom_id": vid.PICK_ID, "values": ["job-7"]}}
+    resp = await handler.handle_interaction(payload)
+    assert resp["type"] == DEFERRED_UPDATE_MESSAGE
+    await _drain()
+    router.run_video_menu.assert_awaited_once()
+    ctx, job = router.run_video_menu.await_args.args
+    assert job == "job-7"
+    assert ctx.channel_id == "vid-thread"
+    # respond_components posts a REGULAR message so buttons render.
+    await ctx.respond_components("menu", [{"type": 1, "components": []}])
+    args = handler.discord.post_channel_message.await_args
+    assert args.args[0] == "vid-thread"
+    assert args.kwargs.get("components")
