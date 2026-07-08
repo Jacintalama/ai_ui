@@ -3125,19 +3125,27 @@ class CommandRouter:
         if not vids:
             await ctx.respond("You have no videos yet. Click **New video** to make one.")
             return
-        from handlers.video_panel import VIDEO_STATUS_LABELS, build_videos_select
-        lines = []
-        for v in vids[:25]:
+        from handlers.video_panel import (
+            VIDEO_STATUS_EMOJI, VIDEO_STATUS_LABELS, build_videos_select,
+        )
+        lines = ["\U0001f3ac **Your videos**", ""]
+        for n, v in enumerate(vids[:25], start=1):
             status = (v.get("status") or "unknown").strip()
-            lines.append(f"- **{v.get('title') or v['id']}** - "
-                         f"{VIDEO_STATUS_LABELS.get(status, status)}")
-        text = "Your videos:\n" + "\n".join(lines)
+            label = VIDEO_STATUS_LABELS.get(status, status)
+            emoji = VIDEO_STATUS_EMOJI.get(status, "•")
+            lines.append(f"`{n}.` **{v.get('title') or v['id']}**  {emoji} {label}")
         rows = build_videos_select(vids)
         if rows and ctx.respond_components is not None:
-            await ctx.respond_components(
-                text + "\n\nPick one below to watch, retry, or delete it.", rows)
+            lines += [
+                "",
+                "**Manage one in 3 quick steps:**",
+                "`1.` Pick a video in the menu below.",
+                "`2.` I post its buttons right here.",
+                "`3.` Use them: ▶ Watch, Refine, ↻ Retry, or \U0001f5d1 Delete.",
+            ]
+            await ctx.respond_components("\n".join(lines), rows)
         else:
-            await ctx.respond(text)
+            await ctx.respond("\n".join(lines))
 
     async def run_video_menu(self, ctx: CommandContext, job_id: str) -> None:
         """Video picked from the My-videos select: post its manage buttons."""
@@ -3151,18 +3159,29 @@ class CommandRouter:
             await ctx.respond(f"Couldn't open that video: {e.message}")
             return
         from handlers.video_panel import (
-            VIDEO_STATUS_LABELS, build_video_manage_components,
+            VIDEO_STATUS_EMOJI, VIDEO_STATUS_LABELS, build_video_manage_components,
         )
         status = (job.get("status") or "unknown").strip()
         title = job.get("title") or "(no title)"
-        header = f"**{title}** - {VIDEO_STATUS_LABELS.get(status, status)}"
+        label = VIDEO_STATUS_LABELS.get(status, status)
+        emoji = VIDEO_STATUS_EMOJI.get(status, "•")
+        next_line = {
+            "done": "Next: ▶ watch it, refine it with a note, or delete it.",
+            "failed": "Next: ↻ retry the render, or delete it.",
+            "collecting": "Next: this draft never started. Delete it to tidy the list.",
+            "queued": "Next: it is waiting for the renderer. You can still delete it.",
+            "scripting": "Hang tight, the script is being written. Check back shortly.",
+            "rendering": "Hang tight, it is rendering. Check back shortly.",
+        }.get(status, "")
+        header = f"\U0001f3ac **{title}**\nStatus: {emoji} {label}"
+        if next_line:
+            header += f"\n{next_line}"
         rows = build_video_manage_components(
             job_id, status, share_url=(job.get("share_url") or ""))
         if rows and ctx.respond_components is not None:
             await ctx.respond_components(header, rows)
         else:
-            await ctx.respond(
-                header + "\nNothing to do while it is in this state - check back shortly.")
+            await ctx.respond(header)
 
     async def run_video_delete(self, ctx: CommandContext, job_id: str) -> None:
         """Confirmed delete of one video job."""

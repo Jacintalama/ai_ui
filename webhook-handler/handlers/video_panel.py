@@ -306,6 +306,16 @@ def is_vid_src_shots_continue(c: str) -> bool: return c.startswith(SRC_SHOTS_CON
 def is_vid_options(c: str) -> bool: return c.startswith(OPTIONS_PREFIX)
 def is_vid_options_back(c: str) -> bool: return c.startswith(OPTIONS_BACK_PREFIX)
 # User-facing status labels: internal states like "collecting" are jargon.
+# Status glyphs for the structured My-videos list and manage cards.
+VIDEO_STATUS_EMOJI = {
+    "collecting": "📝",
+    "queued": "⏳",
+    "scripting": "✍️",
+    "rendering": "🎞️",
+    "done": "✅",
+    "failed": "❌",
+}
+
 VIDEO_STATUS_LABELS = {
     "collecting": "draft (never started)",
     "queued": "queued",
