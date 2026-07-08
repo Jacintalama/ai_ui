@@ -414,19 +414,28 @@ import asyncio  # noqa: E402
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_video_list_posts_select_and_clean_labels():
+async def test_run_video_list_posts_per_video_buttons_and_clean_labels():
     tc = MagicMock()
     tc.list_videos = AsyncMock(return_value={"videos": [
-        {"id": "j1", "title": "Mine", "status": "collecting"}]})
+        {"id": "j1", "title": "Mine", "status": "collecting"},
+        {"id": "j2", "title": "Done one", "status": "done",
+         "share_url": "https://x/v.mp4"}]})
     r = _router(tc)
     rc = AsyncMock()
     ctx = _ctx(respond_components=rc)
     await r.run_video_list(ctx)
-    msg, rows = rc.await_args.args
-    assert "draft (never started)" in msg
-    assert "collecting" not in msg
-    ids = [c.get("custom_id") for row in rows for c in row.get("components", [])]
-    assert "aiuivid:pick" in ids
+    # Intro line goes through plain respond.
+    assert "Your videos" in ctx.respond.await_args_list[0].args[0]
+    # Each video gets its own message with its own buttons, no dropdown step.
+    assert rc.await_count == 2
+    msg1, rows1 = rc.await_args_list[0].args
+    assert "draft (never started)" in msg1 and "collecting" not in msg1
+    ids1 = [c.get("custom_id") for row in rows1 for c in row.get("components", [])]
+    assert ids1 == ["aiuivid:del:j1"]
+    msg2, rows2 = rc.await_args_list[1].args
+    flat2 = [c for row in rows2 for c in row["components"]]
+    assert any(c.get("url") == "https://x/v.mp4" for c in flat2)
+    assert any(c.get("custom_id") == "aiuivid:del:j2" for c in flat2)
 
 
 @pytest.mark.asyncio

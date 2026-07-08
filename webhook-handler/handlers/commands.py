@@ -3126,26 +3126,35 @@ class CommandRouter:
             await ctx.respond("You have no videos yet. Click **New video** to make one.")
             return
         from handlers.video_panel import (
-            VIDEO_STATUS_EMOJI, VIDEO_STATUS_LABELS, build_videos_select,
+            VIDEO_STATUS_LABELS, build_video_manage_components,
         )
-        lines = ["\U0001f3ac **Your videos**", ""]
-        for n, v in enumerate(vids[:25], start=1):
+        shown = vids[:10]
+        intro = f"**Your videos** ({len(vids)})"
+        if len(vids) > len(shown):
+            intro += f", showing the latest {len(shown)}"
+        if ctx.respond_components is None:
+            # Plain-text fallback (no component surface available).
+            lines = [intro]
+            for v in shown:
+                status = (v.get("status") or "unknown").strip()
+                lines.append(f"- **{v.get('title') or v['id']}** - "
+                             f"{VIDEO_STATUS_LABELS.get(status, status)}")
+            await ctx.respond("\n".join(lines))
+            return
+        # One compact message per video with its buttons right underneath,
+        # so managing a video is a single click (no dropdown step).
+        await ctx.respond(intro)
+        for v in shown:
+            job_id = str(v.get("id") or "")
             status = (v.get("status") or "unknown").strip()
             label = VIDEO_STATUS_LABELS.get(status, status)
-            emoji = VIDEO_STATUS_EMOJI.get(status, "•")
-            lines.append(f"`{n}.` **{v.get('title') or v['id']}**  {emoji} {label}")
-        rows = build_videos_select(vids)
-        if rows and ctx.respond_components is not None:
-            lines += [
-                "",
-                "**Manage one in 3 quick steps:**",
-                "`1.` Pick a video in the menu below.",
-                "`2.` I post its buttons right here.",
-                "`3.` Use them: ▶ Watch, Refine, ↻ Retry, or \U0001f5d1 Delete.",
-            ]
-            await ctx.respond_components("\n".join(lines), rows)
-        else:
-            await ctx.respond("\n".join(lines))
+            line = f"**{v.get('title') or v['id']}** - {label}"
+            rows = build_video_manage_components(
+                job_id, status, share_url=(v.get("share_url") or "")) if job_id else []
+            if rows:
+                await ctx.respond_components(line, rows)
+            else:
+                await ctx.respond(line)
 
     async def run_video_menu(self, ctx: CommandContext, job_id: str) -> None:
         """Video picked from the My-videos select: post its manage buttons."""
@@ -3159,21 +3168,20 @@ class CommandRouter:
             await ctx.respond(f"Couldn't open that video: {e.message}")
             return
         from handlers.video_panel import (
-            VIDEO_STATUS_EMOJI, VIDEO_STATUS_LABELS, build_video_manage_components,
+            VIDEO_STATUS_LABELS, build_video_manage_components,
         )
         status = (job.get("status") or "unknown").strip()
         title = job.get("title") or "(no title)"
         label = VIDEO_STATUS_LABELS.get(status, status)
-        emoji = VIDEO_STATUS_EMOJI.get(status, "•")
         next_line = {
-            "done": "Next: ▶ watch it, refine it with a note, or delete it.",
-            "failed": "Next: ↻ retry the render, or delete it.",
-            "collecting": "Next: this draft never started. Delete it to tidy the list.",
-            "queued": "Next: it is waiting for the renderer. You can still delete it.",
-            "scripting": "Hang tight, the script is being written. Check back shortly.",
-            "rendering": "Hang tight, it is rendering. Check back shortly.",
+            "done": "Watch it, refine it with a note, or delete it.",
+            "failed": "Retry the render, or delete it.",
+            "collecting": "This draft never started. Delete it to tidy the list.",
+            "queued": "Waiting for the renderer. You can still delete it.",
+            "scripting": "The script is being written. Check back shortly.",
+            "rendering": "Rendering now. Check back shortly.",
         }.get(status, "")
-        header = f"\U0001f3ac **{title}**\nStatus: {emoji} {label}"
+        header = f"**{title}** - {label}"
         if next_line:
             header += f"\n{next_line}"
         rows = build_video_manage_components(
