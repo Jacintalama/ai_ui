@@ -210,7 +210,7 @@ async def capture_site(
     url: str,
     *,
     max_frames: int = 5,
-    viewport: tuple[int, int] = (1280, 800),
+    viewport: tuple[int, int] = (1280, 720),
     nav_timeout_ms: int = 20000,
 ) -> tuple[list[bytes], dict]:
     """Capture a live site as up to `max_frames` viewport-height PNG frames by
@@ -238,6 +238,12 @@ async def capture_site(
                 try:
                     context = await browser.new_context(
                         viewport={"width": vw, "height": vh},
+                        # 2x captures: the renderer zooms and pans these frames,
+                        # so 1x PNGs come out soft. Retina keeps text crisp.
+                        device_scale_factor=2,
+                        # Freeze CSS animations/transitions mid-state so shots
+                        # are not caught between keyframes.
+                        reduced_motion="reduce",
                         user_agent="Mozilla/5.0 (compatible; AIUI-VideoCapture)",
                     )
                     page = await context.new_page()
@@ -263,6 +269,10 @@ async def capture_site(
                         raise CaptureError(f"could not load the page: {e}") from e
                     # A redirect may have landed somewhere internal — re-check.
                     await assert_capturable(page.url)
+                    try:
+                        await page.evaluate("document.fonts ? document.fonts.ready.then(() => 0) : 0")
+                    except Exception:  # noqa: BLE001
+                        pass
                     height = int(await page.evaluate("document.body.scrollHeight") or vh)
                     n = max(1, min(max_frames, math.ceil(height / vh)))
                     for i in range(n):
@@ -302,6 +312,11 @@ async def _walk_with_page(
         await page.goto(cur, wait_until="domcontentloaded", timeout=None)
         if settle_ms:
             await page.wait_for_timeout(settle_ms)
+        try:
+            # Webfonts swapping in mid-shot are a top cause of ugly frames.
+            await page.evaluate("document.fonts ? document.fonts.ready.then(() => 0) : 0")
+        except Exception:  # noqa: BLE001 - fonts API missing on odd pages is fine
+            pass
         await page.evaluate("window.scrollTo(0, 0)")
         frames.append(await page.screenshot())
         real_url = page.url or cur
@@ -331,7 +346,7 @@ async def capture_walk(
     url: str,
     *,
     max_pages: int = 4,
-    viewport: tuple[int, int] = (1280, 800),
+    viewport: tuple[int, int] = (1280, 720),
     nav_timeout_ms: int = 30000,
 ) -> tuple[list[bytes], list[dict], dict]:
     """Navigate up to max_pages same-origin pages, screenshotting each and
@@ -355,6 +370,12 @@ async def capture_walk(
                 try:
                     context = await browser.new_context(
                         viewport={"width": vw, "height": vh},
+                        # 2x captures: the renderer zooms and pans these frames,
+                        # so 1x PNGs come out soft. Retina keeps text crisp.
+                        device_scale_factor=2,
+                        # Freeze CSS animations/transitions mid-state so shots
+                        # are not caught between keyframes.
+                        reduced_motion="reduce",
                         user_agent="Mozilla/5.0 (compatible; AIUI-VideoCapture)",
                     )
                     page = await context.new_page()
