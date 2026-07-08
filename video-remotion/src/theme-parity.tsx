@@ -192,21 +192,30 @@ export const SceneParity: React.FC<{
             />
             {clickCur ? (
               <>
-                {/* cursor arrow (tip lands ~ on the target) */}
-                <div
+                {/* Real arrow cursor (macOS-style polygon, tip anchored on the
+                    target). Presses down slightly while the click pulses. */}
+                <svg
+                  width={22}
+                  height={30}
+                  viewBox="-1 -1 15.6 21.4"
                   style={{
                     position: "absolute",
                     left: `${clickCur.x * 100}%`,
                     top: `${clickCur.y * 100}%`,
-                    width: 0,
-                    height: 0,
-                    borderTop: "18px solid #f7f5ef",
-                    borderRight: "11px solid transparent",
-                    filter: "drop-shadow(0 2px 1px rgba(0,0,0,.55))",
-                    transform: "rotate(-12deg)",
+                    transform: `scale(${1 - 0.12 * clickCur.pulse})`,
+                    transformOrigin: "0 0",
+                    filter: "drop-shadow(0 2px 3px rgba(0,0,0,.5))",
                     pointerEvents: "none",
                   }}
-                />
+                >
+                  <polygon
+                    points="0,0 0,16.97 4.59,13.23 7.32,19.36 10.36,18.04 7.63,11.91 13.61,11.91"
+                    fill="#fff"
+                    stroke="#1a1a1a"
+                    strokeWidth="1.1"
+                    strokeLinejoin="round"
+                  />
+                </svg>
                 {/* click pulse ring centered on the target */}
                 <div
                   style={{

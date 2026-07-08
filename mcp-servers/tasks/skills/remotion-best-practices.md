@@ -31,8 +31,20 @@ Install/update: scripts/install_video_skill.py (writes the skill DB row).
 ## Cursor click-through (REQUIRED on screenshot scenes with a click target)
 
 The signature of these videos is a cursor that uses the site like a person:
-- Draw ONE cursor: a simple white pointer with a soft drop shadow, about
-  22-28px tall. It must persist across the scene, never teleport.
+- Draw ONE cursor and make it a REAL arrow pointer, never a triangle, dot, or
+  circle. Use exactly this inline SVG (macOS-style arrow, white fill, dark
+  outline, soft drop shadow), with the polygon's (0,0) TIP anchored on the
+  click point via transformOrigin "0 0":
+
+  ```tsx
+  <svg width={22} height={30} viewBox="-1 -1 15.6 21.4"
+       style={{position: "absolute", filter: "drop-shadow(0 2px 3px rgba(0,0,0,.5))"}}>
+    <polygon points="0,0 0,16.97 4.59,13.23 7.32,19.36 10.36,18.04 7.63,11.91 13.61,11.91"
+             fill="#fff" stroke="#1a1a1a" strokeWidth="1.1" strokeLinejoin="round" />
+  </svg>
+  ```
+
+  It must persist across the scene, never teleport.
 - GLIDE: move the cursor to the click point along a slightly curved path with
   ease-in-out over 0.6-1.0s. Overshoot by 2-3px and settle.
 - PRESS: on arrival, scale the cursor to 0.9 for ~3 frames, then back, and
