@@ -449,3 +449,87 @@ async def test_submit_with_template_and_empty_prompt_uses_template_script():
     call = router._tasks_client.create_video_draft.await_args
     assert "punchy social clip" in call.args[2]      # prompt arg
     assert call.args[3] == "snappy_social"            # style arg
+
+
+# ---------------------------------------------------------------------------
+# Delete / Retry / Watch interactions
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_vid_watch_link_button_is_acked_quietly():
+    router = _video_router()
+    handler, slack = _handler(router)
+    resp = await handler.handle_interaction(
+        _block_actions_payload("slackvid_watch:j1"))
+    assert resp == {}
+    assert router._tasks_client.mock_calls == []
+
+
+@pytest.mark.asyncio
+async def test_vid_delete_deletes_and_reposts_list():
+    router = _video_router()
+    router._tasks_client.delete_video = AsyncMock(return_value={"status": "deleted"})
+    router._tasks_client.list_videos = AsyncMock(return_value={"videos": []})
+    handler, slack = _handler(router)
+
+    resp = await handler.handle_interaction(
+        _block_actions_payload("slackvid_del:j9"))
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.delete_video.assert_awaited_once_with("u@x.com", "j9")
+    router._tasks_client.list_videos.assert_awaited_once_with("u@x.com")
+    _, kwargs = slack.post_message.call_args
+    assert kwargs.get("text") == "Deleted."
+    assert kwargs.get("blocks")
+
+
+@pytest.mark.asyncio
+async def test_vid_delete_409_reports_rendering_and_still_lists():
+    from clients.tasks import TasksAPIError
+    router = _video_router()
+    router._tasks_client.delete_video = AsyncMock(
+        side_effect=TasksAPIError(409, "Cannot delete a video while it is rendering"))
+    router._tasks_client.list_videos = AsyncMock(return_value={"videos": []})
+    handler, slack = _handler(router)
+
+    await handler.handle_interaction(_block_actions_payload("slackvid_del:j9"))
+    await asyncio.sleep(0)
+
+    _, kwargs = slack.post_message.call_args
+    assert "rendering right now" in kwargs.get("text", "")
+
+
+@pytest.mark.asyncio
+async def test_vid_retry_requeues_and_watches():
+    router = _video_router()
+    router._tasks_client.retry_video = AsyncMock(return_value={"status": "queued"})
+    handler, slack = _handler(router)
+    handler._watch_slack_video = AsyncMock()
+
+    resp = await handler.handle_interaction(
+        _block_actions_payload("slackvid_retry:j5"))
+    assert resp == {}
+    await asyncio.sleep(0)
+
+    router._tasks_client.retry_video.assert_awaited_once_with("u@x.com", "j5")
+    handler._watch_slack_video.assert_awaited_once()
+    args = handler._watch_slack_video.await_args.args
+    assert args[0] == "u@x.com" and args[1] == "j5"
+
+
+@pytest.mark.asyncio
+async def test_vid_retry_conflict_posts_clean_error():
+    from clients.tasks import TasksAPIError
+    router = _video_router()
+    router._tasks_client.retry_video = AsyncMock(
+        side_effect=TasksAPIError(409, "Only a failed video can be retried"))
+    handler, slack = _handler(router)
+    handler._watch_slack_video = AsyncMock()
+
+    await handler.handle_interaction(_block_actions_payload("slackvid_retry:j5"))
+    await asyncio.sleep(0)
+
+    handler._watch_slack_video.assert_not_awaited()
+    _, kwargs = slack.post_message.call_args
+    assert "Could not retry" in kwargs.get("text", "")

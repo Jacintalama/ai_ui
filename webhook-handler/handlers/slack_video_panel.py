@@ -15,6 +15,9 @@ CREATE_CALLBACK = "slackvid_create"
 REFINE_PREFIX = "slackvid_refine:"
 REFINE_CALLBACK = "slackvid_refine_submit"
 APPLY_PREFIX = "slackvid_apply:"
+DELETE_PREFIX = "slackvid_del:"
+RETRY_PREFIX = "slackvid_retry:"
+WATCH_PREFIX = "slackvid_watch:"
 
 STYLES: list[tuple[str, str]] = [
     ("clean_product_demo", "Clean product demo"),
@@ -302,17 +305,47 @@ def parse_video_modal(view: dict) -> dict:
 # Result blocks (posted when a render completes)
 # ---------------------------------------------------------------------------
 
-def build_result_blocks(job_id: str, title: str, share_url: str) -> list[dict]:
-    """Blocks for the render-done message: section with link + Refine button."""
-    return [
-        _section(f"Your video is ready: *{title}*\n<{share_url}|Watch it here>"),
-        {
-            "type": "actions",
-            "elements": [
-                _button("Refine", f"{REFINE_PREFIX}{job_id}"),
-            ],
+def _watch_button(job_id: str, url: str) -> dict:
+    """Link-style button that opens the rendered video in the browser."""
+    return {
+        "type": "button",
+        "text": {"type": "plain_text", "text": "▶ Watch"},
+        "url": url,
+        "action_id": f"{WATCH_PREFIX}{job_id}",
+    }
+
+
+def _delete_button(job_id: str, title: str) -> dict:
+    """Danger-styled Delete button with a native Slack confirm dialog."""
+    return {
+        "type": "button",
+        "text": {"type": "plain_text", "text": "Delete"},
+        "style": "danger",
+        "action_id": f"{DELETE_PREFIX}{job_id}",
+        "confirm": {
+            "title": {"type": "plain_text", "text": "Delete video?"},
+            "text": {"type": "mrkdwn",
+                     "text": f"This permanently deletes *{title[:80]}*. No undo."},
+            "confirm": {"type": "plain_text", "text": "Delete"},
+            "deny": {"type": "plain_text", "text": "Cancel"},
         },
-    ]
+    }
+
+
+def build_result_blocks(job_id: str, title: str, share_url: str) -> list[dict]:
+    """Blocks for the render-done message. Only emits the watch link when a
+    share URL actually exists (an empty URL used to render as a dead
+    '<|Watch it here>' fragment), and always offers Refine."""
+    if share_url:
+        text = f"Your video is ready: *{title}*\n<{share_url}|Watch it here>"
+    else:
+        text = (f"Your video is ready: *{title}*\n"
+                "Open the web Video Studio to watch it.")
+    elements: list[dict] = []
+    if share_url:
+        elements.append(_watch_button(job_id, share_url))
+    elements.append(_button("Refine", f"{REFINE_PREFIX}{job_id}"))
+    return [_section(text), {"type": "actions", "elements": elements}]
 
 
 # ---------------------------------------------------------------------------
@@ -359,9 +392,24 @@ def build_proposal_blocks(job_id: str) -> list[dict]:
 # List blocks
 # ---------------------------------------------------------------------------
 
+# User-facing status labels: internal states like "collecting" are jargon,
+# so the list shows what the state MEANS instead.
+_STATUS_LABELS = {
+    "collecting": "draft (never started)",
+    "queued": "queued",
+    "scripting": "writing the script",
+    "rendering": "rendering",
+    "done": "done",
+    "failed": "failed",
+}
+
+
 def build_list_blocks(jobs: list[dict]) -> list[dict]:
-    """Header + one section per job (title + status) with a Refine button when
-    status == 'done'. Capped at _MAX_LIST_JOBS jobs."""
+    """Header + one section per job with status-appropriate actions:
+    done -> Watch (when a share link exists) + Refine + Delete;
+    failed -> Retry + Delete; drafts and queued -> Delete;
+    scripting/rendering -> no buttons (the API blocks deletion mid-render).
+    Capped at _MAX_LIST_JOBS jobs."""
     blocks: list[dict] = [
         {
             "type": "header",
@@ -379,12 +427,24 @@ def build_list_blocks(jobs: list[dict]) -> list[dict]:
         job_id = str(job.get("id") or "")
         title = (job.get("title") or "(no title)").strip()
         status = (job.get("status") or "unknown").strip()
-        blocks.append(_section(f"*{title}* - {status}"))
-        if status == "done" and job_id:
-            blocks.append({
-                "type": "actions",
-                "elements": [_button("Refine", f"{REFINE_PREFIX}{job_id}")],
-            })
+        label = _STATUS_LABELS.get(status, status)
+        blocks.append(_section(f"*{title}* - {label}"))
+        if not job_id:
+            continue
+        elements: list[dict] = []
+        if status == "done":
+            share_url = (job.get("share_url") or "").strip()
+            if share_url:
+                elements.append(_watch_button(job_id, share_url))
+            elements.append(_button("Refine", f"{REFINE_PREFIX}{job_id}"))
+            elements.append(_delete_button(job_id, title))
+        elif status == "failed":
+            elements.append(_button("Retry", f"{RETRY_PREFIX}{job_id}", primary=True))
+            elements.append(_delete_button(job_id, title))
+        elif status in ("collecting", "queued"):
+            elements.append(_delete_button(job_id, title))
+        if elements:
+            blocks.append({"type": "actions", "elements": elements})
 
     return blocks
 
@@ -409,9 +469,29 @@ def is_vid_apply(a: str) -> bool:
     return bool(a) and a.startswith(APPLY_PREFIX)
 
 
+def is_vid_delete(a: str) -> bool:
+    return bool(a) and a.startswith(DELETE_PREFIX)
+
+
+def is_vid_retry(a: str) -> bool:
+    return bool(a) and a.startswith(RETRY_PREFIX)
+
+
+def is_vid_watch(a: str) -> bool:
+    return bool(a) and a.startswith(WATCH_PREFIX)
+
+
 def job_from_refine(a: str) -> str:
     return a[len(REFINE_PREFIX):]
 
 
 def job_from_apply(a: str) -> str:
     return a[len(APPLY_PREFIX):]
+
+
+def job_from_delete(a: str) -> str:
+    return a[len(DELETE_PREFIX):]
+
+
+def job_from_retry(a: str) -> str:
+    return a[len(RETRY_PREFIX):]

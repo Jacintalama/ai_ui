@@ -11,6 +11,7 @@ import logging
 from typing import Any, Optional
 
 from clients.slack import SlackClient
+from clients.tasks import TasksAPIError
 from handlers.commands import CommandRouter, CommandContext
 from handlers import intent_cards
 from handlers.url_guard import is_safe_public_url
@@ -494,6 +495,77 @@ class SlackInteractionsHandler:
                         "Slack video list failed user=%s: %s", user_id, exc)
 
             task = asyncio.create_task(_do_vid_list())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        if svp.is_vid_watch(action_id):
+            # Link button: Slack opens the URL client-side; just ack.
+            return {}
+
+        if svp.is_vid_delete(action_id):
+            user_id = (payload.get("user") or {}).get("id", "")
+            job_id = svp.job_from_delete(action_id)
+
+            async def _do_vid_delete() -> None:
+                try:
+                    email = await self._bail_if_not_linked(user_id)
+                    if not email:
+                        return
+                    tasks_client = self.router._tasks_client
+                    try:
+                        await tasks_client.delete_video(email, job_id)
+                        note = "Deleted."
+                    except TasksAPIError as e:
+                        note = ("That video is rendering right now. Try again "
+                                "when it finishes."
+                                if e.status == 409
+                                else f"Could not delete it: {e.message}")
+                    res = await tasks_client.list_videos(email)
+                    jobs = (res.get("videos", [])
+                            if isinstance(res, dict) else (res or []))
+                    await self._video_dm(
+                        user_id, channel_id,
+                        text=note,
+                        blocks=svp.build_list_blocks(jobs),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Slack video delete failed job=%s user=%s: %s",
+                        job_id, user_id, exc)
+
+            task = asyncio.create_task(_do_vid_delete())
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        if svp.is_vid_retry(action_id):
+            user_id = (payload.get("user") or {}).get("id", "")
+            job_id = svp.job_from_retry(action_id)
+
+            async def _do_vid_retry() -> None:
+                try:
+                    email = await self._bail_if_not_linked(user_id)
+                    if not email:
+                        return
+                    tasks_client = self.router._tasks_client
+                    try:
+                        await tasks_client.retry_video(email, job_id)
+                    except TasksAPIError as e:
+                        await self._video_dm(
+                            user_id, channel_id,
+                            text=f"Could not retry that video: {e.message}")
+                        return
+                    await self._video_dm(
+                        user_id, channel_id,
+                        text="Retrying the render. I'll post it here when it's done.")
+                    await self._watch_slack_video(email, job_id, user_id, channel_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Slack video retry failed job=%s user=%s: %s",
+                        job_id, user_id, exc)
+
+            task = asyncio.create_task(_do_vid_retry())
             self.router._background_tasks.add(task)
             task.add_done_callback(self.router._background_tasks.discard)
             return {}

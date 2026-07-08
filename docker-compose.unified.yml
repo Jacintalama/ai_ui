@@ -287,6 +287,9 @@ services:
       - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
       - AIUI_SUPABASE_CLIENT_SECRET=${AIUI_SUPABASE_CLIENT_SECRET:-}
       - AIUI_PUBLIC_BASE_URL=https://ai-ui.coolestdomain.win
+      # Public base for capability watch links (share_url) minted by the
+      # video routes and the cron video scheduler.
+      - VIDEO_PUBLIC_BASE=https://ai-ui.coolestdomain.win
       - AGENT_BACKEND=${AGENT_BACKEND:-local}
       - AGENT_HOST=${AGENT_HOST:-172.22.0.1}
       - AGENT_USER=${AGENT_USER:-claude-agent}

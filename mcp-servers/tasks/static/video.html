@@ -2247,25 +2247,45 @@
       if (tv && tv.value !== id && tv.querySelector('option[value="' + id + '"]')) tv.value = id;
     }
 
+    let voicePreviewBtn = null; // the button bound to voiceAudio's current clip
+
+    function _setPreviewBtn(btn, playing) {
+      if (!btn) return;
+      btn.classList.toggle("playing", playing);
+      btn.textContent = playing ? "⏸" : "▶";
+    }
+
     function stopVoicePreview() {
       if (voiceAudio) { voiceAudio.pause(); voiceAudio.currentTime = 0; }
-      voiceList.querySelectorAll(".vo-play.playing").forEach((b) => {
-        b.classList.remove("playing");
-        b.textContent = "▶"; // play triangle
-      });
+      _setPreviewBtn(voicePreviewBtn, false);
+      voicePreviewBtn = null;
+      // Sweep every preview button (list + template panel) so no stale
+      // pause glyph survives a voice switch or state change.
+      voiceList && voiceList.querySelectorAll(".vo-play.playing").forEach((b) => _setPreviewBtn(b, false));
+      const tb = document.getElementById("tpl-voice-play");
+      if (tb) _setPreviewBtn(tb, false);
     }
 
     function playVoicePreview(url, btn) {
-      const wasPlaying = btn.classList.contains("playing");
-      stopVoicePreview();
-      if (wasPlaying) return; // second click = toggle off
       if (!voiceAudio) voiceAudio = new Audio();
+      const sameClip = voicePreviewBtn === btn && voiceAudio.src && voiceAudio.src.indexOf(url) !== -1;
+      if (sameClip && !voiceAudio.paused) {
+        // Playing -> pause, keep position so the next click resumes.
+        voiceAudio.pause();
+        _setPreviewBtn(btn, false);
+        return;
+      }
+      if (sameClip && voiceAudio.paused && !voiceAudio.ended && voiceAudio.currentTime > 0) {
+        // Paused mid-clip -> resume.
+        voiceAudio.play().then(() => _setPreviewBtn(btn, true)).catch(() => stopVoicePreview());
+        return;
+      }
+      // Different clip (or finished): reset everything, then start fresh.
+      stopVoicePreview();
       voiceAudio.src = url;
+      voicePreviewBtn = btn;
       voiceAudio.onended = stopVoicePreview;
-      voiceAudio.play().then(() => {
-        btn.classList.add("playing");
-        btn.textContent = "⏸"; // pause glyph while playing
-      }).catch(() => stopVoicePreview());
+      voiceAudio.play().then(() => _setPreviewBtn(btn, true)).catch(() => stopVoicePreview());
     }
 
     async function loadTemplates() {
@@ -2368,6 +2388,7 @@
         tv.appendChild(o);
       });
       tv.addEventListener("change", () => {
+        stopVoicePreview(); // a new voice means the old sample is stale
         const chosen = tv.value;
         setSelectedVoice(chosen || defaultVoiceId);
         if (!chosen) tv.value = ""; // keep None displayed; the default applies underneath

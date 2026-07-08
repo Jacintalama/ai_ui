@@ -365,6 +365,16 @@ class TasksClient:
                                    json={"version_no": version_no})
         return resp.json()
 
+    async def delete_video(self, user_email: str, job_id: str) -> dict[str, Any]:
+        """Delete one of the user's video jobs (409 while it is rendering)."""
+        resp = await self._request("DELETE", f"/api/video-jobs/{job_id}", user_email)
+        return resp.json()
+
+    async def retry_video(self, user_email: str, job_id: str) -> dict[str, Any]:
+        """Re-queue a failed render (409 unless the job status is failed)."""
+        resp = await self._request("POST", f"/api/video-jobs/{job_id}/retry", user_email)
+        return resp.json()
+
     async def download_video_bytes(self, user_email: str, job_id: str) -> bytes:
         """Fetch the rendered MP4 (member-auth via X-User-Email). Returns raw bytes."""
         resp = await self._request("GET", f"/api/video-jobs/{job_id}/download", user_email)

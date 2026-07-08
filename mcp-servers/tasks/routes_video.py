@@ -322,19 +322,33 @@ async def list_jobs(user: CurrentUser = Depends(current_user)) -> dict:
     """
     async with session() as s:
         rows = (await s.execute(
-            select(VideoJob.id, VideoJob.title, VideoJob.status, VideoJob.created_at,
-                   VideoJob.current_version_no, VideoJob.output_path)
+            select(VideoJob.id, VideoJob.slug, VideoJob.title, VideoJob.status,
+                   VideoJob.created_at, VideoJob.current_version_no,
+                   VideoJob.output_path)
             .where(VideoJob.user_email == user.email)
             .order_by(VideoJob.created_at.desc())
         )).all()
-    return {"videos": [{
-        "id": str(r.id),
-        "title": r.title,
-        "status": r.status,
-        "created_at": r.created_at.isoformat() if r.created_at else None,
-        "current_version_no": r.current_version_no,
-        "output_available": bool(r.output_path),
-    } for r in rows]}
+    base = os.environ.get("VIDEO_PUBLIC_BASE", "").rstrip("/")
+    videos = []
+    for r in rows:
+        # Best-effort watch link for finished videos, same recipe as job_status.
+        share_url = None
+        if base and r.status == "done" and r.output_path:
+            try:
+                tok = mint_video_capability(user.email, r.slug, str(r.id))
+                share_url = f"{base}/api/video-jobs/{r.id}/download?cap={tok}"
+            except RuntimeError:
+                share_url = None  # OAUTH_STATE_SECRET unset -> no link
+        videos.append({
+            "id": str(r.id),
+            "title": r.title,
+            "status": r.status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "current_version_no": r.current_version_no,
+            "output_available": bool(r.output_path),
+            "share_url": share_url,
+        })
+    return {"videos": videos}
 
 
 # Registered BEFORE "/{job_id}" so the literal "voices" path is not captured as
@@ -1025,6 +1039,30 @@ async def queue_job(job_id: str, user: CurrentUser = Depends(current_user)) -> d
             ))
         )).scalar() or 0
     return {"status": "queued", "queue_position": queue_position}
+
+
+@router.post("/{job_id}/retry")
+async def retry_job(job_id: str, user: CurrentUser = Depends(current_user)) -> dict:
+    """Re-queue a FAILED render as-is (same screenshots, plan, and options).
+
+    A failed attempt never counted toward the daily limit (only queued/
+    scripting/rendering/done do), so the retry is the free do-over path.
+    Owner-or-admin; 409 unless the job status is 'failed'."""
+    if not _video_enabled():
+        raise HTTPException(503, "Video generation is disabled")
+    jid = _coerce_job_id(job_id)
+    async with session() as s:
+        job = (await s.execute(select(VideoJob).where(VideoJob.id == jid))).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(404, "Video job not found")
+        if not user.is_admin and job.user_email != user.email:
+            raise HTTPException(403, "Not authorized for this video")
+        if job.status != "failed":
+            raise HTTPException(409, "Only a failed video can be retried")
+        await s.execute(update(VideoJob).where(VideoJob.id == jid).values(
+            status="queued", error=None))
+        await s.commit()
+    return {"status": "queued"}
 
 
 @router.post("/{job_id}/draft-set")

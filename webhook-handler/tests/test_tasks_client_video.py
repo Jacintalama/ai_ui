@@ -354,3 +354,27 @@ async def test_set_user_video_thread_posts_thread_id():
     assert caps["path"] == "/discord-links/discord-789/video-thread"
     assert caps["json"] == {"thread_id": "T-42"}
     assert result is True
+
+
+async def test_delete_video_path():
+    client = _make_client()
+    fake, caps = _fake_request_factory(return_json={"status": "deleted"})
+    client._request = fake
+
+    result = await client.delete_video("user@test.com", "job-xyz")
+
+    assert caps["method"] == "DELETE"
+    assert caps["path"] == "/api/video-jobs/job-xyz"
+    assert result == {"status": "deleted"}
+
+
+async def test_retry_video_path():
+    client = _make_client()
+    fake, caps = _fake_request_factory(return_json={"status": "queued"})
+    client._request = fake
+
+    result = await client.retry_video("user@test.com", "job-xyz")
+
+    assert caps["method"] == "POST"
+    assert caps["path"] == "/api/video-jobs/job-xyz/retry"
+    assert result == {"status": "queued"}

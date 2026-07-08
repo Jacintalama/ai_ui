@@ -492,3 +492,96 @@ def test_video_modal_description_is_optional():
 
 def test_default_mode_is_animated():
     assert DEFAULT_MODE == "animated"
+
+
+# ---------------------------------------------------------------------------
+# Watch / Delete / Retry additions
+# ---------------------------------------------------------------------------
+
+from handlers.slack_video_panel import (  # noqa: E402
+    DELETE_PREFIX, RETRY_PREFIX, WATCH_PREFIX, build_list_blocks,
+    build_result_blocks, is_vid_delete, is_vid_retry, is_vid_watch,
+    job_from_delete, job_from_retry,
+)
+
+
+def _action_ids(blocks):
+    return [e.get("action_id") for b in blocks if b.get("type") == "actions"
+            for e in b.get("elements", [])]
+
+
+def test_result_blocks_without_share_url_has_no_dead_link():
+    blocks = build_result_blocks("j1", "My Video", "")
+    text = blocks[0]["text"]["text"]
+    assert "<|" not in text
+    assert "Video Studio" in text
+    assert f"{WATCH_PREFIX}j1" not in _action_ids(blocks)
+    assert f"{REFINE_PREFIX}j1" in _action_ids(blocks)
+
+
+def test_result_blocks_with_share_url_has_watch_button():
+    blocks = build_result_blocks("j1", "My Video", "https://x/dl.mp4?cap=t")
+    assert "<https://x/dl.mp4?cap=t|Watch it here>" in blocks[0]["text"]["text"]
+    watch = [e for b in blocks if b.get("type") == "actions"
+             for e in b["elements"] if e.get("action_id") == f"{WATCH_PREFIX}j1"]
+    assert watch and watch[0]["url"] == "https://x/dl.mp4?cap=t"
+
+
+def test_list_done_job_has_watch_refine_delete_in_order():
+    jobs = [{"id": "j1", "title": "T", "status": "done",
+             "share_url": "https://x/v.mp4"}]
+    ids = _action_ids(build_list_blocks(jobs))
+    assert ids == [f"{WATCH_PREFIX}j1", f"{REFINE_PREFIX}j1", f"{DELETE_PREFIX}j1"]
+
+
+def test_list_done_without_share_url_skips_watch():
+    jobs = [{"id": "j1", "title": "T", "status": "done"}]
+    ids = _action_ids(build_list_blocks(jobs))
+    assert ids == [f"{REFINE_PREFIX}j1", f"{DELETE_PREFIX}j1"]
+
+
+def test_list_failed_job_has_primary_retry_and_delete():
+    jobs = [{"id": "j2", "title": "T", "status": "failed"}]
+    blocks = build_list_blocks(jobs)
+    ids = _action_ids(blocks)
+    assert ids == [f"{RETRY_PREFIX}j2", f"{DELETE_PREFIX}j2"]
+    retry = [e for b in blocks if b.get("type") == "actions"
+             for e in b["elements"] if e["action_id"] == f"{RETRY_PREFIX}j2"][0]
+    assert retry.get("style") == "primary"
+
+
+def test_list_collecting_shows_draft_label_and_delete_only():
+    jobs = [{"id": "j3", "title": "Stale", "status": "collecting"}]
+    blocks = build_list_blocks(jobs)
+    section = blocks[1]["text"]["text"]
+    assert "collecting" not in section
+    assert "draft (never started)" in section
+    assert _action_ids(blocks) == [f"{DELETE_PREFIX}j3"]
+
+
+def test_list_queued_job_can_be_deleted():
+    jobs = [{"id": "j4", "title": "T", "status": "queued"}]
+    assert _action_ids(build_list_blocks(jobs)) == [f"{DELETE_PREFIX}j4"]
+
+
+def test_list_rendering_job_has_no_buttons():
+    jobs = [{"id": "j5", "title": "T", "status": "rendering"}]
+    assert _action_ids(build_list_blocks(jobs)) == []
+
+
+def test_delete_button_carries_native_confirm():
+    jobs = [{"id": "j6", "title": "My clip", "status": "done"}]
+    blocks = build_list_blocks(jobs)
+    delete = [e for b in blocks if b.get("type") == "actions"
+              for e in b["elements"] if e["action_id"] == f"{DELETE_PREFIX}j6"][0]
+    assert delete["style"] == "danger"
+    assert delete["confirm"]["confirm"]["text"] == "Delete"
+    assert "My clip" in delete["confirm"]["text"]["text"]
+
+
+def test_delete_retry_watch_predicates_round_trip():
+    assert is_vid_delete(f"{DELETE_PREFIX}j7") and job_from_delete(f"{DELETE_PREFIX}j7") == "j7"
+    assert is_vid_retry(f"{RETRY_PREFIX}j8") and job_from_retry(f"{RETRY_PREFIX}j8") == "j8"
+    assert is_vid_watch(f"{WATCH_PREFIX}j9")
+    assert not is_vid_delete(f"{RETRY_PREFIX}j7")
+    assert not is_vid_retry(f"{DELETE_PREFIX}j8")
