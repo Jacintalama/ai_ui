@@ -3125,10 +3125,78 @@ class CommandRouter:
         if not vids:
             await ctx.respond("You have no videos yet. Click **New video** to make one.")
             return
-        lines = [f"- **{v.get('title') or v['id']}** — {v.get('status')}"
-                 + (" (ready)" if v.get("output_available") else "")
-                 for v in vids[:25]]
-        await ctx.respond("Your videos:\n" + "\n".join(lines))
+        from handlers.video_panel import VIDEO_STATUS_LABELS, build_videos_select
+        lines = []
+        for v in vids[:25]:
+            status = (v.get("status") or "unknown").strip()
+            lines.append(f"- **{v.get('title') or v['id']}** - "
+                         f"{VIDEO_STATUS_LABELS.get(status, status)}")
+        text = "Your videos:\n" + "\n".join(lines)
+        rows = build_videos_select(vids)
+        if rows and ctx.respond_components is not None:
+            await ctx.respond_components(
+                text + "\n\nPick one below to watch, retry, or delete it.", rows)
+        else:
+            await ctx.respond(text)
+
+    async def run_video_menu(self, ctx: CommandContext, job_id: str) -> None:
+        """Video picked from the My-videos select: post its manage buttons."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            job = await self._tasks_client.get_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't open that video: {e.message}")
+            return
+        from handlers.video_panel import (
+            VIDEO_STATUS_LABELS, build_video_manage_components,
+        )
+        status = (job.get("status") or "unknown").strip()
+        title = job.get("title") or "(no title)"
+        header = f"**{title}** - {VIDEO_STATUS_LABELS.get(status, status)}"
+        rows = build_video_manage_components(
+            job_id, status, share_url=(job.get("share_url") or ""))
+        if rows and ctx.respond_components is not None:
+            await ctx.respond_components(header, rows)
+        else:
+            await ctx.respond(
+                header + "\nNothing to do while it is in this state - check back shortly.")
+
+    async def run_video_delete(self, ctx: CommandContext, job_id: str) -> None:
+        """Confirmed delete of one video job."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.delete_video(email, job_id)
+        except TasksAPIError as e:
+            if e.status == 409:
+                await ctx.respond(
+                    "That video is rendering right now. Try again when it finishes.")
+            else:
+                await ctx.respond(f"Couldn't delete it: {e.message}")
+            return
+        await ctx.respond("Deleted. Open **My videos** to see the updated list.")
+
+    async def run_video_retry(self, ctx: CommandContext, job_id: str) -> None:
+        """Retry button on a failed video: re-queue it and watch to delivery."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.retry_video(email, job_id)
+        except TasksAPIError as e:
+            await ctx.respond(f"Couldn't retry that video: {e.message}")
+            return
+        await ctx.respond("Retrying the render - I'll post it here when it's done.")
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(self._watch_video(ctx, email, job_id))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_video_watcher_done)
 
     def _on_video_watcher_done(self, task: "asyncio.Task") -> None:
         self._background_tasks.discard(task)

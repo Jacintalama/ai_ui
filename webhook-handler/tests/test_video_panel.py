@@ -490,3 +490,87 @@ def test_options_components_no_template_row_when_absent():
     from handlers.video_panel import build_options_components
     rows = build_options_components("j1", [{"id": "amy", "label": "Amy"}])
     assert len(rows) == 4
+
+
+# ---------------------------------------------------------------------------
+# My-videos manage menu (pick select + watch/retry/delete)
+# ---------------------------------------------------------------------------
+
+from handlers.video_panel import (  # noqa: E402
+    PICK_ID, RETRY_PREFIX as VID_RETRY_PREFIX, VIDDEL_CANCEL_PREFIX,
+    VIDDEL_CONFIRM_PREFIX, VIDDEL_PREFIX, build_video_delete_confirm_components,
+    build_video_manage_components, build_videos_select, is_vid_del,
+    is_vid_delno, is_vid_delok, is_vid_pick, is_vid_retry, job_from_del,
+    job_from_delok, job_from_retry,
+)
+
+
+def _ids_of(rows):
+    return [c.get("custom_id") for row in rows for c in row.get("components", [])]
+
+
+def test_videos_select_builds_options_with_labels():
+    rows = build_videos_select([
+        {"id": "j1", "title": "First", "status": "done"},
+        {"id": "j2", "title": "Second", "status": "collecting"},
+    ])
+    assert len(rows) == 1
+    sel = rows[0]["components"][0]
+    assert sel["custom_id"] == PICK_ID
+    assert [o["value"] for o in sel["options"]] == ["j1", "j2"]
+    assert sel["options"][1]["description"] == "draft (never started)"
+
+
+def test_videos_select_skips_idless_and_caps_at_25():
+    jobs = [{"title": "broken"}] + [
+        {"id": f"j{i}", "title": f"T{i}", "status": "done"} for i in range(30)]
+    sel = build_videos_select(jobs)[0]["components"][0]
+    assert len(sel["options"]) <= 25
+    assert all(o["value"].startswith("j") for o in sel["options"])
+
+
+def test_videos_select_empty_returns_no_rows():
+    assert build_videos_select([{"title": "x"}]) == []
+
+
+def test_manage_done_has_watch_refine_delete():
+    rows = build_video_manage_components("j1", "done", share_url="https://x/v.mp4")
+    buttons = rows[0]["components"]
+    assert buttons[0]["style"] == 5 and buttons[0]["url"] == "https://x/v.mp4"
+    ids = _ids_of(rows)
+    assert f"aiuivid:refine:j1" in ids and f"{VIDDEL_PREFIX}j1" in ids
+
+
+def test_manage_done_without_share_url_skips_watch():
+    rows = build_video_manage_components("j1", "done")
+    assert all("url" not in c for row in rows for c in row["components"])
+
+
+def test_manage_failed_has_retry_and_delete():
+    ids = _ids_of(build_video_manage_components("j2", "failed"))
+    assert ids == [f"{VID_RETRY_PREFIX}j2", f"{VIDDEL_PREFIX}j2"]
+
+
+def test_manage_draft_and_queued_delete_only():
+    for st in ("collecting", "queued"):
+        ids = _ids_of(build_video_manage_components("j3", st))
+        assert ids == [f"{VIDDEL_PREFIX}j3"]
+
+
+def test_manage_rendering_has_no_rows():
+    assert build_video_manage_components("j4", "rendering") == []
+
+
+def test_delete_confirm_components():
+    ids = _ids_of(build_video_delete_confirm_components("j5"))
+    assert ids == [f"{VIDDEL_CONFIRM_PREFIX}j5", f"{VIDDEL_CANCEL_PREFIX}j5"]
+
+
+def test_manage_predicates_round_trip_and_disjoint():
+    assert is_vid_pick(PICK_ID)
+    assert is_vid_del(f"{VIDDEL_PREFIX}j7") and job_from_del(f"{VIDDEL_PREFIX}j7") == "j7"
+    assert is_vid_delok(f"{VIDDEL_CONFIRM_PREFIX}j7") and job_from_delok(f"{VIDDEL_CONFIRM_PREFIX}j7") == "j7"
+    assert is_vid_delno(f"{VIDDEL_CANCEL_PREFIX}j7")
+    assert is_vid_retry(f"{VID_RETRY_PREFIX}j8") and job_from_retry(f"{VID_RETRY_PREFIX}j8") == "j8"
+    assert not is_vid_del(f"{VIDDEL_CONFIRM_PREFIX}j7")
+    assert not is_vid_delok(f"{VIDDEL_PREFIX}j7")

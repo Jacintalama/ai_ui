@@ -6,7 +6,8 @@ docs/superpowers/specs/2026-06-19-discord-video-channel-design.md.
 """
 from handlers.app_builder_panel import (  # reuse the shared component constants
     ACTION_ROW, BUTTON, SELECT_MENU, TEXT_INPUT, TEXT_PARAGRAPH, TEXT_SHORT,
-    STYLE_PRIMARY, STYLE_SECONDARY, STYLE_SUCCESS, ROBOTIC_CYAN, _button,
+    STYLE_DANGER, STYLE_LINK, STYLE_PRIMARY, STYLE_SECONDARY, STYLE_SUCCESS,
+    ROBOTIC_CYAN, _button,
 )
 
 # --- custom_id namespace ---
@@ -27,6 +28,11 @@ SRC_SHOTS_PREFIX = "aiuivid:srcshots:"
 SRC_SHOTS_CONTINUE_PREFIX = "aiuivid:srcshotsgo:"
 OPTIONS_PREFIX = "aiuivid:options:"
 TPL_PREFIX = "aiuivid:tpl:"
+PICK_ID = "aiuivid:pick"
+VIDDEL_PREFIX = "aiuivid:del:"
+VIDDEL_CONFIRM_PREFIX = "aiuivid:delok:"
+VIDDEL_CANCEL_PREFIX = "aiuivid:delno:"
+RETRY_PREFIX = "aiuivid:retry:"
 OPTIONS_BACK_PREFIX = "aiuivid:optionsback:"
 REFINE_PREFIX = "aiuivid:refine:"
 REFINE_MODAL_PREFIX = "aiuivid:refinemodal:"
@@ -299,6 +305,71 @@ def is_vid_src_shots(c: str) -> bool: return c.startswith(SRC_SHOTS_PREFIX)
 def is_vid_src_shots_continue(c: str) -> bool: return c.startswith(SRC_SHOTS_CONTINUE_PREFIX)
 def is_vid_options(c: str) -> bool: return c.startswith(OPTIONS_PREFIX)
 def is_vid_options_back(c: str) -> bool: return c.startswith(OPTIONS_BACK_PREFIX)
+# User-facing status labels: internal states like "collecting" are jargon.
+VIDEO_STATUS_LABELS = {
+    "collecting": "draft (never started)",
+    "queued": "queued",
+    "scripting": "writing the script",
+    "rendering": "rendering",
+    "done": "done",
+    "failed": "failed",
+}
+
+
+def build_videos_select(jobs: list[dict]) -> list[dict]:
+    """One action row: a select of the user's videos (value=job id) that opens
+    the per-video manage menu. Caps at 25 options (Discord max)."""
+    options = []
+    for v in jobs[:25]:
+        vid_id = str(v.get("id") or "")
+        if not vid_id:
+            continue
+        status = (v.get("status") or "unknown").strip()
+        options.append({
+            "label": (v.get("title") or "(no title)")[:100],
+            "value": vid_id[:100],
+            "description": VIDEO_STATUS_LABELS.get(status, status)[:100],
+        })
+    if not options:
+        return []
+    return [{"type": ACTION_ROW, "components": [{
+        "type": SELECT_MENU, "custom_id": PICK_ID,
+        "placeholder": "Pick a video to manage…",
+        "min_values": 1, "max_values": 1, "options": options,
+    }]}]
+
+
+def build_video_manage_components(job_id: str, status: str,
+                                  share_url: str = "") -> list[dict]:
+    """Status-appropriate action buttons for one video:
+    done -> Watch (link, when a share URL exists) + Refine + Delete;
+    failed -> Retry + Delete; draft/queued -> Delete;
+    scripting/rendering -> no buttons (deletion is blocked mid-render)."""
+    buttons: list[dict] = []
+    if status == "done":
+        if share_url:
+            buttons.append({"type": BUTTON, "style": STYLE_LINK,
+                            "label": "▶ Watch", "url": share_url})
+        buttons.append(_button("Refine", f"{REFINE_PREFIX}{job_id}", STYLE_PRIMARY))
+        buttons.append(_button("🗑 Delete", f"{VIDDEL_PREFIX}{job_id}", STYLE_DANGER))
+    elif status == "failed":
+        buttons.append(_button("↻ Retry", f"{RETRY_PREFIX}{job_id}", STYLE_SUCCESS))
+        buttons.append(_button("🗑 Delete", f"{VIDDEL_PREFIX}{job_id}", STYLE_DANGER))
+    elif status in ("collecting", "queued"):
+        buttons.append(_button("🗑 Delete", f"{VIDDEL_PREFIX}{job_id}", STYLE_DANGER))
+    if not buttons:
+        return []
+    return [{"type": ACTION_ROW, "components": buttons}]
+
+
+def build_video_delete_confirm_components(job_id: str) -> list[dict]:
+    """Confirmation buttons for deleting a video: red Confirm + grey Cancel."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("🗑 Delete it", f"{VIDDEL_CONFIRM_PREFIX}{job_id}", STYLE_DANGER),
+        _button("✖ Cancel", f"{VIDDEL_CANCEL_PREFIX}{job_id}", STYLE_SECONDARY),
+    ]}]
+
+
 def is_vid_tpl(c: str) -> bool: return c.startswith(TPL_PREFIX)
 
 def job_from_src_url(c: str) -> str: return _suffix_after(c, SRC_URL_PREFIX)
@@ -307,3 +378,11 @@ def job_from_src_shots_continue(c: str) -> str: return _suffix_after(c, SRC_SHOT
 def job_from_options(c: str) -> str: return _suffix_after(c, OPTIONS_PREFIX)
 def job_from_options_back(c: str) -> str: return _suffix_after(c, OPTIONS_BACK_PREFIX)
 def job_from_tpl(c: str) -> str: return _suffix_after(c, TPL_PREFIX)
+def is_vid_pick(c: str) -> bool: return c == PICK_ID
+def is_vid_del(c: str) -> bool: return c.startswith(VIDDEL_PREFIX)
+def is_vid_delok(c: str) -> bool: return c.startswith(VIDDEL_CONFIRM_PREFIX)
+def is_vid_delno(c: str) -> bool: return c.startswith(VIDDEL_CANCEL_PREFIX)
+def is_vid_retry(c: str) -> bool: return c.startswith(RETRY_PREFIX)
+def job_from_del(c: str) -> str: return _suffix_after(c, VIDDEL_PREFIX)
+def job_from_delok(c: str) -> str: return _suffix_after(c, VIDDEL_CONFIRM_PREFIX)
+def job_from_retry(c: str) -> str: return _suffix_after(c, RETRY_PREFIX)

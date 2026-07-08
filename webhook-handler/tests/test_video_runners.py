@@ -253,7 +253,7 @@ async def test_run_video_list_lines():
     ctx = _ctx()
     await r.run_video_list(ctx)
     out = ctx.respond.await_args.args[0]
-    assert "Vid A" in out and "(ready)" in out and "b" in out
+    assert "Vid A" in out and "done" in out and "b" in out
 
 
 # --- run_video_revert ------------------------------------------------------- #
@@ -405,3 +405,89 @@ async def test_run_video_apply_template_unknown_key_is_noop():
     r = _router(tc)
     await r.run_video_apply_template(_ctx(), "job1", "nope")
     tc.set_video_draft_fields.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# My-videos manage flow (list select + menu + delete + retry)
+
+import asyncio  # noqa: E402
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_video_list_posts_select_and_clean_labels():
+    tc = MagicMock()
+    tc.list_videos = AsyncMock(return_value={"videos": [
+        {"id": "j1", "title": "Mine", "status": "collecting"}]})
+    r = _router(tc)
+    rc = AsyncMock()
+    ctx = _ctx(respond_components=rc)
+    await r.run_video_list(ctx)
+    msg, rows = rc.await_args.args
+    assert "draft (never started)" in msg
+    assert "collecting" not in msg
+    ids = [c.get("custom_id") for row in rows for c in row.get("components", [])]
+    assert "aiuivid:pick" in ids
+
+
+@pytest.mark.asyncio
+async def test_run_video_menu_done_posts_watch_and_delete():
+    tc = MagicMock()
+    tc.get_video = AsyncMock(return_value={
+        "id": "j1", "title": "Mine", "status": "done",
+        "share_url": "https://x/v.mp4"})
+    r = _router(tc)
+    rc = AsyncMock()
+    ctx = _ctx(respond_components=rc)
+    await r.run_video_menu(ctx, "j1")
+    header, rows = rc.await_args.args
+    assert "done" in header
+    flat = [c for row in rows for c in row["components"]]
+    assert any(c.get("url") == "https://x/v.mp4" for c in flat)
+    assert any(c.get("custom_id") == "aiuivid:del:j1" for c in flat)
+
+
+@pytest.mark.asyncio
+async def test_run_video_delete_deletes_and_confirms():
+    tc = MagicMock()
+    tc.delete_video = AsyncMock(return_value={"status": "deleted"})
+    r = _router(tc)
+    ctx = _ctx()
+    await r.run_video_delete(ctx, "j1")
+    tc.delete_video.assert_awaited_once_with("u@x.com", "j1")
+    assert "Deleted" in ctx.respond.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_run_video_delete_409_reports_rendering():
+    tc = MagicMock()
+    tc.delete_video = AsyncMock(side_effect=TasksAPIError(409, "mid-render"))
+    r = _router(tc)
+    ctx = _ctx()
+    await r.run_video_delete(ctx, "j1")
+    assert "rendering right now" in ctx.respond.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_run_video_retry_requeues_and_watches():
+    tc = MagicMock()
+    tc.retry_video = AsyncMock(return_value={"status": "queued"})
+    r = _router(tc)
+    r._watch_video = AsyncMock()
+    nc = AsyncMock()
+    ctx = _ctx(notify_channel=nc)
+    await r.run_video_retry(ctx, "j1")
+    tc.retry_video.assert_awaited_once_with("u@x.com", "j1")
+    await asyncio.gather(*r._background_tasks)
+    r._watch_video.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_video_retry_conflict_is_clean():
+    tc = MagicMock()
+    tc.retry_video = AsyncMock(side_effect=TasksAPIError(409, "Only a failed video can be retried"))
+    r = _router(tc)
+    r._watch_video = AsyncMock()
+    ctx = _ctx(notify_channel=AsyncMock())
+    await r.run_video_retry(ctx, "j1")
+    r._watch_video.assert_not_awaited()
+    assert "Couldn't retry" in ctx.respond.await_args.args[0]

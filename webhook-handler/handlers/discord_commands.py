@@ -445,6 +445,32 @@ class DiscordCommandHandler:
             return await self._handle_video_route(
                 payload, lambda ctx: self.router.run_video_list(ctx),
                 raw_text="video list")
+        if vid.is_vid_pick(custom_id):
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_video_route(
+                payload, lambda ctx, j=values[0]: self.router.run_video_menu(ctx, j),
+                raw_text="video menu")
+        if vid.is_vid_delok(custom_id):
+            job_id = vid.job_from_delok(custom_id)
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_delete(ctx, j),
+                raw_text="video delete")
+        if vid.is_vid_delno(custom_id):
+            return {"type": UPDATE_MESSAGE,
+                    "data": {"content": "Cancelled.", "components": []}}
+        if vid.is_vid_del(custom_id):
+            job_id = vid.job_from_del(custom_id)
+            return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
+                "content": "Delete this video? This can't be undone.",
+                "components": vid.build_video_delete_confirm_components(job_id),
+                "flags": 64}}
+        if vid.is_vid_retry(custom_id):
+            job_id = vid.job_from_retry(custom_id)
+            return await self._handle_video_route(
+                payload, lambda ctx, j=job_id: self.router.run_video_retry(ctx, j),
+                raw_text="video retry")
         if vid.is_vid_tpl(custom_id):
             values = data.get("values") or []
             if not values:
