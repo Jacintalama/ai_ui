@@ -1,17 +1,35 @@
 """Tasks-side verify mirror — must match webhook-handler's sign output."""
 import os
 import sys
+
+import pytest
+
 os.environ.setdefault("OAUTH_STATE_SECRET", "test-secret-123")
 
 # Import the webhook-handler signer to produce a real token for the test.
+# Inside the tasks container only this service is on disk — skip there; the
+# cross-module contract is covered by full-checkout runs (dev/CI).
 WEBHOOK_HANDLER = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "webhook-handler")
 )
-assert os.path.isdir(WEBHOOK_HANDLER), (
-    f"webhook-handler not found at {WEBHOOK_HANDLER} — "
-    "cross-module token test needs both services on disk"
-)
+if not os.path.isdir(WEBHOOK_HANDLER):
+    pytest.skip(
+        f"webhook-handler not found at {WEBHOOK_HANDLER} — "
+        "cross-module token test needs both services on disk",
+        allow_module_level=True,
+    )
 sys.path.insert(0, WEBHOOK_HANDLER)
+
+# Both modules cache OAUTH_STATE_SECRET in a module-level _SECRET at import.
+# In a full-suite run an earlier test may have imported either one before any
+# secret was set (e.g. via `import main`), freezing an empty secret — reload
+# so both sides read the value set above, regardless of test order.
+import importlib  # noqa: E402
+import handlers.visual_edit_token as _wh_vet  # noqa: E402
+import visual_edit_token as _tasks_vet  # noqa: E402
+importlib.reload(_wh_vet)
+importlib.reload(_tasks_vet)
+
 from handlers.visual_edit_token import sign_edit_token  # noqa: E402
 
 from visual_edit_token import verify_edit_token, EDIT_TOKEN_TTL_SECONDS  # noqa: E402

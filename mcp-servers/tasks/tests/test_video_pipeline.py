@@ -161,6 +161,12 @@ async def test_scripting_skipped_when_plan_exists(monkeypatch):
     os.environ.get("AIUI_TEST_DB") != "1",
     reason="needs a live test DB (set AIUI_TEST_DB=1 + a test DATABASE_URL)",
 )
+@pytest.mark.skipif(
+    bool(os.environ.get("VIDEO_REMOTION_URL")),
+    reason="renderer runs in a separate container that cannot see this test's "
+           "tmp APPS_DIR (files land in the renderer's own filesystem); the "
+           "real path is covered by the live e2e against the deployment",
+)
 async def test_process_job_end_to_end_real_db(db_session, monkeypatch):
     """Exercise the real session()/update path; heavy externals still mocked."""
     from sqlalchemy import select

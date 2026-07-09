@@ -488,10 +488,14 @@ async def delete_video_job(
         try:
             await s.delete(job)
             await s.commit()
-            await asyncio.to_thread(
-                shutil.rmtree,
-                _apps_dir() / slug / ".video" / str(jid),
-                ignore_errors=True)
+            # A standalone video job (slug "vid-<hex>", minted by /draft and
+            # /upload) owns its whole apps/<slug> dir; app-walkthrough jobs
+            # share the app's dir, so only their .video/<jid> subdir goes.
+            if slug.startswith("vid-"):
+                doomed = _apps_dir() / slug
+            else:
+                doomed = _apps_dir() / slug / ".video" / str(jid)
+            await asyncio.to_thread(shutil.rmtree, doomed, ignore_errors=True)
         except Exception:  # noqa: BLE001 - surface a clean 500, not a stack trace
             logger.exception("failed to delete video job=%s", jid)
             raise HTTPException(500, "could not delete that video")

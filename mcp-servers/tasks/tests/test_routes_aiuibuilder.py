@@ -89,7 +89,8 @@ def test_build_requires_email():
 
 
 def test_build_happy_path(monkeypatch):
-    async def fake_create(email, seed, description, template_key=None):
+    async def fake_create(email, seed, description, template_key=None,
+                          attachment_text=None, attachment_name=None):
         assert email == "alice@x.com"
         return ("11111111-1111-1111-1111-111111111111", "todo-list-a1b2")
     monkeypatch.setattr(rb, "_create_and_spawn_build", fake_create)
@@ -107,7 +108,8 @@ def test_build_happy_path(monkeypatch):
 
 
 def test_build_busy_returns_429(monkeypatch):
-    async def busy(email, seed, description, template_key=None):
+    async def busy(email, seed, description, template_key=None,
+                   attachment_text=None, attachment_name=None):
         raise HTTPException(status_code=429, detail="A build is already running")
     monkeypatch.setattr(rb, "_create_and_spawn_build", busy)
 
@@ -276,7 +278,8 @@ def test_templates_catalog_notes():
 
 def test_build_accepts_template_key(monkeypatch):
     seen = {}
-    async def fake_create(email, seed, description, template_key=None):
+    async def fake_create(email, seed, description, template_key=None,
+                          attachment_text=None, attachment_name=None):
         seen["template_key"] = template_key
         return ("11111111-1111-1111-1111-111111111111", "portfolio-a1b2")
     monkeypatch.setattr(rb, "_create_and_spawn_build", fake_create)
@@ -316,7 +319,8 @@ def test_normalize_template_key():
 
 def test_build_template_key_optional(monkeypatch):
     seen = {}
-    async def fake_create(email, seed, description, template_key=None):
+    async def fake_create(email, seed, description, template_key=None,
+                          attachment_text=None, attachment_name=None):
         seen["template_key"] = template_key
         return ("t", "s")
     monkeypatch.setattr(rb, "_create_and_spawn_build", fake_create)

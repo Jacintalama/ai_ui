@@ -235,6 +235,31 @@ class DiscordClient:
             logger.error(f"Error creating Discord private thread: {e}")
             return None
 
+    async def resolve_thread_parent(self, channel_id: str) -> str:
+        """Return the parent text-channel id when `channel_id` is a thread,
+        otherwise the id unchanged. Discord can't create a thread inside a
+        thread (error 50024), so per-schedule threads must be created on the
+        real parent channel. Never raises — falls back to the given id."""
+        url = f"{DISCORD_API_BASE}/channels/{channel_id}"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(
+                    url, headers={"Authorization": f"Bot {self.bot_token}"},
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    # 10/11/12 = announcement/public/private thread
+                    if data.get("type") in (10, 11, 12):
+                        return data.get("parent_id") or channel_id
+                    return channel_id
+                logger.error(
+                    f"Discord resolve thread parent error: {response.status_code} {response.text}"
+                )
+                return channel_id
+        except Exception as e:
+            logger.error(f"Error resolving Discord thread parent: {e}")
+            return channel_id
+
     async def add_thread_member(self, thread_id: str, user_id: str) -> bool:
         """Add a user to a thread (so they see the private thread). Bot token.
         Never raises."""

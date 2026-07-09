@@ -34,8 +34,10 @@ def test_build_enhance_prompt_forbids_stack_pivot():
         attempt_count=0,
         max_attempts=3,
     )
-    # Must warn against replacing stack
-    assert "preserve the existing tech stack" in out.lower()
+    # Must warn against replacing stack ("PRESERVE: Keep the existing tech
+    # stack and existing features intact.")
+    assert "preserve" in out.lower()
+    assert "keep the existing tech stack" in out.lower()
 
 
 def test_build_enhance_prompt_requires_tdd():

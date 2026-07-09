@@ -223,6 +223,11 @@ async def hourly_n8n_workflow_check():
             ],
         }
 
+    except httpx.TransportError as e:
+        # n8n being down/removed is an accepted state (the container is
+        # intentionally stopped in prod) — not an hourly ERROR-log event.
+        logger.info(f"n8n unreachable — skipping workflow check: {e}")
+        return {"skipped": True, "reason": str(e)}
     except Exception as e:
         logger.error(f"n8n workflow check failed: {e}")
         return {"error": str(e)}

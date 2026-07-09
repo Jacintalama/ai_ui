@@ -26,12 +26,12 @@ _HAVE_DB = bool(_DB_URL) and "nowhere" not in _DB_URL
 
 
 def test_delete_route_registered():
-    """The job path supports the DELETE method."""
-    methods = set()
-    for r in app.routes:
-        if getattr(r, "path", None) == "/api/video-jobs/{job_id}":
-            methods |= set(getattr(r, "methods", set()) or set())
-    assert "DELETE" in methods
+    """The job path supports the DELETE method.
+
+    Asserted via the OpenAPI schema: on newer FastAPI include_router is lazy,
+    so a raw app.routes scan sees unmaterialized routers and misses real paths.
+    """
+    assert "delete" in app.openapi()["paths"]["/api/video-jobs/{job_id}"]
 
 
 async def test_delete_requires_auth():
@@ -83,6 +83,28 @@ async def test_delete_admin_can_delete_any(db_session, tmp_path, monkeypatch):
         r = await c.delete(f"/api/video-jobs/{job_id}", headers=ADMIN)
     assert r.status_code == 200
     assert await db_session.get(VideoJob, job_id) is None
+
+
+@pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+async def test_delete_standalone_vid_slug_removes_whole_dir(db_session, tmp_path, monkeypatch):
+    """A standalone video job (slug "vid-<hex>") owns its whole apps/<slug>
+    dir. Delete must remove the entire dir, not just .video/<jid> — otherwise
+    every deleted standalone video leaks its folder (found live: 49 orphaned
+    vid-* dirs on the box)."""
+    monkeypatch.setenv("APPS_DIR", str(tmp_path))
+    job_id = uuid.uuid4()
+    slug = f"vid-{job_id.hex[:8]}"
+    db_session.add(VideoJob(id=job_id, slug=slug, user_email="owner@x.com",
+                            prompt="p", status="done"))
+    await db_session.commit()
+    job_dir = tmp_path / slug / ".video" / str(job_id)
+    (job_dir / "screenshots").mkdir(parents=True)
+    (job_dir / "screenshots" / "screenshot-1.png").write_bytes(b"x")
+    (tmp_path / slug / "video.mp4").write_bytes(b"v")  # top-level artifact
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.delete(f"/api/video-jobs/{job_id}", headers=OWNER)
+    assert r.status_code == 200
+    assert not (tmp_path / slug).exists()
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")

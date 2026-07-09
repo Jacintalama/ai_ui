@@ -24,7 +24,7 @@ async def test_build_new_posts_template_picker_to_thread():
     router = MagicMock()
     router.get_user_builder_thread = AsyncMock(return_value=None)
     router.set_user_builder_thread = AsyncMock()
-    router._resolve_email_auto = AsyncMock(return_value="maya@x.com")
+    router._resolve_email = AsyncMock(return_value="maya@x.com")
     router._tasks_client = MagicMock()
     router._tasks_client.list_templates = AsyncMock(
         return_value=[{"key": "portfolio", "label": "Portfolio"}])
@@ -48,7 +48,7 @@ async def test_build_new_returns_deferred_ephemeral():
     router = MagicMock()
     router.get_user_thread = AsyncMock(return_value=None)
     router.set_user_thread = AsyncMock()
-    router._resolve_email_auto = AsyncMock(return_value="maya@x.com")
+    router._resolve_email = AsyncMock(return_value="maya@x.com")
     router._tasks_client = MagicMock()
     router._tasks_client.list_templates = AsyncMock(return_value=[])
     h = DiscordCommandHandler(discord, router)
@@ -141,7 +141,7 @@ async def test_build_new_uses_builder_thread_not_schedules():
     discord.post_channel_message = AsyncMock()
     discord.edit_original = AsyncMock()
     router = _router_with_both_thread_slots()
-    router._resolve_email_auto = AsyncMock(return_value="maya@x.com")
+    router._resolve_email = AsyncMock(return_value="maya@x.com")
     router._tasks_client.list_templates = AsyncMock(
         return_value=[{"key": "portfolio", "label": "Portfolio"}])
     h = DiscordCommandHandler(discord, router)
@@ -357,3 +357,26 @@ async def test_slack_delete_action_email_none_skips_delete():
     await asyncio.sleep(0)
 
     router._tasks_client.delete_app.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_build_new_unlinked_shows_link_card_not_picker():
+    # Require a real link up front: an unlinked user gets the Link card, never the
+    # template picker (no more sunk-cost bounce at build time).
+    discord = MagicMock()
+    discord.create_private_thread = AsyncMock(return_value="THREAD1")
+    discord.post_channel_message = AsyncMock()
+    discord.edit_original = AsyncMock()
+    router = MagicMock()
+    router.get_user_builder_thread = AsyncMock(return_value=None)
+    router.set_user_builder_thread = AsyncMock()
+    router._resolve_email = AsyncMock(return_value=None)  # unlinked
+    router._tasks_client = MagicMock()
+    router._tasks_client.list_templates = AsyncMock(return_value=[])
+    h = DiscordCommandHandler(discord, router)
+    await h.handle_interaction(_payload(PANEL_NEW_ID))
+    await asyncio.sleep(0)
+    router._tasks_client.list_templates.assert_not_awaited()   # gated before listing
+    discord.post_channel_message.assert_not_awaited()          # no picker posted
+    assert discord.edit_original.await_args is not None
+    assert discord.edit_original.await_args.kwargs.get("content")  # a message was sent

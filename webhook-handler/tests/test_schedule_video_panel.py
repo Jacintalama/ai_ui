@@ -60,6 +60,8 @@ def _handler(router):
     discord.post_channel_message = AsyncMock(return_value=True)
     discord.create_private_thread = AsyncMock(return_value="thread-9")
     discord.add_thread_member = AsyncMock(return_value=True)
+    # channel is already a plain text channel -> resolves to itself
+    discord.resolve_thread_parent = AsyncMock(side_effect=lambda cid: cid)
     return DiscordCommandHandler(discord_client=discord, command_router=router)
 
 

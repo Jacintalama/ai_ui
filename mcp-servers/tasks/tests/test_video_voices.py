@@ -63,12 +63,16 @@ def test_sample_text_matches_generator_script():
     # matching the documented sample line. Keep them in lockstep.
     import re
 
+    import pytest
+
     from video_voices import SAMPLE_TEXT
 
     tasks_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     script = os.path.normpath(
         os.path.join(tasks_dir, "..", "..", "scripts", "gen_voice_previews.sh")
     )
+    if not os.path.exists(script):
+        pytest.skip("repo scripts/ not present (container run) — needs full checkout")
     with open(script, encoding="utf-8") as fh:
         text = fh.read()
     m = re.search(r'TXT="([^"]*)"', text)

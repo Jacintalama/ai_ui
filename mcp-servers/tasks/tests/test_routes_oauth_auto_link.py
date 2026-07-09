@@ -54,6 +54,10 @@ class _FakeResponse:
         self._payload = payload
         self.text = "" if isinstance(payload, (dict, list)) else str(payload)
 
+    @property
+    def is_success(self) -> bool:  # mirror httpx.Response.is_success
+        return 200 <= self.status_code < 300
+
     def json(self) -> object:
         return self._payload
 

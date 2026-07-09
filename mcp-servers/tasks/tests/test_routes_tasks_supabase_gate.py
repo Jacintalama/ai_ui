@@ -136,4 +136,7 @@ async def test_build_with_supabase_template_but_user_picked_none_does_not_gate(d
             },
         )
     assert r.status_code == 201, r.text
-    assert r.json()["status"] == "pending"
+    # Not gated: created and allowed to run. Template builds may finish
+    # synchronously (template-app copy), so "completed" is fine — the gate
+    # would have parked it instead.
+    assert r.json()["status"] in ("pending", "completed")

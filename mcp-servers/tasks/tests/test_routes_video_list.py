@@ -32,8 +32,12 @@ OWNER = {"X-User-Email": "owner@x.com", "X-User-Admin": "false"}
 
 def test_list_route_registered():
     """The bare list route is wired onto the app at the prefix path, distinct
-    from the per-job status route."""
-    paths = {getattr(r, "path", None) for r in app.routes}
+    from the per-job status route.
+
+    Asserted via the OpenAPI schema: on newer FastAPI include_router is lazy,
+    so a raw app.routes scan sees unmaterialized routers and misses real paths.
+    """
+    paths = app.openapi()["paths"]
     assert "/api/video-jobs" in paths
     assert "/api/video-jobs/{job_id}" in paths
 
@@ -117,6 +121,6 @@ async def test_list_returns_only_own_videos_newest_first(db_session):
 
     expected_keys = {
         "id", "title", "status", "created_at", "current_version_no",
-        "output_available",
+        "output_available", "share_url",
     }
     assert set(newer.keys()) == expected_keys

@@ -76,7 +76,7 @@ async def test_voice_build_template_happy_path(monkeypatch):
     tc.list_templates = AsyncMock(return_value=CATALOG)
     tc.start_build = AsyncMock(return_value={"task_id": "t9", "slug": "marios-1234"})
     watched = {}
-    async def fake_watch(self, ctx, email, task_id, slug):
+    async def fake_watch(self, ctx, email, task_id, slug, **kw):
         watched["args"] = (email, task_id, slug)
     monkeypatch.setattr(CommandRouter, "_watch_build", fake_watch)
     async def notify(msg):

@@ -32,9 +32,12 @@ _HAVE_DB = bool(_DB_URL) and "nowhere" not in _DB_URL
 
 
 def test_status_route_registered():
-    """The status route is wired onto the app at the expected path."""
-    paths = {getattr(r, "path", None) for r in app.routes}
-    assert "/api/video-jobs/{job_id}" in paths
+    """The status route is wired onto the app at the expected path.
+
+    Asserted via the OpenAPI schema: on newer FastAPI include_router is lazy,
+    so a raw app.routes scan sees unmaterialized routers and misses real paths.
+    """
+    assert "/api/video-jobs/{job_id}" in app.openapi()["paths"]
 
 
 # --- Offline guard (no DB): fires during dependency resolution, before any DB. ---

@@ -26,7 +26,8 @@ class _CapturingExecutor:
     # sentinel distinct from None so we can distinguish "not called" vs "called with None"
     _sentinel = object()
 
-    async def run(self, prompt, slug=None, execution_id="", user_jwt=None):
+    async def run(self, prompt, slug=None, execution_id="", user_jwt=None,
+                  schedule_id=None):
         self.captured_jwt = user_jwt
         yield "COMPLETED: ok\n"
 

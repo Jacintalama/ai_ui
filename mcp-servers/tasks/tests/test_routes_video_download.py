@@ -34,9 +34,12 @@ _HAVE_DB = bool(_DB_URL) and "nowhere" not in _DB_URL
 
 
 def test_download_route_registered():
-    """The download route is wired onto the app at the expected path."""
-    paths = {getattr(r, "path", None) for r in app.routes}
-    assert "/api/video-jobs/{job_id}/download" in paths
+    """The download route is wired onto the app at the expected path.
+
+    Asserted via the OpenAPI schema: on newer FastAPI include_router is lazy,
+    so a raw app.routes scan sees unmaterialized routers and misses real paths.
+    """
+    assert "/api/video-jobs/{job_id}/download" in app.openapi()["paths"]
 
 
 # --- Offline guards (no DB): these reject before any DB round-trip. ---

@@ -16,7 +16,11 @@ def test_build_prompt_omits_block_when_no_supabase():
         meeting_title="m", meeting_date="2026-04-25",
         supabase_url=None,
     )
-    assert "Supabase" not in text
+    # The base prompt may mention Supabase in passing ("or Supabase if
+    # attached"); what must be absent is the integration block itself.
+    assert "Supabase integration available" not in text
+    assert "window.SUPABASE_URL" not in text
+    assert "window.SUPABASE_ANON_KEY" not in text
 
 
 def test_build_prompt_includes_block_when_supabase_configured():

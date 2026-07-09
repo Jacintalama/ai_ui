@@ -106,8 +106,11 @@ except Exception:  # pragma: no cover - asyncpg always present in CI/container
     not _HAVE_DB,
     reason="DB sweep needs live Postgres (set AIUI_TEST_DB=1 + DATABASE_URL)",
 )
-async def test_sweep_once_smoke():
-    # Just assert one pass runs to completion without raising against a live DB.
+async def test_sweep_once_smoke(db_session):
+    # Just assert one pass runs to completion without raising against a live
+    # DB. Takes db_session so the app's global session maker is rebuilt on
+    # THIS test's event loop (a stale maker from an earlier test raises
+    # cross-loop RuntimeErrors).
     from video_cleanup import _sweep_once
 
     await _sweep_once()

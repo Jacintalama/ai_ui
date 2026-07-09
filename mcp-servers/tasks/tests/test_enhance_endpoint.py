@@ -173,6 +173,8 @@ async def test_enhance_accepts_multipart_with_image(db_session, tmp_path, monkey
 
 
 async def test_enhance_rejects_non_image_mime(db_session):
+    # PDFs/Word/text are accepted document attachments these days — a truly
+    # unsupported type (an executable) must still be rejected with a clear 400.
     source = _make_task()
     db_session.add(source); await db_session.commit(); await db_session.refresh(source)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -180,7 +182,7 @@ async def test_enhance_rejects_non_image_mime(db_session):
             "/api/tasks/enhance",
             headers=ADMIN_HEADERS,
             data={"source_task_id": str(source.id), "prompt": "x"},
-            files=[("files", ("doc.pdf", b"%PDF-1.4\n", "application/pdf"))],
+            files=[("files", ("tool.exe", b"MZ\x90\x00", "application/x-msdownload"))],
         )
     assert r.status_code == 400
     assert "supported" in r.json()["detail"].lower() or "image" in r.json()["detail"].lower()

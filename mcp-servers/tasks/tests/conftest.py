@@ -11,12 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Make app modules importable from tests/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db import init_db  # noqa: E402
-
 # Ensure tests that don't touch the DB can be collected without DATABASE_URL set.
-# The dummy DSN is only read at import time; the db_session fixture still needs
-# a real DATABASE_URL in env (CI sets it) because that's when a connection is opened.
+# Must happen BEFORE importing db — db.py captures DATABASE_URL at import time,
+# and an empty URL makes session() raise (every session-touching route 500s).
+# The db_session fixture still needs a real DATABASE_URL in env (CI sets it)
+# because that's when a connection is opened.
 os.environ.setdefault("DATABASE_URL", "postgresql://nobody@nowhere/nobody")
+
+from db import init_db  # noqa: E402
 
 # Use the same DB as the running app — DATABASE_URL is set in the container env.
 RAW_DB_URL = os.environ["DATABASE_URL"]
@@ -32,6 +34,14 @@ async def db_session():
     "future attached to different loop" errors when pytest-asyncio creates
     a fresh event loop per test function.
     """
+    # The app's lazy db.session() maker binds its engine to the first event
+    # loop that used it. pytest-asyncio gives every test a fresh loop, so a
+    # maker left over from a previous test poisons this one with cross-loop
+    # RuntimeErrors. Abandon it (closing would touch the dead loop) and let
+    # init_db() rebuild it on this test's loop.
+    import db as _db
+    _db._engine = None
+    _db._session_maker = None
     await init_db()
     engine = create_async_engine(SQLA_DB_URL)
     maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

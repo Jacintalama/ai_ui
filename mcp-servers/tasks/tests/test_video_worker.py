@@ -29,6 +29,12 @@ def test_should_run_respects_kill_switch(monkeypatch):
 
 
 @pytest.mark.skipif(not _HAVE_DB, reason="needs Postgres (runs at deploy/CI)")
+@pytest.mark.skipif(
+    bool(os.environ.get("VIDEO_REMOTION_URL")),
+    reason="renderer runs in a separate container that cannot see this test's "
+           "tmp APPS_DIR (files land in the renderer's own filesystem); the "
+           "real path is covered by the live e2e against the deployment",
+)
 async def test_process_job_snapshots_version(db_session, tmp_path, monkeypatch):
     import video_worker
     monkeypatch.setenv("APPS_DIR", str(tmp_path))

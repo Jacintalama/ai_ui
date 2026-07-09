@@ -1835,17 +1835,16 @@ class DiscordCommandHandler:
                     content="That schedule request expired — please set it up again.",
                 )
                 return
-            # Results land in a private thread (created/reused) so they stay
-            # visible only to this user. Fall back to the channel if thread
-            # creation fails.
-            target = channel_id
-            thread_id = await self.router.get_user_thread(user_id)
-            if not thread_id:
-                thread_id = await self.discord.create_private_thread(
-                    channel_id, f"schedules-{user_name}"[:90]
-                )
-                if thread_id:
-                    await self.router.set_user_thread(user_id, thread_id)
+            # Results land in a private per-schedule thread named after the
+            # schedule, so each schedule stays its own conversation. The confirm
+            # may be clicked inside the dashboard thread, and Discord can't nest
+            # threads (error 50024), so create on the resolved parent channel.
+            # Fall back to that channel if thread creation fails.
+            parent = await self.discord.resolve_thread_parent(channel_id)
+            target = parent
+            thread_id = await self.discord.create_private_thread(
+                parent, pending["name"][:90]
+            )
             if thread_id:
                 await self.discord.add_thread_member(thread_id, user_id)
                 target = thread_id
@@ -2186,15 +2185,31 @@ class DiscordCommandHandler:
                     return
                 thread_id = await self._get_or_make_thread(
                     user_id, channel_id, user_name, kind="schedules")
+                posted = False
                 if thread_id:
-                    await self.discord.post_channel_message(
+                    posted = await self.discord.post_channel_message(
                         thread_id, dash["content"], components=dash["components"])
+                    if not posted:
+                        # The stored thread accepted the member probe but the
+                        # post bounced (deleted/archived thread) — recreate and
+                        # repost, or the ACK below would link to "#unknown".
+                        fresh = await self.discord.create_private_thread(
+                            channel_id, f"schedules-{user_name}"[:90])
+                        if fresh:
+                            await self.router.set_user_thread(user_id, fresh)
+                            await self.discord.add_thread_member(fresh, user_id)
+                            posted = await self.discord.post_channel_message(
+                                fresh, dash["content"],
+                                components=dash["components"])
+                            thread_id = fresh
+                if thread_id and posted:
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
-                        content=f"📅 Your schedules are in <#{thread_id}>",
+                        content=f"Your schedules are in <#{thread_id}>",
                     )
                 else:
-                    # Couldn't open a thread — fall back to an ephemeral dashboard.
+                    # Couldn't land the dashboard in a thread — fall back to an
+                    # ephemeral dashboard with no reference to a dead thread.
                     await self.discord.edit_original(
                         interaction_token=interaction_token,
                         content=dash["content"], components=dash.get("components"),

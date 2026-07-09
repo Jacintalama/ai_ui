@@ -144,6 +144,13 @@ async def test_capture_from_url_writes_walk_json(db_session, tmp_path, monkeypat
 
     monkeypatch.setattr(routes_video, "capture_walk", fake_capture_walk)
 
+    # The SSRF/DNS guard is covered by its own tests; a real lookup here makes
+    # the test hostage to the container's resolver.
+    async def _allow(url):
+        return url
+
+    monkeypatch.setattr(routes_video, "assert_capturable", _allow)
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         draft = await c.post("/api/video-jobs/draft",
                              json={"title": "t", "prompt": "", "style": "clean_product_demo",
@@ -151,7 +158,7 @@ async def test_capture_from_url_writes_walk_json(db_session, tmp_path, monkeypat
         jid = draft.json()["id"]
         slug = draft.json()["slug"]
         r = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
-                         json={"url": "https://s.com/", "max_frames": 4}, headers=HEAD)
+                         json={"url": "https://example.com/", "max_frames": 4}, headers=HEAD)
     assert r.status_code == 200
     walk_path = Path(str(tmp_path)) / slug / ".video" / str(jid) / "walk.json"
     assert walk_path.exists()
@@ -184,6 +191,13 @@ async def test_capture_from_url_recapture_clears_stale_screenshots(db_session, t
     async def fake_second(url, **kw):
         return [b"PNG-NEW"], second_walk, {"title": "Home"}
 
+    # The SSRF/DNS guard is covered by its own tests; a real lookup here makes
+    # the test hostage to the container's resolver.
+    async def _allow(url):
+        return url
+
+    monkeypatch.setattr(routes_video, "assert_capturable", _allow)
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         draft = await c.post("/api/video-jobs/draft",
                              json={"title": "t", "prompt": "", "style": "clean_product_demo",
@@ -193,13 +207,13 @@ async def test_capture_from_url_recapture_clears_stale_screenshots(db_session, t
 
         monkeypatch.setattr(routes_video, "capture_walk", fake_first)
         r1 = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
-                          json={"url": "https://s.com/", "max_frames": 3}, headers=HEAD)
+                          json={"url": "https://example.com/", "max_frames": 3}, headers=HEAD)
         assert r1.status_code == 200
         assert r1.json()["count"] == 3
 
         monkeypatch.setattr(routes_video, "capture_walk", fake_second)
         r2 = await c.post(f"/api/video-jobs/{jid}/capture-from-url",
-                          json={"url": "https://s.com/", "max_frames": 1}, headers=HEAD)
+                          json={"url": "https://example.com/", "max_frames": 1}, headers=HEAD)
     assert r2.status_code == 200
     body = r2.json()
     assert body["count"] == 1

@@ -20,7 +20,8 @@ class _FakeExecutor:
     def __init__(self, chunks):
         self._chunks = list(chunks)
 
-    async def run(self, prompt, slug=None, execution_id="", user_jwt=None):
+    async def run(self, prompt, slug=None, execution_id="", user_jwt=None,
+                  schedule_id=None):
         for c in self._chunks:
             yield c
 
