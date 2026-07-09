@@ -140,7 +140,8 @@ async def test_capture_from_url_writes_walk_json(db_session, tmp_path, monkeypat
     ]
 
     async def fake_capture_walk(url, **kw):
-        return [b"PNG1", b"PNG2"], fake_walk, {"title": "Home"}
+        # real PNG bytes — the blob store content-validates each frame
+        return [_png(), _png()], fake_walk, {"title": "Home"}
 
     monkeypatch.setattr(routes_video, "capture_walk", fake_capture_walk)
 
@@ -186,10 +187,11 @@ async def test_capture_from_url_recapture_clears_stale_screenshots(db_session, t
     ]
 
     async def fake_first(url, **kw):
-        return [b"PNG1", b"PNG2", b"PNG3"], first_walk, {"title": "Home"}
+        # real PNG bytes — the blob store content-validates each frame
+        return [_png(), _png(), _png()], first_walk, {"title": "Home"}
 
     async def fake_second(url, **kw):
-        return [b"PNG-NEW"], second_walk, {"title": "Home"}
+        return [_png()], second_walk, {"title": "Home"}
 
     # The SSRF/DNS guard is covered by its own tests; a real lookup here makes
     # the test hostage to the container's resolver.
