@@ -304,27 +304,64 @@ def _build_ffmpeg_args(frames_pattern: str, out_path: str, *, fps: int,
     return args
 
 
-def _build_audio_mux_args(video_in: str, out_path: str, *, audio_path: str | None) -> list[str]:
+# One synthesized mouse-click tick: a 60ms pink-noise burst with a fast
+# attack and decay reads as a soft, natural UI click (no asset file needed).
+_CLICK_LAVFI = "anoisesrc=d=0.06:c=pink:a=0.5"
+_CLICK_SHAPE = "afade=t=in:st=0:d=0.004,afade=t=out:st=0.014:d=0.045"
+
+
+def _build_audio_mux_args(video_in: str, out_path: str, *, audio_path: str | None,
+                          click_times: list[float] | None = None) -> list[str]:
     """Pure builder for the ffmpeg argv that muxes audio onto an existing video file.
 
     The video stream is copied (no re-encode). The audio stream is always
     built from the ambient bed (input 1, lavfi). When narration (audio_path)
-    is present it becomes input 2 and the bed is ducked under it via amix;
-    otherwise the bed plays alone at a moderate level."""
+    is present it becomes the next input and the bed is ducked under it.
+    ``click_times`` (seconds) adds one synthesized click tick per entry,
+    delayed to its timestamp, so cursor clicks are audible."""
+    clicks = [t for t in (click_times or []) if t >= 0]
     # input 0: existing video file.  input 1: ambient bed (always).
     args = ["ffmpeg", "-y",
             "-i", video_in,
             "-f", "lavfi", "-i", _AMBIENT_LAVFI]
-    if audio_path:
-        # input 2: narration. Duck the bed, then mix bed + narration.
-        args += ["-i", audio_path]
-        filtergraph = (
-            f"[1:a]volume={_BED_DUCK_VOLUME}[bed];"
-            "[bed][2:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]"
-        )
+    if not clicks:
+        if audio_path:
+            # input 2: narration. Duck the bed, then mix bed + narration.
+            args += ["-i", audio_path]
+            filtergraph = (
+                f"[1:a]volume={_BED_DUCK_VOLUME}[bed];"
+                "[bed][2:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]"
+            )
+        else:
+            # Bed alone at a moderate level.
+            filtergraph = "[1:a]volume=0.4[aout]"
     else:
-        # Bed alone at a moderate level.
-        filtergraph = "[1:a]volume=0.4[aout]"
+        next_idx = 2
+        nar_idx = None
+        if audio_path:
+            args += ["-i", audio_path]
+            nar_idx = next_idx
+            next_idx += 1
+        click_idxs = []
+        for _ in clicks:
+            args += ["-f", "lavfi", "-i", _CLICK_LAVFI]
+            click_idxs.append(next_idx)
+            next_idx += 1
+        bed_vol = _BED_DUCK_VOLUME if nar_idx is not None else 0.4
+        parts = [f"[1:a]volume={bed_vol}[bed]"]
+        mix = ["[bed]"]
+        if nar_idx is not None:
+            mix.append(f"[{nar_idx}:a]")
+        for i, (idx, t) in enumerate(zip(click_idxs, clicks)):
+            ms = max(0, int(round(t * 1000)))
+            parts.append(f"[{idx}:a]{_CLICK_SHAPE},adelay={ms}|{ms}[ck{i}]")
+            mix.append(f"[ck{i}]")
+        # normalize=0 keeps the bed/narration level independent of how many
+        # short click inputs join the mix (ffmpeg >= 5.1).
+        parts.append("".join(mix) +
+                     f"amix=inputs={len(mix)}:duration=longest:"
+                     "dropout_transition=0:normalize=0[aout]")
+        filtergraph = ";".join(parts)
     args += ["-filter_complex", filtergraph,
              "-map", "0:v", "-map", "[aout]",
              "-c:v", "copy",

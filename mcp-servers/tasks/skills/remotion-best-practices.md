@@ -45,6 +45,16 @@ The signature of these videos is a cursor that uses the site like a person:
   ```
 
   It must persist across the scene, never teleport.
+- During the PRESS you may swap the arrow for this pointing-hand cursor (what
+  a real cursor becomes over a link), fingertip on the click point:
+
+  ```tsx
+  <svg width={26} height={26} viewBox="0 0 24 24"
+       style={{marginLeft: -10, marginTop: -2, filter: "drop-shadow(0 2px 3px rgba(0,0,0,.5))"}}>
+    <path d="M9 1.5c-.83 0-1.5.67-1.5 1.5v8.9l-1.83-1.66c-.68-.62-1.73-.6-2.38.06-.66.66-.68 1.72-.04 2.4l4.92 5.24c.85.9 2.03 1.41 3.27 1.41h3.66c2.49 0 4.5-2.01 4.5-4.5v-4.1c0-1.1-.9-2-2-2h-.55c-.14-.8-.84-1.4-1.68-1.4h-.62c-.2-.72-.86-1.25-1.64-1.25h-.61V3c0-.83-.67-1.5-1.5-1.5z"
+          fill="#fff" stroke="#1a1a1a" strokeWidth="1.2" strokeLinejoin="round" />
+  </svg>
+  ```
 - GLIDE: move the cursor to the click point along a slightly curved path with
   ease-in-out over 0.6-1.0s. Overshoot by 2-3px and settle.
 - PRESS: on arrival, scale the cursor to 0.9 for ~3 frames, then back, and

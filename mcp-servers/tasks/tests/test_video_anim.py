@@ -203,3 +203,49 @@ def test_audio_mux_args_without_narration():
     assert "lavfi" in j and "[aout]" in j
     assert "copy" in args and "-shortest" in args
     assert "narration" not in j
+
+
+# ---------------------------------------------------------------------------
+# Click-tick mux additions
+# ---------------------------------------------------------------------------
+
+from video_anim import _build_audio_mux_args as _mux_args  # noqa: E402
+
+
+def test_mux_without_clicks_is_byte_identical_to_before():
+    args = _mux_args("in.mp4", "out.mp4", audio_path=None)
+    fg = args[args.index("-filter_complex") + 1]
+    assert fg == "[1:a]volume=0.4[aout]"
+    assert "anoisesrc" not in " ".join(args)
+    args2 = _mux_args("in.mp4", "out.mp4", audio_path="n.wav", click_times=[])
+    fg2 = args2[args2.index("-filter_complex") + 1]
+    assert "amix=inputs=2:duration=longest:dropout_transition=0[aout]" in fg2
+    assert "normalize" not in fg2
+
+
+def test_mux_clicks_add_delayed_ticks_bed_only():
+    args = _mux_args("in.mp4", "out.mp4", audio_path=None,
+                     click_times=[4.6, 8.65])
+    joined = " ".join(args)
+    assert joined.count("anoisesrc") == 2
+    fg = args[args.index("-filter_complex") + 1]
+    assert "adelay=4600|4600[ck0]" in fg
+    assert "adelay=8650|8650[ck1]" in fg
+    assert "amix=inputs=3:duration=longest:dropout_transition=0:normalize=0[aout]" in fg
+    assert "[1:a]volume=0.4[bed]" in fg
+
+
+def test_mux_clicks_with_narration_duck_and_mix_all():
+    args = _mux_args("in.mp4", "out.mp4", audio_path="n.wav",
+                     click_times=[2.0])
+    fg = args[args.index("-filter_complex") + 1]
+    # narration is input 2, click input 3
+    assert "[2:a]" in fg and "[3:a]" in fg
+    assert "amix=inputs=3" in fg and "normalize=0" in fg
+
+
+def test_mux_negative_click_times_are_dropped():
+    args = _mux_args("in.mp4", "out.mp4", audio_path=None,
+                     click_times=[-1.0])
+    fg = args[args.index("-filter_complex") + 1]
+    assert fg == "[1:a]volume=0.4[aout]"

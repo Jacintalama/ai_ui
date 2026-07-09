@@ -28,13 +28,16 @@ def remotion_scene_dict(sc: dict, screenshot_abs: str | None) -> dict:
     return d
 
 
-async def _run_audio_mux(video_in: str, out_path: str, audio_path: str | None) -> str:
+async def _run_audio_mux(video_in: str, out_path: str, audio_path: str | None,
+                         click_times: list[float] | None = None) -> str:
     """Run ffmpeg to mux narration + ambient bed onto video_in, writing out_path.
 
     audio_path is positional (not keyword-only) so tests can monkeypatch this
     function and call it positionally: fake_mux(video_in, out_path, audio_path).
+    click_times adds one audible click tick per cursor click (seconds).
     """
-    args = _build_audio_mux_args(video_in, out_path, audio_path=audio_path)
+    args = _build_audio_mux_args(video_in, out_path, audio_path=audio_path,
+                                 click_times=click_times)
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -106,7 +109,19 @@ async def render_remotion_job(
         animationPreset=animation_preset,
     )
 
-    # Mux ambient bed + optional narration onto the video.
+    # Cursor clicks are audible: one soft tick per drawn click, timed to the
+    # press moment (cursor.ts ramps the pulse at ~52% of the scene).
+    click_times: list[float] = []
+    t_cursor = 0.0
+    for sc in plan.get("scenes", []):
+        dur = float(sc.get("duration_s") or 0)
+        click = sc.get("click")
+        if (sc.get("kind") == "screenshot" and isinstance(click, dict)
+                and float(click.get("y", 1.0)) <= 0.72):
+            click_times.append(t_cursor + dur * 0.52)
+        t_cursor += dur
+
+    # Mux ambient bed + optional narration + click ticks onto the video.
     out = os.path.join(job_dir, "out.mp4")
-    await _run_audio_mux(video_only, out, narration)
+    await _run_audio_mux(video_only, out, narration, click_times)
     return out
