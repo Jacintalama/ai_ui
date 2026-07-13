@@ -133,9 +133,10 @@ def test_build_validation_empty_description(monkeypatch):
 import types
 
 
-def _fake_item(status, slug, result=None, assignee="alice@x.com"):
+def _fake_item(status, slug, result=None, assignee="alice@x.com", description=""):
     return types.SimpleNamespace(
         status=status, built_app_slug=slug, result=result, assignee_email=assignee,
+        description=description,
     )
 
 
@@ -227,6 +228,39 @@ def test_build_status_pending_maps_failed(monkeypatch):
     body = r.json()
     assert body["status"] == "failed"
     assert body["preview_url"] is None
+
+
+def test_build_status_includes_user_prompt_and_question(monkeypatch):
+    # A paused build surfaces the clean prompt AND the pending question, so the
+    # bot/voice can echo "you asked X" and "it needs Y".
+    async def load(email, task_id):
+        return _fake_item(
+            "awaiting_input", "todo-a1b2",
+            result="Which color theme — light or dark?",
+            description='PROJECT NAME: "todo-a1b2".\n<rules>\n\nUSER REQUEST:\na todo list with dark mode',
+        )
+    monkeypatch.setattr(rb, "_load_owned_build", load)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    body = r.json()
+    assert body["user_prompt"] == "a todo list with dark mode"
+    assert "color theme" in body["question"]
+
+
+def test_build_status_completed_has_no_question(monkeypatch):
+    async def load(email, task_id):
+        return _fake_item("completed", "todo-a1b2",
+                          description='<rules>\n\nUSER REQUEST:\na todo list')
+    monkeypatch.setattr(rb, "_load_owned_build", load)
+    r = _client().get(
+        "/api/aiuibuilder/build/11111111-1111-1111-1111-111111111111",
+        headers={"X-User-Email": "alice@x.com"},
+    )
+    body = r.json()
+    assert body["question"] is None
+    assert body["user_prompt"] == "a todo list"
 
 
 def test_compose_build_description_template_less_matches_bind():

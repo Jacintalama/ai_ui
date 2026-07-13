@@ -18,6 +18,7 @@ from sqlalchemy import select, text
 from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
+from prompt_utils import clean_user_prompt
 from templates import is_valid_key
 from routes_projects import _delete_slug, _publish_slug, _unpublish_slug, _validate_slug, PublishStatus
 
@@ -85,6 +86,11 @@ class BuildStatusResponse(BaseModel):
     slug: str
     preview_url: str | None = None
     error: str | None = None
+    # The user's original request (clean of the template-rules wrapper) so the
+    # bot/voice can echo "you asked X"; and the agent's pending question when the
+    # build is waiting on an answer, so it can be surfaced and answered.
+    user_prompt: str = ""
+    question: str | None = None
 
 
 # Catalog keys equivalent to a template-less Discord build (`custom` has no
@@ -459,6 +465,8 @@ async def get_build_status(task_id: uuid.UUID, user: CurrentUser = Depends(curre
         slug=slug,
         preview_url=_preview_url(slug) if status == "completed" and slug else None,
         error=(item.result or "")[:500] if status in ("failed", "needs_input") else None,
+        user_prompt=clean_user_prompt(item.description or ""),
+        question=(item.result or "")[:500] if status == "needs_input" else None,
     )
 
 
