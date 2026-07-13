@@ -45,16 +45,21 @@ async def test_build_with_supabase_template_and_no_link_gates_on_supabase(db_ses
     assert body["status"] == "awaiting_supabase"
     assert body["built_app_slug"] == "foo-app"
 
-    # Chat message seeded with the [ACTION:supabase_connect] sentinel.
+    # Two messages seeded: the user's original request (role=user) and the
+    # Supabase-connect assistant prompt.
     rows = (await db_session.execute(
         select(ChatMessage).where(
             ChatMessage.slug == "foo-app",
             ChatMessage.user_email == "ralph@aiui.com",
         )
     )).scalars().all()
-    assert len(rows) == 1
-    assert rows[0].role == "assistant"
-    assert rows[0].content.startswith("[ACTION:supabase_connect]")
+    assert len(rows) == 2
+    assistant = [r for r in rows if r.role == "assistant"]
+    user = [r for r in rows if r.role == "user"]
+    assert len(assistant) == 1
+    assert assistant[0].content.startswith("[ACTION:supabase_connect]")
+    assert len(user) == 1
+    assert "Invoice editor" in user[0].content
 
 
 async def test_build_with_supabase_template_and_existing_link_does_not_gate(db_session):
@@ -112,10 +117,14 @@ async def test_build_with_static_template_does_not_gate(db_session):
     body = r.json()
     assert body["status"] == "pending"
 
+    # No Supabase-connect prompt for a static template — only the user's
+    # original request is seeded as the first chat message.
     rows = (await db_session.execute(
         select(ChatMessage).where(ChatMessage.slug == "bean-there")
     )).scalars().all()
-    assert rows == []
+    assert len(rows) == 1
+    assert rows[0].role == "user"
+    assert "coffee shop" in rows[0].content
 
 
 async def test_build_with_supabase_template_but_user_picked_none_does_not_gate(db_session):

@@ -11,6 +11,7 @@ import os
 
 os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
+import asyncio
 import uuid
 
 import pytest
@@ -74,7 +75,12 @@ async def test_answer_resumes_one_shot_build_with_full_context(db_session, _capt
     )).scalars().all()
     assert len(execs) >= 1
 
-    prompt = _capture_prompt["prompt"]
+    # _run_execution runs as a background task, so give it a tick to populate.
+    for _ in range(20):
+        if _capture_prompt.get("prompt"):
+            break
+        await asyncio.sleep(0.01)
+    prompt = _capture_prompt.get("prompt")
     assert prompt, "resume prompt was not captured"
     assert "dark, teal accents" in prompt   # earlier round retained (the bug)
     assert "three pages" in prompt          # latest answer
@@ -114,7 +120,12 @@ async def test_execute_from_awaiting_input_preserves_conversation(db_session, _c
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "running"
 
-    prompt = _capture_prompt["prompt"]
+    # _run_execution runs as a background task, so give it a tick to populate.
+    for _ in range(20):
+        if _capture_prompt.get("prompt"):
+            break
+        await asyncio.sleep(0.01)
+    prompt = _capture_prompt.get("prompt")
     assert prompt, "resume prompt was not captured"
     assert "playful and bold" in prompt      # conversation retained (the bug)
     assert "apps/landing-a1/" in prompt      # continue the existing app

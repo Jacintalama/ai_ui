@@ -8,6 +8,7 @@ import os
 
 os.environ.setdefault("AIUI_FERNET_KEY", _AIUI_TEST_KEY)
 
+import asyncio
 import uuid
 
 import pytest
@@ -70,7 +71,13 @@ async def test_answer_build_resumes_paused_build(db_session, _capture_prompt):
     )).scalars().all()
     assert len(execs) >= 1
 
-    prompt = _capture_prompt["prompt"]
+    # _run_execution runs as a background task, so give it a tick to populate.
+    for _ in range(20):
+        if _capture_prompt.get("prompt"):
+            break
+        await asyncio.sleep(0.01)
+    prompt = _capture_prompt.get("prompt")
+    assert prompt, "resume prompt was not captured"
     assert "world capitals" in prompt          # the answer is replayed
     assert "apps/disc-a1/" in prompt           # continue the existing app
     assert "build a quiz app" in prompt        # original request/build context
