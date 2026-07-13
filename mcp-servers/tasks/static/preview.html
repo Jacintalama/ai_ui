@@ -2231,6 +2231,7 @@
   <div class="wand"></div>
   <h2 id="build-title">AIUI Agent is building your app…</h2>
   <div class="sub" id="build-sub">Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.</div>
+  <div id="build-userprompt" hidden style="margin:8px auto 2px; max-width:640px; font-size:13px; opacity:0.85; font-style:italic; white-space:pre-wrap;"></div>
   <div class="phase-chip" id="build-phase">Starting up</div>
   <div class="progress-bar" id="build-progress"></div>
   <div class="live-log" id="build-log"><span class="cursor"></span></div>
@@ -2979,6 +2980,7 @@
   const $bovLog      = document.getElementById("build-log");
   const $bovRetry    = document.getElementById("build-retry");
   const $bovStart    = document.getElementById("build-start");
+  const $bovUserPrompt = document.getElementById("build-userprompt");
   // NEEDS_INPUT panel — shown when the BUILD task hits awaiting_input
   // so users can answer the agent's question without leaving the overlay.
   // Without this, awaiting_input bricks the user (build keeps running but
@@ -3117,13 +3119,21 @@
     try {
       const task = await apiFetch("GET", "/" + taskId);
       if (!task) return false;
+      // Remind the user what they asked for while the overlay is up.
+      if ($bovUserPrompt) {
+        const up = (task.user_prompt || "").trim();
+        if (up) {
+          $bovUserPrompt.textContent = "Your request: " + up;
+          $bovUserPrompt.hidden = false;
+        }
+      }
       if (task.status === "completed") {
         $bov.hidden = true;
         await loadFileTree();
         try { startPolling(); } catch (_) {}
         try { loadLogs(); } catch (_) {}
         try { loadDatabase(); } catch (_) {}
-        try { loadEnhanceHistory(); } catch (_) {}
+        // Transcript is loaded by loadFileTree() → loadTranscript() above.
         try { loadGraph(); } catch (_) {}
         try { refreshPreviewIframeIfVisible(); } catch (_) {}
         // Auto-land on the Preview tab so the user sees their finished app
@@ -3199,6 +3209,13 @@
               $bovSub.textContent = "Click Start below to kick it off manually, or go back to your projects.";
               $bovStart.hidden = false;
             }
+          } else {
+            // Pending but it already has an execution (a prior run likely died
+            // mid-build). Don't hang on "building…" forever — reveal a manual
+            // Start so the user can resume it.
+            $bovTitle.textContent = "This build is paused";
+            $bovSub.textContent = "It didn't finish starting. Click Start below to resume it.";
+            $bovStart.hidden = false;
           }
         } catch (_) { /* ignore — we'll retry the overall poll */ }
       }
@@ -3625,8 +3642,7 @@
     try {
       const data = await apiFetch("GET", "/" + taskId + "/files");
       slug = data.slug || "";
-      loadEnhanceHistory();
-      loadChatHistory();
+      loadTranscript();
       files = data.files || [];
       $slugName.textContent = slug || "unknown";
       document.title = "Preview: " + slug;
@@ -7027,7 +7043,7 @@
     setTimeout(tick, 2000);
   }
 
-  async function loadChatHistory() {
+  async function loadChatHistory(clear = true) {
     if (!slug) return;
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/chat?limit=200`, {
@@ -7040,7 +7056,8 @@
       const empty = document.getElementById("enhance-empty");
       if (empty) empty.remove();
       // Re-render from scratch so reload after /resume doesn't double up.
-      $log.innerHTML = "";
+      // (loadTranscript passes clear=false and owns the single clear.)
+      if (clear) $log.innerHTML = "";
       for (const m of rows) {
         if (m.role === "user") {
           renderChatBubble("user", m.content);
@@ -7059,7 +7076,7 @@
     } catch (_) {}
   }
 
-  async function loadEnhanceHistory() {
+  async function loadEnhanceHistory(clear = true) {
     if (!slug) return;
     try {
       // Fetch ALL three status groups — pending covers awaiting_input/planning
@@ -7076,7 +7093,7 @@
         .filter((t) => (t.description || "").startsWith("Enhance apps/"))
         .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
       if (!sorted.length) return;
-      $log.innerHTML = "";
+      if (clear) $log.innerHTML = "";
       for (const t of sorted) {
         const userMsg = (t.description || "").replace(/^Enhance apps\/[^\/]+\/:\s*/i, "");
         renderBubble("user", userMsg, { taskId: t.id });
@@ -7089,6 +7106,21 @@
     } catch (e) {
       console.warn("[enhance] history load failed", e);
     }
+  }
+
+  // Render the full transcript once: the seeded initial prompt + chat, then the
+  // enhancement requests. loadChatHistory and loadEnhanceHistory each clear the
+  // log when called standalone; here we clear ONCE and let both append, so they
+  // no longer clobber each other (the old back-to-back unawaited calls raced,
+  // and whichever finished last wiped the other — often hiding the prompt).
+  async function loadTranscript() {
+    if (!slug) return;
+    $log.innerHTML = "";
+    const empty = document.getElementById("enhance-empty");
+    if (empty) empty.remove();
+    await loadChatHistory(false);
+    await loadEnhanceHistory(false);
+    $log.scrollTop = $log.scrollHeight;
   }
 })();
 </script>
