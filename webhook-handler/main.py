@@ -568,6 +568,21 @@ async def discord_webhook(
 _last_voice_build: dict = {}
 
 
+async def _hydrate_last_voice_build() -> None:
+    """On a cache miss (e.g. after a handler restart), rehydrate the last voice
+    build from the durable store so build_status / answer_build still work.
+    Best-effort: any error (or a mocked router without the method) is a no-op."""
+    if _last_voice_build.get("task_id"):
+        return
+    try:
+        entry = await command_router.recall_voice_build()
+    except Exception:  # noqa: BLE001 - never break a voice turn
+        return
+    if entry and entry.get("task_id"):
+        _last_voice_build.clear()
+        _last_voice_build.update(entry)
+
+
 async def _post_to_discord_channel(
     channel_id: str, content: str, components: list | None = None,
 ) -> None:
@@ -683,6 +698,7 @@ async def voice_webhook(
                 "email": (settings.voice_user_email or "").strip().lower(),
             })
     elif command == "build_status":
+        await _hydrate_last_voice_build()
         task_id = (body.get("task_id") or "").strip() or _last_voice_build.get("task_id", "")
         if not task_id:
             await collector.respond(
@@ -695,6 +711,27 @@ async def voice_webhook(
                 _last_voice_build.get("email")
                 or (settings.voice_user_email or "").strip().lower(),
                 task_id,
+                slug=_last_voice_build.get("slug", ""),
+            )
+    elif command == "answer_build":
+        await _hydrate_last_voice_build()
+        answer = (body.get("answer") or "").strip()
+        task_id = (body.get("task_id") or "").strip() or _last_voice_build.get("task_id", "")
+        email = (_last_voice_build.get("email")
+                 or (settings.voice_user_email or "").strip().lower())
+        if not answer:
+            await collector.respond(
+                "What should I tell the builder? Say your answer and I'll pass it on."
+            )
+        elif not task_id:
+            await collector.respond(
+                "I don't have a paused build to answer — ask me to build "
+                "something first."
+            )
+        else:
+            await command_router.run_voice_answer_build(
+                _ctx("aiuibuilder", "answer-build"),
+                email, task_id, answer,
                 slug=_last_voice_build.get("slug", ""),
             )
     else:

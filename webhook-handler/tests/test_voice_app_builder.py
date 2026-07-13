@@ -190,3 +190,37 @@ async def test_build_status_needs_input_includes_detail():
 async def test_build_status_api_error_spoken():
     captured = await _status_reply(None, error=TasksAPIError(0, "down"))
     assert any("try again" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_build_status_needs_input_invites_answer():
+    captured = await _status_reply(
+        {"status": "needs_input", "question": "Which city is the restaurant in?"})
+    joined = " ".join(captured).lower()
+    assert "which city" in joined
+    assert "tell me your answer" in joined
+
+
+# ---------------------------------------------------------------------------
+# run_voice_answer_build
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_voice_answer_build_resumes_and_confirms():
+    captured = []
+    tc = MagicMock()
+    tc.answer_build = AsyncMock(return_value={"status": "running", "slug": "m-1"})
+    await _router(tc).run_voice_answer_build(
+        _voice_ctx(captured), "o@x.com", "t9", "use a dark teal theme", slug="marios-1234")
+    tc.answer_build.assert_awaited_once_with("o@x.com", "t9", "use a dark teal theme")
+    assert any("continuing" in m.lower() for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_voice_answer_build_error_spoken():
+    captured = []
+    tc = MagicMock()
+    tc.answer_build = AsyncMock(side_effect=TasksAPIError(0, "down"))
+    await _router(tc).run_voice_answer_build(
+        _voice_ctx(captured), "o@x.com", "t9", "blue", slug="m")
+    assert any("try again" in m.lower() for m in captured)

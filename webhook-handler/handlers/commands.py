@@ -2222,10 +2222,19 @@ class CommandRouter:
                 )
                 return None
             template_label = labels[template_key]
-        return await self._start_build(
+        result = await self._start_build(
             ctx, email, template_key, description,
             template_label=template_label,
         )
+        if result:
+            # Persist the last voice build so 'is it done?' / answering survives
+            # a handler restart (best-effort; StateStore swallows store errors).
+            await self._state.set("last_voice_build", {
+                "task_id": result.get("task_id", ""),
+                "slug": result.get("slug", ""),
+                "email": email,
+            })
+        return result
 
     async def run_voice_build_status(
         self, ctx: CommandContext, email: str, task_id: str, slug: str = "",
@@ -2250,14 +2259,38 @@ class CommandRouter:
                 f"The build for {name} failed. You can ask me to build it again."
             )
         elif status == "needs_input":
-            detail = (st.get("error") or "").strip()
-            tail = f" It needs to know: {detail}" if detail else ""
-            await ctx.respond(f"The build for {name} is paused.{tail}")
+            detail = (st.get("question") or st.get("error") or "").strip()
+            tail = f" It's asking: {detail}" if detail else ""
+            await ctx.respond(
+                f"The build for {name} needs one more thing from you.{tail} "
+                "Just tell me your answer and I'll keep building."
+            )
         else:
             await ctx.respond(
                 f"{name} is still building — I'll post the link in the text "
                 "channel the moment it's ready."
             )
+
+    async def run_voice_answer_build(
+        self, ctx: CommandContext, email: str, task_id: str, answer: str, slug: str = "",
+    ) -> None:
+        """Answer a paused voice build by voice, then confirm and keep it moving."""
+        name = slug or "your app"
+        try:
+            await self._tasks_client.answer_build(email, task_id, answer)
+        except TasksAPIError:
+            await ctx.respond(
+                "I couldn't reach the builder to continue — try again in a moment."
+            )
+            return
+        await ctx.respond(
+            f"Got it — I'm continuing {name} now. I'll let you know when it's ready."
+        )
+
+    async def recall_voice_build(self) -> dict | None:
+        """The last voice build (task_id/slug/email), hydrated from the durable
+        store so 'is my build done?' / answering survives a handler restart."""
+        return await self._state.get("last_voice_build")
 
     async def run_panel_publish(self, ctx: CommandContext, slug: str) -> None:
         """App Builder channel entry for the Publish button. Resolves the

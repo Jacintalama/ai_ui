@@ -10,10 +10,10 @@ sva = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sva)
 
 
-def test_three_tools_defined_with_secret_header():
+def test_app_builder_tools_defined_with_secret_header():
     tools = sva.build_tool_definitions("sssh")
     names = [t["name"] for t in tools]
-    assert names == ["list_templates", "start_build", "build_status"]
+    assert names == ["list_templates", "start_build", "build_status", "answer_build"]
     for t in tools:
         assert t["type"] == "webhook"
         api = t["api_schema"]
@@ -29,6 +29,9 @@ def test_start_build_schema_requires_description():
     assert "template_key" in body["properties"]
     body_status = tools["build_status"]["api_schema"]["request_body_schema"]
     assert body_status["required"] == []
+    body_answer = tools["answer_build"]["api_schema"]["request_body_schema"]
+    assert body_answer["required"] == ["answer"]
+    assert "task_id" in body_answer["properties"]
 
 
 def test_plan_tool_changes_is_idempotent():
@@ -38,7 +41,7 @@ def test_plan_tool_changes_is_idempotent():
         {"id": "tool_2", "tool_config": {"name": "status"}},  # unrelated, untouched
     ]
     creates, updates = sva.plan_tool_changes(existing, wanted)
-    assert [t["name"] for t in creates] == ["list_templates", "build_status"]
+    assert [t["name"] for t in creates] == ["list_templates", "build_status", "answer_build"]
     assert [u[0] for u in updates] == ["tool_1"]
 
 

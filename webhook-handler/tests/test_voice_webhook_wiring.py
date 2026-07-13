@@ -137,6 +137,37 @@ async def test_bad_secret_rejected(voice_setup):
         await main.voice_webhook("status", _Req({}), x_voice_secret="wrong")
 
 
+async def test_answer_build_routes_to_run_voice_answer_build(voice_setup):
+    voice_setup.run_voice_answer_build = AsyncMock()
+    main._last_voice_build.update({"task_id": "t9", "slug": "m-1", "email": "o@x.com"})
+    await main.voice_webhook(
+        "answer_build", _Req({"answer": "dark teal"}), x_voice_secret="s3cret")
+    voice_setup.run_voice_answer_build.assert_awaited_once()
+    args = voice_setup.run_voice_answer_build.await_args
+    assert args.args[1] == "o@x.com"    # email
+    assert args.args[2] == "t9"         # task_id
+    assert args.args[3] == "dark teal"  # answer
+    assert args.kwargs.get("slug") == "m-1"
+
+
+async def test_answer_build_without_answer_prompts(voice_setup):
+    voice_setup.run_voice_answer_build = AsyncMock()
+    main._last_voice_build.update({"task_id": "t9", "slug": "m-1", "email": "o@x.com"})
+    resp = await main.voice_webhook("answer_build", _Req({}), x_voice_secret="s3cret")
+    voice_setup.run_voice_answer_build.assert_not_awaited()
+    assert "answer" in resp["spoken_summary"].lower()
+
+
+async def test_answer_build_without_build_prompts(voice_setup):
+    voice_setup.run_voice_answer_build = AsyncMock()
+    main._last_voice_build.clear()
+    resp = await main.voice_webhook(
+        "answer_build", _Req({"answer": "dark teal"}), x_voice_secret="s3cret")
+    voice_setup.run_voice_answer_build.assert_not_awaited()
+    joined = resp["spoken_summary"].lower()
+    assert "paused build" in joined or "build something first" in joined
+
+
 # ---------------------------------------------------------------------------
 # Build-ready thread button: the voice notify message carries a link button
 # that jumps to the user's private App Builder thread (user request

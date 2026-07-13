@@ -157,6 +157,22 @@ def build_tool_definitions(secret: str) -> list:
                 ),
             },
         ),
+        tool(
+            "answer_build",
+            "Answer the App Builder's question so a paused build can continue. "
+            "Use when build_status says the build needs input or is asking "
+            "something — pass the user's spoken answer to keep it building.",
+            ["answer"],
+            {
+                "answer": _str_prop(
+                    "The user's answer to the builder's question, in their own "
+                    "words. Example: use a dark blue and teal colour theme"
+                ),
+                "task_id": _str_prop(
+                    "Optional build task id; omit to use the most recent build"
+                ),
+            },
+        ),
     ]
 
 
