@@ -19,7 +19,7 @@ from sqlalchemy import select
 
 from main import app
 import routes_execution
-from models import TaskExecution, TaskItem
+from models import ProjectMember, TaskExecution, TaskItem
 
 
 ADMIN_HEADERS = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
@@ -81,3 +81,41 @@ async def test_answer_resumes_one_shot_build_with_full_context(db_session, _capt
     assert "apps/portfolio-a1/" in prompt   # continue the existing app
     assert "restart" in prompt.lower()
     assert "build a portfolio site" in prompt  # original request/build context
+
+
+async def test_execute_from_awaiting_input_preserves_conversation(db_session, _capture_prompt):
+    # Resuming via /execute (not /answer) must not drop the clarification the
+    # user already gave — it used to fall through to a bare build_prompt.
+    item = TaskItem(
+        meeting_id=uuid.uuid4(),
+        action_type="BUILD",
+        assignee_name="Ralph",
+        assignee_email="ralph@aiui.com",
+        description="<rules>\n\nUSER REQUEST:\nbuild a landing page",
+        priority="IMPORTANT",
+        status="awaiting_input",
+        max_attempts=1,
+        built_app_slug="landing-a1",
+        conversation_history=[
+            {"role": "ai", "content": "What tone?"},
+            {"role": "admin", "content": "playful and bold"},
+        ],
+    )
+    db_session.add(item)
+    db_session.add(ProjectMember(
+        slug="landing-a1", user_email="ralph@aiui.com", role="owner", added_by="ralph@aiui.com",
+    ))
+    await db_session.commit()
+    await db_session.refresh(item)
+    task_id = str(item.id)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.post(f"/api/tasks/{task_id}/execute", headers=ADMIN_HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "running"
+
+    prompt = _capture_prompt["prompt"]
+    assert prompt, "resume prompt was not captured"
+    assert "playful and bold" in prompt      # conversation retained (the bug)
+    assert "apps/landing-a1/" in prompt      # continue the existing app
+    assert "build a landing page" in prompt

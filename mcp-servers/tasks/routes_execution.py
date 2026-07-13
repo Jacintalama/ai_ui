@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from agent_executor import get_executor
 from auth import AdminUser, current_admin, current_admin_or_capability
 from claude_executor import (
-    build_prompt, build_clarify_prompt, build_plan_prompt,
+    build_prompt, build_resume_prompt, build_clarify_prompt, build_plan_prompt,
     build_tdd_execute_prompt, build_verify_prompt,
     extract_app_slug, parse_outcome, parse_clarify_done,
     parse_plan, parse_test_outcome,
@@ -366,9 +366,15 @@ def _build_execute_prompt(
     item: TaskItem,
     supabase_url: str | None,
     has_db_uri: bool,
+    prior_status: str = "",
 ) -> str:
     """Compose the right execute-style prompt for an item that's about to
     transition into `running`. Shared by /execute and /resume.
+
+    When resuming a one-shot build that paused for input (prior_status ==
+    "awaiting_input"), replay the whole conversation and continue the existing
+    app — otherwise /execute restarts from scratch and drops the clarification
+    the user already gave via /answer.
     """
     item_slug = item.built_app_slug or ""
     item_email = item.assignee_email or ""
@@ -388,6 +394,15 @@ def _build_execute_prompt(
             has_db_uri=has_db_uri,
             slug=item_slug,
             user_email=item_email,
+        )
+    if prior_status == "awaiting_input":
+        return build_resume_prompt(
+            description=item.description,
+            slug=item_slug,
+            user_email=item_email,
+            conversation_history=item.conversation_history or [],
+            supabase_url=supabase_url,
+            has_db_uri=has_db_uri,
         )
     return build_prompt(
         description=item.description,
@@ -445,6 +460,7 @@ async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(cur
             .values(status="failed", error="orphan execution — reaped on retry", finished_at=datetime.utcnow())
         )
 
+        prior_status = item.status  # capture before flipping — resume detection
         item.status = "running"
         item.mode = "ai"
         execution = TaskExecution(task_id=item.id, status="running", log="")
@@ -454,7 +470,7 @@ async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(cur
         await s.refresh(execution)
         supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
 
-    prompt = _build_execute_prompt(item, supabase_url, has_db_uri)
+    prompt = _build_execute_prompt(item, supabase_url, has_db_uri, prior_status)
     auth = request.headers.get("Authorization", "")
     user_jwt = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else None
     # Create a holder dict that _stream_claude will fill with the executor
