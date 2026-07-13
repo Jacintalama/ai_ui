@@ -1256,10 +1256,23 @@
       return { cls: "pending", label: s, action: "approve" };
     }
 
+    // Recover the user's real request. Prefer the server-computed user_prompt
+    // (clean of the rules wrapper / the "Enhance apps/…:" prefix); fall back to
+    // splitting on the FIRST "USER REQUEST:" marker for older API responses.
+    function cleanPrompt(t) {
+      if (t && typeof t.user_prompt === "string" && t.user_prompt.length) {
+        return t.user_prompt;
+      }
+      const raw = String((t && t.description) || "");
+      const i = raw.indexOf("USER REQUEST:");
+      return i >= 0 ? raw.slice(i + "USER REQUEST:".length).trim() : raw;
+    }
+
     function renderCards(tasks) {
       // Dedupe tasks by slug, but keep every slugless task as its own card
       // (new projects that haven't been built yet don't have a slug yet).
-      const bySlug = new Map();
+      const bySlug = new Map();       // slug -> newest task (drives status + links)
+      const promptBySlug = new Map(); // slug -> ORIGINAL build task (drives the shown prompt)
       const slugless = [];
       for (const t of tasks) {
         if (!t.built_app_slug) {
@@ -1269,6 +1282,15 @@
         const prev = bySlug.get(t.built_app_slug);
         if (!prev || new Date(t.completed_at || t.created_at) > new Date(prev.completed_at || prev.created_at)) {
           bySlug.set(t.built_app_slug, t);
+        }
+        // The gallery shows the ORIGINAL request, not the latest enhancement —
+        // enhance tasks ("Enhance apps/<slug>/: …") would otherwise overwrite it.
+        const isEnhance = String(t.description || "").startsWith("Enhance apps/");
+        if (!isEnhance) {
+          const prevP = promptBySlug.get(t.built_app_slug);
+          if (!prevP || new Date(t.created_at) < new Date(prevP.created_at)) {
+            promptBySlug.set(t.built_app_slug, t);
+          }
         }
       }
       const unique = [...slugless, ...Array.from(bySlug.values())].sort(
@@ -1293,14 +1315,10 @@
         card.className = "card";
         const built = t.completed_at || t.created_at;
         const info = statusInfo(t);
-        // Strip the server-side rules prefix from descriptions so cards
-        // show the user's actual request. The prefix ends with the literal
-        // "USER REQUEST:" — anything after that is what the user typed.
-        const _rawDesc = String(t.description || "");
-        const _userIdx = _rawDesc.lastIndexOf("USER REQUEST:");
-        const userDesc = _userIdx >= 0
-          ? _rawDesc.slice(_userIdx + "USER REQUEST:".length).trim()
-          : _rawDesc;
+        // Show the ORIGINAL request (from the first build task for this slug),
+        // not the latest enhancement's internal "Enhance apps/…:" text.
+        const _promptTask = promptBySlug.get(t.built_app_slug) || t;
+        const userDesc = cleanPrompt(_promptTask);
         const title = t.built_app_slug || userDesc.slice(0, 60) + (userDesc.length > 60 ? "…" : "");
 
         let actionBtn = "";
@@ -1749,6 +1767,26 @@
     }
     npBtn.addEventListener("click", openModal);
     modal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", closeModal));
+
+    // The standalone template gallery (templates.html) links here as
+    // /tasks/app-builder#template=<key>. Pre-select that template and open the
+    // New Project modal so the selection isn't silently dropped (it used to be —
+    // projects.html never read the hash).
+    async function applyTemplateFromUrl() {
+      const src = (location.hash || "") + " " + (location.search || "");
+      const m = src.match(/template=([a-z0-9_-]+)/i);
+      if (!m) return;
+      const key = m[1];
+      const ok = await ensureTemplatesLoaded();
+      if (!ok) return;
+      const exists = Array.from(npTemplate.options).some((o) => o.value === key);
+      if (!exists) return;
+      openModal();
+      npTemplate.value = key;
+      applyTemplatePlaceholder();
+      // Drop the hash so a refresh doesn't reopen the modal.
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (_) {}
+    }
     modal.addEventListener("click", (ev) => { if (ev.target === modal) closeModal(); });
     document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !modal.hidden) closeModal(); });
 
@@ -2610,6 +2648,8 @@
     load();
     // Warm the templates cache eagerly so the gallery opens instantly.
     ensureTemplatesLoaded().catch((e) => console.warn("[templates] eager load failed", e));
+    // Honor a ?template=/#template= deep link from the standalone gallery.
+    applyTemplateFromUrl().catch((e) => console.warn("[templates] url preselect failed", e));
     // Poll so status badges flip from pending → building → built on their
     // own without the user needing to refresh. 8s is a good middle ground
     // between snappy updates and not hammering the API.
