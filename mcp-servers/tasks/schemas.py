@@ -3,7 +3,9 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
+
+from prompt_utils import clean_user_prompt
 
 ActionType = Literal["RESEARCH", "BUILD", "INTEGRATE", "ASK_USER"]
 Priority = Literal["CRITICAL", "IMPORTANT", "NICE_TO_HAVE"]
@@ -32,6 +34,16 @@ class TaskOut(BaseModel):
     built_app_slug: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
+
+    @computed_field
+    @property
+    def user_prompt(self) -> str:
+        """The user's original request, recovered from the wrapped description.
+
+        Every UI that shows "what did I ask for" should read this instead of
+        re-deriving it from ``description`` (which carries the template rules
+        wrapper or the ``Enhance apps/…:`` prefix)."""
+        return clean_user_prompt(self.description)
 
     class Config:
         from_attributes = True
