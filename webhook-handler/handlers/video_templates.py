@@ -130,6 +130,11 @@ def template_prompts() -> set[str]:
 
 
 def cache_is_fresh(now: float | None = None) -> bool:
+    # _fetched_at == 0.0 is the "never fetched" sentinel — always stale,
+    # regardless of the monotonic clock's absolute value (on a short uptime
+    # `monotonic() - 0` can be < TTL and wrongly read as fresh).
+    if not _fetched_at:
+        return False
     return ((now if now is not None else time.monotonic()) - _fetched_at) < _TTL_SECONDS
 
 
