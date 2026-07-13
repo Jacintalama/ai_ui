@@ -617,97 +617,11 @@ async def answer(
             return item
 
         if item.status == "awaiting_input":
-            import asyncio
-            from claude_executor import build_resume_prompt, build_tdd_execute_prompt, build_enhance_prompt
-            from models import TaskExecution
-            from routes_execution import _run_execution, _RUNNING, _lookup_supabase_config
-
-            history = list(item.conversation_history or [])
-            history.append({"role": "admin", "content": body.answer})
-            item.conversation_history = history
-            item.status = "running"
-            new_exec = TaskExecution(task_id=item.id, status="running", log="")
-            s.add(new_exec)
-            await s.commit()
-            await s.refresh(item)
-            await s.refresh(new_exec)
-            supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
-            item_slug = item.built_app_slug or ""
-            item_email = item.assignee_email or ""
-
-            # Enhance tasks need `build_enhance_prompt` so Claude stays in the
-            # app's existing stack/dir and follows the enhance rules. Using the
-            # generic `build_prompt` here would make Claude start a NEW app
-            # instead of modifying `apps/<slug>/`.
-            is_enhance = (
-                item.action_type == "BUILD"
-                and item.built_app_slug
-                and (item.description or "").startswith("Enhance apps/")
-            )
-
-            if is_enhance:
-                convo_block_lines = []
-                for entry in history:
-                    role = entry.get("role", "")
-                    content = entry.get("content", "")
-                    if role == "ai":
-                        convo_block_lines.append(f"AI asked: {content}")
-                    elif role == "admin":
-                        convo_block_lines.append(f"ADMIN answered: {content}")
-                convo_block = "\n".join(convo_block_lines)
-                # Strip the "Enhance apps/<slug>/: " prefix to get the raw ask,
-                # then append the clarifying round so Claude has full context.
-                raw_ask = (item.description or "").split(":", 1)[-1].strip()
-                user_request = (
-                    raw_ask
-                    + "\n\nCONVERSATION WITH ADMIN:\n"
-                    + convo_block
-                )
-                prompt = build_enhance_prompt(
-                    slug=item.built_app_slug,
-                    user_request=user_request,
-                    attempt_count=item.attempt_count,
-                    max_attempts=item.max_attempts,
-                    supabase_url=supabase_url,
-                    has_db_uri=has_db_uri,
-                    user_email=item_email,
-                )
-            elif item.max_attempts > 1 and item.plan:
-                prompt = build_tdd_execute_prompt(
-                    description=item.description,
-                    action_type=item.action_type,
-                    priority=item.priority,
-                    meeting_title=str(item.meeting_id),
-                    meeting_date="",
-                    plan=item.plan,
-                    conversation_history=history,
-                    attempt_count=item.attempt_count,
-                    max_attempts=item.max_attempts,
-                    error_context="",
-                    supabase_url=supabase_url,
-                    has_db_uri=has_db_uri,
-                    slug=item_slug,
-                    user_email=item_email,
-                )
-            else:
-                # One-shot resume: replay the FULL clarification conversation and
-                # tell the agent the partial app already exists on disk. The old
-                # code sent build_prompt + only the latest answer, so on a second
-                # NEEDS_INPUT round the earlier Q&A was silently dropped and the
-                # agent was never told to continue the existing app.
-                prompt = build_resume_prompt(
-                    description=item.description,
-                    slug=item_slug,
-                    user_email=item_email,
-                    conversation_history=history,
-                    latest_answer=body.answer,
-                    supabase_url=supabase_url,
-                    has_db_uri=has_db_uri,
-                )
-
-            _RUNNING[item.id] = {"task": None, "proc": None}
-            bg = asyncio.create_task(_run_execution(item.id, new_exec.id, prompt))
-            _RUNNING[item.id]["task"] = bg
+            # Shared resume core (also used by the user-scoped aiuibuilder answer
+            # endpoint) — appends the answer, flips to running, spawns the agent
+            # with full replayed context. Commits + refreshes item internally.
+            from routes_execution import resume_with_answer
+            await resume_with_answer(s, item, body.answer)
             return item
 
         raise HTTPException(status_code=409, detail="Answer not applicable in current state")

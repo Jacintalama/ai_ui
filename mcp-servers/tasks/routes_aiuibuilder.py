@@ -63,6 +63,10 @@ class EnhanceRequest(BaseModel):
     attachment_name: str | None = Field(default=None, max_length=200)
 
 
+class BuildAnswerRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=4000)
+
+
 def _attachment_block(name: str | None, text: str | None) -> str:
     """Frame extracted attachment text for the build/enhance prompt as
     UNTRUSTED data (indirect-prompt-injection guard). Empty when no text."""
@@ -152,10 +156,11 @@ def _public_build_status(task_status: str) -> str:
     """Map an internal TaskItem.status to the small public build status.
 
     Only `running`/`planning` mean the agent is still working. `awaiting_input`
-    is terminal for a Discord-origin build — the agent exited asking a question
-    and there is no Discord answer path — so it surfaces as `needs_input`.
+    surfaces as `needs_input` — the agent paused with a question. This is now
+    resumable from Discord/Slack/Voice via POST /build/{id}/answer (the watcher
+    surfaces the question and accepts an answer), not a dead end.
     Anything else a build could land in (`pending` after an exception,
-    `claimed_manual`) is a dead end for Discord and surfaces as `failed`. This
+    `claimed_manual`) is a dead end for the bot and surfaces as `failed`, which
     keeps the watcher from polling forever on a build that already settled.
     """
     if task_status == "completed":
@@ -471,6 +476,55 @@ async def get_build_status(task_id: uuid.UUID, user: CurrentUser = Depends(curre
         user_prompt=clean_user_prompt(item.description or ""),
         question=(item.result or "")[:500] if status == "needs_input" else None,
     )
+
+
+@router.post("/build/{task_id}/answer", response_model=BuildStatusResponse)
+async def answer_build(
+    task_id: uuid.UUID,
+    body: BuildAnswerRequest,
+    user: CurrentUser = Depends(current_user),
+):
+    """Answer a paused (needs_input) build and resume it — the Discord/Slack/
+    Voice counterpart to the admin web /answer. Ownership-scoped to the caller.
+
+    Enforces the one-build-platform-wide memory guard: 429 if another build is
+    already live (a paused build doesn't hold the slot, so it re-acquires it on
+    resume). Reuses the same resume_with_answer core as the web path, so context
+    replay and the continue-existing-app instruction are identical.
+    """
+    from routes_execution import resume_with_answer
+    async with session() as s:
+        # Serialize with build starts/other answers so we can't create a second
+        # concurrently-running build.
+        await s.execute(text("SELECT pg_advisory_xact_lock(hashtext('aiuibuilder:build'))"))
+        item = (await s.execute(
+            select(TaskItem).where(TaskItem.id == task_id)
+        )).scalar_one_or_none()
+        if item is None or item.assignee_email != user.email:
+            raise HTTPException(status_code=404, detail="not found")
+        if item.status != "awaiting_input":
+            raise HTTPException(status_code=409, detail="This build is not waiting for an answer")
+        other = (await s.execute(
+            select(TaskItem.id).where(
+                TaskItem.action_type == "BUILD",
+                TaskItem.status.in_(_LIVE_BUILD_STATES),
+                TaskItem.id != item.id,
+            ).limit(1)
+        )).scalar_one_or_none()
+        if other:
+            raise HTTPException(status_code=429, detail="A build is already running")
+        await resume_with_answer(s, item, body.answer)
+        await s.refresh(item)
+        status = _public_build_status(item.status)
+        slug = item.built_app_slug or ""
+        return BuildStatusResponse(
+            status=status,
+            slug=slug,
+            preview_url=_preview_url(slug) if status == "completed" and slug else None,
+            error=(item.result or "")[:500] if status in ("failed", "needs_input") else None,
+            user_prompt=clean_user_prompt(item.description or ""),
+            question=(item.result or "")[:500] if status == "needs_input" else None,
+        )
 
 
 @router.post("/{slug}/publish", response_model=PublishStatus)

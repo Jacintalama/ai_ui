@@ -14,12 +14,14 @@ from sse_starlette.sse import EventSourceResponse
 from agent_executor import get_executor
 from auth import AdminUser, current_admin, current_admin_or_capability
 from claude_executor import (
-    build_prompt, build_resume_prompt, build_clarify_prompt, build_plan_prompt,
+    build_prompt, build_resume_prompt, build_enhance_prompt,
+    build_clarify_prompt, build_plan_prompt,
     build_tdd_execute_prompt, build_verify_prompt,
     extract_app_slug, parse_outcome, parse_clarify_done,
     parse_plan, parse_test_outcome,
 )
 from db import session
+from prompt_utils import clean_user_prompt
 from heavy_lock import heavy_lock
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
 from schemas import PlanReviewRequest, TaskOut
@@ -415,6 +417,90 @@ def _build_execute_prompt(
         slug=item_slug,
         user_email=item_email,
     )
+
+
+async def resume_with_answer(s, item: TaskItem, answer: str) -> None:
+    """Resume a paused (awaiting_input) build with the user's answer.
+
+    Appends the answer to the conversation, flips the task back to running,
+    creates a fresh execution row, and spawns a new agent run that keeps the
+    prior context (enhance / loop-with-plan / one-shot each replay their
+    history). Commits the transition itself. Shared by the admin web /answer and
+    the user-scoped aiuibuilder answer endpoint, so web, Discord, Slack, and
+    Voice resume identically.
+    """
+    history = list(item.conversation_history or [])
+    history.append({"role": "admin", "content": answer})
+    item.conversation_history = history
+    item.status = "running"
+    new_exec = TaskExecution(task_id=item.id, status="running", log="")
+    s.add(new_exec)
+    await s.commit()
+    await s.refresh(item)
+    await s.refresh(new_exec)
+    supabase_url, has_db_uri = await _lookup_supabase_config(s, item.built_app_slug)
+    item_slug = item.built_app_slug or ""
+    item_email = item.assignee_email or ""
+
+    # Enhance tasks stay in the app's existing stack/dir via build_enhance_prompt;
+    # a generic build prompt would start a NEW app instead of modifying it.
+    is_enhance = (
+        item.action_type == "BUILD"
+        and item.built_app_slug
+        and (item.description or "").startswith("Enhance apps/")
+    )
+    if is_enhance:
+        convo_block_lines = []
+        for entry in history:
+            role = entry.get("role", "")
+            content = entry.get("content", "")
+            if role == "ai":
+                convo_block_lines.append(f"AI asked: {content}")
+            elif role == "admin":
+                convo_block_lines.append(f"ADMIN answered: {content}")
+        convo_block = "\n".join(convo_block_lines)
+        raw_ask = clean_user_prompt(item.description)
+        user_request = raw_ask + "\n\nCONVERSATION WITH ADMIN:\n" + convo_block
+        prompt = build_enhance_prompt(
+            slug=item.built_app_slug,
+            user_request=user_request,
+            attempt_count=item.attempt_count,
+            max_attempts=item.max_attempts,
+            supabase_url=supabase_url,
+            has_db_uri=has_db_uri,
+            user_email=item_email,
+        )
+    elif item.max_attempts > 1 and item.plan:
+        prompt = build_tdd_execute_prompt(
+            description=item.description,
+            action_type=item.action_type,
+            priority=item.priority,
+            meeting_title=str(item.meeting_id),
+            meeting_date="",
+            plan=item.plan,
+            conversation_history=history,
+            attempt_count=item.attempt_count,
+            max_attempts=item.max_attempts,
+            error_context="",
+            supabase_url=supabase_url,
+            has_db_uri=has_db_uri,
+            slug=item_slug,
+            user_email=item_email,
+        )
+    else:
+        prompt = build_resume_prompt(
+            description=item.description,
+            slug=item_slug,
+            user_email=item_email,
+            conversation_history=history,
+            latest_answer=answer,
+            supabase_url=supabase_url,
+            has_db_uri=has_db_uri,
+        )
+
+    _RUNNING[item.id] = {"task": None, "proc": None}
+    bg = asyncio.create_task(_run_execution(item.id, new_exec.id, prompt))
+    _RUNNING[item.id]["task"] = bg
 
 
 @router.post("/{task_id}/execute", response_model=TaskOut)
