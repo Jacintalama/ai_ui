@@ -618,7 +618,7 @@ async def answer(
 
         if item.status == "awaiting_input":
             import asyncio
-            from claude_executor import build_prompt, build_tdd_execute_prompt, build_enhance_prompt
+            from claude_executor import build_resume_prompt, build_tdd_execute_prompt, build_enhance_prompt
             from models import TaskExecution
             from routes_execution import _run_execution, _RUNNING, _lookup_supabase_config
 
@@ -690,19 +690,19 @@ async def answer(
                     user_email=item_email,
                 )
             else:
-                prompt = (
-                    build_prompt(
-                        description=item.description,
-                        action_type=item.action_type,
-                        priority=item.priority,
-                        meeting_title=str(item.meeting_id),
-                        meeting_date="",
-                        supabase_url=supabase_url,
-                        has_db_uri=has_db_uri,
-                        slug=item_slug,
-                        user_email=item_email,
-                    )
-                    + f"\n\nADMIN PROVIDED THIS ANSWER: {body.answer}"
+                # One-shot resume: replay the FULL clarification conversation and
+                # tell the agent the partial app already exists on disk. The old
+                # code sent build_prompt + only the latest answer, so on a second
+                # NEEDS_INPUT round the earlier Q&A was silently dropped and the
+                # agent was never told to continue the existing app.
+                prompt = build_resume_prompt(
+                    description=item.description,
+                    slug=item_slug,
+                    user_email=item_email,
+                    conversation_history=history,
+                    latest_answer=body.answer,
+                    supabase_url=supabase_url,
+                    has_db_uri=has_db_uri,
                 )
 
             _RUNNING[item.id] = {"task": None, "proc": None}

@@ -670,6 +670,50 @@ def build_plan_prompt(
     )
 
 
+def build_resume_prompt(
+    *,
+    description: str,
+    slug: str,
+    user_email: str = "",
+    conversation_history: list[dict] | None = None,
+    latest_answer: str = "",
+    supabase_url: str | None = None,
+    has_db_uri: bool = False,
+) -> str:
+    """Resume a one-shot build that paused for input (NEEDS_INPUT).
+
+    A fresh agent process has no memory of the paused run, so we reissue the
+    original build prompt (rules + user request) for full context, replay the
+    WHOLE clarification conversation (not just the last answer — otherwise
+    earlier rounds are silently dropped), and tell the agent the partial app
+    already exists on disk so it continues rather than regenerating.
+    """
+    base = build_prompt(
+        description=description,
+        action_type="BUILD",
+        priority="NICE_TO_HAVE",
+        meeting_title="",
+        meeting_date="",
+        supabase_url=supabase_url,
+        has_db_uri=has_db_uri,
+        slug=slug,
+        user_email=user_email,
+    )
+    parts = [base]
+    convo = _format_conversation_history(conversation_history or [])
+    if convo:
+        parts.append(convo)
+    if latest_answer and latest_answer.strip():
+        parts.append(f"The admin's latest answer: {latest_answer.strip()}")
+    if slug:
+        parts.append(
+            f"IMPORTANT: A partial app already exists at apps/{slug}/. Read the "
+            "existing files first and continue building on top of them. Do NOT "
+            "restart or regenerate the app from scratch."
+        )
+    return "\n\n".join(parts)
+
+
 def build_tdd_execute_prompt(
     *,
     description: str,
