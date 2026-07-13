@@ -287,6 +287,10 @@ class CommandRouter:
         # Shared by the channel/DM/slash flow (plan_chat_step) and the private
         # app thread (handle_builder_thread_message).
         self._pending_clarify: dict[str, dict] = {}
+        # user id -> {"task_id","slug","display"} of a paused build waiting for
+        # the user's answer. Armed by _watch_build on needs_input; the next
+        # thread reply resumes it via /answer. Durable-mirrored like the above.
+        self._pending_build_answer: dict[str, dict] = {}
         # Durable, cache-backed mirror of the three dicts above so a webhook-handler
         # redeploy doesn't wipe in-flight chats. The dicts act as the fast cache;
         # writes persist (best-effort) and reads hydrate on a cache miss.
@@ -650,6 +654,15 @@ class CommandRouter:
         pending vague-build clarification, refine the current app, or answer."""
         uid = ctx.user_id or ""
         ctx.arguments = text
+        # 0) The user is answering a paused build's question -> resume the build.
+        pending_ans = self._pending_build_answer.get(uid)
+        if pending_ans is None:
+            pending_ans = await self._state.get(f"pending_build_answer:{uid}")
+            if pending_ans is not None:
+                self._pending_build_answer[uid] = pending_ans
+        if pending_ans:
+            await self._answer_paused_build(ctx, uid, pending_ans, text)
+            return
         # Hydrate the two per-user stores on a cache miss (e.g. after a redeploy).
         pending = self._pending_clarify.get(uid)
         if pending is None:
@@ -682,6 +695,35 @@ class CommandRouter:
             return
         # 3) No app yet — just answer (the user can ask to build).
         await self._handle_ask(ctx)
+
+    async def _answer_paused_build(
+        self, ctx: CommandContext, uid: str, pending: dict, answer_text: str,
+    ) -> None:
+        """Resume a paused build with the user's thread reply, then re-arm the
+        result watcher so completion/further questions still surface in-thread."""
+        task_id = pending.get("task_id")
+        slug = pending.get("slug", "")
+        display = pending.get("display") or slug
+        # Clear the armed flag up front so a failure can't trap the user in a loop.
+        self._pending_build_answer.pop(uid, None)
+        self._forget(f"pending_build_answer:{uid}")
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.answer_build(email, task_id, answer_text)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        await ctx.respond(
+            f"Got it — continuing **{display}**. I'll post the link here when it's ready."
+        )
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(
+                self._watch_build(ctx, email, task_id, slug, display_name=display))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_build_watcher_done)
 
     async def _handle_briefing(self, ctx: CommandContext) -> None:
         """/aiui briefing — set up a daily morning briefing; `off` turns it off."""
@@ -2864,12 +2906,17 @@ class CommandRouter:
                         await _notify(msg)
                     return
                 if status == "needs_input":
-                    detail = (st.get("error") or "").strip()
-                    ask = f" It needs to know: {detail}" if detail else ""
+                    detail = (st.get("question") or st.get("error") or "").strip()
+                    uid = ctx.user_id or ""
+                    if uid:
+                        # Arm the thread so the user's next reply answers the build.
+                        entry = {"task_id": task_id, "slug": slug, "display": display}
+                        self._pending_build_answer[uid] = entry
+                        self._persist(f"pending_build_answer:{uid}", entry)
+                    ask = f"\n> {detail}" if detail else ""
                     await _notify(
-                        f"**{display}** needs more detail to finish.{ask} "
-                        "Continue it in the App Builder, or run `build` again with a "
-                        "more specific description."
+                        f"**{display}** needs a bit more from you to finish:{ask}\n"
+                        "Reply here with your answer and I'll keep building."
                     )
                     return
                 if status == "failed":

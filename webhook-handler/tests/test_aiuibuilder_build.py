@@ -162,8 +162,10 @@ async def test_watch_build_notifies_on_needs_input():
     r = _router({"100": "a@x.com"}, tc)
     await r._watch_build(ctx, "a@x.com", "t1", "s", poll_seconds=0, max_polls=5)
     assert len(notified) == 1
-    assert "more detail" in notified[0].lower()
     assert "color theme" in notified[0]
+    assert "reply here" in notified[0].lower()
+    # the build is armed so the user's next thread reply resumes it
+    assert r._pending_build_answer.get("100", {}).get("task_id") == "t1"
 
 
 @pytest.mark.asyncio
