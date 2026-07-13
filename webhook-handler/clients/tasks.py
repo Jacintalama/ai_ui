@@ -266,6 +266,17 @@ class TasksClient:
         )
         return resp.json()
 
+    async def answer_build(
+        self, user_email: str, task_id: str, answer: str,
+    ) -> dict[str, Any]:
+        """Answer a paused (needs_input) build and resume it. Returns the new
+        build status ({status, slug, preview_url, error, user_prompt, question})."""
+        resp = await self._request(
+            "POST", f"/api/aiuibuilder/build/{task_id}/answer", user_email,
+            json={"answer": answer},
+        )
+        return resp.json()
+
     # --- Video generation (user-scoped, X-User-Email) ---
     async def get_video_templates(self) -> dict[str, Any]:
         """Template preset catalog (static registry - not user-scoped)."""
