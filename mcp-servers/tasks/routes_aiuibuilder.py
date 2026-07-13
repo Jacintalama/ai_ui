@@ -20,6 +20,7 @@ from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
 from prompt_utils import clean_user_prompt
 from templates import is_valid_key
+from chat_seed import seed_user_prompt
 from routes_projects import _delete_slug, _publish_slug, _unpublish_slug, _validate_slug, PublishStatus
 
 logger = logging.getLogger("tasks.aiuibuilder")
@@ -298,6 +299,8 @@ async def _create_and_spawn_build(
         await s.flush()
         execution = TaskExecution(task_id=item.id, status="running", log="")
         s.add(execution)
+        # Seed the chat thread with the user's original request (idempotent).
+        await seed_user_prompt(s, slug, email, description)
         await s.commit()
         await s.refresh(item)
         await s.refresh(execution)

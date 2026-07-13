@@ -19,6 +19,7 @@ from document_extract import classify_document, extract_text
 from models import ChatMessage, ProjectSupabase, TaskItem
 from schemas import AnswerRequest, ChatMessage as ChatMessageSchema, ChatRequest, ChatResponse, CompleteRequest, CreateTaskRequest, TaskOut
 from templates import _has_template_app, build_rules_for, is_valid_key, requires_supabase
+from chat_seed import seed_user_prompt
 
 _FILENAME_SAFE_RE = _re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -364,6 +365,10 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
                 role="assistant",
                 content=SUPABASE_CONNECT_PROMPT,
             ))
+        # Record the user's original request as the first chat message so the
+        # preview/chat thread shows what was asked (idempotent, no-op if empty).
+        if body.action_type == "BUILD" and item.built_app_slug:
+            await seed_user_prompt(s, item.built_app_slug, user.email, body.description)
         await s.commit()
         await s.refresh(item)
 
