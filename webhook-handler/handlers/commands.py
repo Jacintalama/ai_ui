@@ -655,13 +655,7 @@ class CommandRouter:
         uid = ctx.user_id or ""
         ctx.arguments = text
         # 0) The user is answering a paused build's question -> resume the build.
-        pending_ans = self._pending_build_answer.get(uid)
-        if pending_ans is None:
-            pending_ans = await self._state.get(f"pending_build_answer:{uid}")
-            if pending_ans is not None:
-                self._pending_build_answer[uid] = pending_ans
-        if pending_ans:
-            await self._answer_paused_build(ctx, uid, pending_ans, text)
+        if await self.try_resume_paused_build(ctx, uid, text):
             return
         # Hydrate the two per-user stores on a cache miss (e.g. after a redeploy).
         pending = self._pending_clarify.get(uid)
@@ -695,6 +689,20 @@ class CommandRouter:
             return
         # 3) No app yet — just answer (the user can ask to build).
         await self._handle_ask(ctx)
+
+    async def try_resume_paused_build(self, ctx: CommandContext, uid: str, text: str) -> bool:
+        """If the user has a paused build awaiting an answer, resume it with
+        `text` and return True; otherwise return False. Shared by Discord app
+        threads and Slack DMs. Hydrates from the durable store on a cache miss."""
+        pending_ans = self._pending_build_answer.get(uid)
+        if pending_ans is None:
+            pending_ans = await self._state.get(f"pending_build_answer:{uid}")
+            if pending_ans is not None:
+                self._pending_build_answer[uid] = pending_ans
+        if not pending_ans:
+            return False
+        await self._answer_paused_build(ctx, uid, pending_ans, text)
+        return True
 
     async def _answer_paused_build(
         self, ctx: CommandContext, uid: str, pending: dict, answer_text: str,

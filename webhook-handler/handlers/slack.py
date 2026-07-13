@@ -160,6 +160,17 @@ class SlackWebhookHandler:
 
         return {"success": True, "message": "Mention handled, response posted"}
 
+    def _dm_resume_ctx(self, user_id: str, channel: str, text: str) -> "CommandContext":
+        """A minimal DM-targeted ctx so a build resume posts back into the DM."""
+        from handlers.commands import CommandContext
+        async def respond(msg: str) -> None:
+            await self.slack.post_message(channel=channel, text=msg)
+        return CommandContext(
+            user_id=user_id, user_name=user_id, channel_id=channel,
+            raw_text=text, subcommand="aiuibuilder", arguments=text,
+            platform="slack", respond=respond, notify_channel=respond,
+        )
+
     async def _handle_direct_message(self, event: dict[str, Any]) -> dict[str, Any]:
         """Handle direct message to bot."""
         # Only respond to a freshly-typed user message. Skip bot echoes (bot_id)
@@ -179,6 +190,16 @@ class SlackWebhookHandler:
             return {"success": True, "message": "Skipped empty message"}
 
         logger.info(f"Slack DM from {user}: {text[:100]}")
+
+        # A DM reply to a paused build's question resumes the build (mirrors the
+        # Discord app-thread flow). Only fires when a build is armed for this user.
+        if self.router is not None:
+            try:
+                resume_ctx = self._dm_resume_ctx(user, channel, text)
+                if await self.router.try_resume_paused_build(resume_ctx, user, text):
+                    return {"success": True, "message": "Build answer resumed"}
+            except Exception as exc:  # noqa: BLE001
+                logger.error("slack build-answer resume failed user=%s: %s", user, exc)
 
         if onboarding.looks_like_getting_started(text):
             await self.slack.post_message(
