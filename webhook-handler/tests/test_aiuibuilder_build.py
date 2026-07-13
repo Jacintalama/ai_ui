@@ -79,6 +79,27 @@ async def test_build_happy_path_starts_and_acks(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_build_ack_echoes_full_request(monkeypatch):
+    # friendly_name truncates at the first comma ("A CRM, …" -> "CRM"), so the
+    # ack must ALSO echo the user's verbatim request or the multi-clause ask is
+    # invisible to them.
+    captured = []
+    tc = MagicMock()
+    tc.list_templates = AsyncMock(return_value=[])
+    tc.start_build = AsyncMock(return_value={"task_id": "t1", "slug": "clinic-a1", "status": "running"})
+
+    async def fake_watch(self, ctx, email, task_id, slug, **kw):
+        pass
+    monkeypatch.setattr(CommandRouter, "_watch_build", fake_watch)
+
+    desc = "A CRM, a dashboard, and booking for my clinic"
+    await _router({"100": "a@x.com"}, tc)._handle_aiuibuilder(
+        _ctx("100", f'build "{desc}"', captured, notify=None)
+    )
+    assert any(desc in m for m in captured), captured
+
+
+@pytest.mark.asyncio
 async def test_build_unquoted_description_works():
     captured = []
     tc = MagicMock()

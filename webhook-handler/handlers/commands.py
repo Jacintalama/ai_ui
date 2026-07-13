@@ -2078,9 +2078,16 @@ class CommandRouter:
             self._persist(f"current_app:{ctx.user_id}", slug)  # durable across restarts
         display = name or slug
         tnote = f" (from the {template_label} template)" if template_label else ""
+        # Echo the user's ACTUAL request, not just the short friendly title
+        # (friendly_name truncates at the first comma, so a multi-clause ask
+        # like "A CRM, a dashboard, and booking" showed back as just "CRM").
+        req = " ".join((description or "").split())
+        if len(req) > 300:
+            req = req[:297].rstrip() + "…"
+        req_line = f" — from your request:\n> {req}\n" if req else " "
         await ctx.respond(
-            f"Building **{display}** (`{slug}`){tnote} … I'll post the link here "
-            "when it's ready (usually a few minutes)."
+            f"Building **{display}** (`{slug}`){tnote}{req_line}"
+            "I'll post the link here when it's ready (usually a few minutes)."
         )
         if ctx.notify_channel is not None:
             watcher = asyncio.create_task(
