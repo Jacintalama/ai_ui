@@ -22,16 +22,16 @@ from claude_executor import (
     parse_plan, parse_test_outcome,
 )
 from db import session
+from prompt_utils import clean_user_prompt
+from heavy_lock import heavy_lock
+from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
+from schemas import PlanReviewRequest, TaskOut
 
 # AutoFix loop: real-browser smoke check + up to this many narrow fix
 # passes after a build completes. Module-level seam so tests can monkeypatch
 # _smoke_app without touching the real Playwright checker.
 _smoke_app = _smoke_app_default
 AUTOFIX_MAX_PASSES = 2
-from prompt_utils import clean_user_prompt
-from heavy_lock import heavy_lock
-from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
-from schemas import PlanReviewRequest, TaskOut
 
 
 async def _lookup_supabase_url(s, slug: str | None) -> str | None:
@@ -165,24 +165,40 @@ async def _run_autofix(
     AUTOFIX_MAX_PASSES times. Returns the final unresolved report, or None
     once the app loads clean (including when it was already clean on the
     first check). Calls the module-level `_smoke_app` / `_stream_claude`
-    seams so this can be driven start to finish by tests."""
-    report = await _smoke_app(slug)
-    for i in range(1, AUTOFIX_MAX_PASSES + 1):
-        if not report:
-            return None
-        async with session() as s:
-            await s.execute(
-                update(TaskExecution).where(TaskExecution.id == execution_id)
-                .values(log=TaskExecution.log + f"\n\n--- AUTOFIX {i}/{AUTOFIX_MAX_PASSES} ---\n{report}\n")
-            )
-            await s.commit()
-        await _stream_claude(
-            build_autofix_prompt(slug=slug, errors=report),
-            execution_id, task_id,
-            user_jwt=user_jwt, schedule_id=schedule_id,
-        )
+    seams so this can be driven start to finish by tests.
+
+    Fully non-fatal by design: AutoFix is a best-effort polish step that
+    runs after a build has already reached "completed". Any exception here
+    (a crashed fix pass, a DB write that fails, an unexpected smoke error)
+    must never bubble up and flip that completed build to failed. On any
+    such error we log a warning and return whatever report we last have
+    (or None), so the caller degrades to "AutoFix skipped/incomplete"
+    instead of losing the build."""
+    report: str | None = None
+    try:
         report = await _smoke_app(slug)
-    return report
+        for i in range(1, AUTOFIX_MAX_PASSES + 1):
+            if not report:
+                return None
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution).where(TaskExecution.id == execution_id)
+                    .values(log=TaskExecution.log + f"\n\n--- AUTOFIX {i}/{AUTOFIX_MAX_PASSES} ---\n{report}\n")
+                )
+                await s.commit()
+            await _stream_claude(
+                build_autofix_prompt(slug=slug, errors=report),
+                execution_id, task_id,
+                user_jwt=user_jwt, schedule_id=schedule_id,
+            )
+            report = await _smoke_app(slug)
+        return report
+    except Exception as exc:
+        logger.warning(
+            "AutoFix step failed for slug=%s execution_id=%s, skipping: %s",
+            slug, execution_id, exc,
+        )
+        return report
 
 
 async def _run_execution(

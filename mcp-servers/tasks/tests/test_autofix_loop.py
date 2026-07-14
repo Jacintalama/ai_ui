@@ -108,6 +108,67 @@ async def test_persistent_error_stops_after_max_passes(monkeypatch):
     assert len(log_sink) == 2
 
 
+def _make_raising_stream_claude(exc_cls=RuntimeError, message="executor crashed"):
+    async def _stream(prompt, execution_id, task_id, user_jwt=None, schedule_id=None):
+        raise exc_cls(message)
+    return _stream
+
+
+async def test_stream_claude_crash_does_not_propagate(monkeypatch):
+    """Critical regression test: a fix-pass crash (subprocess crash, timeout,
+    remote-exec failure) must NOT propagate out of _run_autofix. If it did,
+    it would bubble into _run_execution's outer except and flip an already
+    completed build to failed. AutoFix must degrade gracefully instead."""
+    log_sink = []
+    monkeypatch.setattr(routes_execution, "session", _fake_session_factory(log_sink))
+    monkeypatch.setattr(routes_execution, "_smoke_app", _make_smoke(["- console.error: boom"]))
+    monkeypatch.setattr(routes_execution, "_stream_claude", _make_raising_stream_claude())
+
+    result = await routes_execution._run_autofix(
+        "my-app", uuid.uuid4(), uuid.uuid4(),
+    )
+
+    # Must not raise, and must degrade to the last-known smoke report
+    # instead of losing the build.
+    assert result == "- console.error: boom"
+
+
+async def test_db_log_append_crash_does_not_propagate(monkeypatch):
+    """Second variant of the Critical regression: if the DB log-append
+    between smoke and fix pass raises (e.g. a lost connection), that must
+    also be swallowed rather than propagate out of _run_autofix."""
+
+    class _RaisingSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, stmt):
+            raise RuntimeError("db connection lost")
+
+        async def commit(self):
+            return None
+
+    def _raising_session_factory():
+        return _RaisingSession()
+
+    fix_calls = []
+    monkeypatch.setattr(routes_execution, "session", _raising_session_factory)
+    monkeypatch.setattr(routes_execution, "_smoke_app", _make_smoke(["- console.error: boom"]))
+    monkeypatch.setattr(routes_execution, "_stream_claude", _make_stream_claude(fix_calls))
+
+    result = await routes_execution._run_autofix(
+        "my-app", uuid.uuid4(), uuid.uuid4(),
+    )
+
+    # Must not raise. The fix pass never ran (log-append failed first), so
+    # the last-known smoke report is what comes back.
+    assert result == "- console.error: boom"
+    assert len(fix_calls) == 0
+
+
 async def test_autofix_prompt_includes_errors_verbatim_and_scope_phrasing():
     errors = "- console.error: TypeError: foo is not a function\n- pageerror: ReferenceError: x"
     prompt = build_autofix_prompt(slug="my-app", errors=errors)
