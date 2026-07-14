@@ -594,7 +594,7 @@ async def get_build_status(task_id: uuid.UUID, user: CurrentUser = Depends(curre
         error=(item.result or "")[:500] if status in ("failed", "needs_input") else None,
         user_prompt=clean_user_prompt(item.description or ""),
         question=(item.result or "")[:500] if status == "needs_input" else None,
-        questions=item.questions_json if status == "needs_input" else None,
+        questions=getattr(item, "questions_json", None) if status == "needs_input" else None,
     )
 
 
@@ -640,7 +640,8 @@ async def answer_build(
         if other:
             raise HTTPException(status_code=429, detail="A build is already running")
 
-        if body.answers is not None or body.answer == "__skip__":
+        _has_prebuild_qs = getattr(item, "questions_json", None) is not None
+        if body.answers is not None or (body.answer == "__skip__" and _has_prebuild_qs):
             answer_text = _compose_questions_answer_text(item.questions_json, body.answers)
             # One round only: clear the stored questions now that they're
             # answered/skipped. Never touches item.result (the separate
