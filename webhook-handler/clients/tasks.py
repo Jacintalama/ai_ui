@@ -267,13 +267,28 @@ class TasksClient:
         return resp.json()
 
     async def answer_build(
-        self, user_email: str, task_id: str, answer: str,
+        self, user_email: str, task_id: str, answer: str | None = None,
+        answers: list[str] | None = None,
     ) -> dict[str, Any]:
         """Answer a paused (needs_input) build and resume it. Returns the new
-        build status ({status, slug, preview_url, error, user_prompt, question})."""
+        build status ({status, slug, preview_url, error, user_prompt,
+        question, questions}).
+
+        Two shapes: free-text `answer` (the Jul-13 mid-build flow, unchanged)
+        and `answers`, one string per stored pre-build question in order,
+        or [] to skip (the Task-4 structured pre-build questions flow).
+        `answers`, when given, is included in the request body; `answer` is
+        included whenever it's not None (back-compat with existing callers
+        that only ever pass `answer`).
+        """
+        body: dict[str, Any] = {}
+        if answer is not None:
+            body["answer"] = answer
+        if answers is not None:
+            body["answers"] = answers
         resp = await self._request(
             "POST", f"/api/aiuibuilder/build/{task_id}/answer", user_email,
-            json={"answer": answer},
+            json=body,
         )
         return resp.json()
 

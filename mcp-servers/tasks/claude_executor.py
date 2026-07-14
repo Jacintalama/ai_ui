@@ -1,8 +1,10 @@
 """Build prompts, spawn the claude CLI subprocess, and parse its outcomes."""
 import asyncio
+import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
@@ -356,6 +358,33 @@ When you have gathered enough information to write a detailed plan, end with:
 
 {conversation_history_block}"""
 
+PREBUILD_QUESTIONS_PROMPT_TEMPLATE = """You are about to build the following app from scratch. Before starting, \
+decide whether you need to ask the user up to 3 short multiple-choice \
+questions, or whether the brief is already clear enough to build.
+
+USER REQUEST:
+{description}
+
+RULES:
+1. If the brief is clear enough to build a good app right now, reply with \
+EXACTLY this and nothing else:
+NO_QUESTIONS
+
+2. Otherwise, reply with ONLY minified JSON (no prose, no markdown fences, \
+no commentary before or after) in this exact shape:
+{{"questions": [{{"q": "short question under 100 chars", "options": ["option \
+1", "option 2"]}}]}}
+
+Constraints on the JSON form:
+- At most 3 questions total.
+- Each question has 2 to 4 short string options.
+- Each question's "q" text is under 100 characters.
+- Only ask about things that materially change what gets built (purpose, \
+audience, key features, look and feel). Do not ask about implementation \
+details the user would not have an opinion on.
+
+Reply with NO_QUESTIONS or the JSON only. Nothing else."""
+
 PLAN_PROMPT_TEMPLATE = """You are creating an implementation plan for the AIUI decision engine.
 
 TASK: {description}
@@ -655,6 +684,14 @@ def build_clarify_prompt(
     )
 
 
+def build_prebuild_questions_prompt(description: str) -> str:
+    """A single one-shot, non-tool completion: either NO_QUESTIONS (the brief
+    is clear enough to build) or minified JSON with up to 3 short
+    multiple-choice questions. Runs once, before scaffolding a non-template
+    build; separate from and does not touch the mid-build NEEDS_INPUT flow."""
+    return PREBUILD_QUESTIONS_PROMPT_TEMPLATE.format(description=description)
+
+
 def build_plan_prompt(
     *,
     description: str,
@@ -935,6 +972,67 @@ def parse_clarify_done(claude_response: str) -> str | None:
     text = _extract_assistant_text(claude_response) or claude_response
     match = _CLARIFY_DONE_RE.search(text)
     return match.group("rest").strip() if match else None
+
+
+def parse_prebuild_questions(claude_response: str | None) -> list[dict] | None:
+    """Parse the one-shot pre-build question pass output.
+
+    Returns None for the literal NO_QUESTIONS reply, empty/unparseable text,
+    JSON missing a "questions" key, or a payload with no valid question left
+    after dropping malformed entries. Otherwise returns a list of
+    {"q": str, "options": [str, ...]} dicts, trimmed to at most 3, keeping
+    only questions with a non-empty "q" and 2-4 string options."""
+    if not claude_response:
+        return None
+    text = (_extract_assistant_text(claude_response) or claude_response or "").strip()
+    if not text or text == "NO_QUESTIONS":
+        return None
+    # Tolerate stray whitespace/prose around the JSON blob. Find the first
+    # '{' through the last '}' and try that slice.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return None
+    try:
+        payload = json.loads(text[start:end + 1])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    raw_questions = payload.get("questions")
+    if not isinstance(raw_questions, list) or not raw_questions:
+        return None
+
+    cleaned: list[dict] = []
+    for entry in raw_questions:
+        if not isinstance(entry, dict):
+            continue
+        q = entry.get("q")
+        options = entry.get("options")
+        if not isinstance(q, str) or not q.strip():
+            continue
+        if not isinstance(options, list):
+            continue
+        options = [o for o in options if isinstance(o, str) and o.strip()]
+        if not (2 <= len(options) <= 4):
+            continue
+        cleaned.append({"q": q.strip(), "options": options})
+        if len(cleaned) == 3:
+            break
+    return cleaned or None
+
+
+def questions_timed_out(
+    asked_at: datetime | None, now: datetime, *, minutes: int = 10,
+) -> bool:
+    """Pure helper: True iff `asked_at` is set and at least `minutes` have
+    elapsed since it. Used by the scheduler tick to auto-skip a pre-build
+    question pass nobody answered. `asked_at is None` always -> False (never
+    touches tasks that never went through the question pass, including the
+    separate mid-build NEEDS_INPUT flow, which never sets questions_asked_at)."""
+    if asked_at is None:
+        return False
+    return (now - asked_at).total_seconds() >= minutes * 60
 
 
 def parse_plan(claude_response: str) -> str | None:

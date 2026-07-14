@@ -32,6 +32,12 @@ class TaskItem(Base):
     plan = Column(Text, nullable=True)
     plan_status = Column(Text, nullable=True)
     built_app_slug = Column(Text, nullable=True)
+    # Structured pre-build clarifying questions (Task 4). Populated only by the
+    # one-shot question pass ahead of a NON-template build; the separate
+    # mid-build free-text NEEDS_INPUT flow never touches these columns (its
+    # question lives in `result`, and questions_json stays NULL for it).
+    questions_json = Column(JSONB, nullable=True)
+    questions_asked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
