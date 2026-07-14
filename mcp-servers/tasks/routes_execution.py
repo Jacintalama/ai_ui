@@ -12,15 +12,22 @@ from sqlalchemy.exc import ProgrammingError
 from sse_starlette.sse import EventSourceResponse
 
 from agent_executor import get_executor
+from app_smoke import smoke_app as _smoke_app_default
 from auth import AdminUser, current_admin, current_admin_or_capability
 from claude_executor import (
     build_prompt, build_resume_prompt, build_enhance_prompt,
     build_clarify_prompt, build_plan_prompt,
-    build_tdd_execute_prompt, build_verify_prompt,
+    build_tdd_execute_prompt, build_verify_prompt, build_autofix_prompt,
     extract_app_slug, parse_outcome, parse_clarify_done,
     parse_plan, parse_test_outcome,
 )
 from db import session
+
+# AutoFix loop: real-browser smoke check + up to this many narrow fix
+# passes after a build completes. Module-level seam so tests can monkeypatch
+# _smoke_app without touching the real Playwright checker.
+_smoke_app = _smoke_app_default
+AUTOFIX_MAX_PASSES = 2
 from prompt_utils import clean_user_prompt
 from heavy_lock import heavy_lock
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
@@ -142,6 +149,42 @@ async def _stream_claude(
     return "".join(full_log)
 
 
+async def _run_autofix(
+    slug: str,
+    execution_id: UUID,
+    task_id: UUID,
+    *,
+    user_jwt: str | None = None,
+    schedule_id: str | None = None,
+) -> str | None:
+    """Real-browser smoke check + up to AUTOFIX_MAX_PASSES narrow fix passes
+    for a just-completed build.
+
+    Smokes the app; when the smoke check reports concrete load errors, runs
+    a narrow fix pass (scoped to exactly those errors) and re-smokes, up to
+    AUTOFIX_MAX_PASSES times. Returns the final unresolved report, or None
+    once the app loads clean (including when it was already clean on the
+    first check). Calls the module-level `_smoke_app` / `_stream_claude`
+    seams so this can be driven start to finish by tests."""
+    report = await _smoke_app(slug)
+    for i in range(1, AUTOFIX_MAX_PASSES + 1):
+        if not report:
+            return None
+        async with session() as s:
+            await s.execute(
+                update(TaskExecution).where(TaskExecution.id == execution_id)
+                .values(log=TaskExecution.log + f"\n\n--- AUTOFIX {i}/{AUTOFIX_MAX_PASSES} ---\n{report}\n")
+            )
+            await s.commit()
+        await _stream_claude(
+            build_autofix_prompt(slug=slug, errors=report),
+            execution_id, task_id,
+            user_jwt=user_jwt, schedule_id=schedule_id,
+        )
+        report = await _smoke_app(slug)
+    return report
+
+
 async def _run_execution(
     task_id: UUID,
     execution_id: UUID,
@@ -220,6 +263,14 @@ async def _run_execution(
             await _run_execution(task_id, new_exec.id, retry_prompt,
                                  user_jwt=user_jwt, schedule_id=schedule_id)
             return
+
+        # --- AUTOFIX: real-browser smoke check + narrow fix passes ---
+        smoke_report = None
+        if outcome.kind == "completed" and slug:
+            smoke_report = await _run_autofix(
+                slug, execution_id, task_id,
+                user_jwt=user_jwt, schedule_id=schedule_id,
+            )
 
         # --- LOOP MODE: VERIFY step after COMPLETED ---
         if outcome.kind == "completed" and is_loop and slug:
@@ -300,10 +351,16 @@ async def _run_execution(
         # and Claude's completion message for a tweak rarely repeats the
         # `apps/<slug>/` path — without this guard the slug gets clobbered to
         # NULL, breaking the Preview App button and sidebar polling).
+        result_payload = outcome.payload
+        if smoke_report:
+            result_payload = (
+                f"{outcome.payload}\n\nAutoFix could not resolve these load errors:\n{smoke_report}"
+            )
+
         update_values = {
             "status": new_task_status,
             "mode": mode_val,
-            "result": outcome.payload,
+            "result": result_payload,
             "completed_at": datetime.utcnow() if outcome.kind == "completed" else None,
             **history_update,
         }

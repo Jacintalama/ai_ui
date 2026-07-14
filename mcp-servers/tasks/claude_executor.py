@@ -759,6 +759,27 @@ def build_verify_prompt(*, slug: str, description: str) -> str:
     return VERIFY_PROMPT_TEMPLATE.format(slug=slug, description=description)
 
 
+AUTOFIX_PROMPT_TEMPLATE = """You are fixing a build that fails its automated load check.
+
+The app at apps/{slug}/ fails its load check with EXACTLY these errors:
+
+{errors}
+
+Fix ONLY these errors with the smallest possible change. Do NOT redesign,
+restyle, refactor, or touch anything unrelated to these specific errors.
+Then commit your fix.
+
+If you fixed the errors:
+  TESTS_PASSED: <one-line summary of the fix>
+
+If you could not fix them:
+  TESTS_FAILED: <what is still broken and why>"""
+
+
+def build_autofix_prompt(*, slug: str, errors: str) -> str:
+    return AUTOFIX_PROMPT_TEMPLATE.format(slug=slug, errors=errors)
+
+
 @dataclass(frozen=True)
 class Outcome:
     kind: Literal["completed", "needs_input", "needs_steps", "failed"]
