@@ -109,7 +109,7 @@ def test_slack_question_skip_blocks_shape():
 
 # ---------------------------------------------------------------------------
 # CommandRouter: _watch_build renders structured questions (shared code path
-# for both Discord and Slack — platform only changes components vs. blocks)
+# for both Discord and Slack (platform only changes components vs. blocks)
 # ---------------------------------------------------------------------------
 
 def _router(mapping, tasks_client):
