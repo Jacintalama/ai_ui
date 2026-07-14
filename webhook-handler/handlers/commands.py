@@ -18,6 +18,12 @@ from handlers.app_builder_panel import (
     build_schedules_dashboard,
     build_schedule_card,
     build_versions_select_components,
+    build_question_option_components,
+    build_question_skip_components,
+)
+from handlers.slack_app_builder_panel import (
+    build_question_option_blocks,
+    build_question_skip_blocks,
 )
 from handlers import onboarding
 from handlers import intent_router, intent_cards
@@ -292,6 +298,15 @@ class CommandRouter:
         # the user's answer. Armed by _watch_build on needs_input; the next
         # thread reply resumes it via /answer. Durable-mirrored like the above.
         self._pending_build_answer: dict[str, dict] = {}
+        # task_id -> {"questions","answers","uid","slug","display"} for a build
+        # paused with STRUCTURED pre-build questions (Task 4's questions_json).
+        # Armed by _watch_build on needs_input when `questions` is present;
+        # each qopt button click fills in `answers[qi]` until every question
+        # has one, then the whole set is submitted in one answer_build call.
+        # Keyed by task_id (not user id) since each question message carries
+        # its own custom_id, unlike the free-text flow which waits for the
+        # next thread reply. Durable-mirrored like the dicts above.
+        self._pending_build_questions: dict[str, dict] = {}
         # Durable, cache-backed mirror of the three dicts above so a webhook-handler
         # redeploy doesn't wipe in-flight chats. The dicts act as the fast cache;
         # writes persist (best-effort) and reads hydrate on a cache miss.
@@ -727,6 +742,102 @@ class CommandRouter:
             return
         await ctx.respond(
             f"Got it — continuing **{display}**. I'll post the link here when it's ready."
+        )
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(
+                self._watch_build(ctx, email, task_id, slug, display_name=display))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_build_watcher_done)
+
+    async def _get_pending_build_questions(self, task_id: str) -> dict | None:
+        """Hydrate a paused build's question set from the fast cache, falling
+        back to the durable store on a cache miss (e.g. after a redeploy)."""
+        entry = self._pending_build_questions.get(task_id)
+        if entry is None:
+            entry = await self._state.get(f"pending_build_questions:{task_id}")
+            if entry is not None:
+                self._pending_build_questions[task_id] = entry
+        return entry
+
+    async def run_build_question_option(
+        self, ctx: CommandContext, task_id: str, qi: int, oi: int,
+    ) -> None:
+        """A qopt button click: record `answers[qi]` = the chosen option. Once
+        every question in the set has an answer, submit them all in one
+        answer_build call (ordered by question index) and resume the watcher."""
+        entry = await self._get_pending_build_questions(task_id)
+        if not entry:
+            await ctx.respond("This question set already expired. The build may have moved on.")
+            return
+        questions = entry.get("questions") or []
+        if qi < 0 or qi >= len(questions):
+            return
+        options = (questions[qi].get("options") or []) if isinstance(questions[qi], dict) else []
+        if oi < 0 or oi >= len(options):
+            return
+        answers = entry.setdefault("answers", {})
+        # String keys: `answers` may round-trip through the durable JSON store
+        # (state_store -> tasks bot_state KV), which turns int dict keys into
+        # strings on read-back. Keeping them as strings from the start avoids
+        # a silent key-type mismatch after a mid-flight redeploy.
+        answers[str(qi)] = options[oi]
+        self._persist(f"pending_build_questions:{task_id}", entry)
+        q_text = (questions[qi].get("q") or "").strip() if isinstance(questions[qi], dict) else ""
+        await ctx.respond(f"Got it{(': ' + q_text) if q_text else ''} -> **{options[oi]}**")
+        if len(answers) < len(questions):
+            return  # still waiting on the rest
+        await self._submit_build_questions(ctx, task_id, entry)
+
+    async def run_build_question_skip(self, ctx: CommandContext, task_id: str) -> None:
+        """The 'Just build it' skip button: drop any partial answers and resume
+        the build with the agent's own defaults."""
+        entry = await self._get_pending_build_questions(task_id)
+        self._pending_build_questions.pop(task_id, None)
+        self._forget(f"pending_build_questions:{task_id}")
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            await self._tasks_client.answer_build(email, task_id, answer="__skip__")
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        slug = (entry or {}).get("slug", "")
+        display = (entry or {}).get("display") or slug or "your app"
+        await ctx.respond(
+            f"Okay, building **{display}** now with the AI's best judgment."
+        )
+        if ctx.notify_channel is not None:
+            watcher = asyncio.create_task(
+                self._watch_build(ctx, email, task_id, slug, display_name=display))
+            self._background_tasks.add(watcher)
+            watcher.add_done_callback(self._on_build_watcher_done)
+
+    async def _submit_build_questions(
+        self, ctx: CommandContext, task_id: str, entry: dict,
+    ) -> None:
+        """All questions answered: submit the ordered answers in one
+        answer_build call and re-arm the watcher so completion/further
+        questions still surface in-thread."""
+        self._pending_build_questions.pop(task_id, None)
+        self._forget(f"pending_build_questions:{task_id}")
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        questions = entry.get("questions") or []
+        answers_by_index = entry.get("answers") or {}
+        ordered_answers = [answers_by_index.get(str(i), "") for i in range(len(questions))]
+        slug = entry.get("slug", "")
+        display = entry.get("display") or slug or "your app"
+        try:
+            await self._tasks_client.answer_build(email, task_id, answers=ordered_answers)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_build_error(e))
+            return
+        await ctx.respond(
+            f"Thanks, building **{display}** now. I'll post the link here when it's ready."
         )
         if ctx.notify_channel is not None:
             watcher = asyncio.create_task(
@@ -3027,8 +3138,59 @@ class CommandRouter:
                         await _notify(msg)
                     return
                 if status == "needs_input":
-                    detail = (st.get("question") or st.get("error") or "").strip()
                     uid = ctx.user_id or ""
+                    questions = st.get("questions")
+                    # Structured pre-build questions (Task 4): render option
+                    # buttons instead of waiting for a typed reply. Only when
+                    # the surface has notify_channel_msg wired (needed to post
+                    # button rows from a detached watcher); otherwise degrade
+                    # to the free-text flow below so the user isn't stranded.
+                    if questions and ctx.notify_channel_msg is not None:
+                        entry = {
+                            "questions": questions, "answers": {},
+                            "uid": uid, "slug": slug, "display": display,
+                        }
+                        self._pending_build_questions[task_id] = entry
+                        self._persist(f"pending_build_questions:{task_id}", entry)
+                        is_slack = ctx.platform == "slack"
+                        bold = display if is_slack else f"**{display}**"
+                        try:
+                            for qi, q in enumerate(questions):
+                                q_text = (q.get("q") or "").strip() if isinstance(q, dict) else str(q)
+                                options = (q.get("options") or []) if isinstance(q, dict) else []
+                                if not q_text or not options:
+                                    continue
+                                content = f"{bold} - {q_text}"
+                                if is_slack:
+                                    await ctx.notify_channel_msg({
+                                        "content": content, "text": content,
+                                        "blocks": build_question_option_blocks(task_id, qi, options),
+                                    })
+                                else:
+                                    await ctx.notify_channel_msg({
+                                        "content": content,
+                                        "components": build_question_option_components(
+                                            task_id, qi, options),
+                                    })
+                            skip_text = "Or skip the questions and let the AI decide:"
+                            if is_slack:
+                                await ctx.notify_channel_msg({
+                                    "content": skip_text, "text": skip_text,
+                                    "blocks": build_question_skip_blocks(task_id),
+                                })
+                            else:
+                                await ctx.notify_channel_msg({
+                                    "content": skip_text,
+                                    "components": build_question_skip_components(task_id),
+                                })
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(
+                                "watch_build failed posting questions task=%s: %s",
+                                task_id, exc,
+                            )
+                        return
+                    # Jul-13 mid-build free-text question (unchanged).
+                    detail = (st.get("question") or st.get("error") or "").strip()
                     if uid:
                         # Arm the thread so the user's next reply answers the build.
                         entry = {"task_id": task_id, "slug": slug, "display": display}

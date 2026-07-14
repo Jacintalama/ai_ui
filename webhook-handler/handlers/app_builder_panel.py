@@ -509,6 +509,66 @@ def build_rollback_confirm_components(slug: str, sha: str) -> list[dict]:
     ]}]
 
 
+# --- Pre-build clarifying questions (structured, buttons) ---
+# One-round, up-to-3-question pause before a blank/custom build starts. The
+# agent's questions + short-string options come back on BuildStatusResponse
+# as `questions: [{q, options}]`. Each question renders as its own message
+# with one option per button; a single Skip button ("Just build it") lets the
+# user proceed with the agent's own defaults instead of answering.
+QOPT_PREFIX = "aiuibuild:qopt:"    # option button -> :<task_id>:<qi>:<oi>
+QSKIP_PREFIX = "aiuibuild:qskip:"  # skip-all button -> :<task_id>
+
+
+def is_qopt_button(custom_id: str) -> bool:
+    return custom_id.startswith(QOPT_PREFIX)
+
+
+def parse_qopt_button(custom_id: str) -> tuple[str, int, int]:
+    """-> (task_id, question_index, option_index). Raises ValueError on any
+    malformed id (missing parts or non-integer indices) so callers can ignore
+    it rather than crash."""
+    if not custom_id.startswith(QOPT_PREFIX):
+        raise ValueError(f"not a {QOPT_PREFIX!r} custom_id: {custom_id!r}")
+    rest = custom_id[len(QOPT_PREFIX):]
+    parts = rest.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"{QOPT_PREFIX!r} custom_id has wrong shape: {custom_id!r}")
+    task_id, qi_s, oi_s = parts
+    if not task_id:
+        raise ValueError(f"{QOPT_PREFIX!r} custom_id has an empty task_id: {custom_id!r}")
+    try:
+        qi, oi = int(qi_s), int(oi_s)
+    except ValueError:
+        raise ValueError(f"{QOPT_PREFIX!r} custom_id has non-integer indices: {custom_id!r}")
+    return task_id, qi, oi
+
+
+def is_qskip_button(custom_id: str) -> bool:
+    return custom_id.startswith(QSKIP_PREFIX)
+
+
+def task_id_from_qskip_button(custom_id: str) -> str:
+    return _slug_after(custom_id, QSKIP_PREFIX)
+
+
+def build_question_option_components(task_id: str, qi: int, options: list[str]) -> list[dict]:
+    """One action row: a button per option (the prompt caps questions at
+    2-4 options, well under Discord's 5-per-row limit)."""
+    buttons = [
+        _button(opt, f"{QOPT_PREFIX}{task_id}:{qi}:{oi}", STYLE_SECONDARY)
+        for oi, opt in enumerate(options)
+    ]
+    return [{"type": ACTION_ROW, "components": buttons}]
+
+
+def build_question_skip_components(task_id: str) -> list[dict]:
+    """Single 'Just build it' button that skips all remaining questions and
+    lets the agent proceed with its own defaults."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("Just build it", f"{QSKIP_PREFIX}{task_id}", STYLE_PRIMARY),
+    ]}]
+
+
 # --- Schedules (Discord cron jobs): panel, modal, confirm card, list ---
 TEXT_SHORT = 1  # Discord short text-input style (paragraph is 2)
 

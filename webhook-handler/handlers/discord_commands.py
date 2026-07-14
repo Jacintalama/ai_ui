@@ -61,6 +61,8 @@ from handlers.app_builder_panel import (
     is_rollback_ok, slug_sha_from_rollback_ok,
     is_rollback_no,
     build_rollback_confirm_components,
+    is_qopt_button, parse_qopt_button,
+    is_qskip_button, task_id_from_qskip_button,
     build_schedule_modal, build_confirm_components, build_connect_components,
     is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
@@ -348,6 +350,25 @@ class DiscordCommandHandler:
             return await self._handle_panel_route(
                 payload, lambda ctx: self.router.run_app_rollback(ctx, slug, sha),
                 raw_text=f"aiuibuilder rollback {slug}")
+        # --- Pre-build clarifying questions (aiuibuild:qopt:/qskip:) ---
+        if is_qopt_button(custom_id):
+            try:
+                task_id, qi, oi = parse_qopt_button(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed qopt custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_build_watch_route(
+                payload, lambda ctx: self.router.run_build_question_option(ctx, task_id, qi, oi),
+                raw_text="aiuibuilder question answer")
+        if is_qskip_button(custom_id):
+            try:
+                task_id = task_id_from_qskip_button(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed qskip custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_build_watch_route(
+                payload, lambda ctx: self.router.run_build_question_skip(ctx, task_id),
+                raw_text="aiuibuilder question skip")
         # --- Schedules (aiuisched:*) ---
         if is_sched_new(custom_id):
             token = uuid.uuid4().hex[:16]
@@ -970,6 +991,60 @@ class DiscordCommandHandler:
                 "interaction_token": interaction_token,
                 "guild_id": payload.get("guild_id", ""),
             },
+        )
+        self._spawn(run(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
+
+    async def _handle_build_watch_route(
+        self, payload: dict[str, Any], run: Callable[[CommandContext], Awaitable[None]],
+        *, raw_text: str = "aiuibuilder menu",
+    ) -> dict[str, Any]:
+        """Like `_handle_panel_route`, but also wires the channel notifiers
+        (`notify_channel` / `notify_channel_rich` / `notify_channel_msg`) since
+        the pre-build question handlers (qopt/qskip) may resume a build and
+        re-arm `_watch_build`, which posts to the channel directly rather than
+        editing the (soon-expired) interaction response."""
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+        channel_id = payload.get("channel_id", "")
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg,
+            )
+
+        async def respond_components(msg: str, components: list, embeds: list | None = None) -> None:
+            await self.discord.edit_original(
+                interaction_token=interaction_token, content=msg, components=components, embeds=embeds,
+            )
+
+        notify_channel, notify_channel_rich = self._channel_notifiers(channel_id)
+
+        async def notify_channel_msg(msg: dict) -> None:
+            await self.discord.post_channel_message(
+                channel_id, content=msg.get("content", ""),
+                embeds=msg.get("embeds"), components=msg.get("components"),
+            )
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""),
+            user_name=user.get("username", "unknown"),
+            channel_id=channel_id,
+            raw_text=raw_text,
+            subcommand="aiuibuilder",
+            arguments="",
+            platform="discord",
+            respond=respond,
+            respond_components=respond_components,
+            metadata={
+                "interaction_id": payload.get("id", ""),
+                "interaction_token": interaction_token,
+                "guild_id": payload.get("guild_id", ""),
+            },
+            notify_channel=notify_channel if channel_id else None,
+            notify_channel_rich=notify_channel_rich if channel_id else None,
+            notify_channel_msg=notify_channel_msg if channel_id else None,
         )
         self._spawn(run(ctx))
         return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": 64}}
@@ -1638,6 +1713,13 @@ class DiscordCommandHandler:
                         )
 
                 notify_channel, notify_channel_rich = self._channel_notifiers(target)
+
+                async def notify_channel_msg(msg: dict) -> None:
+                    await self.discord.post_channel_message(
+                        target, content=msg.get("content", ""),
+                        embeds=msg.get("embeds"), components=msg.get("components"),
+                    )
+
                 ctx = CommandContext(
                     user_id=user_id,
                     user_name=user_name,
@@ -1654,7 +1736,13 @@ class DiscordCommandHandler:
                     },
                     notify_channel=notify_channel,
                     notify_channel_rich=notify_channel_rich,
+                    notify_channel_msg=notify_channel_msg,
                 )
+                # Pre-build clarifying questions (Task 4) only fire for blank/
+                # custom (non-template) builds, so notify_channel_msg above is
+                # only exercised on that path; template builds skip the
+                # question pass server-side and this ctx field simply goes
+                # unused (no behavior change for template builds).
                 await self.router.run_panel_build(ctx, template_key, description)
             except Exception as exc:  # noqa: BLE001
                 logger.error("_open_and_build failed user=%s: %s", user_id, exc)

@@ -59,6 +59,8 @@ from handlers.app_builder_panel import (
     CONNECT_RESUME_PREFIX,
     WALKVIDEO_PREFIX,
     VERSIONS_PREFIX,
+    is_qopt_button, parse_qopt_button,
+    is_qskip_button, task_id_from_qskip_button,
 )
 from handlers.slack_schedule_panel import (
     build_schedules_dashboard,
@@ -206,6 +208,29 @@ class SlackInteractionsHandler:
                 logger.info(f"Ignoring malformed rollback action_id: {action_id}")
                 return {}
             task = asyncio.create_task(self._do_app_rollback(payload, slug, sha))
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        if is_qopt_button(action_id):
+            try:
+                task_id, qi, oi = parse_qopt_button(action_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed qopt action_id: {action_id}")
+                return {}
+            task = asyncio.create_task(
+                self._do_build_question_option(payload, task_id, qi, oi))
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
+        if is_qskip_button(action_id):
+            try:
+                task_id = task_id_from_qskip_button(action_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed qskip action_id: {action_id}")
+                return {}
+            task = asyncio.create_task(self._do_build_question_skip(payload, task_id))
             self.router._background_tasks.add(task)
             task.add_done_callback(self.router._background_tasks.discard)
             return {}
@@ -908,6 +933,17 @@ class SlackInteractionsHandler:
                     blocks=att["blocks"],
                 )
 
+        async def notify_channel_msg(msg: dict) -> None:
+            # Block Kit poster for the pre-build question buttons (_watch_build
+            # posts one of these per question + a skip button). Falls back to
+            # an ephemeral in the origin channel exactly like `respond` above.
+            text = msg.get("content", "") or msg.get("text", "")
+            blocks = msg.get("blocks", [])
+            if dm_id:
+                await self.slack.post_message(channel=dm_id, text=text, blocks=blocks)
+            elif origin_channel:
+                await self.slack.post_ephemeral(origin_channel, user_id, text, blocks=blocks)
+
         return CommandContext(
             user_id=user_id,
             user_name=user_name,
@@ -920,6 +956,7 @@ class SlackInteractionsHandler:
             metadata={"team_id": payload.get("team", {}).get("id", "")},
             notify_channel=notify_channel,
             notify_channel_rich=notify_channel_rich,
+            notify_channel_msg=notify_channel_msg,
         )
 
     async def _handle_view_submission(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1687,6 +1724,47 @@ class SlackInteractionsHandler:
                         channel=dm, text=f"Couldn't restore {slug}. Try again shortly.")
             except Exception:  # noqa: BLE001
                 pass
+
+    async def _do_build_question_option(
+        self, payload: dict[str, Any], task_id: str, qi: int, oi: int,
+    ) -> None:
+        """A qopt button click in the DM: record the choice via the shared
+        router method, which submits and re-arms the watcher once every
+        question in the set has an answer."""
+        user = payload.get("user", {})
+        user_id: str = user.get("id", "")
+        user_name = user.get("username") or user.get("name", "unknown")
+        origin_channel = (payload.get("channel") or {}).get("id", "")
+        try:
+            dm_id = await self.slack.open_dm(user_id)
+            ctx = self._dm_context(
+                payload, dm_id=dm_id, origin_channel=origin_channel,
+                user_id=user_id, user_name=user_name, subcommand="aiuibuilder",
+                raw_text="aiuibuilder question answer",
+            )
+            await self.router.run_build_question_option(ctx, task_id, qi, oi)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "_do_build_question_option failed task=%s user=%s: %s", task_id, user_id, exc)
+
+    async def _do_build_question_skip(self, payload: dict[str, Any], task_id: str) -> None:
+        """The 'Just build it' skip button: resume the build with the agent's
+        own defaults via the shared router method."""
+        user = payload.get("user", {})
+        user_id: str = user.get("id", "")
+        user_name = user.get("username") or user.get("name", "unknown")
+        origin_channel = (payload.get("channel") or {}).get("id", "")
+        try:
+            dm_id = await self.slack.open_dm(user_id)
+            ctx = self._dm_context(
+                payload, dm_id=dm_id, origin_channel=origin_channel,
+                user_id=user_id, user_name=user_name, subcommand="aiuibuilder",
+                raw_text="aiuibuilder question skip",
+            )
+            await self.router.run_build_question_skip(ctx, task_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "_do_build_question_skip failed task=%s user=%s: %s", task_id, user_id, exc)
 
     async def _do_delete(self, payload: dict[str, Any], slug: str) -> None:
         """Handle a Delete button click — resolves email, deletes, DMs result.

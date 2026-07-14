@@ -11,7 +11,9 @@ them as `action_id` (buttons) and `callback_id` (modal views).
 from __future__ import annotations
 
 from config import settings
-from handlers.app_builder_panel import WALKVIDEO_PREFIX, VERSIONS_PREFIX
+from handlers.app_builder_panel import (
+    WALKVIDEO_PREFIX, VERSIONS_PREFIX, QOPT_PREFIX, QSKIP_PREFIX,
+)
 
 # custom_id schemes (shared shape with the Discord panel)
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button action_id -> aiuibuild:tpl:<key>  ("" = Blank)
@@ -512,6 +514,34 @@ def slug_sha_from_rollback_action(action_id: str) -> tuple[str, str]:
     if not slug or not sha:
         raise ValueError(f"rollback action_id has an empty slug/sha: {action_id!r}")
     return slug, sha
+
+
+# --- Pre-build clarifying questions (structured, block buttons) ---
+# Same custom_id shape as the Discord panel (aiuibuild:qopt:/qskip:, see
+# handlers/app_builder_panel.py's QOPT_PREFIX/QSKIP_PREFIX and its
+# is_qopt_button/parse_qopt_button/is_qskip_button/task_id_from_qskip_button,
+# reused as-is by slack_interactions.py since the id shape is identical -
+# only the block/component RENDERING differs per platform.
+
+def build_question_option_blocks(task_id: str, qi: int, options: list[str]) -> list[dict]:
+    """One actions block: a button per option (2-4 short strings per the
+    prompt, well under Slack's 25-per-block cap)."""
+    return [{
+        "type": "actions",
+        "elements": [
+            _button(opt, f"{QOPT_PREFIX}{task_id}:{qi}:{oi}")
+            for oi, opt in enumerate(options)
+        ],
+    }]
+
+
+def build_question_skip_blocks(task_id: str) -> list[dict]:
+    """Single 'Just build it' button that skips all remaining questions and
+    lets the agent proceed with its own defaults."""
+    return [{
+        "type": "actions",
+        "elements": [_button("Just build it", f"{QSKIP_PREFIX}{task_id}", primary=True)],
+    }]
 
 
 def build_enhance_modal_view(slug: str) -> dict:
