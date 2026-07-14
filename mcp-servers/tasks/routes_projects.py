@@ -547,19 +547,18 @@ def _validate_slug(slug: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid slug")
 
 
-@router.get("/{slug}/versions", response_model=list[VersionEntry])
-async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
-    """List all commits that touched apps/<slug>/.
-
-    Each commit is cross-referenced with the tasks table so we can mark:
+async def list_app_versions_core(slug: str) -> list[VersionEntry]:
+    """Git-log-derived version list for apps/<slug>/, cross-referenced with
+    the tasks table so we can mark:
     - "error" — a task whose result mentions the commit SHA failed
     - "rollback" — commit message starts with "Rollback"
     - "ok" — normal build/enhance commit
+
+    No auth here. Callers must check access themselves. Extracted so both
+    the admin /api/projects route and the owner-scoped /api/aiuibuilder
+    route share one implementation.
     """
     _validate_slug(slug)
-    async with session() as s:
-        if not await _user_can_see_project(s, slug, user.email):
-            raise HTTPException(status_code=403, detail="Not a member of this project")
 
     # Get git log for apps/<slug>/ — up to 100 most recent.
     rc, out = await _run_git(
@@ -634,30 +633,34 @@ async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_ca
     return versions
 
 
-@router.post("/{slug}/rollback")
-async def rollback_project(
-    slug: str,
-    body: RollbackRequest,
-    user: AdminUser = Depends(current_admin),
-):
-    """Restore apps/<slug>/ to the content at a specific commit.
-
-    Creates a new commit on top of HEAD so history is preserved — the
-    "error version" stays in the log but no longer represents the current
-    state of the app. Owners only (plus admins) can rollback.
-    """
+@router.get("/{slug}/versions", response_model=list[VersionEntry])
+async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+    """List all commits that touched apps/<slug>/. Membership-gated; the git
+    log + task cross-reference logic lives in list_app_versions_core (shared
+    with the owner-scoped aiuibuilder route)."""
     _validate_slug(slug)
-    if not re.fullmatch(r"[0-9a-f]{7,40}", body.sha):
-        raise HTTPException(status_code=400, detail="Invalid SHA")
-
-    # Access: must be project member with 'owner' role OR an admin.
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
-        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
+    return await list_app_versions_core(slug)
+
+
+async def rollback_app_core(slug: str, sha: str, actor_email: str) -> dict:
+    """Restore apps/<slug>/ to the content at `sha`, committing as
+    `actor_email`. Creates a new commit on top of HEAD so history is
+    preserved — the "error version" stays in the log but no longer
+    represents the current state of the app.
+
+    No auth here. Callers must check access themselves. Extracted so both
+    the admin /api/projects route and the owner-scoped /api/aiuibuilder
+    route share one implementation.
+    """
+    _validate_slug(slug)
+    if not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+        raise HTTPException(status_code=400, detail="Invalid SHA")
 
     # Verify the SHA exists and touched this app.
-    rc, out = await _run_git("cat-file", "-e", f"{body.sha}^{{commit}}")
+    rc, out = await _run_git("cat-file", "-e", f"{sha}^{{commit}}")
     if rc != 0:
         raise HTTPException(status_code=404, detail="Commit not found")
 
@@ -676,7 +679,7 @@ async def rollback_project(
         )
 
     # Perform the checkout + commit.
-    rc, out = await _run_git("checkout", body.sha, "--", f"apps/{slug}/")
+    rc, out = await _run_git("checkout", sha, "--", f"apps/{slug}/")
     if rc != 0:
         raise HTTPException(status_code=500, detail=f"checkout failed: {out[:300]}")
 
@@ -692,15 +695,38 @@ async def rollback_project(
         return {"ok": True, "noop": True, "message": "Already at that version"}
 
     rc, out = await _run_git(
-        "-c", f"user.email={user.email}",
-        "-c", f"user.name={user.email.split('@')[0]}",
+        "-c", f"user.email={actor_email}",
+        "-c", f"user.name={actor_email.split('@')[0]}",
         "commit",
-        "-m", f"Rollback apps/{slug}/ to {body.sha[:7]}",
+        "-m", f"Rollback apps/{slug}/ to {sha[:7]}",
     )
     if rc != 0:
         raise HTTPException(status_code=500, detail=f"commit failed: {out[:300]}")
 
     return {"ok": True, "noop": False}
+
+
+@router.post("/{slug}/rollback")
+async def rollback_project(
+    slug: str,
+    body: RollbackRequest,
+    user: AdminUser = Depends(current_admin),
+):
+    """Restore apps/<slug>/ to the content at a specific commit. Owners only
+    (plus admins) can rollback. The git mechanics live in rollback_app_core
+    (shared with the owner-scoped aiuibuilder route).
+    """
+    _validate_slug(slug)
+    if not re.fullmatch(r"[0-9a-f]{7,40}", body.sha):
+        raise HTTPException(status_code=400, detail="Invalid SHA")
+
+    # Access: must be project member with 'owner' role OR an admin.
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
+
+    return await rollback_app_core(slug, body.sha, user.email)
 
 
 # ---------------------------------------------------------------------------

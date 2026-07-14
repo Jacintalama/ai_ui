@@ -21,7 +21,12 @@ from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
 from prompt_utils import clean_user_prompt
 from templates import is_valid_key
 from chat_seed import seed_user_prompt
-from routes_projects import _delete_slug, _publish_slug, _unpublish_slug, _validate_slug, PublishStatus
+from routes_projects import (
+    _delete_slug, _publish_slug, _unpublish_slug, _validate_slug,
+    _require_role, _user_can_see_project,
+    list_app_versions_core, rollback_app_core,
+    PublishStatus, RollbackRequest, VersionEntry,
+)
 
 logger = logging.getLogger("tasks.aiuibuilder")
 
@@ -567,3 +572,47 @@ async def enhance_built_app(slug: str, body: EnhanceRequest, user: CurrentUser =
         attachment_text=body.attachment_text, attachment_name=body.attachment_name,
     )
     return BuildResponse(task_id=task_id, slug=out_slug, status="running")
+
+
+@router.get("/{slug}/versions", response_model=list[VersionEntry])
+async def list_built_app_versions(slug: str, user: CurrentUser = Depends(current_user)):
+    """User-scoped version history for a Discord/Slack-built app. Owner-only
+    (mirrors publish_built_app). Reuses the shared list_app_versions_core so
+    the response is identical to the admin /api/projects route."""
+    _validate_slug(slug)  # fast-fail before touching the DB pool
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "owner", is_admin=False)
+    return await list_app_versions_core(slug)
+
+
+@router.post("/{slug}/rollback")
+async def rollback_built_app(slug: str, body: RollbackRequest, user: CurrentUser = Depends(current_user)):
+    """User-scoped rollback for a Discord/Slack-built app. Owner-only, and
+    serialized against a live build/enhance with the same per-slug advisory
+    lock _create_and_spawn_enhance uses, so a rollback can't race a build.
+    Reuses rollback_app_core for the git mechanics (shared with the admin
+    /api/projects route); the core's own 400/404/409 mappings apply as-is."""
+    _validate_slug(slug)  # fast-fail before touching the DB pool
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "owner", is_admin=False)
+
+        # Serialize against a concurrent build/enhance on this slug.
+        await s.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"build:{slug}"},
+        )
+        in_flight = (await s.execute(
+            select(TaskItem.id).where(
+                TaskItem.built_app_slug == slug,
+                TaskItem.status.in_(_LIVE_ENHANCE_STATES),
+            ).limit(1)
+        )).scalar_one_or_none()
+        if in_flight:
+            raise HTTPException(status_code=409, detail="An enhancement is already in progress")
+
+        # Hold the lock across the rollback itself so nothing can start a
+        # build/enhance on this slug mid-checkout.
+        return await rollback_app_core(slug, body.sha, user.email)

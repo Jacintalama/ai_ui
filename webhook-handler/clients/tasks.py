@@ -460,3 +460,15 @@ class TasksClient:
             "POST", f"/api/aiuibuilder/{slug}/enhance", user_email, json=body,
         )
         return resp.json()
+
+    async def list_app_versions(self, user_email: str, slug: str) -> list[dict[str, Any]]:
+        resp = await self._request(
+            "GET", f"/api/aiuibuilder/{slug}/versions", user_email,
+        )
+        return resp.json()
+
+    async def rollback_app(self, user_email: str, slug: str, sha: str) -> dict[str, Any]:
+        resp = await self._request(
+            "POST", f"/api/aiuibuilder/{slug}/rollback", user_email, json={"sha": sha},
+        )
+        return resp.json()
