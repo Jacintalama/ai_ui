@@ -783,6 +783,64 @@
     }
     .build-overlay .bov-answer-actions .btn { padding: 8px 14px; }
 
+    /* Structured pre-build questions (option buttons) */
+    .build-overlay .bov-structured-questions[hidden] { display: none; }
+    .build-overlay .bov-structured-questions {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      text-align: left;
+    }
+    .build-overlay .bov-sq-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .build-overlay .bov-sq-text {
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .build-overlay .bov-sq-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .build-overlay .bov-sq-opt {
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .build-overlay .bov-sq-opt:hover { border-color: var(--accent); }
+    .build-overlay .bov-sq-opt.selected {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .build-overlay .bov-sq-skip-row {
+      display: flex;
+      justify-content: flex-start;
+      margin-top: -4px;
+    }
+    .build-overlay .bov-sq-skip {
+      background: none;
+      border: none;
+      color: var(--text-2);
+      font: inherit;
+      font-size: 12.5px;
+      text-decoration: underline;
+      cursor: pointer;
+      padding: 2px 0;
+    }
+    .build-overlay .bov-sq-skip:hover { color: var(--text); }
+
     .back-link {
       display: inline-flex;
       align-items: center;
@@ -2237,12 +2295,17 @@
   <div class="live-log" id="build-log"><span class="cursor"></span></div>
   <div class="bov-answer" id="build-answer" hidden>
     <div class="bov-question" id="build-question"></div>
+    <!-- Structured pre-build questions (option buttons). Shown INSTEAD of the
+         free-text textarea below when the task carries a `questions` array;
+         the free-text Jul-13 mid-build flow (question string only) keeps
+         using the textarea untouched. See _bovRenderStructuredQuestions. -->
+    <div class="bov-structured-questions" id="build-structured-questions" hidden></div>
     <textarea
       id="build-answer-text"
       rows="3"
       placeholder="Type your answer to the AI… (Cmd/Ctrl-Enter to send)"
     ></textarea>
-    <div class="bov-answer-actions">
+    <div class="bov-answer-actions" id="build-answer-actions">
       <button class="btn btn-primary" id="build-send" type="button">Send answer</button>
       <button class="btn btn-danger"  id="build-cancel" type="button">Cancel build</button>
     </div>
@@ -2990,8 +3053,18 @@
   const $bovAnswerText = document.getElementById("build-answer-text");
   const $bovSend       = document.getElementById("build-send");
   const $bovCancel     = document.getElementById("build-cancel");
+  // Structured pre-build questions (Task 4/5): rendered INSTEAD of the
+  // free-text textarea+Send button when the polled task carries a
+  // `questions` array. The Jul-13 mid-build free-text flow (question is a
+  // plain string, no `questions` array) keeps using $bovAnswerText/$bovSend
+  // exactly as before. See the isAwaitingInput branch in _bovCheck.
+  const $bovStructuredQuestions = document.getElementById("build-structured-questions");
+  const $bovAnswerActionsRow    = document.getElementById("build-answer-actions");
   let _bovAutoKicked = false;  // only fire auto-execute once per page load
   let _bovSendInFlight = false;
+  let _bovSqSignature = "";     // detects a NEW question set vs. a re-poll of the same one
+  let _bovSqAnswers = {};       // question index -> chosen option text
+  let _bovSqSubmitting = false;
   const BUILDING_STATES = new Set([
     "pending", "planning", "running", "awaiting_input", "awaiting_plan_review", "claimed_manual",
   ]);
@@ -3175,8 +3248,19 @@
       if (isAwaitingInput) {
         $bovTitle.textContent = "AIUI Agent has a question";
         $bovSub.textContent = "Answer below so it can keep going. Cancel to bail out and start over.";
-        const q = (task.result || "").trim();
-        $bovQuestion.textContent = q || "The agent needs more info to continue.";
+        // Structured pre-build questions (Task 4/5): a `questions` array on
+        // the task means option buttons instead of the free-text textarea.
+        // Not present on this general task GET today (TaskOut doesn't carry
+        // it yet); this branch is forward-compatible and stays dormant
+        // until that field is added; the Jul-13 free-text path below is
+        // what actually runs right now and is UNCHANGED.
+        const structuredQuestions =
+          Array.isArray(task.questions) && task.questions.length ? task.questions : null;
+        if (structuredQuestions) {
+          _bovShowStructuredQuestions(structuredQuestions);
+        } else {
+          _bovShowFreeTextQuestion(task);
+        }
       } else if (!$bov.classList.contains("failed")) {
         // Restore the default "Building…" copy when the task resumes
         // (e.g. user just submitted an answer and status flipped back to
@@ -3185,6 +3269,7 @@
           $bovTitle.textContent = "AIUI Agent is building your app…";
           $bovSub.textContent = "Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.";
         }
+        _bovResetStructuredQuestions();
       }
 
       // Auto-kick: a pending BUILD/INTEGRATE/RESEARCH with zero executions
@@ -3287,6 +3372,149 @@
       if (_bovPollTimer) clearInterval(_bovPollTimer);
       _bovStart();
     });
+  }
+
+  // ── Structured pre-build questions (option buttons) ──
+  // Mirrors the Discord/Slack qopt/qskip semantics: pick one option per
+  // question, and once every question has an answer, submit them all in one
+  // /answer call. A "skip" link proceeds with the agent's own defaults.
+  // Composes the same text shape the backend uses for the structured-answers
+  // flow (`_compose_questions_answer_text` in routes_aiuibuilder.py) so the
+  // agent sees consistent context regardless of which surface answered.
+  function _bovShowFreeTextQuestion(task) {
+    $bovStructuredQuestions.hidden = true;
+    $bovAnswerText.style.display = "";
+    $bovAnswerActionsRow.style.display = "";
+    $bovQuestion.hidden = false;
+    const q = (task.result || "").trim();
+    $bovQuestion.textContent = q || "The agent needs more info to continue.";
+  }
+
+  function _bovShowStructuredQuestions(questions) {
+    $bovQuestion.hidden = true;
+    $bovAnswerText.style.display = "none";
+    $bovAnswerActionsRow.style.display = "none";
+    $bovStructuredQuestions.hidden = false;
+    // Only re-render on a genuinely NEW question set. A poll tick re-fetches
+    // the same paused task every ~2.5s, and re-rendering on every tick would
+    // wipe the user's in-progress button selections mid-click.
+    let signature = "";
+    try { signature = JSON.stringify(questions); } catch (_) { signature = String(questions.length); }
+    if (signature === _bovSqSignature) return;
+    _bovSqSignature = signature;
+    _bovSqAnswers = {};
+    _bovSqSubmitting = false;
+    _bovRenderStructuredQuestions(questions);
+  }
+
+  function _bovResetStructuredQuestions() {
+    _bovSqSignature = "";
+    _bovSqAnswers = {};
+    _bovSqSubmitting = false;
+    $bovStructuredQuestions.hidden = true;
+    $bovStructuredQuestions.innerHTML = "";
+    $bovQuestion.hidden = false;
+    $bovAnswerText.style.display = "";
+    $bovAnswerActionsRow.style.display = "";
+  }
+
+  function _bovRenderStructuredQuestions(questions) {
+    $bovStructuredQuestions.innerHTML = "";
+    questions.forEach((q, qi) => {
+      const qText = (q && q.q ? String(q.q) : "").trim();
+      const options = (q && Array.isArray(q.options)) ? q.options : [];
+      if (!qText || !options.length) return;
+      const card = document.createElement("div");
+      card.className = "bov-sq-card";
+      const textEl = document.createElement("div");
+      textEl.className = "bov-sq-text";
+      textEl.textContent = qText;
+      card.appendChild(textEl);
+      const optsEl = document.createElement("div");
+      optsEl.className = "bov-sq-options";
+      options.forEach((opt) => {
+        const optText = String(opt);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "bov-sq-opt";
+        btn.textContent = optText;
+        btn.addEventListener("click", () => _bovPickStructuredOption(qi, optText, optsEl, btn));
+        optsEl.appendChild(btn);
+      });
+      card.appendChild(optsEl);
+      $bovStructuredQuestions.appendChild(card);
+    });
+    const skipRow = document.createElement("div");
+    skipRow.className = "bov-sq-skip-row";
+    const skipBtn = document.createElement("button");
+    skipBtn.type = "button";
+    skipBtn.className = "bov-sq-skip";
+    skipBtn.textContent = "Skip, just build it with your best judgment";
+    skipBtn.addEventListener("click", () => _bovSkipStructuredQuestions());
+    skipRow.appendChild(skipBtn);
+    $bovStructuredQuestions.appendChild(skipRow);
+  }
+
+  function _bovPickStructuredOption(qi, optionText, optsEl, btn) {
+    if (_bovSqSubmitting) return;
+    Array.from(optsEl.querySelectorAll(".bov-sq-opt")).forEach((el) => el.classList.remove("selected"));
+    btn.classList.add("selected");
+    _bovSqAnswers[qi] = optionText;
+    const totalQuestions = $bovStructuredQuestions.querySelectorAll(".bov-sq-card").length;
+    if (Object.keys(_bovSqAnswers).length >= totalQuestions) {
+      _bovSubmitStructuredAnswers();
+    }
+  }
+
+  async function _bovSubmitStructuredAnswers() {
+    if (_bovSqSubmitting) return;
+    _bovSqSubmitting = true;
+    const cards = Array.from($bovStructuredQuestions.querySelectorAll(".bov-sq-card"));
+    const lines = ["User choices:"];
+    cards.forEach((card, qi) => {
+      const qTextEl = card.querySelector(".bov-sq-text");
+      const qText = qTextEl ? qTextEl.textContent : "";
+      const answer = _bovSqAnswers[qi] || "";
+      lines.push(`- ${qText} -> ${answer}`);
+    });
+    const composed = lines.join("\n");
+    try {
+      await apiFetch("POST", "/" + taskId + "/answer", { answer: composed });
+      _bovResetStructuredQuestions();
+      $bovAnswer.hidden = true;
+      $bovLog.style.display = "";
+      if ($bovProgress) $bovProgress.style.display = "";
+      $bovTitle.textContent = "AIUI Agent is building your app…";
+      $bovSub.textContent = "Got your answers, picking back up where it left off.";
+    } catch (err) {
+      _bovSqSubmitting = false;
+      if (typeof toast === "function") {
+        toast("Couldn't send your answers: " + err.message, "error", 5000);
+      } else {
+        alert("Couldn't send your answers: " + err.message);
+      }
+    }
+  }
+
+  async function _bovSkipStructuredQuestions() {
+    if (_bovSqSubmitting) return;
+    _bovSqSubmitting = true;
+    try {
+      await apiFetch("POST", "/" + taskId + "/answer", { answer: "__skip__" });
+      _bovResetStructuredQuestions();
+      $bovAnswer.hidden = true;
+      $bovLog.style.display = "";
+      if ($bovProgress) $bovProgress.style.display = "";
+      $bovTitle.textContent = "AIUI Agent is building your app…";
+      $bovSub.textContent = "Skipped, building with the AI's best judgment.";
+    } catch (err) {
+      _bovSqSubmitting = false;
+      if (typeof toast === "function") {
+        toast("Couldn't skip: " + err.message, "error", 5000);
+      } else {
+        alert("Couldn't skip: " + err.message);
+      }
+    }
   }
 
   if ($bovSend) {

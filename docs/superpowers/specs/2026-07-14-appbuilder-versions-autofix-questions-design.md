@@ -4,36 +4,46 @@ Date: 2026-07-14
 Status: Approved direction (Ralph: "build the 1 and 2 and 3" from
 docs/app-builder-feature-research-2026-07-14.md); design grounded in code.
 
-## F1. App version timeline + restore
+## F1. App version timeline + restore (REUSE the existing git system)
 
-Every successful build, enhance, or restore snapshots the app so users can
-always go back. Restore is never destructive (Lovable model): restoring v2
-creates v5 whose content equals v2.
+REVISION 2026-07-14: A git-backed version+rollback system ALREADY exists and
+is the source of truth - `routes_projects.py` exposes
+`GET /api/projects/{slug}/versions` (git log of `apps/<slug>/`) and
+`POST /api/projects/{slug}/rollback` (restores a chosen SHA as a NEW commit,
+non-destructive), and `preview.html`'s "Version history" tab already renders
+this timeline with working rollback. The build agent commits per change, so
+the timeline is populated. We do NOT build a second snapshot system.
 
-- **Snapshot hook:** in `routes_execution._run_execution`, when an app task
-  reaches `completed` and has a `slug`, copy `APPS_DIR/<slug>/` into
-  `APPS_DIR/<slug>/.versions/v<N>/` (excluding `.versions`, `.video`,
-  `node_modules`, attachments dirs). Manifest at
-  `.versions/manifest.json`: list of `{no, created_at, kind:
-  build|enhance|restore, label}` where label is the first 80 chars of the
-  triggering description. Keep the newest 10 snapshots; prune older.
-- **API (routes_aiuibuilder, owner-scoped like publish):**
-  - `GET /{slug}/versions` -> `{versions: [{no, created_at, kind, label}]}`
-    (newest first).
-  - `POST /{slug}/restore` body `{version_no}` -> snapshots the CURRENT
-    state first (kind=restore label "before restore to vN"), then copies
-    `v<N>` over the live app dir, appends a new manifest entry, returns the
-    updated list. 409 while a build/enhance for the slug is live.
-- **Surfaces:**
-  - Web `preview.html`: a Versions side panel (list + Restore button each,
-    confirm dialog, preview iframe reload after restore).
-  - Discord My-apps project menu: new "Versions" button
-    (`aiuibuild:versions:<slug>`) -> ephemeral list with per-version restore
-    buttons (`aiuibuild:restore:<slug>:<no>`, confirm card first).
-  - Slack app row: "Versions" button -> DM list with restore buttons
-    (native confirm dialogs).
-- **Client:** `TasksClient.list_app_versions(email, slug)`,
-  `restore_app_version(email, slug, version_no)`.
+The real gap: this git system is reachable only by admin/capability auth
+(web), not by the bots' owner-scoped `X-User-Email`. So there are NO Discord
+or Slack version controls.
+
+Approach: expose the SAME git logic to owner-scoped callers and add bot
+surfaces.
+
+- **Shared core:** factor the git list-versions and rollback logic in
+  `routes_projects.py` into reusable functions (extract in place, or a small
+  `app_git_versions.py`) so both routers call one implementation. No behavior
+  change for the existing `/api/projects/*` routes.
+- **Owner-scoped API (aiuibuilder router, `current_user` + `_require_owner`,
+  the pattern publish uses):**
+  - `GET /api/aiuibuilder/{slug}/versions` -> the same version list the
+    projects route returns (SHA, message, timestamp, author, current flag).
+  - `POST /api/aiuibuilder/{slug}/rollback` body `{sha}` -> same rollback
+    core; take the per-slug advisory xact lock (`hashtext("build:<slug>")`,
+    as `_create_and_spawn_enhance` does) so a rollback cannot race a live
+    build/enhance; 409 while one is live.
+- **Web:** already done (`preview.html` version-history tab). No work.
+- **Discord My-apps project menu:** new "Versions" button
+  (`aiuibuild:versions:<slug>`) -> a select of recent versions
+  (`aiuibuild:verpick:<slug>`, value = short SHA) then a confirm card
+  (`aiuibuild:rbok:<slug>:<sha>` / `aiuibuild:rbno:`) -> rollback.
+- **Slack app row:** "Versions" button -> DM list; each version row a
+  Rollback button with a native confirm dialog.
+- **Client:** `TasksClient.list_app_versions(email, slug)` (GET the
+  aiuibuilder versions route), `rollback_app(email, slug, sha)` (POST the
+  aiuibuilder rollback route). Version labels shown to users come from the
+  git commit message; the newest/current version has no rollback button.
 
 ## F2. AutoFix loop (narrow, real-browser smoke)
 

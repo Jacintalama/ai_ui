@@ -248,6 +248,39 @@ async def test_enhance_app_posts(client):
 
 
 @pytest.mark.asyncio
+async def test_list_app_versions_gets_and_returns_list(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.get("/api/aiuibuilder/slug-1/versions").mock(
+            return_value=Response(200, json=[
+                {"sha": "a" * 40, "short_sha": "aaaaaaa", "date": "2026-07-14T00:00:00Z",
+                 "author": "alice", "message": "Build", "is_current": True,
+                 "status": "ok", "task_id": None, "actor_email": None},
+            ])
+        )
+        out = await client.list_app_versions("alice@x.com", "slug-1")
+    assert route.called
+    req = route.calls.last.request
+    assert req.headers.get("x-user-email") == "alice@x.com"
+    assert "x-cron-secret" not in {k.lower() for k in req.headers}
+    assert out[0]["short_sha"] == "aaaaaaa"
+
+
+@pytest.mark.asyncio
+async def test_rollback_app_posts_sha(client):
+    with respx.mock(base_url=BASE) as mock:
+        route = mock.post("/api/aiuibuilder/slug-1/rollback").mock(
+            return_value=Response(200, json={"ok": True, "noop": False})
+        )
+        out = await client.rollback_app("alice@x.com", "slug-1", "abcdef1")
+    assert out["ok"] is True
+    req = route.calls.last.request
+    assert req.headers.get("x-user-email") == "alice@x.com"
+    assert "x-cron-secret" not in {k.lower() for k in req.headers}
+    import json as _j
+    assert _j.loads(req.content)["sha"] == "abcdef1"
+
+
+@pytest.mark.asyncio
 async def test_create_schedule_includes_delivery_channel_id(client):
     with respx.mock(base_url=BASE) as mock:
         route = mock.post("/schedules").mock(return_value=Response(201, json={"id": "x"}))

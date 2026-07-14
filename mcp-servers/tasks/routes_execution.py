@@ -12,11 +12,12 @@ from sqlalchemy.exc import ProgrammingError
 from sse_starlette.sse import EventSourceResponse
 
 from agent_executor import get_executor
+from app_smoke import smoke_app as _smoke_app_default
 from auth import AdminUser, current_admin, current_admin_or_capability
 from claude_executor import (
     build_prompt, build_resume_prompt, build_enhance_prompt,
     build_clarify_prompt, build_plan_prompt,
-    build_tdd_execute_prompt, build_verify_prompt,
+    build_tdd_execute_prompt, build_verify_prompt, build_autofix_prompt,
     extract_app_slug, parse_outcome, parse_clarify_done,
     parse_plan, parse_test_outcome,
 )
@@ -25,6 +26,12 @@ from prompt_utils import clean_user_prompt
 from heavy_lock import heavy_lock
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
 from schemas import PlanReviewRequest, TaskOut
+
+# AutoFix loop: real-browser smoke check + up to this many narrow fix
+# passes after a build completes. Module-level seam so tests can monkeypatch
+# _smoke_app without touching the real Playwright checker.
+_smoke_app = _smoke_app_default
+AUTOFIX_MAX_PASSES = 2
 
 
 async def _lookup_supabase_url(s, slug: str | None) -> str | None:
@@ -142,6 +149,58 @@ async def _stream_claude(
     return "".join(full_log)
 
 
+async def _run_autofix(
+    slug: str,
+    execution_id: UUID,
+    task_id: UUID,
+    *,
+    user_jwt: str | None = None,
+    schedule_id: str | None = None,
+) -> str | None:
+    """Real-browser smoke check + up to AUTOFIX_MAX_PASSES narrow fix passes
+    for a just-completed build.
+
+    Smokes the app; when the smoke check reports concrete load errors, runs
+    a narrow fix pass (scoped to exactly those errors) and re-smokes, up to
+    AUTOFIX_MAX_PASSES times. Returns the final unresolved report, or None
+    once the app loads clean (including when it was already clean on the
+    first check). Calls the module-level `_smoke_app` / `_stream_claude`
+    seams so this can be driven start to finish by tests.
+
+    Fully non-fatal by design: AutoFix is a best-effort polish step that
+    runs after a build has already reached "completed". Any exception here
+    (a crashed fix pass, a DB write that fails, an unexpected smoke error)
+    must never bubble up and flip that completed build to failed. On any
+    such error we log a warning and return whatever report we last have
+    (or None), so the caller degrades to "AutoFix skipped/incomplete"
+    instead of losing the build."""
+    report: str | None = None
+    try:
+        report = await _smoke_app(slug)
+        for i in range(1, AUTOFIX_MAX_PASSES + 1):
+            if not report:
+                return None
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution).where(TaskExecution.id == execution_id)
+                    .values(log=TaskExecution.log + f"\n\n--- AUTOFIX {i}/{AUTOFIX_MAX_PASSES} ---\n{report}\n")
+                )
+                await s.commit()
+            await _stream_claude(
+                build_autofix_prompt(slug=slug, errors=report),
+                execution_id, task_id,
+                user_jwt=user_jwt, schedule_id=schedule_id,
+            )
+            report = await _smoke_app(slug)
+        return report
+    except Exception as exc:
+        logger.warning(
+            "AutoFix step failed for slug=%s execution_id=%s, skipping: %s",
+            slug, execution_id, exc,
+        )
+        return report
+
+
 async def _run_execution(
     task_id: UUID,
     execution_id: UUID,
@@ -220,6 +279,14 @@ async def _run_execution(
             await _run_execution(task_id, new_exec.id, retry_prompt,
                                  user_jwt=user_jwt, schedule_id=schedule_id)
             return
+
+        # --- AUTOFIX: real-browser smoke check + narrow fix passes ---
+        smoke_report = None
+        if outcome.kind == "completed" and slug:
+            smoke_report = await _run_autofix(
+                slug, execution_id, task_id,
+                user_jwt=user_jwt, schedule_id=schedule_id,
+            )
 
         # --- LOOP MODE: VERIFY step after COMPLETED ---
         if outcome.kind == "completed" and is_loop and slug:
@@ -300,10 +367,16 @@ async def _run_execution(
         # and Claude's completion message for a tweak rarely repeats the
         # `apps/<slug>/` path — without this guard the slug gets clobbered to
         # NULL, breaking the Preview App button and sidebar polling).
+        result_payload = outcome.payload
+        if smoke_report:
+            result_payload = (
+                f"{outcome.payload}\n\nAutoFix could not resolve these load errors:\n{smoke_report}"
+            )
+
         update_values = {
             "status": new_task_status,
             "mode": mode_val,
-            "result": outcome.payload,
+            "result": result_payload,
             "completed_at": datetime.utcnow() if outcome.kind == "completed" else None,
             **history_update,
         }
@@ -419,6 +492,23 @@ def _build_execute_prompt(
     )
 
 
+def _clear_prebuild_questions(item: TaskItem) -> None:
+    """Clear stored pre-build questions on any resume, structured, skip, or
+    free-text alike.
+
+    Only the structured/skip branch used to clear these fields. That left
+    stale questions_json on a task after a free-text resume (or an admin
+    answering via the web /answer route), and if that same build later hit
+    a genuine mid-build awaiting_input pause, that pause never sets
+    questions_json, so the scheduler's pre-build timeout sweep still matched
+    on the stale value and silently auto-skipped a real mid-build question.
+    Clearing here, in the one path every resume flows through, closes that
+    gap for web, Discord, Slack, and Voice at once.
+    """
+    item.questions_json = None
+    item.questions_asked_at = None
+
+
 async def resume_with_answer(s, item: TaskItem, answer: str) -> None:
     """Resume a paused (awaiting_input) build with the user's answer.
 
@@ -429,6 +519,7 @@ async def resume_with_answer(s, item: TaskItem, answer: str) -> None:
     the user-scoped aiuibuilder answer endpoint, so web, Discord, Slack, and
     Voice resume identically.
     """
+    _clear_prebuild_questions(item)
     history = list(item.conversation_history or [])
     history.append({"role": "admin", "content": answer})
     item.conversation_history = history

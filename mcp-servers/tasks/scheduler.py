@@ -481,6 +481,64 @@ async def _tick_once() -> None:
         asyncio.create_task(_finalize_run(sched))
 
 
+async def _sweep_prebuild_question_timeouts() -> None:
+    """Auto-skip pre-build question rounds nobody answered within the
+    timeout, so a forgotten Discord/Slack/web build doesn't sit parked
+    forever.
+
+    Scoped to `status == 'awaiting_input' AND questions_json IS NOT NULL`,
+    the Task-4 structured pre-build questions flow. The separate Jul-13
+    mid-build NEEDS_INPUT flow never sets questions_json (its question lives
+    in `result`), so this sweep never touches it.
+    """
+    from claude_executor import questions_timed_out
+    from routes_aiuibuilder import _LIVE_BUILD_STATES, _compose_questions_answer_text
+    from routes_execution import resume_with_answer
+
+    now = datetime.now(timezone.utc)
+    async with session() as s:
+        rows = (
+            await s.execute(
+                select(TaskItem).where(
+                    TaskItem.status == "awaiting_input",
+                    TaskItem.questions_json.isnot(None),
+                )
+            )
+        ).scalars().all()
+
+    due = [r for r in rows if questions_timed_out(r.questions_asked_at, now)]
+    if not due:
+        return
+
+    for item in due:
+        async with session() as s:
+            # Serialize with build starts/answers so we can't create a
+            # second concurrently-running build.
+            await s.execute(text("SELECT pg_advisory_xact_lock(hashtext('aiuibuilder:build'))"))
+            fresh = (
+                await s.execute(select(TaskItem).where(TaskItem.id == item.id))
+            ).scalar_one_or_none()
+            if fresh is None or fresh.status != "awaiting_input" or not fresh.questions_json:
+                continue  # already answered/changed since the read above
+            other = (
+                await s.execute(
+                    select(TaskItem.id).where(
+                        TaskItem.action_type == "BUILD",
+                        TaskItem.status.in_(_LIVE_BUILD_STATES),
+                        TaskItem.id != fresh.id,
+                    ).limit(1)
+                )
+            ).scalar_one_or_none()
+            if other:
+                # A build is live right now, leave it parked, retry next tick.
+                continue
+            answer_text = _compose_questions_answer_text(fresh.questions_json, None)
+            fresh.questions_json = None
+            fresh.questions_asked_at = None
+            await resume_with_answer(s, fresh, answer_text)
+            logger.info("auto-skipped unanswered pre-build questions for task %s", fresh.id)
+
+
 async def schedule_tick_loop() -> None:
     """Main loop: wake once a minute, tick, sleep. Runs forever."""
     logger.info("schedule_tick_loop started")
@@ -489,4 +547,8 @@ async def schedule_tick_loop() -> None:
             await _tick_once()
         except Exception:
             logger.exception("schedule_tick failed")
+        try:
+            await _sweep_prebuild_question_timeouts()
+        except Exception:
+            logger.exception("prebuild question timeout sweep failed")
         await asyncio.sleep(60)
