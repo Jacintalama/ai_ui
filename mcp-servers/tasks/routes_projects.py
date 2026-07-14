@@ -648,7 +648,7 @@ async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_ca
 async def rollback_app_core(slug: str, sha: str, actor_email: str) -> dict:
     """Restore apps/<slug>/ to the content at `sha`, committing as
     `actor_email`. Creates a new commit on top of HEAD so history is
-    preserved — the "error version" stays in the log but no longer
+    preserved - the "error version" stays in the log but no longer
     represents the current state of the app.
 
     No auth here. Callers must check access themselves. Extracted so both
