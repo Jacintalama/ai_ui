@@ -314,54 +314,72 @@ async def _run_prebuild_questions_then_build(
     pass never interact with it. Any failure in the question pass itself
     (parse error, subprocess error) degrades to building without questions.
     It must never strand a build that would otherwise have succeeded.
+
+    Wrapped in the same outer try/except/finally contract as
+    routes_execution._run_execution: on an unexpected failure (e.g. a DB
+    write raising while parking the task or chaining into the build), the
+    task is reset to "pending" so it can't stay stuck "running" forever and
+    block every future build behind the one-build-platform-wide guard;
+    the finally always pops `_RUNNING` so the slot is released either way.
     """
     from claude_executor import build_prebuild_questions_prompt, parse_prebuild_questions
     from routes_execution import _RUNNING, _run_execution, _stream_claude
 
-    questions: list[dict] | None = None
     try:
-        q_prompt = build_prebuild_questions_prompt(description)
-        raw = await _stream_claude(q_prompt, exec_id, task_id)
-        questions = parse_prebuild_questions(raw)
-    except Exception:
-        logger.exception(
-            "Pre-build question pass failed for task %s; building without questions", task_id,
-        )
-        questions = None
+        questions: list[dict] | None = None
+        try:
+            q_prompt = build_prebuild_questions_prompt(description)
+            raw = await _stream_claude(q_prompt, exec_id, task_id)
+            questions = parse_prebuild_questions(raw)
+        except Exception:
+            logger.exception(
+                "Pre-build question pass failed for task %s; building without questions", task_id,
+            )
+            questions = None
 
-    if questions:
+        if questions:
+            async with session() as s:
+                await s.execute(
+                    update(TaskExecution).where(TaskExecution.id == exec_id)
+                    .values(status="succeeded", finished_at=datetime.utcnow())
+                )
+                await s.execute(
+                    update(TaskItem).where(TaskItem.id == task_id).values(
+                        status="awaiting_input",
+                        questions_json=questions,
+                        questions_asked_at=datetime.now(timezone.utc),
+                    )
+                )
+                await s.commit()
+            return
+
         async with session() as s:
             await s.execute(
                 update(TaskExecution).where(TaskExecution.id == exec_id)
                 .values(status="succeeded", finished_at=datetime.utcnow())
             )
+            new_exec = TaskExecution(task_id=task_id, status="running", log="")
+            s.add(new_exec)
+            await s.commit()
+            await s.refresh(new_exec)
+            new_exec_id = new_exec.id
+
+        # Awaited directly (not a nested create_task): this coroutine is already
+        # running as the background task tracked in _RUNNING[task_id], so
+        # cancel/executor.stop() reaches whichever phase is currently in flight,
+        # and _run_execution's own finally block pops _RUNNING on completion.
+        await _run_execution(task_id, new_exec_id, prompt)
+    except Exception as exc:
+        logger.exception("Pre-build question/park phase failed for task %s: %s", task_id, exc)
+        async with session() as s:
             await s.execute(
                 update(TaskItem).where(TaskItem.id == task_id).values(
-                    status="awaiting_input",
-                    questions_json=questions,
-                    questions_asked_at=datetime.now(timezone.utc),
+                    status="pending", mode=None, result=f"Previous AI run failed: {exc}"[:500]
                 )
             )
             await s.commit()
+    finally:
         _RUNNING.pop(task_id, None)
-        return
-
-    async with session() as s:
-        await s.execute(
-            update(TaskExecution).where(TaskExecution.id == exec_id)
-            .values(status="succeeded", finished_at=datetime.utcnow())
-        )
-        new_exec = TaskExecution(task_id=task_id, status="running", log="")
-        s.add(new_exec)
-        await s.commit()
-        await s.refresh(new_exec)
-        new_exec_id = new_exec.id
-
-    # Awaited directly (not a nested create_task): this coroutine is already
-    # running as the background task tracked in _RUNNING[task_id], so
-    # cancel/executor.stop() reaches whichever phase is currently in flight,
-    # and _run_execution's own finally block pops _RUNNING on completion.
-    await _run_execution(task_id, new_exec_id, prompt)
 
 
 async def _create_and_spawn_build(
@@ -643,11 +661,9 @@ async def answer_build(
         _has_prebuild_qs = getattr(item, "questions_json", None) is not None
         if body.answers is not None or (body.answer == "__skip__" and _has_prebuild_qs):
             answer_text = _compose_questions_answer_text(item.questions_json, body.answers)
-            # One round only: clear the stored questions now that they're
-            # answered/skipped. Never touches item.result (the separate
-            # mid-build NEEDS_INPUT question, unaffected).
-            item.questions_json = None
-            item.questions_asked_at = None
+            # resume_with_answer clears questions_json/questions_asked_at
+            # unconditionally now, so no clearing needed here. Never touches
+            # item.result (the separate mid-build NEEDS_INPUT question).
         else:
             answer_text = body.answer
         await resume_with_answer(s, item, answer_text)

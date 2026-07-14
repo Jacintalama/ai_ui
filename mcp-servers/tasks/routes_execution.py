@@ -492,6 +492,23 @@ def _build_execute_prompt(
     )
 
 
+def _clear_prebuild_questions(item: TaskItem) -> None:
+    """Clear stored pre-build questions on any resume, structured, skip, or
+    free-text alike.
+
+    Only the structured/skip branch used to clear these fields. That left
+    stale questions_json on a task after a free-text resume (or an admin
+    answering via the web /answer route), and if that same build later hit
+    a genuine mid-build awaiting_input pause, that pause never sets
+    questions_json, so the scheduler's pre-build timeout sweep still matched
+    on the stale value and silently auto-skipped a real mid-build question.
+    Clearing here, in the one path every resume flows through, closes that
+    gap for web, Discord, Slack, and Voice at once.
+    """
+    item.questions_json = None
+    item.questions_asked_at = None
+
+
 async def resume_with_answer(s, item: TaskItem, answer: str) -> None:
     """Resume a paused (awaiting_input) build with the user's answer.
 
@@ -502,6 +519,7 @@ async def resume_with_answer(s, item: TaskItem, answer: str) -> None:
     the user-scoped aiuibuilder answer endpoint, so web, Discord, Slack, and
     Voice resume identically.
     """
+    _clear_prebuild_questions(item)
     history = list(item.conversation_history or [])
     history.append({"role": "admin", "content": answer})
     item.conversation_history = history
