@@ -17,6 +17,7 @@ from handlers.app_builder_panel import (
     build_schedule_list,
     build_schedules_dashboard,
     build_schedule_card,
+    build_versions_select_components,
 )
 from handlers import onboarding
 from handlers import intent_router, intent_cards
@@ -2437,6 +2438,61 @@ class CommandRouter:
             self._background_tasks.add(watcher)
             watcher.add_done_callback(self._on_video_watcher_done)
 
+    async def run_app_versions(self, ctx: CommandContext, slug: str) -> None:
+        """My apps 'Versions': list recent commits for the app and offer a
+        select to pick one to restore. The current commit is shown in the
+        header but excluded from the select - there's nothing to roll back
+        to from itself."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            versions = await self._tasks_client.list_app_versions(email, slug)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_versions_error(e))
+            return
+        if not versions:
+            await ctx.respond(f"No version history yet for `{slug}`.")
+            return
+        current = next((v for v in versions if v.get("is_current")), versions[0])
+        current_sha = (current.get("short_sha") or (current.get("sha") or ""))[:7]
+        current_msg = (current.get("message") or "").strip() or "(no message)"
+        header = (
+            f"**Version history for `{slug}`**\n"
+            f"Current: `{current_sha}` - {current_msg}"
+        )
+        components = build_versions_select_components(slug, versions)
+        if not components:
+            await ctx.respond(header + "\nNo earlier versions to restore yet.")
+            return
+        if ctx.respond_components is not None:
+            await ctx.respond_components(header, components)
+        else:
+            await ctx.respond(header)
+
+    async def run_app_rollback(self, ctx: CommandContext, slug: str, sha: str) -> None:
+        """Confirmed rollback: restore `slug` to `sha` as a new commit (the
+        prior state stays in history, nothing is destroyed)."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            result = await self._tasks_client.rollback_app(email, slug, sha)
+        except TasksAPIError as e:
+            await ctx.respond(self._format_rollback_error(e))
+            return
+        short = sha[:7]
+        if result.get("noop"):
+            await ctx.respond(f"`{slug}` is already at version `{short}`, nothing to change.")
+            return
+        lines = [f"Restored `{slug}` to `{short}`."]
+        preview_url = f"https://{PUBLIC_DOMAIN}/tasks/preview-app/{slug}/" if PUBLIC_DOMAIN else ""
+        if preview_url:
+            lines.append(f"Preview: {preview_url}")
+        await ctx.respond("\n".join(lines))
+
     async def run_panel_status(self, ctx: CommandContext, slug: str) -> None:
         """App Builder Status button → post the app's status text (same shape as
         the `aiuibuilder status <slug>` text action)."""
@@ -2840,6 +2896,30 @@ class CommandRouter:
         if e.status == 404:
             return "That app doesn't exist (already deleted?)."
         return f"Couldn't delete (error {e.status})."
+
+    def _format_versions_error(self, e: TasksAPIError) -> str:
+        """Version-history-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status in (401, 403):
+            return "Only the app's owner can view its version history."
+        if e.status == 404:
+            return "Project not found or not yours."
+        return f"Couldn't load version history (error {e.status})."
+
+    def _format_rollback_error(self, e: TasksAPIError) -> str:
+        """Rollback-flavored error text."""
+        if e.status == 0:
+            return "Tasks service unreachable, try again."
+        if e.status == 409:
+            return "A build is still running, try again when it finishes."
+        if e.status in (401, 403):
+            return "Only the app's owner can restore a version."
+        if e.status == 404:
+            return "That version wasn't found - it may have been rewritten."
+        if e.status in (400, 422):
+            return "Couldn't restore that version - invalid version id."
+        return f"Couldn't restore that version (error {e.status})."
 
     def _format_publish_error(self, e: TasksAPIError) -> str:
         """Publish-flavored error text."""

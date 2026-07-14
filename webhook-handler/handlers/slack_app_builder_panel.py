@@ -11,7 +11,7 @@ them as `action_id` (buttons) and `callback_id` (modal views).
 from __future__ import annotations
 
 from config import settings
-from handlers.app_builder_panel import WALKVIDEO_PREFIX
+from handlers.app_builder_panel import WALKVIDEO_PREFIX, VERSIONS_PREFIX
 
 # custom_id schemes (shared shape with the Discord panel)
 TEMPLATE_PREFIX = "aiuibuild:tpl:"   # button action_id -> aiuibuild:tpl:<key>  ("" = Blank)
@@ -36,6 +36,7 @@ ENHANCE_MODAL_PREFIX = "aiuibuild:enhmodal:"
 UNPUBLISH_PREFIX = "aiuibuild:unpublish:"
 STATUS_PREFIX = "aiuibuild:status:"
 DELETE_PREFIX = "aiuibuild:del:"
+ROLLBACK_PREFIX = "aiuibuild:rollback:"  # button action_id -> :<slug>:<sha>, native confirm dialog
 
 # B6 — card colours
 COLOR_READY = "#36a64f"
@@ -407,6 +408,7 @@ def build_apps_list_blocks(apps: list[dict], *, owner: str = "") -> list[dict]:
         if open_url:
             row_buttons.append(_link_button("Preview", open_url))
         row_buttons.append(_button("Walkthrough video", f"{WALKVIDEO_PREFIX}{slug}"))
+        row_buttons.append(_button("Versions", f"{VERSIONS_PREFIX}{slug}"))
         row_buttons.append(_delete_button(slug, name))
 
         # Slack caps an actions block at 5 elements — split into a second
@@ -429,6 +431,87 @@ def build_apps_list_blocks(apps: list[dict], *, owner: str = "") -> list[dict]:
         })
 
     return blocks
+
+
+def _rollback_button(slug: str, sha: str, message: str) -> dict:
+    """Danger-styled Rollback button with a native Slack confirm dialog (the
+    confirm/deny round trip happens client-side; by the time the action_id
+    fires the user has already confirmed)."""
+    short = sha[:7]
+    return {
+        "type": "button",
+        "text": {"type": "plain_text", "text": "Rollback"},
+        "style": "danger",
+        "action_id": f"{ROLLBACK_PREFIX}{slug}:{sha}",
+        "confirm": {
+            "title": {"type": "plain_text", "text": "Restore this version?"},
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"Restore *{slug}* to `{short}` ({message[:80]})? "
+                    "This creates a new commit, nothing already committed is deleted."
+                ),
+            },
+            "confirm": {"type": "plain_text", "text": "Restore"},
+            "deny": {"type": "plain_text", "text": "Cancel"},
+        },
+    }
+
+
+def build_versions_list_blocks(slug: str, versions: list[dict]) -> list[dict]:
+    """One section per version (newest first), capped at _MAX_LIST_ROWS. The
+    current version is labeled and has no Rollback button; every other
+    version gets a Rollback button with a native confirm dialog."""
+    if not versions:
+        return [{
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"No version history yet for *{slug}*."},
+        }]
+    visible = versions[:_MAX_LIST_ROWS]
+    blocks: list[dict] = []
+    for v in visible:
+        sha = v.get("sha") or ""
+        short = (v.get("short_sha") or sha[:7]).strip()
+        if not short:
+            continue
+        message = (v.get("message") or "").strip() or "(no message)"
+        is_current = bool(v.get("is_current"))
+        date = (v.get("date") or "").strip()
+        label = f"*{short}* - {message}"
+        if is_current:
+            label += " _(current)_"
+        if date:
+            label += f"\n{date}"
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": label},
+        })
+        if not is_current and sha:
+            blocks.append({
+                "type": "actions",
+                "elements": [_rollback_button(slug, sha, message)],
+            })
+    if len(versions) > _MAX_LIST_ROWS:
+        blocks.append({
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": f"Showing the {_MAX_LIST_ROWS} most recent versions.",
+            }],
+        })
+    return blocks
+
+
+def slug_sha_from_rollback_action(action_id: str) -> tuple[str, str]:
+    if not is_action(action_id, ROLLBACK_PREFIX):
+        raise ValueError(f"not a rollback action_id: {action_id!r}")
+    rest = action_id[len(ROLLBACK_PREFIX):]
+    if ":" not in rest:
+        raise ValueError(f"rollback action_id missing sha: {action_id!r}")
+    slug, sha = rest.split(":", 1)
+    if not slug or not sha:
+        raise ValueError(f"rollback action_id has an empty slug/sha: {action_id!r}")
+    return slug, sha
 
 
 def build_enhance_modal_view(slug: str) -> dict:

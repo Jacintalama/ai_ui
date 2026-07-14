@@ -308,6 +308,10 @@ DELETE_PREFIX = "aiuibuild:del:"         # delete button -> aiuibuild:del:<slug>
 DEL_CONFIRM_PREFIX = "aiuibuild:del-confirm:"  # confirm-delete -> :<slug>
 DEL_CANCEL_PREFIX = "aiuibuild:del-cancel:"    # cancel-delete  -> :<slug>
 WALKVIDEO_PREFIX = "aiuibuild:video:"    # walkthrough-video button -> :<slug>
+VERSIONS_PREFIX = "aiuibuild:versions:"  # versions button -> :<slug>
+VERPICK_PREFIX = "aiuibuild:verpick:"    # version-pick select -> :<slug> (value=short sha)
+ROLLBACK_OK_PREFIX = "aiuibuild:rbok:"   # confirm rollback -> :<slug>:<sha>
+ROLLBACK_NO_PREFIX = "aiuibuild:rbno:"   # cancel rollback -> :<slug>:<sha>
 _MAX_SELECT_OPTIONS = 25                 # Discord hard limit
 
 
@@ -408,11 +412,101 @@ def build_project_menu_components(
                             "label": "\U0001f517 Open preview", "url": preview_url})
     buttons.append(_button("\U0001f3ac Walkthrough video",
                            f"{WALKVIDEO_PREFIX}{slug}", STYLE_PRIMARY))
+    buttons.append(_button("\U0001f553 Versions", f"{VERSIONS_PREFIX}{slug}", STYLE_SECONDARY))
     buttons.append(_button("ℹ️ Status", f"{STATUS_PREFIX}{slug}", STYLE_SECONDARY))
     buttons.append(_button("🗑 Delete", f"{DELETE_PREFIX}{slug}", STYLE_DANGER))
     # Chunk into action rows of at most 5 buttons (Discord's per-row limit).
     return [{"type": ACTION_ROW, "components": buttons[i:i + _MAX_PER_ROW]}
             for i in range(0, len(buttons), _MAX_PER_ROW)]
+
+
+# --- Versions + rollback: select of recent commits, then a confirm card ---
+
+def is_versions_button(custom_id: str) -> bool:
+    return custom_id.startswith(VERSIONS_PREFIX)
+
+
+def slug_from_versions_button(custom_id: str) -> str:
+    return _slug_after(custom_id, VERSIONS_PREFIX)
+
+
+def is_verpick_select(custom_id: str) -> bool:
+    return custom_id.startswith(VERPICK_PREFIX)
+
+
+def slug_from_verpick_select(custom_id: str) -> str:
+    return _slug_after(custom_id, VERPICK_PREFIX)
+
+
+def _slug_sha_after(custom_id: str, prefix: str) -> tuple[str, str]:
+    if not custom_id.startswith(prefix):
+        raise ValueError(f"not a {prefix!r} custom_id: {custom_id!r}")
+    rest = custom_id[len(prefix):]
+    if ":" not in rest:
+        raise ValueError(f"{prefix!r} custom_id missing sha: {custom_id!r}")
+    slug, sha = rest.split(":", 1)
+    if not slug or not sha:
+        raise ValueError(f"{prefix!r} custom_id has an empty slug/sha: {custom_id!r}")
+    return slug, sha
+
+
+def is_rollback_ok(custom_id: str) -> bool:
+    return custom_id.startswith(ROLLBACK_OK_PREFIX)
+
+
+def slug_sha_from_rollback_ok(custom_id: str) -> tuple[str, str]:
+    return _slug_sha_after(custom_id, ROLLBACK_OK_PREFIX)
+
+
+def is_rollback_no(custom_id: str) -> bool:
+    return custom_id.startswith(ROLLBACK_NO_PREFIX)
+
+
+def slug_sha_from_rollback_no(custom_id: str) -> tuple[str, str]:
+    return _slug_sha_after(custom_id, ROLLBACK_NO_PREFIX)
+
+
+def build_versions_select_components(slug: str, versions: list[dict]) -> list[dict]:
+    """One action row: a select of the app's rollback-able versions (every
+    entry EXCEPT the current one), newest first, value = short SHA. Caps at
+    25 options (Discord max). Returns [] when there's nothing to roll back
+    to (0 or 1 versions total, or the caller already filtered the list down
+    to just the current one)."""
+    options: list[dict] = []
+    for v in versions:
+        if v.get("is_current"):
+            continue
+        short = (v.get("short_sha") or (v.get("sha") or "")[:7]).strip()
+        if not short:
+            continue
+        message = (v.get("message") or "").strip() or "(no message)"
+        options.append({
+            "label": message[:100],
+            "value": short[:100],
+            "description": (v.get("date") or "")[:100],
+        })
+        if len(options) >= _MAX_SELECT_OPTIONS:
+            break
+    if not options:
+        return []
+    select = {
+        "type": SELECT_MENU,
+        "custom_id": f"{VERPICK_PREFIX}{slug}",
+        "placeholder": "Pick a version to restore…",
+        "min_values": 1,
+        "max_values": 1,
+        "options": options,
+    }
+    return [{"type": ACTION_ROW, "components": [select]}]
+
+
+def build_rollback_confirm_components(slug: str, sha: str) -> list[dict]:
+    """Confirmation-card buttons for restoring an app to a prior version: a
+    red Confirm (carries slug+sha) + a grey Cancel."""
+    return [{"type": ACTION_ROW, "components": [
+        _button("↩ Restore this version", f"{ROLLBACK_OK_PREFIX}{slug}:{sha}", STYLE_DANGER),
+        _button("✖ Cancel", f"{ROLLBACK_NO_PREFIX}{slug}:{sha}", STYLE_SECONDARY),
+    ]}]
 
 
 # --- Schedules (Discord cron jobs): panel, modal, confirm card, list ---

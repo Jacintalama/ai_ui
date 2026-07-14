@@ -25,12 +25,14 @@ from handlers.slack_app_builder_panel import (
     DELETE_PREFIX,
     ENHANCE_PREFIX,
     ENHANCE_MODAL_PREFIX,
+    ROLLBACK_PREFIX,
     build_modal_view,
     build_template_picker_blocks,
     build_ready_attachment,
     build_published_attachment,
     build_apps_list_blocks,
     build_enhance_modal_view,
+    build_versions_list_blocks,
     description_from_view,
     enhance_text_from_view,
     is_action,
@@ -39,6 +41,7 @@ from handlers.slack_app_builder_panel import (
     is_panel_modal,
     slug_from_action,
     slug_from_enhance_modal,
+    slug_sha_from_rollback_action,
     template_key_from_button,
     template_key_from_modal,
 )
@@ -55,6 +58,7 @@ from handlers.app_builder_panel import (
     SCHED_EDIT_PREFIX,
     CONNECT_RESUME_PREFIX,
     WALKVIDEO_PREFIX,
+    VERSIONS_PREFIX,
 )
 from handlers.slack_schedule_panel import (
     build_schedules_dashboard,
@@ -195,10 +199,22 @@ class SlackInteractionsHandler:
             await self.slack.open_modal(trigger_id, view)
             return {}
 
+        if is_action(action_id, ROLLBACK_PREFIX):
+            try:
+                slug, sha = slug_sha_from_rollback_action(action_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed rollback action_id: {action_id}")
+                return {}
+            task = asyncio.create_task(self._do_app_rollback(payload, slug, sha))
+            self.router._background_tasks.add(task)
+            task.add_done_callback(self.router._background_tasks.discard)
+            return {}
+
         for prefix, handler in (
             (PUBLISH_PREFIX, self._do_publish),
             (UNPUBLISH_PREFIX, self._do_unpublish),
             (WALKVIDEO_PREFIX, self._do_walkthrough_video),
+            (VERSIONS_PREFIX, self._do_app_versions),
             (DELETE_PREFIX, self._do_delete),
             (STATUS_PREFIX, self._do_status),
             (ENHANCE_PREFIX, self._do_open_enhance),
@@ -1603,6 +1619,72 @@ class SlackInteractionsHandler:
                     await self.slack.post_message(
                         channel=dm,
                         text="Something went wrong starting the walkthrough video. Try again shortly.")
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _do_app_versions(self, payload: dict[str, Any], slug: str) -> None:
+        """My apps 'Versions': DM the version history for this app. Each
+        non-current version gets a Rollback button with a native confirm
+        dialog; the current version has none."""
+        user_id: str = payload.get("user", {}).get("id", "")
+        try:
+            email = await self._bail_if_not_linked(user_id)
+            if not email:
+                return
+            versions = await self.router._tasks_client.list_app_versions(email, slug)
+            blocks = build_versions_list_blocks(slug, versions)
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(
+                    channel=dm, text=f"Version history for {slug}", blocks=blocks)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("_do_app_versions failed slug=%s user=%s: %s", slug, user_id, exc)
+            try:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm,
+                        text=f"Couldn't load version history for {slug}. Try again shortly.")
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _do_app_rollback(self, payload: dict[str, Any], slug: str, sha: str) -> None:
+        """Rollback button click (already confirmed via the native dialog):
+        restore `slug` to `sha` and DM the result. A 409 (build/enhance in
+        progress) gets a clean message instead of a raw error."""
+        user_id: str = payload.get("user", {}).get("id", "")
+        try:
+            email = await self._bail_if_not_linked(user_id)
+            if not email:
+                return
+            try:
+                result = await self.router._tasks_client.rollback_app(email, slug, sha)
+            except TasksAPIError as e:
+                text = (
+                    "A build is still running, try again when it finishes."
+                    if e.status == 409 else f"Couldn't restore that version: {e.message}"
+                )
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(channel=dm, text=text)
+                return
+            short = sha[:7]
+            if result.get("noop"):
+                text = f"{slug} is already at version {short}, nothing to change."
+            else:
+                open_url = f"{settings.tasks_public_url.rstrip('/')}/tasks/preview-app/{slug}/"
+                text = f"Restored {slug} to {short}. Preview: {open_url}"
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(channel=dm, text=text)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "_do_app_rollback failed slug=%s sha=%s user=%s: %s", slug, sha, user_id, exc)
+            try:
+                dm = await self.slack.open_dm(user_id)
+                if dm:
+                    await self.slack.post_message(
+                        channel=dm, text=f"Couldn't restore {slug}. Try again shortly.")
             except Exception:  # noqa: BLE001
                 pass
 

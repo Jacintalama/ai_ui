@@ -56,6 +56,11 @@ from handlers.app_builder_panel import (
     is_del_cancel, slug_from_del_cancel,
     build_delete_confirm_components,
     WALKVIDEO_PREFIX,
+    is_versions_button, slug_from_versions_button,
+    is_verpick_select, slug_from_verpick_select,
+    is_rollback_ok, slug_sha_from_rollback_ok,
+    is_rollback_no,
+    build_rollback_confirm_components,
     build_schedule_modal, build_confirm_components, build_connect_components,
     is_connect_resume, token_from_connect_resume,
     SCHED_WHAT_INPUT, SCHED_WHEN_INPUT,
@@ -309,6 +314,40 @@ class DiscordCommandHandler:
             return await self._handle_video_route(
                 payload, lambda ctx, s=slug: self.router.run_app_walkthrough_video(ctx, s),
                 raw_text=f"aiuibuilder video {slug}")
+        if is_versions_button(custom_id):
+            try:
+                slug = slug_from_versions_button(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed versions custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_app_versions(ctx, slug),
+                raw_text=f"aiuibuilder versions {slug}")
+        if is_verpick_select(custom_id):
+            try:
+                slug = slug_from_verpick_select(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed verpick custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            values = data.get("values") or []
+            if not values:
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            sha = values[0]
+            return self._ephemeral_components(
+                f"Restore `{slug}` to `{sha}`? This creates a new commit, nothing is deleted.",
+                build_rollback_confirm_components(slug, sha), update=True)
+        if is_rollback_no(custom_id):
+            return {"type": UPDATE_MESSAGE,
+                    "data": {"content": "Cancelled.", "components": []}}
+        if is_rollback_ok(custom_id):
+            try:
+                slug, sha = slug_sha_from_rollback_ok(custom_id)
+            except ValueError:
+                logger.info(f"Ignoring malformed rollback-ok custom_id: {custom_id}")
+                return {"type": DEFERRED_UPDATE_MESSAGE}
+            return await self._handle_panel_route(
+                payload, lambda ctx: self.router.run_app_rollback(ctx, slug, sha),
+                raw_text=f"aiuibuilder rollback {slug}")
         # --- Schedules (aiuisched:*) ---
         if is_sched_new(custom_id):
             token = uuid.uuid4().hex[:16]
