@@ -13,6 +13,7 @@ from routes_chat_history import router as chat_history_router
 from routes_cron import router as cron_router
 from routes_db import router as db_router
 from routes_execution import router as execution_router
+from routes_fusion import router as fusion_router
 from routes_graph import router as graph_router
 from routes_preview import router as preview_router
 from routes_projects import router as projects_router
@@ -107,6 +108,7 @@ app.include_router(state_router)  # /state — system KV for bot conversational 
 app.include_router(tasks_router)
 app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload
 app.include_router(execution_router)
+app.include_router(fusion_router)  # /api/fusion - internal, OWUI fusion pipe
 app.include_router(cron_router)
 app.include_router(preview_router)
 app.include_router(projects_router)
