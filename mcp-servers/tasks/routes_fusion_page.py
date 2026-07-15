@@ -118,7 +118,10 @@ async def fusion_stream(request: Request,
         # the browser EventSource auto-reconnecting and re-running the fusion
         # on an already-answered session (an infinite loop plus real cost).
         if not s.messages or s.messages[-1].get("role") != "user":
-            s.streaming = False
+            # Do NOT clear s.streaming here: a concurrent reconnect can hit this
+            # branch while the owning generator is still fusing, and clearing it
+            # would drop the double-submit guard mid-turn. The owning gen's
+            # finally is the only place that resets streaming.
             yield {"event": "close", "data": ""}
             return
         # Claim the turn atomically, before the first `await`. Appending the
@@ -126,9 +129,12 @@ async def fusion_stream(request: Request,
         # concurrent or reconnecting stream for this same session fails the
         # pending-turn check above and closes without a second paid fan-out.
         # `fuse` runs against a snapshot so a New chat mid-stream cannot mutate
-        # the list it is reading.
+        # the list it is reading. The snapshot drops any empty-content turn (an
+        # assistant placeholder left by an earlier early-disconnect): empty
+        # content is rejected by the Anthropic API and would silently drop every
+        # Claude panelist for the rest of the conversation.
         my_generation = s.generation
-        fuse_messages = list(s.messages)
+        fuse_messages = [m for m in s.messages if (m.get("content") or "").strip()]
         placeholder = {"role": "assistant", "content": ""}
         s.messages.append(placeholder)
         collected: list[str] = []

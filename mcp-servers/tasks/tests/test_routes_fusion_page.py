@@ -238,3 +238,47 @@ def test_new_chat_bumps_generation(monkeypatch):
     sess = mod._SESSIONS["gen@t.com"]
     assert sess.generation == g0 + 1
     assert sess.messages == []
+
+
+def test_stream_already_claimed_turn_does_not_fuse(monkeypatch):
+    # The core of the fix: a session whose last message is an (unfilled)
+    # assistant placeholder is a turn already claimed by another generator.
+    # A second stream must close without calling fuse.
+    app, mod = _app(monkeypatch)
+    calls = {"n": 0}
+
+    async def fake_fuse(messages, preset, *, client=None):
+        calls["n"] += 1
+        yield "x"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "claim@t.com",
+          [{"role": "user", "content": "q"},
+           {"role": "assistant", "content": ""}], streaming=True)
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("claim@t.com")) as r:
+        raw = "".join(chunk for chunk in r.iter_text())
+    assert calls["n"] == 0
+    assert "event: close" in raw
+
+
+def test_stream_snapshot_drops_empty_history_turn(monkeypatch):
+    # A stray empty assistant turn (from an earlier early-disconnect) must be
+    # filtered out of the messages handed to fuse, else Anthropic 400s and the
+    # Claude panel silently drops for the rest of the conversation.
+    app, mod = _app(monkeypatch)
+    seen = {}
+
+    async def fake_fuse(messages, preset, *, client=None):
+        seen["messages"] = messages
+        yield "ok"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "poison@t.com",
+          [{"role": "user", "content": "first"},
+           {"role": "assistant", "content": ""},   # stray empty turn
+           {"role": "user", "content": "second"}], streaming=True)
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("poison@t.com")) as r:
+        "".join(chunk for chunk in r.iter_text())
+    # fuse never receives an empty-content message
+    assert all((m.get("content") or "").strip() for m in seen["messages"])
+    assert {"role": "user", "content": "second"} in seen["messages"]
