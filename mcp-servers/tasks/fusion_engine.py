@@ -118,7 +118,11 @@ async def call_model(model_id: str, messages: list[dict], *, max_tokens: int,
 
 
 FUSION_TIMEOUT_S = float(os.environ.get("FUSION_TIMEOUT_S", "120"))
-PANEL_MAX_TOKENS = int(os.environ.get("FUSION_PANEL_MAX_TOKENS", "2000"))
+# Generous by default: reasoning models (gpt-5/o3) spend tokens on hidden
+# reasoning that counts toward max_completion_tokens, so a low cap makes them
+# return empty content. This is an upper bound, not a target - non-reasoning
+# models still stop at their natural answer length.
+PANEL_MAX_TOKENS = int(os.environ.get("FUSION_PANEL_MAX_TOKENS", "8000"))
 FUSION_MAX_TOKENS = int(os.environ.get("FUSION_MAX_TOKENS", "3000"))
 
 

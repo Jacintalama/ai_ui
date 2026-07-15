@@ -15,7 +15,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 
-class Pipeline:
+class Pipe:
     class Valves(BaseModel):
         TASKS_URL: str = Field(default="http://tasks:8210",
                                description="tasks-service base URL (docker network)")
