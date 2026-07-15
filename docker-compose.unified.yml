@@ -480,8 +480,11 @@ services:
       - LINEAR_API_KEY=${LINEAR_API_KEY:-}
       - NOTION_API_KEY=${NOTION_API_KEY:-}
       - N8N_API_KEY=${N8N_API_KEY:-}
-      # Meta-tools mode
-      - META_TOOLS_MODE=${META_TOOLS_MODE:-false}
+      # Meta-tools mode: expose 3 lookup tools (search/describe/call) instead of
+      # all ~318 individual tools. Open WebUI + OpenAI cap the tools array at 128;
+      # advertising every tool 128-errors any tool-using chat (incl. voice) once
+      # the big servers (ClickUp 146, GitHub 80, ...) are online. Default ON here.
+      - META_TOOLS_MODE=${META_TOOLS_MODE:-true}
       # Skip cache refresh on startup (faster boot)
       - SKIP_CACHE_REFRESH=${SKIP_CACHE_REFRESH:-false}
     depends_on:
