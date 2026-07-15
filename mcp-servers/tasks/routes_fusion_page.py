@@ -96,10 +96,11 @@ def _render_picker(s: FusionSession) -> str:
     prov_by_id = {m["id"]: m["provider"] for m in models}
     prov_name = {"openai": "OpenAI", "anthropic": "Anthropic"}
 
-    # Preset tabs. Quality/Budget switch the selection; Custom is a passive
-    # indicator that lights up when the selection was hand-edited.
+    # Preset tabs. Quality sets the recommended selection; Custom is a passive
+    # indicator that lights up when the selection was hand-edited. (Budget is
+    # hidden from the UI for now but still works via the engine preset.)
     tabs = []
-    for name in ("quality", "budget"):
+    for name in ("quality",):
         active = " active" if s.preset_label == name else ""
         tabs.append(
             f'<button class="tab{active}" hx-post="/tasks/fusion/preset" '

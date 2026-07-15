@@ -163,12 +163,21 @@
     .mrow .mprov { font-size: 11px; color: #7d8494; }
 
     /* Composer (fills the dock) */
-    form.composer { display: flex; gap: 10px; width: 100%; }
+    form.composer { display: flex; gap: 10px; width: 100%; align-items: stretch; }
     textarea {
-      flex: 1; resize: none; height: 48px; max-height: 160px; padding: 13px 15px;
+      flex: 1; resize: none; min-height: 50px; max-height: 160px;
+      padding: 13px 15px; line-height: 1.4;
       background: #12141b; color: #e6e8eb; border: 1px solid #2a3040;
       border-radius: 12px; font: inherit;
+      /* Thin, buttonless scrollbar only when the text actually overflows,
+         instead of the chunky native scrollbar with up/down arrows. */
+      overflow-y: auto;
+      scrollbar-width: thin; scrollbar-color: #2f3646 transparent;
     }
+    textarea::-webkit-scrollbar { width: 8px; }
+    textarea::-webkit-scrollbar-track { background: transparent; }
+    textarea::-webkit-scrollbar-thumb { background: #2f3646; border-radius: 8px; }
+    textarea::-webkit-scrollbar-button { display: none; height: 0; }
     textarea:focus { outline: none; border-color: #2b6cff; }
     button.send {
       background: linear-gradient(135deg, #2b6cff, #4f7dff); color: #fff; border: none;
