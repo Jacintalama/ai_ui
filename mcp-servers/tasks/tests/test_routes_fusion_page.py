@@ -25,19 +25,10 @@ def test_send_requires_identity(monkeypatch):
     assert r.status_code == 401
 
 
-def test_send_unknown_preset_400(monkeypatch):
-    app, _ = _app(monkeypatch)
-    c = TestClient(app)
-    r = c.post("/tasks/fusion/send", data={"message": "hi", "preset": "nope"},
-               headers=_hdr())
-    assert r.status_code == 400
-
-
 def test_send_appends_user_and_returns_stream_fragment(monkeypatch):
     app, mod = _app(monkeypatch)
     c = TestClient(app)
-    r = c.post("/tasks/fusion/send",
-               data={"message": "what is 2+2?", "preset": "budget"},
+    r = c.post("/tasks/fusion/send", data={"message": "what is 2+2?"},
                headers=_hdr("a@b.com"))
     assert r.status_code == 200
     body = r.text
@@ -46,15 +37,13 @@ def test_send_appends_user_and_returns_stream_fragment(monkeypatch):
     assert "what is 2+2?" in body
     sess = mod._SESSIONS["a@b.com"]
     assert sess.messages[-1] == {"role": "user", "content": "what is 2+2?"}
-    assert sess.preset == "budget"
     assert sess.streaming is True
 
 
 def test_send_escapes_html_in_message(monkeypatch):
     app, _ = _app(monkeypatch)
     c = TestClient(app)
-    r = c.post("/tasks/fusion/send",
-               data={"message": "<script>x</script>", "preset": "quality"},
+    r = c.post("/tasks/fusion/send", data={"message": "<script>x</script>"},
                headers=_hdr("c@d.com"))
     assert "<script>x</script>" not in r.text
     assert "&lt;script&gt;" in r.text
@@ -63,22 +52,26 @@ def test_send_escapes_html_in_message(monkeypatch):
 def test_send_empty_message_400(monkeypatch):
     app, _ = _app(monkeypatch)
     c = TestClient(app)
-    r = c.post("/tasks/fusion/send", data={"message": "   ", "preset": "quality"},
-               headers=_hdr())
+    r = c.post("/tasks/fusion/send", data={"message": "   "}, headers=_hdr())
+    assert r.status_code == 400
+
+
+def test_send_empty_panel_400(monkeypatch):
+    app, mod = _app(monkeypatch)
+    mod._SESSIONS["nop@t.com"] = mod.FusionSession(
+        panel=[], judge="gpt-4o", streaming=False, last_used=time.time())
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/send", data={"message": "hi"}, headers=_hdr("nop@t.com"))
     assert r.status_code == 400
 
 
 def test_send_while_streaming_is_rejected(monkeypatch):
     app, mod = _app(monkeypatch)
-    mod._SESSIONS["e@f.com"] = mod.FusionSession(
-        messages=[{"role": "user", "content": "prev"}],
-        preset="quality", streaming=True, last_used=time.time())
+    _seed(mod, "e@f.com", [{"role": "user", "content": "prev"}], streaming=True)
     c = TestClient(app)
-    r = c.post("/tasks/fusion/send", data={"message": "again", "preset": "quality"},
-               headers=_hdr("e@f.com"))
+    r = c.post("/tasks/fusion/send", data={"message": "again"}, headers=_hdr("e@f.com"))
     assert r.status_code == 200
     assert "still answering" in r.text.lower()
-    # the second message was NOT appended
     assert mod._SESSIONS["e@f.com"].messages == [{"role": "user", "content": "prev"}]
 
 
@@ -87,7 +80,7 @@ def test_new_clears_session(monkeypatch):
     mod._SESSIONS["g@h.com"] = mod.FusionSession(
         messages=[{"role": "user", "content": "x"},
                   {"role": "assistant", "content": "y"}],
-        preset="quality", streaming=False, last_used=time.time())
+        streaming=False, last_used=time.time())
     c = TestClient(app)
     r = c.post("/tasks/fusion/new", headers=_hdr("g@h.com"))
     assert r.status_code == 200
@@ -114,16 +107,19 @@ def test_page_route_returns_html(monkeypatch, tmp_path):
     assert "/tasks/fusion" in routes
 
 
-def _seed(mod, email, messages, preset="quality", streaming=True):
+def _seed(mod, email, messages, panel=None, judge=None, preset_label="custom",
+          streaming=True):
     mod._SESSIONS[email] = mod.FusionSession(
-        messages=list(messages), preset=preset, streaming=streaming,
-        last_used=time.time())
+        messages=list(messages),
+        panel=list(panel or ["gpt-4o", "claude-haiku-4-5-20251001"]),
+        judge=judge or "gpt-4o", preset_label=preset_label,
+        streaming=streaming, last_used=time.time())
 
 
 def test_stream_relays_fuse_chunks_and_appends_assistant(monkeypatch):
     app, mod = _app(monkeypatch)
 
-    async def fake_fuse(messages, preset, *, client=None):
+    async def fake_fuse(messages, panel, judge, *, client=None):
         for piece in ["Final ", "answer."]:
             yield piece
     monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
@@ -143,7 +139,7 @@ def test_stream_relays_fuse_chunks_and_appends_assistant(monkeypatch):
 def test_stream_escapes_html_chunks(monkeypatch):
     app, mod = _app(monkeypatch)
 
-    async def fake_fuse(messages, preset, *, client=None):
+    async def fake_fuse(messages, panel, judge, *, client=None):
         yield "<b>hi</b>"
     monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
     _seed(mod, "esc@t.com", [{"role": "user", "content": "q"}])
@@ -159,7 +155,7 @@ def test_stream_no_pending_turn_closes_without_calling_fuse(monkeypatch):
     app, mod = _app(monkeypatch)
     called = {"fuse": False}
 
-    async def fake_fuse(messages, preset, *, client=None):
+    async def fake_fuse(messages, panel, judge, *, client=None):
         called["fuse"] = True
         yield "should not happen"
     monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
@@ -188,7 +184,7 @@ def test_stream_reconnect_after_turn_does_not_refuse(monkeypatch):
     app, mod = _app(monkeypatch)
     calls = {"n": 0}
 
-    async def fake_fuse(messages, preset, *, client=None):
+    async def fake_fuse(messages, panel, judge, *, client=None):
         calls["n"] += 1
         yield "ans"
     monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
@@ -213,7 +209,7 @@ def test_new_chat_during_stream_discards_stale_answer(monkeypatch):
     app, mod = _app(monkeypatch)
     email = "mid@t.com"
 
-    async def fake_fuse(messages, preset, *, client=None):
+    async def fake_fuse(messages, panel, judge, *, client=None):
         s = mod._SESSIONS[email]
         s.messages.clear()
         s.streaming = False
@@ -247,7 +243,7 @@ def test_stream_already_claimed_turn_does_not_fuse(monkeypatch):
     app, mod = _app(monkeypatch)
     calls = {"n": 0}
 
-    async def fake_fuse(messages, preset, *, client=None):
+    async def fake_fuse(messages, panel, judge, *, client=None):
         calls["n"] += 1
         yield "x"
     monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
@@ -268,7 +264,7 @@ def test_stream_snapshot_drops_empty_history_turn(monkeypatch):
     app, mod = _app(monkeypatch)
     seen = {}
 
-    async def fake_fuse(messages, preset, *, client=None):
+    async def fake_fuse(messages, panel, judge, *, client=None):
         seen["messages"] = messages
         yield "ok"
     monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
@@ -282,3 +278,43 @@ def test_stream_snapshot_drops_empty_history_turn(monkeypatch):
     # fuse never receives an empty-content message
     assert all((m.get("content") or "").strip() for m in seen["messages"])
     assert {"role": "user", "content": "second"} in seen["messages"]
+
+
+def test_session_defaults_to_quality(monkeypatch):
+    _, mod = _app(monkeypatch)
+    s = mod.FusionSession()
+    assert s.preset_label == "quality"
+    assert s.panel == ["gpt-5.5", "claude-opus-4-8"]
+    assert s.judge == "claude-opus-4-8"
+
+
+def test_stream_calls_fuse_with_session_panel_judge(monkeypatch):
+    app, mod = _app(monkeypatch)
+    got = {}
+
+    async def fake_fuse(messages, panel, judge, *, client=None):
+        got["panel"] = panel
+        got["judge"] = judge
+        yield "ok"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "pj@t.com", [{"role": "user", "content": "q"}],
+          panel=["gpt-5.5", "o3"], judge="claude-opus-4-8")
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("pj@t.com")) as r:
+        "".join(chunk for chunk in r.iter_text())
+    assert got["panel"] == ["gpt-5.5", "o3"]
+    assert got["judge"] == "claude-opus-4-8"
+
+
+def test_new_keeps_model_selection(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "keep@t.com",
+          [{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}],
+          panel=["gpt-5.5", "o3"], judge="o3", preset_label="custom", streaming=False)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/new", headers=_hdr("keep@t.com"))
+    assert r.status_code == 200
+    sess = mod._SESSIONS["keep@t.com"]
+    assert sess.messages == []
+    assert sess.panel == ["gpt-5.5", "o3"] and sess.judge == "o3"
+    assert sess.preset_label == "custom"

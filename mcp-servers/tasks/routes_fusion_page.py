@@ -19,13 +19,17 @@ from auth import CurrentUser, current_user
 
 router = APIRouter()
 
+_DEFAULT_PANEL, _DEFAULT_JUDGE = fusion_engine.resolve_preset("quality")
+
 _SESSION_IDLE_SECONDS = 2 * 60 * 60  # drop sessions idle longer than 2h
 
 
 @dataclass
 class FusionSession:
     messages: list[dict] = field(default_factory=list)
-    preset: str = "quality"
+    panel: list[str] = field(default_factory=lambda: list(_DEFAULT_PANEL))
+    judge: str = _DEFAULT_JUDGE
+    preset_label: str = "quality"
     streaming: bool = False
     last_used: float = field(default_factory=time.time)
     # Bumped whenever the session is reset (New chat). A stream generator
@@ -89,19 +93,18 @@ async def fusion_page() -> FileResponse:
 
 
 @router.post("/tasks/fusion/send", include_in_schema=False)
-async def fusion_send(message: str = Form(...), preset: str = Form("quality"),
+async def fusion_send(message: str = Form(...),
                       user: CurrentUser = Depends(current_user)) -> HTMLResponse:
-    if preset not in fusion_engine.PRESETS:
-        raise HTTPException(status_code=400, detail=f"unknown preset: {preset}")
     text = (message or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="empty message")
     s = _get_session(user.email)
+    if not s.panel:
+        raise HTTPException(status_code=400, detail="pick at least one model")
     if s.streaming:
         return HTMLResponse(
             '<div class="msg system">Still answering the previous turn, '
             'one moment.</div>')
-    s.preset = preset
     s.messages.append({"role": "user", "content": text})
     s.streaming = True
     return HTMLResponse(_user_bubble(text) + _assistant_bubble_streaming())
@@ -139,7 +142,7 @@ async def fusion_stream(request: Request,
         s.messages.append(placeholder)
         collected: list[str] = []
         try:
-            async for chunk in fusion_engine.fuse(fuse_messages, s.preset):
+            async for chunk in fusion_engine.fuse(fuse_messages, s.panel, s.judge):
                 if not chunk:
                     continue
                 if await request.is_disconnected():
