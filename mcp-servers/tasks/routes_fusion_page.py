@@ -28,6 +28,11 @@ class FusionSession:
     preset: str = "quality"
     streaming: bool = False
     last_used: float = field(default_factory=time.time)
+    # Bumped whenever the session is reset (New chat). A stream generator
+    # captures it at start and refuses to write its result back if the value
+    # changed underneath it, so an in-flight turn can never corrupt a session
+    # the user has since cleared or restarted.
+    generation: int = 0
 
 
 _SESSIONS: dict[str, FusionSession] = {}
@@ -116,9 +121,19 @@ async def fusion_stream(request: Request,
             s.streaming = False
             yield {"event": "close", "data": ""}
             return
+        # Claim the turn atomically, before the first `await`. Appending the
+        # assistant placeholder flips messages[-1] to "assistant", so any
+        # concurrent or reconnecting stream for this same session fails the
+        # pending-turn check above and closes without a second paid fan-out.
+        # `fuse` runs against a snapshot so a New chat mid-stream cannot mutate
+        # the list it is reading.
+        my_generation = s.generation
+        fuse_messages = list(s.messages)
+        placeholder = {"role": "assistant", "content": ""}
+        s.messages.append(placeholder)
         collected: list[str] = []
         try:
-            async for chunk in fusion_engine.fuse(s.messages, s.preset):
+            async for chunk in fusion_engine.fuse(fuse_messages, s.preset):
                 if not chunk:
                     continue
                 if await request.is_disconnected():
@@ -127,8 +142,15 @@ async def fusion_stream(request: Request,
                 yield {"event": "message", "data": _esc(chunk)}
         finally:
             full = "".join(collected)
-            if full:
-                s.messages.append({"role": "assistant", "content": full})
+            # Resolve the claimed turn to its answer, but only if this session
+            # was not reset (New chat) and our placeholder is still present.
+            # Otherwise the turn was abandoned and its result must be discarded,
+            # not stapled onto a newer conversation. We always fill the
+            # placeholder (even with "" on an early disconnect) rather than
+            # removing it, so the turn is never left pending: a later reconnect
+            # then closes without a second, already-paid fan-out.
+            if s.generation == my_generation and placeholder in s.messages:
+                placeholder["content"] = full
             s.streaming = False
             yield {"event": "close", "data": ""}
 
@@ -141,4 +163,7 @@ async def fusion_new(
     s = _get_session(user.email)
     s.messages.clear()
     s.streaming = False
+    # Invalidate any stream still running against the old conversation so its
+    # result is discarded instead of being appended to the fresh session.
+    s.generation += 1
     return HTMLResponse(_empty_thread())

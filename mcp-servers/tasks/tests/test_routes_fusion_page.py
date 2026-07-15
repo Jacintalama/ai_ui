@@ -180,3 +180,61 @@ def test_stream_requires_identity(monkeypatch):
     c = TestClient(app)
     r = c.get("/tasks/fusion/stream")
     assert r.status_code == 401
+
+
+def test_stream_reconnect_after_turn_does_not_refuse(monkeypatch):
+    # After a turn resolves, an EventSource reconnect on the same session must
+    # close without a second (paid) fan-out.
+    app, mod = _app(monkeypatch)
+    calls = {"n": 0}
+
+    async def fake_fuse(messages, preset, *, client=None):
+        calls["n"] += 1
+        yield "ans"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "cc@t.com", [{"role": "user", "content": "q"}], streaming=True)
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("cc@t.com")) as r:
+        "".join(chunk for chunk in r.iter_text())
+    assert calls["n"] == 1
+    sess = mod._SESSIONS["cc@t.com"]
+    assert sess.messages[-1] == {"role": "assistant", "content": "ans"}
+    # simulate the browser EventSource auto-reconnecting on the same turn
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("cc@t.com")) as r:
+        "".join(chunk for chunk in r.iter_text())
+    assert calls["n"] == 1  # NOT re-fused
+    assert sess.messages == [{"role": "user", "content": "q"},
+                             {"role": "assistant", "content": "ans"}]
+
+
+def test_new_chat_during_stream_discards_stale_answer(monkeypatch):
+    # If the user clicks New chat while a turn is streaming, the in-flight
+    # generator's result must be discarded, not appended to the fresh session.
+    app, mod = _app(monkeypatch)
+    email = "mid@t.com"
+
+    async def fake_fuse(messages, preset, *, client=None):
+        s = mod._SESSIONS[email]
+        s.messages.clear()
+        s.streaming = False
+        s.generation += 1  # exactly what fusion_new does
+        yield "stale answer"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, email, [{"role": "user", "content": "q"}], streaming=True)
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr(email)) as r:
+        "".join(chunk for chunk in r.iter_text())
+    # the stale answer was discarded; the reset session stays empty
+    assert mod._SESSIONS[email].messages == []
+
+
+def test_new_chat_bumps_generation(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "gen@t.com", [{"role": "user", "content": "q"}], streaming=True)
+    g0 = mod._SESSIONS["gen@t.com"].generation
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/new", headers=_hdr("gen@t.com"))
+    assert r.status_code == 200
+    sess = mod._SESSIONS["gen@t.com"]
+    assert sess.generation == g0 + 1
+    assert sess.messages == []
