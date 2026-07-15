@@ -77,7 +77,8 @@ async def test_call_model_anthropic_contract():
     assert "/v1/messages" in captured["url"]
     assert captured["body"]["model"] == "claude-opus-4-8"
     assert captured["body"]["max_tokens"] == 100
-    assert captured["hdr"] == fe._anthropic_key() and captured["hdr"][1] == "2023-06-01" or captured["hdr"][1] == "2023-06-01"
+    assert captured["hdr"][0] == fe._anthropic_key()
+    assert captured["hdr"][1] == "2023-06-01"
 
 
 @pytest.mark.asyncio
