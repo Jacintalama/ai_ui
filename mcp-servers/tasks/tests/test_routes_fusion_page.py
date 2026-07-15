@@ -112,3 +112,71 @@ def test_page_route_returns_html(monkeypatch, tmp_path):
     app, _ = _app(monkeypatch)
     routes = {r.path for r in app.routes}
     assert "/tasks/fusion" in routes
+
+
+def _seed(mod, email, messages, preset="quality", streaming=True):
+    mod._SESSIONS[email] = mod.FusionSession(
+        messages=list(messages), preset=preset, streaming=streaming,
+        last_used=time.time())
+
+
+def test_stream_relays_fuse_chunks_and_appends_assistant(monkeypatch):
+    app, mod = _app(monkeypatch)
+
+    async def fake_fuse(messages, preset, *, client=None):
+        for piece in ["Final ", "answer."]:
+            yield piece
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "s@t.com", [{"role": "user", "content": "q"}], streaming=True)
+
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream",
+                  headers=_hdr("s@t.com")) as r:
+        raw = "".join(chunk for chunk in r.iter_text())
+    assert "Final " in raw and "answer." in raw
+    assert "event: close" in raw
+    sess = mod._SESSIONS["s@t.com"]
+    assert sess.messages[-1] == {"role": "assistant", "content": "Final answer."}
+    assert sess.streaming is False
+
+
+def test_stream_escapes_html_chunks(monkeypatch):
+    app, mod = _app(monkeypatch)
+
+    async def fake_fuse(messages, preset, *, client=None):
+        yield "<b>hi</b>"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "esc@t.com", [{"role": "user", "content": "q"}])
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream",
+                  headers=_hdr("esc@t.com")) as r:
+        raw = "".join(chunk for chunk in r.iter_text())
+    assert "<b>hi</b>" not in raw
+    assert "&lt;b&gt;hi&lt;/b&gt;" in raw
+
+
+def test_stream_no_pending_turn_closes_without_calling_fuse(monkeypatch):
+    app, mod = _app(monkeypatch)
+    called = {"fuse": False}
+
+    async def fake_fuse(messages, preset, *, client=None):
+        called["fuse"] = True
+        yield "should not happen"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    # last message is assistant -> no pending user turn
+    _seed(mod, "done@t.com",
+          [{"role": "user", "content": "q"},
+           {"role": "assistant", "content": "a"}], streaming=False)
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream",
+                  headers=_hdr("done@t.com")) as r:
+        raw = "".join(chunk for chunk in r.iter_text())
+    assert called["fuse"] is False
+    assert "event: close" in raw
+
+
+def test_stream_requires_identity(monkeypatch):
+    app, _ = _app(monkeypatch)
+    c = TestClient(app)
+    r = c.get("/tasks/fusion/stream")
+    assert r.status_code == 401

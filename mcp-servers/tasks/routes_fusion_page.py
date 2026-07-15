@@ -102,6 +102,39 @@ async def fusion_send(message: str = Form(...), preset: str = Form("quality"),
     return HTMLResponse(_user_bubble(text) + _assistant_bubble_streaming())
 
 
+@router.get("/tasks/fusion/stream", include_in_schema=False)
+async def fusion_stream(request: Request,
+                        user: CurrentUser = Depends(current_user)
+                        ) -> EventSourceResponse:
+    s = _get_session(user.email)
+
+    async def gen():
+        # Only answer when there is a pending user turn. This guards against
+        # the browser EventSource auto-reconnecting and re-running the fusion
+        # on an already-answered session (an infinite loop plus real cost).
+        if not s.messages or s.messages[-1].get("role") != "user":
+            s.streaming = False
+            yield {"event": "close", "data": ""}
+            return
+        collected: list[str] = []
+        try:
+            async for chunk in fusion_engine.fuse(s.messages, s.preset):
+                if not chunk:
+                    continue
+                if await request.is_disconnected():
+                    break
+                collected.append(chunk)
+                yield {"event": "message", "data": _esc(chunk)}
+        finally:
+            full = "".join(collected)
+            if full:
+                s.messages.append({"role": "assistant", "content": full})
+            s.streaming = False
+            yield {"event": "close", "data": ""}
+
+    return EventSourceResponse(gen())
+
+
 @router.post("/tasks/fusion/new", include_in_schema=False)
 async def fusion_new(
         user: CurrentUser = Depends(current_user)) -> HTMLResponse:
