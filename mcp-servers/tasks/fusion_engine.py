@@ -23,22 +23,23 @@ class ModelSpec:
     provider: str   # "openai" | "anthropic"
     api_model: str
     contract: str   # "openai_new" | "openai_legacy" | "anthropic"
+    label: str      # human-facing name for the picker UI
 
 
 PROVIDER_REGISTRY: dict[str, ModelSpec] = {
     # OpenAI - newer reasoning/GPT-5 models need max_completion_tokens, no temperature.
-    "gpt-5": ModelSpec("openai", "gpt-5", "openai_new"),
-    "gpt-5.5": ModelSpec("openai", "gpt-5.5", "openai_new"),
-    "o3": ModelSpec("openai", "o3", "openai_new"),
+    "gpt-5": ModelSpec("openai", "gpt-5", "openai_new", "GPT-5"),
+    "gpt-5.5": ModelSpec("openai", "gpt-5.5", "openai_new", "GPT-5.5"),
+    "o3": ModelSpec("openai", "o3", "openai_new", "o3"),
     # OpenAI - legacy contract (max_tokens + temperature ok).
-    "gpt-4o": ModelSpec("openai", "gpt-4o", "openai_legacy"),
-    "gpt-4.1": ModelSpec("openai", "gpt-4.1", "openai_legacy"),
+    "gpt-4o": ModelSpec("openai", "gpt-4o", "openai_legacy", "GPT-4o"),
+    "gpt-4.1": ModelSpec("openai", "gpt-4.1", "openai_legacy", "GPT-4.1"),
     # Anthropic.
-    "claude-opus-4-8": ModelSpec("anthropic", "claude-opus-4-8", "anthropic"),
-    "claude-opus-4-5": ModelSpec("anthropic", "claude-opus-4-5", "anthropic"),
-    "claude-sonnet-5": ModelSpec("anthropic", "claude-sonnet-5", "anthropic"),
-    "claude-fable-5": ModelSpec("anthropic", "claude-fable-5", "anthropic"),
-    "claude-haiku-4-5-20251001": ModelSpec("anthropic", "claude-haiku-4-5-20251001", "anthropic"),
+    "claude-opus-4-8": ModelSpec("anthropic", "claude-opus-4-8", "anthropic", "Claude Opus 4.8"),
+    "claude-opus-4-5": ModelSpec("anthropic", "claude-opus-4-5", "anthropic", "Claude Opus 4.5"),
+    "claude-sonnet-5": ModelSpec("anthropic", "claude-sonnet-5", "anthropic", "Claude Sonnet 5"),
+    "claude-fable-5": ModelSpec("anthropic", "claude-fable-5", "anthropic", "Claude Fable 5"),
+    "claude-haiku-4-5-20251001": ModelSpec("anthropic", "claude-haiku-4-5-20251001", "anthropic", "Claude Haiku 4.5"),
 }
 
 _DEFAULT_PRESETS = {
@@ -70,6 +71,13 @@ PRESETS = _load_presets()
 def resolve_preset(name: str) -> tuple[list[str], str]:
     p = PRESETS[name]  # KeyError on unknown
     return list(p["panel"]), p["judge"]
+
+
+def available_models() -> list[dict]:
+    """Registry models for the picker UI: id, human label, provider. Returned
+    in stable registry order (OpenAI first, then Anthropic)."""
+    return [{"id": mid, "label": spec.label, "provider": spec.provider}
+            for mid, spec in PROVIDER_REGISTRY.items()]
 
 
 def _openai_key() -> str:
@@ -230,9 +238,8 @@ async def _stream_judge(judge_id: str, judge_messages: list[dict], *,
                     yield piece
 
 
-async def fuse(messages: list[dict], preset: str, *,
+async def fuse(messages: list[dict], panel: list[str], judge: str, *,
                client: httpx.AsyncClient | None = None) -> AsyncIterator[str]:
-    panel, judge = resolve_preset(preset)
     owns = client is None
     client = client or httpx.AsyncClient()
     try:

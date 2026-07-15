@@ -120,7 +120,9 @@ async def test_fuse_all_panel_failed_yields_error(monkeypatch):
     async def all_fail(messages, panel, *, max_tokens, timeout_s, client):
         return [fe.PanelAnswer(m, False, error="x") for m in panel]
     monkeypatch.setattr(fe, "fan_out", all_fail)
-    out = "".join([c async for c in fe.fuse([{"role": "user", "content": "q"}], "budget")])
+    out = "".join([c async for c in fe.fuse(
+        [{"role": "user", "content": "q"}],
+        ["gpt-4o", "claude-haiku-4-5-20251001"], "gpt-4o")])
     assert "could not" in out.lower() or "unavailable" in out.lower()
 
 
@@ -134,7 +136,9 @@ async def test_fuse_judge_fails_falls_back_to_panel_answer(monkeypatch):
         yield  # pragma: no cover
     monkeypatch.setattr(fe, "fan_out", two_ok)
     monkeypatch.setattr(fe, "_stream_judge", judge_boom)
-    out = "".join([c async for c in fe.fuse([{"role": "user", "content": "q"}], "budget")])
+    out = "".join([c async for c in fe.fuse(
+        [{"role": "user", "content": "q"}],
+        ["gpt-4o", "claude-haiku-4-5-20251001"], "gpt-4o")])
     assert "a much longer better answer" in out and "judge unavailable" in out.lower()
 
 
@@ -147,5 +151,20 @@ async def test_fuse_streams_judge_output_in_order(monkeypatch):
             yield piece
     monkeypatch.setattr(fe, "fan_out", two_ok)
     monkeypatch.setattr(fe, "_stream_judge", judge_stream)
-    chunks = [c async for c in fe.fuse([{"role": "user", "content": "q"}], "quality")]
+    chunks = [c async for c in fe.fuse(
+        [{"role": "user", "content": "q"}],
+        ["gpt-4o", "claude-haiku-4-5-20251001"], "gpt-4o")]
     assert "".join(chunks).endswith("Final synthesized answer.")
+
+
+def test_available_models_all_have_labels():
+    models = fe.available_models()
+    ids = {m["id"] for m in models}
+    assert ids == set(fe.PROVIDER_REGISTRY.keys())
+    for m in models:
+        assert m["label"].strip()
+        assert m["provider"] in ("openai", "anthropic")
+    by = {m["id"]: m for m in models}
+    assert by["gpt-5.5"]["label"] == "GPT-5.5"
+    assert by["claude-opus-4-8"]["label"] == "Claude Opus 4.8"
+    assert by["claude-haiku-4-5-20251001"]["label"] == "Claude Haiku 4.5"
