@@ -28,17 +28,13 @@ FUNCTION_TYPE = "pipe"
 USER_ID = os.environ.get("OWUI_ADMIN_USER_ID", "b794bbd5-151c-4d70-b2cb-8fd6b1be851d")
 
 # Valves defaults (overridden via Open WebUI UI or API after install)
+# Fusion pipe valves. INTERNAL_SECRET is auto-populated from the container's
+# INTERNAL_CALLBACK_SECRET (the same secret /api/fusion checks) so the pipe can
+# authenticate immediately after install with no manual valve editing.
 DEFAULT_VALVES = {
-    "OPENWEBUI_API_URL": os.environ.get("OPENWEBUI_API_URL", "http://open-webui:8080"),
-    "OPENWEBUI_API_KEY": os.environ.get("OPENWEBUI_API_KEY", ""),
-    "AI_MODEL": os.environ.get("AI_MODEL", "gpt-4o-mini"),
-    "MCP_PROXY_URL": os.environ.get("MCP_PROXY_URL", "http://mcp-proxy:8000"),
-    "MCP_USER_EMAIL": "webhook-handler@system",
-    "MCP_USER_GROUPS": "MCP-Admin",
-    "N8N_URL": os.environ.get("N8N_URL", "http://n8n:5678"),
-    "N8N_API_KEY": os.environ.get("N8N_API_KEY", ""),
-    "TIMEOUT_SECONDS": 90,
-    "MAX_TOOL_CALLS": 5,
+    "TASKS_URL": os.environ.get("TASKS_URL", "http://tasks:8210"),
+    "INTERNAL_SECRET": os.environ.get("INTERNAL_CALLBACK_SECRET", ""),
+    "TIMEOUT_SECONDS": 150,
 }
 
 # ---------- Read the pipe function source ----------
@@ -86,7 +82,7 @@ if USER_ID == "b794bbd5-151c-4d70-b2cb-8fd6b1be851d":
 # ---------- Upsert the function ----------
 now = int(time.time())
 meta = json.dumps({
-    "description": "Webhook Automation - AI reasoning + MCP tools + n8n workflows",
+    "description": "Model Fusion - fan a prompt out to a model panel, judge synthesizes one answer",
 })
 valves_json = json.dumps(DEFAULT_VALVES)
 
@@ -142,4 +138,4 @@ for r in rows:
 
 conn.close()
 print(f"\nDone! The '{FUNCTION_NAME}' pipe is now available in Open WebUI.")
-print(f"Model name for API calls: {FUNCTION_ID}.webhook-automation")
+print(f"Model names in the dropdown: {FUNCTION_ID}.fusion-quality, {FUNCTION_ID}.fusion-budget")
