@@ -318,3 +318,108 @@ def test_new_keeps_model_selection(monkeypatch):
     assert sess.messages == []
     assert sess.panel == ["gpt-5.5", "o3"] and sess.judge == "o3"
     assert sess.preset_label == "custom"
+
+
+def test_picker_get_renders_default_quality(monkeypatch):
+    app, _ = _app(monkeypatch)
+    c = TestClient(app)
+    r = c.get("/tasks/fusion/picker", headers=_hdr("pk@t.com"))
+    assert r.status_code == 200
+    body = r.text
+    assert 'id="picker"' in body
+    assert "Claude Opus 4.8" in body and "GPT-5.5" in body   # quality panel chips
+    assert "/tasks/fusion/panel/add" in body
+    assert "/tasks/fusion/judge" in body
+
+
+def test_picker_preset_switches_and_sets_label(monkeypatch):
+    app, mod = _app(monkeypatch)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/preset", data={"name": "budget"}, headers=_hdr("pp@t.com"))
+    assert r.status_code == 200
+    s = mod._SESSIONS["pp@t.com"]
+    assert s.panel == ["gpt-4o", "claude-haiku-4-5-20251001"]
+    assert s.judge == "gpt-4o" and s.preset_label == "budget"
+
+
+def test_picker_preset_unknown_400(monkeypatch):
+    app, _ = _app(monkeypatch)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/preset", data={"name": "nope"}, headers=_hdr("pu@t.com"))
+    assert r.status_code == 400
+
+
+def test_picker_add_model_appends_and_flips_custom(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "pa@t.com", [], panel=["gpt-5.5"], judge="gpt-5.5",
+          preset_label="quality", streaming=False)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/panel/add", data={"model": "o3"}, headers=_hdr("pa@t.com"))
+    assert r.status_code == 200
+    s = mod._SESSIONS["pa@t.com"]
+    assert s.panel == ["gpt-5.5", "o3"] and s.preset_label == "custom"
+
+
+def test_picker_add_caps_at_four(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "cap@t.com", [],
+          panel=["gpt-5.5", "o3", "gpt-4o", "gpt-4.1"], judge="gpt-4o",
+          preset_label="custom", streaming=False)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/panel/add", data={"model": "claude-opus-4-8"},
+               headers=_hdr("cap@t.com"))
+    assert r.status_code == 200
+    assert mod._SESSIONS["cap@t.com"].panel == ["gpt-5.5", "o3", "gpt-4o", "gpt-4.1"]
+
+
+def test_picker_add_duplicate_is_noop(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "dup@t.com", [], panel=["gpt-5.5"], judge="gpt-5.5",
+          preset_label="quality", streaming=False)
+    c = TestClient(app)
+    c.post("/tasks/fusion/panel/add", data={"model": "gpt-5.5"}, headers=_hdr("dup@t.com"))
+    assert mod._SESSIONS["dup@t.com"].panel == ["gpt-5.5"]
+
+
+def test_picker_add_unknown_model_400(monkeypatch):
+    app, _ = _app(monkeypatch)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/panel/add", data={"model": "no-such"}, headers=_hdr("ax@t.com"))
+    assert r.status_code == 400
+
+
+def test_picker_remove_drops_but_refuses_last(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "rm@t.com", [], panel=["gpt-5.5", "o3"], judge="gpt-5.5",
+          preset_label="custom", streaming=False)
+    c = TestClient(app)
+    c.post("/tasks/fusion/panel/remove", data={"model": "o3"}, headers=_hdr("rm@t.com"))
+    assert mod._SESSIONS["rm@t.com"].panel == ["gpt-5.5"]
+    # removing the last one is refused
+    c.post("/tasks/fusion/panel/remove", data={"model": "gpt-5.5"}, headers=_hdr("rm@t.com"))
+    assert mod._SESSIONS["rm@t.com"].panel == ["gpt-5.5"]
+
+
+def test_picker_judge_sets_and_flips_custom(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "jg@t.com", [], panel=["gpt-5.5", "claude-opus-4-8"],
+          judge="claude-opus-4-8", preset_label="quality", streaming=False)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/judge", data={"model": "gpt-5.5"}, headers=_hdr("jg@t.com"))
+    assert r.status_code == 200
+    s = mod._SESSIONS["jg@t.com"]
+    assert s.judge == "gpt-5.5" and s.preset_label == "custom"
+
+
+def test_picker_judge_unknown_400(monkeypatch):
+    app, _ = _app(monkeypatch)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/judge", data={"model": "no-such"}, headers=_hdr("ju@t.com"))
+    assert r.status_code == 400
+
+
+def test_picker_requires_identity(monkeypatch):
+    app, _ = _app(monkeypatch)
+    c = TestClient(app)
+    assert c.get("/tasks/fusion/picker").status_code == 401
+    assert c.post("/tasks/fusion/preset", data={"name": "budget"}).status_code == 401

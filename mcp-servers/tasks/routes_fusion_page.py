@@ -87,6 +87,66 @@ def _empty_thread() -> str:
             'You get one synthesized answer.</div>')
 
 
+def _render_picker(s: FusionSession) -> str:
+    """The model-picker fragment: preset tabs, panel chips (with remove), an
+    Add-model select, and a judge select. Server-rendered; every mutation
+    returns this whole fragment (hx-swap outerHTML into #picker)."""
+    models = fusion_engine.available_models()
+    label_by_id = {m["id"]: m["label"] for m in models}
+
+    # Preset tabs. Quality/Budget switch the selection; Custom is a passive
+    # indicator that lights up when the selection was hand-edited.
+    tabs = []
+    for name in ("quality", "budget"):
+        active = " active" if s.preset_label == name else ""
+        tabs.append(
+            f'<button class="tab{active}" hx-post="/tasks/fusion/preset" '
+            f'hx-vals=\'{{"name": "{name}"}}\' hx-target="#picker" '
+            f'hx-swap="outerHTML">{name.capitalize()}</button>')
+    custom_active = " active" if s.preset_label == "custom" else ""
+    tabs.append(f'<span class="tab passive{custom_active}">Custom</span>')
+
+    # Panel chips. The remove button is omitted when only one chip remains.
+    chips = []
+    can_remove = len(s.panel) > 1
+    for mid in s.panel:
+        lbl = _esc(label_by_id.get(mid, mid))
+        remove = ""
+        if can_remove:
+            remove = (f'<button class="x" hx-post="/tasks/fusion/panel/remove" '
+                      f'hx-vals=\'{{"model": "{_esc(mid)}"}}\' hx-target="#picker" '
+                      f'hx-swap="outerHTML" title="remove">&times;</button>')
+        chips.append(f'<span class="chip">{lbl}{remove}</span>')
+
+    # Add-model select (only models not already chosen; hidden once panel is full).
+    add = ""
+    if len(s.panel) < 4:
+        opts = ['<option value="" selected disabled>+ Add model</option>']
+        for m in models:
+            if m["id"] not in s.panel:
+                opts.append(f'<option value="{_esc(m["id"])}">{_esc(m["label"])}</option>')
+        add = ('<select class="add" hx-post="/tasks/fusion/panel/add" '
+               'hx-trigger="change" hx-target="#picker" hx-swap="outerHTML" '
+               'name="model">' + "".join(opts) + '</select>')
+
+    # Judge select (all models; current judge selected).
+    jopts = []
+    for m in models:
+        sel = " selected" if m["id"] == s.judge else ""
+        jopts.append(f'<option value="{_esc(m["id"])}"{sel}>{_esc(m["label"])}</option>')
+    judge = ('<select class="judge" hx-post="/tasks/fusion/judge" '
+             'hx-trigger="change" hx-target="#picker" hx-swap="outerHTML" '
+             'name="model">' + "".join(jopts) + '</select>')
+
+    return (
+        '<div id="picker" class="picker">'
+        f'<div class="tabs">{"".join(tabs)}</div>'
+        f'<div class="row"><span class="rlabel">Panel</span>{"".join(chips)}{add}</div>'
+        f'<div class="row"><span class="rlabel">Fuse with</span>{judge}</div>'
+        '</div>'
+    )
+
+
 @router.get("/tasks/fusion", include_in_schema=False)
 async def fusion_page() -> FileResponse:
     return FileResponse("static/fusion.html", media_type="text/html")
@@ -176,3 +236,53 @@ async def fusion_new(
     # result is discarded instead of being appended to the fresh session.
     s.generation += 1
     return HTMLResponse(_empty_thread())
+
+
+@router.get("/tasks/fusion/picker", include_in_schema=False)
+async def fusion_picker(
+        user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    return HTMLResponse(_render_picker(_get_session(user.email)))
+
+
+@router.post("/tasks/fusion/preset", include_in_schema=False)
+async def fusion_preset(name: str = Form(...),
+                        user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    if name not in fusion_engine.PRESETS:
+        raise HTTPException(status_code=400, detail=f"unknown preset: {name}")
+    s = _get_session(user.email)
+    s.panel, s.judge = fusion_engine.resolve_preset(name)
+    s.preset_label = name
+    return HTMLResponse(_render_picker(s))
+
+
+@router.post("/tasks/fusion/panel/add", include_in_schema=False)
+async def fusion_panel_add(model: str = Form(...),
+                           user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    if model not in fusion_engine.PROVIDER_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"unknown model: {model}")
+    s = _get_session(user.email)
+    if model not in s.panel and len(s.panel) < 4:
+        s.panel.append(model)
+        s.preset_label = "custom"
+    return HTMLResponse(_render_picker(s))
+
+
+@router.post("/tasks/fusion/panel/remove", include_in_schema=False)
+async def fusion_panel_remove(model: str = Form(...),
+                              user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    s = _get_session(user.email)
+    if model in s.panel and len(s.panel) > 1:
+        s.panel.remove(model)
+        s.preset_label = "custom"
+    return HTMLResponse(_render_picker(s))
+
+
+@router.post("/tasks/fusion/judge", include_in_schema=False)
+async def fusion_judge(model: str = Form(...),
+                       user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    if model not in fusion_engine.PROVIDER_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"unknown model: {model}")
+    s = _get_session(user.email)
+    s.judge = model
+    s.preset_label = "custom"
+    return HTMLResponse(_render_picker(s))
