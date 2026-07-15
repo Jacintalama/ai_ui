@@ -89,10 +89,12 @@ def _empty_thread() -> str:
 
 def _render_picker(s: FusionSession) -> str:
     """The model-picker fragment: preset tabs, panel chips (with remove), an
-    Add-model select, and a judge select. Server-rendered; every mutation
-    returns this whole fragment (hx-swap outerHTML into #picker)."""
+    Add-model button that opens a modal, and a judge select. Server-rendered;
+    every mutation returns this whole fragment (hx-swap outerHTML into #picker)."""
     models = fusion_engine.available_models()
     label_by_id = {m["id"]: m["label"] for m in models}
+    prov_by_id = {m["id"]: m["provider"] for m in models}
+    prov_name = {"openai": "OpenAI", "anthropic": "Anthropic"}
 
     # Preset tabs. Quality/Budget switch the selection; Custom is a passive
     # indicator that lights up when the selection was hand-edited.
@@ -106,28 +108,52 @@ def _render_picker(s: FusionSession) -> str:
     custom_active = " active" if s.preset_label == "custom" else ""
     tabs.append(f'<span class="tab passive{custom_active}">Custom</span>')
 
-    # Panel chips. The remove button is omitted when only one chip remains.
+    # Panel chips (each with a provider dot). The remove button is omitted when
+    # only one chip remains.
     chips = []
     can_remove = len(s.panel) > 1
     for mid in s.panel:
         lbl = _esc(label_by_id.get(mid, mid))
+        dot = _esc(prov_by_id.get(mid, ""))
         remove = ""
         if can_remove:
             remove = (f'<button class="x" hx-post="/tasks/fusion/panel/remove" '
                       f'hx-vals=\'{{"model": "{_esc(mid)}"}}\' hx-target="#picker" '
                       f'hx-swap="outerHTML" title="remove">&times;</button>')
-        chips.append(f'<span class="chip">{lbl}{remove}</span>')
+        chips.append(
+            f'<span class="chip"><span class="dot {dot}"></span>{lbl}{remove}</span>')
 
-    # Add-model select (only models not already chosen; hidden once panel is full).
-    add = ""
+    # Add-model button + modal (only when there is room; both omitted at 4).
+    add_btn = ""
+    modal = ""
     if len(s.panel) < 4:
-        opts = ['<option value="" selected disabled>+ Add model</option>']
+        add_btn = ('<button type="button" class="addbtn" '
+                   'onclick="openAddModal()">+ Add model</button>')
+        rows = []
         for m in models:
-            if m["id"] not in s.panel:
-                opts.append(f'<option value="{_esc(m["id"])}">{_esc(m["label"])}</option>')
-        add = ('<select class="add" hx-post="/tasks/fusion/panel/add" '
-               'hx-trigger="change" hx-target="#picker" hx-swap="outerHTML" '
-               'name="model">' + "".join(opts) + '</select>')
+            if m["id"] in s.panel:
+                continue
+            pn = _esc(prov_name.get(m["provider"], m["provider"]))
+            rows.append(
+                f'<button type="button" class="mrow" '
+                f'data-name="{_esc(m["label"].lower())}" '
+                f'hx-post="/tasks/fusion/panel/add" '
+                f'hx-vals=\'{{"model": "{_esc(m["id"])}"}}\' '
+                f'hx-target="#picker" hx-swap="outerHTML">'
+                f'<span class="dot {_esc(m["provider"])}"></span>'
+                f'<span class="mname">{_esc(m["label"])}</span>'
+                f'<span class="mprov">{pn}</span></button>')
+        modal = (
+            '<div class="modal-backdrop" id="addModal" '
+            'onclick="if(event.target===this)closeAddModal()">'
+            '<div class="modal">'
+            '<div class="modal-head"><span>Add a model</span>'
+            '<button type="button" class="mx" onclick="closeAddModal()" '
+            'aria-label="close">&times;</button></div>'
+            '<input class="msearch" type="text" placeholder="Search models" '
+            'oninput="filterModels(this.value)" autocomplete="off" />'
+            f'<div class="mlist">{"".join(rows)}</div>'
+            '</div></div>')
 
     # Judge select (all models; current judge selected).
     jopts = []
@@ -141,8 +167,9 @@ def _render_picker(s: FusionSession) -> str:
     return (
         '<div id="picker" class="picker">'
         f'<div class="tabs">{"".join(tabs)}</div>'
-        f'<div class="row"><span class="rlabel">Panel</span>{"".join(chips)}{add}</div>'
+        f'<div class="row"><span class="rlabel">Panel</span>{"".join(chips)}{add_btn}</div>'
         f'<div class="row"><span class="rlabel">Fuse with</span>{judge}</div>'
+        f'{modal}'
         '</div>'
     )
 
