@@ -423,3 +423,24 @@ def test_picker_requires_identity(monkeypatch):
     c = TestClient(app)
     assert c.get("/tasks/fusion/picker").status_code == 401
     assert c.post("/tasks/fusion/preset", data={"name": "budget"}).status_code == 401
+
+
+def test_picker_full_panel_omits_add_select(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "full@t.com", [],
+          panel=["gpt-5.5", "o3", "gpt-4o", "gpt-4.1"], judge="gpt-4o",
+          preset_label="custom", streaming=False)
+    c = TestClient(app)
+    r = c.get("/tasks/fusion/picker", headers=_hdr("full@t.com"))
+    assert r.status_code == 200
+    assert "/tasks/fusion/panel/add" not in r.text  # no Add-model select at 4
+
+
+def test_picker_sole_chip_has_no_remove_button(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _seed(mod, "one@t.com", [], panel=["gpt-5.5"], judge="gpt-5.5",
+          preset_label="custom", streaming=False)
+    c = TestClient(app)
+    r = c.get("/tasks/fusion/picker", headers=_hdr("one@t.com"))
+    assert r.status_code == 200
+    assert "/tasks/fusion/panel/remove" not in r.text  # cannot remove the last chip
