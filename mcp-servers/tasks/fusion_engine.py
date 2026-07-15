@@ -137,7 +137,8 @@ def _last_user_question(messages: list[dict]) -> str:
     return ""
 
 
-async def fan_out(messages, panel, *, max_tokens, timeout_s, client) -> list[PanelAnswer]:
+async def fan_out(messages: list[dict], panel: list[str], *, max_tokens: int,
+                  timeout_s: float, client: httpx.AsyncClient) -> list[PanelAnswer]:
     async def one(model_id):
         try:
             text = await call_model(model_id, messages, max_tokens=max_tokens,
@@ -169,7 +170,8 @@ def build_judge_messages(user_question: str, answers: list[PanelAnswer]) -> list
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-async def _stream_judge(judge_id: str, judge_messages: list[dict], *, client) -> AsyncIterator[str]:
+async def _stream_judge(judge_id: str, judge_messages: list[dict], *,
+                        client: httpx.AsyncClient) -> AsyncIterator[str]:
     spec = PROVIDER_REGISTRY[judge_id]
     if spec.provider == "openai":
         body = {"model": spec.api_model, "messages": judge_messages, "stream": True}
@@ -224,7 +226,8 @@ async def _stream_judge(judge_id: str, judge_messages: list[dict], *, client) ->
                     yield piece
 
 
-async def fuse(messages, preset, *, client=None) -> AsyncIterator[str]:
+async def fuse(messages: list[dict], preset: str, *,
+               client: httpx.AsyncClient | None = None) -> AsyncIterator[str]:
     panel, judge = resolve_preset(preset)
     owns = client is None
     client = client or httpx.AsyncClient()
