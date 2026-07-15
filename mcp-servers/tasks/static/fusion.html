@@ -15,7 +15,8 @@
         radial-gradient(1200px 500px at 50% -10%, #16203a 0%, rgba(22,32,58,0) 60%),
         #0d0f14;
       color: #e6e8eb;
-      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font: 15px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
     }
 
     /* Header / brand */
@@ -41,13 +42,27 @@
     }
     button.ghost:hover { color: #fff; border-color: #3a4152; background: #171a22; }
 
+    /* Stage: the flexible area between header and the bottom of the window. It
+       centers everything in the hero (empty) state and becomes a scrolling
+       chat once a conversation starts. State is driven by `body.chat`. */
+    .stage {
+      flex: 1; min-height: 0; width: 100%; position: relative;
+      display: flex; flex-direction: column;
+    }
+
+    .hero-head { text-align: center; }
+    .hero-head h2 {
+      margin: 0 0 6px; font-size: clamp(21px, 3.2vw, 29px); font-weight: 700;
+      letter-spacing: -0.02em; text-wrap: balance;
+    }
+    .hero-head p { margin: 0; color: #7d8494; font-size: 14px; }
+
     /* Chat thread */
     #thread {
-      flex: 1; overflow-y: auto; padding: 26px 20px;
+      overflow-y: auto; padding: 26px 20px;
       display: flex; flex-direction: column; gap: 16px;
       max-width: 860px; width: 100%; margin: 0 auto;
     }
-    .empty { color: #6b7280; text-align: center; margin: auto; font-size: 14px; }
     .msg { display: flex; }
     .msg.user { justify-content: flex-end; }
     .msg.assistant, .msg.system { justify-content: flex-start; }
@@ -59,9 +74,13 @@
     .msg.assistant .bubble { background: #14171f; border: 1px solid #232838; }
     .msg.system .bubble, .msg.system { color: #f0b429; font-size: 13px; }
 
-    /* Picker card */
+    /* Dock: holds the picker card + composer. Its max-width differs by state:
+       a narrow hero column, or the full 860 chat column pinned to the bottom. */
+    .dock { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+
+    /* Picker card (fills the dock now; the dock owns the outer width) */
     .picker {
-      max-width: 860px; width: 100%; margin: 10px auto 0; padding: 14px 16px;
+      width: 100%; padding: 14px 16px;
       display: flex; flex-direction: column; gap: 12px;
       background: #12141b; border: 1px solid #212636; border-radius: 16px;
       box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
@@ -143,11 +162,8 @@
     .mrow .mname { flex: 1; }
     .mrow .mprov { font-size: 11px; color: #7d8494; }
 
-    /* Composer */
-    form.composer {
-      display: flex; gap: 10px; padding: 14px 20px 18px; border-top: 1px solid #1b1f2b;
-      max-width: 860px; width: 100%; margin: 0 auto;
-    }
+    /* Composer (fills the dock) */
+    form.composer { display: flex; gap: 10px; width: 100%; }
     textarea {
       flex: 1; resize: none; height: 48px; max-height: 160px; padding: 13px 15px;
       background: #12141b; color: #e6e8eb; border: 1px solid #2a3040;
@@ -159,6 +175,33 @@
       border-radius: 12px; padding: 0 22px; cursor: pointer; font-weight: 600;
     }
     button.send:disabled { opacity: .5; cursor: default; }
+
+    /* ---- HERO state (default: no conversation yet) ---- */
+    body:not(.chat) .stage {
+      justify-content: center; align-items: center; gap: 18px; padding: 24px;
+    }
+    body:not(.chat) .stage::before {
+      content: ""; position: absolute; z-index: 0; pointer-events: none;
+      width: 640px; height: 340px; top: 6%; left: 50%; transform: translateX(-50%);
+      background: radial-gradient(closest-side, rgba(96, 92, 255, 0.20), transparent 70%);
+      filter: blur(8px);
+    }
+    body:not(.chat) .hero-head,
+    body:not(.chat) .dock { position: relative; z-index: 1; }
+    body:not(.chat) #thread { display: none; }
+    body:not(.chat) .dock { max-width: 600px; }
+
+    /* ---- CHAT state (a conversation exists) ---- */
+    body.chat .hero-head { display: none; }
+    body.chat #thread { flex: 1; }
+    body.chat .dock {
+      max-width: 860px; margin: 0 auto; padding: 12px 20px 18px;
+      border-top: 1px solid #1b1f2b;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      .hero-head { transition: opacity .2s ease; }
+    }
   </style>
 </head>
 <body>
@@ -182,22 +225,35 @@
             hx-target="#thread" hx-swap="innerHTML">New chat</button>
   </header>
 
-  <div id="thread">
-    <div class="empty">Pick your models below, ask a question, and get one combined answer.</div>
-  </div>
+  <main class="stage">
+    <div class="hero-head">
+      <h2>What should the panel answer?</h2>
+      <p>Pick your models, ask once, and get one combined answer.</p>
+    </div>
 
-  <div id="picker" class="picker" hx-get="/tasks/fusion/picker"
-       hx-trigger="load" hx-swap="outerHTML"></div>
+    <div id="thread"></div>
 
-  <form class="composer" hx-post="/tasks/fusion/send"
-        hx-target="#thread" hx-swap="beforeend"
-        hx-on::after-request="if(event.detail.successful){this.querySelector('textarea').value='';}">
-    <textarea name="message" placeholder="Ask Fusion..."
-              autocomplete="off" required></textarea>
-    <button class="send" type="submit">Send</button>
-  </form>
+    <div class="dock">
+      <div id="picker" class="picker" hx-get="/tasks/fusion/picker"
+           hx-trigger="load" hx-swap="outerHTML"></div>
+
+      <form class="composer" hx-post="/tasks/fusion/send"
+            hx-target="#thread" hx-swap="beforeend"
+            hx-on::after-request="if(event.detail.successful){this.querySelector('textarea').value='';}">
+        <textarea name="message" placeholder="Ask Fusion..."
+                  autocomplete="off" required></textarea>
+        <button class="send" type="submit">Send</button>
+      </form>
+    </div>
+  </main>
 
   <script>
+    // Toggle the hero/chat layout based on whether the thread holds any message.
+    function syncLayout() {
+      document.body.classList.toggle(
+        'chat', !!document.querySelector('#thread .msg'));
+    }
+
     // Auth: attach the OWUI login token as a Bearer header on HTMX requests.
     // The SSE stream (EventSource) cannot send headers, so it relies on the
     // same-origin OWUI cookie instead; that path needs nothing here.
@@ -245,6 +301,7 @@
     // Disable Send while a turn is streaming; re-enable when the stream closes.
     var sendBtn = document.querySelector('button.send');
     document.body.addEventListener('htmx:afterSwap', function () {
+      syncLayout();
       var streaming = document.querySelector('.bubble[sse-connect]');
       sendBtn.disabled = !!streaming;
       var thread = document.getElementById('thread');
@@ -266,8 +323,11 @@
         var thread = document.getElementById('thread');
         thread.insertAdjacentHTML('beforeend',
           '<div class="msg system"><div class="bubble">Please sign in to Open WebUI and reload this page.</div></div>');
+        syncLayout();
       }
     });
+
+    syncLayout();
   </script>
 </body>
 </html>
