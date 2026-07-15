@@ -1144,6 +1144,24 @@
           svg.innerHTML = '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>';
         },
       },
+      {
+        attr: "data-aiui-fusion",
+        // Visible to ALL signed-in users, not just admins.
+        allUsers: true,
+        label: "Fusion",
+        title: "Fusion: ask a panel of models, get one answer",
+        href: "/tasks/fusion",
+        // merge / fusion glyph (two paths converging into one)
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<path d="M8 4v4a4 4 0 0 0 4 4h0"></path><path d="M16 4v4a4 4 0 0 1 -4 4h0"></path><line x1="12" y1="12" x2="12" y2="20"></line><polyline points="9 17 12 20 15 17"></polyline>';
+        },
+      },
     ];
 
     // Build a sidebar nav entry by deep-cloning the Workspace row wrapper.
