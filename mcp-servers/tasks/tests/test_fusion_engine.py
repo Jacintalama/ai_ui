@@ -86,3 +86,66 @@ async def test_call_model_unknown_raises():
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))) as client:
         with pytest.raises(KeyError):
             await fe.call_model("no-such-model", [], max_tokens=10, timeout_s=5, client=client)
+
+
+@pytest.mark.asyncio
+async def test_fan_out_parallel_and_drops_failures(monkeypatch):
+    async def fake_call(model_id, messages, *, max_tokens, timeout_s, client):
+        if model_id == "gpt-4o":
+            raise RuntimeError("boom")
+        return f"answer from {model_id}"
+    monkeypatch.setattr(fe, "call_model", fake_call)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))) as client:
+        answers = await fe.fan_out([{"role": "user", "content": "q"}],
+                                   ["gpt-4o", "claude-opus-4-8"],
+                                   max_tokens=100, timeout_s=5, client=client)
+    by = {a.model: a for a in answers}
+    assert by["gpt-4o"].ok is False and "boom" in by["gpt-4o"].error
+    assert by["claude-opus-4-8"].ok is True and "claude-opus-4-8" in by["claude-opus-4-8"].text
+
+
+def test_build_judge_messages_only_ok_answers_and_instruction():
+    answers = [fe.PanelAnswer("gpt-5.5", True, "GPT says X"),
+               fe.PanelAnswer("gpt-4o", False, error="dead"),
+               fe.PanelAnswer("claude-opus-4-8", True, "Claude says Y")]
+    msgs = fe.build_judge_messages("what is X?", answers)
+    joined = " ".join(m["content"] for m in msgs)
+    assert "consensus" in joined.lower() and "contradiction" in joined.lower()
+    assert "GPT says X" in joined and "Claude says Y" in joined
+    assert "dead" not in joined  # failed answers excluded
+
+
+@pytest.mark.asyncio
+async def test_fuse_all_panel_failed_yields_error(monkeypatch):
+    async def all_fail(messages, panel, *, max_tokens, timeout_s, client):
+        return [fe.PanelAnswer(m, False, error="x") for m in panel]
+    monkeypatch.setattr(fe, "fan_out", all_fail)
+    out = "".join([c async for c in fe.fuse([{"role": "user", "content": "q"}], "budget")])
+    assert "could not" in out.lower() or "unavailable" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_fuse_judge_fails_falls_back_to_panel_answer(monkeypatch):
+    async def two_ok(messages, panel, *, max_tokens, timeout_s, client):
+        return [fe.PanelAnswer("gpt-4o", True, "short"),
+                fe.PanelAnswer("claude-haiku-4-5-20251001", True, "a much longer better answer")]
+    async def judge_boom(judge_id, judge_messages, *, client):
+        raise RuntimeError("judge down")
+        yield  # pragma: no cover
+    monkeypatch.setattr(fe, "fan_out", two_ok)
+    monkeypatch.setattr(fe, "_stream_judge", judge_boom)
+    out = "".join([c async for c in fe.fuse([{"role": "user", "content": "q"}], "budget")])
+    assert "a much longer better answer" in out and "judge unavailable" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_fuse_streams_judge_output_in_order(monkeypatch):
+    async def two_ok(messages, panel, *, max_tokens, timeout_s, client):
+        return [fe.PanelAnswer("gpt-4o", True, "A"), fe.PanelAnswer("claude-haiku-4-5-20251001", True, "B")]
+    async def judge_stream(judge_id, judge_messages, *, client):
+        for piece in ["Final ", "synthesized ", "answer."]:
+            yield piece
+    monkeypatch.setattr(fe, "fan_out", two_ok)
+    monkeypatch.setattr(fe, "_stream_judge", judge_stream)
+    chunks = [c async for c in fe.fuse([{"role": "user", "content": "q"}], "quality")]
+    assert "".join(chunks).endswith("Final synthesized answer.")
