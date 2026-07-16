@@ -64,6 +64,38 @@ async def fusion_complete(body: FusionRequest,
     return StreamingResponse(gen(), media_type="text/plain")
 
 
+class PanelAnswerIn(BaseModel):
+    model: str = Field(default="a model", max_length=120)
+    content: str
+
+
+class SynthesizeRequest(BaseModel):
+    question: str = Field(min_length=1)
+    answers: list[PanelAnswerIn] = Field(min_length=1, max_length=8)
+    judge: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/synthesize")
+async def fusion_synthesize(body: SynthesizeRequest,
+                            x_internal_secret: str = Header(default="")):
+    """Judge answers that already exist, for the Open WebUI Fuse action.
+
+    Unlike /complete this runs no fan-out: the models the user picked in the
+    chat have already answered and been paid for, so fusion only judges.
+    """
+    _require_internal(x_internal_secret)
+    if body.judge not in fusion_engine.PROVIDER_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"unknown judge: {body.judge}")
+    answers = [{"model": a.model, "content": a.content} for a in body.answers]
+
+    async def gen():
+        async for chunk in fusion_engine.synthesize(body.question, answers, body.judge):
+            if chunk:
+                yield chunk
+
+    return StreamingResponse(gen(), media_type="text/plain")
+
+
 @router.get("/models")
 async def fusion_models(x_internal_secret: str = Header(default="")):
     """The registry, so the tool's dropdowns never drift from what exists."""

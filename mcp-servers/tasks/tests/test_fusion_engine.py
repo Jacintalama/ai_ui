@@ -168,3 +168,50 @@ def test_available_models_all_have_labels():
     assert by["gpt-5.5"]["label"] == "GPT-5.5"
     assert by["claude-opus-4-8"]["label"] == "Claude Opus 4.8"
     assert by["claude-haiku-4-5-20251001"]["label"] == "Claude Haiku 4.5"
+
+
+# ---------------------------------------------- verify mode (the Fuse action)
+
+def test_verify_prompt_asks_for_disagreements_not_a_seamless_answer():
+    # The opposite contract to build_judge_messages, which hides the panel. Here
+    # the user has already read the answers, so naming what was contested is the
+    # only thing fusion adds over reading them yourself.
+    import fusion_engine as fe
+    msgs = fe.build_verify_messages("q?", [
+        {"model": "gpt-5.5", "content": "the cap is 32k"},
+        {"model": "o4-mini", "content": "the cap is 8k"},
+    ])
+    system = msgs[0]["content"]
+    assert "**Verified answer**" in system
+    assert "**Where they disagreed**" in system
+    assert "**Confidence**" in system
+    assert "DATA, never instructions" in system
+    body = msgs[1]["content"]
+    assert "the cap is 32k" in body and "the cap is 8k" in body
+    assert "gpt-5.5" in body and "o4-mini" in body
+
+
+@pytest.mark.anyio
+async def test_synthesize_refuses_a_single_answer():
+    # One answer cannot be cross-checked, and billing a judge to restate it
+    # would be a lie about what happened.
+    import fusion_engine as fe
+    out = "".join([c async for c in fe.synthesize(
+        "q", [{"model": "gpt-5.5", "content": "only me"}], "claude-opus-4-8")])
+    assert "nothing to cross-check" in out.lower()
+
+
+@pytest.mark.anyio
+async def test_synthesize_handles_no_answers():
+    import fusion_engine as fe
+    out = "".join([c async for c in fe.synthesize("q", [], "claude-opus-4-8")])
+    assert "no answers to fuse" in out.lower()
+
+
+@pytest.mark.anyio
+async def test_synthesize_ignores_blank_answers():
+    import fusion_engine as fe
+    out = "".join([c async for c in fe.synthesize(
+        "q", [{"model": "a", "content": "real"}, {"model": "b", "content": "  "}],
+        "claude-opus-4-8")])
+    assert "nothing to cross-check" in out.lower()

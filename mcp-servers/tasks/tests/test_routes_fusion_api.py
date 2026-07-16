@@ -179,3 +179,64 @@ def test_models_lists_the_registry(monkeypatch):
 def test_models_needs_the_secret(monkeypatch):
     app, _ = _app(monkeypatch)
     assert TestClient(app).get("/api/fusion/models").status_code == 403
+
+
+# ------------------------------------------------- synthesize (the Fuse action)
+
+def _syn(**over):
+    b = {"question": "what is 2+2?",
+         "answers": [{"model": "gpt-5.5", "content": "4"},
+                     {"model": "o4-mini", "content": "five"}],
+         "judge": "claude-opus-4-8"}
+    b.update(over)
+    return b
+
+
+def _fake_synth(mod, monkeypatch, seen=None):
+    async def fake(question, answers, judge, *, client=None):
+        if seen is not None:
+            seen.update(question=question, answers=answers, judge=judge)
+        yield "verified answer"
+    monkeypatch.setattr(mod.fusion_engine, "synthesize", fake)
+
+
+def test_synthesize_needs_the_secret(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_synth(mod, monkeypatch)
+    assert TestClient(app).post("/api/fusion/synthesize", json=_syn()).status_code == 403
+
+
+def test_synthesize_judges_the_answers_it_is_given(monkeypatch):
+    # The whole point of the action: no fan-out, the answers already exist and
+    # were already paid for.
+    app, mod = _app(monkeypatch)
+    seen = {}
+    _fake_synth(mod, monkeypatch, seen)
+
+    async def no_fanout(*a, **k):
+        raise AssertionError("synthesize must never fan out")
+        yield
+    monkeypatch.setattr(mod.fusion_engine, "fuse", no_fanout)
+
+    r = TestClient(app).post("/api/fusion/synthesize", json=_syn(), headers=_hdr())
+    assert r.status_code == 200
+    assert "verified answer" in r.text
+    assert seen["question"] == "what is 2+2?"
+    assert [a["model"] for a in seen["answers"]] == ["gpt-5.5", "o4-mini"]
+    assert seen["judge"] == "claude-opus-4-8"
+
+
+def test_synthesize_rejects_an_unknown_judge(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_synth(mod, monkeypatch)
+    r = TestClient(app).post("/api/fusion/synthesize", json=_syn(judge="nope"),
+                             headers=_hdr())
+    assert r.status_code == 400
+
+
+def test_synthesize_needs_at_least_one_answer(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_synth(mod, monkeypatch)
+    r = TestClient(app).post("/api/fusion/synthesize", json=_syn(answers=[]),
+                             headers=_hdr())
+    assert r.status_code == 422
