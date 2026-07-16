@@ -278,11 +278,10 @@
       .sidebar { display: none; }
       header .back { display: grid; place-items: center; }
     }
-    /* Composer tools (web search) */
-    .inputwrap { flex-wrap: wrap; }
-    .tools { display: flex; align-items: center; gap: 6px; order: 3; flex: 1 0 100%;
-      padding: 2px 0 2px 0; }
+    /* Composer tools (web search), inline inside the input pill */
+    .inputwrap { padding-left: 7px; }
     button.tool {
+      flex: none; margin-bottom: 1px;
       display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
       padding: 5px 11px; border-radius: 999px; font: inherit; font-size: 12.5px;
       background: transparent; color: var(--muted);
@@ -362,13 +361,10 @@
             hx-target="#thread" hx-swap="beforeend"
             hx-on::after-request="if(event.detail.successful){this.querySelector('textarea').value='';}">
         <div class="inputwrap">
+          <span id="searchbtn" hx-get="/tasks/fusion/search/button"
+                hx-trigger="load" hx-swap="outerHTML"></span>
           <textarea name="message" placeholder="Send a message" rows="1"
                     autocomplete="off" required></textarea>
-          <div class="tools">
-            <span id="searchbtn" hx-get="/tasks/fusion/search/button"
-                  hx-trigger="load" hx-swap="outerHTML"></span>
-            <div class="spacer"></div>
-          </div>
           <button class="send" type="submit" aria-label="Send">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path d="M12 20V5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
