@@ -99,13 +99,19 @@ def test_send_empty_message_400(monkeypatch):
     assert r.status_code == 400
 
 
-def test_send_empty_panel_400(monkeypatch):
+def test_send_with_no_models_asks_for_one(monkeypatch):
+    # An empty panel is a normal state now that Custom starts blank, so this
+    # says so in the thread. It used to 400, which the page never rendered:
+    # the send just did nothing.
     app, mod = _app(monkeypatch)
     mod._SESSIONS["nop@t.com"] = mod.FusionSession(
         panel=[], judge="gpt-4o", streaming=False, last_used=time.time())
     c = TestClient(app)
     r = c.post("/tasks/fusion/send", data={"message": "hi"}, headers=_hdr("nop@t.com"))
-    assert r.status_code == 400
+    assert r.status_code == 200
+    assert "Pick at least one model" in r.text
+    assert "sse-connect" not in r.text
+    assert mod._SESSIONS["nop@t.com"].messages == []
 
 
 def test_send_while_streaming_is_rejected(monkeypatch):
@@ -403,7 +409,9 @@ def test_credit_reads_naturally_for_a_sole_panelist(monkeypatch):
     assert "Answered by GPT-5.5, combined by o3" in mod._credit(s)
 
 
-def test_picker_preset_custom_keeps_panel_and_only_moves_label(monkeypatch):
+def test_picker_preset_custom_clears_the_panel_to_pick_from_scratch(monkeypatch):
+    # Custom that kept Quality's models looked identical to Quality, so it read
+    # as "Custom does nothing". It hands the choice over instead.
     app, mod = _app(monkeypatch)
     c = TestClient(app)
     _seed(mod, "pc@t.com", [], panel=["gpt-5.5", "o3"], judge="o3",
@@ -411,8 +419,19 @@ def test_picker_preset_custom_keeps_panel_and_only_moves_label(monkeypatch):
     r = c.post("/tasks/fusion/preset", data={"name": "custom"}, headers=_hdr("pc@t.com"))
     assert r.status_code == 200
     s = mod._SESSIONS["pc@t.com"]
-    assert s.panel == ["gpt-5.5", "o3"] and s.judge == "o3"
+    assert s.panel == []
     assert s.preset_label == "custom"
+    assert "Pick the models you want" in r.text
+
+
+def test_quality_restores_a_panel_after_custom_emptied_it(monkeypatch):
+    app, mod = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/preset", data={"name": "custom"}, headers=_hdr("pq@t.com"))
+    assert mod._SESSIONS["pq@t.com"].panel == []
+    c.post("/tasks/fusion/preset", data={"name": "quality"}, headers=_hdr("pq@t.com"))
+    s = mod._SESSIONS["pq@t.com"]
+    assert s.panel == list(mod._DEFAULT_PANEL) and s.preset_label == "quality"
 
 
 def test_picker_renders_custom_as_a_live_tab(monkeypatch):
@@ -697,3 +716,133 @@ def test_chat_list_keeps_listening_after_it_swaps_itself(monkeypatch):
     assert 'hx-get="/tasks/fusion/chats"' in full
     assert "fusion-chats-changed from:body" in full
     assert 'hx-swap="outerHTML"' in full
+
+
+# --------------------------------------------------------------- web search
+
+def test_search_is_off_by_default_and_toggles(monkeypatch):
+    app, mod = _app(monkeypatch)
+    c = TestClient(app)
+    r = c.get("/tasks/fusion/search/button", headers=_hdr("w1@t.com"))
+    assert r.status_code == 200
+    assert 'aria-pressed="false"' in r.text
+    assert mod._SESSIONS["w1@t.com"].web_search is False
+
+    r = c.post("/tasks/fusion/search/toggle", headers=_hdr("w1@t.com"))
+    assert 'aria-pressed="true"' in r.text
+    assert 'class="tool on"' in r.text
+    assert mod._SESSIONS["w1@t.com"].web_search is True
+
+    c.post("/tasks/fusion/search/toggle", headers=_hdr("w1@t.com"))
+    assert mod._SESSIONS["w1@t.com"].web_search is False
+
+
+def test_search_button_reflects_the_session_not_the_page(monkeypatch):
+    # The session outlives a reload, so a fresh page must render the toggle on.
+    app, mod = _app(monkeypatch)
+    c = TestClient(app)
+    _seed(mod, "w2@t.com", [], streaming=False)
+    mod._SESSIONS["w2@t.com"].web_search = True
+    r = c.get("/tasks/fusion/search/button", headers=_hdr("w2@t.com"))
+    assert 'aria-pressed="true"' in r.text
+
+
+def test_search_toggle_requires_identity(monkeypatch):
+    app, _ = _app(monkeypatch)
+    assert TestClient(app).post("/tasks/fusion/search/toggle").status_code == 401
+
+
+def test_grounding_gives_every_model_the_same_live_results(monkeypatch):
+    app, mod = _app(monkeypatch)
+
+    async def fake_search(query):
+        return [{"title": "PAGASA", "url": "https://pagasa.dost.gov.ph",
+                 "snippet": "Rain expected over Luzon."}]
+    monkeypatch.setattr(mod, "_web_search", fake_search)
+
+    seen = {}
+
+    async def fake_fuse(messages, panel, judge, *, client=None):
+        seen["messages"] = messages
+        yield "answer"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+
+    _seed(mod, "w3@t.com", [{"role": "user", "content": "weather in ph?"}])
+    mod._SESSIONS["w3@t.com"].web_search = True
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("w3@t.com")) as r:
+        "".join(r.iter_text())
+
+    sent = seen["messages"][-1]["content"]
+    assert "weather in ph?" in sent          # the question survives
+    assert "pagasa.dost.gov.ph" in sent      # grounded in the live result
+    assert "Rain expected over Luzon." in sent
+    # The panel is one list of messages, so all of them get this same block.
+
+
+def test_no_grounding_when_search_is_off(monkeypatch):
+    app, mod = _app(monkeypatch)
+
+    async def boom(query):
+        raise AssertionError("must not search when the toggle is off")
+    monkeypatch.setattr(mod, "_web_search", boom)
+
+    async def fake_fuse(messages, panel, judge, *, client=None):
+        yield "answer"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "w4@t.com", [{"role": "user", "content": "2+2?"}])
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("w4@t.com")) as r:
+        raw = "".join(r.iter_text())
+    assert "answer" in raw
+
+
+def test_a_dead_search_still_answers(monkeypatch):
+    # Search is an add-on to a turn the user is already paying for. If it dies,
+    # the answer must still land.
+    app, mod = _app(monkeypatch)
+
+    async def dead(*a, **k):
+        raise RuntimeError("search is down")
+    monkeypatch.setattr(mod.httpx, "AsyncClient", dead)
+
+    async def fake_fuse(messages, panel, judge, *, client=None):
+        yield "answered anyway"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "w5@t.com", [{"role": "user", "content": "q"}])
+    mod._SESSIONS["w5@t.com"].web_search = True
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("w5@t.com")) as r:
+        raw = "".join(r.iter_text())
+    assert "answered anyway" in raw
+    assert mod._SESSIONS["w5@t.com"].messages[-1]["content"] == "answered anyway"
+
+
+def test_empty_search_results_leave_the_question_untouched(monkeypatch):
+    app, mod = _app(monkeypatch)
+
+    async def none_found(query):
+        return []
+    monkeypatch.setattr(mod, "_web_search", none_found)
+    seen = {}
+
+    async def fake_fuse(messages, panel, judge, *, client=None):
+        seen["messages"] = messages
+        yield "ok"
+    monkeypatch.setattr(mod.fusion_engine, "fuse", fake_fuse)
+    _seed(mod, "w6@t.com", [{"role": "user", "content": "obscure thing"}])
+    mod._SESSIONS["w6@t.com"].web_search = True
+    c = TestClient(app)
+    with c.stream("GET", "/tasks/fusion/stream", headers=_hdr("w6@t.com")) as r:
+        "".join(r.iter_text())
+    assert seen["messages"][-1]["content"] == "obscure thing"
+
+
+def test_credit_says_when_the_answer_was_searched(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    _seed(mod, "w7@t.com", [], panel=["gpt-5.5"], judge="o3", streaming=False)
+    mod._SESSIONS["w7@t.com"].web_search = True
+    r = c.post("/tasks/fusion/send", data={"message": "hi"}, headers=_hdr("w7@t.com"))
+    assert "Searched the web, then answered by GPT-5.5" in r.text

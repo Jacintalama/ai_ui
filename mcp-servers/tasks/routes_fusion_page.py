@@ -9,6 +9,7 @@ service end to end, so no gateway or proxy change is needed."""
 import html
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
+
+import httpx
 
 import fusion_engine
 from auth import CurrentUser, current_user
@@ -43,6 +46,10 @@ class FusionSession:
     # not been written yet (no message sent). The in-memory session stays the
     # working copy; the row is the durable one.
     chat_id: str | None = None
+    # When on, each turn is grounded in a live web search before the panel sees
+    # it. Off by default: it costs a round trip and most questions do not need
+    # today's news.
+    web_search: bool = False
     # Bumped whenever the session is reset (New chat). A stream generator
     # captures it at start and refuses to write its result back if the value
     # changed underneath it, so an in-flight turn can never corrupt a session
@@ -144,6 +151,94 @@ async def _delete_chat(email: str, chat_id: str) -> None:
         await db.commit()
 
 
+# ---------------------------------------------------------------- web search
+
+# The platform already runs a Brave-backed search service, so Fusion borrows it
+# rather than taking a second provider and a second key.
+WEB_SEARCH_URL = os.environ.get(
+    "WEB_SEARCH_URL", "http://mcp-web-search:8000/web_search")
+_SEARCH_RESULTS = 5
+_SEARCH_TIMEOUT = 12.0
+
+
+async def _web_search(query: str) -> list[dict]:
+    """Live results for a query, or [] if search is unavailable.
+
+    Never raises: search is an enhancement to a turn the user is already paying
+    for, so a search outage degrades the answer instead of losing it.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=_SEARCH_TIMEOUT) as client:
+            r = await client.post(WEB_SEARCH_URL,
+                                  json={"query": query, "count": _SEARCH_RESULTS})
+            r.raise_for_status()
+            return (r.json() or {}).get("results", []) or []
+    except Exception:
+        log.exception("fusion: web search failed for %r", query[:80])
+        return []
+
+
+def _search_block(query: str, results: list[dict]) -> str:
+    """Search results as text the models can read."""
+    lines = [f'Web search results for "{query}", retrieved just now:', ""]
+    for i, r in enumerate(results, 1):
+        lines.append(f'{i}. {r.get("title", "")}')
+        lines.append(f'   {r.get("url", "")}')
+        snippet = " ".join((r.get("snippet") or "").split())
+        if snippet:
+            lines.append(f'   {snippet}')
+        lines.append("")
+    lines.append("These results are current. Prefer them over your training "
+                 "data for anything time-sensitive, and cite the URLs you use. "
+                 "If they do not cover the question, say so rather than "
+                 "guessing.")
+    return "\n".join(lines)
+
+
+async def _ground_in_search(messages: list[dict]) -> list[dict]:
+    """Append live search results to the latest user turn.
+
+    Every panel model gets the same block, so they answer from one shared set of
+    facts instead of each model's own stale training data.
+    """
+    if not messages or messages[-1].get("role") != "user":
+        return messages
+    query = (messages[-1].get("content") or "").strip()
+    if not query:
+        return messages
+    results = await _web_search(query)
+    if not results:
+        return messages
+    grounded = list(messages)
+    grounded[-1] = {
+        "role": "user",
+        "content": f'{query}\n\n---\n{_search_block(query, results)}',
+    }
+    return grounded
+
+
+def _render_search_btn(s: FusionSession) -> str:
+    """The composer's Search toggle. Server-rendered so the on/off state is the
+    session's, not the DOM's."""
+    on = " on" if s.web_search else ""
+    pressed = "true" if s.web_search else "false"
+    title = ("Web search is on: every model answers from live results"
+             if s.web_search else "Search the web before answering")
+    return (
+        f'<button type="button" class="tool{on}" id="searchbtn" '
+        f'aria-pressed="{pressed}" title="{title}" '
+        f'hx-post="/tasks/fusion/search/toggle" hx-target="#searchbtn" '
+        f'hx-swap="outerHTML">'
+        '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">'
+        '<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"></circle>'
+        '<path d="M20 20l-3.5-3.5" stroke="currentColor" stroke-width="2" '
+        'stroke-linecap="round"></path>'
+        '</svg>'
+        '<span>Search</span>'
+        '</button>'
+    )
+
+
 def _user_bubble(text: str) -> str:
     return f'<div class="msg user"><div class="bubble">{_esc(text)}</div></div>'
 
@@ -173,7 +268,8 @@ def _credit(s: FusionSession) -> str:
     else:
         panel_txt = names[0] if names else "no models"
     judge_txt = _esc(label_by_id.get(s.judge, s.judge))
-    return (f'<div class="credit">Answered by {panel_txt}, '
+    searched = "Searched the web, then a" if s.web_search else "A"
+    return (f'<div class="credit">{searched}nswered by {panel_txt}, '
             f'combined by {judge_txt}</div>')
 
 
@@ -284,6 +380,8 @@ def _render_picker(s: FusionSession) -> str:
                       f'hx-swap="outerHTML" title="remove">&times;</button>')
         chips.append(
             f'<span class="chip"><span class="dot {dot}"></span>{lbl}{remove}</span>')
+    if not s.panel:
+        chips.append('<span class="pickhint">Pick the models you want</span>')
 
     # Add-model button + modal (only when there is room; both omitted at 4).
     add_btn = ""
@@ -349,7 +447,9 @@ async def fusion_send(message: str = Form(...),
         raise HTTPException(status_code=400, detail="empty message")
     s = _get_session(user.email)
     if not s.panel:
-        raise HTTPException(status_code=400, detail="pick at least one model")
+        return HTMLResponse(
+            '<div class="msg system">Pick at least one model first, then ask '
+            'again.</div>')
     if s.streaming:
         return HTMLResponse(
             '<div class="msg system">Still answering the previous turn, '
@@ -403,6 +503,11 @@ async def fusion_stream(request: Request,
         s.messages.append(placeholder)
         collected: list[str] = []
         try:
+            # Deliberately after the claim above: the claim must be the last
+            # thing to happen before the first await, or a reconnecting
+            # EventSource could slip in and start a second paid fan-out.
+            if s.web_search:
+                fuse_messages = await _ground_in_search(fuse_messages)
             async for chunk in fusion_engine.fuse(fuse_messages, s.panel, s.judge):
                 if not chunk:
                     continue
@@ -510,6 +615,22 @@ async def fusion_chat_delete(chat_id: str,
     return HTMLResponse(body + cleared)
 
 
+@router.get("/tasks/fusion/search/button", include_in_schema=False)
+async def fusion_search_button(
+        user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    """The toggle in its current state, for the composer's initial load. The
+    session outlives the page, so the button has to be told, not assumed."""
+    return HTMLResponse(_render_search_btn(_get_session(user.email)))
+
+
+@router.post("/tasks/fusion/search/toggle", include_in_schema=False)
+async def fusion_search_toggle(
+        user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    s = _get_session(user.email)
+    s.web_search = not s.web_search
+    return HTMLResponse(_render_search_btn(s))
+
+
 @router.get("/tasks/fusion/picker", include_in_schema=False)
 async def fusion_picker(
         user: CurrentUser = Depends(current_user)) -> HTMLResponse:
@@ -520,10 +641,13 @@ async def fusion_picker(
 async def fusion_preset(name: str = Form(...),
                         user: CurrentUser = Depends(current_user)) -> HTMLResponse:
     s = _get_session(user.email)
-    # "custom" is not an engine preset: it means "keep what is selected, I am
-    # driving now", so it only moves the label.
+    # "custom" is not an engine preset: it means "I pick my own panel", so it
+    # empties the panel and hands the choice over. Keeping Quality's models
+    # made Custom look identical to Quality, which is exactly the confusion
+    # this caused.
     if name == "custom":
         s.preset_label = "custom"
+        s.panel = []
         return HTMLResponse(_render_picker(s))
     if name not in fusion_engine.PRESETS:
         raise HTTPException(status_code=400, detail=f"unknown preset: {name}")
