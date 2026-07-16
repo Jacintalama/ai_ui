@@ -342,6 +342,24 @@ def test_picker_preset_switches_and_sets_label(monkeypatch):
     assert s.judge == "gpt-4o" and s.preset_label == "budget"
 
 
+def test_send_credits_the_panel_and_the_judge(monkeypatch):
+    app, mod = _app(monkeypatch)
+    c = TestClient(app)
+    _seed(mod, "cr@t.com", [], panel=["gpt-5.5", "claude-opus-4-8"],
+          judge="claude-opus-4-8", preset_label="quality", streaming=False)
+    r = c.post("/tasks/fusion/send", data={"message": "hi"}, headers=_hdr("cr@t.com"))
+    assert r.status_code == 200
+    assert ("Answered by GPT-5.5 and Claude Opus 4.8, "
+            "combined by Claude Opus 4.8") in r.text
+
+
+def test_credit_reads_naturally_for_a_sole_panelist(monkeypatch):
+    _, mod = _app(monkeypatch)
+    s = mod.FusionSession(messages=[], panel=["gpt-5.5"], judge="o3",
+                          preset_label="custom", streaming=False, last_used=0.0)
+    assert "Answered by GPT-5.5, combined by o3" in mod._credit(s)
+
+
 def test_picker_preset_custom_keeps_panel_and_only_moves_label(monkeypatch):
     app, mod = _app(monkeypatch)
     c = TestClient(app)

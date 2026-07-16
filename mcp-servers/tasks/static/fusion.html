@@ -6,6 +6,8 @@
   <title>Fusion</title>
   <script src="/tasks/static/vendor/htmx.min.js"></script>
   <script src="/tasks/static/vendor/sse.js"></script>
+  <script src="/tasks/static/vendor/marked.min.js"></script>
+  <script src="/tasks/static/vendor/purify.min.js"></script>
   <style>
     /* Open WebUI look. The palette, font stack and radii below are lifted
        verbatim from the running Open WebUI build so this page reads as native:
@@ -120,7 +122,37 @@
     }
     .msg.assistant .body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
     .msg.assistant .who { font-weight: 600; font-size: 14px; }
+    /* pre-wrap while raw tokens stream in; .done drops it once the finished
+       answer has been parsed to real markdown, so block margins can breathe. */
     .msg.assistant .text { white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; }
+    .msg.assistant .text.done { white-space: normal; }
+    .msg.assistant .credit { color: var(--faint); font-size: 12px; margin-top: 8px; }
+
+    /* Rendered markdown */
+    .text h1, .text h2, .text h3 { font-size: 1.05em; margin: 1.1em 0 .4em; }
+    .text p { margin: 0 0 .85em; }
+    .text > *:last-child { margin-bottom: 0; }
+    .text ul, .text ol { margin: 0 0 .85em; padding-left: 1.4em; }
+    .text li { margin: .2em 0; }
+    .text a { color: var(--gray-300); text-decoration: underline; }
+    .text strong { font-weight: 600; color: var(--gray-50); }
+    .text code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .88em; background: var(--gray-850); border: 1px solid var(--hair-2);
+      border-radius: 5px; padding: 1px 5px;
+    }
+    .text pre {
+      background: var(--gray-950); border: 1px solid var(--hair);
+      border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 0 0 .85em;
+    }
+    .text pre code { background: none; border: none; padding: 0; font-size: .85em; }
+    .text blockquote {
+      margin: 0 0 .85em; padding-left: 12px;
+      border-left: 2px solid var(--hair-2); color: var(--muted);
+    }
+    .text table { border-collapse: collapse; margin: 0 0 .85em; display: block; overflow-x: auto; }
+    .text th, .text td { border: 1px solid var(--hair-2); padding: 6px 10px; text-align: left; }
+    .text hr { border: none; border-top: 1px solid var(--hair); margin: 1.2em 0; }
     /* System notices */
     .msg.system { color: var(--warn); font-size: 13px; }
     .msg.system .bubble { color: var(--warn); }
@@ -375,7 +407,26 @@
       var thread = document.getElementById('thread');
       thread.scrollTop = thread.scrollHeight;
     });
+    // Tokens stream in as plain text, so the raw markdown is on screen while
+    // the answer is being written. Once the turn closes, parse the finished
+    // text into HTML. marked does not sanitize, and this is model output, so
+    // DOMPurify runs on the result before it ever touches innerHTML.
+    function renderMarkdown(el) {
+      if (!el || el.classList.contains('done')) { return; }
+      if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') { return; }
+      el.innerHTML = DOMPurify.sanitize(marked.parse(el.textContent));
+      el.classList.add('done');
+    }
+
     document.body.addEventListener('htmx:sseClose', function () {
+      // The sse extension leaves sse-connect on the element after closing it.
+      // Drop it, so the live-stream check above cannot match a finished turn
+      // and strand the Send button disabled.
+      var el = document.querySelector('.msg.assistant .text[sse-connect]');
+      if (el) {
+        el.removeAttribute('sse-connect');
+        renderMarkdown(el);
+      }
       sendBtn.disabled = false;
     });
     document.body.addEventListener('htmx:sseMessage', function () {

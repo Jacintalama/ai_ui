@@ -83,7 +83,22 @@ _FUSION_AVATAR = (
     '</svg>')
 
 
-def _assistant_bubble_streaming() -> str:
+def _credit(s: FusionSession) -> str:
+    """A line naming the panel that answered and the model that combined them.
+    Without it a fused answer is indistinguishable from a single-model reply,
+    which reads as "fusion is not running" even when every model was called."""
+    label_by_id = {m["id"]: m["label"] for m in fusion_engine.available_models()}
+    names = [_esc(label_by_id.get(mid, mid)) for mid in s.panel]
+    if len(names) > 1:
+        panel_txt = ", ".join(names[:-1]) + " and " + names[-1]
+    else:
+        panel_txt = names[0] if names else "no models"
+    judge_txt = _esc(label_by_id.get(s.judge, s.judge))
+    return (f'<div class="credit">Answered by {panel_txt}, '
+            f'combined by {judge_txt}</div>')
+
+
+def _assistant_bubble_streaming(s: FusionSession) -> str:
     """An assistant message in Open WebUI style: an avatar, the name, and the
     streamed answer as plain full-width text (no bubble). The text element opens
     the SSE connection; tokens arrive as "message" events and are appended
@@ -96,6 +111,7 @@ def _assistant_bubble_streaming() -> str:
         '<div class="body"><div class="who">Fusion</div>'
         '<div class="text" hx-ext="sse" sse-connect="/tasks/fusion/stream" '
         'sse-swap="message" hx-swap="beforeend" sse-close="close"></div>'
+        f'{_credit(s)}'
         '</div>'
         '</div>'
     )
@@ -213,7 +229,7 @@ async def fusion_send(message: str = Form(...),
             'one moment.</div>')
     s.messages.append({"role": "user", "content": text})
     s.streaming = True
-    return HTMLResponse(_user_bubble(text) + _assistant_bubble_streaming())
+    return HTMLResponse(_user_bubble(text) + _assistant_bubble_streaming(s))
 
 
 @router.get("/tasks/fusion/stream", include_in_schema=False)
