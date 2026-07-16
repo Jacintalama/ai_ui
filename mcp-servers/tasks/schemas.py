@@ -7,7 +7,17 @@ from pydantic import BaseModel, Field, computed_field
 
 from prompt_utils import clean_user_prompt
 
+# What a CALLER may create. Keep this strict.
 ActionType = Literal["RESEARCH", "BUILD", "INTEGRATE", "ASK_USER"]
+
+# What a RESPONSE may contain. Must cover every action_type the code writes,
+# including ones only created server-side: routes_outreach.py:141 writes
+# "OUTREACH". A response model validates against itself, so a value missing
+# here does not reject one row, it 500s the WHOLE list endpoint
+# (ResponseValidationError). That broke GET /api/tasks?status=done for a month
+# on two OUTREACH rows. Adding a new server-side action_type? Add it here too;
+# test_schemas_action_type.py enforces that this stays a superset of ActionType.
+TaskActionType = Literal["RESEARCH", "BUILD", "INTEGRATE", "ASK_USER", "OUTREACH"]
 Priority = Literal["CRITICAL", "IMPORTANT", "NICE_TO_HAVE"]
 Status = Literal["pending", "planning", "awaiting_plan_review", "claimed_manual", "running", "awaiting_input", "awaiting_supabase", "completed", "failed"]
 Mode = Literal["ai", "manual"]
@@ -17,7 +27,7 @@ PlanStatus = Literal["pending_review", "approved", "rejected"]
 class TaskOut(BaseModel):
     id: UUID
     meeting_id: UUID
-    action_type: ActionType
+    action_type: TaskActionType
     assignee_name: str
     assignee_email: str
     description: str
