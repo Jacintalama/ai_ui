@@ -758,7 +758,7 @@ def test_grounding_gives_every_model_the_same_live_results(monkeypatch):
     async def fake_search(query):
         return [{"title": "PAGASA", "url": "https://pagasa.dost.gov.ph",
                  "snippet": "Rain expected over Luzon."}]
-    monkeypatch.setattr(mod, "_web_search", fake_search)
+    monkeypatch.setattr(mod.fusion_search, "web_search", fake_search)
 
     seen = {}
 
@@ -785,7 +785,7 @@ def test_no_grounding_when_search_is_off(monkeypatch):
 
     async def boom(query):
         raise AssertionError("must not search when the toggle is off")
-    monkeypatch.setattr(mod, "_web_search", boom)
+    monkeypatch.setattr(mod.fusion_search, "web_search", boom)
 
     async def fake_fuse(messages, panel, judge, *, client=None):
         yield "answer"
@@ -804,7 +804,7 @@ def test_a_dead_search_still_answers(monkeypatch):
 
     async def dead(*a, **k):
         raise RuntimeError("search is down")
-    monkeypatch.setattr(mod.httpx, "AsyncClient", dead)
+    monkeypatch.setattr(mod.fusion_search.httpx, "AsyncClient", dead)
 
     async def fake_fuse(messages, panel, judge, *, client=None):
         yield "answered anyway"
@@ -823,7 +823,7 @@ def test_empty_search_results_leave_the_question_untouched(monkeypatch):
 
     async def none_found(query):
         return []
-    monkeypatch.setattr(mod, "_web_search", none_found)
+    monkeypatch.setattr(mod.fusion_search, "web_search", none_found)
     seen = {}
 
     async def fake_fuse(messages, panel, judge, *, client=None):

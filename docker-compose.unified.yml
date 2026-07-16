@@ -542,6 +542,10 @@ services:
       - ./openwebui-overrides/index.html:/app/build/index.html:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # The Fusion tool runs inside this process and calls the tasks
+      # service's internal API, which authenticates on this secret.
+      - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
+      - TASKS_URL=http://tasks:8210
       # LLM Connections
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
       - ENABLE_OLLAMA_API=${ENABLE_OLLAMA_API:-false}
