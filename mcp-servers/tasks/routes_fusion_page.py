@@ -69,15 +69,34 @@ def _user_bubble(text: str) -> str:
     return f'<div class="msg user"><div class="bubble">{_esc(text)}</div></div>'
 
 
+# Fusion avatar mark (used on assistant messages, Open WebUI style).
+_FUSION_AVATAR = (
+    '<svg viewBox="0 0 24 24" fill="none" width="18" height="18">'
+    '<path d="M5 4v3.5a5.5 5.5 0 0 0 5.5 5.5H12" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round"></path>'
+    '<path d="M19 4v3.5A5.5 5.5 0 0 1 13.5 13H12" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round"></path>'
+    '<path d="M12 13v6" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round"></path>'
+    '<polyline points="9 16.5 12 19.5 15 16.5" stroke="currentColor" '
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></polyline>'
+    '</svg>')
+
+
 def _assistant_bubble_streaming() -> str:
-    """An assistant bubble that opens an SSE connection to the stream route.
-    Tokens arrive as "message" events and are appended (hx-swap=beforeend). The
-    terminal "close" event closes the stream (sse-close) so the browser's
-    EventSource does not auto-reconnect and re-run the fusion."""
+    """An assistant message in Open WebUI style: an avatar, the name, and the
+    streamed answer as plain full-width text (no bubble). The text element opens
+    the SSE connection; tokens arrive as "message" events and are appended
+    (hx-swap=beforeend). The terminal "close" event closes the stream
+    (sse-close) so the browser's EventSource does not auto-reconnect and re-run
+    the fusion."""
     return (
         '<div class="msg assistant">'
-        '<div class="bubble" hx-ext="sse" sse-connect="/tasks/fusion/stream" '
+        f'<div class="avatar">{_FUSION_AVATAR}</div>'
+        '<div class="body"><div class="who">Fusion</div>'
+        '<div class="text" hx-ext="sse" sse-connect="/tasks/fusion/stream" '
         'sse-swap="message" hx-swap="beforeend" sse-close="close"></div>'
+        '</div>'
         '</div>'
     )
 

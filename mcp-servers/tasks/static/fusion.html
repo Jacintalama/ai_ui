@@ -7,227 +7,193 @@
   <script src="/tasks/static/vendor/htmx.min.js"></script>
   <script src="/tasks/static/vendor/sse.js"></script>
   <style>
-    :root { color-scheme: dark; }
+    /* Open WebUI look: neutral, near-black, monochrome. No brand accent. */
+    :root {
+      color-scheme: dark;
+      --bg: #1a1a1a;
+      --panel: #212121;
+      --field: #2a2a2a;
+      --hair: #2f2f2f;
+      --hair-2: #3a3a3a;
+      --text: #ececec;
+      --muted: #9b9ba1;
+      --user: #2f2f2f;
+      --active: #3a3a3a;
+      --teal: #10a37f;
+      --rust: #d97757;
+      --warn: #e0a13a;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0; height: 100vh; display: flex; flex-direction: column;
-      background:
-        radial-gradient(1200px 500px at 50% -10%, #16203a 0%, rgba(22,32,58,0) 60%),
-        #0d0f14;
-      color: #e6e8eb;
-      font: 15px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
 
-    /* Header / brand */
+    /* Slim top bar (Open WebUI keeps this minimal) */
     header {
-      display: flex; align-items: center; gap: 14px;
-      padding: 12px 22px; border-bottom: 1px solid #1b1f2b;
-      background: rgba(15, 17, 21, 0.7); backdrop-filter: blur(8px);
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 18px; border-bottom: 1px solid var(--hair);
     }
-    .brand { display: flex; align-items: center; gap: 11px; }
-    .brand .logo {
-      width: 34px; height: 34px; border-radius: 10px;
-      display: grid; place-items: center;
-      background: linear-gradient(135deg, #2b6cff, #7a3cff);
-      box-shadow: 0 4px 14px rgba(43, 108, 255, 0.35);
+    header .title { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15px; }
+    header .mark {
+      width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center;
+      background: var(--field); color: var(--text);
     }
-    .brand .name { display: flex; flex-direction: column; line-height: 1.15; }
-    .brand .name b { font-size: 16px; font-weight: 700; letter-spacing: .2px; }
-    .brand .name small { font-size: 11px; color: #7d8494; }
     .spacer { flex: 1; }
     button.ghost {
-      background: transparent; color: #aeb4c0; border: 1px solid #2a2f3d;
-      border-radius: 9px; padding: 7px 13px; cursor: pointer; font-size: 13px;
+      background: transparent; color: var(--muted); border: 1px solid var(--hair);
+      border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px;
     }
-    button.ghost:hover { color: #fff; border-color: #3a4152; background: #171a22; }
+    button.ghost:hover { color: var(--text); border-color: var(--hair-2); background: #242424; }
 
-    /* Stage: the flexible area between header and the bottom of the window. It
-       centers everything in the hero (empty) state and becomes a scrolling
-       chat once a conversation starts. State is driven by `body.chat`. */
-    .stage {
-      flex: 1; min-height: 0; width: 100%; position: relative;
-      display: flex; flex-direction: column;
-    }
+    /* Stage: centers in the hero (empty) state, scrolls in chat. */
+    .stage { flex: 1; min-height: 0; width: 100%; position: relative;
+      display: flex; flex-direction: column; }
 
     .hero-head { text-align: center; }
-    .hero-head h2 {
-      margin: 0 0 6px; font-size: clamp(21px, 3.2vw, 29px); font-weight: 700;
-      letter-spacing: -0.02em; text-wrap: balance;
-    }
-    .hero-head p { margin: 0; color: #7d8494; font-size: 14px; }
+    .hero-head h2 { margin: 0 0 6px; font-size: clamp(20px, 3vw, 27px); font-weight: 600;
+      letter-spacing: -0.01em; text-wrap: balance; }
+    .hero-head p { margin: 0; color: var(--muted); font-size: 14px; }
 
     /* Chat thread */
     #thread {
       overflow-y: auto; padding: 26px 20px;
-      display: flex; flex-direction: column; gap: 16px;
-      max-width: 860px; width: 100%; margin: 0 auto;
+      display: flex; flex-direction: column; gap: 22px;
+      max-width: 820px; width: 100%; margin: 0 auto;
     }
     .msg { display: flex; }
+    /* User: small gray pill, right-aligned. */
     .msg.user { justify-content: flex-end; }
-    .msg.assistant, .msg.system { justify-content: flex-start; }
-    .bubble {
-      max-width: 80%; padding: 11px 15px; border-radius: 14px;
-      white-space: pre-wrap; word-wrap: break-word;
+    .msg.user .bubble {
+      background: var(--user); color: var(--text); border-radius: 18px;
+      padding: 9px 15px; max-width: 76%; white-space: pre-wrap; word-wrap: break-word;
     }
-    .msg.user .bubble { background: linear-gradient(135deg, #2b6cff, #4f7dff); color: #fff; }
-    .msg.assistant .bubble { background: #14171f; border: 1px solid #232838; }
-    .msg.system .bubble, .msg.system { color: #f0b429; font-size: 13px; }
+    /* Assistant: avatar + name + plain full-width text (no bubble). */
+    .msg.assistant { gap: 12px; align-items: flex-start; }
+    .msg.assistant .avatar {
+      width: 28px; height: 28px; border-radius: 8px; flex: none; margin-top: 1px;
+      background: var(--field); color: var(--text); display: grid; place-items: center;
+    }
+    .msg.assistant .body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .msg.assistant .who { font-weight: 600; font-size: 14px; }
+    .msg.assistant .text { white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; }
+    /* System notices */
+    .msg.system { color: var(--warn); font-size: 13px; }
+    .msg.system .bubble { color: var(--warn); }
 
-    /* Dock: holds the picker card + composer. Its max-width differs by state:
-       a narrow hero column, or the full 860 chat column pinned to the bottom. */
+    /* Dock: picker + composer */
     .dock { width: 100%; display: flex; flex-direction: column; gap: 10px; }
 
-    /* Picker card (fills the dock now; the dock owns the outer width) */
+    /* Model picker, restyled neutral to blend with Open WebUI */
     .picker {
-      width: 100%; padding: 14px 16px;
-      display: flex; flex-direction: column; gap: 12px;
-      background: #12141b; border: 1px solid #212636; border-radius: 16px;
-      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+      width: 100%; padding: 13px 15px; display: flex; flex-direction: column; gap: 11px;
+      background: var(--panel); border: 1px solid var(--hair); border-radius: 16px;
     }
-    .picker .tabs { display: inline-flex; gap: 6px; background: #0f1117;
-      padding: 4px; border-radius: 11px; border: 1px solid #1e2333; width: fit-content; }
-    .picker .tab {
-      padding: 6px 15px; border-radius: 8px; font-size: 13px; cursor: pointer;
-      background: transparent; color: #aeb4c0; border: none; font: inherit;
-    }
-    .picker .tab:hover:not(.passive) { color: #fff; }
-    .picker .tab.active { background: #2b6cff; color: #fff; box-shadow: 0 2px 8px rgba(43,108,255,.4); }
-    .picker .tab.passive { cursor: default; color: #6b7280; }
-    .picker .tab.passive.active { background: #232838; color: #cfd4de; }
+    .picker .tabs { display: inline-flex; gap: 5px; background: var(--bg);
+      padding: 4px; border-radius: 10px; border: 1px solid var(--hair); width: fit-content; }
+    .picker .tab { padding: 5px 14px; border-radius: 7px; font-size: 13px; cursor: pointer;
+      background: transparent; color: var(--muted); border: none; font: inherit; }
+    .picker .tab:hover:not(.passive) { color: var(--text); }
+    .picker .tab.active { background: var(--active); color: #fff; }
+    .picker .tab.passive { cursor: default; color: #6f6f75; }
+    .picker .tab.passive.active { background: var(--active); color: var(--text); }
     .picker .row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-    .picker .rlabel {
-      font-size: 11px; letter-spacing: .5px; text-transform: uppercase;
-      color: #6b7280; min-width: 70px;
-    }
-    .picker .chip {
-      display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
-      padding: 6px 11px; border-radius: 10px; background: #1a1e29; border: 1px solid #2a3040;
-    }
-    .picker .chip .x {
-      background: transparent; border: none; color: #7d8494; cursor: pointer;
-      font-size: 16px; line-height: 1; padding: 0; margin-left: 1px;
-    }
-    .picker .chip .x:hover { color: #ff6b6b; }
-    .picker .addbtn {
-      display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 13px;
+    .picker .rlabel { font-size: 11px; letter-spacing: .4px; text-transform: uppercase;
+      color: #6f6f75; min-width: 68px; }
+    .picker .chip { display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
+      padding: 6px 11px; border-radius: 10px; background: var(--field); border: 1px solid var(--hair); }
+    .picker .chip .x { background: transparent; border: none; color: var(--muted); cursor: pointer;
+      font-size: 16px; line-height: 1; padding: 0; margin-left: 1px; }
+    .picker .chip .x:hover { color: #ff7a7a; }
+    .picker .addbtn { display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 13px;
       padding: 6px 12px; border-radius: 10px; cursor: pointer;
-      background: transparent; color: #6ea0ff; border: 1px dashed #37507e;
-    }
-    .picker .addbtn:hover { background: #141a29; border-color: #4f7dff; color: #9dbcff; }
-    .picker select.judge {
-      background: #0f1117; color: #e6e8eb; border: 1px solid #2a3040;
-      border-radius: 10px; padding: 7px 11px; font: inherit; font-size: 13px; cursor: pointer;
-    }
-    .picker select.judge:focus { outline: none; border-color: #2b6cff; }
+      background: transparent; color: var(--muted); border: 1px dashed var(--hair-2); }
+    .picker .addbtn:hover { background: #262626; border-color: #4a4a4a; color: var(--text); }
+    .picker select.judge { background: var(--bg); color: var(--text); border: 1px solid var(--hair);
+      border-radius: 10px; padding: 7px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+    .picker select.judge:focus { outline: none; border-color: var(--hair-2); }
 
-    /* Provider dot */
     .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
-    .dot.openai { background: #10a37f; }
-    .dot.anthropic { background: #d97757; }
+    .dot.openai { background: var(--teal); }
+    .dot.anthropic { background: var(--rust); }
+    .dot.openrouter { background: #a78bfa; }
 
     /* Add-model modal */
-    .modal-backdrop {
-      display: none; position: fixed; inset: 0; z-index: 50;
-      background: rgba(6, 8, 12, 0.6); backdrop-filter: blur(3px);
-      align-items: flex-start; justify-content: center; padding: 12vh 16px;
-    }
+    .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 50;
+      background: rgba(0, 0, 0, 0.55); align-items: flex-start; justify-content: center; padding: 12vh 16px; }
     .modal-backdrop.open { display: flex; }
-    .modal {
-      width: 100%; max-width: 460px; max-height: 62vh; display: flex; flex-direction: column;
-      background: #14161e; border: 1px solid #262c3c; border-radius: 16px; overflow: hidden;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
-    }
-    .modal-head {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 16px; border-bottom: 1px solid #1f2430; font-weight: 600;
-    }
-    .modal-head .mx {
-      background: transparent; border: none; color: #7d8494; font-size: 20px;
-      line-height: 1; cursor: pointer; padding: 0;
-    }
-    .modal-head .mx:hover { color: #fff; }
-    .msearch {
-      margin: 12px 16px 6px; padding: 9px 12px; border-radius: 10px;
-      background: #0f1117; color: #e6e8eb; border: 1px solid #2a3040; font: inherit; font-size: 14px;
-    }
-    .msearch:focus { outline: none; border-color: #2b6cff; }
+    .modal { width: 100%; max-width: 460px; max-height: 62vh; display: flex; flex-direction: column;
+      background: #202020; border: 1px solid var(--hair-2); border-radius: 16px; overflow: hidden;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); }
+    .modal-head { display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; border-bottom: 1px solid var(--hair); font-weight: 600; }
+    .modal-head .mx { background: transparent; border: none; color: var(--muted); font-size: 20px;
+      line-height: 1; cursor: pointer; padding: 0; }
+    .modal-head .mx:hover { color: var(--text); }
+    .msearch { margin: 12px 16px 6px; padding: 9px 12px; border-radius: 10px;
+      background: var(--bg); color: var(--text); border: 1px solid var(--hair); font: inherit; font-size: 14px; }
+    .msearch:focus { outline: none; border-color: var(--hair-2); }
     .mlist { overflow-y: auto; padding: 6px 8px 12px; display: flex; flex-direction: column; gap: 2px; }
-    .mrow {
-      display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    .mrow { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
       padding: 10px 12px; border-radius: 10px; cursor: pointer; font: inherit; font-size: 14px;
-      background: transparent; border: none; color: #e6e8eb;
-    }
-    .mrow:hover { background: #1c2130; }
+      background: transparent; border: none; color: var(--text); }
+    .mrow:hover { background: #2a2a2a; }
     .mrow .mname { flex: 1; }
-    .mrow .mprov { font-size: 11px; color: #7d8494; }
+    .mrow .mprov { font-size: 11px; color: var(--muted); }
 
-    /* Composer (fills the dock) */
-    form.composer { display: flex; gap: 10px; width: 100%; align-items: stretch; }
+    /* Composer: one rounded field with a circular send button (Open WebUI style) */
+    form.composer { width: 100%; }
+    .inputwrap {
+      display: flex; align-items: flex-end; gap: 8px; width: 100%;
+      background: var(--field); border: 1px solid var(--hair); border-radius: 26px;
+      padding: 7px 7px 7px 18px;
+    }
+    .inputwrap:focus-within { border-color: var(--hair-2); }
     textarea {
-      flex: 1; resize: none; min-height: 50px; max-height: 160px;
-      padding: 13px 15px; line-height: 1.4;
-      background: #12141b; color: #e6e8eb; border: 1px solid #2a3040;
-      border-radius: 12px; font: inherit;
-      /* Thin, buttonless scrollbar only when the text actually overflows,
-         instead of the chunky native scrollbar with up/down arrows. */
-      overflow-y: auto;
-      scrollbar-width: thin; scrollbar-color: #2f3646 transparent;
+      flex: 1; resize: none; min-height: 26px; max-height: 170px; padding: 8px 0;
+      background: transparent; color: var(--text); border: none; font: inherit; line-height: 1.5;
+      overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent;
     }
     textarea::-webkit-scrollbar { width: 8px; }
     textarea::-webkit-scrollbar-track { background: transparent; }
-    textarea::-webkit-scrollbar-thumb { background: #2f3646; border-radius: 8px; }
+    textarea::-webkit-scrollbar-thumb { background: #3a3a3a; border-radius: 8px; }
     textarea::-webkit-scrollbar-button { display: none; height: 0; }
-    textarea:focus { outline: none; border-color: #2b6cff; }
+    textarea:focus { outline: none; }
+    textarea::placeholder { color: #7f7f85; }
     button.send {
-      background: linear-gradient(135deg, #2b6cff, #4f7dff); color: #fff; border: none;
-      border-radius: 12px; padding: 0 22px; cursor: pointer; font-weight: 600;
+      width: 36px; height: 36px; flex: none; border-radius: 50%; border: none; cursor: pointer;
+      background: var(--text); color: var(--bg); display: grid; place-items: center;
     }
-    button.send:disabled { opacity: .5; cursor: default; }
+    button.send:hover { background: #fff; }
+    button.send:disabled { opacity: .35; cursor: default; }
+    .hint { text-align: center; color: #6f6f75; font-size: 11.5px; margin: 8px 0 0; }
 
-    /* ---- HERO state (default: no conversation yet) ---- */
-    body:not(.chat) .stage {
-      justify-content: center; align-items: center; gap: 18px; padding: 24px;
-    }
-    body:not(.chat) .stage::before {
-      content: ""; position: absolute; z-index: 0; pointer-events: none;
-      width: 640px; height: 340px; top: 6%; left: 50%; transform: translateX(-50%);
-      background: radial-gradient(closest-side, rgba(96, 92, 255, 0.20), transparent 70%);
-      filter: blur(8px);
-    }
-    body:not(.chat) .hero-head,
-    body:not(.chat) .dock { position: relative; z-index: 1; }
+    /* ---- HERO state (no conversation yet) ---- */
+    body:not(.chat) .stage { justify-content: center; align-items: center; gap: 18px; padding: 24px; }
     body:not(.chat) #thread { display: none; }
-    body:not(.chat) .dock { max-width: 600px; }
+    body:not(.chat) .dock { max-width: 620px; }
 
-    /* ---- CHAT state (a conversation exists) ---- */
+    /* ---- CHAT state ---- */
     body.chat .hero-head { display: none; }
     body.chat #thread { flex: 1; }
-    body.chat .dock {
-      max-width: 860px; margin: 0 auto; padding: 12px 20px 18px;
-      border-top: 1px solid #1b1f2b;
-    }
-
-    @media (prefers-reduced-motion: no-preference) {
-      .hero-head { transition: opacity .2s ease; }
-    }
+    body.chat .dock { max-width: 820px; margin: 0 auto; padding: 8px 20px 16px; }
+    body.chat .hint { display: none; }
   </style>
 </head>
 <body>
   <header>
-    <span class="brand">
-      <span class="logo">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path d="M5 4v3.5a5.5 5.5 0 0 0 5.5 5.5H12" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
-          <path d="M19 4v3.5A5.5 5.5 0 0 1 13.5 13H12" stroke="#dbe4ff" stroke-width="2" stroke-linecap="round"/>
-          <path d="M12 13v6" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
-          <path d="M9 16.5l3 3 3-3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <span class="title">
+      <span class="mark">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+          <path d="M5 4v3.5a5.5 5.5 0 0 0 5.5 5.5H12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M19 4v3.5A5.5 5.5 0 0 1 13.5 13H12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M12 13v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <polyline points="9 16.5 12 19.5 15 16.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </span>
-      <span class="name">
-        <b>Fusion</b>
-        <small>A panel of models, one combined answer</small>
-      </span>
+      Fusion
     </span>
     <div class="spacer"></div>
     <button class="ghost" hx-post="/tasks/fusion/new"
@@ -249,10 +215,18 @@
       <form class="composer" hx-post="/tasks/fusion/send"
             hx-target="#thread" hx-swap="beforeend"
             hx-on::after-request="if(event.detail.successful){this.querySelector('textarea').value='';}">
-        <textarea name="message" placeholder="Ask Fusion..."
-                  autocomplete="off" required></textarea>
-        <button class="send" type="submit">Send</button>
+        <div class="inputwrap">
+          <textarea name="message" placeholder="Send a message" rows="1"
+                    autocomplete="off" required></textarea>
+          <button class="send" type="submit" aria-label="Send">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M12 20V5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              <path d="M6 11l6-6 6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
       </form>
+      <p class="hint">Fusion sends your prompt to every chosen model and a judge combines them.</p>
     </div>
   </main>
 
@@ -271,8 +245,8 @@
       if (token) { e.detail.headers['Authorization'] = 'Bearer ' + token; }
     });
 
-    // Add-model modal (the modal markup is re-rendered inside #picker on every
-    // swap, so these helpers are global and look the element up by id each time).
+    // Add-model modal (re-rendered inside #picker on every swap; helpers are
+    // global and look the element up by id each time).
     function openAddModal() {
       var m = document.getElementById('addModal');
       if (m) {
@@ -298,8 +272,10 @@
       if (e.key === 'Escape') { closeAddModal(); }
     });
 
-    // Enter sends, Shift+Enter makes a newline.
+    // Enter sends, Shift+Enter makes a newline. Auto-grow the textarea.
     var ta = document.querySelector('textarea');
+    function grow() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 170) + 'px'; }
+    ta.addEventListener('input', grow);
     ta.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -311,16 +287,15 @@
     var sendBtn = document.querySelector('button.send');
     document.body.addEventListener('htmx:afterSwap', function () {
       syncLayout();
-      var streaming = document.querySelector('.bubble[sse-connect]');
+      var streaming = document.querySelector('[sse-connect]');
       sendBtn.disabled = !!streaming;
+      ta.style.height = 'auto';
       var thread = document.getElementById('thread');
       thread.scrollTop = thread.scrollHeight;
     });
-    // htmx SSE ext dispatches htmx:sseClose when sse-close fires.
     document.body.addEventListener('htmx:sseClose', function () {
       sendBtn.disabled = false;
     });
-    // Keep the view pinned to the latest tokens as they stream in.
     document.body.addEventListener('htmx:sseMessage', function () {
       var thread = document.getElementById('thread');
       thread.scrollTop = thread.scrollHeight;
