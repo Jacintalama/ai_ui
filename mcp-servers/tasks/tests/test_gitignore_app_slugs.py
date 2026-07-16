@@ -12,8 +12,33 @@ from pathlib import Path
 import pytest
 
 from routes_aiuibuilder import _slugify
+from routes_projects import REPO_ROOT as _BIND_MOUNTED_REPO
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+
+def _find_repo_root() -> Path | None:
+    """The git tree that actually holds .gitignore.
+
+    Local checkout: walk up from this file (IO/mcp-servers/tasks/tests -> IO).
+    In the tasks container the code is COPYd to /app, which has no .gitignore
+    and only two parents to walk, while the real git tree is bind-mounted at
+    /workspace/ai_ui. Hard-coding parents[3] passed locally and raised
+    IndexError in the container, so find it rather than assume it.
+    """
+    for p in Path(__file__).resolve().parents:
+        if (p / ".gitignore").is_file() and (p / ".git").exists():
+            return p
+    fallback = Path(_BIND_MOUNTED_REPO)
+    if (fallback / ".gitignore").is_file() and (fallback / ".git").exists():
+        return fallback
+    return None
+
+
+REPO_ROOT = _find_repo_root()
+
+pytestmark = pytest.mark.skipif(
+    REPO_ROOT is None,
+    reason="no git tree with a .gitignore reachable from here",
+)
 
 
 def _ignored_by(slug: str) -> str | None:
