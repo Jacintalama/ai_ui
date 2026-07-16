@@ -32,27 +32,22 @@ _apps_root = lambda: os.environ.get(  # noqa: E731
 )
 _today = lambda: date.today().isoformat()  # noqa: E731
 
-# A README that is present but empty, or just a title, is the failure this
-# sweep is for. Anything with real prose under a heading is the agent's work
-# and must not be touched.
-_STUB_CHARS = 120
-
-
 def _title_from_slug(slug: str) -> str:
     return " ".join(w.capitalize() for w in re.split(r"[-_]+", slug) if w)
 
 
 def _is_stub(text: str) -> bool:
-    """True when a README exists in name only.
+    """True when a README exists in name only: empty, or headings with nothing
+    written under them.
 
-    Deliberately generous: we would rather leave a thin-but-real doc alone than
-    overwrite something the agent actually wrote. Only clearly-empty content
-    counts as a stub.
+    Deliberately generous. Overwriting a real doc the agent wrote is far worse
+    than leaving a thin one alone, so the only question asked is "did anyone
+    write a single line of prose?". A short README is still a README: judging
+    by length would delete a perfectly good one-line description.
     """
     body = (text or "").strip()
-    if len(body) < _STUB_CHARS:
+    if not body:
         return True
-    # Headings alone are not documentation.
     prose = [ln for ln in body.splitlines()
              if ln.strip() and not ln.lstrip().startswith("#")]
     return not prose

@@ -113,6 +113,19 @@ async def test_long_summary_is_truncated(apps_root):
     assert "y" * 400 not in text
 
 
+@pytest.mark.anyio
+async def test_a_short_but_real_readme_is_not_a_stub(apps_root):
+    # Caught live on prod: a length threshold treated a genuine one-line
+    # description as a stub and overwrote the agent's actual docs. Length is
+    # not the question, "did anyone write prose" is.
+    d = _app(apps_root)
+    real = "# App\n\nIt books appointments for the clinic front desk.\n"
+    (d / "README.md").write_text(real, encoding="utf-8")
+    assert app_docs._is_stub(real) is False
+    assert await app_docs.sweep_app_docs("my-app", summary="x") is False
+    assert (d / "README.md").read_text(encoding="utf-8") == real
+
+
 def test_title_from_slug_handles_dashes_and_underscores():
     assert app_docs._title_from_slug("my-cool_app") == "My Cool App"
 
