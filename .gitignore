@@ -51,19 +51,28 @@ _tplpng/
 # non-alphanumeric runs and drops leading empties, so a user description can
 # never reach that namespace. Covered by tests/test_gitignore_app_slugs.py.
 apps/_test-*/
-apps/alama-flight/
+
+# Generated video artifacts, NOT source: 5.9M of MP4s across 13 dirs on prod.
+# Git never forgets a binary and these are regenerable. Scoped to `.video/`
+# rather than `apps/vid-*/` because three real apps carry a .video/ dir too,
+# and the app itself must still get version history. Mirrors the per-app
+# `.attachments/` rule that claude_executor.py:37 maintains.
+apps/*/.video/
+# Junk on EVIDENCE (checked against tasks.project_members 2026-07-16), not on
+# how the name reads. Every entry below is either owned by *@example.com (the
+# reserved test domain, so a fixture), an orphan with no owner and no build
+# row, or a prefix our harnesses regenerate on every run.
+#
+# Removed here because the DB says a real human account built them, so they are
+# that person's data no matter how test-y the name looks: alama-flight,
+# crudsimple, landing-page-for-aiui-bot-*, ralph-portfolio, test-crud, testfly,
+# upload-c2f78c78, upload-da5312a9. If an owner wants one gone they can delete
+# it in the UI. That is their call, not a .gitignore rule's.
 apps/browser-smoke-*/
 apps/build-smoke-*/
 apps/caddy-auth-test-*/
-apps/crudsimple/
 apps/diag-test/
 apps/e2e-4f3e4b/
 apps/foo-app/
-apps/landing-page-for-aiui-bot-*/
-apps/ralph-portfolio/
 apps/smoke-upload-*/
-apps/test-crud/
 apps/test-project/
-apps/testfly/
-apps/upload-c2f78c78/
-apps/upload-da5312a9/
