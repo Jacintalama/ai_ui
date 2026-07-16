@@ -674,3 +674,26 @@ def test_send_survives_a_dead_database(monkeypatch):
     assert r.status_code == 200
     assert 'sse-connect="/tasks/fusion/stream"' in r.text
     assert mod._SESSIONS["h8@t.com"].chat_id is None
+
+
+def test_chat_list_keeps_listening_after_it_swaps_itself(monkeypatch):
+    # The list replaces itself via outerHTML, so both the empty and populated
+    # renders must carry hx-get/hx-trigger. Without them the first swap leaves
+    # an element that never hears fusion-chats-changed again, and new chats only
+    # show up on a full reload.
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    empty = c.get("/tasks/fusion/chats", headers=_hdr("l1@t.com")).text
+    assert "No saved chats yet" in empty
+    for frag in (empty,):
+        assert 'hx-get="/tasks/fusion/chats"' in frag
+        assert "fusion-chats-changed from:body" in frag
+        assert 'hx-swap="outerHTML"' in frag
+
+    c.post("/tasks/fusion/send", data={"message": "now populated"}, headers=_hdr("l1@t.com"))
+    full = c.get("/tasks/fusion/chats", headers=_hdr("l1@t.com")).text
+    assert "now populated" in full
+    assert 'hx-get="/tasks/fusion/chats"' in full
+    assert "fusion-chats-changed from:body" in full
+    assert 'hx-swap="outerHTML"' in full

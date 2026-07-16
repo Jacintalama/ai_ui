@@ -211,10 +211,19 @@ def _assistant_bubble_static(content: str, s: FusionSession) -> str:
     )
 
 
+# This fragment replaces itself (hx-swap=outerHTML), so it has to carry its own
+# hx-get and hx-trigger. Without them the first swap installs an element that is
+# no longer listening for fusion-chats-changed, and the sidebar goes deaf for the
+# rest of the page's life: chats save fine but only ever appear on a reload.
+_CHATLIST_HX = ('id="chatlist" hx-get="/tasks/fusion/chats" '
+                'hx-trigger="load, fusion-chats-changed from:body" '
+                'hx-swap="outerHTML"')
+
+
 def _render_chat_list(chats: list[dict], active_id: str | None) -> str:
     """The sidebar's saved-chat list."""
     if not chats:
-        return ('<p class="sidenote" id="chatlist">No saved chats yet. '
+        return (f'<p class="sidenote" {_CHATLIST_HX}>No saved chats yet. '
                 'Ask something and it will show up here.</p>')
     rows = []
     for c in chats:
@@ -229,7 +238,7 @@ def _render_chat_list(chats: list[dict], active_id: str | None) -> str:
             f'hx-target="#chatlist" hx-swap="outerHTML" '
             f'hx-confirm="Delete this chat?" title="Delete">&times;</button>'
             f'</div>')
-    return f'<div class="chatlist" id="chatlist">{"".join(rows)}</div>'
+    return f'<div class="chatlist" {_CHATLIST_HX}>{"".join(rows)}</div>'
 
 
 def _empty_thread() -> str:
