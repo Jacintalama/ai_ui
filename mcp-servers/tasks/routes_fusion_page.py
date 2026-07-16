@@ -138,9 +138,12 @@ def _render_picker(s: FusionSession) -> str:
     tabs = []
     for name in ("quality", "custom"):
         active = " active" if s.preset_label == name else ""
+        # hx-sync: a fast second click aborts the first request instead of
+        # queueing behind it, so the last tab pressed is the one that wins.
         tabs.append(
             f'<button class="tab{active}" hx-post="/tasks/fusion/preset" '
             f'hx-vals=\'{{"name": "{name}"}}\' hx-target="#picker" '
+            f'hx-sync="#picker:replace" '
             f'hx-swap="outerHTML">{name.capitalize()}</button>')
 
     # Panel chips (each with a provider dot). The remove button is omitted when
