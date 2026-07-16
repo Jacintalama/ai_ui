@@ -342,6 +342,27 @@ def test_picker_preset_switches_and_sets_label(monkeypatch):
     assert s.judge == "gpt-4o" and s.preset_label == "budget"
 
 
+def test_picker_preset_custom_keeps_panel_and_only_moves_label(monkeypatch):
+    app, mod = _app(monkeypatch)
+    c = TestClient(app)
+    _seed(mod, "pc@t.com", [], panel=["gpt-5.5", "o3"], judge="o3",
+          preset_label="quality", streaming=False)
+    r = c.post("/tasks/fusion/preset", data={"name": "custom"}, headers=_hdr("pc@t.com"))
+    assert r.status_code == 200
+    s = mod._SESSIONS["pc@t.com"]
+    assert s.panel == ["gpt-5.5", "o3"] and s.judge == "o3"
+    assert s.preset_label == "custom"
+
+
+def test_picker_renders_custom_as_a_live_tab(monkeypatch):
+    _, mod = _app(monkeypatch)
+    s = mod.FusionSession(messages=[], panel=["gpt-5.5"], judge="o3",
+                          preset_label="quality", streaming=False, last_used=0.0)
+    html = mod._render_picker(s)
+    assert '"name": "custom"' in html
+    assert "tab passive" not in html
+
+
 def test_picker_preset_unknown_400(monkeypatch):
     app, _ = _app(monkeypatch)
     c = TestClient(app)

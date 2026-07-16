@@ -115,18 +115,17 @@ def _render_picker(s: FusionSession) -> str:
     prov_by_id = {m["id"]: m["provider"] for m in models}
     prov_name = {"openai": "OpenAI", "anthropic": "Anthropic"}
 
-    # Preset tabs. Quality sets the recommended selection; Custom is a passive
-    # indicator that lights up when the selection was hand-edited. (Budget is
-    # hidden from the UI for now but still works via the engine preset.)
+    # Preset tabs. Quality restores the recommended selection; Custom keeps the
+    # current panel and just stops calling it Quality. Editing the panel by hand
+    # also flips the label to Custom. (Budget is hidden from the UI for now but
+    # still works via the engine preset.)
     tabs = []
-    for name in ("quality",):
+    for name in ("quality", "custom"):
         active = " active" if s.preset_label == name else ""
         tabs.append(
             f'<button class="tab{active}" hx-post="/tasks/fusion/preset" '
             f'hx-vals=\'{{"name": "{name}"}}\' hx-target="#picker" '
             f'hx-swap="outerHTML">{name.capitalize()}</button>')
-    custom_active = " active" if s.preset_label == "custom" else ""
-    tabs.append(f'<span class="tab passive{custom_active}">Custom</span>')
 
     # Panel chips (each with a provider dot). The remove button is omitted when
     # only one chip remains.
@@ -294,9 +293,14 @@ async def fusion_picker(
 @router.post("/tasks/fusion/preset", include_in_schema=False)
 async def fusion_preset(name: str = Form(...),
                         user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    s = _get_session(user.email)
+    # "custom" is not an engine preset: it means "keep what is selected, I am
+    # driving now", so it only moves the label.
+    if name == "custom":
+        s.preset_label = "custom"
+        return HTMLResponse(_render_picker(s))
     if name not in fusion_engine.PRESETS:
         raise HTTPException(status_code=400, detail=f"unknown preset: {name}")
-    s = _get_session(user.email)
     s.panel, s.judge = fusion_engine.resolve_preset(name)
     s.preset_label = name
     return HTMLResponse(_render_picker(s))
