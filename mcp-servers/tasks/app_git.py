@@ -24,9 +24,15 @@ _run_git = _run_git_default
 _validate_slug = _validate_slug_default
 
 
+# Git's conventional subject cap. The version timeline renders this string
+# straight into the UI, and the agent's completion payload is routinely a whole
+# paragraph on a single line (observed live 2026-07-16 at 405 chars).
+_MAX_SUBJECT = 72
+
+
 def _safe_message(message: str | None, slug: str) -> str:
-    """First line of the task summary, guaranteed non-empty and guaranteed not
-    to be mistaken for a rollback entry."""
+    """First line of the task summary, guaranteed non-empty, guaranteed not to
+    be mistaken for a rollback entry, and short enough to read in a timeline."""
     lines = [ln for ln in (message or "").strip().splitlines() if ln.strip()]
     msg = lines[0].strip() if lines else ""
     if not msg:
@@ -36,6 +42,8 @@ def _safe_message(message: str | None, slug: str) -> str:
         # prefix, so a real build summary starting with "Rollback" would
         # mislabel a genuine build in the timeline.
         msg = f"Build: {msg}"
+    if len(msg) > _MAX_SUBJECT:
+        msg = msg[:_MAX_SUBJECT - 3].rstrip() + "..."
     return msg
 
 

@@ -168,6 +168,37 @@ async def test_sweep_message_never_starts_with_rollback(monkeypatch):
     assert "Rollback the header colour" in msg, "the real summary must survive"
 
 
+async def test_sweep_truncates_a_long_summary_to_a_git_subject(monkeypatch):
+    """Found by the live e2e on 2026-07-16: the agent's completion payload is a
+    whole paragraph on one line, so the version timeline rendered a wall of
+    text. Git caps a subject at ~72 chars by convention and the timeline shows
+    this string directly."""
+    long_msg = "Created a single page that says History Works " + "and more " * 40
+    git = _make_git({"status": (0, "?? apps/my-app/x\n")})
+    monkeypatch.setattr(app_git, "_run_git", git)
+
+    await app_git.sweep_app_commit("my-app", message=long_msg, actor_email="a@b.com")
+
+    commit = _argv_for(git.calls, "commit")
+    msg = commit[commit.index("-m") + 1]
+    assert len(msg) <= 72, f"timeline subject is {len(msg)} chars: {msg!r}"
+    assert msg.startswith("Created a single page that says History Works")
+    assert msg.endswith("...")
+
+
+async def test_sweep_does_not_truncate_a_short_summary(monkeypatch):
+    git = _make_git({"status": (0, "?? apps/my-app/x\n")})
+    monkeypatch.setattr(app_git, "_run_git", git)
+
+    await app_git.sweep_app_commit(
+        "my-app", message="Add a dark mode toggle", actor_email="a@b.com"
+    )
+
+    commit = _argv_for(git.calls, "commit")
+    msg = commit[commit.index("-m") + 1]
+    assert msg == "Add a dark mode toggle"
+
+
 async def test_sweep_falls_back_to_a_default_message_when_summary_is_empty(monkeypatch):
     git = _make_git({"status": (0, "?? apps/my-app/x\n")})
     monkeypatch.setattr(app_git, "_run_git", git)
