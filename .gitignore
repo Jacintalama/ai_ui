@@ -35,17 +35,35 @@ mcp-servers/gdrive/docker-compose.test.yml
 *.bak.*
 .deploy-state
 _tplpng/
+# --- apps/ ignores: read this before adding a rule (revised 2026-07-16) ---
+# Built apps are USER DATA. They must stay tracked, because the version
+# timeline and rollback read `git log -- apps/<slug>/`
+# (routes_projects.list_app_versions_core). Only OUR OWN test junk belongs here.
+#
+# NEVER add an `apps/<verb>-*/` rule. _slugify (routes_aiuibuilder.py:187)
+# builds a slug from the first five words of the user's build description, so
+# such a rule eats real user apps by construction and does it silently, since
+# `git add` on an ignored path is a no-op. The rules removed here
+# (create-me-*, make-the-*, me-a-*, upload-*, *smoke*) were swallowing 11 real
+# apps on prod, 8 via create-me-* alone.
+#
+# Generated test apps belong under the `_test-` prefix: _slugify collapses
+# non-alphanumeric runs and drops leading empties, so a user description can
+# never reach that namespace. Covered by tests/test_gitignore_app_slugs.py.
+apps/_test-*/
 apps/alama-flight/
-apps/*smoke*/
+apps/browser-smoke-*/
+apps/build-smoke-*/
 apps/caddy-auth-test-*/
-apps/create-me-*/
 apps/crudsimple/
 apps/diag-test/
+apps/e2e-4f3e4b/
+apps/foo-app/
 apps/landing-page-for-aiui-bot-*/
-apps/make-the-*/
-apps/me-a-*/
 apps/ralph-portfolio/
+apps/smoke-upload-*/
 apps/test-crud/
 apps/test-project/
 apps/testfly/
-apps/upload-*/
+apps/upload-c2f78c78/
+apps/upload-da5312a9/

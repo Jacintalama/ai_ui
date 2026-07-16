@@ -12,6 +12,7 @@ from sqlalchemy.exc import ProgrammingError
 from sse_starlette.sse import EventSourceResponse
 
 from agent_executor import get_executor
+from app_git import sweep_app_commit as _sweep_app_commit_default
 from app_smoke import smoke_app as _smoke_app_default
 from auth import AdminUser, current_admin, current_admin_or_capability
 from claude_executor import (
@@ -32,6 +33,9 @@ from schemas import PlanReviewRequest, TaskOut
 # _smoke_app without touching the real Playwright checker.
 _smoke_app = _smoke_app_default
 AUTOFIX_MAX_PASSES = 2
+
+# History sweep: commits apps/<slug>/ when the agent didn't. Same seam pattern.
+_sweep_app_commit = _sweep_app_commit_default
 
 
 async def _lookup_supabase_url(s, slug: str | None) -> str | None:
@@ -286,6 +290,18 @@ async def _run_execution(
             smoke_report = await _run_autofix(
                 slug, execution_id, task_id,
                 user_jwt=user_jwt, schedule_id=schedule_id,
+            )
+
+        # --- HISTORY: commit the app if the agent didn't ---
+        # claude_executor.py:174-183 *tells* the agent to `git add` + `git
+        # commit` its work, and nothing verified that it did: measured on prod
+        # 2026-07-16, 43 of 47 app dirs had zero commits, so the version
+        # timeline + rollback shipped 2026-07-13 was empty for 91% of apps.
+        # Runs AFTER AutoFix so the committed tree is the smoke-verified one
+        # and any narrow AutoFix edits land in the same commit. Fails open.
+        if outcome.kind == "completed" and slug:
+            await _sweep_app_commit(
+                slug, message=outcome.payload, actor_email=assignee_email,
             )
 
         # --- LOOP MODE: VERIFY step after COMPLETED ---
