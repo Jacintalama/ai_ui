@@ -86,29 +86,35 @@ def main() -> int:
     # A stale `function` row of the same id would shadow the tool.
     cur.execute("DELETE FROM function WHERE id = %s", (TOOL_ID,))
     cur.execute("DELETE FROM tool WHERE id = %s", (TOOL_ID,))
+    # This Open WebUI (v0.10.2) has no access_control column on `tool`, so
+    # there is no ACL to set and every signed-in user sees the tool. The older
+    # scripts/insert_tool.py still writes that column and is stale against the
+    # live schema. Build the column list from the DB rather than assuming.
+    cur.execute("SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'tool'")
+    cols = {r[0] for r in cur.fetchall()}
+    row = {
+        "id": TOOL_ID, "user_id": user_id, "name": TOOL_NAME, "content": content,
+        "specs": json.dumps(SPECS), "meta": json.dumps(META),
+        "created_at": now, "updated_at": now, "valves": "{}",
+    }
+    if "access_control" in cols:
+        # Newer schemas gate tools with this; NULL means public.
+        row["access_control"] = None
+    names = [c for c in row if c in cols]
     cur.execute(
-        """
-        INSERT INTO tool (id, user_id, name, content, specs, meta,
-                          created_at, updated_at, valves, access_control)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            TOOL_ID, user_id, TOOL_NAME, content,
-            json.dumps(SPECS), json.dumps(META), now, now, "{}",
-            # NULL access_control is public in Open WebUI: every signed-in user
-            # sees Fusion in the Tools dropdown, which is the point.
-            None,
-        ),
+        f"INSERT INTO tool ({', '.join(names)}) "
+        f"VALUES ({', '.join(['%s'] * len(names))})",
+        [row[c] for c in names],
     )
     conn.commit()
 
-    cur.execute("SELECT id, name, access_control IS NULL FROM tool WHERE id = %s",
-                (TOOL_ID,))
+    cur.execute("SELECT id, name FROM tool WHERE id = %s", (TOOL_ID,))
     got = cur.fetchone()
     cur.close()
     conn.close()
     print(f"Installed {got[1]} (id={got[0]}, owner={owner_email}, "
-          f"public={got[2]}, {len(content)} bytes)")
+          f"{len(content)} bytes)")
     return 0
 
 
