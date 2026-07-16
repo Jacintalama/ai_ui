@@ -76,6 +76,24 @@
     .sidenote { color: var(--faint); font-size: 12px; line-height: 1.5; padding: 2px 10px; }
     .sidefoot { margin-top: auto; }
 
+    /* Saved chats */
+    .chatlist { overflow-y: auto; display: flex; flex-direction: column; gap: 1px;
+      scrollbar-width: thin; scrollbar-color: var(--gray-700) transparent; }
+    .chatrow { display: flex; align-items: center; border-radius: 8px; }
+    .chatrow:hover, .chatrow.active { background: var(--gray-850); }
+    .chatopen {
+      flex: 1; min-width: 0; text-align: left; padding: 8px 10px; font-size: 14px;
+      background: none; border: none; color: var(--muted); cursor: pointer;
+      font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .chatrow:hover .chatopen, .chatrow.active .chatopen { color: var(--text); }
+    .chatdel {
+      flex: none; padding: 4px 9px; background: none; border: none; cursor: pointer;
+      color: var(--faint); font-size: 16px; line-height: 1; visibility: hidden;
+    }
+    .chatrow:hover .chatdel { visibility: visible; }
+    .chatdel:hover { color: #ff7a7a; }
+
     /* The page body sits to the right of the sidebar. */
     .app { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -282,8 +300,9 @@
     </button>
 
     <div class="sidesep"></div>
-    <p class="sidenote">Fusion chats are not saved yet. Starting a new chat
-      clears this one.</p>
+    <div id="chatlist" hx-get="/tasks/fusion/chats"
+         hx-trigger="load, fusion-chats-changed from:body"
+         hx-swap="outerHTML"></div>
 
     <div class="sidefoot">
       <div class="sidesep"></div>
@@ -412,6 +431,10 @@
     var sendBtn = document.querySelector('button.send');
     document.body.addEventListener('htmx:afterSwap', function () {
       syncLayout();
+      // Answers replayed from a saved chat arrive as raw markdown text and are
+      // already complete, so render them straight away.
+      var replayed = document.querySelectorAll('.msg.assistant .text.md');
+      for (var i = 0; i < replayed.length; i++) { renderMarkdown(replayed[i]); }
       var streaming = document.querySelector('[sse-connect]');
       sendBtn.disabled = !!streaming;
       ta.style.height = 'auto';

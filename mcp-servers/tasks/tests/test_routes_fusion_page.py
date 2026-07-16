@@ -5,10 +5,53 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
+def _fake_store(mod, monkeypatch):
+    """Swap the chat table for a dict. Without this every send tries to reach a
+    real Postgres, which the route swallows, so the tests would quietly measure
+    the "database is down" path instead of the one that matters."""
+    rows: dict[str, dict] = {}
+    seq = {"n": 0}
+
+    async def create(email, title, s):
+        seq["n"] += 1
+        cid = f"chat-{seq['n']}"
+        rows[cid] = {"id": cid, "user_email": email, "title": title,
+                     "messages": list(s.messages), "panel": list(s.panel),
+                     "judge": s.judge, "preset_label": s.preset_label}
+        return cid
+
+    async def save(email, s):
+        row = rows.get(s.chat_id or "")
+        if row and row["user_email"] == email:
+            row.update(messages=list(s.messages), panel=list(s.panel),
+                       judge=s.judge, preset_label=s.preset_label)
+
+    async def listing(email):
+        return [{"id": r["id"], "title": r["title"]}
+                for r in rows.values() if r["user_email"] == email]
+
+    async def load(email, chat_id):
+        row = rows.get(chat_id)
+        return dict(row) if row and row["user_email"] == email else None
+
+    async def delete(email, chat_id):
+        row = rows.get(chat_id)
+        if row and row["user_email"] == email:
+            del rows[chat_id]
+
+    monkeypatch.setattr(mod, "_create_chat", create)
+    monkeypatch.setattr(mod, "_save_chat", save)
+    monkeypatch.setattr(mod, "_list_chats", listing)
+    monkeypatch.setattr(mod, "_load_chat", load)
+    monkeypatch.setattr(mod, "_delete_chat", delete)
+    return rows
+
+
 def _app(monkeypatch):
     import importlib
     import routes_fusion_page
     importlib.reload(routes_fusion_page)
+    _fake_store(routes_fusion_page, monkeypatch)
     app = FastAPI()
     app.include_router(routes_fusion_page.router)
     return app, routes_fusion_page
@@ -483,3 +526,151 @@ def test_picker_sole_chip_has_no_remove_button(monkeypatch):
     r = c.get("/tasks/fusion/picker", headers=_hdr("one@t.com"))
     assert r.status_code == 200
     assert "/tasks/fusion/panel/remove" not in r.text  # cannot remove the last chip
+
+
+# ------------------------------------------------------------- chat history
+
+def test_send_creates_a_saved_chat_titled_from_the_first_message(monkeypatch):
+    app, mod = _app(monkeypatch)
+    rows = _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/send", data={"message": "what is the weather of ph?"},
+               headers=_hdr("h1@t.com"))
+    assert r.status_code == 200
+    assert r.headers.get("HX-Trigger") == "fusion-chats-changed"
+    s = mod._SESSIONS["h1@t.com"]
+    assert s.chat_id is not None
+    assert rows[s.chat_id]["title"] == "what is the weather of ph?"
+
+
+def test_second_send_reuses_the_same_chat(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "first"}, headers=_hdr("h2@t.com"))
+    first_id = mod._SESSIONS["h2@t.com"].chat_id
+    mod._SESSIONS["h2@t.com"].streaming = False
+    c.post("/tasks/fusion/send", data={"message": "second"}, headers=_hdr("h2@t.com"))
+    assert mod._SESSIONS["h2@t.com"].chat_id == first_id
+
+
+def test_new_chat_detaches_so_the_next_send_starts_a_fresh_row(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "first"}, headers=_hdr("h3@t.com"))
+    first_id = mod._SESSIONS["h3@t.com"].chat_id
+    c.post("/tasks/fusion/new", headers=_hdr("h3@t.com"))
+    assert mod._SESSIONS["h3@t.com"].chat_id is None
+    c.post("/tasks/fusion/send", data={"message": "second"}, headers=_hdr("h3@t.com"))
+    assert mod._SESSIONS["h3@t.com"].chat_id != first_id
+
+
+def test_long_title_is_truncated(monkeypatch):
+    _, mod = _app(monkeypatch)
+    t = mod._title_from("x" * 200)
+    assert len(t) == 48 and t.endswith("…")
+
+
+def test_title_collapses_whitespace(monkeypatch):
+    _, mod = _app(monkeypatch)
+    assert mod._title_from("  hello \n  world  ") == "hello world"
+
+
+def test_open_chat_replays_the_conversation(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "remember me"}, headers=_hdr("h4@t.com"))
+    s = mod._SESSIONS["h4@t.com"]
+    s.messages.append({"role": "assistant", "content": "**bold** answer"})
+    s.streaming = False
+    import anyio
+    anyio.run(mod._save_chat, "h4@t.com", s)
+    cid = s.chat_id
+    c.post("/tasks/fusion/new", headers=_hdr("h4@t.com"))
+    r = c.get(f"/tasks/fusion/chat/{cid}", headers=_hdr("h4@t.com"))
+    assert r.status_code == 200
+    assert "remember me" in r.text
+    # Replayed answers carry raw markdown for the client's md pass, not SSE.
+    assert "**bold** answer" in r.text
+    assert 'class="text md"' in r.text
+    assert "sse-connect" not in r.text
+    assert mod._SESSIONS["h4@t.com"].chat_id == cid
+
+
+def test_open_chat_rejects_another_users_chat(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "mine"}, headers=_hdr("owner@t.com"))
+    cid = mod._SESSIONS["owner@t.com"].chat_id
+    r = c.get(f"/tasks/fusion/chat/{cid}", headers=_hdr("thief@t.com"))
+    assert r.status_code == 404
+
+
+def test_delete_removes_the_chat_and_clears_the_open_thread(monkeypatch):
+    app, mod = _app(monkeypatch)
+    rows = _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "bye"}, headers=_hdr("h5@t.com"))
+    cid = mod._SESSIONS["h5@t.com"].chat_id
+    r = c.delete(f"/tasks/fusion/chat/{cid}", headers=_hdr("h5@t.com"))
+    assert r.status_code == 200
+    assert cid not in rows
+    assert mod._SESSIONS["h5@t.com"].chat_id is None
+    # The deleted chat was on screen, so the thread is cleared out of band.
+    assert 'hx-swap-oob="innerHTML"' in r.text
+
+
+def test_delete_of_another_chat_leaves_the_open_one_alone(monkeypatch):
+    app, mod = _app(monkeypatch)
+    rows = _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "one"}, headers=_hdr("h6@t.com"))
+    old = mod._SESSIONS["h6@t.com"].chat_id
+    c.post("/tasks/fusion/new", headers=_hdr("h6@t.com"))
+    c.post("/tasks/fusion/send", data={"message": "two"}, headers=_hdr("h6@t.com"))
+    current = mod._SESSIONS["h6@t.com"].chat_id
+    r = c.delete(f"/tasks/fusion/chat/{old}", headers=_hdr("h6@t.com"))
+    assert r.status_code == 200
+    assert mod._SESSIONS["h6@t.com"].chat_id == current
+    assert 'hx-swap-oob' not in r.text
+    assert current in rows
+
+
+def test_chat_list_shows_titles_and_marks_the_open_one(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "hello there"}, headers=_hdr("h7@t.com"))
+    cid = mod._SESSIONS["h7@t.com"].chat_id
+    r = c.get("/tasks/fusion/chats", headers=_hdr("h7@t.com"))
+    assert r.status_code == 200
+    assert "hello there" in r.text
+    assert f'hx-get="/tasks/fusion/chat/{cid}"' in r.text
+    assert "chatrow active" in r.text
+
+
+def test_chat_list_is_per_user(monkeypatch):
+    app, mod = _app(monkeypatch)
+    _fake_store(mod, monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/fusion/send", data={"message": "private"}, headers=_hdr("a1@t.com"))
+    r = c.get("/tasks/fusion/chats", headers=_hdr("b1@t.com"))
+    assert "private" not in r.text
+    assert "No saved chats yet" in r.text
+
+
+def test_send_survives_a_dead_database(monkeypatch):
+    app, mod = _app(monkeypatch)
+
+    async def boom(*a, **k):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(mod, "_create_chat", boom)
+    c = TestClient(app)
+    r = c.post("/tasks/fusion/send", data={"message": "still works"},
+               headers=_hdr("h8@t.com"))
+    assert r.status_code == 200
+    assert 'sse-connect="/tasks/fusion/stream"' in r.text
+    assert mod._SESSIONS["h8@t.com"].chat_id is None

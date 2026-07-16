@@ -7,15 +7,22 @@ in-process, so there is no internal HTTP hop.
 All routes live under the /tasks prefix, which is already routed to this
 service end to end, so no gateway or proxy change is needed."""
 import html
+import json
+import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
+from sqlalchemy import text
 from sse_starlette.sse import EventSourceResponse
 
 import fusion_engine
 from auth import CurrentUser, current_user
+from db import session
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -32,6 +39,10 @@ class FusionSession:
     preset_label: str = "quality"
     streaming: bool = False
     last_used: float = field(default_factory=time.time)
+    # The saved chat this session is working on, or None for a chat that has
+    # not been written yet (no message sent). The in-memory session stays the
+    # working copy; the row is the durable one.
+    chat_id: str | None = None
     # Bumped whenever the session is reset (New chat). A stream generator
     # captures it at start and refuses to write its result back if the value
     # changed underneath it, so an in-flight turn can never corrupt a session
@@ -63,6 +74,74 @@ def _get_session(email: str) -> FusionSession:
 
 def _esc(text: str) -> str:
     return html.escape(text or "")
+
+
+# ---------------------------------------------------------------- persistence
+
+def _title_from(message: str) -> str:
+    """A chat's sidebar name, taken from its opening message."""
+    one_line = " ".join((message or "").split())
+    if len(one_line) <= 48:
+        return one_line or "New chat"
+    return one_line[:47].rstrip() + "…"
+
+
+async def _create_chat(email: str, title: str, s: FusionSession) -> str:
+    chat_id = str(uuid.uuid4())
+    async with session() as db:
+        await db.execute(
+            text("INSERT INTO tasks.fusion_chats "
+                 "(id, user_email, title, messages, panel, judge, preset_label) "
+                 "VALUES (:id, :email, :title, CAST(:messages AS JSONB), "
+                 "CAST(:panel AS JSONB), :judge, :preset)"),
+            {"id": chat_id, "email": email, "title": title,
+             "messages": json.dumps(s.messages), "panel": json.dumps(s.panel),
+             "judge": s.judge, "preset": s.preset_label})
+        await db.commit()
+    return chat_id
+
+
+async def _save_chat(email: str, s: FusionSession) -> None:
+    """Write the session's conversation back to its row. Scoped by user_email so
+    a known chat id alone is never enough to write into someone else's chat."""
+    if not s.chat_id:
+        return
+    async with session() as db:
+        await db.execute(
+            text("UPDATE tasks.fusion_chats SET messages = CAST(:messages AS JSONB), "
+                 "panel = CAST(:panel AS JSONB), judge = :judge, "
+                 "preset_label = :preset, updated_at = now() "
+                 "WHERE id = :id AND user_email = :email"),
+            {"messages": json.dumps(s.messages), "panel": json.dumps(s.panel),
+             "judge": s.judge, "preset": s.preset_label,
+             "id": s.chat_id, "email": email})
+        await db.commit()
+
+
+async def _list_chats(email: str) -> list[dict]:
+    async with session() as db:
+        rows = (await db.execute(
+            text("SELECT id, title FROM tasks.fusion_chats WHERE user_email = :email "
+                 "ORDER BY updated_at DESC LIMIT 100"),
+            {"email": email})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def _load_chat(email: str, chat_id: str) -> dict | None:
+    async with session() as db:
+        row = (await db.execute(
+            text("SELECT id, title, messages, panel, judge, preset_label "
+                 "FROM tasks.fusion_chats WHERE id = :id AND user_email = :email"),
+            {"id": chat_id, "email": email})).mappings().first()
+    return dict(row) if row else None
+
+
+async def _delete_chat(email: str, chat_id: str) -> None:
+    async with session() as db:
+        await db.execute(
+            text("DELETE FROM tasks.fusion_chats WHERE id = :id AND user_email = :email"),
+            {"id": chat_id, "email": email})
+        await db.commit()
 
 
 def _user_bubble(text: str) -> str:
@@ -115,6 +194,42 @@ def _assistant_bubble_streaming(s: FusionSession) -> str:
         '</div>'
         '</div>'
     )
+
+
+def _assistant_bubble_static(content: str, s: FusionSession) -> str:
+    """A finished answer replayed from history. No SSE: the text is already
+    known. `md` marks it for the client's markdown pass, the same one the
+    streaming bubble gets when its turn closes."""
+    return (
+        '<div class="msg assistant">'
+        f'<div class="avatar">{_FUSION_AVATAR}</div>'
+        '<div class="body"><div class="who">Fusion</div>'
+        f'<div class="text md">{_esc(content)}</div>'
+        f'{_credit(s)}'
+        '</div>'
+        '</div>'
+    )
+
+
+def _render_chat_list(chats: list[dict], active_id: str | None) -> str:
+    """The sidebar's saved-chat list."""
+    if not chats:
+        return ('<p class="sidenote" id="chatlist">No saved chats yet. '
+                'Ask something and it will show up here.</p>')
+    rows = []
+    for c in chats:
+        cid = _esc(str(c["id"]))
+        active = " active" if str(c["id"]) == active_id else ""
+        rows.append(
+            f'<div class="chatrow{active}">'
+            f'<button class="chatopen" hx-get="/tasks/fusion/chat/{cid}" '
+            f'hx-target="#thread" hx-swap="innerHTML" '
+            f'title="{_esc(c["title"])}">{_esc(c["title"])}</button>'
+            f'<button class="chatdel" hx-delete="/tasks/fusion/chat/{cid}" '
+            f'hx-target="#chatlist" hx-swap="outerHTML" '
+            f'hx-confirm="Delete this chat?" title="Delete">&times;</button>'
+            f'</div>')
+    return f'<div class="chatlist" id="chatlist">{"".join(rows)}</div>'
 
 
 def _empty_thread() -> str:
@@ -232,7 +347,19 @@ async def fusion_send(message: str = Form(...),
             'one moment.</div>')
     s.messages.append({"role": "user", "content": text})
     s.streaming = True
-    return HTMLResponse(_user_bubble(text) + _assistant_bubble_streaming(s))
+    # First message of an unsaved chat: create the row now, so the chat appears
+    # in the sidebar immediately rather than only once the answer lands. A DB
+    # problem must not cost the user their turn, so this is best-effort: the
+    # chat simply stays unsaved and the fusion runs regardless.
+    if s.chat_id is None:
+        try:
+            s.chat_id = await _create_chat(user.email, _title_from(text), s)
+        except Exception:
+            log.exception("fusion: could not create chat row; continuing unsaved")
+    resp = HTMLResponse(_user_bubble(text) + _assistant_bubble_streaming(s))
+    # Tell the sidebar to refresh so the new chat (and its title) shows up.
+    resp.headers["HX-Trigger"] = "fusion-chats-changed"
+    return resp
 
 
 @router.get("/tasks/fusion/stream", include_in_schema=False)
@@ -285,6 +412,13 @@ async def fusion_stream(request: Request,
             # then closes without a second, already-paid fan-out.
             if s.generation == my_generation and placeholder in s.messages:
                 placeholder["content"] = full
+                # Persist only the turn we still own. The same generation guard
+                # applies: an abandoned turn must not be written back over a
+                # conversation the user has since replaced.
+                try:
+                    await _save_chat(user.email, s)
+                except Exception:
+                    log.exception("fusion: could not save chat %s", s.chat_id)
             s.streaming = False
             yield {"event": "close", "data": ""}
 
@@ -297,10 +431,74 @@ async def fusion_new(
     s = _get_session(user.email)
     s.messages.clear()
     s.streaming = False
+    # Detach from the saved chat. The row stays; this session just stops being
+    # about it, so the next message starts a new one instead of appending to
+    # the conversation the user just walked away from.
+    s.chat_id = None
     # Invalidate any stream still running against the old conversation so its
     # result is discarded instead of being appended to the fresh session.
     s.generation += 1
-    return HTMLResponse(_empty_thread())
+    resp = HTMLResponse(_empty_thread())
+    resp.headers["HX-Trigger"] = "fusion-chats-changed"
+    return resp
+
+
+@router.get("/tasks/fusion/chats", include_in_schema=False)
+async def fusion_chats(user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    s = _get_session(user.email)
+    return HTMLResponse(_render_chat_list(await _list_chats(user.email), s.chat_id))
+
+
+@router.get("/tasks/fusion/chat/{chat_id}", include_in_schema=False)
+async def fusion_chat_open(chat_id: str,
+                           user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    row = await _load_chat(user.email, chat_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such chat")
+    s = _get_session(user.email)
+    if s.streaming:
+        return HTMLResponse('<div class="msg system">Still answering the current '
+                            'turn, one moment.</div>')
+    # Adopt the saved chat wholesale, and bump the generation so any stream
+    # still running against the previous conversation discards its result.
+    s.messages = list(row["messages"] or [])
+    s.panel = list(row["panel"] or []) or list(_DEFAULT_PANEL)
+    s.judge = row["judge"] or _DEFAULT_JUDGE
+    s.preset_label = row["preset_label"] or "custom"
+    s.chat_id = str(row["id"])
+    s.generation += 1
+    out = []
+    for m in s.messages:
+        content = m.get("content") or ""
+        if not content.strip():
+            continue
+        if m.get("role") == "user":
+            out.append(_user_bubble(content))
+        else:
+            out.append(_assistant_bubble_static(content, s))
+    resp = HTMLResponse("".join(out) or _empty_thread())
+    resp.headers["HX-Trigger"] = "fusion-chats-changed"
+    return resp
+
+
+@router.delete("/tasks/fusion/chat/{chat_id}", include_in_schema=False)
+async def fusion_chat_delete(chat_id: str,
+                             user: CurrentUser = Depends(current_user)) -> HTMLResponse:
+    await _delete_chat(user.email, chat_id)
+    s = _get_session(user.email)
+    cleared = ""
+    if s.chat_id == chat_id:
+        # The open chat is the one being deleted: leave the session on a blank
+        # conversation rather than pointing at a row that no longer exists, and
+        # clear the thread out of band so the deleted chat does not stay on
+        # screen looking alive.
+        s.messages.clear()
+        s.chat_id = None
+        s.generation += 1
+        cleared = (f'<div id="thread" hx-swap-oob="innerHTML">'
+                   f'{_empty_thread()}</div>')
+    body = _render_chat_list(await _list_chats(user.email), s.chat_id)
+    return HTMLResponse(body + cleared)
 
 
 @router.get("/tasks/fusion/picker", include_in_schema=False)
