@@ -7,6 +7,10 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" crossorigin="use-credentials">
   <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+  <!-- Docs tab renders the app README. marked does not sanitize and the
+       README is agent-written, so DOMPurify runs on its output. -->
+  <script src="/tasks/static/vendor/marked.min.js"></script>
+  <script src="/tasks/static/vendor/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
@@ -2189,6 +2193,24 @@
     @media (max-width: 760px) {
       .slug-pill .slug-name { max-width: 140px; }
     }
+    /* Docs tab: rendered README */
+    .docs-body { overflow-y: auto; padding: 0; }
+    .docs-md { padding: 18px 22px; max-width: 780px; line-height: 1.65; font-size: 13.5px; }
+    .docs-md h1 { font-size: 1.4em; margin: 0 0 .5em; }
+    .docs-md h2 { font-size: 1.12em; margin: 1.4em 0 .45em; }
+    .docs-md h3 { font-size: 1em; margin: 1.2em 0 .4em; }
+    .docs-md p { margin: 0 0 .85em; }
+    .docs-md ul, .docs-md ol { margin: 0 0 .85em; padding-left: 1.5em; }
+    .docs-md li { margin: .25em 0; }
+    .docs-md code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9em;
+      padding: 1px 5px; border-radius: 4px; background: rgba(127,127,127,.16); }
+    .docs-md pre { padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 .85em;
+      background: rgba(127,127,127,.12); }
+    .docs-md pre code { background: none; padding: 0; }
+    .docs-md a { color: inherit; text-decoration: underline; }
+    .docs-md table { border-collapse: collapse; margin: 0 0 .85em; display: block; overflow-x: auto; }
+    .docs-md th, .docs-md td { border: 1px solid rgba(127,127,127,.3); padding: 6px 10px; text-align: left; }
+    .docs-md > *:last-child { margin-bottom: 0; }
   </style>
 </head>
 <body>
@@ -2415,6 +2437,12 @@
         </span>
         <span class="tab-label">History</span>
         <span class="tab-badge" id="badge-history" hidden></span>
+      </button>
+      <button class="tab" data-tab="docs" title="The app's README, written and kept current by the builder">
+        <span class="tab-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+        </span>
+        <span class="tab-label">Docs</span>
       </button>
     </nav>
 
@@ -2677,6 +2705,23 @@
       </div>
 
       <!-- History (version-control) panel -->
+      <div class="panel" id="panel-docs">
+        <div class="panel-head">
+          <span class="filepath" id="docs-title">README.md</span>
+          <div class="panel-actions">
+            <button class="icon-btn" id="docs-refresh" title="Refresh" type="button">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="panel-body docs-body" id="docs-body">
+          <div class="empty">
+            <div class="empty-icon"></div>
+            <div class="empty-title">Loading docs…</div>
+          </div>
+        </div>
+      </div>
+
       <div class="panel" id="panel-history">
         <div class="panel-head">
           <span class="filepath" id="history-title">Version history</span>
@@ -3856,6 +3901,7 @@
     if (tab === "logs") loadLogs();
     if (tab === "tests") loadTests();
     if (tab === "history") loadVersions();
+    if (tab === "docs") loadDocs();
     if (tab === "database") loadDatabase();
   }
   document.getElementById("tabs").addEventListener("click", function (e) {
@@ -4620,6 +4666,58 @@
       b.addEventListener("click", () => rollbackVersion(b.dataset.sha, b.dataset.v))
     );
   }
+
+  // ── Docs tab: the app's README, rendered ──────────────────────────────
+  const $docsBody = document.getElementById("docs-body");
+
+  async function loadDocs() {
+    if (!slug) {
+      $docsBody.innerHTML =
+        '<div class="empty">' +
+        '<div class="empty-icon"></div>' +
+        '<div class="empty-title">Waiting for build</div>' +
+        '<div class="empty-sub">The docs appear here once the app has been built.</div>' +
+        '</div>';
+      return;
+    }
+    $docsBody.innerHTML =
+      '<div class="empty"><div class="empty-icon"></div><div class="empty-title">Loading docs…</div></div>';
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = "Bearer " + token;
+      const r = await fetch("/api/projects/" + encodeURIComponent(slug) + "/docs", {
+        headers: headers,
+        credentials: "include",
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        $docsBody.innerHTML =
+          '<div class="empty"><div class="empty-icon">!</div><div class="empty-title">Could not load</div><div class="empty-sub">' +
+          escapeHtml(txt).slice(0, 300) + '</div></div>';
+        return;
+      }
+      const data = await r.json();
+      if (!data.exists || !(data.markdown || "").trim()) {
+        $docsBody.innerHTML =
+          '<div class="empty">' +
+          '<div class="empty-icon"></div>' +
+          '<div class="empty-title">No docs yet</div>' +
+          '<div class="empty-sub">The next build writes them.</div>' +
+          '</div>';
+        return;
+      }
+      // Agent-written markdown into innerHTML: sanitize before it lands.
+      $docsBody.innerHTML =
+        '<div class="docs-md">' + DOMPurify.sanitize(marked.parse(data.markdown)) + '</div>';
+    } catch (err) {
+      $docsBody.innerHTML =
+        '<div class="empty"><div class="empty-icon">!</div><div class="empty-title">Could not load</div><div class="empty-sub">' +
+        escapeHtml(String(err)) + '</div></div>';
+    }
+  }
+
+  document.getElementById("docs-refresh").addEventListener("click", loadDocs);
 
   async function loadVersions() {
     if (!slug) {
