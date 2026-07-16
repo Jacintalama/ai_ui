@@ -986,12 +986,12 @@
   <div id="docs-modal" class="modal-backdrop" hidden>
     <div class="modal" style="max-width: 680px;">
       <div class="modal-header">
-        <h3>Docs: <span id="dm-slug"></span></h3>
+        <h3>Docs: <span id="docs-slug"></span></h3>
         <button type="button" class="close" data-close>×</button>
       </div>
       <div class="modal-body">
         <div class="form-hint" style="margin-bottom:6px;">The app's README, written and kept up to date by the builder on every build.</div>
-        <div id="dm-body" class="docs-body">
+        <div id="docs-body" class="docs-body">
           <div class="members-empty">Loading…</div>
         </div>
       </div>
@@ -2488,21 +2488,21 @@
       }
     }
 
-    // ===== History modal (version list + rollback) =====
-    const dmModal = document.getElementById("docs-modal");
-    const dmSlug  = document.getElementById("dm-slug");
-    const dmBody  = document.getElementById("dm-body");
+    // ===== Docs modal (renders the app README) =====
+    const docsModal = document.getElementById("docs-modal");
+    const docsSlug  = document.getElementById("docs-slug");
+    const docsBody  = document.getElementById("docs-body");
 
-    function _closeDmModal() { dmModal.hidden = true; }
-    dmModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", _closeDmModal));
-    dmModal.addEventListener("click", (ev) => { if (ev.target === dmModal) _closeDmModal(); });
-    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !dmModal.hidden) _closeDmModal(); });
+    function _closeDocsModal() { docsModal.hidden = true; }
+    docsModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", _closeDocsModal));
+    docsModal.addEventListener("click", (ev) => { if (ev.target === docsModal) _closeDocsModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !docsModal.hidden) _closeDocsModal(); });
 
     async function openDocsModal(slug) {
       if (!slug) return;
-      dmSlug.textContent = slug;
-      dmBody.innerHTML = `<div class="members-empty">Loading docs…</div>`;
-      dmModal.hidden = false;
+      docsSlug.textContent = slug;
+      docsBody.innerHTML = `<div class="members-empty">Loading docs…</div>`;
+      docsModal.hidden = false;
       try {
         const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/docs`, {
           headers: authHeaders(),
@@ -2511,12 +2511,12 @@
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
         if (!data.exists || !(data.markdown || "").trim()) {
-          dmBody.innerHTML = `<div class="members-empty">No docs yet. The next build will write them.</div>`;
+          docsBody.innerHTML = `<div class="members-empty">No docs yet. The next build will write them.</div>`;
           return;
         }
-        dmBody.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown));
+        docsBody.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown));
       } catch (e) {
-        dmBody.innerHTML = `<div class="members-empty">Could not load the docs (${escapeHtml(String(e.message || e))}).</div>`;
+        docsBody.innerHTML = `<div class="members-empty">Could not load the docs (${escapeHtml(String(e.message || e))}).</div>`;
       }
     }
 
