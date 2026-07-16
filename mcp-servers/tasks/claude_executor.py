@@ -111,11 +111,29 @@ content the *visitor* of the built app will see):
     EVERY section? If any section would render as empty whitespace below
     its heading, you are NOT done — go fill it before emitting COMPLETED.
 
+DOCS - NON-NEGOTIABLE (overrides "TERSE / SIMPLEST"):
+  * apps/<slug>/README.md is the app's living documentation. It MUST exist and
+    be current when you finish. Never skip it, never leave it a stub.
+  * It MUST be markdown, in this shape:
+      # <App name>
+      One or two sentences on what the app is for.
+      ## What it does
+      One bullet per real feature you actually built.
+      ## How to run
+      How to open it, plus any setup it needs (e.g. Supabase keys).
+      ## Changelog
+      Newest first, one line per change, each dated YYYY-MM-DD.
+  * On a fresh build, create it and open the Changelog with the first entry.
+  * Write it for the person who asked for the app, not for a developer. The
+    CONTENT FILL rules apply here too: no TODO, no placeholders, no
+    "Coming soon".
+  * Stage it in the same commit as your code changes.
+
 FILE LAYOUT (MANDATORY — create the project folder first, then subfolders, then files):
 
   apps/<slug>/                    ← project root, always created first
     index.html                    # ~30 lines: <head>, mount target, CDN scripts, link to styles + main.js
-    README.md                     # 1-paragraph description + how to run
+    README.md                     # the app's living doc, see DOCS below (never skip it)
     styles/
       main.css                    # project-specific overrides (Tailwind handles 95%)
     src/
@@ -459,11 +477,22 @@ SCOPE RULES:
   3. Place apps under apps/<slug>/ (e.g. apps/todo-list/).
   4. Do NOT add auth, Docker, FastAPI, or deployment unless the plan says so.
 
+DOCS - NON-NEGOTIABLE (overrides "TERSE / SIMPLEST"):
+  * apps/<slug>/README.md is the app's living documentation. It MUST exist and
+    be current when you finish. Never skip it, never leave it a stub.
+  * Markdown, in this shape: "# <App name>", one or two sentences on what it is
+    for, then "## What it does" (a bullet per real feature), "## How to run"
+    (how to open it plus any setup), and "## Changelog" (newest first, one
+    dated line per change).
+  * Write it for the person who asked for the app, not for a developer. No TODO
+    and no placeholders.
+  * Stage it in the same commit as your code changes.
+
 FILE LAYOUT (MANDATORY — create these folders BEFORE writing any files):
 
   apps/<slug>/
     index.html             # thin entry: markup skeleton only; loads main.js + main.css
-    README.md              # 1-paragraph description + how to run
+    README.md              # the app's living doc, see DOCS below (never skip it)
     styles/
       main.css             # all styling
     src/
@@ -556,6 +585,14 @@ RULES (in priority order):
      for a list/grid, 2-3 paragraphs for narrative copy. No empty bodies,
      no placeholder strings, no <!-- TODO -->. Generate the content
      yourself in a voice that matches the rest of the app.
+  8. DOCS: Update apps/{slug}/README.md to match what you changed. This
+     OVERRIDES rule 1: the doc is never "outside the smallest change", it is
+     part of it. Add a dated line at the top of its "## Changelog" saying what
+     you did, and correct any section the change made wrong (a new feature
+     belongs under "## What it does"; new setup belongs under "## How to run").
+     If README.md is missing or a stub, write it in full: "# <App name>", one
+     or two sentences on what the app is for, "## What it does", "## How to
+     run", "## Changelog". Stage it in the same commit as your code.
 
 WORKFLOW:
   1. If the request replaces a placeholder value (name, brand, copy):

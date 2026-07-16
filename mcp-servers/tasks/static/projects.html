@@ -6,6 +6,10 @@
   <title>App Builder</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" crossorigin="use-credentials">
   <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
+  <!-- Docs modal renders the app's README. marked does not sanitize and the
+       README is agent-written, so DOMPurify runs on its output. -->
+  <script src="/tasks/static/vendor/marked.min.js"></script>
+  <script src="/tasks/static/vendor/purify.min.js"></script>
   <style>
     :root[data-theme="dark"] {
       --bg:           #0a0a0b;
@@ -930,6 +934,17 @@
     .np-staged-list li.skipped .path { color: var(--muted); text-decoration: line-through; }
     .np-staged-list li.invalid { background: rgba(239, 68, 68, 0.08); }
     .np-staged-list li.invalid .path { color: var(--danger, #ef4444); }
+    /* Docs modal: rendered README */
+    .docs-body { max-height: 60vh; overflow-y: auto; line-height: 1.6; }
+    .docs-body h1 { font-size: 1.25rem; margin: 0 0 .5em; }
+    .docs-body h2 { font-size: 1.05rem; margin: 1.2em 0 .4em; }
+    .docs-body p { margin: 0 0 .8em; }
+    .docs-body ul, .docs-body ol { margin: 0 0 .8em; padding-left: 1.4em; }
+    .docs-body li { margin: .2em 0; }
+    .docs-body code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .88em; padding: 1px 5px; border-radius: 5px; }
+    .docs-body pre { padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 0 0 .8em; }
+    .docs-body pre code { padding: 0; }
+    .docs-body > *:last-child { margin-bottom: 0; }
   </style>
 </head>
 <body>
@@ -965,6 +980,24 @@
     </div>
     <div id="content">
       <div class="loading"><div class="spinner"></div>Loading your projects…</div>
+    </div>
+  </div>
+
+  <div id="docs-modal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3>Docs: <span id="dm-slug"></span></h3>
+        <button type="button" class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint" style="margin-bottom:6px;">The app's README, written and kept up to date by the builder on every build.</div>
+        <div id="dm-body" class="docs-body">
+          <div class="members-empty">Loading…</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close>Close</button>
+      </div>
     </div>
   </div>
 
@@ -1335,6 +1368,9 @@
         const membersBtn = t.built_app_slug
           ? `<button type="button" class="members-btn" data-slug="${escapeHtml(t.built_app_slug)}">Members</button>`
           : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="Members available once the build completes">Members</span>`;
+        const docsBtn = t.built_app_slug
+          ? `<button type="button" class="members-btn docs-btn" data-slug="${escapeHtml(t.built_app_slug)}">Docs</button>`
+          : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="Docs available once the build completes">Docs</span>`;
         const historyBtn = t.built_app_slug
           ? `<button type="button" class="members-btn history-btn" data-slug="${escapeHtml(t.built_app_slug)}">History</button>`
           : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="History available once the build completes">History</span>`;
@@ -1352,14 +1388,17 @@
           <div class="desc">${escapeHtml(userDesc)}</div>
           <div class="meta">
             <span class="left">${escapeHtml(relativeTime(built))}</span>
-            <span style="display:flex; gap:6px;">${historyBtn}${membersBtn}</span>
+            <span style="display:flex; gap:6px;">${docsBtn}${historyBtn}${membersBtn}</span>
           </div>
           <div class="actions">${actionBtn}</div>`;
         grid.appendChild(card);
       }
       // Wire Members + History buttons (delegated listeners)
-      grid.querySelectorAll("button.members-btn:not(.history-btn)").forEach((b) => {
+      grid.querySelectorAll("button.members-btn:not(.history-btn):not(.docs-btn)").forEach((b) => {
         b.addEventListener("click", () => openMembersModal(b.dataset.slug));
+      });
+      grid.querySelectorAll("button.docs-btn").forEach((b) => {
+        b.addEventListener("click", () => openDocsModal(b.dataset.slug));
       });
       grid.querySelectorAll("button.history-btn").forEach((b) => {
         b.addEventListener("click", () => openHistoryModal(b.dataset.slug));
@@ -2450,6 +2489,37 @@
     }
 
     // ===== History modal (version list + rollback) =====
+    const dmModal = document.getElementById("docs-modal");
+    const dmSlug  = document.getElementById("dm-slug");
+    const dmBody  = document.getElementById("dm-body");
+
+    function _closeDmModal() { dmModal.hidden = true; }
+    dmModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", _closeDmModal));
+    dmModal.addEventListener("click", (ev) => { if (ev.target === dmModal) _closeDmModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !dmModal.hidden) _closeDmModal(); });
+
+    async function openDocsModal(slug) {
+      if (!slug) return;
+      dmSlug.textContent = slug;
+      dmBody.innerHTML = `<div class="members-empty">Loading docs…</div>`;
+      dmModal.hidden = false;
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/docs`, {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (!data.exists || !(data.markdown || "").trim()) {
+          dmBody.innerHTML = `<div class="members-empty">No docs yet. The next build will write them.</div>`;
+          return;
+        }
+        dmBody.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown));
+      } catch (e) {
+        dmBody.innerHTML = `<div class="members-empty">Could not load the docs (${escapeHtml(String(e.message || e))}).</div>`;
+      }
+    }
+
     const hmModal = document.getElementById("history-modal");
     const hmSlug  = document.getElementById("hm-slug");
     const hmList  = document.getElementById("hm-list");

@@ -14,6 +14,7 @@ of truth. Rollback restores files from a chosen SHA with a new commit on
 top (so the "bad" version stays in history, marked as superseded).
 """
 import asyncio
+import logging
 import os
 import re
 import time
@@ -43,6 +44,7 @@ _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$"
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects")
 
 
@@ -643,6 +645,29 @@ async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_ca
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
     return await list_app_versions_core(slug)
+
+
+@router.get("/{slug}/docs")
+async def get_docs(slug: str,
+                   user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+    """The app's README.md as raw markdown, for the Docs tab.
+
+    Membership-gated like the version history next door. Returns the text only;
+    the client renders it, the same way the Fusion page renders an answer."""
+    _validate_slug(slug)
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+    from app_docs import app_readme_path
+    path = app_readme_path(slug)
+    try:
+        if not path.exists():
+            return {"slug": slug, "exists": False, "markdown": ""}
+        return {"slug": slug, "exists": True,
+                "markdown": path.read_text(encoding="utf-8")}
+    except OSError:
+        logger.exception("docs: could not read README for %s", slug)
+        raise HTTPException(status_code=500, detail="Could not read the docs")
 
 
 async def rollback_app_core(slug: str, sha: str, actor_email: str) -> dict:
