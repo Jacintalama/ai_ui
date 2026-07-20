@@ -13,6 +13,12 @@ from sse_starlette.sse import EventSourceResponse
 
 from agent_executor import get_executor
 from app_git import sweep_app_commit as _sweep_app_commit_default
+from app_regression import (
+    capture_baseline as _capture_baseline_default,
+    compose_result,
+    is_regression,
+    revert_regression as _revert_regression_default,
+)
 from app_docs import sweep_app_docs as _sweep_app_docs_default
 from app_smoke import smoke_app as _smoke_app_default
 from auth import AdminUser, current_admin, current_admin_or_capability
@@ -37,6 +43,10 @@ AUTOFIX_MAX_PASSES = 2
 
 # History sweep: commits apps/<slug>/ when the agent didn't. Same seam pattern.
 _sweep_app_commit = _sweep_app_commit_default
+
+# Regression guard: reverts an enhance that broke a working app. Same seam.
+_capture_baseline = _capture_baseline_default
+_revert_regression = _revert_regression_default
 
 # Docs sweep: writes apps/<slug>/README.md when the agent didn't.
 _sweep_app_docs = _sweep_app_docs_default
@@ -232,6 +242,23 @@ async def _run_execution(
             )
             await s.commit()
 
+        # --- REGRESSION GUARD: remember what worked BEFORE we touch it ---
+        # Only enhances: a fresh build has no prior state to regress from.
+        # Returns None (guard disabled) when the app has no history to restore
+        # or anything goes wrong. Costs one headless smoke on an enhance that
+        # already takes minutes.
+        baseline = None
+        async with session() as s:
+            pre = (await s.execute(
+                select(TaskItem).where(TaskItem.id == task_id)
+            )).scalar_one_or_none()
+        if (
+            pre is not None
+            and pre.built_app_slug
+            and (pre.description or "").startswith("Enhance apps/")
+        ):
+            baseline = await _capture_baseline(pre.built_app_slug)
+
         full_output = await _stream_claude(
             prompt, execution_id, task_id,
             user_jwt=user_jwt, schedule_id=schedule_id,
@@ -316,6 +343,18 @@ async def _run_execution(
                 slug, message=outcome.payload, actor_email=assignee_email,
             )
 
+        # --- REGRESSION GUARD: did this enhance break what used to work? ---
+        # Runs AFTER the commit sweep on purpose: the broken attempt becomes a
+        # real commit and the revert is a second commit on top, so nothing is
+        # destroyed, the history reads honestly, and someone can go forward and
+        # repair it by hand. Only fires clean -> broken; an app that was already
+        # failing is left alone because the enhance may be the fix. Fails open.
+        revert_message = None
+        if outcome.kind == "completed" and slug and is_regression(baseline, smoke_report):
+            revert_message = await _revert_regression(
+                slug, baseline, smoke_report, actor_email=assignee_email,
+            )
+
         # --- LOOP MODE: VERIFY step after COMPLETED ---
         if outcome.kind == "completed" and is_loop and slug:
             async with session() as s:
@@ -395,11 +434,11 @@ async def _run_execution(
         # and Claude's completion message for a tweak rarely repeats the
         # `apps/<slug>/` path — without this guard the slug gets clobbered to
         # NULL, breaking the Preview App button and sidebar polling).
-        result_payload = outcome.payload
-        if smoke_report:
-            result_payload = (
-                f"{outcome.payload}\n\nAutoFix could not resolve these load errors:\n{smoke_report}"
-            )
+        result_payload = compose_result(
+            outcome.payload,
+            smoke_report=smoke_report,
+            revert_message=revert_message,
+        )
 
         update_values = {
             "status": new_task_status,
