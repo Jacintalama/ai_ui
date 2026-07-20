@@ -274,9 +274,19 @@ async def _run_execution(
             assignee_email = task.assignee_email or ""
             built_slug = task.built_app_slug or ""
 
-        slug = None
+        # Which app the post-completion steps act on. Prefer what the agent
+        # named, fall back to what the task already knows: the comment at the
+        # built_app_slug write below records that "Claude's completion message
+        # for a tweak rarely repeats the `apps/<slug>/` path", and deriving
+        # this from the output ALONE meant AutoFix, the docs sweep, the commit
+        # sweep and the regression guard all silently skipped real enhances
+        # (measured on prod 2026-07-17). `extracted_slug` stays separate
+        # because the built_app_slug DB write must NOT be widened - writing the
+        # fallback there would defeat the anti-clobber guard it already has.
+        extracted_slug = None
         if outcome.kind == "completed":
-            slug = extract_app_slug(full_output)
+            extracted_slug = extract_app_slug(full_output)
+        slug = effective_slug(extracted_slug, built_slug) if outcome.kind == "completed" else None
 
         # --- LOOP MODE: auto-retry on failure ---
         if outcome.kind == "failed" and is_loop and attempt < max_att:
@@ -447,8 +457,11 @@ async def _run_execution(
             "completed_at": datetime.utcnow() if outcome.kind == "completed" else None,
             **history_update,
         }
-        if slug:
-            update_values["built_app_slug"] = slug
+        # NOTE: `extracted_slug`, deliberately not the widened `slug`. Writing
+        # the fallback here would be a no-op at best and would erase the point
+        # of the guard described above.
+        if extracted_slug:
+            update_values["built_app_slug"] = extracted_slug
 
         async with session() as s:
             await s.execute(

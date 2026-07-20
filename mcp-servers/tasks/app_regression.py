@@ -81,6 +81,20 @@ def is_regression(baseline: Baseline | None, report: str | None) -> bool:
     return bool(report)
 
 
+def effective_slug(extracted: str | None, task_slug: str | None) -> str | None:
+    """Which app the post-build steps should act on.
+
+    Prefer the slug the agent actually named; fall back to the one the task
+    already carries. routes_execution.py:431-435 documents that "Claude's
+    completion message for a tweak rarely repeats the `apps/<slug>/` path", so
+    deriving this from the agent's text ALONE silently skipped AutoFix, the
+    docs sweep, the commit sweep and this guard on real enhances (measured on
+    prod 2026-07-17: index.html changed, autofix ran 0 times, nothing
+    committed). The task knows its own slug; there is no reason to guess.
+    """
+    return (extracted or "").strip() or (task_slug or "").strip() or None
+
+
 def compose_result(
     summary: str,
     *,

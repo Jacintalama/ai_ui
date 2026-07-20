@@ -190,6 +190,34 @@ async def test_revert_fails_open_when_rollback_raises(monkeypatch):
     assert msg is None
 
 
+# --- which app the post-build steps act on ---------------------------------
+# Found by the live e2e on 2026-07-17. routes_execution derived the slug ONLY
+# from the agent's completion text (`extract_app_slug(full_output)`), and
+# routes_execution.py:431-435 already documents that "Claude's completion
+# message for a tweak rarely repeats the `apps/<slug>/` path". So on a real
+# enhance the slug came back None, which silently skipped AutoFix, the docs
+# sweep, the commit sweep AND this regression guard. Measured on prod: the
+# enhance changed index.html, autofix ran 0 times, and nothing was committed.
+# The task already knows its own slug; use it as the fallback.
+
+def test_effective_slug_prefers_what_the_agent_actually_wrote():
+    assert app_regression.effective_slug("agent-said", "task-knows") == "agent-said"
+
+
+def test_effective_slug_falls_back_to_the_task_when_the_agent_stays_quiet():
+    """The enhance case: the agent tweaks a file and never names the path."""
+    assert app_regression.effective_slug(None, "task-knows") == "task-knows"
+
+
+def test_effective_slug_treats_empty_string_as_quiet():
+    assert app_regression.effective_slug("", "task-knows") == "task-knows"
+
+
+def test_effective_slug_is_none_when_neither_knows():
+    assert app_regression.effective_slug(None, "") is None
+    assert app_regression.effective_slug(None, None) is None
+
+
 # --- what the user actually ends up reading ---------------------------------
 
 def test_result_is_the_agent_summary_when_all_is_well():
