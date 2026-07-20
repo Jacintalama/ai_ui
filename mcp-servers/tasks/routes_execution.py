@@ -16,6 +16,7 @@ from app_git import sweep_app_commit as _sweep_app_commit_default
 from app_regression import (
     capture_baseline as _capture_baseline_default,
     compose_result,
+    effective_slug,
     is_regression,
     revert_regression as _revert_regression_default,
 )

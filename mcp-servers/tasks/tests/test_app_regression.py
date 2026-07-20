@@ -9,7 +9,65 @@ Monkeypatches the module-level seams (_smoke_app, _run_git, _rollback) so no
 browser, no git and no LLM are involved. See
 docs/superpowers/specs/2026-07-17-enhance-regression-guard-design.md
 """
+import pathlib
+
 import app_regression
+
+
+# --- the wiring actually resolves ------------------------------------------
+# Caught by the live e2e on 2026-07-17, not by a unit test: routes_execution
+# called effective_slug() without importing it. `python -c "import
+# routes_execution"` passed, because a NameError inside a function body only
+# fires when that line RUNS - and the enhance path has no unit test that runs
+# it. The real enhance died with "name 'effective_slug' is not defined".
+
+def _unresolved_called_names(module_path: str, module_obj) -> list[str]:
+    """Bare function names CALLED in a module that resolve to nothing.
+
+    Deliberately narrow: only `foo(...)` call sites, not every name load, so it
+    stays simple and produces no false positives from locals. That is exactly
+    the shape of the bug it exists to catch.
+    """
+    import ast
+    import builtins
+
+    tree = ast.parse(pathlib.Path(module_path).read_text(encoding="utf-8"))
+    local_names = {
+        n.name for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    # Any name bound anywhere in the module, at any scope (params, assignments,
+    # comprehensions, with/except aliases). A call to one of those is fine.
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            local_names.add(n.id)
+        elif isinstance(n, ast.arg):
+            local_names.add(n.arg)
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            # Includes imports made INSIDE function bodies (routes_execution
+            # does `from routes_projects import _require_role` in three
+            # handlers). Those never appear in dir(module), so relying on the
+            # module namespace alone reports them as missing.
+            for alias in n.names:
+                local_names.add((alias.asname or alias.name).split(".")[0])
+
+    known = set(dir(module_obj)) | set(dir(builtins)) | local_names
+    return sorted({
+        n.func.id for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id not in known
+    })
+
+
+def test_every_function_routes_execution_calls_actually_exists():
+    """routes_execution called effective_slug() without importing it. Importing
+    the module did not catch it, because a NameError inside a function body only
+    fires when that line RUNS, and no unit test exercises the enhance path."""
+    import routes_execution
+
+    missing = _unresolved_called_names(routes_execution.__file__, routes_execution)
+
+    assert missing == [], f"called but never defined or imported: {missing}"
 
 
 # --- helpers ---------------------------------------------------------------
