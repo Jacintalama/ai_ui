@@ -103,7 +103,7 @@ class Pipe:
         # Model ids are OpenRouter :free ids and DO rotate. If a route starts
         # failing, re-check https://openrouter.ai/api/v1/models and update here.
         MODEL_GENERAL: str = Field(
-            default="google/gemma-4-31b-it:free",
+            default="openai/gpt-oss-20b:free",
             description="Free model for general questions.",
         )
         MODEL_CODER: str = Field(
@@ -111,7 +111,7 @@ class Pipe:
             description="Free model for code questions.",
         )
         MODEL_REASONING: str = Field(
-            default="nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+            default="nvidia/nemotron-3-super-120b-a12b:free",
             description="Free model for math and logic questions.",
         )
         SHOW_ROUTE: bool = Field(
