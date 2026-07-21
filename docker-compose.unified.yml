@@ -549,11 +549,14 @@ services:
       # LLM Connections
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
       - ENABLE_OLLAMA_API=${ENABLE_OLLAMA_API:-false}
-      # OpenAI + Pipelines (semicolon-separated for multiple connections)
-      - OPENAI_API_KEYS=${OPENAI_API_KEY:-};0p3n-w3bu!
-      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-};http://pipelines:9099
-      # Free-model auto-router pipe (open-webui-functions/auto_router_pipe.py)
-      # reads this to call OpenRouter's free tier. No new container.
+      # OpenAI + Pipelines + OpenRouter free (semicolon-separated connections)
+      # index 0 OpenAI, 1 pipelines, 2 OpenRouter (free models only).
+      - OPENAI_API_KEYS=${OPENAI_API_KEY:-};0p3n-w3bu!;${OPENROUTER_API_KEY:-}
+      - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-};http://pipelines:9099;https://openrouter.ai/api/v1
+      # Restrict the OpenRouter connection (index 2) to free models only, so the
+      # dropdown never offers a paid model. Ids rotate; refresh from the live list.
+      - 'OPENAI_API_CONFIGS={"2":{"enable":true,"model_ids":["cohere/north-mini-code:free","google/gemma-4-26b-a4b-it:free","google/gemma-4-31b-it:free","nvidia/nemotron-3-nano-30b-a3b:free","nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free","nvidia/nemotron-3-super-120b-a12b:free","nvidia/nemotron-3-ultra-550b-a55b:free","nvidia/nemotron-3.5-content-safety:free","nvidia/nemotron-nano-12b-v2-vl:free","nvidia/nemotron-nano-9b-v2:free","openai/gpt-oss-20b:free","poolside/laguna-m.1:free","poolside/laguna-xs-2.1:free"]}}'
+      # OPENROUTER_API_KEY also used by the auto-router pipe (open-webui-functions/auto_router_pipe.py).
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       # Database
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
