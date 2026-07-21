@@ -552,6 +552,9 @@ services:
       # OpenAI + Pipelines (semicolon-separated for multiple connections)
       - OPENAI_API_KEYS=${OPENAI_API_KEY:-};0p3n-w3bu!
       - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-};http://pipelines:9099
+      # Free-model auto-router pipe (open-webui-functions/auto_router_pipe.py)
+      # reads this to call OpenRouter's free tier. No new container.
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       # Database
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui
       - VECTOR_DB=pgvector
