@@ -77,6 +77,14 @@ class Filter:
             out.pop()
         return out
 
+    def _append_to_reply(self, body: dict, note: str) -> None:
+        """Append text to the assistant reply by editing the body. Filter outlets
+        cannot rely on __event_emitter__ (it may be None here), so we modify the
+        message, which Open WebUI persists and renders."""
+        msgs = body.get("messages") or []
+        if msgs and msgs[-1].get("role") == "assistant":
+            msgs[-1]["content"] = (msgs[-1].get("content") or "") + note
+
     async def outlet(
         self,
         body: dict,
@@ -89,24 +97,28 @@ class Filter:
                     {"type": "status", "data": {"description": desc, "done": done}}
                 )
 
-        async def post(md: str) -> None:
-            if __event_emitter__:
-                await __event_emitter__({"type": "message", "data": {"content": md}})
+        out_msgs = body.get("messages") or []
+        # Only act after an assistant reply, and never fuse the same reply twice
+        # (e.g. on regenerate), which would also double-charge the panel.
+        if not out_msgs or out_msgs[-1].get("role") != "assistant":
+            return body
+        if "## Fusion (verified)" in (out_msgs[-1].get("content") or ""):
+            return body
 
-        messages = self._prompt_messages(body.get("messages") or [])
+        messages = self._prompt_messages(out_msgs)
         if not messages:
             return body
         if not INTERNAL_SECRET:
-            await post("\n\n---\n**Fusion:** not configured (INTERNAL_CALLBACK_SECRET "
-                       "missing from Open WebUI's environment).\n")
+            self._append_to_reply(body, "\n\n---\n**Fusion:** not configured "
+                                  "(INTERNAL_CALLBACK_SECRET missing).\n")
             return body
 
         uv = (__user__ or {}).get("valves") or self.UserValves()
         panel = [m.strip() for m in (uv.panel or "").split(",") if m.strip()]
         judge = (uv.judge or "").strip()
         if not panel or not judge:
-            await post("\n\n---\n**Fusion:** set a panel and a judge in the filter "
-                       "settings.\n")
+            self._append_to_reply(body, "\n\n---\n**Fusion:** set a panel and a "
+                                  "judge in the filter settings.\n")
             return body
 
         await say(f"Fusion: cross-checking with {', '.join(panel)}...")
@@ -122,14 +134,15 @@ class Filter:
                     if r.status_code != 200:
                         detail = (await r.aread()).decode("utf-8", "replace")[:300]
                         await say("Fusion failed", done=True)
-                        await post(f"\n\n---\n**Fusion failed** ({r.status_code}): {detail}\n")
+                        self._append_to_reply(body, f"\n\n---\n**Fusion failed** "
+                                              f"({r.status_code}): {detail}\n")
                         return body
                     async for piece in r.aiter_text():
                         if piece:
                             chunks.append(piece)
         except Exception as e:
             await say("Fusion failed", done=True)
-            await post(f"\n\n---\n**Fusion could not run:** {e}\n")
+            self._append_to_reply(body, f"\n\n---\n**Fusion could not run:** {e}\n")
             return body
 
         verified = "".join(chunks).strip()
@@ -138,6 +151,8 @@ class Filter:
             return body
 
         await say(f"Fusion: cross-checked {len(panel)} models", done=True)
-        await post(f"\n\n---\n## Fusion (verified)\n\n{verified}\n\n"
-                   f"*Cross-checked {', '.join(panel)}; fused by {judge}.*\n")
+        self._append_to_reply(
+            body,
+            f"\n\n---\n## Fusion (verified)\n\n{verified}\n\n"
+            f"*Cross-checked {', '.join(panel)}; fused by {judge}.*\n")
         return body
