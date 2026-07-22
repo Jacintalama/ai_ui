@@ -53,6 +53,16 @@ HARD_SIGNALS = [
 ]
 HARD_REASONING = ["prove", "derive", "theorem", "proof", "step by step", "multi-step"]
 
+# On a rate-limit (429) or error, retry these in order. Free path stays free;
+# paid path escalates to another strong OpenAI model.
+FREE_FALLBACK = [
+    "openai/gpt-oss-20b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-nano-9b-v2:free",
+    "google/gemma-4-26b-a4b-it:free",
+]
+PAID_FALLBACK = ["gpt-4o"]
+
 
 def _last_user_text(messages) -> str:
     for m in reversed(messages or []):
@@ -159,6 +169,14 @@ class Pipe:
         if emitter:
             await emitter({"type": "status", "data": {"description": desc, "done": done}})
 
+    def _candidates(self, provider: str, model: str) -> list:
+        pool = FREE_FALLBACK if provider == "openrouter" else PAID_FALLBACK
+        out = [model]
+        for m in pool:
+            if m not in out:
+                out.append(m)
+        return out
+
     async def pipe(
         self,
         body: dict,
@@ -181,62 +199,78 @@ class Pipe:
             return (f"Auto (Smart) can't reach the {provider} provider: its API key "
                     f"is missing from the environment.")
 
-        await self._emit(__event_emitter__,
-                         f"Routing to a {tier} {category} model ({model})...")
         headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
         if refhdr:
             headers["HTTP-Referer"] = "https://ai-ui.coolestdomain.win"
             headers["X-Title"] = "AIUI Auto Smart"
-        payload = self._payload(body, model)
+        candidates = self._candidates(provider, model)
 
-        if payload.get("stream"):
-            return self._stream(payload, headers, url, category, tier, model, __event_emitter__)
-        return await self._complete(payload, headers, url, category, tier, model, __event_emitter__)
+        if body.get("stream"):
+            return self._stream(body, headers, url, category, tier, candidates, __event_emitter__)
+        return await self._complete(body, headers, url, category, tier, candidates, __event_emitter__)
 
     def _footer(self, category, tier, model) -> str:
         return (f"\n\n*Auto (Smart): routed to the {tier} {category} model `{model}`.*"
                 if self.valves.SHOW_ROUTE else "")
 
-    async def _complete(self, payload, headers, url, category, tier, model, emitter) -> str:
-        try:
-            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
-                r = await client.post(url, json=payload, headers=headers)
-                if r.status_code != 200:
-                    await self._emit(emitter, "Auto (Smart) failed", done=True)
-                    return f"[auto-smart] {model} error {r.status_code}: {r.text[:300]}"
-                content = r.json()["choices"][0]["message"].get("content") or ""
-        except Exception as e:
-            await self._emit(emitter, "Auto (Smart) failed", done=True)
-            return f"[auto-smart] request failed: {e}"
-        await self._emit(emitter, f"Answered by {model}", done=True)
-        return content + self._footer(category, tier, model)
+    async def _complete(self, body, headers, url, category, tier, candidates, emitter) -> str:
+        last_err = "no candidates"
+        for model in candidates:
+            await self._emit(emitter, f"Trying {tier} {category} model ({model})...")
+            try:
+                async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
+                    r = await client.post(url, json=self._payload(body, model), headers=headers)
+                if r.status_code == 200:
+                    content = (r.json()["choices"][0]["message"].get("content") or "").strip()
+                    if content:
+                        await self._emit(emitter, f"Answered by {model}", done=True)
+                        return content + self._footer(category, tier, model)
+                    last_err = f"{model} returned empty"
+                else:
+                    last_err = f"{model} -> {r.status_code}: {r.text[:120]}"
+            except Exception as e:
+                last_err = f"{model}: {e}"
+        await self._emit(emitter, "All candidates were busy", done=True)
+        return f"[auto-smart] every model was rate-limited or failed. Last: {last_err}. Try again."
 
-    async def _stream(self, payload, headers, url, category, tier, model,
+    async def _stream(self, body, headers, url, category, tier, candidates,
                       emitter) -> AsyncIterator[str]:
-        try:
-            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
-                async with client.stream("POST", url, json=payload, headers=headers) as r:
-                    if r.status_code != 200:
-                        detail = (await r.aread()).decode("utf-8", "replace")[:300]
-                        await self._emit(emitter, "Auto (Smart) failed", done=True)
-                        yield f"[auto-smart] {model} error {r.status_code}: {detail}"
-                        return
-                    async for line in r.aiter_lines():
-                        if not line or not line.startswith("data:"):
+        last_err = "no candidates"
+        for model in candidates:
+            await self._emit(emitter, f"Trying {tier} {category} model ({model})...")
+            got_any = False
+            try:
+                async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
+                    async with client.stream("POST", url, json=self._payload(body, model),
+                                             headers=headers) as r:
+                        if r.status_code != 200:
+                            detail = (await r.aread()).decode("utf-8", "replace")[:120]
+                            last_err = f"{model} -> {r.status_code}: {detail}"
                             continue
-                        data = line[len("data:"):].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            delta = json.loads(data)["choices"][0]["delta"].get("content")
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
-                        if delta:
-                            yield delta
-        except Exception as e:
-            yield f"\n\n[auto-smart] request failed: {e}"
-            return
-        await self._emit(emitter, f"Answered by {model}", done=True)
-        footer = self._footer(category, tier, model)
-        if footer:
-            yield footer
+                        async for line in r.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[len("data:"):].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                delta = json.loads(data)["choices"][0]["delta"].get("content")
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+                            if delta:
+                                got_any = True
+                                yield delta
+            except Exception as e:
+                last_err = f"{model}: {e}"
+                if got_any:
+                    return
+                continue
+            if got_any:
+                await self._emit(emitter, f"Answered by {model}", done=True)
+                footer = self._footer(category, tier, model)
+                if footer:
+                    yield footer
+                return
+            last_err = f"{model} returned empty"
+        await self._emit(emitter, "All candidates were busy", done=True)
+        yield f"\n\n[auto-smart] every model was rate-limited or failed. Last: {last_err}. Try again."

@@ -30,6 +30,17 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 # ---------------------------------------------------------------------------
 DEFAULT_CATEGORY = "general"
 
+# When the chosen free model is rate-limited (429) or errors, Auto retries these
+# in order so a busy free provider never dead-ends the user. Kept to the more
+# reliable free models; gemma-4-31b is excluded (its only provider, Google AI
+# Studio, is almost always rate-limited on the free tier).
+FALLBACK_POOL = [
+    "openai/gpt-oss-20b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-nano-9b-v2:free",
+    "google/gemma-4-26b-a4b-it:free",
+]
+
 RULES = {
     "coder": [
         "code", "coding", "program", "programming", "function", "bug", "debug",
@@ -148,6 +159,14 @@ class Pipe:
             await emitter({"type": "status",
                            "data": {"description": description, "done": done}})
 
+    def _candidates(self, category: str) -> list:
+        """Primary model for the category, then reliable fallbacks, deduped."""
+        out = [self._model_for(category)]
+        for m in FALLBACK_POOL:
+            if m not in out:
+                out.append(m)
+        return out
+
     async def pipe(
         self,
         body: dict,
@@ -155,77 +174,90 @@ class Pipe:
         __event_emitter__: Callable[[dict], Any] = None,
     ) -> Union[str, AsyncIterator[str]]:
         category = pick_category(body.get("messages") or [])
-        model = self._model_for(category)
         key = self.valves.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY", "")
-
         if not key:
             return ("Auto router is not configured: OPENROUTER_API_KEY is missing. "
                     "Add it to the environment or this function's valves.")
-        if not (body.get("messages")):
+        if not body.get("messages"):
             return "No message to answer."
 
-        await self._emit(__event_emitter__,
-                         f"Routing to a free {category} model ({model})...")
-
+        candidates = self._candidates(category)
         headers = {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-            # Optional OpenRouter attribution headers.
             "HTTP-Referer": "https://ai-ui.coolestdomain.win",
             "X-Title": "AIUI Auto Router",
         }
-        payload = self._payload(body, model)
-
-        if payload.get("stream"):
-            return self._stream(payload, headers, category, model, __event_emitter__)
-        return await self._complete(payload, headers, category, model, __event_emitter__)
+        if body.get("stream"):
+            return self._stream(body, headers, category, candidates, __event_emitter__)
+        return await self._complete(body, headers, category, candidates, __event_emitter__)
 
     def _footer(self, category: str, model: str) -> str:
         return (f"\n\n*Auto-routed to the free {category} model `{model}`.*"
                 if self.valves.SHOW_ROUTE else "")
 
-    async def _complete(self, payload, headers, category, model, emitter) -> str:
-        try:
-            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
-                r = await client.post(OPENROUTER_URL, json=payload, headers=headers)
-                if r.status_code != 200:
-                    await self._emit(emitter, "Auto router failed", done=True)
-                    return f"[auto-router] OpenRouter error {r.status_code}: {r.text[:300]}"
-                data = r.json()
-                content = data["choices"][0]["message"].get("content") or ""
-        except Exception as e:
-            await self._emit(emitter, "Auto router failed", done=True)
-            return f"[auto-router] request failed: {e}"
-        await self._emit(emitter, f"Answered by {model}", done=True)
-        return content + self._footer(category, model)
+    async def _complete(self, body, headers, category, candidates, emitter) -> str:
+        last_err = "no candidates"
+        for model in candidates:
+            await self._emit(emitter, f"Trying free {category} model ({model})...")
+            try:
+                async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
+                    r = await client.post(OPENROUTER_URL, json=self._payload(body, model),
+                                          headers=headers)
+                if r.status_code == 200:
+                    content = (r.json()["choices"][0]["message"].get("content") or "").strip()
+                    if content:
+                        await self._emit(emitter, f"Answered by {model}", done=True)
+                        return content + self._footer(category, model)
+                    last_err = f"{model} returned empty"
+                else:
+                    last_err = f"{model} -> {r.status_code}: {r.text[:120]}"
+            except Exception as e:
+                last_err = f"{model}: {e}"
+        await self._emit(emitter, "All free models were busy", done=True)
+        return ("[auto-router] every free model was rate-limited or failed. "
+                f"Last: {last_err}. Try again in a moment.")
 
-    async def _stream(self, payload, headers, category, model,
+    async def _stream(self, body, headers, category, candidates,
                       emitter) -> AsyncIterator[str]:
-        try:
-            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
-                async with client.stream("POST", OPENROUTER_URL, json=payload,
-                                         headers=headers) as r:
-                    if r.status_code != 200:
-                        detail = (await r.aread()).decode("utf-8", "replace")[:300]
-                        await self._emit(emitter, "Auto router failed", done=True)
-                        yield f"[auto-router] OpenRouter error {r.status_code}: {detail}"
-                        return
-                    async for line in r.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data = line[len("data:"):].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            delta = json.loads(data)["choices"][0]["delta"].get("content")
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
-                        if delta:
-                            yield delta
-        except Exception as e:
-            yield f"\n\n[auto-router] request failed: {e}"
-            return
-        await self._emit(emitter, f"Answered by {model}", done=True)
-        footer = self._footer(category, model)
-        if footer:
-            yield footer
+        last_err = "no candidates"
+        for model in candidates:
+            await self._emit(emitter, f"Trying free {category} model ({model})...")
+            got_any = False
+            try:
+                async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
+                    async with client.stream("POST", OPENROUTER_URL,
+                                             json=self._payload(body, model),
+                                             headers=headers) as r:
+                        if r.status_code != 200:
+                            detail = (await r.aread()).decode("utf-8", "replace")[:120]
+                            last_err = f"{model} -> {r.status_code}: {detail}"
+                            continue  # rate-limited/error: try the next model
+                        async for line in r.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[len("data:"):].strip()
+                            if data == "[DONE]":
+                                break
+                            try:
+                                delta = json.loads(data)["choices"][0]["delta"].get("content")
+                            except (json.JSONDecodeError, KeyError, IndexError):
+                                continue
+                            if delta:
+                                got_any = True
+                                yield delta
+            except Exception as e:
+                last_err = f"{model}: {e}"
+                if got_any:
+                    return  # already streamed partial content; cannot fall back
+                continue
+            if got_any:
+                await self._emit(emitter, f"Answered by {model}", done=True)
+                footer = self._footer(category, model)
+                if footer:
+                    yield footer
+                return
+            last_err = f"{model} returned empty"  # 200 but nothing: try next
+        await self._emit(emitter, "All free models were busy", done=True)
+        yield ("\n\n[auto-router] every free model was rate-limited or failed. "
+               f"Last: {last_err}. Try again in a moment.")
