@@ -70,3 +70,15 @@ def test_creates_draft_with_message_raw_payload(main, monkeypatch):
     # New drafts have no threadId; payload wraps a raw message.
     assert "raw" in captured["json_body"]["message"]
     assert "threadId" not in captured["json_body"]["message"]
+
+
+def test_invalid_recipient_returns_422(main, monkeypatch):
+    async def fake_token(_email):
+        return "tok"
+
+    monkeypatch.setattr(main, "get_valid_token", fake_token)
+    client = TestClient(main.app)
+    r = client.post("/gmail_create_draft",
+                    json={"to": "   ", "subject": "s", "body": "b"},
+                    headers={"X-User-Email": "u@x.com"})
+    assert r.status_code == 422

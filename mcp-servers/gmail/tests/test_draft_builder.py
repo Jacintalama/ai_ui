@@ -51,3 +51,21 @@ def test_omits_cc_bcc_when_absent(mod):
 def test_empty_recipient_raises(mod):
     with pytest.raises(ValueError):
         mod.build_draft_raw("   ", "s", "b")
+    with pytest.raises(ValueError):
+        mod.build_draft_raw("", "s", "b")
+
+
+def test_subject_with_crlf_raises(mod):
+    with pytest.raises(ValueError):
+        mod.build_draft_raw("a@b.com", "Hi\r\nBcc: evil@x.com", "b")
+
+
+def test_to_with_newline_raises(mod):
+    with pytest.raises(ValueError):
+        mod.build_draft_raw("a@b.com\nBcc: evil@x.com", "s", "b")
+
+
+def test_body_with_newline_is_allowed(mod):
+    raw = mod.build_draft_raw("a@b.com", "s", "line one\nline two")
+    msg = _decode(raw)
+    assert "line one\nline two" in msg.get_payload(decode=True).decode("utf-8")

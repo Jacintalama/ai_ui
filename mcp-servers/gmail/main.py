@@ -24,7 +24,8 @@ IMPORTANT - Tool Usage Guidelines for AI:
 - When user wants to READ an email: use gmail_read_email
 - When user wants to LIST emails: use gmail_list_emails
 - When user wants to SEARCH emails: use gmail_search_emails
-- When user wants to CREATE A DRAFT or REPLY to an email: use gmail_create_draft_reply with the message_id from the email
+- When user wants to COMPOSE A BRAND-NEW email (no existing message to reply to): use gmail_create_draft
+- When user wants to draft a REPLY to an existing email: use gmail_create_draft_reply with the message_id from the email
 - When user wants to SEND an email: use gmail_send_email
 - When user wants to see their LABELS/FOLDERS: use gmail_list_labels
 

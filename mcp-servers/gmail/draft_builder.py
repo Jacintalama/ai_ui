@@ -17,10 +17,18 @@ def build_draft_raw(
     """Return a base64url-encoded MIME message for a new (non-reply) draft.
 
     Raises ValueError if `to` is missing so a bad tool call fails loudly
-    instead of creating a draft with no recipient.
+    instead of creating a draft with no recipient. Also raises ValueError if
+    any header field (`to`, `subject`, `cc`, `bcc`) contains a carriage
+    return or newline, since those are written verbatim as MIME headers and
+    would otherwise make `email` raise a non-ValueError deep in encoding
+    (which the endpoint can't turn into a clean 422). `body` is exempt: it
+    legitimately contains newlines.
     """
     if not to or not to.strip():
         raise ValueError("recipient (to) is required")
+    for field_name, value in (("to", to), ("subject", subject), ("cc", cc), ("bcc", bcc)):
+        if value is not None and ("\r" in value or "\n" in value):
+            raise ValueError("header fields may not contain newlines")
     msg = MIMEText(body or "", "plain")
     msg["To"] = to
     msg["Subject"] = subject or ""
