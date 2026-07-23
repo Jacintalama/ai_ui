@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 import crypto_utils  # encrypt OAuth tokens at rest (AIUI_FERNET_KEY)
 import oauth_state  # verify signed OAuth state (owner identity)
+from draft_builder import build_draft_raw
 
 app = FastAPI(
     title="Gmail MCP",
@@ -389,6 +390,14 @@ class CreateDraftReplyInput(BaseModel):
     cc: Optional[str] = Field(default=None, description="CC recipients (comma-separated)")
 
 
+class CreateDraftInput(BaseModel):
+    to: str = Field(description="Recipient email address")
+    subject: str = Field(description="Email subject")
+    body: str = Field(description="Draft body text (plain text)")
+    cc: Optional[str] = Field(default=None, description="CC recipients (comma-separated)")
+    bcc: Optional[str] = Field(default=None, description="BCC recipients (comma-separated)")
+
+
 # --- Tool Endpoints ---
 
 @app.post("/gmail_list_emails", operation_id="gmail_list_emails", summary="List emails from Gmail inbox")
@@ -619,6 +628,32 @@ async def create_draft_reply(input: CreateDraftReplyInput, request: Request):
         "reply_to": reply_to,
         "subject": subject,
         "message": f"Draft reply created. Open Gmail to review and send it."
+    }
+
+
+@app.post("/gmail_create_draft", operation_id="gmail_create_draft", summary="Create a new draft email in Gmail")
+async def create_draft(input: CreateDraftInput, request: Request):
+    """Create a brand-new draft email (not a reply). Use this when the user asks to draft, compose, or write a new email to someone. The draft is saved in the user's Gmail Drafts folder and is NEVER sent; the user reviews and sends it themselves."""
+    user_email = get_user_email(request)
+    access_token = await get_valid_token(user_email)
+    if not access_token:
+        base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
+        return {"error": NOT_CONNECTED_MSG.format(base_url=base, email=user_email)}
+
+    try:
+        raw = build_draft_raw(input.to, input.subject, input.body, input.cc, input.bcc)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    draft_body = {"message": {"raw": raw}}
+    result = await gmail_request(access_token, "users/me/drafts", method="POST", json_body=draft_body)
+
+    return {
+        "success": True,
+        "draft_id": result.get("id", ""),
+        "to": input.to,
+        "subject": input.subject,
+        "message": "Draft created. Open Gmail to review and send it.",
     }
 
 
