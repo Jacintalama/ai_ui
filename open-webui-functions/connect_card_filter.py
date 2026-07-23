@@ -12,7 +12,7 @@ description: When you mention email or Google Drive and your account isn't linke
 # Connect card (Open WebUI renders the inline HTML) to the reply. Once the user
 # is connected, the card stops appearing.
 
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from pydantic import BaseModel, Field
@@ -101,15 +101,39 @@ class Filter:
             return False
 
     async def inlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
+        print(f"[connect_card] inlet fired; user={(__user__ or {}).get('email')}", flush=True)
         return body
 
-    async def outlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
-        service = self.detect_service(self._last_user_text(body))
+    async def outlet(
+        self,
+        body: dict,
+        __user__: Optional[dict] = None,
+        __event_emitter__: Optional[Callable[[dict], Any]] = None,
+    ) -> dict:
+        text = self._last_user_text(body)
+        service = self.detect_service(text)
+        user_email = (__user__ or {}).get("email") or ""
+        print(f"[connect_card] outlet fired; user={user_email!r} "
+              f"service={service!r} emitter={bool(__event_emitter__)} "
+              f"text={text[:60]!r}", flush=True)
         if not service:
             return body
-        user_email = (__user__ or {}).get("email") or ""
         if not user_email:
+            print("[connect_card] no user_email; skipping", flush=True)
             return body
-        if await self._connected(service, user_email):
+        connected = await self._connected(service, user_email)
+        print(f"[connect_card] connected({service},{user_email})={connected}", flush=True)
+        if connected:
             return body  # already linked; leave the model's answer alone
-        return self._prepend(body, self.build_card(service, user_email))
+        card = self.build_card(service, user_email)
+        # Live render: emit the card so it shows immediately in the open chat.
+        if __event_emitter__:
+            try:
+                await __event_emitter__({"type": "message", "data": {"content": "\n\n" + card}})
+                print("[connect_card] emitted card via event_emitter", flush=True)
+                return body  # emitted content is persisted by OWUI; avoid doubling
+            except Exception as e:
+                print(f"[connect_card] emit failed ({e}); falling back to body", flush=True)
+        # No emitter (or emit failed): mutate the body so it persists at least.
+        print("[connect_card] prepending card into body", flush=True)
+        return self._prepend(body, card)
