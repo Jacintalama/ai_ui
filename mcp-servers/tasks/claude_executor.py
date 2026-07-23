@@ -306,6 +306,27 @@ every new table — no exceptions.
 """
 
 
+def sql_tool_available(*, db_uri: bool, oauth_token: bool,
+                       project_ref: bool) -> bool:
+    """Can POST /api/projects/{slug}/db/sql actually execute SQL for this app?
+
+    Gate the SQL-tool prompt block on the CAPABILITY, not on one mechanism.
+    routes_db.execute_sql has two paths and prefers OAuth:
+
+        if row.oauth_access_token_encrypted and row.linked_project_ref:
+            -> Supabase Management API          (preferred)
+        if row.db_uri_encrypted:
+            -> direct asyncpg                   (legacy / manual)
+
+    This used to be computed as bool(db_uri_encrypted) alone, so an
+    OAuth-linked project - the low-friction path we steer people to - got an
+    agent that never learned the tool existed and never saw the mandatory-RLS
+    instructions. Fixed 2026-07-23 before any project had linked, so no user
+    was affected.
+    """
+    return bool(db_uri) or bool(oauth_token and project_ref)
+
+
 def _supabase_block(supabase_url: str | None,
                     has_db_uri: bool = False,
                     slug: str = "",

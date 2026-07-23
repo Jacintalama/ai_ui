@@ -1,4 +1,5 @@
 """The build/enhance prompt templates must include Supabase context when configured."""
+import claude_executor as ce
 from cryptography.fernet import Fernet as _Fernet
 _AIUI_TEST_KEY = _Fernet.generate_key().decode()
 
@@ -86,3 +87,51 @@ def test_enhance_prompt_includes_sql_tool_when_db_uri_configured():
         has_db_uri=True,
     )
     assert "/db/sql" in text
+
+# --- which projects actually get the SQL tool + mandatory-RLS rules ---------
+# Bug found 2026-07-23. _lookup_supabase_config computed the flag as
+# bool(db_uri_encrypted), but routes_db.execute_sql has TWO paths and PREFERS
+# OAuth:
+#     if row.oauth_access_token_encrypted and row.linked_project_ref: -> Mgmt API
+#     if row.db_uri_encrypted:                                        -> asyncpg
+# So an OAuth-linked project CAN run SQL, but the agent was never told the tool
+# existed and never saw the "RLS is MANDATORY" block. The gate was on the
+# mechanism (db_uri) instead of the capability (can we execute SQL).
+# Zero prod projects were linked when this was found, so no user was affected -
+# it would have bitten the first person to link via OAuth, the low-friction path.
+
+def test_sql_tool_available_with_db_uri_only():
+    assert ce.sql_tool_available(
+        db_uri=True, oauth_token=False, project_ref=False) is True
+
+
+def test_sql_tool_available_with_oauth_only():
+    """The regression: OAuth alone is enough, routes_db prefers this path."""
+    assert ce.sql_tool_available(
+        db_uri=False, oauth_token=True, project_ref=True) is True
+
+
+def test_sql_tool_unavailable_with_neither():
+    assert ce.sql_tool_available(
+        db_uri=False, oauth_token=False, project_ref=False) is False
+
+
+def test_oauth_token_without_project_ref_is_not_enough():
+    """routes_db requires BOTH for the Management API path."""
+    assert ce.sql_tool_available(
+        db_uri=False, oauth_token=True, project_ref=False) is False
+    assert ce.sql_tool_available(
+        db_uri=False, oauth_token=False, project_ref=True) is False
+
+
+def test_oauth_linked_project_gets_the_mandatory_rls_block():
+    """The whole point: an OAuth-linked project must see the RLS rules."""
+    text = build_prompt(
+        description="x", action_type="BUILD", priority="IMPORTANT",
+        meeting_title="m", meeting_date="2026-04-25",
+        supabase_url="https://demo.supabase.co",
+        has_db_uri=ce.sql_tool_available(
+            db_uri=False, oauth_token=True, project_ref=True),
+    )
+    assert "/db/sql" in text
+    assert "ROW LEVEL SECURITY" in text
