@@ -72,9 +72,11 @@ cursor = conn.cursor()
 cursor.execute('DELETE FROM function WHERE id = %s', (TOOL_ID,))
 cursor.execute('DELETE FROM tool WHERE id = %s', (TOOL_ID,))
 
+# This OWUI build's tool table has no access_control column; insert the 9
+# columns it does have. Tool visibility/enable is handled in the workspace.
 cursor.execute(
-    '''INSERT INTO tool (id, user_id, name, content, specs, meta, created_at, updated_at, valves, access_control)
-       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)''',
+    '''INSERT INTO tool (id, user_id, name, content, specs, meta, created_at, updated_at, valves)
+       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)''',
     (
         TOOL_ID,
         USER_ID,
@@ -85,7 +87,6 @@ cursor.execute(
         now,
         now,
         '{}',
-        None,  # null access_control = public (available to all users)
     ),
 )
 conn.commit()
