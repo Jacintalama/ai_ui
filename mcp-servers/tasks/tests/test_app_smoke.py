@@ -154,10 +154,17 @@ async def test_goto_exception_fails_open():
     assert report is None
 
 
-async def test_smoke_app_fails_open_when_preview_unreachable():
-    # Nothing is listening on 8210 in the test environment, so this
-    # exercises the real end-to-end fail-open path (browser launches,
-    # navigation fails, smoke_app swallows it and returns None).
+async def test_smoke_app_fails_open_when_preview_unreachable(monkeypatch):
+    # Exercises the real end-to-end fail-open path: browser launches,
+    # navigation fails, smoke_app swallows it and returns None.
+    #
+    # Points at a closed port explicitly. The original form relied on nothing
+    # listening on 8210, which holds on a dev laptop but NOT inside the tasks
+    # container - there the service itself serves 8210 and answers a fake slug
+    # with a real 404, so the test failed in the one environment that matters
+    # most. Fixed 2026-07-23; the failure predated the interaction pass.
+    import app_smoke
+    monkeypatch.setattr(app_smoke, "PREVIEW_BASE_URL", "http://127.0.0.1:9/preview")
     report = await smoke_app("definitely-not-a-real-slug", timeout_ms=3000)
     assert report is None
 
