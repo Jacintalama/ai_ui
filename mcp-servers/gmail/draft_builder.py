@@ -26,9 +26,10 @@ def build_draft_raw(
     """
     if not to or not to.strip():
         raise ValueError("recipient (to) is required")
-    for field_name, value in (("to", to), ("subject", subject), ("cc", cc), ("bcc", bcc)):
+    header_fields = (("to", to), ("subject", subject), ("cc", cc), ("bcc", bcc))
+    for field_name, value in header_fields:
         if value is not None and ("\r" in value or "\n" in value):
-            raise ValueError("header fields may not contain newlines")
+            raise ValueError(f"{field_name} may not contain newlines")
     msg = MIMEText(body or "", "plain")
     msg["To"] = to
     msg["Subject"] = subject or ""
