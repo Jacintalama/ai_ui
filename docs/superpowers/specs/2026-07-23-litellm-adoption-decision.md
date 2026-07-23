@@ -88,6 +88,28 @@ container ~2.8x its idle size is not free, and the host's *free* RAM fluctuated
 
 So: viable, measured, and declined on value rather than on feasibility.
 
+## Status: two triggers already fired, same day
+
+Recorded within hours of writing this, while syncing the server:
+
+- **Trigger 1 (third provider) — HIT.** Ralph's OpenRouter work went live: 13
+  free models, `auto_router_pipe.py` and `auto_smart_pipe.py` both hand-rolling
+  raw httpx to `openrouter.ai`, and the smart pipe calling `api.openai.com` too.
+  That takes the count from ~10 files hand-rolling provider calls to ~12, across
+  three providers.
+- **Trigger 4 (a contract broke in prod) — HIT.** `auto_smart_pipe._payload`
+  forwarded `max_tokens`/`temperature` to its paid tier, which defaults to
+  `gpt-5.5`. The live API rejects that combination, so every escalated request
+  failed and silently fell back to gpt-4o — the premium tier was unreachable.
+  Fixed the same day by re-deriving the *same* rule `fusion_engine` already
+  encodes. The knowledge existed in the repo and simply was not applied in the
+  second place that needed it, which is precisely the maintenance cost this doc
+  weighed.
+
+**The decision still stands** — 189 MB is still 189 MB, and the fix was ~15
+lines. But the maintenance argument is now evidence rather than forecast. If a
+fourth provider or a third hand-rolled call site appears, reopen this.
+
 ## What would change the answer
 
 Revisit when any of these becomes true:
