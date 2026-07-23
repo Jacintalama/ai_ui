@@ -147,13 +147,23 @@ ssh root@46.224.193.25 "cd /root/proxy-server && docker compose -f docker-compos
 ## The prompt is not a guarantee
 Several "guarantees" here are instructions to the agent that nothing verifies.
 The git commit and the README were both in that state and were both broken in
-production; they now have sweeps that check. **Still unverified: RLS**
-(`claude_executor.py` tells the agent RLS is mandatory, and the OAuth-only path
-without a `db_uri` does not even receive those instructions) **and `schema.sql`**
-(the agent is asked to write it; nothing checks it matches the live DB).
+production; they now have sweeps that check.
+
+**Still unverified: RLS and `schema.sql`.** `claude_executor.py` tells the agent
+RLS is mandatory and asks it to write `schema.sql`; nothing asserts either
+against the live database.
+
+**Check the exposure before prioritising this.** As of 2026-07-23
+`tasks.project_supabase` has **0 rows** — no project has ever linked a Supabase
+database, and no task has ever reached `awaiting_supabase`. So unlike the commit
+bug (which silently broke 43 of 47 real apps), the RLS gap currently risks no
+data. Build the verification when someone actually links a project; until then
+you would be guessing at requirements. Query the table first rather than
+assuming it is urgent.
 
 When adding a feature whose correctness lives in a prompt, treat it as
-unimplemented until something asserts the outcome.
+unimplemented until something asserts the outcome — and gate that work on
+whether anyone is using the feature.
 
 ## Code Review Guidelines
 - Flag security issues: command injection, XSS, SQL injection, secrets in code
