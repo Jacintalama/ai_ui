@@ -54,7 +54,7 @@ code does), so this proves LiteLLM **sends** the right params, not that it would
 **drop** a temperature if given one. Irrelevant to the swap, since our code
 controls what it passes.
 
-**Gate 3 — does it fit the box?** FAIL. This is the blocker.
+**Gate 3 — what does it cost?**
 
 ```
 site-packages   304 MB -> 493 MB   (+189 MB image)
@@ -65,20 +65,28 @@ Pulls in `openai`, `tiktoken`, `tokenizers`, `aiohttp`, `Jinja2` — a large
 expansion for a service that deliberately uses raw httpx and does not even
 install the `openai` package.
 
+**It would fit.** Stated plainly because an earlier draft of this doc overstated
+it as a hard blocker: the `tasks` container runs at **105 MiB against a 1 GiB
+limit**, so +189 MB lands near 294 MiB, under 30% of its own cap. The host had
+499 MB free / 1821 MB available. Nothing here makes adoption impossible.
+
 ## Why declined
 
-The server at decision time: **3805 MB total, 1977 MB used, 358 MB free**
-(1827 MB available), 31 containers.
+Not "it does not fit" — **the trade is bad.**
 
-+189 MB resident is more than half the free headroom, spent to replace 35 lines
-that work and are covered by 16 wire-format tests. Decisive factor: **this box
-already OOMs under memory pressure** — the in-container tasks test tier gets
-SIGKILLed at exit 137 (see the OOM-chunking lesson) — and the tasks service is
-the one that spawns Claude Code CLI subprocesses for every build. The library
-form would put that 189 MB in direct competition with builds.
+We would spend +189 MB resident and take on `openai` + `tiktoken` + `tokenizers`
++ `aiohttp` in a deliberately lean service, in order to delete 35 lines that are
+correct today and pinned by 16 wire-format tests. Nothing is broken. There is no
+bug to fix. The only real return is *future* maintenance we are not yet paying.
 
-The cost/benefit is simply not there yet: we would spend real memory and take on
-a large dependency to remove code that is currently correct and verified.
+The memory does carry a specific risk worth recording even though it fits: this
+box already OOMs under pressure (the in-container tasks test tier gets SIGKILLed
+at exit 137, see the OOM-chunking lesson), and the tasks service is the one that
+spawns Claude Code CLI subprocesses for every build. Making that particular
+container ~2.8x its idle size is not free, and the host's *free* RAM fluctuated
+358-508 MB during this session.
+
+So: viable, measured, and declined on value rather than on feasibility.
 
 ## What would change the answer
 
