@@ -913,7 +913,7 @@ async def meta_call_tool(body: CallToolRequest, request: Request):
     # Execute via existing infrastructure
     server = get_server(server_id)
     if server and server.enabled:
-        return await execute_on_server(server, original_path.strip("/"), body.arguments, tenant_ids)
+        return await execute_on_server(server, original_path.strip("/"), body.arguments, tenant_ids, user_email=user_email)
 
     # Fallback to tenant execution
     return await execute_tool_on_tenant(server_id, original_path, body.arguments, tenant_ids)
@@ -1160,7 +1160,8 @@ async def execute_on_server(
     server: MCPServerConfig,
     tool_path: str,
     body: dict,
-    tenant_ids: Optional[List[str]] = None
+    tenant_ids: Optional[List[str]] = None,
+    user_email: Optional[str] = None
 ) -> Any:
     """
     Execute a tool on any server based on its tier.
@@ -1232,13 +1233,19 @@ async def execute_on_server(
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
+            downstream_headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            # Forward the resolved end-user identity so per-user servers
+            # (gmail, gdrive, calendar) load the right person's OAuth token
+            # instead of falling back to default@local.
+            if user_email:
+                downstream_headers["X-User-Email"] = user_email
             response = await client.post(
                 url,
                 json=body,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
+                headers=downstream_headers
             )
 
             print(f"  Response: {response.status_code}")
@@ -1499,7 +1506,7 @@ async def execute_server_tool(server_id: str, tool_path: str, request: Request):
         print(f"  [ROUTING] User {user.email} groups for routing: {user_groups}")
 
     # Execute based on server tier
-    return await execute_on_server(server, tool_path, body, user_groups)
+    return await execute_on_server(server, tool_path, body, user_groups, user_email=(user.email if user else None))
 
 
 # =============================================================================
