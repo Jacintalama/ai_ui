@@ -24,6 +24,21 @@ from pydantic import BaseModel, Field
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 
+# OpenAI's newer reasoning family takes `max_completion_tokens` and rejects
+# `max_tokens` and `temperature`. Verified against the live API 2026-07-23:
+#   "Unsupported parameter: 'max_tokens' is not supported with this model.
+#    Use 'max_completion_tokens' instead."
+# Without this the paid tier (PAID_* default to gpt-5.5) failed every escalated
+# request and silently fell back to the gpt-4o candidate. Same split
+# fusion_engine.PROVIDER_REGISTRY encodes as the "openai_new" contract.
+# Free OpenRouter ids are namespaced ("openai/gpt-oss-20b:free") so they do not
+# match, and are correctly left on the plain contract.
+_COMPLETION_TOKEN_MODELS = re.compile(r"^(gpt-5|o[1-9])")
+
+
+def _needs_completion_tokens(model: str) -> bool:
+    return bool(_COMPLETION_TOKEN_MODELS.match((model or "").strip()))
+
 DEFAULT_CATEGORY = "general"
 
 RULES = {
@@ -160,8 +175,15 @@ class Pipe:
 
     def _payload(self, body: dict, model: str) -> dict:
         out = {"model": model, "messages": body.get("messages") or []}
+        reasoning = _needs_completion_tokens(model)
         for k in ("stream", "temperature", "top_p", "max_tokens"):
-            if body.get(k) is not None:
+            if body.get(k) is None:
+                continue
+            if reasoning and k == "max_tokens":
+                out["max_completion_tokens"] = body[k]
+            elif reasoning and k == "temperature":
+                continue  # rejected outright by this family
+            else:
                 out[k] = body[k]
         return out
 

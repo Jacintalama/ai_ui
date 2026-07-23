@@ -88,8 +88,74 @@ def test_pipes_exposes_auto_smart(mod):
 
 
 def test_payload_drops_extra_fields(mod):
+    # Model switched from gpt-5.5 to gpt-4o on 2026-07-23. This test's intent is
+    # "extras dropped, model overridden, temperature passes through", but on
+    # gpt-5.5 the live API rejects temperature outright, so the original form
+    # asserted the bug. gpt-4o is the model where every clause here is true.
+    # gpt-5.5's real contract is covered by the reasoning-model tests below.
     p = mod.Pipe()
     out = p._payload({"messages": [{"role": "user", "content": "hi"}],
-                      "model": "x", "user": "u", "temperature": 0.3}, "gpt-5.5")
-    assert out["model"] == "gpt-5.5" and out["temperature"] == 0.3
+                      "model": "x", "user": "u", "temperature": 0.3}, "gpt-4o")
+    assert out["model"] == "gpt-4o" and out["temperature"] == 0.3
     assert "user" not in out
+
+
+# --- request contract per model family -------------------------------------
+# Live bug found 2026-07-23: _payload forwarded max_tokens/temperature to
+# whatever model was picked, but PAID_GENERAL/CODER/REASONING all default to
+# gpt-5.5. The real OpenAI API answers:
+#   "Unsupported parameter: 'max_tokens' is not supported with this model.
+#    Use 'max_completion_tokens' instead."
+# so every escalated request failed on gpt-5.5 and silently fell back to the
+# gpt-4o candidate. The paid tier was unreachable dead config.
+# Same split fusion_engine.PROVIDER_REGISTRY already encodes as openai_new.
+
+@pytest.mark.parametrize("model", ["gpt-5", "gpt-5.5", "o3"])
+def test_reasoning_models_get_max_completion_tokens(mod, model):
+    out = mod.Pipe()._payload(
+        {"messages": [{"role": "user", "content": "q"}], "max_tokens": 100}, model)
+    assert "max_completion_tokens" in out, f"{model} needs max_completion_tokens"
+    assert "max_tokens" not in out, f"{model} rejects max_tokens outright"
+
+
+@pytest.mark.parametrize("model", ["gpt-5", "gpt-5.5", "o3"])
+def test_reasoning_models_never_get_temperature(mod, model):
+    out = mod.Pipe()._payload(
+        {"messages": [{"role": "user", "content": "q"}], "temperature": 0.7}, model)
+    assert "temperature" not in out, f"{model} rejects temperature"
+
+
+@pytest.mark.parametrize("model", ["gpt-4o", "gpt-4.1"])
+def test_legacy_openai_models_keep_max_tokens_and_temperature(mod, model):
+    """Regression guard: the fallback candidate must keep working."""
+    out = mod.Pipe()._payload(
+        {"messages": [{"role": "user", "content": "q"}],
+         "max_tokens": 100, "temperature": 0.7}, model)
+    assert out.get("max_tokens") == 100
+    assert out.get("temperature") == 0.7
+    assert "max_completion_tokens" not in out
+
+
+def test_free_openrouter_models_keep_max_tokens(mod):
+    """The free tier is plain OpenAI-compatible; do not rewrite its params."""
+    out = mod.Pipe()._payload(
+        {"messages": [{"role": "user", "content": "q"}],
+         "max_tokens": 100, "temperature": 0.7}, "openai/gpt-oss-20b:free")
+    assert out.get("max_tokens") == 100
+    assert out.get("temperature") == 0.7
+
+
+def test_paid_defaults_are_covered_by_the_contract_rule(mod):
+    """Whatever the paid valves default to must be a model the payload rule
+    knows about, or this bug silently comes back on the next model bump."""
+    v = mod.Pipe().valves
+    for name in ("PAID_GENERAL", "PAID_CODER", "PAID_REASONING"):
+        model = getattr(v, name)
+        out = mod.Pipe()._payload(
+            {"messages": [{"role": "user", "content": "q"}],
+             "max_tokens": 100, "temperature": 0.7}, model)
+        assert not ("max_tokens" in out and "max_completion_tokens" in out), \
+            f"{name}={model} produced both token params"
+        if mod._needs_completion_tokens(model):
+            assert "max_tokens" not in out and "temperature" not in out, \
+                f"{name}={model} would be rejected by the API"
