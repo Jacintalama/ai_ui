@@ -23,18 +23,58 @@ class _FakeRequest:
         self.failure = {"errorText": error_text} if error_text else None
 
 
+class _FakeElement:
+    """A clickable stub. Can be invisible/disabled, can refuse to be clicked,
+    and can fire a pageerror the way a real broken handler would."""
+
+    def __init__(self, page, *, visible=True, enabled=True,
+                 raises_on_click=None, fires_pageerror=None, navigates_to=None):
+        self._page = page
+        self._visible = visible
+        self._enabled = enabled
+        self._raises_on_click = raises_on_click
+        self._fires_pageerror = fires_pageerror
+        self._navigates_to = navigates_to
+
+    async def is_visible(self):
+        return self._visible
+
+    async def is_enabled(self):
+        return self._enabled
+
+    async def click(self, **kw):
+        self._page.clicks += 1
+        if self._raises_on_click is not None:
+            raise self._raises_on_click
+        if self._fires_pageerror is not None:
+            for cb in self._page._listeners.get("pageerror", []):
+                cb(self._fires_pageerror)
+        if self._navigates_to is not None:
+            self._page.url = self._navigates_to
+
+
 class _FakePage:
     """Minimal page stub: records listeners, fires programmed events on
     goto(), like _FakeWalkPage in test_video_capture.py."""
 
     def __init__(self, *, status=200, pageerrors=None, console=None,
-                 failed_requests=None, goto_error=None):
+                 failed_requests=None, goto_error=None,
+                 elements=None, selector_error=None):
         self._status = status
         self._pageerrors = pageerrors or []
         self._console = console or []          # list of (type, text)
         self._failed_requests = failed_requests or []  # list of (url, errorText)
         self._goto_error = goto_error
         self._listeners: dict[str, list] = {}
+        self._elements = elements or []
+        self._selector_error = selector_error
+        self.url = "http://preview/app/"
+        self.clicks = 0
+
+    async def query_selector_all(self, selector):
+        if self._selector_error is not None:
+            raise self._selector_error
+        return list(self._elements)
 
     def on(self, event, callback):
         self._listeners.setdefault(event, []).append(callback)
@@ -120,3 +160,83 @@ async def test_smoke_app_fails_open_when_preview_unreachable():
     # navigation fails, smoke_app swallows it and returns None).
     report = await smoke_app("definitely-not-a-real-slug", timeout_ms=3000)
     assert report is None
+
+
+# --- errors that only appear when you interact ------------------------------
+# The smoke check navigated, waited, and reported. Anything that breaks on a
+# CLICK was invisible, so an app could pass the check and still be broken for
+# the first person who used it. The listeners were already right; the window
+# they were open for was too short. See the 2026-07-23 interaction pass.
+
+async def test_click_error_is_caught():
+    """The whole point: a handler that throws must be reported."""
+    page = _FakePage()
+    page._elements = [_FakeElement(page, fires_pageerror="cart is not defined")]
+    out = await _smoke_with_page(page, "http://preview/app/")
+    assert out is not None, "a broken click handler must fail the smoke"
+    assert "cart is not defined" in out
+
+
+async def test_clean_buttons_still_pass():
+    """Clicking healthy buttons must not invent problems."""
+    page = _FakePage()
+    page._elements = [_FakeElement(page) for _ in range(3)]
+    assert await _smoke_with_page(page, "http://preview/app/") is None
+    assert page.clicks == 3
+
+
+async def test_clicking_is_bounded():
+    """A page with many buttons must not blow up build time."""
+    page = _FakePage()
+    page._elements = [_FakeElement(page) for _ in range(50)]
+    await _smoke_with_page(page, "http://preview/app/")
+    assert page.clicks <= 10, f"clicked {page.clicks} times, should be bounded"
+
+
+async def test_invisible_and_disabled_buttons_are_skipped():
+    page = _FakePage()
+    page._elements = [
+        _FakeElement(page, visible=False),
+        _FakeElement(page, enabled=False),
+        _FakeElement(page),
+    ]
+    await _smoke_with_page(page, "http://preview/app/")
+    assert page.clicks == 1, "only the visible, enabled button should be clicked"
+
+
+async def test_stops_once_the_page_navigates_away():
+    """After navigation we are no longer testing this app."""
+    page = _FakePage()
+    page._elements = [
+        _FakeElement(page, navigates_to="http://somewhere-else/"),
+        _FakeElement(page),
+        _FakeElement(page),
+    ]
+    await _smoke_with_page(page, "http://preview/app/")
+    assert page.clicks == 1, "must stop clicking once the URL changed"
+
+
+async def test_a_click_that_cannot_execute_is_not_an_app_error():
+    """An element detached or covered is a test artifact, not a bug in the app.
+    Only what the APP raises (via the pageerror/console listeners) counts."""
+    page = _FakePage()
+    page._elements = [_FakeElement(page, raises_on_click=RuntimeError("intercepted"))]
+    assert await _smoke_with_page(page, "http://preview/app/") is None
+
+
+async def test_interaction_failure_never_loses_load_time_errors():
+    """Fail open: if the interaction pass breaks, still report what load found."""
+    page = _FakePage(pageerrors=["boom at load"],
+                     selector_error=RuntimeError("selector engine died"))
+    out = await _smoke_with_page(page, "http://preview/app/")
+    assert out is not None and "boom at load" in out
+
+
+async def test_page_without_query_selector_all_still_works():
+    """Backward compatible: an older page object must not break the smoke."""
+    class _Old(_FakePage):
+        query_selector_all = None
+
+    page = _Old(pageerrors=["load error"])
+    out = await _smoke_with_page(page, "http://preview/app/")
+    assert out is not None and "load error" in out
