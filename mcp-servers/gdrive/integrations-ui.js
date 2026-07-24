@@ -1843,13 +1843,21 @@
 
   function maybePromptConnect(text) {
     var service = detectConnectService(text);
+    console.log('[AIUI] chatcard: send detected, text=', (text || '').slice(0, 60), 'service=', service);
     if (!service) return;
     var email = getEffectiveEmail();
     var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
     fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
       .then(function(r) { return r.json(); })
-      .then(function(d) { if (!(d && d.connected === true)) showChatConnectCard(service); })
-      .catch(function() { showChatConnectCard(service); });
+      .then(function(d) {
+        var connected = !!(d && d.connected === true);
+        console.log('[AIUI] chatcard: status for', email, '=', connected, '- showing card:', !connected);
+        if (!connected) showChatConnectCard(service);
+      })
+      .catch(function(err) {
+        console.log('[AIUI] chatcard: status check failed, showing card anyway', err);
+        showChatConnectCard(service);
+      });
   }
 
   function setupChatConnectWatcher() {
@@ -1885,5 +1893,5 @@
 
   setupChatConnectWatcher();
 
-  console.log('[AIUI] Integrations UI v2 loaded');
+  console.log('[AIUI] Integrations UI v3-chatcard loaded');
 })();
