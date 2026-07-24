@@ -1404,6 +1404,11 @@
   // Watches for new messages in the chat and auto-creates drafts when user asks
 
   function setupGmailWatcher() {
+    // Disabled: this auto-send watcher popped a "Review Email Before Sending"
+    // modal and called gmail_create_draft_reply (422) whenever a message
+    // mentioned sending/emailing. Connecting is now a clean inline button
+    // (see linkifyConnectButtons); drafting goes through the draft_email tool.
+    return;
     var lastMsgCount = 0;
     var processing = false;
 
@@ -1933,5 +1938,43 @@
 
   setupChatConnectWatcher();
 
-  console.log('[AIUI] Integrations UI v5-chatcard loaded');
+  // Turn the plain connect URL the model prints (".../auth/google/start...")
+  // into a clean, clickable inline button. Robust: reads the rendered message,
+  // no textareas, no dependence on catching the send. Same-tab redirect.
+  function styleConnectButton(anchor) {
+    if (!anchor) return;
+    var url = anchor.href || '';
+    if (url.indexOf('/auth/google/start') === -1) return;
+    var service = url.indexOf('/gdrive/') !== -1 ? 'gdrive' : 'gmail';
+    var icon = service === 'gdrive' ? GDRIVE_ICON_SMALL : GMAIL_ICON_SMALL;
+    var label = service === 'gdrive' ? 'Connect Google Drive' : 'Connect Gmail';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'aiui-connect-inline-btn';
+    btn.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 0;' +
+      'padding:11px 20px;background:#4CAF50;color:#fff;border:none;border-radius:10px;' +
+      'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
+    btn.innerHTML = icon + '<span>' + label + '</span>';
+    btn.addEventListener('click', function() { window.location.href = url; });
+    if (anchor.parentNode) anchor.parentNode.replaceChild(btn, anchor);
+  }
+
+  function linkifyConnectButtons() {
+    var pending = false;
+    function scan() {
+      pending = false;
+      var anchors = document.querySelectorAll('a[href*="/auth/google/start"]');
+      for (var i = 0; i < anchors.length; i++) styleConnectButton(anchors[i]);
+    }
+    var obs = new MutationObserver(function() {
+      if (pending) return;
+      pending = true;
+      setTimeout(scan, 200);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    scan();
+  }
+  linkifyConnectButtons();
+
+  console.log('[AIUI] Integrations UI v6-chatcard loaded');
 })();
