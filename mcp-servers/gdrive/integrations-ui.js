@@ -4,6 +4,8 @@
 
   var GDRIVE_API = window.location.hostname === 'localhost' ? 'http://localhost:8005' : '/gdrive';
   var GMAIL_API = window.location.hostname === 'localhost' ? 'http://localhost:8006' : '/gmail';
+  var CALENDAR_API = window.location.hostname === 'localhost' ? 'http://localhost:8007' : '/calendar';
+  var CALENDAR_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4285f4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
   var GMAIL_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 75 75" xmlns="http://www.w3.org/2000/svg"><path d="M6.25 56.25h12.5V36.46L0 22.5v27.5c0 3.45 2.8 6.25 6.25 6.25z" fill="#4285f4"/><path d="M56.25 56.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-18.75 13.96" fill="#34a853"/><path d="M56.25 25v31.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-11.72 8.72" fill="#34a853"/><path d="M18.75 56.25V36.46L37.5 50l18.75-13.54V25L37.5 38.54 18.75 25" fill="#ea4335"/><path d="M0 22.5l18.75 13.96V25L6.25 18.75C2.8 18.75 0 21.55 0 22.5" fill="#c5221f"/><path d="M56.25 25v11.46L75 22.5c0-.95-2.8-3.75-6.25-3.75L56.25 25" fill="#0d652d"/><path d="M18.75 25L6.25 18.75C2.8 18.75 0 21.55 0 22.5l18.75 13.96" fill="#c5221f"/><path d="M56.25 25l12.5-6.25C65.3 18.75 62.5 21.55 62.5 22.5" fill="#0d652d"/></svg>';
   var GMAIL_ICON_BIG = '<svg width="24" height="24" viewBox="0 0 75 75" xmlns="http://www.w3.org/2000/svg"><path d="M6.25 56.25h12.5V36.46L0 22.5v27.5c0 3.45 2.8 6.25 6.25 6.25z" fill="#4285f4"/><path d="M56.25 56.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-18.75 13.96" fill="#34a853"/><path d="M56.25 25v31.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-11.72 8.72" fill="#34a853"/><path d="M18.75 56.25V36.46L37.5 50l18.75-13.54V25L37.5 38.54 18.75 25" fill="#ea4335"/><path d="M0 22.5l18.75 13.96V25L6.25 18.75C2.8 18.75 0 21.55 0 22.5" fill="#c5221f"/><path d="M56.25 25v11.46L75 22.5c0-.95-2.8-3.75-6.25-3.75L56.25 25" fill="#0d652d"/><path d="M18.75 25L6.25 18.75C2.8 18.75 0 21.55 0 22.5l18.75 13.96" fill="#c5221f"/><path d="M56.25 25l12.5-6.25C65.3 18.75 62.5 21.55 62.5 22.5" fill="#0d652d"/></svg>';
   var GDRIVE_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-20.4 35.3c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.4 9.35z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-10.1-17.5c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 23.8h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
@@ -1944,9 +1946,9 @@
   // no textareas, no dependence on catching the send. Same-tab redirect.
   function _renderConnectState(container, service, url, email, connected) {
     container.innerHTML = '';
-    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
-    var icon = service === 'gdrive' ? GDRIVE_ICON_SMALL : GMAIL_ICON_SMALL;
-    var name = service === 'gdrive' ? 'Google Drive' : 'Gmail';
+    var api = service === 'gdrive' ? GDRIVE_API : (service === 'calendar' ? CALENDAR_API : GMAIL_API);
+    var icon = service === 'gdrive' ? GDRIVE_ICON_SMALL : (service === 'calendar' ? CALENDAR_ICON_SMALL : GMAIL_ICON_SMALL);
+    var name = service === 'gdrive' ? 'Google Drive' : (service === 'calendar' ? 'Google Calendar' : 'Gmail');
     if (!connected) {
       var btn = document.createElement('button');
       btn.type = 'button';
@@ -1986,8 +1988,9 @@
     if (!anchor) return;
     var url = anchor.href || '';
     if (url.indexOf('/auth/google/start') === -1) return;
-    var service = url.indexOf('/gdrive/') !== -1 ? 'gdrive' : 'gmail';
-    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
+    var service = url.indexOf('/gdrive/') !== -1 ? 'gdrive'
+      : (url.indexOf('/calendar/') !== -1 ? 'calendar' : 'gmail');
+    var api = service === 'gdrive' ? GDRIVE_API : (service === 'calendar' ? CALENDAR_API : GMAIL_API);
     var email = getEffectiveEmail();
     var container = document.createElement('span');
     container.className = 'aiui-connect-inline';
@@ -2020,5 +2023,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v8-chatcard loaded');
+  console.log('[AIUI] Integrations UI v9-chatcard loaded');
 })();

@@ -13,7 +13,8 @@ import os
 import time
 
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://openwebui:localdev@postgres:5432/openwebui")
-TOOL_ID = "gmail"
+# One or more native tool ids to enable (comma-separated).
+TOOL_IDS = [t.strip() for t in os.environ.get("TOOL_IDS", "gmail").split(",") if t.strip()]
 # Known tool-capable paid models (from the Fusion registry). Extend as needed.
 TARGET_MODELS = os.environ.get(
     "TARGET_MODELS",
@@ -47,23 +48,24 @@ for model_id in [m.strip() for m in TARGET_MODELS if m.strip()]:
     if got:
         meta = json.loads(got[0]) if got[0] else {}
         tool_ids = meta.get("toolIds") or []
-        if TOOL_ID in tool_ids:
+        added = [t for t in TOOL_IDS if t not in tool_ids]
+        if not added:
             print(f"  {model_id}: already enabled -> {tool_ids}")
             continue
-        tool_ids.append(TOOL_ID)
+        tool_ids.extend(added)
         meta["toolIds"] = tool_ids
         cur.execute("UPDATE model SET meta = %s, updated_at = %s WHERE id = %s",
                     (json.dumps(meta), now, model_id))
-        print(f"  {model_id}: merged '{TOOL_ID}' -> {tool_ids}")
+        print(f"  {model_id}: added {added} -> {tool_ids}")
     else:
-        meta = {"toolIds": [TOOL_ID]}
+        meta = {"toolIds": list(TOOL_IDS)}
         cur.execute(
             "INSERT INTO model (id, user_id, base_model_id, name, meta, params, "
             "created_at, updated_at, is_active) "
             "VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, TRUE)",
             (model_id, owner_id, model_id, json.dumps(meta), "{}", now, now),
         )
-        print(f"  {model_id}: created row with '{TOOL_ID}'")
+        print(f"  {model_id}: created row with {list(TOOL_IDS)}")
 
 conn.commit()
 cur.close()
