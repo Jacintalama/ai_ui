@@ -608,168 +608,144 @@
   }
 
   function createIntegrationsModal() {
+    var email = getEffectiveEmail();
     var overlay = document.createElement('div');
     overlay.id = 'aiui-integrations-overlay';
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
 
     var modal = document.createElement('div');
-    modal.style.cssText = 'background:#1e1e1e;border-radius:16px;padding:32px;max-width:700px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.5);';
+    modal.style.cssText = 'background:#151515;border:1px solid #2a2a2a;border-radius:16px;padding:0;max-width:920px;width:92%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,0.6);';
     activeIntModal = modal;
 
-    modal.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-      '<h2 style="color:#fff;font-size:22px;font-weight:600;margin:0;">Connections</h2>' +
-      '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;padding:4px 8px;line-height:1;">&times;</button>' +
-      '</div>' +
-      '<p style="color:#999;font-size:14px;margin:0 0 24px 0;">Connect your Google account once to enable Gmail, Calendar, and Drive. Each connection is personal to your account.</p>' +
-      '<div id="aiui-integrations-grid" style="display:grid;grid-template-columns:1fr;gap:12px;"></div>';
-
-    var grid = modal.querySelector('#aiui-integrations-grid');
-
-    // Google Drive card
-    var card = document.createElement('div');
-    card.setAttribute('data-integration', 'google-drive');
-    card.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:12px;padding:16px;transition:all 0.2s;display:flex;align-items:center;gap:14px;';
-
-    card.innerHTML = '<div style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#333;border-radius:10px;padding:8px;">' + GDRIVE_ICON_BIG + '</div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="display:flex;align-items:center;gap:8px;">' +
-          '<span style="color:#fff;font-weight:600;font-size:15px;">Google Drive</span>' +
-          '<span id="aiui-status-google-drive" style="display:none;background:#00ac47;color:#fff;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:600;">Connected</span>' +
+    modal.innerHTML =
+      '<div style="padding:20px 24px 14px 24px;border-bottom:1px solid #242424;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<h2 style="color:#fff;font-size:20px;font-weight:600;margin:0;">Connections</h2>' +
+          '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;">&times;</button>' +
         '</div>' +
-        '<p style="color:#888;font-size:13px;margin:3px 0 0 0;">Find and analyze files instantly</p>' +
+        '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Sign in once with your Google account to enable Gmail, Calendar, and Drive. Each connection is personal to your account.</p>' +
+        '<input id="aiui-conn-search" type="text" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
+        '<div id="aiui-conn-tabs" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"></div>' +
       '</div>' +
-      '<div style="display:flex;gap:8px;flex-shrink:0;">' +
-        '<button id="aiui-connect-google-drive" style="background:#4a9eff;border:none;border-radius:8px;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:600;">Connect</button>' +
-        '<button id="aiui-disconnect-google-drive" style="display:none;background:transparent;border:1px solid #666;border-radius:8px;color:#ccc;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:500;">Disconnect</button>' +
-      '</div>';
+      '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;padding:16px 24px 24px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;"></div>';
 
-    card.addEventListener('mouseenter', function() { card.style.background = '#333'; });
-    card.addEventListener('mouseleave', function() { card.style.background = '#2a2a2a'; });
+    var CATS = ['All', 'Chat', 'Productivity', 'Tools & Automation', 'Social', 'Platform'];
+    var APPS = [
+      { id: 'gmail', name: 'Gmail', icon: GMAIL_ICON_BIG, api: GMAIL_API, cat: 'Productivity', real: true },
+      { id: 'calendar', name: 'Google Calendar', icon: CALENDAR_ICON_SMALL, api: CALENDAR_API, cat: 'Productivity', real: true },
+      { id: 'google-drive', name: 'Google Drive', icon: GDRIVE_ICON_BIG, api: GDRIVE_API, cat: 'Productivity', real: true },
+      { id: 'slack', name: 'Slack', cat: 'Chat' },
+      { id: 'discord', name: 'Discord', cat: 'Chat' },
+      { id: 'telegram', name: 'Telegram', cat: 'Chat' },
+      { id: 'notion', name: 'Notion', cat: 'Productivity' },
+      { id: 'clickup', name: 'ClickUp', cat: 'Productivity' },
+      { id: 'trello', name: 'Trello', cat: 'Productivity' },
+      { id: 'asana', name: 'Asana', cat: 'Productivity' },
+      { id: 'airtable', name: 'Airtable', cat: 'Productivity' },
+      { id: 'sheets', name: 'Google Sheets', cat: 'Productivity' },
+      { id: 'docs', name: 'Google Docs', cat: 'Productivity' },
+      { id: 'hubspot', name: 'HubSpot', cat: 'Productivity' },
+      { id: 'github', name: 'GitHub', cat: 'Tools & Automation' },
+      { id: 'n8n', name: 'n8n', cat: 'Tools & Automation' },
+      { id: 'zapier', name: 'Zapier', cat: 'Tools & Automation' },
+      { id: 'jira', name: 'Jira', cat: 'Tools & Automation' },
+      { id: 'x', name: 'X (Twitter)', cat: 'Social' },
+      { id: 'linkedin', name: 'LinkedIn', cat: 'Social' },
+      { id: 'facebook', name: 'Facebook', cat: 'Social' },
+      { id: 'dropbox', name: 'Dropbox', cat: 'Platform' },
+      { id: 'stripe', name: 'Stripe', cat: 'Platform' }
+    ];
 
-    card.querySelector('#aiui-connect-google-drive').addEventListener('click', function(e) {
-      e.stopPropagation();
+    var connState = {};
+    var activeCat = 'All';
+    var searchTerm = '';
+
+    function unifiedConnect() {
       try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
       window.location.href = GMAIL_API + '/auth/google/start?user_email='
-        + encodeURIComponent(getEffectiveEmail()) + '&connect=all';
-    });
+        + encodeURIComponent(email) + '&connect=all';
+    }
 
-    card.querySelector('#aiui-disconnect-google-drive').addEventListener('click', function(e) {
-      e.stopPropagation();
-      fetch(GDRIVE_API + '/auth/google/disconnect?user_email=' + encodeURIComponent(getEffectiveEmail()), { method: 'POST' })
-        .then(function() {
-          localStorage.removeItem('aiui-gdrive-email');
-          localStorage.removeItem('aiui-gdrive-connected');
-          updateCardDisconnected(modal, 'google-drive');
+    function makeCard(app) {
+      var connected = !!connState[app.id];
+      var card = document.createElement('div');
+      card.style.cssText = 'position:relative;background:#1b1b1b;border:'
+        + (connected ? '1px solid #2f7d43' : '1px solid #262626')
+        + ';border-radius:14px;padding:16px 12px;display:flex;flex-direction:column;align-items:center;'
+        + 'justify-content:center;gap:8px;min-height:118px;transition:all .15s;cursor:'
+        + (app.real ? 'pointer' : 'default') + ';';
+      var iconHtml = app.icon
+        ? '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;">' + app.icon + '</div>'
+        : '<div style="width:34px;height:34px;border-radius:8px;background:#2e2e2e;color:#ccc;display:flex;'
+          + 'align-items:center;justify-content:center;font-weight:700;font-size:15px;">' + app.name.charAt(0) + '</div>';
+      var status = app.real
+        ? (connected
+            ? '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>'
+            : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>')
+        : '<span style="color:#666;font-size:11px;">Coming soon</span>';
+      card.innerHTML = iconHtml
+        + '<div style="color:#eee;font-size:13px;font-weight:600;text-align:center;">' + app.name + '</div>'
+        + status;
+      if (!app.real) { card.style.opacity = '0.5'; }
+      if (app.real) {
+        card.addEventListener('mouseenter', function () { card.style.background = '#242424'; });
+        card.addEventListener('mouseleave', function () { card.style.background = '#1b1b1b'; });
+        card.addEventListener('click', function () {
+          if (!connState[app.id]) {
+            unifiedConnect();
+          } else if (confirm('Disconnect ' + app.name + '?')) {
+            fetch(app.api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' })
+              .then(function () { connState[app.id] = false; renderGrid(); });
+          }
         });
+      }
+      return card;
+    }
+
+    function renderGrid() {
+      var grid = modal.querySelector('#aiui-conn-grid');
+      grid.innerHTML = '';
+      var term = searchTerm.toLowerCase();
+      APPS.filter(function (a) {
+        if (activeCat !== 'All' && a.cat !== activeCat) return false;
+        if (term && a.name.toLowerCase().indexOf(term) === -1) return false;
+        return true;
+      }).forEach(function (a) { grid.appendChild(makeCard(a)); });
+    }
+
+    var tabsWrap = modal.querySelector('#aiui-conn-tabs');
+    CATS.forEach(function (cat) {
+      var t = document.createElement('button');
+      t.textContent = cat;
+      t.style.cssText = 'background:' + (cat === activeCat ? '#fff' : 'transparent') + ';color:'
+        + (cat === activeCat ? '#111' : '#bbb') + ';border:1px solid #333;border-radius:20px;'
+        + 'padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600;';
+      t.addEventListener('click', function () {
+        activeCat = cat;
+        tabsWrap.querySelectorAll('button').forEach(function (b) { b.style.background = 'transparent'; b.style.color = '#bbb'; });
+        t.style.background = '#fff'; t.style.color = '#111';
+        renderGrid();
+      });
+      tabsWrap.appendChild(t);
     });
 
-    grid.appendChild(card);
-
-    // --- Gmail Card ---
-    var gmailCard = document.createElement('div');
-    gmailCard.setAttribute('data-integration', 'gmail');
-    gmailCard.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:12px;padding:16px;transition:all 0.2s;display:flex;align-items:center;gap:14px;';
-
-    gmailCard.innerHTML = '<div style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#333;border-radius:10px;padding:8px;">' + GMAIL_ICON_BIG + '</div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="display:flex;align-items:center;gap:8px;">' +
-          '<span style="color:#fff;font-weight:600;font-size:15px;">Gmail</span>' +
-          '<span id="aiui-status-gmail" style="display:none;background:#00ac47;color:#fff;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:600;">Connected</span>' +
-        '</div>' +
-        '<p style="color:#888;font-size:13px;margin:3px 0 0 0;">Read, send, draft replies, summarize, and extract email content</p>' +
-      '</div>' +
-      '<div style="display:flex;gap:8px;flex-shrink:0;">' +
-        '<button id="aiui-connect-gmail" style="background:#4a9eff;border:none;border-radius:8px;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:600;">Connect</button>' +
-        '<button id="aiui-disconnect-gmail" style="display:none;background:transparent;border:1px solid #666;border-radius:8px;color:#ccc;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:500;">Disconnect</button>' +
-      '</div>';
-
-    gmailCard.addEventListener('mouseenter', function() { gmailCard.style.background = '#333'; });
-    gmailCard.addEventListener('mouseleave', function() { gmailCard.style.background = '#2a2a2a'; });
-
-    gmailCard.querySelector('#aiui-connect-gmail').addEventListener('click', function(e) {
-      e.stopPropagation();
-      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
-      window.location.href = GMAIL_API + '/auth/google/start?user_email='
-        + encodeURIComponent(getEffectiveEmail()) + '&connect=all';
+    modal.querySelector('#aiui-conn-search').addEventListener('input', function (e) {
+      searchTerm = e.target.value; renderGrid();
     });
 
-    gmailCard.querySelector('#aiui-disconnect-gmail').addEventListener('click', function(e) {
-      e.stopPropagation();
-      fetch(GMAIL_API + '/auth/google/disconnect?user_email=' + encodeURIComponent(getEffectiveEmail()), { method: 'POST' })
-        .then(function() {
-          localStorage.removeItem('aiui-gmail-email');
-          localStorage.removeItem('aiui-gmail-connected');
-          updateCardDisconnected(modal, 'gmail');
-        });
+    renderGrid();
+
+    // Live status for the real Google services.
+    APPS.filter(function (a) { return a.real; }).forEach(function (app) {
+      fetch(app.api + '/auth/google/status?user_email=' + encodeURIComponent(email))
+        .then(function (r) { return r.json(); })
+        .then(function (d) { connState[app.id] = !!(d && d.connected); renderGrid(); })
+        .catch(function () {});
     });
-
-    // Gmail card always visible in Integrations so admins can connect it.
-    // The "+ menu" entry ("Add from Gmail") stays hidden until connected
-    // (handled at the + menu render site).
-    grid.appendChild(gmailCard);
-
-    // Meeting Knowledge Base card removed — not needed in Integrations modal.
-
-    // --- Google Calendar Card ---
-    var calCard = document.createElement('div');
-    calCard.setAttribute('data-integration', 'calendar');
-    calCard.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:12px;padding:16px;transition:all 0.2s;display:flex;align-items:center;gap:14px;';
-    calCard.innerHTML = '<div style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#333;border-radius:10px;padding:10px;">' + CALENDAR_ICON_SMALL + '</div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="display:flex;align-items:center;gap:8px;">' +
-          '<span style="color:#fff;font-weight:600;font-size:15px;">Google Calendar</span>' +
-          '<span id="aiui-status-calendar" style="display:none;background:#00ac47;color:#fff;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:600;">Connected</span>' +
-        '</div>' +
-        '<p style="color:#888;font-size:13px;margin:3px 0 0 0;">See your schedule, create and manage events and meetings</p>' +
-      '</div>' +
-      '<div style="display:flex;gap:8px;flex-shrink:0;">' +
-        '<button id="aiui-connect-calendar" style="background:#4a9eff;border:none;border-radius:8px;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:600;">Connect</button>' +
-        '<button id="aiui-disconnect-calendar" style="display:none;background:transparent;border:1px solid #666;border-radius:8px;color:#ccc;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:500;">Disconnect</button>' +
-      '</div>';
-    calCard.addEventListener('mouseenter', function() { calCard.style.background = '#333'; });
-    calCard.addEventListener('mouseleave', function() { calCard.style.background = '#2a2a2a'; });
-    calCard.querySelector('#aiui-connect-calendar').addEventListener('click', function(e) {
-      e.stopPropagation();
-      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
-      window.location.href = GMAIL_API + '/auth/google/start?user_email='
-        + encodeURIComponent(getEffectiveEmail()) + '&connect=all';
-    });
-    calCard.querySelector('#aiui-disconnect-calendar').addEventListener('click', function(e) {
-      e.stopPropagation();
-      fetch(CALENDAR_API + '/auth/google/disconnect?user_email=' + encodeURIComponent(getEffectiveEmail()), { method: 'POST' })
-        .then(function() { updateCardDisconnected(modal, 'calendar'); });
-    });
-    grid.appendChild(calCard);
-
-    // Check Calendar status
-    fetch(CALENDAR_API + '/auth/google/status?user_email=' + encodeURIComponent(getEffectiveEmail()))
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.connected) updateCardConnected(modal, 'calendar');
-        else updateCardDisconnected(modal, 'calendar');
-      }).catch(function() {});
-
-    // Check Gmail status
-    if (isGmailConnected()) updateCardConnected(modal, 'gmail');
-    fetch(GMAIL_API + '/auth/google/status?user_email=' + encodeURIComponent(getEffectiveEmail()))
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.connected) { localStorage.setItem('aiui-gmail-connected', 'true'); updateCardConnected(modal, 'gmail'); }
-        else { localStorage.removeItem('aiui-gmail-connected'); updateCardDisconnected(modal, 'gmail'); }
-      }).catch(function() {});
-
-    // Check GDrive status
-    if (isConnected()) updateCardConnected(modal, 'google-drive');
-    fetch(GDRIVE_API + '/auth/google/status?user_email=' + encodeURIComponent(getEffectiveEmail()))
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.connected) { localStorage.setItem('aiui-gdrive-connected', 'true'); updateCardConnected(modal, 'google-drive'); }
-        else { localStorage.removeItem('aiui-gdrive-connected'); updateCardDisconnected(modal, 'google-drive'); }
-      }).catch(function() {});
 
     overlay.appendChild(modal);
-    overlay.addEventListener('click', function(e) { if (e.target === overlay) { overlay.remove(); activeIntModal = null; } });
-    modal.querySelector('#aiui-close-modal').addEventListener('click', function() { overlay.remove(); activeIntModal = null; });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) { overlay.remove(); activeIntModal = null; } });
+    modal.querySelector('#aiui-close-modal').addEventListener('click', function () { overlay.remove(); activeIntModal = null; });
 
     return overlay;
   }
@@ -2072,5 +2048,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v11-chatcard loaded');
+  console.log('[AIUI] Integrations UI v12-chatcard loaded');
 })();
