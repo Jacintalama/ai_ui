@@ -1808,6 +1808,7 @@
     card.querySelector('#aiui-chat-connect-btn').addEventListener('click', function() {
       // Same-tab redirect (most inline). Google blocks embedding their login,
       // so we navigate this tab to Google and it returns to the chat after.
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
       window.location.href = url;
     });
     card.querySelector('#aiui-chat-connect-dismiss').addEventListener('click', function() {
@@ -1955,7 +1956,11 @@
       'padding:11px 20px;background:#4CAF50;color:#fff;border:none;border-radius:10px;' +
       'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
     btn.innerHTML = icon + '<span>' + label + '</span>';
-    btn.addEventListener('click', function() { window.location.href = url; });
+    btn.addEventListener('click', function() {
+      // Save the current chat so the OAuth callback can bring us right back.
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
+      window.location.href = url;
+    });
     if (anchor.parentNode) anchor.parentNode.replaceChild(btn, anchor);
   }
 
@@ -1976,5 +1981,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v6-chatcard loaded');
+  console.log('[AIUI] Integrations UI v7-chatcard loaded');
 })();

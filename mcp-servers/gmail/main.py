@@ -219,16 +219,29 @@ async def auth_callback(code: str, state: str = "default@local"):
     <html><body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1e1e1e; color: #fff;">
         <h1 style="color: #ea4335;">Gmail Connected!</h1>
         <p>Your Gmail is now connected for <strong>{user_email}</strong>.</p>
-        <p>This window will close automatically...</p>
+        <p>Returning you to the chat...</p>
         <script>
-            if (window.opener) {{
-                window.opener.postMessage({{
-                    type: 'aiui-gmail-connected',
-                    email: '{user_email}',
-                    connected: true
-                }}, '*');
-            }}
-            setTimeout(function() {{ window.close(); }}, 1500);
+            (function() {{
+                var back = null;
+                try {{
+                    back = localStorage.getItem('aiui-return-url');
+                    localStorage.removeItem('aiui-return-url');
+                }} catch (e) {{}}
+                if (window.opener && !window.opener.closed) {{
+                    // Opened as a popup: tell the app and close.
+                    try {{
+                        window.opener.postMessage({{
+                            type: 'aiui-gmail-connected',
+                            email: '{user_email}',
+                            connected: true
+                        }}, '*');
+                    }} catch (e) {{}}
+                    window.close();
+                }} else {{
+                    // Same-tab redirect: go back to the exact chat the user came from.
+                    window.location.href = back || '/';
+                }}
+            }})();
         </script>
     </body></html>
     """)
