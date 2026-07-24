@@ -1942,26 +1942,65 @@
   // Turn the plain connect URL the model prints (".../auth/google/start...")
   // into a clean, clickable inline button. Robust: reads the rendered message,
   // no textareas, no dependence on catching the send. Same-tab redirect.
+  function _renderConnectState(container, service, url, email, connected) {
+    container.innerHTML = '';
+    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
+    var icon = service === 'gdrive' ? GDRIVE_ICON_SMALL : GMAIL_ICON_SMALL;
+    var name = service === 'gdrive' ? 'Google Drive' : 'Gmail';
+    if (!connected) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 0;' +
+        'padding:11px 20px;background:#4CAF50;color:#fff;border:none;border-radius:10px;' +
+        'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
+      btn.innerHTML = icon + '<span>Connect ' + name + '</span>';
+      btn.addEventListener('click', function () {
+        try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
+        window.location.href = url;
+      });
+      container.appendChild(btn);
+    } else {
+      var chip = document.createElement('span');
+      chip.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 8px 8px 0;' +
+        'padding:9px 16px;background:rgba(76,175,80,0.15);color:#4CAF50;border:1px solid #4CAF50;' +
+        'border-radius:10px;font-weight:600;font-size:14px;';
+      chip.innerHTML = icon + '<span>' + name + ' connected</span>';
+      var dbtn = document.createElement('button');
+      dbtn.type = 'button';
+      dbtn.style.cssText = 'display:inline-flex;align-items:center;margin:8px 0;padding:9px 16px;' +
+        'background:transparent;color:#e57373;border:1px solid #e57373;border-radius:10px;' +
+        'font-weight:600;font-size:13px;cursor:pointer;';
+      dbtn.textContent = 'Disconnect';
+      dbtn.addEventListener('click', function () {
+        dbtn.disabled = true; dbtn.textContent = 'Disconnecting...';
+        fetch(api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' })
+          .then(function () { _renderConnectState(container, service, url, email, false); })
+          .catch(function () { dbtn.disabled = false; dbtn.textContent = 'Disconnect'; });
+      });
+      container.appendChild(chip);
+      container.appendChild(dbtn);
+    }
+  }
+
   function styleConnectButton(anchor) {
     if (!anchor) return;
     var url = anchor.href || '';
     if (url.indexOf('/auth/google/start') === -1) return;
     var service = url.indexOf('/gdrive/') !== -1 ? 'gdrive' : 'gmail';
-    var icon = service === 'gdrive' ? GDRIVE_ICON_SMALL : GMAIL_ICON_SMALL;
-    var label = service === 'gdrive' ? 'Connect Google Drive' : 'Connect Gmail';
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'aiui-connect-inline-btn';
-    btn.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 0;' +
-      'padding:11px 20px;background:#4CAF50;color:#fff;border:none;border-radius:10px;' +
-      'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
-    btn.innerHTML = icon + '<span>' + label + '</span>';
-    btn.addEventListener('click', function() {
-      // Save the current chat so the OAuth callback can bring us right back.
-      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
-      window.location.href = url;
-    });
-    if (anchor.parentNode) anchor.parentNode.replaceChild(btn, anchor);
+    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
+    var email = getEffectiveEmail();
+    var container = document.createElement('span');
+    container.className = 'aiui-connect-inline';
+    if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
+    // Show Connect immediately, then flip to connected/disconnect if the
+    // server says this user is already linked.
+    _renderConnectState(container, service, url, email, false);
+    fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.connected === true) _renderConnectState(container, service, url, email, true);
+      })
+      .catch(function () {});
   }
 
   function linkifyConnectButtons() {
@@ -1981,5 +2020,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v7-chatcard loaded');
+  console.log('[AIUI] Integrations UI v8-chatcard loaded');
 })();
