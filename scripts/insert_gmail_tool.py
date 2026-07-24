@@ -26,20 +26,84 @@ with open(CONTENT_PATH, "r", encoding="utf-8") as fh:
 
 # Function-calling specs (OpenAPI-style), one per public method.
 # __user__ is injected by Open WebUI and is intentionally NOT in the schema.
+def _maxr():
+    return {"max_results": {"type": "integer", "description": "How many to return (max 50)."}}
+
+
 specs = [
     {
+        "name": "list_unread_emails",
+        "description": "List the user's UNREAD emails. Use when they ask what's unread, new, or needs attention.",
+        "parameters": {"type": "object", "properties": _maxr(), "required": []},
+    },
+    {
+        "name": "list_important_emails",
+        "description": "List emails Gmail flagged IMPORTANT. Use when they ask what's important or matters most.",
+        "parameters": {"type": "object", "properties": _maxr(), "required": []},
+    },
+    {
+        "name": "list_recent_emails",
+        "description": "List the most recent inbox emails. Use when they ask to see their latest emails or inbox.",
+        "parameters": {"type": "object", "properties": _maxr(), "required": []},
+    },
+    {
+        "name": "search_emails",
+        "description": "Search Gmail (supports from:, to:, subject:, after:, before:, has:attachment). Use to find specific emails.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Gmail search query, e.g. 'from:alice subject:invoice'."},
+                "max_results": {"type": "integer", "description": "How many results (max 50)."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "read_email",
+        "description": "Read the full content of one email by its id (from a list/search result). Use to read or summarize a message.",
+        "parameters": {
+            "type": "object",
+            "properties": {"message_id": {"type": "string", "description": "The Gmail message id shown as `id:` in results."}},
+            "required": ["message_id"],
+        },
+    },
+    {
         "name": "draft_email",
-        "description": (
-            "Create a brand-new draft email in the user's Gmail Drafts folder "
-            "(never sent). Use when the user wants to draft, compose, or write a "
-            "new email to someone."
-        ),
+        "description": "Create a brand-new DRAFT email in the user's Gmail Drafts (never sent). Use to draft/compose a new email.",
         "parameters": {
             "type": "object",
             "properties": {
                 "to": {"type": "string", "description": "Recipient email address."},
                 "subject": {"type": "string", "description": "Email subject line."},
                 "body": {"type": "string", "description": "Plain-text body of the email."},
+            },
+            "required": ["to", "subject", "body"],
+        },
+    },
+    {
+        "name": "reply_to_email",
+        "description": "Create a DRAFT reply to an existing email (recipient/subject auto-filled). Use to reply to a message shown to the user.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message_id": {"type": "string", "description": "The Gmail message id being replied to."},
+                "body": {"type": "string", "description": "The reply text."},
+            },
+            "required": ["message_id", "body"],
+        },
+    },
+    {
+        "name": "send_email",
+        "description": ("SEND a new email immediately. IMPORTANT: only call this AFTER you have shown the user the "
+                        "full email and they explicitly confirmed sending. If not confirmed, draft it or ask first."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address."},
+                "subject": {"type": "string", "description": "Email subject line."},
+                "body": {"type": "string", "description": "Plain-text body of the email."},
+                "cc": {"type": "string", "description": "Optional CC (comma-separated)."},
+                "bcc": {"type": "string", "description": "Optional BCC (comma-separated)."},
             },
             "required": ["to", "subject", "body"],
         },
