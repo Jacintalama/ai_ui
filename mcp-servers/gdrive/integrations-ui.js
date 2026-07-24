@@ -617,10 +617,10 @@
     activeIntModal = modal;
 
     modal.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-      '<h2 style="color:#fff;font-size:22px;font-weight:600;margin:0;">Integrations</h2>' +
+      '<h2 style="color:#fff;font-size:22px;font-weight:600;margin:0;">Connections</h2>' +
       '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;padding:4px 8px;line-height:1;">&times;</button>' +
       '</div>' +
-      '<p style="color:#999;font-size:14px;margin:0 0 24px 0;">Connect AIUI to your apps, files, and services. Each connection is personal to your account.</p>' +
+      '<p style="color:#999;font-size:14px;margin:0 0 24px 0;">Connect your Google account once to enable Gmail, Calendar, and Drive. Each connection is personal to your account.</p>' +
       '<div id="aiui-integrations-grid" style="display:grid;grid-template-columns:1fr;gap:12px;"></div>';
 
     var grid = modal.querySelector('#aiui-integrations-grid');
@@ -648,8 +648,9 @@
 
     card.querySelector('#aiui-connect-google-drive').addEventListener('click', function(e) {
       e.stopPropagation();
-      var url = GDRIVE_API + '/auth/google/start?user_email=' + encodeURIComponent(getEffectiveEmail());
-      window.open(url, 'aiui-oauth', 'width=600,height=700');
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
+      window.location.href = GMAIL_API + '/auth/google/start?user_email='
+        + encodeURIComponent(getEffectiveEmail()) + '&connect=all';
     });
 
     card.querySelector('#aiui-disconnect-google-drive').addEventListener('click', function(e) {
@@ -687,8 +688,9 @@
 
     gmailCard.querySelector('#aiui-connect-gmail').addEventListener('click', function(e) {
       e.stopPropagation();
-      var url = GMAIL_API + '/auth/google/start?user_email=' + encodeURIComponent(getEffectiveEmail());
-      window.open(url, 'aiui-oauth-gmail', 'width=600,height=700');
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
+      window.location.href = GMAIL_API + '/auth/google/start?user_email='
+        + encodeURIComponent(getEffectiveEmail()) + '&connect=all';
     });
 
     gmailCard.querySelector('#aiui-disconnect-gmail').addEventListener('click', function(e) {
@@ -707,6 +709,45 @@
     grid.appendChild(gmailCard);
 
     // Meeting Knowledge Base card removed — not needed in Integrations modal.
+
+    // --- Google Calendar Card ---
+    var calCard = document.createElement('div');
+    calCard.setAttribute('data-integration', 'calendar');
+    calCard.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:12px;padding:16px;transition:all 0.2s;display:flex;align-items:center;gap:14px;';
+    calCard.innerHTML = '<div style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#333;border-radius:10px;padding:10px;">' + CALENDAR_ICON_SMALL + '</div>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<span style="color:#fff;font-weight:600;font-size:15px;">Google Calendar</span>' +
+          '<span id="aiui-status-calendar" style="display:none;background:#00ac47;color:#fff;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:600;">Connected</span>' +
+        '</div>' +
+        '<p style="color:#888;font-size:13px;margin:3px 0 0 0;">See your schedule, create and manage events and meetings</p>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-shrink:0;">' +
+        '<button id="aiui-connect-calendar" style="background:#4a9eff;border:none;border-radius:8px;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:600;">Connect</button>' +
+        '<button id="aiui-disconnect-calendar" style="display:none;background:transparent;border:1px solid #666;border-radius:8px;color:#ccc;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:500;">Disconnect</button>' +
+      '</div>';
+    calCard.addEventListener('mouseenter', function() { calCard.style.background = '#333'; });
+    calCard.addEventListener('mouseleave', function() { calCard.style.background = '#2a2a2a'; });
+    calCard.querySelector('#aiui-connect-calendar').addEventListener('click', function(e) {
+      e.stopPropagation();
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
+      window.location.href = GMAIL_API + '/auth/google/start?user_email='
+        + encodeURIComponent(getEffectiveEmail()) + '&connect=all';
+    });
+    calCard.querySelector('#aiui-disconnect-calendar').addEventListener('click', function(e) {
+      e.stopPropagation();
+      fetch(CALENDAR_API + '/auth/google/disconnect?user_email=' + encodeURIComponent(getEffectiveEmail()), { method: 'POST' })
+        .then(function() { updateCardDisconnected(modal, 'calendar'); });
+    });
+    grid.appendChild(calCard);
+
+    // Check Calendar status
+    fetch(CALENDAR_API + '/auth/google/status?user_email=' + encodeURIComponent(getEffectiveEmail()))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (data.connected) updateCardConnected(modal, 'calendar');
+        else updateCardDisconnected(modal, 'calendar');
+      }).catch(function() {});
 
     // Check Gmail status
     if (isGmailConnected()) updateCardConnected(modal, 'gmail');
@@ -1349,7 +1390,7 @@
             intBtn.className = refItem.className;
             intBtn.innerHTML = '<div style="display:flex;align-items:center;gap:8px;width:100%;">' +
               '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>' +
-              '<span>Integrations</span>' +
+              '<span>Connections</span>' +
               '</div>';
 
             intBtn.addEventListener('click', function(e) {
@@ -2031,5 +2072,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v10-chatcard loaded');
+  console.log('[AIUI] Integrations UI v11-chatcard loaded');
 })();
