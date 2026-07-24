@@ -1872,28 +1872,56 @@
     return tas.length ? tas[tas.length - 1] : null;  // composer is usually last
   }
 
+  function readLastUserMessage(bodyStr) {
+    try {
+      var data = JSON.parse(bodyStr);
+      var msgs = (data && data.messages) || [];
+      for (var i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i] && msgs[i].role === 'user') {
+          var c = msgs[i].content;
+          if (typeof c === 'string') return c;
+          if (Array.isArray(c)) {
+            return c.map(function(p) { return (p && p.text) || ''; }).join(' ');
+          }
+          return '';
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
   function setupChatConnectWatcher() {
-    // Capture the composer text at send time (synchronously, before clear).
-    document.addEventListener('keydown', function(e) {
-      if (e.key !== 'Enter' || e.shiftKey) return;
-      var ta = (e.target && e.target.tagName === 'TEXTAREA') ? e.target : getComposerTextarea();
-      if (ta && ta.value) {
-        var txt = ta.value;
-        setTimeout(function() { maybePromptConnect(txt); }, 300);
-      }
-    }, true);
-    document.addEventListener('click', function(e) {
-      var btn = e.target && e.target.closest ? e.target.closest('button') : null;
-      if (!btn) return;
-      var aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-      var isSend = btn.type === 'submit' || aria.indexOf('send') !== -1;
-      if (!isSend) return;
-      var ta = getComposerTextarea();
-      if (ta && ta.value) {
-        var txt = ta.value;
-        setTimeout(function() { maybePromptConnect(txt); }, 300);
-      }
-    }, true);
+    // Robust detection: read the ACTUAL user message from the outgoing chat
+    // request, not from a textarea (which can hold a draft/edit box's text).
+    var _origFetch = window.fetch;
+    window.fetch = function(input, init) {
+      try {
+        var url = (typeof input === 'string') ? input : (input && input.url) || '';
+        var body = init && init.body;
+        if (url.indexOf('/api/chat/completions') !== -1 && typeof body === 'string') {
+          var txt = readLastUserMessage(body);
+          if (txt) setTimeout(function() { maybePromptConnect(txt); }, 200);
+        }
+      } catch (e) {}
+      return _origFetch.apply(this, arguments);
+    };
+    // Also patch XHR in case a code path uses it instead of fetch.
+    var _origSend = XMLHttpRequest.prototype.send;
+    var _origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      this.__aiui_url = url || '';
+      return _origOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function(body) {
+      try {
+        if (this.__aiui_url && this.__aiui_url.indexOf('/api/chat/completions') !== -1 &&
+            typeof body === 'string') {
+          var txt = readLastUserMessage(body);
+          if (txt) setTimeout(function() { maybePromptConnect(txt); }, 200);
+        }
+      } catch (e) {}
+      return _origSend.apply(this, arguments);
+    };
     // Remove the card once the account gets connected.
     window.addEventListener('message', function(e) {
       if (e.data && typeof e.data.type === 'string' &&
@@ -1905,5 +1933,5 @@
 
   setupChatConnectWatcher();
 
-  console.log('[AIUI] Integrations UI v4-chatcard loaded');
+  console.log('[AIUI] Integrations UI v5-chatcard loaded');
 })();
