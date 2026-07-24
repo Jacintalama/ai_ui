@@ -96,3 +96,25 @@ class Tools:
         name = data.get("name", "(file)")
         content = data.get("content") or data.get("text") or data.get("body") or ""
         return f"**{name}**\n\n{content}" if content else f"**{name}**\n\n(No readable text content.)"
+
+    async def upload_drive_file(self, name: str, content: str, mime_type: str = "text/plain", __user__: dict = {}) -> str:
+        """
+        Create/upload a NEW file in the user's Google Drive with text content.
+        Use when the user wants to save, upload, or store something as a file in
+        Drive (e.g. "save this as a note in my Drive").
+
+        :param name: File name, e.g. 'notes.txt' or 'summary.md'.
+        :param content: The text content to save into the file.
+        :param mime_type: MIME type (default text/plain).
+        :return: Confirmation with the file link, or a connect prompt if Drive isn't linked.
+        """
+        data = await self._post(
+            "gdrive_create_file",
+            {"name": name, "content": content, "mime_type": mime_type},
+            self._email(__user__),
+        )
+        if isinstance(data, dict) and data.get("error"):
+            return data["error"]
+        link = data.get("link", "")
+        return (f"Created **{data.get('name', name)}** in your Google Drive."
+                + (f"\n{link}" if link else ""))

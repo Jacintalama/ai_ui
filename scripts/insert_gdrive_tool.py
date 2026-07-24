@@ -53,6 +53,19 @@ specs = [
             "required": ["file_id"],
         },
     },
+    {
+        "name": "upload_drive_file",
+        "description": "Create/upload a NEW file in the user's Google Drive with text content. Use to save/upload/store something as a file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "File name, e.g. 'notes.txt'."},
+                "content": {"type": "string", "description": "The text content to save."},
+                "mime_type": {"type": "string", "description": "MIME type (default text/plain)."},
+            },
+            "required": ["name", "content"],
+        },
+    },
 ]
 
 meta = {"description": "Browse, search, and read your Google Drive files from chat. Per-user. Read-only for now."}
