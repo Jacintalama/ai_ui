@@ -630,30 +630,31 @@
       '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;padding:16px 24px 24px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;"></div>';
 
     var CATS = ['All', 'Chat', 'Productivity', 'Tools & Automation', 'Social', 'Platform'];
+    // domain drives the real logo (Clearbit, then Google favicon, then a letter).
     var APPS = [
-      { id: 'gmail', name: 'Gmail', icon: GMAIL_ICON_BIG, api: GMAIL_API, cat: 'Productivity', real: true },
-      { id: 'calendar', name: 'Google Calendar', icon: CALENDAR_ICON_SMALL, api: CALENDAR_API, cat: 'Productivity', real: true },
-      { id: 'google-drive', name: 'Google Drive', icon: GDRIVE_ICON_BIG, api: GDRIVE_API, cat: 'Productivity', real: true },
-      { id: 'slack', name: 'Slack', cat: 'Chat' },
-      { id: 'discord', name: 'Discord', cat: 'Chat' },
-      { id: 'telegram', name: 'Telegram', cat: 'Chat' },
-      { id: 'notion', name: 'Notion', cat: 'Productivity' },
-      { id: 'clickup', name: 'ClickUp', cat: 'Productivity' },
-      { id: 'trello', name: 'Trello', cat: 'Productivity' },
-      { id: 'asana', name: 'Asana', cat: 'Productivity' },
-      { id: 'airtable', name: 'Airtable', cat: 'Productivity' },
-      { id: 'sheets', name: 'Google Sheets', cat: 'Productivity' },
-      { id: 'docs', name: 'Google Docs', cat: 'Productivity' },
-      { id: 'hubspot', name: 'HubSpot', cat: 'Productivity' },
-      { id: 'github', name: 'GitHub', cat: 'Tools & Automation' },
-      { id: 'n8n', name: 'n8n', cat: 'Tools & Automation' },
-      { id: 'zapier', name: 'Zapier', cat: 'Tools & Automation' },
-      { id: 'jira', name: 'Jira', cat: 'Tools & Automation' },
-      { id: 'x', name: 'X (Twitter)', cat: 'Social' },
-      { id: 'linkedin', name: 'LinkedIn', cat: 'Social' },
-      { id: 'facebook', name: 'Facebook', cat: 'Social' },
-      { id: 'dropbox', name: 'Dropbox', cat: 'Platform' },
-      { id: 'stripe', name: 'Stripe', cat: 'Platform' }
+      { id: 'gmail', name: 'Gmail', domain: 'mail.google.com', api: GMAIL_API, cat: 'Productivity', real: true },
+      { id: 'calendar', name: 'Google Calendar', domain: 'calendar.google.com', api: CALENDAR_API, cat: 'Productivity', real: true },
+      { id: 'google-drive', name: 'Google Drive', domain: 'drive.google.com', api: GDRIVE_API, cat: 'Productivity', real: true },
+      { id: 'slack', name: 'Slack', domain: 'slack.com', cat: 'Chat' },
+      { id: 'discord', name: 'Discord', domain: 'discord.com', cat: 'Chat' },
+      { id: 'telegram', name: 'Telegram', domain: 'telegram.org', cat: 'Chat' },
+      { id: 'notion', name: 'Notion', domain: 'notion.so', cat: 'Productivity' },
+      { id: 'clickup', name: 'ClickUp', domain: 'clickup.com', cat: 'Productivity' },
+      { id: 'trello', name: 'Trello', domain: 'trello.com', cat: 'Productivity' },
+      { id: 'asana', name: 'Asana', domain: 'asana.com', cat: 'Productivity' },
+      { id: 'airtable', name: 'Airtable', domain: 'airtable.com', cat: 'Productivity' },
+      { id: 'sheets', name: 'Google Sheets', domain: 'sheets.google.com', cat: 'Productivity' },
+      { id: 'docs', name: 'Google Docs', domain: 'docs.google.com', cat: 'Productivity' },
+      { id: 'hubspot', name: 'HubSpot', domain: 'hubspot.com', cat: 'Productivity' },
+      { id: 'github', name: 'GitHub', domain: 'github.com', cat: 'Tools & Automation' },
+      { id: 'n8n', name: 'n8n', domain: 'n8n.io', cat: 'Tools & Automation' },
+      { id: 'zapier', name: 'Zapier', domain: 'zapier.com', cat: 'Tools & Automation' },
+      { id: 'jira', name: 'Jira', domain: 'atlassian.com', cat: 'Tools & Automation' },
+      { id: 'x', name: 'X (Twitter)', domain: 'x.com', cat: 'Social' },
+      { id: 'linkedin', name: 'LinkedIn', domain: 'linkedin.com', cat: 'Social' },
+      { id: 'facebook', name: 'Facebook', domain: 'facebook.com', cat: 'Social' },
+      { id: 'dropbox', name: 'Dropbox', domain: 'dropbox.com', cat: 'Platform' },
+      { id: 'stripe', name: 'Stripe', domain: 'stripe.com', cat: 'Platform' }
     ];
 
     var connState = {};
@@ -666,28 +667,54 @@
         + encodeURIComponent(email) + '&connect=all';
     }
 
+    // Square logo tile: real logo via Clearbit -> Google favicon -> letter.
+    function iconEl(app) {
+      var box = document.createElement('div');
+      box.style.cssText = 'width:40px;height:40px;border-radius:9px;background:#fff;display:flex;'
+        + 'align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;';
+      var srcs = [
+        'https://logo.clearbit.com/' + app.domain,
+        'https://www.google.com/s2/favicons?domain=' + app.domain + '&sz=64'
+      ];
+      var i = 0;
+      var img = document.createElement('img');
+      img.alt = app.name;
+      img.style.cssText = 'width:78%;height:78%;object-fit:contain;';
+      img.onerror = function () {
+        if (i < srcs.length) { img.src = srcs[i++]; }
+        else {
+          box.style.background = '#2e2e2e';
+          box.innerHTML = '<span style="color:#ccc;font-weight:700;font-size:17px;">' + app.name.charAt(0) + '</span>';
+        }
+      };
+      box.appendChild(img);
+      img.onerror();  // kick off the first source
+      return box;
+    }
+
     function makeCard(app) {
       var connected = !!connState[app.id];
       var card = document.createElement('div');
       card.style.cssText = 'position:relative;background:#1b1b1b;border:'
         + (connected ? '1px solid #2f7d43' : '1px solid #262626')
         + ';border-radius:14px;padding:16px 12px;display:flex;flex-direction:column;align-items:center;'
-        + 'justify-content:center;gap:8px;min-height:118px;transition:all .15s;cursor:'
+        + 'justify-content:center;gap:9px;min-height:122px;transition:all .15s;cursor:'
         + (app.real ? 'pointer' : 'default') + ';';
-      var iconHtml = app.icon
-        ? '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;">' + app.icon + '</div>'
-        : '<div style="width:34px;height:34px;border-radius:8px;background:#2e2e2e;color:#ccc;display:flex;'
-          + 'align-items:center;justify-content:center;font-weight:700;font-size:15px;">' + app.name.charAt(0) + '</div>';
-      var status = app.real
+      var nameEl = document.createElement('div');
+      nameEl.style.cssText = 'color:#eee;font-size:13px;font-weight:600;text-align:center;';
+      nameEl.textContent = app.name;
+      var statusEl = document.createElement('div');
+      statusEl.innerHTML = app.real
         ? (connected
             ? '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>'
             : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>')
         : '<span style="color:#666;font-size:11px;">Coming soon</span>';
-      card.innerHTML = iconHtml
-        + '<div style="color:#eee;font-size:13px;font-weight:600;text-align:center;">' + app.name + '</div>'
-        + status;
-      if (!app.real) { card.style.opacity = '0.5'; }
-      if (app.real) {
+      card.appendChild(iconEl(app));
+      card.appendChild(nameEl);
+      card.appendChild(statusEl);
+      if (!app.real) {
+        card.style.opacity = '0.5';
+      } else {
         card.addEventListener('mouseenter', function () { card.style.background = '#242424'; });
         card.addEventListener('mouseleave', function () { card.style.background = '#1b1b1b'; });
         card.addEventListener('click', function () {
@@ -735,7 +762,6 @@
 
     renderGrid();
 
-    // Live status for the real Google services.
     APPS.filter(function (a) { return a.real; }).forEach(function (app) {
       fetch(app.api + '/auth/google/status?user_email=' + encodeURIComponent(email))
         .then(function (r) { return r.json(); })
@@ -2048,5 +2074,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v12-chatcard loaded');
+  console.log('[AIUI] Integrations UI v13-chatcard loaded');
 })();
