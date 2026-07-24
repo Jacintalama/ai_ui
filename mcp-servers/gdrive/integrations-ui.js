@@ -1950,17 +1950,25 @@
     var icon = service === 'gdrive' ? GDRIVE_ICON_SMALL : (service === 'calendar' ? CALENDAR_ICON_SMALL : GMAIL_ICON_SMALL);
     var name = service === 'gdrive' ? 'Google Drive' : (service === 'calendar' ? 'Google Calendar' : 'Gmail');
     if (!connected) {
+      // Unified connect: one consent links Gmail + Calendar + Drive. Whatever
+      // service prompted this, send the user through the single Google flow.
+      var unifiedUrl = GMAIL_API + '/auth/google/start?user_email='
+        + encodeURIComponent(email) + '&connect=all';
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 0;' +
         'padding:11px 20px;background:#4CAF50;color:#fff;border:none;border-radius:10px;' +
         'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
-      btn.innerHTML = icon + '<span>Connect ' + name + '</span>';
+      btn.innerHTML = icon + '<span>Connect Google</span>';
       btn.addEventListener('click', function () {
         try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
-        window.location.href = url;
+        window.location.href = unifiedUrl;
       });
       container.appendChild(btn);
+      var note = document.createElement('div');
+      note.style.cssText = 'font-size:12px;opacity:0.7;margin-top:6px;';
+      note.textContent = 'Links Gmail, Calendar, and Drive in one step.';
+      container.appendChild(note);
     } else {
       var chip = document.createElement('span');
       chip.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 8px 8px 0;' +
@@ -2023,5 +2031,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v9-chatcard loaded');
+  console.log('[AIUI] Integrations UI v10-chatcard loaded');
 })();

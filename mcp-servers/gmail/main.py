@@ -53,6 +53,16 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1"
 SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.compose"
+# Unified "Connect Google": one consent granting Gmail + Calendar + Drive.
+ALL_SCOPES = " ".join([
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+])
 
 # In-memory token store (dev); PostgreSQL for prod
 _tokens: dict = {}
@@ -173,18 +183,71 @@ NOT_CONNECTED_MSG = (
 )
 
 
+async def _save_token_all_services(user_email: str, access_token: str, refresh_token):
+    """Unified connect: populate gdrive_tokens (encrypted, like gmail) and
+    calendar_tokens (plaintext, per that service's format) so one Google consent
+    links Gmail + Calendar + Drive. gmail_tokens is already written by save_token."""
+    if not DATABASE_URL:
+        return
+    try:
+        import asyncpg
+        enc_access = crypto_utils.encrypt(access_token)
+        enc_refresh = crypto_utils.encrypt(refresh_token) if refresh_token else None
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            # Drive: same encrypted-at-rest convention as gmail.
+            await conn.execute("""
+                INSERT INTO gdrive_tokens (user_email, access_token, refresh_token, token_expiry)
+                VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
+                ON CONFLICT (user_email) DO UPDATE
+                SET access_token = $2, refresh_token = COALESCE($3, gdrive_tokens.refresh_token),
+                    token_expiry = NOW() + INTERVAL '1 hour', updated_at = NOW()
+            """, user_email, enc_access, enc_refresh)
+            # Calendar: plaintext (that service does not decrypt). Create table if
+            # it does not exist yet (mirrors calendar's own save_token schema).
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS calendar_tokens (
+                    user_email TEXT PRIMARY KEY,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    token_expiry TIMESTAMPTZ DEFAULT NOW() + INTERVAL '1 hour',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                INSERT INTO calendar_tokens (user_email, access_token, refresh_token, token_expiry)
+                VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
+                ON CONFLICT (user_email) DO UPDATE
+                SET access_token = $2, refresh_token = COALESCE($3, calendar_tokens.refresh_token),
+                    token_expiry = NOW() + INTERVAL '1 hour', updated_at = NOW()
+            """, user_email, access_token, refresh_token)
+        finally:
+            await conn.close()
+        print(f"[unified-connect] linked gmail+drive+calendar for {user_email}", flush=True)
+    except Exception as e:
+        print(f"[unified-connect] failed for {user_email}: {e}", flush=True)
+
+
 # --- OAuth Endpoints ---
 
 @app.get("/auth/google/start")
-async def auth_start(user_email: str = "default@local", state: str = ""):
-    # The bot passes a pre-signed `state` (owner identity); fall back to the
-    # legacy email-encoded state for manual use.
-    oauth_state_param = state or urllib.parse.quote(user_email)
+async def auth_start(user_email: str = "default@local", state: str = "", connect: str = "gmail"):
+    # connect=all requests Gmail + Calendar + Drive scopes in ONE consent and
+    # marks the state so the callback links all three services at once.
+    if connect == "all":
+        scope = ALL_SCOPES
+        oauth_state_param = "all::" + urllib.parse.quote(user_email)
+    else:
+        scope = SCOPES
+        # The bot passes a pre-signed `state` (owner identity); fall back to the
+        # legacy email-encoded state for manual use.
+        oauth_state_param = state or urllib.parse.quote(user_email)
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
         "response_type": "code",
-        "scope": SCOPES,
+        "scope": scope,
         "access_type": "offline",
         "prompt": "consent",
         "state": oauth_state_param,
@@ -195,11 +258,16 @@ async def auth_start(user_email: str = "default@local", state: str = ""):
 
 @app.get("/auth/google/callback")
 async def auth_callback(code: str, state: str = "default@local"):
-    # Prefer the signed owner identity; fall back to legacy email-encoded state.
-    owner = oauth_state.verify_state(state)
-    if owner is None:
-        owner = urllib.parse.unquote(state)
-    user_email = owner
+    unified = False
+    if state.startswith("all::"):
+        unified = True
+        user_email = urllib.parse.unquote(state[len("all::"):])
+    else:
+        # Prefer the signed owner identity; fall back to legacy email-encoded state.
+        owner = oauth_state.verify_state(state)
+        if owner is None:
+            owner = urllib.parse.unquote(state)
+        user_email = owner
     async with httpx.AsyncClient() as client:
         resp = await client.post(GOOGLE_TOKEN_URL, data={
             "client_id": GOOGLE_CLIENT_ID,
@@ -215,6 +283,11 @@ async def auth_callback(code: str, state: str = "default@local"):
         "access_token": data["access_token"],
         "refresh_token": data.get("refresh_token"),
     })
+    if unified:
+        # One consent -> link Calendar + Drive too. gdrive uses the same
+        # encrypted-at-rest format as gmail; calendar stores plaintext.
+        await _save_token_all_services(
+            user_email, data["access_token"], data.get("refresh_token"))
     return HTMLResponse(f"""
     <html><body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1e1e1e; color: #fff;">
         <h1 style="color: #ea4335;">Gmail Connected!</h1>
