@@ -28,15 +28,6 @@ with open(CONTENT_PATH, "r", encoding="utf-8") as fh:
 # __user__ is injected by Open WebUI and is intentionally NOT in the schema.
 specs = [
     {
-        "name": "connect_gmail",
-        "description": (
-            "Get a one-click link to connect or reconnect the user's Gmail "
-            "account. Use when the user asks to connect Gmail, set up email, or "
-            "when a draft failed because Gmail is not connected."
-        ),
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    },
-    {
         "name": "draft_email",
         "description": (
             "Create a brand-new draft email in the user's Gmail Drafts folder "

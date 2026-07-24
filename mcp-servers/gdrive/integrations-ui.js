@@ -1801,7 +1801,9 @@
       'background:transparent;color:#cfe0f5;border:1px solid rgba(255,255,255,0.25);' +
       'border-radius:8px;font-size:13px;cursor:pointer;">Not now</button>';
     card.querySelector('#aiui-chat-connect-btn').addEventListener('click', function() {
-      window.open(url, 'aiui-oauth', 'width=600,height=700');
+      // Same-tab redirect (most inline). Google blocks embedding their login,
+      // so we navigate this tab to Google and it returns to the chat after.
+      window.location.href = url;
     });
     card.querySelector('#aiui-chat-connect-dismiss').addEventListener('click', function() {
       card.remove();
@@ -1860,14 +1862,24 @@
       });
   }
 
+  // Find the message composer textarea specifically (not a draft/edit box).
+  function getComposerTextarea() {
+    var tas = document.querySelectorAll('textarea');
+    for (var i = 0; i < tas.length; i++) {
+      var ph = (tas[i].getAttribute('placeholder') || '').toLowerCase();
+      if (ph.indexOf('message') !== -1 || ph.indexOf('send a') !== -1) return tas[i];
+    }
+    return tas.length ? tas[tas.length - 1] : null;  // composer is usually last
+  }
+
   function setupChatConnectWatcher() {
-    // Capture the composer text at send time (before it's cleared).
+    // Capture the composer text at send time (synchronously, before clear).
     document.addEventListener('keydown', function(e) {
       if (e.key !== 'Enter' || e.shiftKey) return;
-      var ta = document.activeElement;
-      if (ta && ta.tagName === 'TEXTAREA' && ta.value) {
+      var ta = (e.target && e.target.tagName === 'TEXTAREA') ? e.target : getComposerTextarea();
+      if (ta && ta.value) {
         var txt = ta.value;
-        setTimeout(function() { maybePromptConnect(txt); }, 400);
+        setTimeout(function() { maybePromptConnect(txt); }, 300);
       }
     }, true);
     document.addEventListener('click', function(e) {
@@ -1876,13 +1888,13 @@
       var aria = (btn.getAttribute('aria-label') || '').toLowerCase();
       var isSend = btn.type === 'submit' || aria.indexOf('send') !== -1;
       if (!isSend) return;
-      var ta = document.querySelector('textarea');
+      var ta = getComposerTextarea();
       if (ta && ta.value) {
         var txt = ta.value;
-        setTimeout(function() { maybePromptConnect(txt); }, 400);
+        setTimeout(function() { maybePromptConnect(txt); }, 300);
       }
     }, true);
-    // Remove the card once the account gets connected (OAuth popup posts back).
+    // Remove the card once the account gets connected.
     window.addEventListener('message', function(e) {
       if (e.data && typeof e.data.type === 'string' &&
           e.data.type.indexOf('connected') !== -1) {
@@ -1893,5 +1905,5 @@
 
   setupChatConnectWatcher();
 
-  console.log('[AIUI] Integrations UI v3-chatcard loaded');
+  console.log('[AIUI] Integrations UI v4-chatcard loaded');
 })();

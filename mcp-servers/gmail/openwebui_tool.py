@@ -32,31 +32,9 @@ class Tools:
         return (f"{self.valves.public_base_url}/gmail/auth/google/start"
                 f"?user_email={user_email}")
 
-    async def connect_gmail(self, __user__: dict = {}) -> str:
-        """
-        Get a one-click link to connect (or reconnect) the user's Gmail account.
-        Use this when the user asks to connect Gmail, set up email, or when a
-        draft failed because Gmail is not connected yet.
-
-        :return: A short message with a clickable Connect Gmail link, or a note that Gmail is already connected.
-        """
-        user_email = __user__.get("email", "default@local")
-        try:
-            async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as client:
-                resp = await client.get(
-                    f"{self.valves.gmail_url}/auth/status",
-                    headers={"X-User-Email": user_email},
-                )
-            connected = resp.json().get("connected", False) if resp.status_code == 200 else False
-        except Exception:
-            connected = False
-        if connected:
-            return (f"Your Gmail ({user_email}) is already connected. "
-                    "Just tell me who to email and what to say, and I'll save a draft.")
-        link = self._connect_link(user_email)
-        return (f"To connect your Gmail, click here: **[Connect Gmail]({link})**\n\n"
-                "It opens a Google sign-in for your account. After you approve, "
-                "come back and ask me to draft an email.")
+    # connect_gmail was removed: connecting is handled by the inline Connect
+    # card injected by the frontend (integrations-ui.js), so the model only
+    # drafts. draft_email still surfaces the connect link if not connected yet.
 
     async def draft_email(
         self, to: str, subject: str, body: str, __user__: dict = {}
