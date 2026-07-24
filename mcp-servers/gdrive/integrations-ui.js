@@ -1771,5 +1771,119 @@
 
   setupGmailWatcher();
 
+  // ===== In-chat Connect card =====
+  // When the user sends a message about email / Drive and their Google account
+  // isn't linked, inject a Connect card with a button right into the chat so
+  // it's impossible to miss. Frontend-only, so it renders reliably (unlike an
+  // outlet filter, whose injected content OWUI won't re-render live).
+  function buildChatConnectCard(service, email) {
+    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
+    var icon = service === 'gdrive' ? GDRIVE_ICON_BIG : GMAIL_ICON_BIG;
+    var title = service === 'gdrive' ? 'Connect your Google Drive' : 'Connect your Gmail';
+    var label = service === 'gdrive' ? 'Connect Google Drive' : 'Connect Gmail';
+    var url = api + '/auth/google/start?user_email=' + encodeURIComponent(email);
+    var card = document.createElement('div');
+    card.id = 'aiui-chat-connect-card';
+    card.setAttribute('data-service', service);
+    card.style.cssText = 'max-width:760px;margin:10px auto;padding:16px 18px;' +
+      'background:linear-gradient(135deg,#1e3a5f,#2d5a87);border-radius:14px;color:#fff;' +
+      'box-shadow:0 8px 24px rgba(0,0,0,0.35);font-family:inherit;';
+    card.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' + icon +
+      '<span style="font-size:16px;font-weight:600;">' + title + '</span></div>' +
+      '<div style="opacity:0.9;margin-bottom:12px;font-size:14px;line-height:1.4;">' +
+      'Link your Google account so I can do this for you in chat. Drafts are saved to ' +
+      'your Gmail Drafts, nothing is sent automatically.</div>' +
+      '<button id="aiui-chat-connect-btn" style="padding:12px 22px;background:#4CAF50;' +
+      'color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:14px;cursor:pointer;">' +
+      label + '</button>' +
+      '<button id="aiui-chat-connect-dismiss" style="margin-left:10px;padding:12px 16px;' +
+      'background:transparent;color:#cfe0f5;border:1px solid rgba(255,255,255,0.25);' +
+      'border-radius:8px;font-size:13px;cursor:pointer;">Not now</button>';
+    card.querySelector('#aiui-chat-connect-btn').addEventListener('click', function() {
+      window.open(url, 'aiui-oauth', 'width=600,height=700');
+    });
+    card.querySelector('#aiui-chat-connect-dismiss').addEventListener('click', function() {
+      card.remove();
+    });
+    return card;
+  }
+
+  function removeChatConnectCard() {
+    var c = document.getElementById('aiui-chat-connect-card');
+    if (c) c.remove();
+  }
+
+  function showChatConnectCard(service) {
+    removeChatConnectCard();
+    var card = buildChatConnectCard(service, getEffectiveEmail());
+    var ta = document.querySelector('textarea');
+    var form = ta ? ta.closest('form') : null;
+    if (form && form.parentElement) {
+      form.parentElement.insertBefore(card, form);
+    } else if (ta && ta.parentElement) {
+      ta.parentElement.insertBefore(card, ta);
+    } else {
+      // Last resort: pin above the viewport bottom so it's still visible.
+      card.style.position = 'fixed';
+      card.style.left = '50%';
+      card.style.bottom = '120px';
+      card.style.transform = 'translateX(-50%)';
+      card.style.zIndex = '9999';
+      document.body.appendChild(card);
+    }
+  }
+
+  function detectConnectService(text) {
+    var low = (text || '').toLowerCase();
+    if (/(google drive|gdrive|my drive|save to drive|to my drive|drive folder)/.test(low)) return 'gdrive';
+    if (/(gmail|e-?mail|inbox|compose an email|draft an email|send an email|draft.*email|email .*@)/.test(low)) return 'gmail';
+    return null;
+  }
+
+  function maybePromptConnect(text) {
+    var service = detectConnectService(text);
+    if (!service) return;
+    var email = getEffectiveEmail();
+    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
+    fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
+      .then(function(r) { return r.json(); })
+      .then(function(d) { if (!(d && d.connected === true)) showChatConnectCard(service); })
+      .catch(function() { showChatConnectCard(service); });
+  }
+
+  function setupChatConnectWatcher() {
+    // Capture the composer text at send time (before it's cleared).
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      var ta = document.activeElement;
+      if (ta && ta.tagName === 'TEXTAREA' && ta.value) {
+        var txt = ta.value;
+        setTimeout(function() { maybePromptConnect(txt); }, 400);
+      }
+    }, true);
+    document.addEventListener('click', function(e) {
+      var btn = e.target && e.target.closest ? e.target.closest('button') : null;
+      if (!btn) return;
+      var aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+      var isSend = btn.type === 'submit' || aria.indexOf('send') !== -1;
+      if (!isSend) return;
+      var ta = document.querySelector('textarea');
+      if (ta && ta.value) {
+        var txt = ta.value;
+        setTimeout(function() { maybePromptConnect(txt); }, 400);
+      }
+    }, true);
+    // Remove the card once the account gets connected (OAuth popup posts back).
+    window.addEventListener('message', function(e) {
+      if (e.data && typeof e.data.type === 'string' &&
+          e.data.type.indexOf('connected') !== -1) {
+        removeChatConnectCard();
+      }
+    });
+  }
+
+  setupChatConnectWatcher();
+
   console.log('[AIUI] Integrations UI v2 loaded');
 })();
