@@ -11,7 +11,7 @@
     --text: #ececec; --muted: #9b9b9b; --accent: #4a9eff; --accent-ink: #fff;
     --root: #f2a340; --topic: #4a9eff; --subtopic: #35d29a; --leaf: #9aa7b8;
     --chat: #7aa2ff; --document: #8a97a6; --memory: #b98bff;
-    --app: #f2795b; --cron: #35c3d2;
+    --app: #f2795b; --cron: #35c3d2; --video: #e879b9;
     --link: rgba(255,255,255,0.10); --link-hi: rgba(122,170,255,0.55);
     --shadow: 0 10px 30px rgba(0,0,0,.35);
   }
@@ -21,7 +21,7 @@
       --text: #16202b; --muted: #5c6775; --accent: #2b7fff;
       --root: #e08a1e; --topic: #2b7fff; --subtopic: #12b981; --leaf: #6b7787;
       --chat: #3b74ff; --document: #6b7787; --memory: #9a5cff;
-      --app: #e2603f; --cron: #1aa6b5;
+      --app: #e2603f; --cron: #1aa6b5; --video: #d1509b;
       --dot: rgba(20,30,45,.07);
       --link: rgba(20,30,45,0.12); --link-hi: rgba(43,127,255,0.55);
       --shadow: 0 18px 50px rgba(30,45,70,.14);
@@ -123,6 +123,7 @@
       <span><i class="dot" style="background:var(--chat)"></i> Chat</span>
       <span><i class="dot" style="background:var(--app)"></i> App</span>
       <span><i class="dot" style="background:var(--cron)"></i> Automation</span>
+      <span><i class="dot" style="background:var(--video)"></i> Video</span>
       <span><i class="dot" style="background:var(--document)"></i> Document</span>
       <span><i class="dot" style="background:var(--memory)"></i> Memory</span>
     </div>
@@ -155,11 +156,11 @@
     var g = function (k) { return cs.getPropertyValue(k).trim(); };
     return { root: g("--root"), topic: g("--topic"), subtopic: g("--subtopic"), leaf: g("--leaf"),
       chat: g("--chat"), document: g("--document"), memory: g("--memory"),
-      app: g("--app"), cron: g("--cron"),
+      app: g("--app"), cron: g("--cron"), video: g("--video"),
       link: g("--link"), linkHi: g("--link-hi"), text: g("--text"), muted: g("--muted") };
   }
   var COL = colors();
-  function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : (k === "chat" || k === "memory" || k === "app" || k === "cron") ? 5 : 4.5; }
+  function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : (k === "chat" || k === "memory" || k === "app" || k === "cron" || k === "video") ? 5 : 4.5; }
 
   function setStats(t) { document.getElementById("stats").textContent = t; }
   function overlay(msg, actionsHtml) {
@@ -305,7 +306,7 @@
     selected = n;
     var kinds = { root: "Root", topic: "Topic", subtopic: "Sub-topic", leaf: "Leaf",
                   chat: "Chat", document: "Document", memory: "Memory",
-                  app: "App", cron: "Automation" };
+                  app: "App", cron: "Automation", video: "Video" };
     document.getElementById("pkind").textContent = kinds[n.kind] || n.kind;
     document.getElementById("pkind").style.color = COL[n.kind] || COL.leaf;
     document.getElementById("plabel").textContent = n.label;
@@ -315,7 +316,8 @@
       document: "An uploaded file or collection in your account.",
       memory: "Something you asked the assistant to remember.",
       app: "An app you built with the App Builder.",
-      cron: "A scheduled automation (cron job) you set up."
+      cron: "A scheduled automation (cron job) you set up.",
+      video: "A video you generated."
     };
     document.getElementById("psummary").textContent = n.summary || fallback[n.kind] ||
       ("A " + (kinds[n.kind] || n.kind).toLowerCase() + " grouping related items.");

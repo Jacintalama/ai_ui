@@ -157,7 +157,24 @@ def prettify_slug(slug: str) -> str:
 # Hub labels the assembler generates live. Old builds may have stored these as
 # topic nodes; we drop stale copies so they don't render twice.
 RESERVED_HUBS = {"Uploaded Files", "Knowledge Collections", "App Builder Apps",
-                 "Automations & Cron Jobs", "Saved Memories"}
+                 "Automations & Cron Jobs", "Saved Memories", "Generated Videos"}
+
+# Where App Builder apps live on disk inside this container (bind mount).
+# Deleting an app removes its directory (routes_projects rmtree) but the build
+# rows in tasks.items survive, so disk presence is the truth for "still exists".
+APPS_FS_ROOT = os.environ.get("GRAPH_APPS_ROOT", "/workspace/ai_ui/apps")
+
+
+def _app_exists(slug: str, root: str = None) -> bool:
+    """True if the app's directory still exists. FAILS OPEN: if the apps root
+    itself is missing (local dev, mount gone) we cannot tell, so keep the app
+    visible rather than silently hiding every app."""
+    base = root if root is not None else APPS_FS_ROOT
+    if not slug:
+        return False
+    if not os.path.isdir(base):
+        return True
+    return os.path.isdir(os.path.join(base, slug))
 
 
 def best_parent_id(text: str, candidates: list, default_id: str) -> str:
@@ -375,7 +392,8 @@ async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
         "ORDER BY built_app_slug, updated_at DESC LIMIT $2",
         user_email, limit)
     return [{"label": prettify_slug(r["built_app_slug"]),
-             "summary": (r["built_app_slug"] or None)} for r in rows]
+             "summary": (r["built_app_slug"] or None)}
+            for r in rows if _app_exists(r["built_app_slug"])]
 
 
 async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
@@ -389,6 +407,20 @@ async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
         state = "enabled" if r["enabled"] else "paused"
         summ = f"{r['cron_expr']} ({state}): {r['prompt'] or ''}".strip()
         out.append({"label": (r["name"] or "automation"), "summary": summ})
+    return out
+
+
+async def _read_videos(conn, user_email: str, limit: int = 200) -> list:
+    """Videos the user generated -> nodes (title + status/prompt)."""
+    rows = await conn.fetch(
+        "SELECT title, prompt, status FROM tasks.video_jobs "
+        "WHERE lower(user_email) = lower($1) ORDER BY created_at DESC LIMIT $2",
+        user_email, limit)
+    out = []
+    for r in rows:
+        label = (r["title"] or (r["prompt"] or "video")[:80])
+        summ = f"{r['status'] or 'video'}: {r['prompt'] or ''}".strip()
+        out.append({"label": label, "summary": summ})
     return out
 
 
@@ -428,16 +460,19 @@ async def _assemble_live(conn, user_email: str):
     mems = await _read_memories(conn, uid)
     apps = await _read_apps(conn, user_email)
     crons = await _read_crons(conn, user_email)
+    videos = await _read_videos(conn, user_email)
 
     nodes = list(skeleton)
     nodes += attach_chats(user_email, root_id, skeleton, chats)
     nodes += source_branch(user_email, root_id, "App Builder Apps", apps, "app")
     nodes += source_branch(user_email, root_id, "Automations & Cron Jobs", crons, "cron")
+    nodes += source_branch(user_email, root_id, "Generated Videos", videos, "video")
     nodes += source_branch(user_email, root_id, "Uploaded Files", files, "document")
     nodes += source_branch(user_email, root_id, "Knowledge Collections", kbs, "document")
     nodes += source_branch(user_email, root_id, "Saved Memories", mems, "memory")
     counts = {"chats": len(chats), "apps": len(apps), "crons": len(crons),
-              "files": len(files), "collections": len(kbs), "memories": len(mems)}
+              "videos": len(videos), "files": len(files),
+              "collections": len(kbs), "memories": len(mems)}
     return nodes, counts
 
 

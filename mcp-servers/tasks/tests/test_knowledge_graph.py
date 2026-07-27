@@ -158,3 +158,25 @@ def test_prettify_slug_strips_hash_and_titlecases():
     assert prettify_slug("ralph-portfolio") == "Ralph Portfolio"
     assert prettify_slug("crudsimple") == "Crudsimple"
     assert prettify_slug("") == "app"
+
+
+# --- deleted-app accuracy: disk presence is truth ----------------------------
+from routes_knowledge_graph import _app_exists
+
+
+def test_app_exists_true_when_dir_present(tmp_path):
+    (tmp_path / "my-app").mkdir()
+    assert _app_exists("my-app", root=str(tmp_path)) is True
+
+
+def test_app_exists_false_when_deleted(tmp_path):
+    assert _app_exists("gone-app", root=str(tmp_path)) is False
+
+
+def test_app_exists_fails_open_when_root_missing(tmp_path):
+    # Apps root not mounted (local dev): cannot tell -> keep apps visible.
+    assert _app_exists("any-app", root=str(tmp_path / "nope")) is True
+
+
+def test_app_exists_blank_slug_false(tmp_path):
+    assert _app_exists("", root=str(tmp_path)) is False
