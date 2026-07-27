@@ -656,6 +656,7 @@
     ];
 
     var connState = {};
+    var connPartial = {};
     var activeCat = 'All';
     var searchTerm = '';
 
@@ -692,6 +693,7 @@
 
     function makeCard(app) {
       var connected = !!connState[app.id];
+      var partial = !!connPartial[app.id];
       var card = document.createElement('div');
       card.style.cssText = 'position:relative;background:#1b1b1b;border:'
         + (connected ? '1px solid #2f7d43' : '1px solid #262626')
@@ -705,7 +707,9 @@
       statusEl.innerHTML = app.real
         ? (connected
             ? '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>'
-            : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>')
+            : (partial
+                ? '<span style="color:#e0a72b;font-size:12px;font-weight:600;">Finish connecting</span>'
+                : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>'))
         : '<span style="color:#666;font-size:11px;">Coming soon</span>';
       card.appendChild(iconEl(app));
       card.appendChild(nameEl);
@@ -776,7 +780,10 @@
           .then(function (d) { return !!(d && d.connected); })
           .catch(function () { return false; });
       })).then(function (results) {
-        connState[app.id] = results.every(function (x) { return x; });
+        var all = results.every(function (x) { return x; });
+        var any = results.some(function (x) { return x; });
+        connState[app.id] = all;
+        connPartial[app.id] = any && !all;
         renderGrid();
       });
     });
@@ -2086,5 +2093,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v14-chatcard loaded');
+  console.log('[AIUI] Integrations UI v15-chatcard loaded');
 })();
