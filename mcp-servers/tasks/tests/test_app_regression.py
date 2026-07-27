@@ -11,6 +11,8 @@ docs/superpowers/specs/2026-07-17-enhance-regression-guard-design.md
 """
 import pathlib
 
+import pytest
+
 import app_regression
 
 
@@ -59,15 +61,18 @@ def _unresolved_called_names(module_path: str, module_obj) -> list[str]:
     })
 
 
-def test_every_function_routes_execution_calls_actually_exists():
-    """routes_execution called effective_slug() without importing it. Importing
-    the module did not catch it, because a NameError inside a function body only
-    fires when that line RUNS, and no unit test exercises the enhance path."""
-    import routes_execution
+@pytest.mark.parametrize("module_name", ["routes_execution", "routes_projects"])
+def test_every_function_a_route_module_calls_actually_exists(module_name):
+    """routes_execution once called effective_slug() without importing it —
+    importing the module did not catch it (NameError in a function body only
+    fires when the line RUNS). The guard now also covers routes_projects,
+    which the export feature extends."""
+    import importlib
 
-    missing = _unresolved_called_names(routes_execution.__file__, routes_execution)
+    mod = importlib.import_module(module_name)
+    missing = _unresolved_called_names(mod.__file__, mod)
 
-    assert missing == [], f"called but never defined or imported: {missing}"
+    assert missing == [], f"{module_name}: called but never defined or imported: {missing}"
 
 
 # --- helpers ---------------------------------------------------------------

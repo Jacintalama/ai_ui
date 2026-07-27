@@ -689,7 +689,11 @@ async def _supabase_info_for(s, slug: str):
         return None
     try:
         anon = _crypto.decrypt(row.anon_key_encrypted)
-    except Exception:  # noqa: BLE001 - enrichment degrades to example config
+    except Exception as exc:  # noqa: BLE001 - degrade, but never silently:
+        # a linked project with an unreadable key is a broken link, not an
+        # absent one (e.g. AIUI_FERNET_KEY rotated without re-encrypting).
+        logger.warning("export: anon key decrypt failed for %s, exporting "
+                       "as unlinked: %s", slug, exc)
         return None
 
     runner = None
