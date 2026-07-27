@@ -10,6 +10,7 @@
     --bg: #0d0d0d; --panel: #171717; --panel-2: #212121; --border: rgba(255,255,255,.09);
     --text: #ececec; --muted: #9b9b9b; --accent: #4a9eff; --accent-ink: #fff;
     --root: #f2a340; --topic: #4a9eff; --subtopic: #35d29a; --leaf: #9aa7b8;
+    --chat: #7aa2ff; --document: #8a97a6; --memory: #b98bff;
     --link: rgba(255,255,255,0.10); --link-hi: rgba(122,170,255,0.55);
     --shadow: 0 10px 30px rgba(0,0,0,.35);
   }
@@ -18,6 +19,8 @@
       --bg: #f5f7fa; --panel: #fff; --panel-2: #f2f5f9; --border: #e3e9f0;
       --text: #16202b; --muted: #5c6775; --accent: #2b7fff;
       --root: #e08a1e; --topic: #2b7fff; --subtopic: #12b981; --leaf: #6b7787;
+      --chat: #3b74ff; --document: #6b7787; --memory: #9a5cff;
+      --dot: rgba(20,30,45,.07);
       --link: rgba(20,30,45,0.12); --link-hi: rgba(43,127,255,0.55);
       --shadow: 0 18px 50px rgba(30,45,70,.14);
     }
@@ -31,9 +34,11 @@
   .title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
   .sub { color: var(--muted); font-size: 13.5px; margin: 4px 0 0; max-width: 56ch; line-height: 1.5; }
   .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 18px 0 12px; }
-  button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--border);
-    background: var(--panel-2); color: var(--text); padding: 9px 15px; font-size: 13.5px; font-weight: 600;
+  button { font: inherit; cursor: pointer; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text); padding: 9px 16px; font-size: 13.5px; font-weight: 600;
     display: inline-flex; align-items: center; gap: 8px; transition: background .15s, border-color .15s, transform .05s; }
+  button svg { width: 15px; height: 15px; flex: none; }
+  .toolbar .spacer { flex: 1 1 auto; }
   button:hover { background: var(--panel); border-color: var(--accent); }
   button:active { transform: translateY(1px); }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -46,8 +51,16 @@
   .legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
   .legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-  .stage { position: relative; margin-top: 8px; border: 1px solid var(--border); border-radius: 16px;
-    background: var(--panel); box-shadow: var(--shadow); overflow: hidden;
+  /* Header bar that sits flush above the canvas: stats left, legend right. */
+  .graphhead { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap; margin-top: 14px; padding: 10px 14px; background: var(--panel-2);
+    border: 1px solid var(--border); border-bottom: none; border-radius: 14px 14px 0 0; }
+  .stage { position: relative; border: 1px solid var(--border); border-radius: 0 0 16px 16px;
+    /* subtle dotted grid, like a canvas board */
+    background:
+      radial-gradient(var(--dot, rgba(255,255,255,.05)) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--panel);
+    box-shadow: var(--shadow); overflow: hidden;
     height: 560px; min-height: 320px; min-width: 280px; max-width: 100%;
     resize: both; }
   canvas { display: block; width: 100%; height: 100%; touch-action: none; }
@@ -81,20 +94,34 @@
 <body>
 <div class="wrap">
   <h1 class="title">Graph</h1>
-  <p class="sub">How your knowledge connects. Built from your own chats into topics, sub-topics, and the things you talked about. Private to your account.</p>
+  <p class="sub">How your knowledge connects. Built from your chats, uploaded files and collections into topics and the things you work on. Private to your account.</p>
 
   <div class="toolbar">
-    <button class="primary" id="build">Build / Refresh</button>
-    <button id="reset">Reset view</button>
+    <button id="refresh" title="Reload the graph without rebuilding">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+      Refresh
+    </button>
+    <button id="reset" title="Re-center the view">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+      Reset view
+    </button>
     <div class="spacer"></div>
-    <span class="stats" id="stats">loading…</span>
+    <button class="primary" id="build" title="Rebuild from your chats, files and collections">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2a2.5 2.5 0 0 1 2.5 2.5v15a2.5 2.5 0 0 1-4.96.44A2.5 2.5 0 0 1 4 17.5a2.5 2.5 0 0 1 0-4A2.5 2.5 0 0 1 4.5 9 2.5 2.5 0 0 1 7 4.5 2.5 2.5 0 0 1 9.5 2Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44A2.5 2.5 0 0 0 20 17.5a2.5 2.5 0 0 0 0-4A2.5 2.5 0 0 0 19.5 9 2.5 2.5 0 0 0 17 4.5 2.5 2.5 0 0 0 14.5 2Z"></path></svg>
+      Build Graph
+    </button>
   </div>
 
-  <div class="legend">
-    <span><i class="dot" style="background:var(--root)"></i> Root</span>
-    <span><i class="dot" style="background:var(--topic)"></i> Topic</span>
-    <span><i class="dot" style="background:var(--subtopic)"></i> Sub-topic</span>
-    <span><i class="dot" style="background:var(--leaf)"></i> Leaf</span>
+  <div class="graphhead">
+    <span class="stats" id="stats">loading…</span>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--root)"></i> Root</span>
+      <span><i class="dot" style="background:var(--topic)"></i> Topic</span>
+      <span><i class="dot" style="background:var(--subtopic)"></i> Sub-topic</span>
+      <span><i class="dot" style="background:var(--chat)"></i> Chat</span>
+      <span><i class="dot" style="background:var(--document)"></i> Document</span>
+      <span><i class="dot" style="background:var(--memory)"></i> Memory</span>
+    </div>
   </div>
 
   <div class="stage">
@@ -123,10 +150,11 @@
     var cs = getComputedStyle(document.documentElement);
     var g = function (k) { return cs.getPropertyValue(k).trim(); };
     return { root: g("--root"), topic: g("--topic"), subtopic: g("--subtopic"), leaf: g("--leaf"),
+      chat: g("--chat"), document: g("--document"), memory: g("--memory"),
       link: g("--link"), linkHi: g("--link-hi"), text: g("--text"), muted: g("--muted") };
   }
   var COL = colors();
-  function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : 4.5; }
+  function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : (k === "chat" || k === "memory") ? 5 : 4.5; }
 
   function setStats(t) { document.getElementById("stats").textContent = t; }
   function overlay(msg, actionsHtml) {
@@ -153,7 +181,7 @@
     var note = data.truncated ? " (showing first " + nodes.length + ")" : "";
     setStats(nodes.length + " nodes · " + links.length + " links" + note);
     if (!nodes.length) {
-      overlay("Your graph is empty. Click <strong>Build / Refresh</strong> to create it from your recent chats.");
+      overlay("Your graph is empty. Click <strong>Build Graph</strong> to create it from your chats, files and collections.");
     } else { overlay(""); }
   }
 
@@ -172,7 +200,7 @@
     if (building) return;
     building = true;
     document.getElementById("build").disabled = true;
-    overlay('<span class="spin"></span> Building your graph from recent chats…');
+    overlay('<span class="spin"></span> Building your graph from your chats, files and collections…');
     fetch(API + "/build", { method: "POST", headers: { "Accept": "application/json" } })
       .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, b: b }; }); })
       .then(function (res) {
@@ -242,7 +270,10 @@
     });
   }
 
-  function loop() { if (!reduce || frames < 260) { tick(); frames++; } draw(); requestAnimationFrame(loop); }
+  // Run the O(n^2) physics only until the layout settles (or while dragging),
+  // then freeze and just redraw. Keeps hundreds of nodes smooth on a small box.
+  var SETTLE = 520;
+  function loop() { if (dragging || frames < SETTLE) { tick(); frames++; } draw(); requestAnimationFrame(loop); }
 
   function nodeAt(px, py) {
     for (var i = nodes.length - 1; i >= 0; i--) {
@@ -258,7 +289,7 @@
     if (dragging) { dragging.x = p.x; dragging.y = p.y; return; }
     hover = nodeAt(p.x, p.y); canvas.style.cursor = hover ? "pointer" : "default";
   });
-  canvas.addEventListener("mousedown", function (e) { var n = nodeAt(pos(e).x, pos(e).y); if (n) dragging = n; });
+  canvas.addEventListener("mousedown", function (e) { var n = nodeAt(pos(e).x, pos(e).y); if (n) { dragging = n; frames = 0; } });
   window.addEventListener("mouseup", function () { dragging = null; });
   canvas.addEventListener("click", function (e) {
     var n = nodeAt(pos(e).x, pos(e).y);
@@ -267,13 +298,19 @@
 
   function openPanel(n) {
     selected = n;
-    var kinds = { root: "Root", topic: "Topic", subtopic: "Sub-topic", leaf: "Leaf" };
+    var kinds = { root: "Root", topic: "Topic", subtopic: "Sub-topic", leaf: "Leaf",
+                  chat: "Chat", document: "Document", memory: "Memory" };
     document.getElementById("pkind").textContent = kinds[n.kind] || n.kind;
     document.getElementById("pkind").style.color = COL[n.kind] || COL.leaf;
     document.getElementById("plabel").textContent = n.label;
-    document.getElementById("psummary").textContent = n.summary ||
-      (n.kind === "root" ? "The root of everything the assistant learned from your chats." :
-       "A " + (kinds[n.kind] || n.kind).toLowerCase() + " grouping related items from your chats.");
+    var fallback = {
+      root: "The root of everything the assistant learned about you.",
+      chat: "A conversation of yours, grouped under its topic.",
+      document: "An uploaded file or collection in your account.",
+      memory: "Something you asked the assistant to remember."
+    };
+    document.getElementById("psummary").textContent = n.summary || fallback[n.kind] ||
+      ("A " + (kinds[n.kind] || n.kind).toLowerCase() + " grouping related items.");
     var kids = links.filter(function (l) { return l.a === n; }).length;
     document.getElementById("pmeta").textContent = kids ? kids + " connected below" : "leaf node";
     document.getElementById("panel").classList.add("open");
@@ -290,6 +327,7 @@
     frames = 0;
   });
   document.getElementById("build").addEventListener("click", build);
+  document.getElementById("refresh").addEventListener("click", load);
 
   var mo = new MutationObserver(function () { COL = colors(); });
   mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });

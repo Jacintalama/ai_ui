@@ -130,6 +130,66 @@ def build_memory_context(nodes: list, query: str, limit: int = 6) -> str:
     return ""
 
 
+# --- denser build: attach real items as nodes (pure, unit tested) -----------
+def make_node(user_email: str, kind: str, label: str, parent_id, summary=None) -> dict:
+    """One graph node with a fresh id. Labels are trimmed/capped; blank -> tag."""
+    return {
+        "id": str(uuid.uuid4()),
+        "user_email": user_email,
+        "kind": kind,
+        "label": (label or "").strip()[:200] or "(untitled)",
+        "summary": (summary or None),
+        "parent_id": parent_id,
+    }
+
+
+def best_parent_id(text: str, candidates: list, default_id: str) -> str:
+    """Pick the candidate node whose label+summary best overlaps `text` by
+    keyword tokens. No overlap (or empty text) -> default_id. Deterministic:
+    first candidate wins a tie because we only replace on a strictly higher
+    score, and candidates are passed in a stable order."""
+    it = _tokens(text)
+    if not it:
+        return default_id
+    best_id, best = default_id, 0
+    for c in candidates:
+        ct = _tokens((c.get("label") or "") + " " + (c.get("summary") or ""))
+        s = len(it & ct)
+        if s > best:
+            best, best_id = s, c["id"]
+    return best_id
+
+
+def attach_chats(user_email: str, root_id: str, topic_nodes: list, chats: list) -> list:
+    """Attach each chat as a 'chat' node under its best-matching topic/subtopic
+    (fallback: the root), giving topics many children (hub-and-spoke)."""
+    cands = [n for n in topic_nodes if n.get("kind") in ("topic", "subtopic")]
+    out = []
+    for c in chats:
+        title = (c.get("title") or "").strip()
+        if not title:
+            continue
+        pid = best_parent_id(title + " " + (c.get("snippet") or ""), cands, root_id)
+        out.append(make_node(user_email, "chat", title, pid,
+                             (c.get("snippet") or "")[:300] or None))
+    return out
+
+
+def source_branch(user_email: str, root_id: str, hub_label: str,
+                  items: list, item_kind: str) -> list:
+    """Build a hub topic node under root plus one node per item. `items` =
+    dicts with 'label' (and optional 'summary'). Empty -> [] (no empty hub)."""
+    items = [i for i in items if (i.get("label") or "").strip()]
+    if not items:
+        return []
+    hub = make_node(user_email, "topic", hub_label, root_id)
+    out = [hub]
+    for it in items:
+        out.append(make_node(user_email, item_kind, it.get("label"),
+                             hub["id"], it.get("summary")))
+    return out
+
+
 # --- storage -----------------------------------------------------------------
 async def _connect():
     import asyncpg
@@ -239,6 +299,45 @@ async def _read_recent_chats(conn, user_email: str, limit: int = MAX_CHATS) -> l
             for r in rows]
 
 
+async def _user_id(conn, user_email: str):
+    r = await conn.fetchrow(
+        'SELECT id FROM public."user" WHERE lower(email) = lower($1) LIMIT 1',
+        user_email)
+    return r["id"] if r else None
+
+
+async def _read_files(conn, uid, limit: int = 200) -> list:
+    """Uploaded files -> Document nodes."""
+    if not uid:
+        return []
+    rows = await conn.fetch(
+        'SELECT filename FROM public."file" WHERE user_id = $1 '
+        'ORDER BY created_at DESC LIMIT $2', uid, limit)
+    return [{"label": (r["filename"] or "file")} for r in rows]
+
+
+async def _read_knowledge(conn, uid, limit: int = 200) -> list:
+    """Knowledge collections -> nodes (name + description)."""
+    if not uid:
+        return []
+    rows = await conn.fetch(
+        'SELECT name, description FROM public."knowledge" WHERE user_id = $1 '
+        'ORDER BY created_at DESC LIMIT $2', uid, limit)
+    return [{"label": (r["name"] or "collection"),
+             "summary": (r["description"] or None)} for r in rows]
+
+
+async def _read_memories(conn, uid, limit: int = 200) -> list:
+    """Saved OWUI memories -> nodes. (Empty today; wired for when they exist.)"""
+    if not uid:
+        return []
+    rows = await conn.fetch(
+        'SELECT content FROM public."memory" WHERE user_id = $1 '
+        'ORDER BY created_at DESC LIMIT $2', uid, limit)
+    return [{"label": (r["content"] or "")[:80],
+             "summary": (r["content"] or None)} for r in rows]
+
+
 async def _cluster_with_llm(corpus: str) -> str:
     key = _first_sk(os.environ.get("OPENAI_API_KEY", ""))
     if not key:
@@ -277,18 +376,39 @@ async def build_my_graph(user: CurrentUser = Depends(current_user)):
     conn = await _connect()
     try:
         await ensure_table(conn)
-        chats = await _read_recent_chats(conn, user.email)
-        if not chats:
-            return {"built": False, "reason": "No chats to build from yet.", "nodes": 0}
-        corpus = "\n\n".join(f"# {c['title']}\n{c['snippet']}" for c in chats if (c['title'] or c['snippet']))
-        if not corpus.strip():
-            return {"built": False, "reason": "Your chats have no readable text yet.", "nodes": 0}
-        try:
-            raw = await _cluster_with_llm(corpus)
-            topics = parse_cluster_json(raw)
-        except ValueError as e:
-            raise HTTPException(status_code=502, detail=f"Could not organize your chats: {e}")
-        nodes, truncated = cap_nodes(tree_to_nodes(user.email, topics))
+        uid = await _user_id(conn, user.email)
+        chats = await _read_recent_chats(conn, user.email, limit=200)
+        files = await _read_files(conn, uid)
+        kbs = await _read_knowledge(conn, uid)
+        mems = await _read_memories(conn, uid)
+        if not chats and not files and not kbs and not mems:
+            return {"built": False, "reason": "Nothing to build from yet.", "nodes": 0}
+
+        # Semantic skeleton: cluster a bounded slice of recent chats with the
+        # LLM into root -> topics -> subtopics -> leaves.
+        base = [{"id": str(uuid.uuid4()), "user_email": user.email,
+                 "kind": "root", "label": "My Knowledge", "summary": None,
+                 "parent_id": None}]
+        cluster_chats = chats[:40]
+        corpus = "\n\n".join(f"# {c['title']}\n{c['snippet']}"
+                             for c in cluster_chats if (c['title'] or c['snippet']))
+        if corpus.strip():
+            try:
+                topics = parse_cluster_json(await _cluster_with_llm(corpus))
+                base = tree_to_nodes(user.email, topics)
+            except ValueError as e:
+                raise HTTPException(status_code=502,
+                                    detail=f"Could not organize your chats: {e}")
+        root_id = next(n["id"] for n in base if n["kind"] == "root")
+
+        # Density: every chat attached to its topic + one hub per source type.
+        all_nodes = list(base)
+        all_nodes += attach_chats(user.email, root_id, base, chats)
+        all_nodes += source_branch(user.email, root_id, "Uploaded Files", files, "document")
+        all_nodes += source_branch(user.email, root_id, "Knowledge Collections", kbs, "document")
+        all_nodes += source_branch(user.email, root_id, "Saved Memories", mems, "memory")
+        nodes, truncated = cap_nodes(all_nodes, 600)
+
         async with conn.transaction():
             await conn.execute("DELETE FROM knowledge_graph_node WHERE user_email = $1", user.email)
             for n in nodes:
@@ -297,7 +417,9 @@ async def build_my_graph(user: CurrentUser = Depends(current_user)):
                     "VALUES ($1, $2, $3, $4, $5, $6)",
                     uuid.UUID(n["id"]), n["user_email"], n["kind"], n["label"],
                     n.get("summary"), uuid.UUID(n["parent_id"]) if n.get("parent_id") else None)
-        return {"built": True, "nodes": len(nodes), "chats_used": len(chats), "truncated": truncated}
+        return {"built": True, "nodes": len(nodes), "chats_used": len(chats),
+                "files": len(files), "collections": len(kbs),
+                "memories": len(mems), "truncated": truncated}
     finally:
         await conn.close()
 

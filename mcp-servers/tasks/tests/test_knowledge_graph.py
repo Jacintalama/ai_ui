@@ -85,3 +85,64 @@ def test_build_context_falls_back_to_topic_profile():
 
 def test_build_context_empty_when_no_nodes():
     assert build_memory_context([], "anything", limit=6) == ""
+
+
+# --- Phase 3: denser build helpers (pure) ------------------------------------
+from routes_knowledge_graph import (make_node, best_parent_id, attach_chats,
+                                     source_branch)
+
+
+def test_make_node_trims_and_defaults():
+    n = make_node("u@x.com", "chat", "  Hello  ", "p1")
+    assert n["kind"] == "chat" and n["label"] == "Hello" and n["parent_id"] == "p1"
+    assert n["summary"] is None and n["id"]
+    blank = make_node("u@x.com", "chat", "   ", None)
+    assert blank["label"] == "(untitled)"
+
+
+_TOPICS = [
+    {"id": "t_email", "kind": "topic", "label": "Email Management", "summary": None},
+    {"id": "t_crm", "kind": "topic", "label": "CRM Solutions", "summary": None},
+    {"id": "s_gmail", "kind": "subtopic", "label": "Gmail Setup", "summary": "connecting gmail"},
+]
+
+
+def test_best_parent_matches_topic():
+    assert best_parent_id("connect my gmail account", _TOPICS, "root") == "s_gmail"
+    assert best_parent_id("which crm should I pick", _TOPICS, "root") == "t_crm"
+
+
+def test_best_parent_falls_back_to_default():
+    assert best_parent_id("totally unrelated xyzzy", _TOPICS, "root") == "root"
+    assert best_parent_id("", _TOPICS, "root") == "root"
+
+
+def test_attach_chats_assigns_parents_and_kind():
+    chats = [
+        {"title": "Gmail connection help", "snippet": "connect gmail"},
+        {"title": "Best CRM tools", "snippet": "crm comparison"},
+        {"title": "Random musing", "snippet": "xyzzy nothing"},
+        {"title": "", "snippet": "skipped, no title"},
+    ]
+    out = attach_chats("u@x.com", "root", _TOPICS, chats)
+    assert len(out) == 3                       # blank-title chat skipped
+    assert all(n["kind"] == "chat" for n in out)
+    by_label = {n["label"]: n["parent_id"] for n in out}
+    assert by_label["Gmail connection help"] == "s_gmail"
+    assert by_label["Best CRM tools"] == "t_crm"
+    assert by_label["Random musing"] == "root"   # no match -> default
+
+
+def test_source_branch_builds_hub_and_items():
+    out = source_branch("u@x.com", "root", "Uploaded Files",
+                        [{"label": "a.pdf"}, {"label": "b.docx"}, {"label": "  "}],
+                        "document")
+    assert out[0]["kind"] == "topic" and out[0]["label"] == "Uploaded Files"
+    hub_id = out[0]["id"]
+    items = out[1:]
+    assert len(items) == 2                      # blank label dropped
+    assert all(i["kind"] == "document" and i["parent_id"] == hub_id for i in items)
+
+
+def test_source_branch_empty_makes_no_hub():
+    assert source_branch("u@x.com", "root", "Saved Memories", [], "memory") == []
