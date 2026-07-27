@@ -54,6 +54,82 @@ def build_links(nodes: list) -> list:
     return links
 
 
+# --- retrieval / memory context (pure, unit tested) --------------------------
+# Very common words carry no signal for matching a short chat message against
+# node labels/summaries, so we drop them before scoring.
+_STOPWORDS = {
+    "the", "and", "for", "you", "your", "are", "was", "with", "can", "how",
+    "what", "why", "who", "did", "does", "get", "got", "our", "out", "this",
+    "that", "then", "them", "they", "have", "has", "had", "will", "would",
+    "should", "could", "about", "into", "from", "please", "help", "want",
+    "need", "make", "made", "let", "just", "like", "any", "all", "not",
+}
+
+
+def _tokens(text: str) -> set:
+    """Lowercase alphanumeric words > 2 chars, minus stopwords."""
+    return {
+        w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(w) > 2 and w not in _STOPWORDS
+    }
+
+
+def rank_nodes_for_query(nodes: list, query: str, limit: int = 6) -> list:
+    """Rank non-root nodes by keyword overlap with the query.
+
+    Returns at most `limit` nodes that share >=1 keyword, most relevant first.
+    Deterministic: ties break on label so the same query always yields the
+    same order. Empty query or no overlap -> []."""
+    qt = _tokens(query)
+    if not qt:
+        return []
+    scored = []
+    for n in nodes:
+        if n.get("kind") == "root":
+            continue
+        nt = _tokens((n.get("label") or "") + " " + (n.get("summary") or ""))
+        overlap = len(qt & nt)
+        if overlap > 0:
+            scored.append((overlap, n.get("label") or "", n))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [n for _, _, n in scored[:limit]]
+
+
+def build_memory_context(nodes: list, query: str, limit: int = 6) -> str:
+    """Build a compact memory block to inject into a model's context.
+
+    If the query matches specific nodes, list those (label + summary). If not,
+    fall back to a light profile of the user's recurring topics. Empty graph or
+    nothing to say -> "" (the caller injects nothing)."""
+    if not nodes:
+        return ""
+    matched = rank_nodes_for_query(nodes, query, limit)
+    if matched:
+        lines = []
+        for n in matched:
+            lbl = (n.get("label") or "").strip()
+            summ = (n.get("summary") or "").strip()
+            lines.append(f"- {lbl}: {summ}" if summ else f"- {lbl}")
+        return (
+            "Background on this user, drawn from their personal knowledge graph "
+            "of past conversations. Items relevant to their current message:\n"
+            + "\n".join(lines)
+            + "\nUse this as context about who they are and what they work on. "
+            "Do not mention the knowledge graph unless they ask about it."
+        )
+    topics = [n.get("label") or "" for n in nodes if n.get("kind") == "topic"]
+    topics = [t for t in topics if t][:limit]
+    if topics:
+        return (
+            "Background on this user, from their personal knowledge graph of "
+            "past conversations. Recurring topics they care about: "
+            + ", ".join(topics)
+            + ". Use this as light context. Do not mention the knowledge graph "
+            "unless they ask about it."
+        )
+    return ""
+
+
 # --- storage -----------------------------------------------------------------
 async def _connect():
     import asyncpg
@@ -257,3 +333,38 @@ async def get_my_graph(user: CurrentUser = Depends(current_user)):
         "count": len(nodes),
         "truncated": truncated,
     }
+
+
+@router.get("/context")
+async def my_graph_context(
+    q: str = "",
+    limit: int = 6,
+    user: CurrentUser = Depends(current_user),
+):
+    """Compact memory block for the signed-in user, relevant to query `q`.
+
+    Consumed by the global OWUI memory filter (inlet) so every model gets the
+    user's own knowledge-graph context injected at chat time. Strictly
+    per-user; returns {"context": "", ...} when there is nothing to inject."""
+    conn = await _connect()
+    try:
+        await ensure_table(conn)
+        rows = await conn.fetch(
+            "SELECT kind, label, summary, parent_id "
+            "FROM knowledge_graph_node WHERE user_email = $1 "
+            "ORDER BY created_at",
+            user.email,
+        )
+    finally:
+        await conn.close()
+    nodes = [
+        {
+            "kind": r["kind"],
+            "label": r["label"],
+            "summary": r["summary"],
+            "parent_id": str(r["parent_id"]) if r["parent_id"] else None,
+        }
+        for r in rows
+    ]
+    ctx = build_memory_context(nodes, q, limit)
+    return {"context": ctx, "count": len(nodes), "used": bool(ctx)}
