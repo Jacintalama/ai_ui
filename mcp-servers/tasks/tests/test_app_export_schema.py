@@ -55,3 +55,23 @@ async def test_dump_flags_rls_off_as_fact():
 async def test_empty_database_yields_honest_header():
     sql = await app_export.build_schema_sql(_runner({}))
     assert "no tables found" in sql.lower()
+
+
+async def test_views_are_skipped_not_faked_as_tables():
+    """information_schema.columns includes VIEWS; pg_class relkind='r' does
+    not. A view must never render as CREATE TABLE with a bogus RLS warning."""
+    canned = {
+        "information_schema.columns": [
+            {"table_name": "todos", "column_name": "id", "data_type": "bigint",
+             "is_nullable": "NO", "column_default": None},
+            {"table_name": "todos_view", "column_name": "id", "data_type": "bigint",
+             "is_nullable": "YES", "column_default": None},
+        ],
+        "relrowsecurity": [{"relname": "todos", "relrowsecurity": True}],
+        "pg_policies": [],
+    }
+    sql = await app_export.build_schema_sql(_runner(canned))
+    assert 'CREATE TABLE "todos"' in sql
+    assert 'CREATE TABLE "todos_view"' not in sql
+    assert '"todos_view"' in sql  # disclosed as skipped, not silently dropped
+    assert "RLS is NOT enabled" not in sql  # the view must not trigger the warning
