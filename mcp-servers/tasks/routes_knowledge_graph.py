@@ -12,6 +12,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
+import graph_embeddings
 from auth import current_user, CurrentUser
 
 router = APIRouter(prefix="/graph/mine")
@@ -95,8 +96,39 @@ def rank_nodes_for_query(nodes: list, query: str, limit: int = 6) -> list:
     return [n for _, _, n in scored[:limit]]
 
 
+def format_matched(matched: list) -> str:
+    """Render matched nodes as the injected memory block."""
+    lines = []
+    for n in matched:
+        lbl = (n.get("label") or "").strip()
+        summ = (n.get("summary") or "").strip()
+        lines.append(f"- {lbl}: {summ}" if summ else f"- {lbl}")
+    return (
+        "Background on this user, drawn from their personal knowledge graph "
+        "of past conversations. Items relevant to their current message:\n"
+        + "\n".join(lines)
+        + "\nUse this as context about who they are and what they work on. "
+        "Do not mention the knowledge graph unless they ask about it."
+    )
+
+
+def topic_profile(nodes: list, limit: int = 6) -> str:
+    """Light fallback: the user's recurring topics, when nothing matched."""
+    topics = [n.get("label") or "" for n in nodes if n.get("kind") == "topic"]
+    topics = [t for t in topics if t][:limit]
+    if not topics:
+        return ""
+    return (
+        "Background on this user, from their personal knowledge graph of "
+        "past conversations. Recurring topics they care about: "
+        + ", ".join(topics)
+        + ". Use this as light context. Do not mention the knowledge graph "
+        "unless they ask about it."
+    )
+
+
 def build_memory_context(nodes: list, query: str, limit: int = 6) -> str:
-    """Build a compact memory block to inject into a model's context.
+    """Keyword-ranked memory block (also the fallback when embeddings fail).
 
     If the query matches specific nodes, list those (label + summary). If not,
     fall back to a light profile of the user's recurring topics. Empty graph or
@@ -105,29 +137,54 @@ def build_memory_context(nodes: list, query: str, limit: int = 6) -> str:
         return ""
     matched = rank_nodes_for_query(nodes, query, limit)
     if matched:
-        lines = []
-        for n in matched:
-            lbl = (n.get("label") or "").strip()
-            summ = (n.get("summary") or "").strip()
-            lines.append(f"- {lbl}: {summ}" if summ else f"- {lbl}")
-        return (
-            "Background on this user, drawn from their personal knowledge graph "
-            "of past conversations. Items relevant to their current message:\n"
-            + "\n".join(lines)
-            + "\nUse this as context about who they are and what they work on. "
-            "Do not mention the knowledge graph unless they ask about it."
-        )
-    topics = [n.get("label") or "" for n in nodes if n.get("kind") == "topic"]
-    topics = [t for t in topics if t][:limit]
-    if topics:
-        return (
-            "Background on this user, from their personal knowledge graph of "
-            "past conversations. Recurring topics they care about: "
-            + ", ".join(topics)
-            + ". Use this as light context. Do not mention the knowledge graph "
-            "unless they ask about it."
-        )
-    return ""
+        return format_matched(matched)
+    return topic_profile(nodes, limit)
+
+
+def node_text(n: dict) -> str:
+    """The text a node is embedded under (label plus summary when present)."""
+    lbl = (n.get("label") or "").strip()
+    summ = (n.get("summary") or "").strip()
+    return f"{lbl}: {summ}" if summ else lbl
+
+
+async def semantic_rank(conn, nodes: list, query: str, limit: int = 6) -> list:
+    """Rank non-root nodes against the query by embedding similarity.
+    Raises on embedding failure so the caller can fall back to keywords."""
+    cands = [n for n in nodes if n.get("kind") != "root"]
+    texts = [node_text(n) for n in cands]
+    vecs = await graph_embeddings.get_embeddings(conn, [query] + texts)
+    qvec = vecs.get(query)
+    if not qvec:
+        raise ValueError("query embedding unavailable")
+    pairs = [(n, vecs[t]) for n, t in zip(cands, texts) if t in vecs]
+    return graph_embeddings.rank_by_similarity(qvec, pairs, limit=limit)
+
+
+async def build_memory_context_smart(conn, nodes: list, query: str,
+                                     limit: int = 6):
+    """Structured retrieval chain -> (context, mode).
+
+    semantic (embeddings) -> keyword (on embedding failure) -> topic profile
+    (nothing matched) -> "" (empty graph). `mode` names which tier answered,
+    for observability."""
+    if not nodes:
+        return "", "none"
+    matched, mode = [], "profile"
+    qs = (query or "").strip()
+    if qs:
+        try:
+            matched = await semantic_rank(conn, nodes, qs, limit)
+            mode = "semantic"
+        except Exception as e:
+            print(f"[graph] semantic rank unavailable, keyword fallback: {e}",
+                  flush=True)
+            matched = rank_nodes_for_query(nodes, qs, limit)
+            mode = "keyword"
+    if matched:
+        return format_matched(matched), mode
+    prof = topic_profile(nodes, limit)
+    return (prof, "profile") if prof else ("", "none")
 
 
 # --- denser build: attach real items as nodes (pure, unit tested) -----------
@@ -586,8 +643,10 @@ async def my_graph_context(
     conn = await _connect()
     try:
         await ensure_table(conn)
+        await graph_embeddings.ensure_embed_table(conn)
         nodes, _counts = await _assemble_live(conn, user.email)
+        ctx, mode = await build_memory_context_smart(conn, nodes, q, limit)
     finally:
         await conn.close()
-    ctx = build_memory_context(nodes, q, limit)
-    return {"context": ctx, "count": len(nodes), "used": bool(ctx)}
+    return {"context": ctx, "count": len(nodes), "used": bool(ctx),
+            "mode": mode}
