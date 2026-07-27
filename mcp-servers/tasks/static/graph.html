@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Graph</title>
+<style>
+  :root {
+    /* Neutral grays tuned to match the Open WebUI dark theme it embeds in. */
+    --bg: #0d0d0d; --panel: #171717; --panel-2: #212121; --border: rgba(255,255,255,.09);
+    --text: #ececec; --muted: #9b9b9b; --accent: #4a9eff; --accent-ink: #fff;
+    --root: #f2a340; --topic: #4a9eff; --subtopic: #35d29a; --leaf: #9aa7b8;
+    --chat: #7aa2ff; --document: #8a97a6; --memory: #b98bff;
+    --app: #f2795b; --cron: #35c3d2;
+    --link: rgba(255,255,255,0.10); --link-hi: rgba(122,170,255,0.55);
+    --shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f7fa; --panel: #fff; --panel-2: #f2f5f9; --border: #e3e9f0;
+      --text: #16202b; --muted: #5c6775; --accent: #2b7fff;
+      --root: #e08a1e; --topic: #2b7fff; --subtopic: #12b981; --leaf: #6b7787;
+      --chat: #3b74ff; --document: #6b7787; --memory: #9a5cff;
+      --app: #e2603f; --cron: #1aa6b5;
+      --dot: rgba(20,30,45,.07);
+      --link: rgba(20,30,45,0.12); --link-hi: rgba(43,127,255,0.55);
+      --shadow: 0 18px 50px rgba(30,45,70,.14);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 22px 20px 40px; }
+  .title { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+  .sub { color: var(--muted); font-size: 13.5px; margin: 4px 0 0; max-width: 56ch; line-height: 1.5; }
+  .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 18px 0 12px; }
+  button { font: inherit; cursor: pointer; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text); padding: 9px 16px; font-size: 13.5px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 8px; transition: background .15s, border-color .15s, transform .05s; }
+  button svg { width: 15px; height: 15px; flex: none; }
+  .toolbar .spacer { flex: 1 1 auto; }
+  button:hover { background: var(--panel); border-color: var(--accent); }
+  button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .55; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  .spacer { flex: 1 1 auto; }
+  .stats { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  /* Header bar that sits flush above the canvas: stats left, legend right. */
+  .graphhead { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap; margin-top: 14px; padding: 10px 14px; background: var(--panel-2);
+    border: 1px solid var(--border); border-bottom: none; border-radius: 14px 14px 0 0; }
+  .stage { position: relative; border: 1px solid var(--border); border-radius: 0 0 16px 16px;
+    /* subtle dotted grid, like a canvas board */
+    background:
+      radial-gradient(var(--dot, rgba(255,255,255,.05)) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--panel);
+    box-shadow: var(--shadow); overflow: hidden;
+    height: 560px; min-height: 320px; min-width: 280px; max-width: 100%;
+    resize: both; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  @media (max-width: 620px) { .stage { height: 440px; } }
+  /* Visible grip so it's clear the panel can be dragged bigger/smaller. */
+  .stage::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 10px; height: 10px;
+    border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); opacity: .55;
+    pointer-events: none; border-bottom-right-radius: 3px; }
+  .hint { position: absolute; left: 14px; bottom: 12px; font-size: 11.5px; color: var(--muted); pointer-events: none; }
+  .overlay { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column;
+    gap: 12px; text-align: center; padding: 24px; background: color-mix(in srgb, var(--bg) 55%, transparent);
+    backdrop-filter: blur(2px); z-index: 5; }
+  .overlay.on { display: flex; }
+  .overlay p { margin: 0; color: var(--muted); font-size: 14px; max-width: 40ch; line-height: 1.55; }
+  .spin { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+  .panel { position: absolute; top: 12px; right: 12px; width: 260px; max-width: calc(100% - 24px);
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 14px 15px;
+    box-shadow: var(--shadow); transform: translateX(112%); transition: transform .22s ease; opacity: 0; }
+  .panel.open { transform: translateX(0); opacity: 1; }
+  .panel .kind { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .panel h3 { margin: 6px 0 6px; font-size: 16px; line-height: 1.25; word-break: break-word; }
+  .panel p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .panel .meta { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .panel .close { position: absolute; top: 8px; right: 10px; background: none; border: none; color: var(--muted); font-size: 18px; padding: 2px 6px; }
+  .panel .close:hover { color: var(--text); background: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="title">Graph</h1>
+  <p class="sub">How your knowledge connects across your chats, apps, automations, files and collections. Your items update automatically as you create or delete them; click Build to re-analyze the topics. Private to your account.</p>
+
+  <div class="toolbar">
+    <button id="refresh" title="Reload the graph without rebuilding">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+      Refresh
+    </button>
+    <button id="reset" title="Re-center the view">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+      Reset view
+    </button>
+    <div class="spacer"></div>
+    <button class="primary" id="build" title="Rebuild from your chats, files and collections">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2a2.5 2.5 0 0 1 2.5 2.5v15a2.5 2.5 0 0 1-4.96.44A2.5 2.5 0 0 1 4 17.5a2.5 2.5 0 0 1 0-4A2.5 2.5 0 0 1 4.5 9 2.5 2.5 0 0 1 7 4.5 2.5 2.5 0 0 1 9.5 2Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44A2.5 2.5 0 0 0 20 17.5a2.5 2.5 0 0 0 0-4A2.5 2.5 0 0 0 19.5 9 2.5 2.5 0 0 0 17 4.5 2.5 2.5 0 0 0 14.5 2Z"></path></svg>
+      Build Graph
+    </button>
+  </div>
+
+  <div class="graphhead">
+    <span class="stats" id="stats">loading…</span>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--root)"></i> Root</span>
+      <span><i class="dot" style="background:var(--topic)"></i> Topic</span>
+      <span><i class="dot" style="background:var(--subtopic)"></i> Sub-topic</span>
+      <span><i class="dot" style="background:var(--chat)"></i> Chat</span>
+      <span><i class="dot" style="background:var(--app)"></i> App</span>
+      <span><i class="dot" style="background:var(--cron)"></i> Automation</span>
+      <span><i class="dot" style="background:var(--document)"></i> Document</span>
+      <span><i class="dot" style="background:var(--memory)"></i> Memory</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <canvas id="c"></canvas>
+    <div class="hint">Drag a node to move it · click a node for detail</div>
+    <div class="overlay" id="overlay"><p id="overlay-msg"></p><div id="overlay-actions"></div></div>
+    <div class="panel" id="panel">
+      <button class="close" id="pclose" aria-label="Close">&times;</button>
+      <div class="kind" id="pkind"></div>
+      <h3 id="plabel"></h3>
+      <p id="psummary"></p>
+      <div class="meta" id="pmeta"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var API = "/api/tasks/graph/mine";
+  var canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+  var nodes = [], links = [], W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var hover = null, selected = null, dragging = null, frames = 0, building = false;
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function colors() {
+    var cs = getComputedStyle(document.documentElement);
+    var g = function (k) { return cs.getPropertyValue(k).trim(); };
+    return { root: g("--root"), topic: g("--topic"), subtopic: g("--subtopic"), leaf: g("--leaf"),
+      chat: g("--chat"), document: g("--document"), memory: g("--memory"),
+      app: g("--app"), cron: g("--cron"),
+      link: g("--link"), linkHi: g("--link-hi"), text: g("--text"), muted: g("--muted") };
+  }
+  var COL = colors();
+  function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : (k === "chat" || k === "memory" || k === "app" || k === "cron") ? 5 : 4.5; }
+
+  function setStats(t) { document.getElementById("stats").textContent = t; }
+  function overlay(msg, actionsHtml) {
+    var o = document.getElementById("overlay");
+    document.getElementById("overlay-msg").innerHTML = msg || "";
+    document.getElementById("overlay-actions").innerHTML = actionsHtml || "";
+    if (msg) o.classList.add("on"); else o.classList.remove("on");
+  }
+
+  function ingest(data) {
+    var cx = W / 2, cy = H / 2;
+    var byId = {};
+    nodes = (data.nodes || []).map(function (n) {
+      var ang = Math.random() * Math.PI * 2, r = 40 + Math.random() * 130;
+      var sn = { id: n.id, label: n.label, kind: n.kind, summary: n.summary || "",
+        x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r, vx: 0, vy: 0 };
+      if (n.kind === "root") { sn.x = cx; sn.y = cy; }
+      byId[n.id] = sn; return sn;
+    });
+    links = (data.links || []).map(function (l) { return { a: byId[l.source], b: byId[l.target] }; })
+      .filter(function (l) { return l.a && l.b; });
+    selected = null; document.getElementById("panel").classList.remove("open");
+    frames = 0;
+    var note = data.truncated ? " (showing first " + nodes.length + ")" : "";
+    setStats(nodes.length + " nodes · " + links.length + " links" + note);
+    if (!nodes.length) {
+      overlay("Your graph is empty. Click <strong>Build Graph</strong> to create it from your chats, files and collections.");
+    } else { overlay(""); }
+  }
+
+  function load() {
+    setStats("loading…");
+    fetch(API, { headers: { "Accept": "application/json" } })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(ingest)
+      .catch(function () {
+        setStats("—");
+        overlay("Could not load your graph. Please reload the page.");
+      });
+  }
+
+  function build() {
+    if (building) return;
+    building = true;
+    document.getElementById("build").disabled = true;
+    overlay('<span class="spin"></span> Building your graph from your chats, files and collections…');
+    fetch(API + "/build", { method: "POST", headers: { "Accept": "application/json" } })
+      .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, b: b }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.b && res.b.detail) || "build failed");
+        if (res.b && res.b.built === false) { overlay(res.b.reason || "Nothing to build yet."); return; }
+        load();
+      })
+      .catch(function (e) { overlay("Couldn't build your graph. " + (e.message || "") + " Try again in a moment."); })
+      .finally(function () { building = false; document.getElementById("build").disabled = false; });
+  }
+
+  function resize() {
+    var rect = canvas.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+
+  function tick() {
+    var cx = W / 2, cy = H / 2, i, j;
+    for (i = 0; i < nodes.length; i++) {
+      var a = nodes[i];
+      for (j = i + 1; j < nodes.length; j++) {
+        var b = nodes[j], dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy || 0.01;
+        var f = 900 / d2, d = Math.sqrt(d2), ux = dx / d, uy = dy / d;
+        a.vx += ux * f; a.vy += uy * f; b.vx -= ux * f; b.vy -= uy * f;
+      }
+      a.vx += (cx - a.x) * 0.0016; a.vy += (cy - a.y) * 0.0016;
+    }
+    links.forEach(function (l) {
+      var dx = l.b.x - l.a.x, dy = l.b.y - l.a.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      var target = l.a.kind === "root" ? 92 : l.a.kind === "topic" ? 64 : 42;
+      var f = (d - target) * 0.02, ux = dx / d, uy = dy / d;
+      l.a.vx += ux * f; l.a.vy += uy * f; l.b.vx -= ux * f; l.b.vy -= uy * f;
+    });
+    nodes.forEach(function (n) {
+      if (n === dragging) { n.vx = 0; n.vy = 0; return; }
+      n.vx *= 0.86; n.vy *= 0.86; n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(16, Math.min(W - 16, n.x)); n.y = Math.max(16, Math.min(H - 16, n.y));
+    });
+  }
+
+  function neighborsOf(n) { var s = new Set(); links.forEach(function (l) { if (l.a === n) s.add(l.b); if (l.b === n) s.add(l.a); }); return s; }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    var focus = hover || selected, near = focus ? neighborsOf(focus) : null;
+    links.forEach(function (l) {
+      var on = focus && (l.a === focus || l.b === focus);
+      ctx.strokeStyle = on ? COL.linkHi : COL.link; ctx.lineWidth = on ? 1.6 : 1;
+      ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+    });
+    nodes.forEach(function (n) {
+      var dim = focus && n !== focus && !(near && near.has(n));
+      ctx.globalAlpha = dim ? 0.28 : 1;
+      ctx.beginPath(); ctx.arc(n.x, n.y, radius(n.kind), 0, Math.PI * 2);
+      ctx.fillStyle = COL[n.kind] || COL.leaf; ctx.fill();
+      if (n === selected) { ctx.lineWidth = 2.5; ctx.strokeStyle = COL.text; ctx.stroke(); }
+      ctx.globalAlpha = 1;
+      if (n.kind === "root" || n.kind === "topic" || n === focus || (near && near.has(n))) {
+        ctx.fillStyle = COL.text; ctx.globalAlpha = dim ? 0.4 : 1;
+        ctx.font = (n.kind === "root" ? "600 13px" : n.kind === "topic" ? "600 12px" : "500 11px") +
+          " ui-sans-serif, -apple-system, Segoe UI, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillText(n.label, n.x, n.y + radius(n.kind) + 3); ctx.globalAlpha = 1;
+      }
+    });
+  }
+
+  // Run the O(n^2) physics only until the layout settles (or while dragging),
+  // then freeze and just redraw. Keeps hundreds of nodes smooth on a small box.
+  var SETTLE = 520;
+  function loop() { if (dragging || frames < SETTLE) { tick(); frames++; } draw(); requestAnimationFrame(loop); }
+
+  function nodeAt(px, py) {
+    for (var i = nodes.length - 1; i >= 0; i--) {
+      var n = nodes[i], dx = px - n.x, dy = py - n.y, rr = radius(n.kind) + 6;
+      if (dx * dx + dy * dy <= rr * rr) return n;
+    }
+    return null;
+  }
+  function pos(e) { var r = canvas.getBoundingClientRect(), t = e.touches ? e.touches[0] : e; return { x: t.clientX - r.left, y: t.clientY - r.top }; }
+
+  canvas.addEventListener("mousemove", function (e) {
+    var p = pos(e);
+    if (dragging) { dragging.x = p.x; dragging.y = p.y; return; }
+    hover = nodeAt(p.x, p.y); canvas.style.cursor = hover ? "pointer" : "default";
+  });
+  canvas.addEventListener("mousedown", function (e) { var n = nodeAt(pos(e).x, pos(e).y); if (n) { dragging = n; frames = 0; } });
+  window.addEventListener("mouseup", function () { dragging = null; });
+  canvas.addEventListener("click", function (e) {
+    var n = nodeAt(pos(e).x, pos(e).y);
+    if (n) openPanel(n); else { selected = null; document.getElementById("panel").classList.remove("open"); }
+  });
+
+  function openPanel(n) {
+    selected = n;
+    var kinds = { root: "Root", topic: "Topic", subtopic: "Sub-topic", leaf: "Leaf",
+                  chat: "Chat", document: "Document", memory: "Memory",
+                  app: "App", cron: "Automation" };
+    document.getElementById("pkind").textContent = kinds[n.kind] || n.kind;
+    document.getElementById("pkind").style.color = COL[n.kind] || COL.leaf;
+    document.getElementById("plabel").textContent = n.label;
+    var fallback = {
+      root: "The root of everything the assistant learned about you.",
+      chat: "A conversation of yours, grouped under its topic.",
+      document: "An uploaded file or collection in your account.",
+      memory: "Something you asked the assistant to remember.",
+      app: "An app you built with the App Builder.",
+      cron: "A scheduled automation (cron job) you set up."
+    };
+    document.getElementById("psummary").textContent = n.summary || fallback[n.kind] ||
+      ("A " + (kinds[n.kind] || n.kind).toLowerCase() + " grouping related items.");
+    var kids = links.filter(function (l) { return l.a === n; }).length;
+    document.getElementById("pmeta").textContent = kids ? kids + " connected below" : "leaf node";
+    document.getElementById("panel").classList.add("open");
+  }
+  document.getElementById("pclose").addEventListener("click", function () {
+    selected = null; document.getElementById("panel").classList.remove("open");
+  });
+
+  document.getElementById("reset").addEventListener("click", function () {
+    nodes.forEach(function (n) {
+      var ang = Math.random() * Math.PI * 2, r = 40 + Math.random() * 130;
+      if (n.kind !== "root") { n.x = W / 2 + Math.cos(ang) * r; n.y = H / 2 + Math.sin(ang) * r; n.vx = n.vy = 0; }
+    });
+    frames = 0;
+  });
+  document.getElementById("build").addEventListener("click", build);
+  document.getElementById("refresh").addEventListener("click", load);
+
+  var mo = new MutationObserver(function () { COL = colors(); });
+  mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () { COL = colors(); });
+  window.addEventListener("resize", resize);
+  // Keep the canvas backing store in sync when the user drags the stage grip.
+  var stageEl = document.querySelector(".stage");
+  if (stageEl && "ResizeObserver" in window) {
+    new ResizeObserver(function () { resize(); }).observe(stageEl);
+  }
+
+  resize(); loop(); load();
+})();
+</script>
+</body>
+</html>

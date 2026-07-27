@@ -1144,9 +1144,128 @@
           svg.innerHTML = '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>';
         },
       },
+      {
+        attr: "data-aiui-graph",
+        // Visible to ALL signed-in users; the graph is owner-scoped per user.
+        allUsers: true,
+        label: "Graph",
+        title: "Graph: your personal knowledge graph, built from your chats",
+        href: "/tasks/graph",
+        // Open inside the OWUI shell (keep the sidebar, swap only the
+        // right-hand content area) instead of a full-window navigation.
+        embed: true,
+        // network / share glyph (connected nodes)
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>';
+        },
+      },
     ];
 
     // Build a sidebar nav entry by deep-cloning the Workspace row wrapper.
+    // --- Embedded page overlay -------------------------------------------
+    // Renders a page (e.g. the Graph) inside the OWUI shell: the left sidebar
+    // stays put and only the right-hand content area is swapped, matching the
+    // OWUI dark background. Used by nav entries flagged cfg.embed = true.
+
+    // Measure the left sidebar so the overlay starts exactly at its right edge
+    // (and re-measures when the sidebar collapses / the window resizes).
+    function aiuiSidebarRightEdge() {
+      const seed = document.querySelector("[data-aiui-graph]") ||
+                   document.querySelector('a[href="/workspace"]');
+      let best = null, el = seed;
+      while (el && el !== document.body) {
+        const r = el.getBoundingClientRect();
+        // The sidebar is anchored to the left, tall, and a few hundred px wide.
+        if (r.left <= 8 && r.width >= 120 && r.width <= 520 && r.height > 200) best = el;
+        el = el.parentElement;
+      }
+      if (best) return { edge: Math.round(best.getBoundingClientRect().right), el: best };
+      return { edge: 260, el: null };
+    }
+
+    function closeAiuiEmbed() {
+      const w = document.querySelector("[data-aiui-embed]");
+      if (w) w.remove();
+      if (window.__aiuiEmbedCleanup) { window.__aiuiEmbedCleanup(); window.__aiuiEmbedCleanup = null; }
+    }
+
+    function openAiuiEmbed(cfg) {
+      const existing = document.querySelector("[data-aiui-embed]");
+      if (existing) {
+        // Same page already open -> treat the click as a no-op toggle.
+        if (existing.getAttribute("data-src") === cfg.href) return;
+        closeAiuiEmbed();
+      }
+      const meas = aiuiSidebarRightEdge();
+      const wrap = document.createElement("div");
+      wrap.setAttribute("data-aiui-embed", "");
+      wrap.setAttribute("data-src", cfg.href);
+      wrap.style.cssText =
+        "position:fixed;top:0;right:0;bottom:0;left:" + meas.edge + "px;" +
+        "z-index:35;background:#0b0b0b;overflow:hidden;";
+
+      const frame = document.createElement("iframe");
+      frame.src = cfg.href;
+      frame.setAttribute("title", cfg.title || cfg.label || "AIUI");
+      frame.style.cssText =
+        "width:100%;height:100%;border:0;display:block;background:#0b0b0b;";
+
+      const close = document.createElement("button");
+      close.type = "button";
+      close.setAttribute("aria-label", "Close");
+      close.textContent = "×";
+      close.style.cssText =
+        "position:absolute;top:10px;right:16px;z-index:2;width:32px;height:32px;" +
+        "border:0;border-radius:8px;cursor:pointer;font-size:22px;line-height:1;" +
+        "background:rgba(255,255,255,.08);color:#e5e5e5;";
+      close.addEventListener("mouseenter", () => { close.style.background = "rgba(255,255,255,.16)"; });
+      close.addEventListener("mouseleave", () => { close.style.background = "rgba(255,255,255,.08)"; });
+      close.addEventListener("click", closeAiuiEmbed);
+
+      wrap.appendChild(frame);
+      wrap.appendChild(close);
+      document.body.appendChild(wrap);
+
+      // Keep the overlay glued to the sidebar edge on resize / collapse.
+      const reposition = () => { wrap.style.left = aiuiSidebarRightEdge().edge + "px"; };
+      window.addEventListener("resize", reposition);
+      let ro = null;
+      if (meas.el && "ResizeObserver" in window) {
+        ro = new ResizeObserver(reposition);
+        ro.observe(meas.el);
+      }
+      // Poll briefly to catch the sidebar collapse/expand animation.
+      const iv = setInterval(reposition, 250);
+      setTimeout(() => { clearInterval(iv); }, 3000);
+
+      const onKey = (e) => { if (e.key === "Escape") closeAiuiEmbed(); };
+      document.addEventListener("keydown", onKey);
+
+      // Clicking any OTHER sidebar item (a chat, New Chat, another nav) returns
+      // to the app. We do NOT preventDefault so their action still runs.
+      const onDocClick = (e) => {
+        const t = e.target;
+        if (!t || wrap.contains(t)) return;
+        if (t.closest && t.closest("[data-aiui-graph]")) return;
+        closeAiuiEmbed();
+      };
+      document.addEventListener("click", onDocClick, true);
+
+      window.__aiuiEmbedCleanup = () => {
+        window.removeEventListener("resize", reposition);
+        document.removeEventListener("keydown", onKey);
+        document.removeEventListener("click", onDocClick, true);
+        if (ro) ro.disconnect();
+        clearInterval(iv);
+      };
+    }
+
     // Mirrors the original App Builder cloning logic exactly, parameterized
     // by `cfg` (label / title / target href / icon).
     function buildEntry(rowWrapper, cfg) {
@@ -1200,7 +1319,8 @@
       entry.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        window.location.href = cfg.href;
+        if (cfg.embed) { openAiuiEmbed(cfg); }
+        else { window.location.href = cfg.href; }
       }, true);
       return entry;
     }
