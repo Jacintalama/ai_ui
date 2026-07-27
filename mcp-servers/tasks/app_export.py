@@ -63,3 +63,73 @@ def analyze_app(slug: str, *, apps_root: Path | None = None) -> AppProfile | Non
         size_bytes=size,
         file_count=count,
     )
+
+
+@dataclass(frozen=True)
+class DeployTarget:
+    key: str
+    name: str
+    steps: tuple[str, ...]
+
+    def supports(self, profile: AppProfile) -> tuple[bool, str]:
+        # Every IO app today is static files, which every target below hosts.
+        # When server-side app types exist, per-target constraints go here
+        # (e.g. "Vercel cannot run Docker containers").
+        return True, ""
+
+
+DEPLOY_TARGETS: tuple[DeployTarget, ...] = (
+    DeployTarget("github-pages", "GitHub Pages", (
+        "Create a new repository on github.com and push this folder to it "
+        "(`git remote add origin <url> && git push -u origin main`).",
+        "In the repository: Settings, Pages, set Source to `main` branch, root folder.",
+        "Your app appears at `https://<user>.github.io/<repo>/` in about a minute.",
+    )),
+    DeployTarget("netlify", "Netlify", (
+        "Go to app.netlify.com and log in (free tier works).",
+        "Drag this whole folder onto the Netlify Drop area, or connect the "
+        "GitHub repository if you pushed one.",
+        "Netlify gives you a live URL immediately; no build settings needed.",
+    )),
+    DeployTarget("vercel", "Vercel", (
+        "Push this folder to a GitHub repository first.",
+        "On vercel.com, choose Add New Project and import that repository.",
+        "Framework preset: Other. No build command. Output directory: `./`.",
+    )),
+    DeployTarget("cloudflare-pages", "Cloudflare Pages", (
+        "Push this folder to a GitHub repository first.",
+        "In the Cloudflare dashboard: Workers & Pages, Create, Pages, "
+        "connect the repository.",
+        "No build command; leave the output directory as `/`.",
+    )),
+    DeployTarget("own-server", "Your own server (any static host)", (
+        "Copy this folder to the server.",
+        "Serve it with any web server, e.g. `python -m http.server 8000` to "
+        "test, or point nginx/Caddy at the folder for real hosting.",
+    )),
+)
+
+
+def build_deploy_guide(profile: AppProfile) -> str:
+    lines = ["## Where this app can run", ""]
+    warnings = []
+    if profile.uses_chat_proxy:
+        warnings.append(
+            "- **AI features will not work after export.** This app calls the IO "
+            "platform's `/api/chat-proxy`, which only exists on IO. Standalone, "
+            "those requests fail; you would need your own backend and API key.")
+    if profile.uses_supabase:
+        warnings.append(
+            "- This app uses Supabase. The bundle's `aiui-config.js` must contain "
+            "your project URL and anon key (see the Database section below).")
+    if warnings:
+        lines += ["### Before you deploy", *warnings, ""]
+    for t in DEPLOY_TARGETS:
+        ok, reason = t.supports(profile)
+        lines.append(f"### {t.name}")
+        if not ok:
+            lines += [f"Not supported for this app: {reason}", ""]
+            continue
+        lines += [f"{i}. {s}" for i, s in enumerate(t.steps, 1)]
+        lines.append("")
+    return "\n".join(lines)
