@@ -1001,6 +1001,26 @@
     </div>
   </div>
 
+  <div id="export-modal" class="modal-backdrop" hidden>
+    <div class="modal" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3>Export: <span id="export-slug"></span></h3>
+        <button type="button" class="close" data-close>&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint" style="margin-bottom:6px;">Download this app as a
+          working git repository: code, history, config and a README that
+          explains where it can run and how.</div>
+        <div id="export-body" class="docs-body">
+          <div class="members-empty">Loading the deploy guide...</div>
+        </div>
+        <div style="margin-top:12px; display:flex; justify-content:flex-end;">
+          <button type="button" id="export-download" class="btn primary">Download zip</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="history-modal" class="modal-backdrop" hidden>
     <div class="modal" style="max-width: 680px;">
       <div class="modal-header">
@@ -1371,6 +1391,9 @@
         const docsBtn = t.built_app_slug
           ? `<button type="button" class="members-btn docs-btn" data-slug="${escapeHtml(t.built_app_slug)}">Docs</button>`
           : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="Docs available once the build completes">Docs</span>`;
+        const exportBtn = t.built_app_slug
+          ? `<button type="button" class="members-btn export-btn" data-slug="${escapeHtml(t.built_app_slug)}">Export</button>`
+          : "";
         const historyBtn = t.built_app_slug
           ? `<button type="button" class="members-btn history-btn" data-slug="${escapeHtml(t.built_app_slug)}">History</button>`
           : `<span class="members-btn" style="opacity:0.4;cursor:default;" title="History available once the build completes">History</span>`;
@@ -1388,17 +1411,20 @@
           <div class="desc">${escapeHtml(userDesc)}</div>
           <div class="meta">
             <span class="left">${escapeHtml(relativeTime(built))}</span>
-            <span style="display:flex; gap:6px;">${docsBtn}${historyBtn}${membersBtn}</span>
+            <span style="display:flex; gap:6px;">${docsBtn}${exportBtn}${historyBtn}${membersBtn}</span>
           </div>
           <div class="actions">${actionBtn}</div>`;
         grid.appendChild(card);
       }
       // Wire Members + History buttons (delegated listeners)
-      grid.querySelectorAll("button.members-btn:not(.history-btn):not(.docs-btn)").forEach((b) => {
+      grid.querySelectorAll("button.members-btn:not(.history-btn):not(.docs-btn):not(.export-btn)").forEach((b) => {
         b.addEventListener("click", () => openMembersModal(b.dataset.slug));
       });
       grid.querySelectorAll("button.docs-btn").forEach((b) => {
         b.addEventListener("click", () => openDocsModal(b.dataset.slug));
+      });
+      grid.querySelectorAll("button.export-btn").forEach((b) => {
+        b.addEventListener("click", () => openExportModal(b.dataset.slug));
       });
       grid.querySelectorAll("button.history-btn").forEach((b) => {
         b.addEventListener("click", () => openHistoryModal(b.dataset.slug));
@@ -2519,6 +2545,69 @@
         docsBody.innerHTML = `<div class="members-empty">Could not load the docs (${escapeHtml(String(e.message || e))}).</div>`;
       }
     }
+
+    // ===== Export modal (deploy guide + bundle download) =====
+    const exportModal = document.getElementById("export-modal");
+    const exportSlugEl = document.getElementById("export-slug");
+    const exportBody = document.getElementById("export-body");
+    const exportDownload = document.getElementById("export-download");
+    let exportCurrentSlug = null;
+
+    function _closeExportModal() { exportModal.hidden = true; }
+    exportModal.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", _closeExportModal));
+    exportModal.addEventListener("click", (ev) => { if (ev.target === exportModal) _closeExportModal(); });
+    document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !exportModal.hidden) _closeExportModal(); });
+
+    async function openExportModal(slug) {
+      if (!slug) return;
+      exportCurrentSlug = slug;
+      exportSlugEl.textContent = slug;
+      exportBody.innerHTML = `<div class="members-empty">Loading the deploy guide...</div>`;
+      exportModal.hidden = false;
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/export/guide`, {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        exportBody.innerHTML = DOMPurify.sanitize(marked.parse(data.markdown || ""));
+      } catch (e) {
+        exportBody.innerHTML = `<div class="members-empty">Could not load the guide (${escapeHtml(String(e.message || e))}).</div>`;
+      }
+    }
+
+    exportDownload.addEventListener("click", async () => {
+      if (!exportCurrentSlug) return;
+      exportDownload.disabled = true;
+      exportDownload.textContent = "Preparing...";
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(exportCurrentSlug)}/export`, {
+          headers: authHeaders(),
+          credentials: "include",
+        });
+        if (!r.ok) {
+          let detail = `HTTP ${r.status}`;
+          try { detail = (await r.json()).detail || detail; } catch (_e) {}
+          throw new Error(detail);
+        }
+        const blob = await r.blob();
+        const cd = r.headers.get("Content-Disposition") || "";
+        const m = cd.match(/filename="?([^";]+)"?/);
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = m ? m[1] : `${exportCurrentSlug}-export.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+      } catch (e) {
+        exportBody.innerHTML = `<div class="members-empty">Export failed: ${escapeHtml(String(e.message || e))}</div>` + exportBody.innerHTML;
+      } finally {
+        exportDownload.disabled = false;
+        exportDownload.textContent = "Download zip";
+      }
+    });
 
     const hmModal = document.getElementById("history-modal");
     const hmSlug  = document.getElementById("hm-slug");
