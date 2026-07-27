@@ -162,3 +162,60 @@ async def test_subtree_path_uses_split_and_clone(tmp_path, monkeypatch):
     assert any(f.startswith("clone") or "\x00clone\x00" in "\x00" + f + "\x00" for f in flat)
     assert any("branch" in c and "-D" in c for c in calls), "temp branch cleaned up"
     assert filename == "shop-export-deadbee.zip"
+
+
+async def test_split_failure_raises_and_leaves_no_tmp(tmp_path, monkeypatch):
+    """A failed export must surface ExportError AND clean up its temp dir."""
+    monkeypatch.setattr(app_export, "_APPS_ROOT", tmp_path)
+    _mk_app(tmp_path, "shop")
+
+    async def fake(*args, cwd=None, **kw):
+        if "log" in args:
+            return 0, "abc123 built\n"
+        if "subtree" in args:
+            return 1, "fatal: subtree exploded"
+        return 0, ""
+    monkeypatch.setattr(app_export, "_run_git", fake)
+
+    import glob
+    import os
+    import tempfile as _tf
+    before = set(glob.glob(os.path.join(_tf.gettempdir(), "ioexport-*")))
+    try:
+        await export_app("shop", actor_email="a@b.com", supabase_row=None)
+        assert False, "should raise"
+    except ExportError as e:
+        assert "history extraction failed" in str(e)
+    after = set(glob.glob(os.path.join(_tf.gettempdir(), "ioexport-*")))
+    assert after == before, "failed export must not leak its temp dir"
+
+
+async def test_stale_temp_branch_is_deleted_before_split(tmp_path, monkeypatch):
+    """A crashed prior export can leave export-tmp-<slug> behind; the next
+    export must delete it BEFORE splitting so it can never wedge the slug."""
+    monkeypatch.setattr(app_export, "_APPS_ROOT", tmp_path)
+    _mk_app(tmp_path, "shop")
+    calls = []
+
+    async def fake(*args, cwd=None, **kw):
+        calls.append(list(args))
+        if "log" in args:
+            return 0, "abc123 x\n"
+        if "subtree" in args:
+            return 0, "deadbeefcafe\n"
+        if "clone" in args:
+            dest = Path(args[-1])
+            (dest / ".git").mkdir(parents=True)
+            (dest / "index.html").write_text("<html><head></head></html>",
+                                             encoding="utf-8")
+            return 0, ""
+        if "rev-parse" in args:
+            return 0, "deadbee\n"
+        return 0, ""
+    monkeypatch.setattr(app_export, "_run_git", fake)
+
+    await export_app("shop", actor_email="a@b.com", supabase_row=None)
+    split_i = next(i for i, c in enumerate(calls) if "subtree" in c)
+    pre = [i for i, c in enumerate(calls)
+           if "branch" in c and "-D" in c and i < split_i]
+    assert pre, "stale export-tmp branch must be deleted before split"
