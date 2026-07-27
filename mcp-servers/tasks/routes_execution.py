@@ -28,7 +28,7 @@ from claude_executor import (
     build_clarify_prompt, build_plan_prompt,
     build_tdd_execute_prompt, build_verify_prompt, build_autofix_prompt,
     extract_app_slug, parse_outcome, parse_clarify_done,
-    parse_plan, parse_test_outcome,
+    parse_plan, parse_test_outcome, sql_tool_available,
 )
 from db import session
 from prompt_utils import clean_user_prompt
@@ -64,10 +64,14 @@ async def _lookup_supabase_url(s, slug: str | None) -> str | None:
 
 
 async def _lookup_supabase_config(s, slug: str | None) -> tuple[str | None, bool]:
-    """Return (supabase_url, has_db_uri) for a project slug.
+    """Return (supabase_url, sql_tool_available) for a project slug.
 
-    has_db_uri is True iff the row has a non-empty db_uri_encrypted value —
-    signals to prompt builders that the SQL-execute tool is available.
+    The second value signals to prompt builders that the SQL-execute tool is
+    available. It is deliberately NOT "has a db_uri": routes_db.execute_sql
+    runs SQL via the Supabase Management API when the project is OAuth-linked,
+    and prefers that path. Computing this as bool(db_uri_encrypted) meant an
+    OAuth-linked project got an agent that never learned the tool existed and
+    never saw the mandatory-RLS instructions. See claude_executor.
     """
     if not slug:
         return None, False
@@ -76,7 +80,11 @@ async def _lookup_supabase_config(s, slug: str | None) -> tuple[str | None, bool
     )).scalar_one_or_none()
     if not row:
         return None, False
-    return row.supabase_url, bool(row.db_uri_encrypted)
+    return row.supabase_url, sql_tool_available(
+        db_uri=bool(row.db_uri_encrypted),
+        oauth_token=bool(row.oauth_access_token_encrypted),
+        project_ref=bool(row.linked_project_ref),
+    )
 
 logger = logging.getLogger("tasks")
 router = APIRouter(prefix="/api/tasks")

@@ -35,6 +35,61 @@ def _truncate(text: str, limit: int = _MAX_MESSAGE_LEN) -> str:
     return text
 
 
+_MAX_CLICKS = 5
+_CLICK_SETTLE_MS = 400
+_CLICK_TIMEOUT_MS = 1500
+
+
+async def _exercise_clicks(page, *, max_clicks: int = _MAX_CLICKS) -> None:
+    """Click a few visible buttons so handlers that only fail on interaction
+    are caught too.
+
+    The caller has already registered the pageerror / console / requestfailed
+    listeners, so this adds no error handling of its own: it just keeps the
+    page alive and interacting while those listeners are open. Before this, an
+    app could pass the smoke and still be broken for the first person to click
+    anything.
+
+    Deliberately narrow:
+      - buttons only, never anchors: following a link would navigate away and
+        we would end up smoke-testing some other page
+      - bounded, so build time barely moves
+      - stops the moment the URL changes, for the same reason
+      - a click that cannot execute (detached, covered, intercepted) is a
+        harness artifact, NOT an app bug, so it is skipped silently. Only what
+        the app itself raises reaches the listeners.
+
+    Fails open throughout: any problem here leaves the load-time findings
+    untouched.
+    """
+    selector_all = getattr(page, "query_selector_all", None)
+    if not callable(selector_all):
+        return  # older/!fake page object: nothing to do
+    try:
+        elements = await selector_all("button, [role=button]")
+    except Exception:  # noqa: BLE001 - selector engine failure is not an app bug
+        return
+
+    start_url = getattr(page, "url", None)
+    clicked = 0
+    for el in elements or []:
+        if clicked >= max_clicks:
+            break
+        try:
+            if not await el.is_visible() or not await el.is_enabled():
+                continue
+            await el.click(timeout=_CLICK_TIMEOUT_MS)
+            clicked += 1
+        except Exception:  # noqa: BLE001 - see docstring
+            continue
+        try:
+            await page.wait_for_timeout(_CLICK_SETTLE_MS)
+        except Exception:  # noqa: BLE001
+            pass
+        if getattr(page, "url", None) != start_url:
+            break  # navigated away; no longer this app
+
+
 async def _smoke_with_page(page, url: str, *, timeout_ms: int = 15000) -> str | None:
     """Drive an already-created Playwright page through the smoke check.
 
@@ -85,6 +140,13 @@ async def _smoke_with_page(page, url: str, *, timeout_ms: int = 15000) -> str | 
             issues.insert(0, f"- http: main response status {status}")
 
     await page.wait_for_timeout(_SETTLE_MS)
+
+    # Widen the window the listeners above are open for: exercise the page so
+    # errors that only fire on interaction land in `issues` too.
+    try:
+        await _exercise_clicks(page)
+    except Exception as exc:  # noqa: BLE001 - never lose load-time findings
+        logger.warning("app_smoke: interaction pass failed for %s: %s", url, exc)
 
     if not issues:
         return None
