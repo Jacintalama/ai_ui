@@ -146,3 +146,15 @@ def test_source_branch_builds_hub_and_items():
 
 def test_source_branch_empty_makes_no_hub():
     assert source_branch("u@x.com", "root", "Saved Memories", [], "memory") == []
+
+
+# --- Phase 4: accuracy helpers -----------------------------------------------
+from routes_knowledge_graph import prettify_slug
+
+
+def test_prettify_slug_strips_hash_and_titlecases():
+    assert prettify_slug("create-me-a-shoe-website-fe02") == "Create Me A Shoe Website"
+    assert prettify_slug("upload-c2f78c78") == "Upload"
+    assert prettify_slug("ralph-portfolio") == "Ralph Portfolio"
+    assert prettify_slug("crudsimple") == "Crudsimple"
+    assert prettify_slug("") == "app"

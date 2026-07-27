@@ -143,6 +143,23 @@ def make_node(user_email: str, kind: str, label: str, parent_id, summary=None) -
     }
 
 
+def prettify_slug(slug: str) -> str:
+    """App slug -> readable label: drop the trailing build hash and title-case.
+    'create-me-a-shoe-website-fe02' -> 'Create Me A Shoe Website'."""
+    s = (slug or "").strip()
+    if not s:
+        return "app"
+    s = re.sub(r"[-_][0-9a-f]{4,8}$", "", s)   # trailing build hash
+    s = s.replace("-", " ").replace("_", " ").strip()
+    return " ".join(w.capitalize() for w in s.split()) or (slug or "app")
+
+
+# Hub labels the assembler generates live. Old builds may have stored these as
+# topic nodes; we drop stale copies so they don't render twice.
+RESERVED_HUBS = {"Uploaded Files", "Knowledge Collections", "App Builder Apps",
+                 "Automations & Cron Jobs", "Saved Memories"}
+
+
 def best_parent_id(text: str, candidates: list, default_id: str) -> str:
     """Pick the candidate node whose label+summary best overlaps `text` by
     keyword tokens. No overlap (or empty text) -> default_id. Deterministic:
@@ -357,8 +374,8 @@ async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
         "AND built_app_slug IS NOT NULL AND built_app_slug NOT LIKE 'sched-%' "
         "ORDER BY built_app_slug, updated_at DESC LIMIT $2",
         user_email, limit)
-    return [{"label": (r["built_app_slug"] or "app"),
-             "summary": (r["description"] or None)} for r in rows]
+    return [{"label": prettify_slug(r["built_app_slug"]),
+             "summary": (r["built_app_slug"] or None)} for r in rows]
 
 
 async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
@@ -375,9 +392,10 @@ async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
     return out
 
 
-# Kinds that make up the LLM "skeleton" we persist; everything else (chats,
-# apps, files, cron jobs, ...) is assembled live so it stays current.
-SKELETON_KINDS = ("root", "topic", "subtopic", "leaf")
+# Kinds that make up the LLM "skeleton" we persist: just the short topic
+# labels. We deliberately DROP the LLM's full-sentence "leaf" summaries (the
+# part most prone to paraphrase error); real items now hang under topics.
+SKELETON_KINDS = ("root", "topic", "subtopic")
 
 
 async def _assemble_live(conn, user_email: str):
@@ -393,6 +411,10 @@ async def _assemble_live(conn, user_email: str):
                  "label": r["label"], "summary": r["summary"],
                  "parent_id": str(r["parent_id"]) if r["parent_id"] else None}
                 for r in srows]
+    # Drop stale source-hub topics left by older builds (now generated live),
+    # so hubs like "Uploaded Files" never render twice.
+    skeleton = [n for n in skeleton
+                if not (n["kind"] == "topic" and n["label"] in RESERVED_HUBS)]
     root = next((n for n in skeleton if n["kind"] == "root"), None)
     if root is None:
         root = {"id": str(uuid.uuid4()), "user_email": user_email, "kind": "root",
@@ -473,6 +495,8 @@ async def build_my_graph(user: CurrentUser = Depends(current_user)):
             except ValueError as e:
                 raise HTTPException(status_code=502,
                                     detail=f"Could not organize your chats: {e}")
+        # Keep only short topic labels; drop the LLM's paraphrase leaves.
+        base = [n for n in base if n["kind"] != "leaf"]
         skeleton, truncated = cap_nodes(base, 600)
 
         async with conn.transaction():
