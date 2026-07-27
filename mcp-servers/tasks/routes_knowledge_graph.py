@@ -338,6 +338,87 @@ async def _read_memories(conn, uid, limit: int = 200) -> list:
              "summary": (r["content"] or None)} for r in rows]
 
 
+async def _read_chat_titles(conn, uid, limit: int = 200) -> list:
+    """Fast title-only chat read for the live assembler (no JSON parse)."""
+    if not uid:
+        return []
+    rows = await conn.fetch(
+        'SELECT title FROM public."chat" WHERE user_id = $1 '
+        'ORDER BY updated_at DESC LIMIT $2', uid, limit)
+    return [{"title": (r["title"] or ""), "snippet": ""} for r in rows]
+
+
+async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
+    """App Builder apps the user created -> nodes. Excludes 'sched-*' slugs,
+    which are scheduled-run artifacts, not real apps."""
+    rows = await conn.fetch(
+        "SELECT DISTINCT ON (built_app_slug) built_app_slug, description "
+        "FROM tasks.items WHERE lower(assignee_email) = lower($1) "
+        "AND built_app_slug IS NOT NULL AND built_app_slug NOT LIKE 'sched-%' "
+        "ORDER BY built_app_slug, updated_at DESC LIMIT $2",
+        user_email, limit)
+    return [{"label": (r["built_app_slug"] or "app"),
+             "summary": (r["description"] or None)} for r in rows]
+
+
+async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
+    """Scheduled automations (cron jobs) the user created -> nodes."""
+    rows = await conn.fetch(
+        "SELECT name, cron_expr, prompt, enabled FROM tasks.schedules "
+        "WHERE lower(user_email) = lower($1) ORDER BY created_at DESC LIMIT $2",
+        user_email, limit)
+    out = []
+    for r in rows:
+        state = "enabled" if r["enabled"] else "paused"
+        summ = f"{r['cron_expr']} ({state}): {r['prompt'] or ''}".strip()
+        out.append({"label": (r["name"] or "automation"), "summary": summ})
+    return out
+
+
+# Kinds that make up the LLM "skeleton" we persist; everything else (chats,
+# apps, files, cron jobs, ...) is assembled live so it stays current.
+SKELETON_KINDS = ("root", "topic", "subtopic", "leaf")
+
+
+async def _assemble_live(conn, user_email: str):
+    """Merge the stored topic skeleton with LIVE items read fresh each call, so
+    the graph reflects what the user has right now (new/updated/deleted chats,
+    apps, cron jobs, files) with no LLM rebuild. Returns (nodes, counts)."""
+    uid = await _user_id(conn, user_email)
+    srows = await conn.fetch(
+        "SELECT id, kind, label, summary, parent_id FROM knowledge_graph_node "
+        "WHERE user_email = $1 AND kind = ANY($2::text[]) ORDER BY created_at",
+        user_email, list(SKELETON_KINDS))
+    skeleton = [{"id": str(r["id"]), "user_email": user_email, "kind": r["kind"],
+                 "label": r["label"], "summary": r["summary"],
+                 "parent_id": str(r["parent_id"]) if r["parent_id"] else None}
+                for r in srows]
+    root = next((n for n in skeleton if n["kind"] == "root"), None)
+    if root is None:
+        root = {"id": str(uuid.uuid4()), "user_email": user_email, "kind": "root",
+                "label": "My Knowledge", "summary": None, "parent_id": None}
+        skeleton = [root] + skeleton
+    root_id = root["id"]
+
+    chats = await _read_chat_titles(conn, uid)
+    files = await _read_files(conn, uid)
+    kbs = await _read_knowledge(conn, uid)
+    mems = await _read_memories(conn, uid)
+    apps = await _read_apps(conn, user_email)
+    crons = await _read_crons(conn, user_email)
+
+    nodes = list(skeleton)
+    nodes += attach_chats(user_email, root_id, skeleton, chats)
+    nodes += source_branch(user_email, root_id, "App Builder Apps", apps, "app")
+    nodes += source_branch(user_email, root_id, "Automations & Cron Jobs", crons, "cron")
+    nodes += source_branch(user_email, root_id, "Uploaded Files", files, "document")
+    nodes += source_branch(user_email, root_id, "Knowledge Collections", kbs, "document")
+    nodes += source_branch(user_email, root_id, "Saved Memories", mems, "memory")
+    counts = {"chats": len(chats), "apps": len(apps), "crons": len(crons),
+              "files": len(files), "collections": len(kbs), "memories": len(mems)}
+    return nodes, counts
+
+
 async def _cluster_with_llm(corpus: str) -> str:
     key = _first_sk(os.environ.get("OPENAI_API_KEY", ""))
     if not key:
@@ -376,22 +457,15 @@ async def build_my_graph(user: CurrentUser = Depends(current_user)):
     conn = await _connect()
     try:
         await ensure_table(conn)
-        uid = await _user_id(conn, user.email)
-        chats = await _read_recent_chats(conn, user.email, limit=200)
-        files = await _read_files(conn, uid)
-        kbs = await _read_knowledge(conn, uid)
-        mems = await _read_memories(conn, uid)
-        if not chats and not files and not kbs and not mems:
-            return {"built": False, "reason": "Nothing to build from yet.", "nodes": 0}
-
-        # Semantic skeleton: cluster a bounded slice of recent chats with the
-        # LLM into root -> topics -> subtopics -> leaves.
+        # Build ONLY re-derives the LLM topic skeleton from recent chats. The
+        # items (chats/apps/cron jobs/files) are attached live on read, so they
+        # never need a rebuild to stay current.
+        chats = await _read_recent_chats(conn, user.email, limit=60)
         base = [{"id": str(uuid.uuid4()), "user_email": user.email,
                  "kind": "root", "label": "My Knowledge", "summary": None,
                  "parent_id": None}]
-        cluster_chats = chats[:40]
         corpus = "\n\n".join(f"# {c['title']}\n{c['snippet']}"
-                             for c in cluster_chats if (c['title'] or c['snippet']))
+                             for c in chats[:40] if (c['title'] or c['snippet']))
         if corpus.strip():
             try:
                 topics = parse_cluster_json(await _cluster_with_llm(corpus))
@@ -399,60 +473,42 @@ async def build_my_graph(user: CurrentUser = Depends(current_user)):
             except ValueError as e:
                 raise HTTPException(status_code=502,
                                     detail=f"Could not organize your chats: {e}")
-        root_id = next(n["id"] for n in base if n["kind"] == "root")
-
-        # Density: every chat attached to its topic + one hub per source type.
-        all_nodes = list(base)
-        all_nodes += attach_chats(user.email, root_id, base, chats)
-        all_nodes += source_branch(user.email, root_id, "Uploaded Files", files, "document")
-        all_nodes += source_branch(user.email, root_id, "Knowledge Collections", kbs, "document")
-        all_nodes += source_branch(user.email, root_id, "Saved Memories", mems, "memory")
-        nodes, truncated = cap_nodes(all_nodes, 600)
+        skeleton, truncated = cap_nodes(base, 600)
 
         async with conn.transaction():
             await conn.execute("DELETE FROM knowledge_graph_node WHERE user_email = $1", user.email)
-            for n in nodes:
+            for n in skeleton:
                 await conn.execute(
                     "INSERT INTO knowledge_graph_node (id, user_email, kind, label, summary, parent_id) "
                     "VALUES ($1, $2, $3, $4, $5, $6)",
                     uuid.UUID(n["id"]), n["user_email"], n["kind"], n["label"],
                     n.get("summary"), uuid.UUID(n["parent_id"]) if n.get("parent_id") else None)
-        return {"built": True, "nodes": len(nodes), "chats_used": len(chats),
-                "files": len(files), "collections": len(kbs),
-                "memories": len(mems), "truncated": truncated}
+
+        # Report the full live picture (skeleton + attached items).
+        nodes, counts = await _assemble_live(conn, user.email)
+        topics = sum(1 for n in skeleton if n["kind"] == "topic")
+        return {"built": True, "topics": topics, "nodes": len(nodes),
+                "truncated": truncated, **counts}
     finally:
         await conn.close()
 
 
 @router.get("")
 async def get_my_graph(user: CurrentUser = Depends(current_user)):
-    """Return the signed-in user's knowledge graph as {nodes, links}."""
+    """Return the signed-in user's knowledge graph as {nodes, links}, assembled
+    live (stored topic skeleton + current chats/apps/cron jobs/files)."""
     conn = await _connect()
     try:
         await ensure_table(conn)
-        rows = await conn.fetch(
-            "SELECT id, kind, label, summary, parent_id "
-            "FROM knowledge_graph_node WHERE user_email = $1 "
-            "ORDER BY created_at",
-            user.email,
-        )
+        nodes, counts = await _assemble_live(conn, user.email)
     finally:
         await conn.close()
-    nodes = [
-        {
-            "id": str(r["id"]),
-            "kind": r["kind"],
-            "label": r["label"],
-            "summary": r["summary"],
-            "parent_id": str(r["parent_id"]) if r["parent_id"] else None,
-        }
-        for r in rows
-    ]
-    capped, truncated = cap_nodes(nodes)
+    capped, truncated = cap_nodes(nodes, 600)
     return {
         "nodes": capped,
         "links": build_links(capped),
         "count": len(nodes),
+        "counts": counts,
         "truncated": truncated,
     }
 
@@ -471,22 +527,8 @@ async def my_graph_context(
     conn = await _connect()
     try:
         await ensure_table(conn)
-        rows = await conn.fetch(
-            "SELECT kind, label, summary, parent_id "
-            "FROM knowledge_graph_node WHERE user_email = $1 "
-            "ORDER BY created_at",
-            user.email,
-        )
+        nodes, _counts = await _assemble_live(conn, user.email)
     finally:
         await conn.close()
-    nodes = [
-        {
-            "kind": r["kind"],
-            "label": r["label"],
-            "summary": r["summary"],
-            "parent_id": str(r["parent_id"]) if r["parent_id"] else None,
-        }
-        for r in rows
-    ]
     ctx = build_memory_context(nodes, q, limit)
     return {"context": ctx, "count": len(nodes), "used": bool(ctx)}
