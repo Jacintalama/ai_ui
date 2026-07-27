@@ -1144,6 +1144,24 @@
           svg.innerHTML = '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>';
         },
       },
+      {
+        attr: "data-aiui-graph",
+        // Visible to ALL signed-in users; the graph is owner-scoped per user.
+        allUsers: true,
+        label: "Graph",
+        title: "Graph: your personal knowledge graph, built from your chats",
+        href: "/tasks/graph",
+        // network / share glyph (connected nodes)
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>';
+        },
+      },
     ];
 
     // Build a sidebar nav entry by deep-cloning the Workspace row wrapper.
