@@ -7,7 +7,7 @@ import logging
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -219,3 +219,205 @@ async def build_schema_sql(run_sql) -> str:
                 "a policy.\n")
         out.append("\n")
     return "".join(out)
+
+
+from routes_projects import (  # module-level seams, app_git.py pattern
+    _run_git as _run_git_default,
+    _validate_slug as _validate_slug_default,
+)
+
+_run_git = _run_git_default
+_validate_slug = _validate_slug_default
+
+
+class ExportError(Exception):
+    """User-visible export failure. The route maps it to a 4xx/5xx detail."""
+
+
+@dataclass(frozen=True)
+class SupabaseInfo:
+    """Decrypted, export-safe subset of the project's Supabase link.
+
+    Only url + anon key ever reach the bundle (both public by construction:
+    they are injected into every served page today). `never_export` carries
+    the decrypted secrets purely so tests can assert they are NOT in the zip.
+    `schema_runner` is the injected run_sql for build_schema_sql, or None.
+    """
+    url: str
+    anon_key: str
+    schema_runner: object = None
+    never_export: tuple = field(default_factory=tuple)
+
+
+def _config_js(info: SupabaseInfo, slug: str) -> str:
+    return (
+        "// Written by IO export. Your own Supabase project; the anon key is\n"
+        "// public by design (RLS is the security boundary).\n"
+        f"window.SUPABASE_URL = {info.url!r};\n"
+        f"window.SUPABASE_ANON_KEY = {info.anon_key!r};\n"
+        f"window.AIUI_SLUG = {slug!r};\n"
+    )
+
+
+_EXAMPLE_CONFIG = (
+    "// Copy to aiui-config.js and fill in from your Supabase project settings\n"
+    "// (Project Settings, API). The anon key is safe to ship; RLS protects data.\n"
+    "window.SUPABASE_URL = 'https://YOUR-PROJECT.supabase.co';\n"
+    "window.SUPABASE_ANON_KEY = 'YOUR-ANON-KEY';\n"
+)
+
+
+def _inject_config_tag(index_html: str) -> str:
+    tag = '<script src="./aiui-config.js"></script>'
+    if tag in index_html:
+        return index_html
+    lowered = index_html.lower()
+    i = lowered.find("</head>")
+    if i == -1:
+        return tag + "\n" + index_html
+    return index_html[:i] + "  " + tag + "\n" + index_html[i:]
+
+
+def _readme(slug: str, profile: AppProfile, *, had_history: bool,
+            supabase: str, schema_note: str) -> str:
+    parts = [
+        f"# {slug}",
+        "",
+        "Exported from IO. This folder is a complete, standalone copy of your "
+        "app, including its git history. You own it.",
+        "",
+        "## Run it locally",
+        "",
+        "```",
+        "python -m http.server 8000",
+        "```",
+        "Then open http://localhost:8000 (or just open `index.html`).",
+        "",
+        build_deploy_guide(profile),
+    ]
+    if supabase:
+        parts += ["## Database (Supabase)", "", supabase, ""]
+    if schema_note:
+        parts += [schema_note, ""]
+    parts += ["## History", ""]
+    parts.append(
+        "Your full change history is in this repository: run `git log`."
+        if had_history else
+        "Prior history was not available for this app, so the repository "
+        "starts at this export.")
+    parts.append("")
+    return "\n".join(parts)
+
+
+async def _materialize_repo(slug: str, tmp: Path) -> tuple[Path, bool]:
+    """Standalone repo at tmp/repo. Returns (repo_dir, had_history)."""
+    repo = tmp / "repo"
+    rc, out = await _run_git("log", "--max-count=1", "--format=%H",
+                             "--", f"apps/{slug}/")
+    if rc == 0 and out.strip():
+        branch = f"export-tmp-{slug}"
+        rc, out = await _run_git("subtree", "split", f"--prefix=apps/{slug}",
+                                 "-b", branch)
+        if rc != 0:
+            raise ExportError(f"history extraction failed: {out[:300]}")
+        try:
+            from routes_projects import REPO_ROOT
+            rc, out = await _run_git("clone", "--branch", branch,
+                                     f"file://{REPO_ROOT}", str(repo))
+            if rc != 0:
+                raise ExportError(f"clone failed: {out[:300]}")
+        finally:
+            await _run_git("branch", "-D", branch)
+        await _run_git("remote", "remove", "origin", cwd=str(repo))
+        return repo, True
+
+    # Fallback: no commits touch this app. Fresh repo from the tree on disk.
+    src = _APPS_ROOT / slug
+    shutil.copytree(src, repo,
+                    ignore=shutil.ignore_patterns(*_SKIP_DIRS))
+    for args in (("init", "-b", "main"), ("add", "--", ".")):
+        rc, out = await _run_git(*args, cwd=str(repo))
+        if rc != 0:
+            raise ExportError(f"git {args[0]} failed: {out[:300]}")
+    rc, out = await _run_git(
+        "-c", "user.email=export@aiui", "-c", "user.name=IO Export",
+        "commit", "-q", "-m", "Exported from IO (no prior history)",
+        cwd=str(repo))
+    if rc != 0:
+        raise ExportError(f"initial commit failed: {out[:300]}")
+    return repo, False
+
+
+async def export_app(slug: str, *, actor_email: str,
+                     supabase_row: SupabaseInfo | None) -> tuple[Path, str]:
+    """Build the bundle. Returns (zip_path, filename); caller streams + cleans
+    up the parent temp dir. Raises ExportError with a plain-words message."""
+    _validate_slug(slug)
+    profile = analyze_app(slug)
+    if profile is None:
+        raise ExportError(f"no such app: apps/{slug}/ does not exist")
+    if not profile.has_index:
+        raise ExportError(
+            f"apps/{slug}/ has no index.html; only static apps can be exported")
+
+    tmp = Path(tempfile.mkdtemp(prefix="ioexport-"))
+    repo, had_history = await _materialize_repo(slug, tmp)
+
+    supabase_section = ""
+    schema_note = ""
+    if supabase_row is not None:
+        (repo / "aiui-config.js").write_text(
+            _config_js(supabase_row, slug), encoding="utf-8")
+        idx = repo / "index.html"
+        if idx.is_file():
+            idx.write_text(_inject_config_tag(
+                idx.read_text(encoding="utf-8", errors="replace")),
+                encoding="utf-8")
+        supabase_section = (
+            "This bundle includes `aiui-config.js` with YOUR Supabase project "
+            "URL and anon key, so the app works out of the box. The anon key "
+            "is public by design; Row Level Security is the boundary.")
+        if supabase_row.schema_runner is not None:
+            try:
+                (repo / "schema.sql").write_text(
+                    await build_schema_sql(supabase_row.schema_runner),
+                    encoding="utf-8")
+                supabase_section += (
+                    " Your database structure is in `schema.sql`, generated "
+                    "from the live database.")
+            except Exception as exc:  # noqa: BLE001 - enrichment degrades
+                logger.warning("export: schema introspection failed for %s: %s",
+                               slug, exc)
+                schema_note = ("Note: the database schema could not be read "
+                               "at export time, so `schema.sql` is absent.")
+    elif profile.uses_supabase:
+        (repo / "aiui-config.example.js").write_text(_EXAMPLE_CONFIG,
+                                                    encoding="utf-8")
+        supabase_section = (
+            "This app expects a Supabase project. Copy "
+            "`aiui-config.example.js` to `aiui-config.js` and fill in your "
+            "project URL and anon key, then add a `<script "
+            'src="./aiui-config.js"></script>` tag to `index.html`.')
+
+    (repo / "README.md").write_text(
+        _readme(slug, profile, had_history=had_history,
+                supabase=supabase_section, schema_note=schema_note),
+        encoding="utf-8")
+
+    rc, _ = await _run_git("add", "--", ".", cwd=str(repo))
+    if rc == 0:
+        await _run_git(
+            "-c", f"user.email={actor_email or 'export@aiui'}",
+            "-c", f"user.name={(actor_email or 'export').split('@')[0]}",
+            "commit", "-q", "-m", "Export from IO: config, schema and README",
+            cwd=str(repo))
+
+    rc, out = await _run_git("rev-parse", "--short", "HEAD", cwd=str(repo))
+    short = out.strip() if rc == 0 and had_history else ("fresh" if not had_history
+                                                        else "export")
+    filename = f"{slug}-export-{short}.zip"
+    zip_base = tmp / "bundle"
+    shutil.make_archive(str(zip_base), "zip", root_dir=str(repo))
+    zip_path = tmp / filename
+    (tmp / "bundle.zip").rename(zip_path)
+    return zip_path, filename
