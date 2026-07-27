@@ -37,7 +37,10 @@ MAX_CONTENT_SIZE = 2 * 1024 * 1024  # 2MB limit
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_DRIVE_API = "https://www.googleapis.com/drive/v3"
-SCOPES = "https://www.googleapis.com/auth/drive.readonly"
+GOOGLE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files"
+# drive.readonly: read/list existing files. drive.file: create/upload new files
+# (and manage the ones this app creates). No delete of arbitrary user files.
+SCOPES = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file"
 
 # In-memory token store (for local dev; production would use PostgreSQL)
 _tokens: dict = {}
@@ -280,6 +283,11 @@ class ReadFileInput(BaseModel):
 
 class FileInfoInput(BaseModel):
     file_id: str = Field(description="The Google Drive file ID to get info about")
+
+class CreateFileInput(BaseModel):
+    name: str = Field(description="File name, e.g. 'notes.txt' or 'summary.md'")
+    content: str = Field(description="Text content to write into the file")
+    mime_type: str = Field(default="text/plain", description="MIME type (default text/plain)")
 
 
 # --- Helper ---
@@ -658,6 +666,54 @@ async def get_file_info(input: FileInfoInput, request: Request):
 
 
 # --- Health ---
+
+@app.post("/gdrive_create_file", operation_id="gdrive_create_file", summary="Create/upload a new file in Google Drive")
+async def create_file(input: CreateFileInput, request: Request):
+    """Create a new file in the user's Google Drive with the given text content.
+    Use when the user wants to save, upload, or store something as a file in Drive."""
+    user_email = get_user_email(request)
+    access_token = await get_valid_token(user_email)
+    if not access_token:
+        base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
+        return {"error": NOT_CONNECTED_MSG.format(base_url=base, email=user_email)}
+
+    boundary = "aiui-gdrive-boundary-8f3c1d"
+    metadata = json.dumps({"name": input.name})
+    body = (
+        f"--{boundary}\r\n"
+        "Content-Type: application/json; charset=UTF-8\r\n\r\n"
+        f"{metadata}\r\n"
+        f"--{boundary}\r\n"
+        f"Content-Type: {input.mime_type}\r\n\r\n"
+        f"{input.content}\r\n"
+        f"--{boundary}--"
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{GOOGLE_UPLOAD_API}?uploadType=multipart&fields=id,name,webViewLink",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": f"multipart/related; boundary={boundary}",
+                },
+                content=body.encode("utf-8"),
+                timeout=30.0,
+            )
+    except Exception as e:
+        return {"error": f"Could not reach Google Drive: {e}"}
+    if resp.status_code in (200, 201):
+        d = resp.json()
+        return {
+            "success": True,
+            "file_id": d.get("id", ""),
+            "name": d.get("name", input.name),
+            "link": d.get("webViewLink", ""),
+        }
+    if resp.status_code in (401, 403):
+        base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
+        return {"error": NOT_CONNECTED_MSG.format(base_url=base, email=user_email)}
+    return {"error": f"Create failed: {resp.status_code} {resp.text[:200]}"}
+
 
 @app.get("/health")
 async def health():

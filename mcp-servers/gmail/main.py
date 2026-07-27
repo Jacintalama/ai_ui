@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 import crypto_utils  # encrypt OAuth tokens at rest (AIUI_FERNET_KEY)
 import oauth_state  # verify signed OAuth state (owner identity)
+from draft_builder import build_draft_raw
 
 app = FastAPI(
     title="Gmail MCP",
@@ -23,7 +24,8 @@ IMPORTANT - Tool Usage Guidelines for AI:
 - When user wants to READ an email: use gmail_read_email
 - When user wants to LIST emails: use gmail_list_emails
 - When user wants to SEARCH emails: use gmail_search_emails
-- When user wants to CREATE A DRAFT or REPLY to an email: use gmail_create_draft_reply with the message_id from the email
+- When user wants to COMPOSE A BRAND-NEW email (no existing message to reply to): use gmail_create_draft
+- When user wants to draft a REPLY to an existing email: use gmail_create_draft_reply with the message_id from the email
 - When user wants to SEND an email: use gmail_send_email
 - When user wants to see their LABELS/FOLDERS: use gmail_list_labels
 
@@ -51,6 +53,16 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1"
 SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.compose"
+# Unified "Connect Google": one consent granting Gmail + Calendar + Drive.
+ALL_SCOPES = " ".join([
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
+])
 
 # In-memory token store (dev); PostgreSQL for prod
 _tokens: dict = {}
@@ -171,18 +183,71 @@ NOT_CONNECTED_MSG = (
 )
 
 
+async def _save_token_all_services(user_email: str, access_token: str, refresh_token):
+    """Unified connect: populate gdrive_tokens (encrypted, like gmail) and
+    calendar_tokens (plaintext, per that service's format) so one Google consent
+    links Gmail + Calendar + Drive. gmail_tokens is already written by save_token."""
+    if not DATABASE_URL:
+        return
+    try:
+        import asyncpg
+        enc_access = crypto_utils.encrypt(access_token)
+        enc_refresh = crypto_utils.encrypt(refresh_token) if refresh_token else None
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            # Drive: same encrypted-at-rest convention as gmail.
+            await conn.execute("""
+                INSERT INTO gdrive_tokens (user_email, access_token, refresh_token, token_expiry)
+                VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
+                ON CONFLICT (user_email) DO UPDATE
+                SET access_token = $2, refresh_token = COALESCE($3, gdrive_tokens.refresh_token),
+                    token_expiry = NOW() + INTERVAL '1 hour', updated_at = NOW()
+            """, user_email, enc_access, enc_refresh)
+            # Calendar: plaintext (that service does not decrypt). Create table if
+            # it does not exist yet (mirrors calendar's own save_token schema).
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS calendar_tokens (
+                    user_email TEXT PRIMARY KEY,
+                    access_token TEXT NOT NULL,
+                    refresh_token TEXT,
+                    token_expiry TIMESTAMPTZ DEFAULT NOW() + INTERVAL '1 hour',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            await conn.execute("""
+                INSERT INTO calendar_tokens (user_email, access_token, refresh_token, token_expiry)
+                VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
+                ON CONFLICT (user_email) DO UPDATE
+                SET access_token = $2, refresh_token = COALESCE($3, calendar_tokens.refresh_token),
+                    token_expiry = NOW() + INTERVAL '1 hour', updated_at = NOW()
+            """, user_email, access_token, refresh_token)
+        finally:
+            await conn.close()
+        print(f"[unified-connect] linked gmail+drive+calendar for {user_email}", flush=True)
+    except Exception as e:
+        print(f"[unified-connect] failed for {user_email}: {e}", flush=True)
+
+
 # --- OAuth Endpoints ---
 
 @app.get("/auth/google/start")
-async def auth_start(user_email: str = "default@local", state: str = ""):
-    # The bot passes a pre-signed `state` (owner identity); fall back to the
-    # legacy email-encoded state for manual use.
-    oauth_state_param = state or urllib.parse.quote(user_email)
+async def auth_start(user_email: str = "default@local", state: str = "", connect: str = "gmail"):
+    # connect=all requests Gmail + Calendar + Drive scopes in ONE consent and
+    # marks the state so the callback links all three services at once.
+    if connect == "all":
+        scope = ALL_SCOPES
+        oauth_state_param = "all::" + urllib.parse.quote(user_email)
+    else:
+        scope = SCOPES
+        # The bot passes a pre-signed `state` (owner identity); fall back to the
+        # legacy email-encoded state for manual use.
+        oauth_state_param = state or urllib.parse.quote(user_email)
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
         "response_type": "code",
-        "scope": SCOPES,
+        "scope": scope,
         "access_type": "offline",
         "prompt": "consent",
         "state": oauth_state_param,
@@ -193,11 +258,16 @@ async def auth_start(user_email: str = "default@local", state: str = ""):
 
 @app.get("/auth/google/callback")
 async def auth_callback(code: str, state: str = "default@local"):
-    # Prefer the signed owner identity; fall back to legacy email-encoded state.
-    owner = oauth_state.verify_state(state)
-    if owner is None:
-        owner = urllib.parse.unquote(state)
-    user_email = owner
+    unified = False
+    if state.startswith("all::"):
+        unified = True
+        user_email = urllib.parse.unquote(state[len("all::"):])
+    else:
+        # Prefer the signed owner identity; fall back to legacy email-encoded state.
+        owner = oauth_state.verify_state(state)
+        if owner is None:
+            owner = urllib.parse.unquote(state)
+        user_email = owner
     async with httpx.AsyncClient() as client:
         resp = await client.post(GOOGLE_TOKEN_URL, data={
             "client_id": GOOGLE_CLIENT_ID,
@@ -213,20 +283,38 @@ async def auth_callback(code: str, state: str = "default@local"):
         "access_token": data["access_token"],
         "refresh_token": data.get("refresh_token"),
     })
+    if unified:
+        # One consent -> link Calendar + Drive too. gdrive uses the same
+        # encrypted-at-rest format as gmail; calendar stores plaintext.
+        await _save_token_all_services(
+            user_email, data["access_token"], data.get("refresh_token"))
     return HTMLResponse(f"""
     <html><body style="font-family: sans-serif; text-align: center; padding: 50px; background: #1e1e1e; color: #fff;">
         <h1 style="color: #ea4335;">Gmail Connected!</h1>
         <p>Your Gmail is now connected for <strong>{user_email}</strong>.</p>
-        <p>This window will close automatically...</p>
+        <p>Returning you to the chat...</p>
         <script>
-            if (window.opener) {{
-                window.opener.postMessage({{
-                    type: 'aiui-gmail-connected',
-                    email: '{user_email}',
-                    connected: true
-                }}, '*');
-            }}
-            setTimeout(function() {{ window.close(); }}, 1500);
+            (function() {{
+                var back = null;
+                try {{
+                    back = localStorage.getItem('aiui-return-url');
+                    localStorage.removeItem('aiui-return-url');
+                }} catch (e) {{}}
+                if (window.opener && !window.opener.closed) {{
+                    // Opened as a popup: tell the app and close.
+                    try {{
+                        window.opener.postMessage({{
+                            type: 'aiui-gmail-connected',
+                            email: '{user_email}',
+                            connected: true
+                        }}, '*');
+                    }} catch (e) {{}}
+                    window.close();
+                }} else {{
+                    // Same-tab redirect: go back to the exact chat the user came from.
+                    window.location.href = back || '/';
+                }}
+            }})();
         </script>
     </body></html>
     """)
@@ -387,6 +475,14 @@ class CreateDraftReplyInput(BaseModel):
     message_id: str = Field(description="Gmail message ID to reply to")
     body: str = Field(description="Draft reply body text")
     cc: Optional[str] = Field(default=None, description="CC recipients (comma-separated)")
+
+
+class CreateDraftInput(BaseModel):
+    to: str = Field(description="Recipient email address")
+    subject: str = Field(description="Email subject")
+    body: str = Field(description="Draft body text (plain text)")
+    cc: Optional[str] = Field(default=None, description="CC recipients (comma-separated)")
+    bcc: Optional[str] = Field(default=None, description="BCC recipients (comma-separated)")
 
 
 # --- Tool Endpoints ---
@@ -619,6 +715,32 @@ async def create_draft_reply(input: CreateDraftReplyInput, request: Request):
         "reply_to": reply_to,
         "subject": subject,
         "message": f"Draft reply created. Open Gmail to review and send it."
+    }
+
+
+@app.post("/gmail_create_draft", operation_id="gmail_create_draft", summary="Create a new draft email in Gmail")
+async def create_draft(input: CreateDraftInput, request: Request):
+    """Create a brand-new draft email (not a reply). Use this when the user asks to draft, compose, or write a new email to someone. The draft is saved in the user's Gmail Drafts folder and is NEVER sent; the user reviews and sends it themselves."""
+    user_email = get_user_email(request)
+    access_token = await get_valid_token(user_email)
+    if not access_token:
+        base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
+        return {"error": NOT_CONNECTED_MSG.format(base_url=base, email=user_email)}
+
+    try:
+        raw = build_draft_raw(input.to, input.subject, input.body, input.cc, input.bcc)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    draft_body = {"message": {"raw": raw}}
+    result = await gmail_request(access_token, "users/me/drafts", method="POST", json_body=draft_body)
+
+    return {
+        "success": True,
+        "draft_id": result.get("id", ""),
+        "to": input.to,
+        "subject": input.subject,
+        "message": "Draft created. Open Gmail to review and send it.",
     }
 
 

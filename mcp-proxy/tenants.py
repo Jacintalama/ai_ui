@@ -577,7 +577,11 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="none",
         api_key_env=None,
         description="Search, read, and send emails from your Gmail (5 tools)",
-        enabled=True,
+        # Gmail is served to Open WebUI via the native OWUI tool (draft/connect),
+        # not the meta-tools. Disabled here so the model cannot call the raw
+        # gmail_send_email through call_tool (which sent + rendered as a popup).
+        # The native tool talks to mcp-gmail directly, so it is unaffected.
+        enabled=False,
     ),
     "calendar": MCPServerConfig(
         server_id="calendar",

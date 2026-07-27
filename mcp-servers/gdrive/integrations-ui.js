@@ -4,6 +4,8 @@
 
   var GDRIVE_API = window.location.hostname === 'localhost' ? 'http://localhost:8005' : '/gdrive';
   var GMAIL_API = window.location.hostname === 'localhost' ? 'http://localhost:8006' : '/gmail';
+  var CALENDAR_API = window.location.hostname === 'localhost' ? 'http://localhost:8007' : '/calendar';
+  var CALENDAR_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4285f4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
   var GMAIL_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 75 75" xmlns="http://www.w3.org/2000/svg"><path d="M6.25 56.25h12.5V36.46L0 22.5v27.5c0 3.45 2.8 6.25 6.25 6.25z" fill="#4285f4"/><path d="M56.25 56.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-18.75 13.96" fill="#34a853"/><path d="M56.25 25v31.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-11.72 8.72" fill="#34a853"/><path d="M18.75 56.25V36.46L37.5 50l18.75-13.54V25L37.5 38.54 18.75 25" fill="#ea4335"/><path d="M0 22.5l18.75 13.96V25L6.25 18.75C2.8 18.75 0 21.55 0 22.5" fill="#c5221f"/><path d="M56.25 25v11.46L75 22.5c0-.95-2.8-3.75-6.25-3.75L56.25 25" fill="#0d652d"/><path d="M18.75 25L6.25 18.75C2.8 18.75 0 21.55 0 22.5l18.75 13.96" fill="#c5221f"/><path d="M56.25 25l12.5-6.25C65.3 18.75 62.5 21.55 62.5 22.5" fill="#0d652d"/></svg>';
   var GMAIL_ICON_BIG = '<svg width="24" height="24" viewBox="0 0 75 75" xmlns="http://www.w3.org/2000/svg"><path d="M6.25 56.25h12.5V36.46L0 22.5v27.5c0 3.45 2.8 6.25 6.25 6.25z" fill="#4285f4"/><path d="M56.25 56.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-18.75 13.96" fill="#34a853"/><path d="M56.25 25v31.25h12.5c3.45 0 6.25-2.8 6.25-6.25V22.5l-11.72 8.72" fill="#34a853"/><path d="M18.75 56.25V36.46L37.5 50l18.75-13.54V25L37.5 38.54 18.75 25" fill="#ea4335"/><path d="M0 22.5l18.75 13.96V25L6.25 18.75C2.8 18.75 0 21.55 0 22.5" fill="#c5221f"/><path d="M56.25 25v11.46L75 22.5c0-.95-2.8-3.75-6.25-3.75L56.25 25" fill="#0d652d"/><path d="M18.75 25L6.25 18.75C2.8 18.75 0 21.55 0 22.5l18.75 13.96" fill="#c5221f"/><path d="M56.25 25l12.5-6.25C65.3 18.75 62.5 21.55 62.5 22.5" fill="#0d652d"/></svg>';
   var GDRIVE_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-20.4 35.3c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.4 9.35z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-10.1-17.5c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 23.8h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
@@ -606,127 +608,170 @@
   }
 
   function createIntegrationsModal() {
+    var email = getEffectiveEmail();
     var overlay = document.createElement('div');
     overlay.id = 'aiui-integrations-overlay';
     overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
 
     var modal = document.createElement('div');
-    modal.style.cssText = 'background:#1e1e1e;border-radius:16px;padding:32px;max-width:700px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:0 25px 50px rgba(0,0,0,0.5);';
+    modal.style.cssText = 'background:#151515;border:1px solid #2a2a2a;border-radius:16px;padding:0;max-width:920px;width:92%;max-height:85vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,0.6);';
     activeIntModal = modal;
 
-    modal.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-      '<h2 style="color:#fff;font-size:22px;font-weight:600;margin:0;">Integrations</h2>' +
-      '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;padding:4px 8px;line-height:1;">&times;</button>' +
-      '</div>' +
-      '<p style="color:#999;font-size:14px;margin:0 0 24px 0;">Connect AIUI to your apps, files, and services. Each connection is personal to your account.</p>' +
-      '<div id="aiui-integrations-grid" style="display:grid;grid-template-columns:1fr;gap:12px;"></div>';
-
-    var grid = modal.querySelector('#aiui-integrations-grid');
-
-    // Google Drive card
-    var card = document.createElement('div');
-    card.setAttribute('data-integration', 'google-drive');
-    card.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:12px;padding:16px;transition:all 0.2s;display:flex;align-items:center;gap:14px;';
-
-    card.innerHTML = '<div style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#333;border-radius:10px;padding:8px;">' + GDRIVE_ICON_BIG + '</div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="display:flex;align-items:center;gap:8px;">' +
-          '<span style="color:#fff;font-weight:600;font-size:15px;">Google Drive</span>' +
-          '<span id="aiui-status-google-drive" style="display:none;background:#00ac47;color:#fff;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:600;">Connected</span>' +
+    modal.innerHTML =
+      '<div style="padding:20px 24px 14px 24px;border-bottom:1px solid #242424;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+          '<h2 style="color:#fff;font-size:20px;font-weight:600;margin:0;">Connections</h2>' +
+          '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;">&times;</button>' +
         '</div>' +
-        '<p style="color:#888;font-size:13px;margin:3px 0 0 0;">Find and analyze files instantly</p>' +
+        '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Sign in once with your Google account to enable Gmail, Calendar, and Drive. Each connection is personal to your account.</p>' +
+        '<input id="aiui-conn-search" type="text" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
+        '<div id="aiui-conn-tabs" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"></div>' +
       '</div>' +
-      '<div style="display:flex;gap:8px;flex-shrink:0;">' +
-        '<button id="aiui-connect-google-drive" style="background:#4a9eff;border:none;border-radius:8px;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:600;">Connect</button>' +
-        '<button id="aiui-disconnect-google-drive" style="display:none;background:transparent;border:1px solid #666;border-radius:8px;color:#ccc;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:500;">Disconnect</button>' +
-      '</div>';
+      '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;padding:16px 24px 24px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;"></div>';
 
-    card.addEventListener('mouseenter', function() { card.style.background = '#333'; });
-    card.addEventListener('mouseleave', function() { card.style.background = '#2a2a2a'; });
+    var CATS = ['All', 'Chat', 'Productivity', 'Tools & Automation', 'Social', 'Platform'];
+    // domain drives the real logo (Clearbit, then Google favicon, then a letter).
+    var APPS = [
+      { id: 'gmail', name: 'Gmail', domain: 'mail.google.com', api: GMAIL_API, cat: 'Productivity', real: true },
+      { id: 'calendar', name: 'Google Calendar', domain: 'calendar.google.com', api: CALENDAR_API, cat: 'Productivity', real: true },
+      { id: 'google-drive', name: 'Google Drive', domain: 'drive.google.com', api: GDRIVE_API, cat: 'Productivity', real: true },
+      { id: 'slack', name: 'Slack', domain: 'slack.com', cat: 'Chat' },
+      { id: 'discord', name: 'Discord', domain: 'discord.com', cat: 'Chat' },
+      { id: 'telegram', name: 'Telegram', domain: 'telegram.org', cat: 'Chat' },
+      { id: 'notion', name: 'Notion', domain: 'notion.so', cat: 'Productivity' },
+      { id: 'clickup', name: 'ClickUp', domain: 'clickup.com', cat: 'Productivity' },
+      { id: 'trello', name: 'Trello', domain: 'trello.com', cat: 'Productivity' },
+      { id: 'asana', name: 'Asana', domain: 'asana.com', cat: 'Productivity' },
+      { id: 'airtable', name: 'Airtable', domain: 'airtable.com', cat: 'Productivity' },
+      { id: 'sheets', name: 'Google Sheets', domain: 'sheets.google.com', cat: 'Productivity' },
+      { id: 'docs', name: 'Google Docs', domain: 'docs.google.com', cat: 'Productivity' },
+      { id: 'hubspot', name: 'HubSpot', domain: 'hubspot.com', cat: 'Productivity' },
+      { id: 'github', name: 'GitHub', domain: 'github.com', cat: 'Tools & Automation' },
+      { id: 'n8n', name: 'n8n', domain: 'n8n.io', cat: 'Tools & Automation' },
+      { id: 'zapier', name: 'Zapier', domain: 'zapier.com', cat: 'Tools & Automation' },
+      { id: 'jira', name: 'Jira', domain: 'atlassian.com', cat: 'Tools & Automation' },
+      { id: 'x', name: 'X (Twitter)', domain: 'x.com', cat: 'Social' },
+      { id: 'linkedin', name: 'LinkedIn', domain: 'linkedin.com', cat: 'Social' },
+      { id: 'facebook', name: 'Facebook', domain: 'facebook.com', cat: 'Social' },
+      { id: 'dropbox', name: 'Dropbox', domain: 'dropbox.com', cat: 'Platform' },
+      { id: 'stripe', name: 'Stripe', domain: 'stripe.com', cat: 'Platform' }
+    ];
 
-    card.querySelector('#aiui-connect-google-drive').addEventListener('click', function(e) {
-      e.stopPropagation();
-      var url = GDRIVE_API + '/auth/google/start?user_email=' + encodeURIComponent(getEffectiveEmail());
-      window.open(url, 'aiui-oauth', 'width=600,height=700');
-    });
+    var connState = {};
+    var activeCat = 'All';
+    var searchTerm = '';
 
-    card.querySelector('#aiui-disconnect-google-drive').addEventListener('click', function(e) {
-      e.stopPropagation();
-      fetch(GDRIVE_API + '/auth/google/disconnect?user_email=' + encodeURIComponent(getEffectiveEmail()), { method: 'POST' })
-        .then(function() {
-          localStorage.removeItem('aiui-gdrive-email');
-          localStorage.removeItem('aiui-gdrive-connected');
-          updateCardDisconnected(modal, 'google-drive');
+    function unifiedConnect() {
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
+      window.location.href = GMAIL_API + '/auth/google/start?user_email='
+        + encodeURIComponent(email) + '&connect=all';
+    }
+
+    // Square logo tile: real logo via Clearbit -> Google favicon -> letter.
+    function iconEl(app) {
+      var box = document.createElement('div');
+      box.style.cssText = 'width:40px;height:40px;border-radius:9px;background:#fff;display:flex;'
+        + 'align-items:center;justify-content:center;overflow:hidden;flex-shrink:0;';
+      var srcs = [
+        'https://logo.clearbit.com/' + app.domain,
+        'https://www.google.com/s2/favicons?domain=' + app.domain + '&sz=64'
+      ];
+      var i = 0;
+      var img = document.createElement('img');
+      img.alt = app.name;
+      img.style.cssText = 'width:78%;height:78%;object-fit:contain;';
+      img.onerror = function () {
+        if (i < srcs.length) { img.src = srcs[i++]; }
+        else {
+          box.style.background = '#2e2e2e';
+          box.innerHTML = '<span style="color:#ccc;font-weight:700;font-size:17px;">' + app.name.charAt(0) + '</span>';
+        }
+      };
+      box.appendChild(img);
+      img.onerror();  // kick off the first source
+      return box;
+    }
+
+    function makeCard(app) {
+      var connected = !!connState[app.id];
+      var card = document.createElement('div');
+      card.style.cssText = 'position:relative;background:#1b1b1b;border:'
+        + (connected ? '1px solid #2f7d43' : '1px solid #262626')
+        + ';border-radius:14px;padding:16px 12px;display:flex;flex-direction:column;align-items:center;'
+        + 'justify-content:center;gap:9px;min-height:122px;transition:all .15s;cursor:'
+        + (app.real ? 'pointer' : 'default') + ';';
+      var nameEl = document.createElement('div');
+      nameEl.style.cssText = 'color:#eee;font-size:13px;font-weight:600;text-align:center;';
+      nameEl.textContent = app.name;
+      var statusEl = document.createElement('div');
+      statusEl.innerHTML = app.real
+        ? (connected
+            ? '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>'
+            : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>')
+        : '<span style="color:#666;font-size:11px;">Coming soon</span>';
+      card.appendChild(iconEl(app));
+      card.appendChild(nameEl);
+      card.appendChild(statusEl);
+      if (!app.real) {
+        card.style.opacity = '0.5';
+      } else {
+        card.addEventListener('mouseenter', function () { card.style.background = '#242424'; });
+        card.addEventListener('mouseleave', function () { card.style.background = '#1b1b1b'; });
+        card.addEventListener('click', function () {
+          if (!connState[app.id]) {
+            unifiedConnect();
+          } else if (confirm('Disconnect ' + app.name + '?')) {
+            fetch(app.api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' })
+              .then(function () { connState[app.id] = false; renderGrid(); });
+          }
         });
+      }
+      return card;
+    }
+
+    function renderGrid() {
+      var grid = modal.querySelector('#aiui-conn-grid');
+      grid.innerHTML = '';
+      var term = searchTerm.toLowerCase();
+      APPS.filter(function (a) {
+        if (activeCat !== 'All' && a.cat !== activeCat) return false;
+        if (term && a.name.toLowerCase().indexOf(term) === -1) return false;
+        return true;
+      }).forEach(function (a) { grid.appendChild(makeCard(a)); });
+    }
+
+    var tabsWrap = modal.querySelector('#aiui-conn-tabs');
+    CATS.forEach(function (cat) {
+      var t = document.createElement('button');
+      t.textContent = cat;
+      t.style.cssText = 'background:' + (cat === activeCat ? '#fff' : 'transparent') + ';color:'
+        + (cat === activeCat ? '#111' : '#bbb') + ';border:1px solid #333;border-radius:20px;'
+        + 'padding:6px 14px;font-size:12px;cursor:pointer;font-weight:600;';
+      t.addEventListener('click', function () {
+        activeCat = cat;
+        tabsWrap.querySelectorAll('button').forEach(function (b) { b.style.background = 'transparent'; b.style.color = '#bbb'; });
+        t.style.background = '#fff'; t.style.color = '#111';
+        renderGrid();
+      });
+      tabsWrap.appendChild(t);
     });
 
-    grid.appendChild(card);
-
-    // --- Gmail Card ---
-    var gmailCard = document.createElement('div');
-    gmailCard.setAttribute('data-integration', 'gmail');
-    gmailCard.style.cssText = 'background:#2a2a2a;border:1px solid #333;border-radius:12px;padding:16px;transition:all 0.2s;display:flex;align-items:center;gap:14px;';
-
-    gmailCard.innerHTML = '<div style="width:44px;height:44px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#333;border-radius:10px;padding:8px;">' + GMAIL_ICON_BIG + '</div>' +
-      '<div style="flex:1;min-width:0;">' +
-        '<div style="display:flex;align-items:center;gap:8px;">' +
-          '<span style="color:#fff;font-weight:600;font-size:15px;">Gmail</span>' +
-          '<span id="aiui-status-gmail" style="display:none;background:#00ac47;color:#fff;font-size:11px;padding:2px 10px;border-radius:10px;font-weight:600;">Connected</span>' +
-        '</div>' +
-        '<p style="color:#888;font-size:13px;margin:3px 0 0 0;">Read, send, draft replies, summarize, and extract email content</p>' +
-      '</div>' +
-      '<div style="display:flex;gap:8px;flex-shrink:0;">' +
-        '<button id="aiui-connect-gmail" style="background:#4a9eff;border:none;border-radius:8px;color:#fff;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:600;">Connect</button>' +
-        '<button id="aiui-disconnect-gmail" style="display:none;background:transparent;border:1px solid #666;border-radius:8px;color:#ccc;padding:8px 18px;font-size:13px;cursor:pointer;font-weight:500;">Disconnect</button>' +
-      '</div>';
-
-    gmailCard.addEventListener('mouseenter', function() { gmailCard.style.background = '#333'; });
-    gmailCard.addEventListener('mouseleave', function() { gmailCard.style.background = '#2a2a2a'; });
-
-    gmailCard.querySelector('#aiui-connect-gmail').addEventListener('click', function(e) {
-      e.stopPropagation();
-      var url = GMAIL_API + '/auth/google/start?user_email=' + encodeURIComponent(getEffectiveEmail());
-      window.open(url, 'aiui-oauth-gmail', 'width=600,height=700');
+    modal.querySelector('#aiui-conn-search').addEventListener('input', function (e) {
+      searchTerm = e.target.value; renderGrid();
     });
 
-    gmailCard.querySelector('#aiui-disconnect-gmail').addEventListener('click', function(e) {
-      e.stopPropagation();
-      fetch(GMAIL_API + '/auth/google/disconnect?user_email=' + encodeURIComponent(getEffectiveEmail()), { method: 'POST' })
-        .then(function() {
-          localStorage.removeItem('aiui-gmail-email');
-          localStorage.removeItem('aiui-gmail-connected');
-          updateCardDisconnected(modal, 'gmail');
-        });
+    renderGrid();
+
+    APPS.filter(function (a) { return a.real; }).forEach(function (app) {
+      fetch(app.api + '/auth/google/status?user_email=' + encodeURIComponent(email))
+        .then(function (r) { return r.json(); })
+        .then(function (d) { connState[app.id] = !!(d && d.connected); renderGrid(); })
+        .catch(function () {});
     });
-
-    // Gmail card always visible in Integrations so admins can connect it.
-    // The "+ menu" entry ("Add from Gmail") stays hidden until connected
-    // (handled at the + menu render site).
-    grid.appendChild(gmailCard);
-
-    // Meeting Knowledge Base card removed — not needed in Integrations modal.
-
-    // Check Gmail status
-    if (isGmailConnected()) updateCardConnected(modal, 'gmail');
-    fetch(GMAIL_API + '/auth/google/status?user_email=' + encodeURIComponent(getEffectiveEmail()))
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.connected) { localStorage.setItem('aiui-gmail-connected', 'true'); updateCardConnected(modal, 'gmail'); }
-        else { localStorage.removeItem('aiui-gmail-connected'); updateCardDisconnected(modal, 'gmail'); }
-      }).catch(function() {});
-
-    // Check GDrive status
-    if (isConnected()) updateCardConnected(modal, 'google-drive');
-    fetch(GDRIVE_API + '/auth/google/status?user_email=' + encodeURIComponent(getEffectiveEmail()))
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.connected) { localStorage.setItem('aiui-gdrive-connected', 'true'); updateCardConnected(modal, 'google-drive'); }
-        else { localStorage.removeItem('aiui-gdrive-connected'); updateCardDisconnected(modal, 'google-drive'); }
-      }).catch(function() {});
 
     overlay.appendChild(modal);
-    overlay.addEventListener('click', function(e) { if (e.target === overlay) { overlay.remove(); activeIntModal = null; } });
-    modal.querySelector('#aiui-close-modal').addEventListener('click', function() { overlay.remove(); activeIntModal = null; });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) { overlay.remove(); activeIntModal = null; } });
+    modal.querySelector('#aiui-close-modal').addEventListener('click', function () { overlay.remove(); activeIntModal = null; });
 
     return overlay;
   }
@@ -1347,7 +1392,7 @@
             intBtn.className = refItem.className;
             intBtn.innerHTML = '<div style="display:flex;align-items:center;gap:8px;width:100%;">' +
               '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="8" height="8" rx="1"/><rect x="14" y="2" width="8" height="8" rx="1"/><rect x="2" y="14" width="8" height="8" rx="1"/><rect x="14" y="14" width="8" height="8" rx="1"/></svg>' +
-              '<span>Integrations</span>' +
+              '<span>Connections</span>' +
               '</div>';
 
             intBtn.addEventListener('click', function(e) {
@@ -1404,6 +1449,11 @@
   // Watches for new messages in the chat and auto-creates drafts when user asks
 
   function setupGmailWatcher() {
+    // Disabled: this auto-send watcher popped a "Review Email Before Sending"
+    // modal and called gmail_create_draft_reply (422) whenever a message
+    // mentioned sending/emailing. Connecting is now a clean inline button
+    // (see linkifyConnectButtons); drafting goes through the draft_email tool.
+    return;
     var lastMsgCount = 0;
     var processing = false;
 
@@ -1771,5 +1821,258 @@
 
   setupGmailWatcher();
 
-  console.log('[AIUI] Integrations UI v2 loaded');
+  // ===== In-chat Connect card =====
+  // When the user sends a message about email / Drive and their Google account
+  // isn't linked, inject a Connect card with a button right into the chat so
+  // it's impossible to miss. Frontend-only, so it renders reliably (unlike an
+  // outlet filter, whose injected content OWUI won't re-render live).
+  function buildChatConnectCard(service, email) {
+    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
+    var icon = service === 'gdrive' ? GDRIVE_ICON_BIG : GMAIL_ICON_BIG;
+    var title = service === 'gdrive' ? 'Connect your Google Drive' : 'Connect your Gmail';
+    var label = service === 'gdrive' ? 'Connect Google Drive' : 'Connect Gmail';
+    var url = api + '/auth/google/start?user_email=' + encodeURIComponent(email);
+    var card = document.createElement('div');
+    card.id = 'aiui-chat-connect-card';
+    card.setAttribute('data-service', service);
+    card.style.cssText = 'max-width:760px;margin:10px auto;padding:16px 18px;' +
+      'background:linear-gradient(135deg,#1e3a5f,#2d5a87);border-radius:14px;color:#fff;' +
+      'box-shadow:0 8px 24px rgba(0,0,0,0.35);font-family:inherit;';
+    card.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">' + icon +
+      '<span style="font-size:16px;font-weight:600;">' + title + '</span></div>' +
+      '<div style="opacity:0.9;margin-bottom:12px;font-size:14px;line-height:1.4;">' +
+      'Link your Google account so I can do this for you in chat. Drafts are saved to ' +
+      'your Gmail Drafts, nothing is sent automatically.</div>' +
+      '<button id="aiui-chat-connect-btn" style="padding:12px 22px;background:#4CAF50;' +
+      'color:#fff;border:none;border-radius:8px;font-weight:bold;font-size:14px;cursor:pointer;">' +
+      label + '</button>' +
+      '<button id="aiui-chat-connect-dismiss" style="margin-left:10px;padding:12px 16px;' +
+      'background:transparent;color:#cfe0f5;border:1px solid rgba(255,255,255,0.25);' +
+      'border-radius:8px;font-size:13px;cursor:pointer;">Not now</button>';
+    card.querySelector('#aiui-chat-connect-btn').addEventListener('click', function() {
+      // Same-tab redirect (most inline). Google blocks embedding their login,
+      // so we navigate this tab to Google and it returns to the chat after.
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
+      window.location.href = url;
+    });
+    card.querySelector('#aiui-chat-connect-dismiss').addEventListener('click', function() {
+      card.remove();
+    });
+    return card;
+  }
+
+  function removeChatConnectCard() {
+    var c = document.getElementById('aiui-chat-connect-card');
+    if (c) c.remove();
+  }
+
+  function showChatConnectCard(service) {
+    removeChatConnectCard();
+    var card = buildChatConnectCard(service, getEffectiveEmail());
+    var ta = document.querySelector('textarea');
+    var form = ta ? ta.closest('form') : null;
+    if (form && form.parentElement) {
+      form.parentElement.insertBefore(card, form);
+    } else if (ta && ta.parentElement) {
+      ta.parentElement.insertBefore(card, ta);
+    } else {
+      // Last resort: pin above the viewport bottom so it's still visible.
+      card.style.position = 'fixed';
+      card.style.left = '50%';
+      card.style.bottom = '120px';
+      card.style.transform = 'translateX(-50%)';
+      card.style.zIndex = '9999';
+      document.body.appendChild(card);
+    }
+  }
+
+  function detectConnectService(text) {
+    var low = (text || '').toLowerCase();
+    if (/(google drive|gdrive|my drive|save to drive|to my drive|drive folder)/.test(low)) return 'gdrive';
+    if (/(gmail|e-?mail|inbox|compose an email|draft an email|send an email|draft.*email|email .*@)/.test(low)) return 'gmail';
+    return null;
+  }
+
+  function maybePromptConnect(text) {
+    var service = detectConnectService(text);
+    console.log('[AIUI] chatcard: send detected, text=', (text || '').slice(0, 60), 'service=', service);
+    if (!service) return;
+    var email = getEffectiveEmail();
+    var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
+    fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var connected = !!(d && d.connected === true);
+        console.log('[AIUI] chatcard: status for', email, '=', connected, '- showing card:', !connected);
+        if (!connected) showChatConnectCard(service);
+      })
+      .catch(function(err) {
+        console.log('[AIUI] chatcard: status check failed, showing card anyway', err);
+        showChatConnectCard(service);
+      });
+  }
+
+  // Find the message composer textarea specifically (not a draft/edit box).
+  function getComposerTextarea() {
+    var tas = document.querySelectorAll('textarea');
+    for (var i = 0; i < tas.length; i++) {
+      var ph = (tas[i].getAttribute('placeholder') || '').toLowerCase();
+      if (ph.indexOf('message') !== -1 || ph.indexOf('send a') !== -1) return tas[i];
+    }
+    return tas.length ? tas[tas.length - 1] : null;  // composer is usually last
+  }
+
+  function readLastUserMessage(bodyStr) {
+    try {
+      var data = JSON.parse(bodyStr);
+      var msgs = (data && data.messages) || [];
+      for (var i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i] && msgs[i].role === 'user') {
+          var c = msgs[i].content;
+          if (typeof c === 'string') return c;
+          if (Array.isArray(c)) {
+            return c.map(function(p) { return (p && p.text) || ''; }).join(' ');
+          }
+          return '';
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function setupChatConnectWatcher() {
+    // Robust detection: read the ACTUAL user message from the outgoing chat
+    // request, not from a textarea (which can hold a draft/edit box's text).
+    var _origFetch = window.fetch;
+    window.fetch = function(input, init) {
+      try {
+        var url = (typeof input === 'string') ? input : (input && input.url) || '';
+        var body = init && init.body;
+        if (url.indexOf('/api/chat/completions') !== -1 && typeof body === 'string') {
+          var txt = readLastUserMessage(body);
+          if (txt) setTimeout(function() { maybePromptConnect(txt); }, 200);
+        }
+      } catch (e) {}
+      return _origFetch.apply(this, arguments);
+    };
+    // Also patch XHR in case a code path uses it instead of fetch.
+    var _origSend = XMLHttpRequest.prototype.send;
+    var _origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+      this.__aiui_url = url || '';
+      return _origOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function(body) {
+      try {
+        if (this.__aiui_url && this.__aiui_url.indexOf('/api/chat/completions') !== -1 &&
+            typeof body === 'string') {
+          var txt = readLastUserMessage(body);
+          if (txt) setTimeout(function() { maybePromptConnect(txt); }, 200);
+        }
+      } catch (e) {}
+      return _origSend.apply(this, arguments);
+    };
+    // Remove the card once the account gets connected.
+    window.addEventListener('message', function(e) {
+      if (e.data && typeof e.data.type === 'string' &&
+          e.data.type.indexOf('connected') !== -1) {
+        removeChatConnectCard();
+      }
+    });
+  }
+
+  setupChatConnectWatcher();
+
+  // Turn the plain connect URL the model prints (".../auth/google/start...")
+  // into a clean, clickable inline button. Robust: reads the rendered message,
+  // no textareas, no dependence on catching the send. Same-tab redirect.
+  function _renderConnectState(container, service, url, email, connected) {
+    container.innerHTML = '';
+    var api = service === 'gdrive' ? GDRIVE_API : (service === 'calendar' ? CALENDAR_API : GMAIL_API);
+    var icon = service === 'gdrive' ? GDRIVE_ICON_SMALL : (service === 'calendar' ? CALENDAR_ICON_SMALL : GMAIL_ICON_SMALL);
+    var name = service === 'gdrive' ? 'Google Drive' : (service === 'calendar' ? 'Google Calendar' : 'Gmail');
+    if (!connected) {
+      // Unified connect: one consent links Gmail + Calendar + Drive. Whatever
+      // service prompted this, send the user through the single Google flow.
+      var unifiedUrl = GMAIL_API + '/auth/google/start?user_email='
+        + encodeURIComponent(email) + '&connect=all';
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 0;' +
+        'padding:11px 20px;background:#4CAF50;color:#fff;border:none;border-radius:10px;' +
+        'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
+      btn.innerHTML = icon + '<span>Connect Google</span>';
+      btn.addEventListener('click', function () {
+        try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
+        window.location.href = unifiedUrl;
+      });
+      container.appendChild(btn);
+      var note = document.createElement('div');
+      note.style.cssText = 'font-size:12px;opacity:0.7;margin-top:6px;';
+      note.textContent = 'Links Gmail, Calendar, and Drive in one step.';
+      container.appendChild(note);
+    } else {
+      var chip = document.createElement('span');
+      chip.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 8px 8px 0;' +
+        'padding:9px 16px;background:rgba(76,175,80,0.15);color:#4CAF50;border:1px solid #4CAF50;' +
+        'border-radius:10px;font-weight:600;font-size:14px;';
+      chip.innerHTML = icon + '<span>' + name + ' connected</span>';
+      var dbtn = document.createElement('button');
+      dbtn.type = 'button';
+      dbtn.style.cssText = 'display:inline-flex;align-items:center;margin:8px 0;padding:9px 16px;' +
+        'background:transparent;color:#e57373;border:1px solid #e57373;border-radius:10px;' +
+        'font-weight:600;font-size:13px;cursor:pointer;';
+      dbtn.textContent = 'Disconnect';
+      dbtn.addEventListener('click', function () {
+        dbtn.disabled = true; dbtn.textContent = 'Disconnecting...';
+        fetch(api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' })
+          .then(function () { _renderConnectState(container, service, url, email, false); })
+          .catch(function () { dbtn.disabled = false; dbtn.textContent = 'Disconnect'; });
+      });
+      container.appendChild(chip);
+      container.appendChild(dbtn);
+    }
+  }
+
+  function styleConnectButton(anchor) {
+    if (!anchor) return;
+    var url = anchor.href || '';
+    if (url.indexOf('/auth/google/start') === -1) return;
+    var service = url.indexOf('/gdrive/') !== -1 ? 'gdrive'
+      : (url.indexOf('/calendar/') !== -1 ? 'calendar' : 'gmail');
+    var api = service === 'gdrive' ? GDRIVE_API : (service === 'calendar' ? CALENDAR_API : GMAIL_API);
+    var email = getEffectiveEmail();
+    var container = document.createElement('span');
+    container.className = 'aiui-connect-inline';
+    if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
+    // Show Connect immediately, then flip to connected/disconnect if the
+    // server says this user is already linked.
+    _renderConnectState(container, service, url, email, false);
+    fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.connected === true) _renderConnectState(container, service, url, email, true);
+      })
+      .catch(function () {});
+  }
+
+  function linkifyConnectButtons() {
+    var pending = false;
+    function scan() {
+      pending = false;
+      var anchors = document.querySelectorAll('a[href*="/auth/google/start"]');
+      for (var i = 0; i < anchors.length; i++) styleConnectButton(anchors[i]);
+    }
+    var obs = new MutationObserver(function() {
+      if (pending) return;
+      pending = true;
+      setTimeout(scan, 200);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    scan();
+  }
+  linkifyConnectButtons();
+
+  console.log('[AIUI] Integrations UI v13-chatcard loaded');
 })();
