@@ -17,12 +17,13 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import time
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 
 from auth import AdminUser, current_admin, current_admin_or_capability_for_slug, CurrentUser, current_user
 from db import session
@@ -668,6 +669,83 @@ async def get_docs(slug: str,
     except OSError:
         logger.exception("docs: could not read README for %s", slug)
         raise HTTPException(status_code=500, detail="Could not read the docs")
+
+
+# --- Export: Take Your App With You (spec 2026-07-27) ----------------------
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
+
+import app_export as _app_export
+import crypto_utils as _crypto
+from models import ProjectSupabase as _PS
+import routes_db as _routes_db
+
+
+async def _supabase_info_for(s, slug: str):
+    """Decrypted export-safe Supabase info + schema runner, or None."""
+    row = (await s.execute(
+        select(_PS).where(_PS.slug == slug))).scalar_one_or_none()
+    if row is None or not row.supabase_url:
+        return None
+    try:
+        anon = _crypto.decrypt(row.anon_key_encrypted)
+    except Exception:  # noqa: BLE001 - enrichment degrades to example config
+        return None
+
+    runner = None
+    if (row.oauth_access_token_encrypted and row.linked_project_ref) \
+            or row.db_uri_encrypted:
+        async def runner(sql: str):
+            if row.oauth_access_token_encrypted and row.linked_project_ref:
+                resp = await _routes_db._exec_via_management_api(s, row, sql)
+            else:
+                resp = await _routes_db._exec_via_asyncpg(
+                    _crypto.decrypt(row.db_uri_encrypted), sql)
+            return resp.rows
+    return _app_export.SupabaseInfo(url=row.supabase_url, anon_key=anon,
+                                    schema_runner=runner)
+
+
+@router.get("/{slug}/export/guide")
+async def export_guide(slug: str,
+                       user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+    """Deploy-guide markdown for the gallery modal."""
+    _validate_slug(slug)
+    profile = _app_export.analyze_app(slug)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="App not found on disk")
+    return {"markdown": _app_export.build_deploy_guide(profile)}
+
+
+@router.get("/{slug}/export")
+async def export_bundle(slug: str,
+                        user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+    """Download the app as a working git repository (zip).
+
+    User-initiated: a good bundle or a clear error, never a silent partial.
+    Holds the per-slug build lock for the duration so we never zip a
+    half-written tree; a live build/enhance means 409, not a wait."""
+    _validate_slug(slug)
+    async with session() as s:
+        got = (await s.execute(
+            text("SELECT pg_try_advisory_xact_lock(hashtext(:k))"),
+            {"k": f"build:{slug}"})).scalar()
+        if not got:
+            raise HTTPException(
+                status_code=409,
+                detail="A build or enhance is running for this app; "
+                       "try again when it finishes.")
+        info = await _supabase_info_for(s, slug)
+        try:
+            zip_path, filename = await _app_export.export_app(
+                slug, actor_email=getattr(user, "email", "") or "",
+                supabase_row=info)
+        except _app_export.ExportError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+    return FileResponse(
+        path=str(zip_path), filename=filename, media_type="application/zip",
+        background=BackgroundTask(shutil.rmtree, str(zip_path.parent),
+                                  ignore_errors=True))
 
 
 async def rollback_app_core(slug: str, sha: str, actor_email: str) -> dict:
