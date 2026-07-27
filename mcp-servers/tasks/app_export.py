@@ -80,7 +80,8 @@ class DeployTarget:
 
 DEPLOY_TARGETS: tuple[DeployTarget, ...] = (
     DeployTarget("github-pages", "GitHub Pages", (
-        "Create a new repository on github.com and push this folder to it "
+        "Create a new public repository on github.com (GitHub Pages on a free "
+        "account requires a public repo) and push this folder to it "
         "(`git remote add origin <url> && git push -u origin main`).",
         "In the repository: Settings, Pages, set Source to `main` branch, root folder.",
         "Your app appears at `https://<user>.github.io/<repo>/` in about a minute.",
@@ -120,8 +121,8 @@ def build_deploy_guide(profile: AppProfile) -> str:
             "those requests fail; you would need your own backend and API key.")
     if profile.uses_supabase:
         warnings.append(
-            "- This app uses Supabase. The bundle's `aiui-config.js` must contain "
-            "your project URL and anon key (see the Database section below).")
+            "- This app uses Supabase. It needs your project URL and anon key in "
+            "`aiui-config.js` to work; the bundle's README explains exactly what to set.")
     if warnings:
         lines += ["### Before you deploy", *warnings, ""]
     for t in DEPLOY_TARGETS:
