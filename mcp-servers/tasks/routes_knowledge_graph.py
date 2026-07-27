@@ -4,17 +4,32 @@ Nodes are strictly per-user (scoped by the signed-in email). See
 docs/superpowers/specs/2026-07-27-user-knowledge-graph-design.md and the
 Phase 1 plan. Build-from-chats lives in this module too (added in Task 2).
 """
+import json
 import os
+import re
 import uuid
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, HTTPException
 
 from auth import current_user, CurrentUser
 
 router = APIRouter(prefix="/graph/mine")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+OPENAI_URL = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
 MAX_NODES = 800  # cap per user to bound RAM/render cost on the small box
+MAX_CHATS = 30   # most-recent conversations to build from
+CLUSTER_MODEL = os.environ.get("GRAPH_CLUSTER_MODEL", "gpt-4o")
+
+
+def _first_sk(value: str) -> str:
+    """OWUI may store several keys joined by ';'. Pick the first real sk- key."""
+    for part in (value or "").split(";"):
+        part = part.strip()
+        if part.startswith("sk-"):
+            return part
+    return (value or "").strip()
 
 
 # --- pure helpers (unit tested, no I/O) --------------------------------------
@@ -65,10 +80,150 @@ async def ensure_table(conn) -> None:
     )
 
 
+# --- build pipeline (pure parts unit tested) --------------------------------
+def parse_cluster_json(text: str) -> list:
+    """Parse the LLM clustering output into a topics list. Strips code fences.
+    Raises ValueError on empty/malformed output or a missing 'topics' list."""
+    if not text or not text.strip():
+        raise ValueError("empty cluster response")
+    s = text.strip()
+    s = re.sub(r"^```(?:json)?", "", s).strip()
+    s = re.sub(r"```$", "", s).strip()
+    data = json.loads(s)  # JSONDecodeError is a ValueError subclass
+    topics = data.get("topics") if isinstance(data, dict) else None
+    if not isinstance(topics, list):
+        raise ValueError("response has no 'topics' list")
+    return topics
+
+
+def tree_to_nodes(user_email: str, topics: list, root_label: str = "My Knowledge") -> list:
+    """Flatten a topics tree into node dicts (root -> topic -> subtopic -> leaf),
+    each with a fresh id and a parent_id. Skips malformed/empty entries."""
+    nodes = []
+    root_id = str(uuid.uuid4())
+    nodes.append({"id": root_id, "user_email": user_email, "kind": "root",
+                  "label": root_label, "summary": None, "parent_id": None})
+    for t in topics:
+        if not isinstance(t, dict):
+            continue
+        t_label = (t.get("label") or "").strip()
+        if not t_label:
+            continue
+        t_id = str(uuid.uuid4())
+        nodes.append({"id": t_id, "user_email": user_email, "kind": "topic",
+                      "label": t_label[:200], "summary": None, "parent_id": root_id})
+        for st in (t.get("subtopics") or []):
+            if not isinstance(st, dict):
+                continue
+            st_label = (st.get("label") or "").strip()
+            if not st_label:
+                continue
+            st_id = str(uuid.uuid4())
+            nodes.append({"id": st_id, "user_email": user_email, "kind": "subtopic",
+                          "label": st_label[:200], "summary": None, "parent_id": t_id})
+            for lf in (st.get("leaves") or []):
+                if not isinstance(lf, dict):
+                    continue
+                lf_label = (lf.get("label") or "").strip()
+                if not lf_label:
+                    continue
+                summary = (lf.get("summary") or "").strip()[:1000] or None
+                nodes.append({"id": str(uuid.uuid4()), "user_email": user_email,
+                              "kind": "leaf", "label": lf_label[:200],
+                              "summary": summary, "parent_id": st_id})
+    return nodes
+
+
+def _chat_snippet(chat_val, max_chars: int = 600) -> str:
+    """Pull a short text snippet from an OWUI chat JSON blob (defensive)."""
+    try:
+        data = chat_val if isinstance(chat_val, dict) else json.loads(chat_val)
+    except Exception:
+        return ""
+    parts = []
+    msgs = data.get("messages") if isinstance(data, dict) else None
+    if isinstance(msgs, list):
+        for m in msgs:
+            if isinstance(m, dict) and isinstance(m.get("content"), str):
+                parts.append(m["content"])
+    return " ".join(parts)[:max_chars]
+
+
+async def _read_recent_chats(conn, user_email: str, limit: int = MAX_CHATS) -> list:
+    urow = await conn.fetchrow(
+        'SELECT id FROM public."user" WHERE lower(email) = lower($1) LIMIT 1',
+        user_email)
+    if not urow:
+        return []
+    rows = await conn.fetch(
+        'SELECT title, chat FROM public."chat" WHERE user_id = $1 '
+        'ORDER BY updated_at DESC LIMIT $2',
+        urow["id"], limit)
+    return [{"title": (r["title"] or ""), "snippet": _chat_snippet(r["chat"])}
+            for r in rows]
+
+
+async def _cluster_with_llm(corpus: str) -> str:
+    key = _first_sk(os.environ.get("OPENAI_API_KEY", ""))
+    if not key:
+        raise ValueError("no OpenAI key configured")
+    sys = (
+        "You organize a user's content into a compact knowledge tree. Return "
+        "ONLY JSON, no prose, in this exact shape: "
+        '{"topics":[{"label":"...","subtopics":[{"label":"...","leaves":['
+        '{"label":"...","summary":"..."}]}]}]}. Use 3-8 topics, each with 2-6 '
+        "subtopics, each with 1-6 leaves. Labels are short (a few words); "
+        "summaries are one sentence."
+    )
+    payload = {
+        "model": CLUSTER_MODEL,
+        "temperature": 0,
+        "messages": [{"role": "system", "content": sys},
+                     {"role": "user", "content": corpus[:12000]}],
+    }
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(OPENAI_URL, json=payload,
+                              headers={"Authorization": f"Bearer {key}"})
+    if r.status_code != 200:
+        raise ValueError(f"LLM error {r.status_code}: {r.text[:160]}")
+    return r.json()["choices"][0]["message"].get("content") or ""
+
+
 # --- endpoints ---------------------------------------------------------------
 @router.get("/healthz")
 async def healthz():
     return {"ok": True}
+
+
+@router.post("/build")
+async def build_my_graph(user: CurrentUser = Depends(current_user)):
+    """Rebuild the signed-in user's knowledge graph from their recent chats."""
+    conn = await _connect()
+    try:
+        await ensure_table(conn)
+        chats = await _read_recent_chats(conn, user.email)
+        if not chats:
+            return {"built": False, "reason": "No chats to build from yet.", "nodes": 0}
+        corpus = "\n\n".join(f"# {c['title']}\n{c['snippet']}" for c in chats if (c['title'] or c['snippet']))
+        if not corpus.strip():
+            return {"built": False, "reason": "Your chats have no readable text yet.", "nodes": 0}
+        try:
+            raw = await _cluster_with_llm(corpus)
+            topics = parse_cluster_json(raw)
+        except ValueError as e:
+            raise HTTPException(status_code=502, detail=f"Could not organize your chats: {e}")
+        nodes, truncated = cap_nodes(tree_to_nodes(user.email, topics))
+        async with conn.transaction():
+            await conn.execute("DELETE FROM knowledge_graph_node WHERE user_email = $1", user.email)
+            for n in nodes:
+                await conn.execute(
+                    "INSERT INTO knowledge_graph_node (id, user_email, kind, label, summary, parent_id) "
+                    "VALUES ($1, $2, $3, $4, $5, $6)",
+                    uuid.UUID(n["id"]), n["user_email"], n["kind"], n["label"],
+                    n.get("summary"), uuid.UUID(n["parent_id"]) if n.get("parent_id") else None)
+        return {"built": True, "nodes": len(nodes), "chats_used": len(chats), "truncated": truncated}
+    finally:
+        await conn.close()
 
 
 @router.get("")
