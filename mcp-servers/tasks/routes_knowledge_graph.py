@@ -473,16 +473,19 @@ async def _read_chat_titles(conn, uid, limit: int = 200) -> list:
 
 
 async def _read_apps(conn, user_email: str, limit: int = 100) -> list:
-    """The user's App Builder cards, from the EXACT query the App Builder page
-    uses (routes_tasks list_tasks is_project=true): BUILD tasks they own or
-    whose project they are an invited member of, no team bucket. Mirroring the
-    page means the graph count always equals the page count."""
+    """The user's App Builder cards, mirroring the page EXACTLY: same source
+    query (routes_tasks is_project=true: BUILD tasks they own or are invited
+    to, no team bucket) AND the same dedup the page does client-side (one card
+    per distinct built_app_slug, newest task wins; slugless builds stay
+    individual). Recurring schedules re-run the same slug many times, so
+    without the dedup the count explodes past what the user sees."""
     rows = await conn.fetch(
-        "SELECT built_app_slug AS slug, description, status FROM tasks.items "
+        "SELECT DISTINCT ON (COALESCE(built_app_slug, id::text)) "
+        "  built_app_slug AS slug, description, status FROM tasks.items "
         "WHERE action_type = 'BUILD' AND ("
         "  assignee_email = $1 OR built_app_slug IN ("
         "    SELECT slug FROM tasks.project_members WHERE user_email = $1)) "
-        "ORDER BY created_at DESC LIMIT $2",
+        "ORDER BY COALESCE(built_app_slug, id::text), created_at DESC LIMIT $2",
         user_email, limit)
     out = []
     for r in rows:
