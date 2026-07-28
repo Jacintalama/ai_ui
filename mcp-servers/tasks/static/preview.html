@@ -2299,6 +2299,28 @@
       </div>
     </div>
 
+    <!-- ─── Deploy to the user's own Vercel account ─── -->
+    <div class="pub-section-divider"></div>
+    <div class="pub-section-title">
+      <span>Deploy to your Vercel</span>
+      <span class="badge-soft">Optional</span>
+    </div>
+    <div class="body">
+      Put this app on your own Vercel account too. Connect once with an access token
+      (<a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" style="color:inherit;text-decoration:underline;">create one here</a>), no CLI needed.
+    </div>
+    <div class="pub-domain-input-row" id="pub-vc-token-row" hidden>
+      <input type="password" class="pub-domain-input" id="pub-vc-token"
+             placeholder="Vercel access token" autocomplete="off" spellcheck="false">
+      <button type="button" class="btn btn-primary" id="pub-vc-connect">Connect</button>
+    </div>
+    <div class="pub-actions" style="margin-top:6px;">
+      <span id="pub-vc-result" style="font-size:12px;color:var(--muted);"></span>
+      <span style="flex:1;"></span>
+      <a href="#" target="_blank" rel="noreferrer" class="btn" id="pub-vc-open" hidden style="text-decoration:none;">Open ↗</a>
+      <button type="button" class="btn btn-primary" id="pub-vc-deploy">Deploy to Vercel</button>
+    </div>
+
     <div class="pub-actions">
       <button type="button" class="btn" id="pub-cancel">Close</button>
       <button type="button" class="btn btn-danger" id="pub-unpublish" hidden>Unpublish</button>
@@ -5515,6 +5537,91 @@
   const $btnPubLbl  = document.getElementById("btn-publish-label");
 
   let _publishedState = null; // {published, public_url, ...}
+
+  // --- Deploy to the user's own Vercel account (inside the Publish modal) ---
+  const $vcTokenRow = document.getElementById("pub-vc-token-row");
+  const $vcToken    = document.getElementById("pub-vc-token");
+  const $vcConnect  = document.getElementById("pub-vc-connect");
+  const $vcDeploy   = document.getElementById("pub-vc-deploy");
+  const $vcOpen     = document.getElementById("pub-vc-open");
+  const $vcResult   = document.getElementById("pub-vc-result");
+  let _vcConnected = false;
+
+  function _vcHeaders(json) {
+    const token = localStorage.getItem("token");
+    const h = token ? { Authorization: "Bearer " + token } : {};
+    if (json) h["Content-Type"] = "application/json";
+    return h;
+  }
+
+  async function refreshVercelStatus() {
+    try {
+      const [s, d] = await Promise.all([
+        fetch("/api/tasks/vercel/status", { headers: _vcHeaders(), credentials: "include" })
+          .then((r) => (r.ok ? r.json() : null)),
+        fetch("/api/tasks/vercel/deployments", { headers: _vcHeaders(), credentials: "include" })
+          .then((r) => (r.ok ? r.json() : {})),
+      ]);
+      _vcConnected = !!(s && s.connected);
+      if (_vcConnected) $vcResult.textContent = "Connected as " + (s.username || "you");
+      const url = slug && d ? d[slug] : null;
+      if (url) { $vcOpen.href = url; $vcOpen.hidden = false; }
+    } catch (_) { /* fail open: section still usable, connect will prompt */ }
+  }
+
+  async function _vcDoDeploy() {
+    if (!slug) { $vcResult.textContent = "Wait for the build to finish first."; return; }
+    $vcDeploy.disabled = true;
+    const t = $vcDeploy.textContent;
+    $vcDeploy.textContent = "Deploying…";
+    try {
+      const r = await fetch("/api/tasks/vercel/deploy/" + encodeURIComponent(slug), {
+        method: "POST", headers: _vcHeaders(), credentials: "include" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+      $vcOpen.href = body.url; $vcOpen.hidden = false;
+      $vcResult.textContent = "Live on your Vercel.";
+      window.open(body.url, "_blank", "noopener");
+    } catch (e) {
+      $vcResult.textContent = "Deploy failed: " + String(e && e.message ? e.message : e);
+    } finally {
+      $vcDeploy.disabled = false; $vcDeploy.textContent = t;
+    }
+  }
+
+  $vcConnect.addEventListener("click", async () => {
+    const tok = ($vcToken.value || "").trim();
+    if (!tok) { $vcResult.textContent = "Paste a token first."; return; }
+    $vcConnect.disabled = true; $vcConnect.textContent = "Verifying…"; $vcResult.textContent = "";
+    try {
+      const r = await fetch("/api/tasks/vercel/connect", {
+        method: "POST", headers: _vcHeaders(true), credentials: "include",
+        body: JSON.stringify({ token: tok }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.detail || ("HTTP " + r.status));
+      _vcConnected = true; $vcTokenRow.hidden = true; $vcToken.value = "";
+      $vcResult.textContent = "Connected as " + (body.username || "you") + ". Deploying…";
+      _vcDoDeploy();
+    } catch (e) {
+      $vcResult.textContent = String(e && e.message ? e.message : e);
+    } finally {
+      $vcConnect.disabled = false; $vcConnect.textContent = "Connect";
+    }
+  });
+
+  $vcDeploy.addEventListener("click", () => {
+    if (!_vcConnected) {
+      $vcTokenRow.hidden = false;
+      $vcToken.focus();
+      $vcResult.textContent = "Paste your Vercel token, then hit Connect.";
+      return;
+    }
+    _vcDoDeploy();
+  });
+
+  // Refresh connect state whenever the Publish modal is opened.
+  document.getElementById("btn-publish").addEventListener("click", refreshVercelStatus);
+  refreshVercelStatus();
 
   function _closePub() { $pubOverlay.hidden = true; }
   $pubCancel.addEventListener("click", _closePub);
