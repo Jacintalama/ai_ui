@@ -96,13 +96,49 @@ def rank_nodes_for_query(nodes: list, query: str, limit: int = 6) -> list:
     return [n for _, _, n in scored[:limit]]
 
 
-def format_matched(matched: list) -> str:
-    """Render matched nodes as the injected memory block."""
+COUNT_LABELS = (("apps", "App Builder apps"),
+                ("crons", "scheduled automations (cron jobs)"),
+                ("videos", "generated videos"),
+                ("files", "uploaded files"),
+                ("collections", "knowledge collections"),
+                ("memories", "saved memories"),
+                ("chats", "chats"))
+
+
+def counts_line(counts) -> str:
+    """One authoritative sentence of live totals, so 'how many X do I have'
+    is answerable directly from memory instead of guessed at."""
+    if not counts:
+        return ""
+    parts = [f"{counts.get(k, 0)} {lbl}" for k, lbl in COUNT_LABELS]
+    return ("Live totals for this user on this platform right now "
+            "(authoritative; when asked how many, use these exact numbers): "
+            + ", ".join(parts) + ".")
+
+
+def format_matched(matched: list, all_nodes: list = None,
+                   max_children: int = 15) -> str:
+    """Render matched nodes as the injected memory block. Matched source hubs
+    (App Builder Apps, cron jobs, ...) expand into their actual item names so
+    the model can enumerate them."""
+    kids = {}
+    for n in (all_nodes or []):
+        p = n.get("parent_id")
+        if p:
+            kids.setdefault(p, []).append(n)
     lines = []
     for n in matched:
         lbl = (n.get("label") or "").strip()
         summ = (n.get("summary") or "").strip()
-        lines.append(f"- {lbl}: {summ}" if summ else f"- {lbl}")
+        line = f"- {lbl}: {summ}" if summ else f"- {lbl}"
+        if lbl in RESERVED_HUBS:
+            ch = kids.get(n.get("id") or "", [])
+            if ch:
+                names = [(c.get("label") or "").strip() for c in ch][:max_children]
+                more = len(ch) - len(names)
+                tail = f"; and {more} more" if more > 0 else ""
+                line += f" [{len(ch)} items: " + "; ".join(names) + tail + "]"
+        lines.append(line)
     return (
         "Background on this user, drawn from their personal knowledge graph "
         "of past conversations. Items relevant to their current message:\n"
@@ -162,12 +198,13 @@ async def semantic_rank(conn, nodes: list, query: str, limit: int = 6) -> list:
 
 
 async def build_memory_context_smart(conn, nodes: list, query: str,
-                                     limit: int = 6):
+                                     limit: int = 6, counts=None):
     """Structured retrieval chain -> (context, mode).
 
     semantic (embeddings) -> keyword (on embedding failure) -> topic profile
     (nothing matched) -> "" (empty graph). `mode` names which tier answered,
-    for observability."""
+    for observability. Every non-empty context opens with the live totals so
+    quantitative questions get exact numbers."""
     if not nodes:
         return "", "none"
     matched, mode = [], "profile"
@@ -181,10 +218,14 @@ async def build_memory_context_smart(conn, nodes: list, query: str,
                   flush=True)
             matched = rank_nodes_for_query(nodes, qs, limit)
             mode = "keyword"
+    totals = counts_line(counts)
     if matched:
-        return format_matched(matched), mode
+        body = format_matched(matched, all_nodes=nodes)
+        return (totals + "\n" + body if totals else body), mode
     prof = topic_profile(nodes, limit)
-    return (prof, "profile") if prof else ("", "none")
+    if prof:
+        return (totals + "\n" + prof if totals else prof), "profile"
+    return (totals, "profile") if totals else ("", "none")
 
 
 # --- denser build: attach real items as nodes (pure, unit tested) -----------
@@ -644,8 +685,9 @@ async def my_graph_context(
     try:
         await ensure_table(conn)
         await graph_embeddings.ensure_embed_table(conn)
-        nodes, _counts = await _assemble_live(conn, user.email)
-        ctx, mode = await build_memory_context_smart(conn, nodes, q, limit)
+        nodes, counts = await _assemble_live(conn, user.email)
+        ctx, mode = await build_memory_context_smart(conn, nodes, q, limit,
+                                                     counts=counts)
     finally:
         await conn.close()
     return {"context": ctx, "count": len(nodes), "used": bool(ctx),
