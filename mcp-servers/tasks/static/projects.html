@@ -1395,7 +1395,7 @@
           ? `<button type="button" class="members-btn export-btn" data-slug="${escapeHtml(t.built_app_slug)}">Export</button>`
           : "";
         const deployBtn = t.built_app_slug
-          ? `<button type="button" class="members-btn deploy-btn" data-slug="${escapeHtml(t.built_app_slug)}" title="Publish this app to your own Vercel account">Deploy</button>`
+          ? `<button type="button" class="members-btn deploy-btn" data-slug="${escapeHtml(t.built_app_slug)}" title="Go live: publish on this platform or deploy to your own Vercel">Deploy</button>`
           : "";
         const liveLink = (t.built_app_slug && vercelDeployments[t.built_app_slug])
           ? `<a class="members-btn" style="text-decoration:none;" href="${escapeHtml(vercelDeployments[t.built_app_slug])}" target="_blank" rel="noopener" title="Your live Vercel deployment">Live &#8599;</a>`
@@ -1424,7 +1424,7 @@
       }
       // Wire Members + History buttons (delegated listeners)
       grid.querySelectorAll("button.deploy-btn").forEach((b) => {
-        b.addEventListener("click", () => deployToVercel(b));
+        b.addEventListener("click", () => openPublishChooser(b.dataset.slug));
       });
       grid.querySelectorAll("button.members-btn:not(.history-btn):not(.docs-btn):not(.export-btn):not(.deploy-btn)").forEach((b) => {
         b.addEventListener("click", () => openMembersModal(b.dataset.slug));
@@ -2858,8 +2858,7 @@
       });
     }
 
-    async function deployToVercel(btn) {
-      const slug = btn.dataset.slug;
+    async function doVercelDeploy(slug, btn) {
       if (!vercelState.connected) {
         const ok = await openVercelConnectModal();
         if (!ok) return;
@@ -2879,6 +2878,81 @@
       } finally {
         btn.disabled = false; btn.textContent = old;
       }
+    }
+
+    // "Where should this app go live?" - the platform (hosted here) or the
+    // user's own Vercel account. Status-aware: shows Open links for
+    // destinations that are already live.
+    function openPublishChooser(slug) {
+      const ov = document.createElement("div");
+      ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:70;display:flex;align-items:center;justify-content:center;";
+      const rowStyle = "display:flex;align-items:center;gap:10px;justify-content:space-between;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:10px;";
+      ov.innerHTML = `
+        <div style="background:#17181c;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:22px;width:min(500px,92vw);color:#eee;">
+          <h3 style="margin:0 0 4px;font-size:17px;">Publish ${escapeHtml(slug)}</h3>
+          <p style="margin:0 0 14px;font-size:12.5px;opacity:.7;">Choose where your app goes live. You can use both.</p>
+          <div style="${rowStyle}margin-bottom:10px;">
+            <div>
+              <div style="font-weight:600;font-size:13.5px;">This platform</div>
+              <div style="font-size:12px;opacity:.65;">Hosted here instantly. No account needed.</div>
+            </div>
+            <span data-act-platform style="display:flex;align-items:center;"></span>
+          </div>
+          <div style="${rowStyle}">
+            <div>
+              <div style="font-weight:600;font-size:13.5px;">Your Vercel account</div>
+              <div style="font-size:12px;opacity:.65;">Connect once with an access token. No CLI needed.</div>
+            </div>
+            <span data-act-vercel style="display:flex;align-items:center;"></span>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+            <button type="button" class="btn" data-pc-close>Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const close = () => ov.remove();
+      ov.querySelector("[data-pc-close]").addEventListener("click", close);
+      ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+
+      const actP = ov.querySelector("[data-act-platform]");
+      const actV = ov.querySelector("[data-act-vercel]");
+      const linkBtn = (url) =>
+        `<a class="btn" style="text-decoration:none;" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open &#8599;</a>`;
+
+      function renderVercelRow() {
+        actV.innerHTML = (vercelDeployments[slug] ? linkBtn(vercelDeployments[slug]) : "") +
+          `<button type="button" class="btn primary" data-v-deploy style="margin-left:6px;">Deploy</button>`;
+        actV.querySelector("[data-v-deploy]").addEventListener("click", async (e) => {
+          await doVercelDeploy(slug, e.target);
+          renderVercelRow();
+        });
+      }
+      renderVercelRow();
+
+      function renderPlatformRow(published, url) {
+        actP.innerHTML = (published && url ? linkBtn(url) : "") +
+          `<button type="button" class="btn ${published ? "" : "primary"}" data-p-pub style="margin-left:6px;">${published ? "Republish" : "Publish"}</button>`;
+        actP.querySelector("[data-p-pub]").addEventListener("click", async (e) => {
+          const b = e.target; const t = b.textContent;
+          b.disabled = true; b.textContent = "Publishing…";
+          try {
+            const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/publish`, {
+              method: "POST", headers: authHeaders(), credentials: "include" });
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+            renderPlatformRow(true, body.public_url);
+            if (body.public_url) window.open(body.public_url, "_blank", "noopener");
+          } catch (err) {
+            alert("Publish failed: " + String(err && err.message ? err.message : err));
+            b.disabled = false; b.textContent = t;
+          }
+        });
+      }
+      renderPlatformRow(false, null);
+      fetch(`/api/projects/${encodeURIComponent(slug)}/publish`, { headers: authHeaders(), credentials: "include" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((s) => { if (s) renderPlatformRow(!!s.published, s.public_url); })
+        .catch(() => {});
     }
 
     async function load() {
