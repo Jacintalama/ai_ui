@@ -160,23 +160,20 @@ def test_prettify_slug_strips_hash_and_titlecases():
     assert prettify_slug("") == "app"
 
 
-# --- deleted-app accuracy: disk presence is truth ----------------------------
-from routes_knowledge_graph import _app_exists
+# --- app cards labeled the way the App Builder page shows them ---------------
+from routes_knowledge_graph import app_label
 
 
-def test_app_exists_true_when_dir_present(tmp_path):
-    (tmp_path / "my-app").mkdir()
-    assert _app_exists("my-app", root=str(tmp_path)) is True
+def test_app_label_sched_slugs_stay_raw():
+    # sched-* hashes must stay visible or three cards all read "Sched".
+    assert app_label("sched-9e1b7c07") == "sched-9e1b7c07"
 
 
-def test_app_exists_false_when_deleted(tmp_path):
-    assert _app_exists("gone-app", root=str(tmp_path)) is False
+def test_app_label_normal_slugs_prettified():
+    assert app_label("build-a-website-and-make-3104") == "Build A Website And Make"
 
 
-def test_app_exists_fails_open_when_root_missing(tmp_path):
-    # Apps root not mounted (local dev): cannot tell -> keep apps visible.
-    assert _app_exists("any-app", root=str(tmp_path / "nope")) is True
-
-
-def test_app_exists_blank_slug_false(tmp_path):
-    assert _app_exists("", root=str(tmp_path)) is False
+def test_app_label_no_slug_uses_description():
+    assert app_label(None, "Build a landing page for a bakery") == \
+        "Build a landing page for a bakery"
+    assert app_label(None, "") == "app"

@@ -257,22 +257,14 @@ def prettify_slug(slug: str) -> str:
 RESERVED_HUBS = {"Uploaded Files", "Knowledge Collections", "App Builder Apps",
                  "Automations & Cron Jobs", "Saved Memories", "Generated Videos"}
 
-# Where App Builder apps live on disk inside this container (bind mount).
-# Deleting an app removes its directory (routes_projects rmtree) but the build
-# rows in tasks.items survive, so disk presence is the truth for "still exists".
-APPS_FS_ROOT = os.environ.get("GRAPH_APPS_ROOT", "/workspace/ai_ui/apps")
-
-
-def _app_exists(slug: str, root: str = None) -> bool:
-    """True if the app's directory still exists. FAILS OPEN: if the apps root
-    itself is missing (local dev, mount gone) we cannot tell, so keep the app
-    visible rather than silently hiding every app."""
-    base = root if root is not None else APPS_FS_ROOT
-    if not slug:
-        return False
-    if not os.path.isdir(base):
-        return True
-    return os.path.isdir(os.path.join(base, slug))
+def app_label(slug, description: str = "") -> str:
+    """Label an App Builder card the way the page shows it: the slug (raw for
+    sched-* so they stay distinguishable), or the task description when the
+    build has no slug yet."""
+    if slug:
+        return slug if slug.startswith("sched-") else prettify_slug(slug)
+    d = (description or "").strip()
+    return d[:60] if d else "app"
 
 
 def best_parent_id(text: str, candidates: list, default_id: str) -> str:
@@ -480,18 +472,24 @@ async def _read_chat_titles(conn, uid, limit: int = 200) -> list:
     return [{"title": (r["title"] or ""), "snippet": ""} for r in rows]
 
 
-async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
-    """App Builder apps the user created -> nodes. Excludes 'sched-*' slugs,
-    which are scheduled-run artifacts, not real apps."""
+async def _read_apps(conn, user_email: str, limit: int = 100) -> list:
+    """The user's App Builder cards, from the EXACT query the App Builder page
+    uses (routes_tasks list_tasks is_project=true): BUILD tasks they own or
+    whose project they are an invited member of, no team bucket. Mirroring the
+    page means the graph count always equals the page count."""
     rows = await conn.fetch(
-        "SELECT DISTINCT ON (built_app_slug) built_app_slug, description "
-        "FROM tasks.items WHERE lower(assignee_email) = lower($1) "
-        "AND built_app_slug IS NOT NULL AND built_app_slug NOT LIKE 'sched-%' "
-        "ORDER BY built_app_slug, updated_at DESC LIMIT $2",
+        "SELECT built_app_slug AS slug, description, status FROM tasks.items "
+        "WHERE action_type = 'BUILD' AND ("
+        "  assignee_email = $1 OR built_app_slug IN ("
+        "    SELECT slug FROM tasks.project_members WHERE user_email = $1)) "
+        "ORDER BY created_at DESC LIMIT $2",
         user_email, limit)
-    return [{"label": prettify_slug(r["built_app_slug"]),
-             "summary": (r["built_app_slug"] or None)}
-            for r in rows if _app_exists(r["built_app_slug"])]
+    out = []
+    for r in rows:
+        desc = (r["description"] or "").strip()
+        summ = f"{r['status']}: {desc}"[:300] if desc else (r["slug"] or None)
+        out.append({"label": app_label(r["slug"], desc), "summary": summ})
+    return out
 
 
 async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
