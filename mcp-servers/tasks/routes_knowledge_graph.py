@@ -472,19 +472,21 @@ async def _read_chat_titles(conn, uid, limit: int = 200) -> list:
     return [{"title": (r["title"] or ""), "snippet": ""} for r in rows]
 
 
-async def _read_apps(conn, user_email: str, limit: int = 100) -> list:
+async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
     """The user's App Builder cards, mirroring the page EXACTLY: same source
     query (routes_tasks is_project=true: BUILD tasks they own or are invited
-    to, no team bucket) AND the same dedup the page does client-side (one card
-    per distinct built_app_slug, newest task wins; slugless builds stay
-    individual). Recurring schedules re-run the same slug many times, so
-    without the dedup the count explodes past what the user sees."""
+    to, no team bucket, sched-* schedule artifacts excluded) AND the same
+    dedup the page does client-side (one card per distinct built_app_slug,
+    newest task wins; slugless builds stay individual). The limit matches the
+    page's fetch window; if the page's rules change, change this with it."""
     rows = await conn.fetch(
         "SELECT DISTINCT ON (COALESCE(slug, rid)) slug, description, status "
         "FROM ("
         "  SELECT built_app_slug AS slug, id::text AS rid, description, "
         "         status, created_at FROM tasks.items "
-        "  WHERE action_type = 'BUILD' AND ("
+        "  WHERE action_type = 'BUILD' "
+        "  AND (built_app_slug IS NULL OR built_app_slug NOT LIKE 'sched-%') "
+        "  AND ("
         "    assignee_email = $1 OR built_app_slug IN ("
         "      SELECT slug FROM tasks.project_members WHERE user_email = $1)) "
         "  ORDER BY created_at DESC LIMIT $2"

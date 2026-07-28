@@ -155,13 +155,24 @@ async def list_tasks(
             # No team bucket. Only BUILD tasks show up on the app-builder
             # page — research, integrate, ask-user, and other non-app
             # tasks stay in the admin task panel instead.
+            # sched-* slugs are excluded: those are scheduled-run artifacts
+            # (a recurring schedule creates a fresh BUILD item every run,
+            # flooding the recency window and hiding the user's real apps).
+            # Schedules have their own page; they are not apps.
             access_clause = or_(
                 TaskItem.assignee_email == user.email,
                 TaskItem.built_app_slug.in_(member_slugs_subq),
             )
             q = (
                 select(TaskItem)
-                .where(access_clause, TaskItem.action_type == "BUILD")
+                .where(
+                    access_clause,
+                    TaskItem.action_type == "BUILD",
+                    or_(
+                        TaskItem.built_app_slug.is_(None),
+                        TaskItem.built_app_slug.notlike("sched-%"),
+                    ),
+                )
                 .order_by(TaskItem.created_at.desc())
                 .limit(limit)
             )

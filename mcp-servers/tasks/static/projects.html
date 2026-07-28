@@ -2784,7 +2784,7 @@
 
     async function load() {
       try {
-        const resp = await fetch("/api/tasks?is_project=true&limit=100", {
+        const resp = await fetch("/api/tasks?is_project=true&limit=200", {
           headers: authHeaders(),
           credentials: "include",
         });

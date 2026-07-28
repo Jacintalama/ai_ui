@@ -52,3 +52,19 @@ async def test_list_tasks_unknown_slug_returns_empty(db_session):
         r = await c.get("/api/tasks?status=done&slug=nonexistent", headers=HDR)
     assert r.status_code == 200
     assert r.json() == []
+
+
+async def test_is_project_hides_sched_artifacts_keeps_real_and_slugless(db_session):
+    """The app-builder page (is_project=true) must not show sched-* schedule
+    runs; real apps and not-yet-slugged builds stay visible."""
+    db_session.add(_make_done_task(slug="my-real-app", description="real app"))
+    db_session.add(_make_done_task(slug="sched-abc12345", description="schedule run"))
+    db_session.add(_make_done_task(slug=None, description="queued build no slug"))
+    await db_session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get("/api/tasks?is_project=true&limit=200", headers=HDR)
+    assert r.status_code == 200
+    slugs = [t["built_app_slug"] for t in r.json()]
+    assert "my-real-app" in slugs
+    assert None in slugs                      # slugless build still listed
+    assert "sched-abc12345" not in slugs      # schedule artifact hidden
