@@ -17,6 +17,7 @@ from routes_fusion_page import router as fusion_page_router
 from routes_fusion import router as fusion_api_router
 from routes_graph import router as graph_router
 from routes_knowledge_graph import router as graph_mine_router
+from routes_vercel import router as vercel_router
 from routes_preview import router as preview_router
 from routes_projects import router as projects_router
 from routes_schedules import router as schedules_router
@@ -121,6 +122,8 @@ app.include_router(upload_router)
 app.include_router(graph_router)
 app.include_router(graph_mine_router)  # /graph/mine — per-user knowledge graph (internal)
 app.include_router(graph_mine_router, prefix="/api/tasks")  # public: /api/tasks/graph/mine (gateway injects X-User-Email)
+app.include_router(vercel_router)  # /vercel — per-user Vercel connect + deploy (internal)
+app.include_router(vercel_router, prefix="/api/tasks")  # public: /api/tasks/vercel/*
 app.include_router(supabase_router)
 app.include_router(supabase_oauth_router)
 app.include_router(db_router)
