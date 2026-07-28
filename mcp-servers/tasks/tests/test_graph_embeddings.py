@@ -146,3 +146,31 @@ async def test_smart_context_opens_with_totals(monkeypatch):
                                                      counts=_COUNTS)
     assert ctx.startswith("Live totals")
     assert "21 App Builder apps" in ctx and mode == "semantic"
+
+
+# --- automatic topic refresh: pure decision ----------------------------------
+from routes_knowledge_graph import should_auto_rebuild
+
+
+def test_auto_rebuild_first_use_with_enough_chats():
+    assert should_auto_rebuild(0, 5, None, threshold_hours=24) is True
+
+
+def test_auto_rebuild_not_for_users_with_few_chats():
+    assert should_auto_rebuild(0, 2, None, threshold_hours=24) is False
+
+
+def test_auto_rebuild_when_skeleton_stale():
+    assert should_auto_rebuild(6, 30, 30.0, threshold_hours=24) is True
+
+
+def test_auto_rebuild_not_when_fresh():
+    assert should_auto_rebuild(6, 30, 2.0, threshold_hours=24) is False
+
+
+def test_auto_rebuild_when_topics_but_no_timestamp():
+    assert should_auto_rebuild(6, 30, None, threshold_hours=24) is True
+
+
+def test_auto_rebuild_disabled_by_zero_threshold():
+    assert should_auto_rebuild(0, 30, None, threshold_hours=0) is False

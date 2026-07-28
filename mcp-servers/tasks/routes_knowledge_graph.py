@@ -4,9 +4,11 @@ Nodes are strictly per-user (scoped by the signed-in email). See
 docs/superpowers/specs/2026-07-27-user-knowledge-graph-design.md and the
 Phase 1 plan. Build-from-chats lives in this module too (added in Task 2).
 """
+import asyncio
 import json
 import os
 import re
+import time
 import uuid
 
 import httpx
@@ -580,6 +582,110 @@ async def _assemble_live(conn, user_email: str):
     return nodes, counts
 
 
+async def _rebuild_skeleton(conn, user_email: str) -> dict:
+    """Re-derive the LLM topic skeleton from recent chats and store it
+    (transactional replace). The one step that costs an LLM call; items are
+    attached live on read so they never need this. Raises ValueError when the
+    LLM/parse fails so callers choose their own error handling."""
+    chats = await _read_recent_chats(conn, user_email, limit=60)
+    base = [{"id": str(uuid.uuid4()), "user_email": user_email,
+             "kind": "root", "label": "My Knowledge", "summary": None,
+             "parent_id": None}]
+    corpus = "\n\n".join(f"# {c['title']}\n{c['snippet']}"
+                         for c in chats[:40] if (c['title'] or c['snippet']))
+    if corpus.strip():
+        topics = parse_cluster_json(await _cluster_with_llm(corpus))
+        base = tree_to_nodes(user_email, topics)
+    # Keep only short topic labels; drop the LLM's paraphrase leaves.
+    base = [n for n in base if n["kind"] != "leaf"]
+    skeleton, truncated = cap_nodes(base, 600)
+    async with conn.transaction():
+        await conn.execute("DELETE FROM knowledge_graph_node WHERE user_email = $1", user_email)
+        for n in skeleton:
+            await conn.execute(
+                "INSERT INTO knowledge_graph_node (id, user_email, kind, label, summary, parent_id) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                uuid.UUID(n["id"]), n["user_email"], n["kind"], n["label"],
+                n.get("summary"), uuid.UUID(n["parent_id"]) if n.get("parent_id") else None)
+    return {"topics": sum(1 for n in skeleton if n["kind"] == "topic"),
+            "truncated": truncated}
+
+
+# --- automatic topic refresh -------------------------------------------------
+# Topics re-analyze themselves so no user ever has to press Build: first use
+# with enough chats triggers a build, and an existing skeleton refreshes once
+# it is older than the threshold. Runs in the background (never blocks a
+# request), at most one attempt per user per cooldown, and fails silently.
+AUTO_REBUILD_HOURS = float(os.environ.get("GRAPH_AUTO_REBUILD_HOURS", "24"))
+AUTO_REBUILD_MIN_CHATS = 3
+AUTO_COOLDOWN_SEC = 3600
+_AUTO_RUNNING = set()   # user_emails with a rebuild task in flight
+_AUTO_LAST = {}         # user_email -> time.time() of the last attempt
+
+
+def should_auto_rebuild(skeleton_topics: int, chats: int, age_hours,
+                        threshold_hours: float = None) -> bool:
+    """Pure decision. Rebuild when the user has enough chats but no topics yet
+    (first use), no skeleton timestamp at all, or a skeleton older than the
+    threshold. threshold <= 0 disables the feature."""
+    th = AUTO_REBUILD_HOURS if threshold_hours is None else threshold_hours
+    if th <= 0:
+        return False
+    if chats < AUTO_REBUILD_MIN_CHATS:
+        return False
+    if skeleton_topics == 0 or age_hours is None:
+        return True
+    return age_hours >= th
+
+
+async def _skeleton_age_hours(conn, user_email: str):
+    """Hours since this user's skeleton was stored (server clock); None if
+    they have no stored nodes yet."""
+    row = await conn.fetchrow(
+        "SELECT EXTRACT(EPOCH FROM (now() - MAX(created_at))) / 3600.0 AS h "
+        "FROM knowledge_graph_node WHERE user_email = $1", user_email)
+    return float(row["h"]) if row and row["h"] is not None else None
+
+
+async def _auto_rebuild(user_email: str) -> None:
+    try:
+        conn = await _connect()
+        try:
+            await ensure_table(conn)
+            res = await _rebuild_skeleton(conn, user_email)
+            print(f"[graph] auto-rebuilt topics for {user_email}: {res}",
+                  flush=True)
+        finally:
+            await conn.close()
+    except Exception as e:
+        print(f"[graph] auto-rebuild failed for {user_email}: {e}", flush=True)
+    finally:
+        _AUTO_RUNNING.discard(user_email)
+
+
+def _maybe_schedule_auto_build(user_email: str, nodes: list, counts: dict,
+                               age_hours) -> bool:
+    """Kick a background rebuild when warranted. Returns True if scheduled."""
+    sk_topics = sum(1 for n in nodes
+                    if n.get("kind") == "topic"
+                    and n.get("label") not in RESERVED_HUBS)
+    if not should_auto_rebuild(sk_topics, counts.get("chats", 0), age_hours):
+        return False
+    t = time.time()
+    if user_email in _AUTO_RUNNING:
+        return False
+    if t - _AUTO_LAST.get(user_email, 0) < AUTO_COOLDOWN_SEC:
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False  # no loop (e.g. unit test) -> just skip, fail open
+    _AUTO_LAST[user_email] = t
+    _AUTO_RUNNING.add(user_email)
+    loop.create_task(_auto_rebuild(user_email))
+    return True
+
+
 async def _cluster_with_llm(corpus: str) -> str:
     key = _first_sk(os.environ.get("OPENAI_API_KEY", ""))
     if not key:
@@ -618,40 +724,14 @@ async def build_my_graph(user: CurrentUser = Depends(current_user)):
     conn = await _connect()
     try:
         await ensure_table(conn)
-        # Build ONLY re-derives the LLM topic skeleton from recent chats. The
-        # items (chats/apps/cron jobs/files) are attached live on read, so they
-        # never need a rebuild to stay current.
-        chats = await _read_recent_chats(conn, user.email, limit=60)
-        base = [{"id": str(uuid.uuid4()), "user_email": user.email,
-                 "kind": "root", "label": "My Knowledge", "summary": None,
-                 "parent_id": None}]
-        corpus = "\n\n".join(f"# {c['title']}\n{c['snippet']}"
-                             for c in chats[:40] if (c['title'] or c['snippet']))
-        if corpus.strip():
-            try:
-                topics = parse_cluster_json(await _cluster_with_llm(corpus))
-                base = tree_to_nodes(user.email, topics)
-            except ValueError as e:
-                raise HTTPException(status_code=502,
-                                    detail=f"Could not organize your chats: {e}")
-        # Keep only short topic labels; drop the LLM's paraphrase leaves.
-        base = [n for n in base if n["kind"] != "leaf"]
-        skeleton, truncated = cap_nodes(base, 600)
-
-        async with conn.transaction():
-            await conn.execute("DELETE FROM knowledge_graph_node WHERE user_email = $1", user.email)
-            for n in skeleton:
-                await conn.execute(
-                    "INSERT INTO knowledge_graph_node (id, user_email, kind, label, summary, parent_id) "
-                    "VALUES ($1, $2, $3, $4, $5, $6)",
-                    uuid.UUID(n["id"]), n["user_email"], n["kind"], n["label"],
-                    n.get("summary"), uuid.UUID(n["parent_id"]) if n.get("parent_id") else None)
-
+        try:
+            built = await _rebuild_skeleton(conn, user.email)
+        except ValueError as e:
+            raise HTTPException(status_code=502,
+                                detail=f"Could not organize your chats: {e}")
         # Report the full live picture (skeleton + attached items).
         nodes, counts = await _assemble_live(conn, user.email)
-        topics = sum(1 for n in skeleton if n["kind"] == "topic")
-        return {"built": True, "topics": topics, "nodes": len(nodes),
-                "truncated": truncated, **counts}
+        return {"built": True, "nodes": len(nodes), **built, **counts}
     finally:
         await conn.close()
 
@@ -664,14 +744,17 @@ async def get_my_graph(user: CurrentUser = Depends(current_user)):
     try:
         await ensure_table(conn)
         nodes, counts = await _assemble_live(conn, user.email)
+        age = await _skeleton_age_hours(conn, user.email)
     finally:
         await conn.close()
+    auto = _maybe_schedule_auto_build(user.email, nodes, counts, age)
     capped, truncated = cap_nodes(nodes, 600)
     return {
         "nodes": capped,
         "links": build_links(capped),
         "count": len(nodes),
         "counts": counts,
+        "auto_refresh": auto,
         "truncated": truncated,
     }
 
@@ -694,7 +777,9 @@ async def my_graph_context(
         nodes, counts = await _assemble_live(conn, user.email)
         ctx, mode = await build_memory_context_smart(conn, nodes, q, limit,
                                                      counts=counts)
+        age = await _skeleton_age_hours(conn, user.email)
     finally:
         await conn.close()
+    _maybe_schedule_auto_build(user.email, nodes, counts, age)
     return {"context": ctx, "count": len(nodes), "used": bool(ctx),
             "mode": mode}
