@@ -1211,7 +1211,9 @@
         "z-index:35;background:#0b0b0b;overflow:hidden;";
 
       const frame = document.createElement("iframe");
-      frame.src = cfg.href;
+      // Cache-bust every open so the pane always shows the latest page
+      // (the PWA service worker/browser otherwise caches the old HTML).
+      frame.src = cfg.href + (cfg.href.indexOf("?") < 0 ? "?v=" : "&v=") + Date.now();
       frame.setAttribute("title", cfg.title || cfg.label || "AIUI");
       frame.style.cssText =
         "width:100%;height:100%;border:0;display:block;background:#0b0b0b;";
