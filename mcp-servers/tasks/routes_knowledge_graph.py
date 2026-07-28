@@ -480,12 +480,15 @@ async def _read_apps(conn, user_email: str, limit: int = 100) -> list:
     individual). Recurring schedules re-run the same slug many times, so
     without the dedup the count explodes past what the user sees."""
     rows = await conn.fetch(
-        "SELECT DISTINCT ON (COALESCE(built_app_slug, id::text)) "
-        "  built_app_slug AS slug, description, status FROM tasks.items "
-        "WHERE action_type = 'BUILD' AND ("
-        "  assignee_email = $1 OR built_app_slug IN ("
-        "    SELECT slug FROM tasks.project_members WHERE user_email = $1)) "
-        "ORDER BY COALESCE(built_app_slug, id::text), created_at DESC LIMIT $2",
+        "SELECT DISTINCT ON (COALESCE(slug, rid)) slug, description, status "
+        "FROM ("
+        "  SELECT built_app_slug AS slug, id::text AS rid, description, "
+        "         status, created_at FROM tasks.items "
+        "  WHERE action_type = 'BUILD' AND ("
+        "    assignee_email = $1 OR built_app_slug IN ("
+        "      SELECT slug FROM tasks.project_members WHERE user_email = $1)) "
+        "  ORDER BY created_at DESC LIMIT $2"
+        ") w ORDER BY COALESCE(slug, rid), created_at DESC",
         user_email, limit)
     out = []
     for r in rows:
