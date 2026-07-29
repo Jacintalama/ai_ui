@@ -331,7 +331,14 @@ async def _materialize_repo(slug: str, tmp: Path) -> tuple[Path, bool]:
             raise ExportError(f"history extraction failed: {out[:300]}")
         try:
             from routes_projects import REPO_ROOT
-            rc, out = await _run_git("clone", "--branch", branch,
+            # --single-branch --no-tags or the bundle carries the whole
+            # monorepo. A plain `clone --branch` copies every tag and
+            # everything each tag reaches; this repo is a fork of Open WebUI,
+            # so 119 upstream v0.1.x tags anchored a 280.6 MB pack and turned
+            # a 28 KB app into a 295 MB download (measured on prod 2026-07-29).
+            # The subtree-split branch is the only ref a user needs.
+            rc, out = await _run_git("clone", "--single-branch", "--no-tags",
+                                     "--branch", branch,
                                      f"file://{REPO_ROOT}", str(repo))
             if rc != 0:
                 raise ExportError(f"clone failed: {out[:300]}")

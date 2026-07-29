@@ -1,4 +1,5 @@
 """Shared pytest fixtures."""
+import base64
 import os
 import sys
 import uuid
@@ -17,6 +18,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # The db_session fixture still needs a real DATABASE_URL in env (CI sets it)
 # because that's when a connection is opened.
 os.environ.setdefault("DATABASE_URL", "postgresql://nobody@nowhere/nobody")
+
+# Same reasoning for the fernet key: crypto_utils raises at IMPORT time when
+# AIUI_FERNET_KEY is unset, and routes_projects imports it (export feature,
+# b627b88be), so any test transitively importing routes_projects needed the key
+# just to be COLLECTED. Eight files carried their own setdefault; in a full run
+# the alphabetically-first one set it and every later file passed BY ACCIDENT,
+# while running a single file failed. setdefault, so the container's real key
+# always wins — this only ever supplies a dummy for local collection.
+os.environ.setdefault(
+    "AIUI_FERNET_KEY",
+    base64.urlsafe_b64encode(b"aiui-test-key-not-a-real-secret!").decode(),
+)
 
 from db import init_db  # noqa: E402
 
