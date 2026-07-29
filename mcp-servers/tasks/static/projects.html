@@ -2949,11 +2949,23 @@
         `<a class="btn" style="text-decoration:none;" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open &#8599;</a>`;
 
       function renderVercelRow() {
-        actV.innerHTML = (vercelDeployments[slug] ? linkBtn(vercelDeployments[slug]) : "") +
+        const sw = vercelState.connected
+          ? `<a href="#" data-v-switch style="font-size:11.5px;color:#9b9b9b;text-decoration:underline;margin-right:8px;" title="Disconnect and connect a different Vercel account">Switch</a>`
+          : "";
+        actV.innerHTML = sw + (vercelDeployments[slug] ? linkBtn(vercelDeployments[slug]) : "") +
           `<button type="button" class="btn primary" data-v-deploy style="margin-left:6px;">Deploy</button>`;
         actV.querySelector("[data-v-deploy]").addEventListener("click", async (e) => {
           await doVercelDeploy(slug, e.target);
           renderVercelRow();
+        });
+        const swEl = actV.querySelector("[data-v-switch]");
+        if (swEl) swEl.addEventListener("click", async (e) => {
+          e.preventDefault();
+          try {
+            await fetch("/api/tasks/vercel/connect", { method: "DELETE", headers: authHeaders(), credentials: "include" });
+            vercelState = { connected: false, username: null };
+            renderVercelRow();
+          } catch (_) {}
         });
       }
       renderVercelRow();

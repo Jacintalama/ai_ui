@@ -2316,6 +2316,7 @@
     </div>
     <div class="pub-actions" style="margin-top:6px;">
       <span id="pub-vc-result" style="font-size:12px;color:var(--muted);"></span>
+      <a href="#" id="pub-vc-switch" hidden style="font-size:12px;color:var(--muted);text-decoration:underline;">Switch account</a>
       <span style="flex:1;"></span>
       <a href="#" target="_blank" rel="noreferrer" class="btn" id="pub-vc-open" hidden style="text-decoration:none;">Open ↗</a>
       <button type="button" class="btn btn-primary" id="pub-vc-deploy">Deploy to Vercel</button>
@@ -5564,10 +5565,27 @@
       ]);
       _vcConnected = !!(s && s.connected);
       if (_vcConnected) $vcResult.textContent = "Connected as " + (s.username || "you");
+      $vcSwitch.hidden = !_vcConnected;
       const url = slug && d ? d[slug] : null;
       if (url) { $vcOpen.href = url; $vcOpen.hidden = false; }
     } catch (_) { /* fail open: section still usable, connect will prompt */ }
   }
+
+  // Switch to a different Vercel account: forget the stored connection, then
+  // the next Deploy prompts a fresh Install (log into the other account on
+  // vercel.com first, the popup connects whichever account is signed in).
+  const $vcSwitch = document.getElementById("pub-vc-switch");
+  $vcSwitch.addEventListener("click", async (e) => {
+    e.preventDefault();
+    try {
+      await fetch("/api/tasks/vercel/connect", { method: "DELETE", headers: _vcHeaders(), credentials: "include" });
+      _vcConnected = false;
+      $vcSwitch.hidden = true;
+      $vcResult.textContent = "Disconnected. Sign into the other account on vercel.com, then click Deploy.";
+    } catch (_) {
+      $vcResult.textContent = "Could not disconnect. Try again.";
+    }
+  });
 
   async function _vcDoDeploy() {
     if (!slug) { $vcResult.textContent = "Wait for the build to finish first."; return; }
