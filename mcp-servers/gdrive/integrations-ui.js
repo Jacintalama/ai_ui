@@ -631,10 +631,10 @@
 
     var CATS = ['All', 'Chat', 'Productivity', 'Tools & Automation', 'Social', 'Platform'];
     // domain drives the real logo (Clearbit, then Google favicon, then a letter).
+    // One "Google" card connects Gmail + Calendar + Drive in a single consent.
     var APPS = [
-      { id: 'gmail', name: 'Gmail', domain: 'mail.google.com', api: GMAIL_API, cat: 'Productivity', real: true },
-      { id: 'calendar', name: 'Google Calendar', domain: 'calendar.google.com', api: CALENDAR_API, cat: 'Productivity', real: true },
-      { id: 'google-drive', name: 'Google Drive', domain: 'drive.google.com', api: GDRIVE_API, cat: 'Productivity', real: true },
+      { id: 'google', name: 'Google', sub: 'Gmail, Calendar, Drive', domain: 'google.com',
+        apis: [GMAIL_API, CALENDAR_API, GDRIVE_API], cat: 'Productivity', real: true },
       { id: 'slack', name: 'Slack', domain: 'slack.com', cat: 'Chat' },
       { id: 'discord', name: 'Discord', domain: 'discord.com', cat: 'Chat' },
       { id: 'telegram', name: 'Telegram', domain: 'telegram.org', cat: 'Chat' },
@@ -643,8 +643,6 @@
       { id: 'trello', name: 'Trello', domain: 'trello.com', cat: 'Productivity' },
       { id: 'asana', name: 'Asana', domain: 'asana.com', cat: 'Productivity' },
       { id: 'airtable', name: 'Airtable', domain: 'airtable.com', cat: 'Productivity' },
-      { id: 'sheets', name: 'Google Sheets', domain: 'sheets.google.com', cat: 'Productivity' },
-      { id: 'docs', name: 'Google Docs', domain: 'docs.google.com', cat: 'Productivity' },
       { id: 'hubspot', name: 'HubSpot', domain: 'hubspot.com', cat: 'Productivity' },
       { id: 'github', name: 'GitHub', domain: 'github.com', cat: 'Tools & Automation' },
       { id: 'n8n', name: 'n8n', domain: 'n8n.io', cat: 'Tools & Automation' },
@@ -658,6 +656,7 @@
     ];
 
     var connState = {};
+    var connPartial = {};
     var activeCat = 'All';
     var searchTerm = '';
 
@@ -694,6 +693,7 @@
 
     function makeCard(app) {
       var connected = !!connState[app.id];
+      var partial = !!connPartial[app.id];
       var card = document.createElement('div');
       card.style.cssText = 'position:relative;background:#1b1b1b;border:'
         + (connected ? '1px solid #2f7d43' : '1px solid #262626')
@@ -707,10 +707,18 @@
       statusEl.innerHTML = app.real
         ? (connected
             ? '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>'
-            : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>')
+            : (partial
+                ? '<span style="color:#e0a72b;font-size:12px;font-weight:600;">Finish connecting</span>'
+                : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>'))
         : '<span style="color:#666;font-size:11px;">Coming soon</span>';
       card.appendChild(iconEl(app));
       card.appendChild(nameEl);
+      if (app.sub) {
+        var subEl = document.createElement('div');
+        subEl.style.cssText = 'color:#888;font-size:11px;text-align:center;margin-top:-4px;';
+        subEl.textContent = app.sub;
+        card.appendChild(subEl);
+      }
       card.appendChild(statusEl);
       if (!app.real) {
         card.style.opacity = '0.5';
@@ -720,9 +728,11 @@
         card.addEventListener('click', function () {
           if (!connState[app.id]) {
             unifiedConnect();
-          } else if (confirm('Disconnect ' + app.name + '?')) {
-            fetch(app.api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' })
-              .then(function () { connState[app.id] = false; renderGrid(); });
+          } else if (confirm('Disconnect ' + app.name + (app.sub ? ' (' + app.sub + ')' : '') + '?')) {
+            var apis = app.apis || [app.api];
+            Promise.all(apis.map(function (api) {
+              return fetch(api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' }).catch(function () {});
+            })).then(function () { connState[app.id] = false; renderGrid(); });
           }
         });
       }
@@ -763,10 +773,19 @@
     renderGrid();
 
     APPS.filter(function (a) { return a.real; }).forEach(function (app) {
-      fetch(app.api + '/auth/google/status?user_email=' + encodeURIComponent(email))
-        .then(function (r) { return r.json(); })
-        .then(function (d) { connState[app.id] = !!(d && d.connected); renderGrid(); })
-        .catch(function () {});
+      var apis = app.apis || [app.api];
+      Promise.all(apis.map(function (api) {
+        return fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
+          .then(function (r) { return r.json(); })
+          .then(function (d) { return !!(d && d.connected); })
+          .catch(function () { return false; });
+      })).then(function (results) {
+        var all = results.every(function (x) { return x; });
+        var any = results.some(function (x) { return x; });
+        connState[app.id] = all;
+        connPartial[app.id] = any && !all;
+        renderGrid();
+      });
     });
 
     overlay.appendChild(modal);
@@ -2074,5 +2093,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v13-chatcard loaded');
+  console.log('[AIUI] Integrations UI v15-chatcard loaded');
 })();
