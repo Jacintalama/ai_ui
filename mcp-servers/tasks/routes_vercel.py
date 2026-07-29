@@ -12,9 +12,12 @@ import asyncio
 import base64
 import os
 import re
+import secrets
+import time
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 import crypto_utils
@@ -24,6 +27,45 @@ router = APIRouter(prefix="/vercel")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 VERCEL_API = "https://api.vercel.com"
+
+# --- OAuth integration (one-click Connect with Vercel) -----------------------
+# Requires a "connectable account" Integration registered in the Vercel
+# Integrations Console (dashboard -> Integrations -> Console -> Create).
+# Until the three env vars below are set on the server, the UI automatically
+# falls back to paste-an-access-token. Docs: vercel.com/docs/integrations.
+VERCEL_CLIENT_ID = os.environ.get("VERCEL_CLIENT_ID", "")
+VERCEL_CLIENT_SECRET = os.environ.get("VERCEL_CLIENT_SECRET", "")
+VERCEL_INTEGRATION_SLUG = os.environ.get("VERCEL_INTEGRATION_SLUG", "")
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://ai-ui.coolestdomain.win")
+VERCEL_REDIRECT_URI = os.environ.get(
+    "VERCEL_REDIRECT_URI", PUBLIC_BASE_URL + "/api/tasks/vercel/oauth/callback")
+OAUTH_STATE_TTL_SEC = 1800  # matches Vercel's 30-minute code validity
+_OAUTH_STATES = {}          # state -> (user_email, expires_at)
+
+
+def oauth_configured() -> bool:
+    return bool(VERCEL_CLIENT_ID and VERCEL_CLIENT_SECRET
+                and VERCEL_INTEGRATION_SLUG)
+
+
+def new_oauth_state(email: str, now: float = None) -> str:
+    """Mint a CSRF state bound to the signed-in user (30 min TTL)."""
+    now = time.time() if now is None else now
+    for k in [k for k, (_, exp) in _OAUTH_STATES.items() if exp < now]:
+        _OAUTH_STATES.pop(k, None)
+    s = secrets.token_urlsafe(24)
+    _OAUTH_STATES[s] = (email, now + OAUTH_STATE_TTL_SEC)
+    return s
+
+
+def pop_oauth_state(state: str, now: float = None):
+    """Consume a state exactly once -> owning email, or None if bad/expired."""
+    now = time.time() if now is None else now
+    item = _OAUTH_STATES.pop(state or "", None)
+    if not item:
+        return None
+    email, exp = item
+    return email if exp >= now else None
 APPS_ROOT = os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 
@@ -97,6 +139,8 @@ async def ensure_tables(conn) -> None:
         )
         """)
     await conn.execute(
+        "ALTER TABLE vercel_tokens ADD COLUMN IF NOT EXISTS configuration_id text")
+    await conn.execute(
         """
         CREATE TABLE IF NOT EXISTS vercel_deployments (
             slug        text NOT NULL,
@@ -137,6 +181,89 @@ async def _vercel_username(token: str) -> str:
 class ConnectBody(BaseModel):
     token: str
     team_id: str | None = None
+
+
+@router.get("/oauth/config")
+async def oauth_config(user: CurrentUser = Depends(current_user)):
+    """Tells the UI whether one-click OAuth is available on this server."""
+    return {"oauth": oauth_configured()}
+
+
+@router.get("/oauth/start")
+async def oauth_start(user: CurrentUser = Depends(current_user)):
+    """Mint a CSRF state and hand the UI the Vercel install URL to open."""
+    if not oauth_configured():
+        raise HTTPException(status_code=503,
+                            detail="Vercel OAuth is not configured on this server yet.")
+    state = new_oauth_state(user.email)
+    return {"url": f"https://vercel.com/integrations/{VERCEL_INTEGRATION_SLUG}/new"
+                   f"?state={state}"}
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(
+    code: str = "",
+    state: str = "",
+    teamId: str = "",
+    configurationId: str = "",
+    next_url: str = Query("", alias="next"),
+    user: CurrentUser = Depends(current_user),
+):
+    """Vercel redirects the install popup here (cookie-authenticated through
+    the gateway). Exchange the one-shot code for a long-lived token, store it
+    encrypted, then send the popup back to Vercel's `next` URL to finish."""
+    if not oauth_configured():
+        raise HTTPException(status_code=503,
+                            detail="Vercel OAuth is not configured on this server yet.")
+    owner = pop_oauth_state(state)
+    if not owner or owner != user.email:
+        raise HTTPException(status_code=400,
+                            detail="Connect session expired or mismatched. Please start again.")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code from Vercel.")
+    async with httpx.AsyncClient(timeout=20) as client:
+        r = await client.post(
+            f"{VERCEL_API}/v2/oauth/access_token",
+            data={"client_id": VERCEL_CLIENT_ID,
+                  "client_secret": VERCEL_CLIENT_SECRET,
+                  "code": code,
+                  "redirect_uri": VERCEL_REDIRECT_URI})
+    if r.status_code != 200:
+        raise HTTPException(status_code=502,
+                            detail=f"Vercel token exchange failed (HTTP {r.status_code}).")
+    data = r.json() or {}
+    token = data.get("access_token") or ""
+    if not token:
+        raise HTTPException(status_code=502, detail="Vercel returned no access token.")
+    team_id = data.get("team_id") or (teamId or None)
+    try:
+        username = await _vercel_username(token)
+    except Exception:
+        username = "connected"
+    conn = await _connect_db()
+    try:
+        await ensure_tables(conn)
+        await conn.execute(
+            "INSERT INTO vercel_tokens (user_email, token_enc, team_id, username, configuration_id) "
+            "VALUES ($1, $2, $3, $4, $5) "
+            "ON CONFLICT (user_email) DO UPDATE SET token_enc = $2, team_id = $3, "
+            "username = $4, configuration_id = $5, created_at = now()",
+            user.email, crypto_utils.encrypt(token), team_id, username,
+            (configurationId or None))
+    finally:
+        await conn.close()
+    print(f"[vercel] oauth connected {user.email} (team={bool(team_id)})", flush=True)
+    # Vercel's popup flow: returning to `next` closes the install popup.
+    # Only follow it when it points back at Vercel (no open redirects).
+    if next_url.startswith("https://vercel.com/"):
+        return RedirectResponse(next_url)
+    return HTMLResponse(
+        "<html><body style=\"font-family:sans-serif;background:#111;color:#eee;"
+        "display:flex;align-items:center;justify-content:center;height:100vh;\">"
+        "<div style=\"text-align:center;\"><h2>Vercel connected!</h2>"
+        "<p>You can close this window and hit Deploy.</p>"
+        "<script>setTimeout(function(){window.close();},1200);</script>"
+        "</div></body></html>")
 
 
 @router.get("/status")

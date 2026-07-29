@@ -2808,6 +2808,35 @@
       } catch (e) { /* fail open: buttons still work, connect will prompt */ }
     }
 
+    // One-click OAuth connect: opens the Vercel install popup and waits for
+    // the connection to land. Used automatically when the server has the
+    // Vercel Integration configured; otherwise we fall back to token paste.
+    async function vercelOauthFlow() {
+      const s = await fetch("/api/tasks/vercel/oauth/start", { headers: authHeaders(), credentials: "include" });
+      const body = await s.json().catch(() => ({}));
+      if (!s.ok || !body.url) { alert(body.detail || "Could not start the Vercel connect."); return false; }
+      const win = window.open(body.url, "_blank", "width=740,height=800");
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2500));
+        try {
+          const st = await fetch("/api/tasks/vercel/status", { headers: authHeaders(), credentials: "include" })
+            .then((r) => (r.ok ? r.json() : null));
+          if (st && st.connected) { vercelState = st; try { if (win) win.close(); } catch (_) {} return true; }
+          if (win && win.closed && !(st && st.connected)) return false;
+        } catch (_) {}
+      }
+      return false;
+    }
+
+    async function openVercelConnect() {
+      try {
+        const cfg = await fetch("/api/tasks/vercel/oauth/config", { headers: authHeaders(), credentials: "include" })
+          .then((r) => (r.ok ? r.json() : { oauth: false }));
+        if (cfg.oauth) return await vercelOauthFlow();
+      } catch (_) {}
+      return openVercelConnectModal();
+    }
+
     function openVercelConnectModal() {
       return new Promise((resolve) => {
         const ov = document.createElement("div");
@@ -2860,7 +2889,7 @@
 
     async function doVercelDeploy(slug, btn) {
       if (!vercelState.connected) {
-        const ok = await openVercelConnectModal();
+        const ok = await openVercelConnect();
         if (!ok) return;
       }
       const old = btn.textContent;

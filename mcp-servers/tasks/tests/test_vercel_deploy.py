@@ -51,3 +51,24 @@ def test_to_vercel_files_base64_payload():
     assert out == [{"file": "index.html",
                     "data": base64.b64encode(b"<h1>hi</h1>").decode("ascii"),
                     "encoding": "base64"}]
+
+
+# --- OAuth state (CSRF) helpers ----------------------------------------------
+from routes_vercel import new_oauth_state, pop_oauth_state, oauth_configured
+
+
+def test_oauth_state_roundtrip_and_single_use():
+    s = new_oauth_state("u@x.com")
+    assert pop_oauth_state(s) == "u@x.com"
+    assert pop_oauth_state(s) is None          # consumed exactly once
+
+
+def test_oauth_state_expires():
+    s = new_oauth_state("u@x.com", now=1000.0)
+    assert pop_oauth_state(s, now=1000.0 + 1801) is None
+
+
+def test_oauth_state_unknown_is_none():
+    assert pop_oauth_state("nope") is None
+    assert pop_oauth_state("") is None
+    assert pop_oauth_state(None) is None

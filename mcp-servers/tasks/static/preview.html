@@ -5609,8 +5609,45 @@
     }
   });
 
-  $vcDeploy.addEventListener("click", () => {
+  async function _vcOauthFlow() {
+    const s = await fetch("/api/tasks/vercel/oauth/start", { headers: _vcHeaders(), credentials: "include" });
+    const body = await s.json().catch(() => ({}));
+    if (!s.ok || !body.url) { $vcResult.textContent = body.detail || "Could not start the Vercel connect."; return false; }
+    const win = window.open(body.url, "_blank", "width=740,height=800");
+    $vcResult.textContent = "Finish connecting in the Vercel window…";
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 2500));
+      try {
+        const st = await fetch("/api/tasks/vercel/status", { headers: _vcHeaders(), credentials: "include" })
+          .then((r) => (r.ok ? r.json() : null));
+        if (st && st.connected) {
+          _vcConnected = true;
+          $vcResult.textContent = "Connected as " + (st.username || "you") + ".";
+          try { if (win) win.close(); } catch (_) {}
+          return true;
+        }
+        if (win && win.closed && !(st && st.connected)) { $vcResult.textContent = "Connect window closed."; return false; }
+      } catch (_) {}
+    }
+    $vcResult.textContent = "Connect timed out. Try again.";
+    return false;
+  }
+
+  $vcDeploy.addEventListener("click", async () => {
     if (!_vcConnected) {
+      // Prefer one-click OAuth when the server has the Integration set up;
+      // otherwise fall back to pasting an access token.
+      let oauth = false;
+      try {
+        const cfg = await fetch("/api/tasks/vercel/oauth/config", { headers: _vcHeaders(), credentials: "include" })
+          .then((r) => (r.ok ? r.json() : { oauth: false }));
+        oauth = !!cfg.oauth;
+      } catch (_) {}
+      if (oauth) {
+        const ok = await _vcOauthFlow();
+        if (ok) _vcDoDeploy();
+        return;
+      }
       $vcTokenRow.hidden = false;
       $vcToken.focus();
       $vcResult.textContent = "Paste your Vercel token, then hit Connect.";
