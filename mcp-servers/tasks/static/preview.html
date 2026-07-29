@@ -2223,6 +2223,11 @@
     </div>
 
     <!-- ─── Auto subdomain section (hidden once a custom domain is verified) ─── -->
+    <div class="pub-section-title">
+      <span>Publish on this platform</span>
+      <span class="badge-soft">Free</span>
+    </div>
+    <div class="body">Instant public URL hosted by us. No account needed.</div>
     <div id="pub-auto-section">
       <div class="pub-url-pill" id="pub-url-row" hidden>
         <span style="flex:1;" id="pub-url-text"></span>
@@ -2232,6 +2237,10 @@
       <div class="pub-meta" id="pub-meta" hidden>
         <span>Published <span id="pub-when"></span> by <strong id="pub-by"></strong>.</span>
         <span>Re-publish is automatic — every new build is live immediately.</span>
+      </div>
+      <div class="pub-actions" style="margin-top:6px;">
+        <span style="flex:1;"></span>
+        <button type="button" class="btn btn-primary" id="pub-confirm">Publish now</button>
       </div>
 
       <!-- Rename project (only shown once published) -->
@@ -2306,8 +2315,8 @@
       <span class="badge-soft">Optional</span>
     </div>
     <div class="body">
-      Put this app on your own Vercel account too. Connect once with an access token
-      (<a href="https://vercel.com/account/tokens" target="_blank" rel="noreferrer" style="color:inherit;text-decoration:underline;">create one here</a>), no CLI needed.
+      Put this app on your own Vercel account too. The first time, a Vercel window
+      opens so you can approve the connection with one click. No CLI, no setup.
     </div>
     <div class="pub-domain-input-row" id="pub-vc-token-row" hidden>
       <input type="password" class="pub-domain-input" id="pub-vc-token"
@@ -2325,7 +2334,6 @@
     <div class="pub-actions">
       <button type="button" class="btn" id="pub-cancel">Close</button>
       <button type="button" class="btn btn-danger" id="pub-unpublish" hidden>Unpublish</button>
-      <button type="button" class="btn btn-primary" id="pub-confirm">Publish now</button>
     </div>
   </div>
 </div>
@@ -5744,14 +5752,21 @@
       }
     } else {
       $pubTitle.textContent = "🌐 Publish app";
-      $pubBody.innerHTML = "Make <strong>" + escapeHtml(slug) + "</strong> reachable at a public URL anyone can visit. Publishing is free — you can unpublish anytime.";
-      $pubUrlRow.hidden = false;
-      const previewUrl = "https://" + slug + ".ai-ui.coolestdomain.win/";
-      $pubUrlText.textContent = previewUrl;
-      $pubUrlOpen.href = previewUrl;
+      $pubBody.innerHTML = "Choose where <strong>" + escapeHtml(slug || "your app") + "</strong> goes live. You can use more than one destination.";
+      if (slug) {
+        $pubUrlRow.hidden = false;
+        const previewUrl = "https://" + slug + ".ai-ui.coolestdomain.win/";
+        $pubUrlText.textContent = previewUrl;
+        $pubUrlOpen.href = previewUrl;
+      } else {
+        // Build not finished: no slug yet, so no URL to promise.
+        $pubUrlRow.hidden = true;
+      }
       $pubUrlOpen.style.display = "none";
       $pubMeta.hidden = true;
       $pubConfirm.hidden = false;
+      $pubConfirm.disabled = !slug;
+      $pubConfirm.title = slug ? "" : "Available once the build finishes";
       $pubUnpub.hidden = true;
       if ($renameBlock) $renameBlock.hidden = true;
     }
