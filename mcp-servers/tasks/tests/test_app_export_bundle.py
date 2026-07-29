@@ -219,3 +219,54 @@ async def test_stale_temp_branch_is_deleted_before_split(tmp_path, monkeypatch):
     pre = [i for i, c in enumerate(calls)
            if "branch" in c and "-D" in c and i < split_i]
     assert pre, "stale export-tmp branch must be deleted before split"
+
+
+# --- the bundle must not carry the monorepo's upstream history --------------
+# Measured on prod 2026-07-29: exporting `icecreamery` produced a 295 MB zip
+# for a 28 KB app. `git clone --branch <b> file://<monorepo>` copies EVERY tag
+# and everything each tag reaches. This repo is a fork of Open WebUI, so 119
+# upstream `v0.1.x` tags anchored a 280.6 MB pack file. The app itself was
+# index.html plus a few small JS/CSS files.
+#
+# Not a data leak - no other user's app is reachable and the only .env paths
+# are .env.example templates, both re-verified on prod. It is a size bug: a
+# 10,000x download, built and zipped on a 3.8 GB box.
+
+def _record_clone_git(monkeypatch, calls):
+    """History path, capturing the clone argv."""
+    async def fake(*args, **kw):
+        calls.append(list(args))
+        if "log" in args:
+            return 0, "abc123\n"          # pretend the app has history
+        if "clone" in args:
+            return 1, "stopped by test"   # abort right after we captured it
+        return 0, ""
+    monkeypatch.setattr(app_export, "_run_git", fake)
+
+
+async def _clone_argv(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_export, "_APPS_ROOT", tmp_path)
+    _mk_app(tmp_path, "sizeapp")
+    calls = []
+    _record_clone_git(monkeypatch, calls)
+    try:
+        await export_app("sizeapp", actor_email="a@b.com", supabase_row=None)
+    except ExportError:
+        pass
+    return next((c for c in calls if "clone" in c), None)
+
+
+async def test_export_clone_takes_only_the_export_branch(tmp_path, monkeypatch):
+    argv = await _clone_argv(tmp_path, monkeypatch)
+    assert argv is not None, "expected a clone on the history path"
+    assert "--single-branch" in argv, (
+        "without --single-branch the clone drags in every branch of the monorepo"
+    )
+
+
+async def test_export_clone_carries_no_tags(tmp_path, monkeypatch):
+    argv = await _clone_argv(tmp_path, monkeypatch)
+    assert argv is not None
+    assert "--no-tags" in argv, (
+        "119 upstream Open WebUI tags anchored a 280MB pack in the bundle"
+    )
