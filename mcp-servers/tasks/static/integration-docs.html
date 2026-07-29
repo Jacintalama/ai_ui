@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIUI Deploy for Vercel - Documentation</title>
+<style>
+  body { margin: 0; background: #0d0d0d; color: #ececec; font: 15px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 80px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  .meta { color: #9b9b9b; font-size: 13px; margin-bottom: 28px; }
+  h2 { font-size: 18px; margin: 28px 0 8px; }
+  p, li { color: #c9c9c9; }
+  ol li { margin-bottom: 6px; }
+  code { background: #1c1c1c; border-radius: 6px; padding: 2px 6px; font-size: 13px; }
+  a { color: #8ab4ff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>AIUI Deploy for Vercel</h1>
+  <div class="meta">Publish apps you built on AIUI to your own Vercel account with one click.</div>
+
+  <h2>What it does</h2>
+  <p>AIUI's App Builder creates web apps from a chat prompt. This integration connects your Vercel account so any app you built can go live on your own Vercel with a single Deploy click. Your apps, your account, your URLs.</p>
+
+  <h2>How to use it</h2>
+  <ol>
+    <li>In AIUI, open <strong>App Builder</strong> and find your app, or open the app preview and click <strong>Publish</strong>.</li>
+    <li>Click <strong>Deploy</strong> and choose <strong>Your Vercel account</strong>.</li>
+    <li>The first time, a Vercel window opens. Click <strong>Install</strong> to approve the connection. The window closes itself.</li>
+    <li>The deploy runs and your live <code>*.vercel.app</code> URL opens automatically. A <strong>Live</strong> link stays on the app card.</li>
+  </ol>
+
+  <h2>Permissions it asks for</h2>
+  <ul>
+    <li><strong>Deployments (read and write):</strong> to create the deployment on your account.</li>
+    <li><strong>Projects (read and write):</strong> Vercel creates a project for the app automatically.</li>
+    <li><strong>Your profile (read):</strong> to show which account is connected.</li>
+    <li><strong>Project environment variables (read and write):</strong> so apps that need configuration can receive it.</li>
+  </ul>
+
+  <h2>Disconnecting</h2>
+  <p>Uninstall the integration from your Vercel dashboard at any time, or disconnect inside AIUI. Either action invalidates the stored access and stops all future deploys. Apps already deployed stay on your Vercel until you remove them there.</p>
+
+  <h2>Support</h2>
+  <p>Contact <a href="mailto:aiui.teams@gmail.com">aiui.teams@gmail.com</a></p>
+</main>
+</body>
+</html>
