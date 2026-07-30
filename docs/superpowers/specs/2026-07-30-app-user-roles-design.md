@@ -136,12 +136,26 @@ Scripts kept at
 
 Prompt text only. No new Python, no new routes, no migration.
 
-1. **`claude_executor.py`**, the `### RLS is MANDATORY` block: add a third
-   policy shape (admin-or-owner) beside the existing two, and the roles recipe
-   above. Trigger it on the app's brief implying more than one kind of user
-   ("admin", "staff", "manage users", "moderator").
-2. **`templates.py`**: the same guidance where per-template `SUPABASE SCHEMA`
-   hints live, so template builds inherit it.
+**One file: `claude_executor.py`**, inside `SUPABASE_SQL_TOOL_TEMPLATE` (the
+`### RLS is MANDATORY` block, `:289-306`). Add a third policy shape
+(admin-or-owner) beside the existing two, plus the roles recipe above. Trigger
+it on the app's brief implying more than one kind of user ("admin", "staff",
+"manage users", "moderator", "roles").
+
+**CORRECTED while planning — `templates.py` is deliberately NOT touched.** The
+first draft of this spec said to mirror the guidance there. Reading the file
+shows that would be wrong: there is no shared Supabase constant. Each template
+carries its own inline `SUPABASE SCHEMA` string (20 of them, `_RULES_DASHBOARD`,
+`_RULES_CRUD`, `_RULES_CRM`, ...), and the only shared constant, `_BASE_RULES` /
+`UNIVERSAL_RULES` (`:44`, `:153`), is about tech stack and layout — SQL policy
+text does not belong there. Mirroring would mean duplicating the recipe up to 20
+times.
+
+`SUPABASE_SQL_TOOL_TEMPLATE` is already appended for every build where the SQL
+tool is available, whatever the template, so one copy reaches all of them. The
+per-template hints already say things like "RLS scoped to `auth.uid() = user_id`
+if multi-user implied"; the shared recipe is what tells the agent *how* to do
+that.
 
 Deliberately keeps the existing two shapes unchanged — an app with one kind of
 user should not pay for a `profiles` table it does not need.
