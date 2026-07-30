@@ -135,3 +135,29 @@ def test_oauth_linked_project_gets_the_mandatory_rls_block():
     )
     assert "/db/sql" in text
     assert "ROW LEVEL SECURITY" in text
+
+
+# --- roles: the change must be ADDITIVE ------------------------------------
+# Lukas, standup 2026-07-30: "they can have admins ... I bet the builder then
+# knows how to create admins and regular users." It did not - the RLS block
+# offered exactly two policy shapes and neither covered "admin sees all".
+# These two tests pin the pre-existing shapes so adding a third cannot quietly
+# drop them.
+
+def _sql_prompt() -> str:
+    """The build prompt WITH the SQL tool block (OAuth-linked project)."""
+    return build_prompt(
+        description="x", action_type="BUILD", priority="IMPORTANT",
+        meeting_title="m", meeting_date="2026-07-30",
+        supabase_url="https://demo.supabase.co",
+        has_db_uri=ce.sql_tool_available(
+            db_uri=False, oauth_token=True, project_ref=True),
+    )
+
+
+def test_no_auth_policy_shape_survives():
+    assert "allow_all_anon" in _sql_prompt()
+
+
+def test_single_user_policy_shape_survives():
+    assert "user_owns_row" in _sql_prompt()
