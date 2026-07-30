@@ -161,3 +161,64 @@ def test_no_auth_policy_shape_survives():
 
 def test_single_user_policy_shape_survives():
     assert "user_owns_row" in _sql_prompt()
+
+
+def test_admin_or_owner_policy_shape_is_taught():
+    """The third shape: admin sees all, owner sees own."""
+    text = _sql_prompt()
+    assert "public.is_admin()" in text
+    assert "user_id = auth.uid() OR public.is_admin()" in text
+
+
+def test_is_admin_is_security_definer():
+    """Load-bearing, not stylistic: without SECURITY DEFINER a policy on
+    profiles that queries profiles recurses. Proven in the recipe scripts."""
+    text = _sql_prompt()
+    assert "SECURITY DEFINER" in text
+    assert "search_path = public, pg_temp" in text
+
+
+def test_first_signup_becomes_admin_trigger_is_taught():
+    """At build time no user exists, so 'who is the admin' has no answer.
+    First-signup-wins bootstraps it with no manual step."""
+    text = _sql_prompt()
+    assert "on_auth_user_created" in text
+    assert "handle_new_user" in text
+
+
+def test_admins_can_appoint_admins():
+    """Without an UPDATE policy, RLS default-deny blocks role changes for
+    EVERYONE including admins, so only the first signup could ever be admin.
+    Found by running the recipe, not by reading it."""
+    text = _sql_prompt()
+    assert "profiles_admin_manages" in text
+    assert "FOR UPDATE TO authenticated" in text
+
+
+def test_roles_recipe_is_gated_behind_the_sql_tool():
+    """No SQL tool means the agent cannot create tables at all, so the recipe
+    must not appear and waste context."""
+    text = build_prompt(
+        description="x", action_type="BUILD", priority="IMPORTANT",
+        meeting_title="m", meeting_date="2026-07-30",
+        supabase_url="https://demo.supabase.co",
+        has_db_uri=False,
+    )
+    assert "public.is_admin()" not in text
+    assert "on_auth_user_created" not in text
+
+
+def test_recipe_defines_is_admin_before_any_policy_uses_it():
+    """Order matters: a policy referencing is_admin() before the function
+    exists fails at execution. Guards a future edit reordering the block."""
+    text = _sql_prompt()
+    definition = text.index("CREATE FUNCTION public.is_admin()")
+    first_use = text.index("public.is_admin())")
+    assert definition < first_use
+
+
+def test_every_create_table_in_the_recipe_enables_rls():
+    """A future edit must not add a table to the recipe without RLS."""
+    text = _sql_prompt()
+    assert text.count("CREATE TABLE profiles") == 1
+    assert "ALTER TABLE profiles ENABLE ROW LEVEL SECURITY" in text
