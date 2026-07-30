@@ -121,6 +121,23 @@ def to_vercel_files(pairs: list) -> list:
             for rel, data in pairs]
 
 
+def live_domain(aliases, deployment_url: str) -> str:
+    """Stable domain for a production deploy.
+
+    Vercel aliases every production deployment to <project>.vercel.app; prefer
+    that over the per-deployment hash URL so the link users keep never changes.
+    Branch aliases (-git-) and custom domains are excluded: the former are
+    transient, the latter are managed on the user's Vercel, not by us.
+    """
+    candidates = [a for a in (aliases or [])
+                  if isinstance(a, str)
+                  and a.endswith(".vercel.app")
+                  and "-git-" not in a]
+    if candidates:
+        return min(candidates, key=len)
+    return deployment_url
+
+
 # --- storage -----------------------------------------------------------------
 async def _connect_db():
     import asyncpg
@@ -373,6 +390,7 @@ async def deploy_app(slug: str, user: CurrentUser = Depends(current_user)):
                                     detail=f"Vercel deploy failed (HTTP {r.status_code}). {detail[:160]}")
             dep = r.json()
             dep_id, url = dep.get("id"), dep.get("url")
+            aliases = dep.get("alias") or []
             # Poll until the deployment settles (static builds are fast).
             state = dep.get("readyState") or "QUEUED"
             for _ in range(40):
@@ -382,11 +400,13 @@ async def deploy_app(slug: str, user: CurrentUser = Depends(current_user)):
                 pr = await client.get(f"{VERCEL_API}/v13/deployments/{dep_id}",
                                       headers=headers, params=params)
                 if pr.status_code == 200:
-                    state = pr.json().get("readyState") or state
+                    pj = pr.json()
+                    state = pj.get("readyState") or state
+                    aliases = pj.get("alias") or aliases
         if state != "READY":
             raise HTTPException(status_code=502,
                                 detail=f"Deployment did not become ready (state: {state}).")
-        live = f"https://{url}"
+        live = f"https://{live_domain(aliases, url)}"
         await conn.execute(
             "INSERT INTO vercel_deployments (slug, user_email, url) "
             "VALUES ($1, $2, $3) ON CONFLICT (slug, user_email) "
