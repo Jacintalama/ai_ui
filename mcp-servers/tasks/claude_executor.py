@@ -303,6 +303,41 @@ followed (in separate calls) by:
 
 Pick the policy that matches the app's auth model. Apply all three steps for
 every new table — no exceptions.
+
+### Two kinds of user: admins and regular users
+
+Use this ONLY when the brief implies more than one kind of user — words like
+admin, staff, manage users, moderator, roles. A single-user app must not pay
+for a `profiles` table it does not need; use `user_owns_row` above instead.
+
+An admin sees every row. A regular user sees only their own. Emit these in
+order, one statement per `/db/sql` call:
+
+  1. Who is who:
+     `CREATE TABLE profiles (id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE, email text, role text NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')));`
+  2. `ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;`
+  3. The role check. SECURITY DEFINER is REQUIRED — it runs as the owner so it
+     does not re-enter RLS. Without it, a policy on `profiles` that reads
+     `profiles` recurses and every query fails:
+     `CREATE FUNCTION public.is_admin() RETURNS boolean LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public, pg_temp AS $$ SELECT EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin') $$;`
+  4. `CREATE POLICY profiles_read_self_or_admin ON profiles FOR SELECT TO authenticated USING (id = auth.uid() OR public.is_admin());`
+  5. Admins appoint other admins. Without this UPDATE policy nobody can change
+     a role at all — not even an admin — so only the very first signup could
+     ever be one:
+     `CREATE POLICY profiles_admin_manages ON profiles FOR UPDATE TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());`
+  6. Every other table gets a `user_id uuid NOT NULL DEFAULT auth.uid()` column
+     and this policy instead of `user_owns_row`:
+     `CREATE POLICY <table>_owner_or_admin ON <table> FOR ALL TO authenticated USING (user_id = auth.uid() OR public.is_admin()) WITH CHECK (user_id = auth.uid() OR public.is_admin());`
+  7. Bootstrap. At build time there are no users, so the FIRST person to sign up
+     becomes the admin and everyone after is a regular user. No manual step, no
+     dashboard visit, no service key in the browser:
+     `CREATE FUNCTION public.handle_new_user() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$ BEGIN INSERT INTO public.profiles (id, email, role) VALUES (NEW.id, NEW.email, CASE WHEN NOT EXISTS (SELECT 1 FROM public.profiles) THEN 'admin' ELSE 'user' END); RETURN NEW; END $$;`
+  8. `CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();`
+
+In the UI, read the signed-in user's role once after sign-in
+(`select role from profiles where id = <uid>`) and show admin-only controls
+behind it. Never trust a role held only in browser state for data access — the
+policies above are what actually enforce it.
 """
 
 
