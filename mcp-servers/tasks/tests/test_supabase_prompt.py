@@ -222,3 +222,60 @@ def test_every_create_table_in_the_recipe_enables_rls():
     text = _sql_prompt()
     assert text.count("CREATE TABLE profiles") == 1
     assert "ALTER TABLE profiles ENABLE ROW LEVEL SECURITY" in text
+
+
+def test_taught_sql_matches_the_proven_recipe():
+    """The recipe was proven against a real Postgres BEFORE being taught
+    (docs/superpowers/scripts/2026-07-30-prove-*.sql). If the prompt text drifts
+    from what was proven, the agent emits untested SQL against a real user's
+    database. This is the whole point of the exercise."""
+    import pathlib
+    repo = pathlib.Path(__file__).resolve().parents[3]
+    scripts = repo / "docs" / "superpowers" / "scripts"
+    if not scripts.is_dir():
+        import pytest
+        pytest.skip("proof scripts not present")
+    proven = " ".join(
+        " ".join(p.read_text(encoding="utf-8").split())
+        for p in sorted(scripts.glob("2026-07-30-prove-*.sql"))
+    )
+    taught = " ".join(_sql_prompt().split())
+
+    for fragment in (
+        "SECURITY DEFINER",
+        "search_path = public, pg_temp",
+        "role IN ('admin', 'user')",
+        "id = auth.uid() OR public.is_admin()",
+        "user_id = auth.uid() OR public.is_admin()",
+        # Full statements, not bare identifiers: "guard_role_change" is a
+        # substring of "guard_role_changeX", so an identifier alone does NOT
+        # detect drift. Verified by mutation.
+        "CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users",
+        "CREATE OR REPLACE FUNCTION public.handle_new_user() RETURNS trigger",
+        "CREATE FUNCTION public.guard_role_change() RETURNS trigger",
+        "CREATE TRIGGER profiles_guard_role BEFORE UPDATE ON profiles",
+        "ENABLE ROW LEVEL SECURITY;",
+    ):
+        norm = " ".join(fragment.split())
+        assert norm in proven, f"{fragment!r} is not in any PROVEN script"
+        assert norm in taught, f"{fragment!r} is not in the TAUGHT prompt"
+
+
+def test_hardening_from_the_review_is_taught():
+    """Each of these was a measured hole, not a hypothetical."""
+    text = _sql_prompt()
+    # a policy without enable-RLS is inert: staff saw 2 of 2 rows
+    assert "is INERT without step 8b" in text or "ENABLE ROW LEVEL SECURITY;" in text
+    # a leftover allow_all_anon ORs: an anon visitor read 2 of 2 rows
+    assert "DROP POLICY IF EXISTS" in text
+    # a raise inside the signup transaction blocks sign-up entirely
+    assert "ON CONFLICT (id) DO NOTHING" in text
+    # enhancing an app with existing users would crown the wrong admin
+    assert "backfill" in text.lower()
+
+
+def test_recipe_warns_that_policies_combine_with_or():
+    """The single fact behind two of the three measured holes."""
+    assert "OR" in _sql_prompt()
+    assert "Policies OR" in _sql_prompt() or "policies OR" in _sql_prompt() \
+        or "COMBINE WITH OR" in _sql_prompt()
