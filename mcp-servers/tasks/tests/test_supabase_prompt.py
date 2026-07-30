@@ -230,11 +230,19 @@ def test_taught_sql_matches_the_proven_recipe():
     from what was proven, the agent emits untested SQL against a real user's
     database. This is the whole point of the exercise."""
     import pathlib
-    repo = pathlib.Path(__file__).resolve().parents[3]
-    scripts = repo / "docs" / "superpowers" / "scripts"
-    if not scripts.is_dir():
-        import pytest
-        pytest.skip("proof scripts not present")
+    import pytest
+    # Walk UP for the scripts dir instead of hardcoding parents[3]. In the
+    # container this file is /app/tests/..., which has only three parents, so
+    # parents[3] raises IndexError rather than reaching the skip below. Fourth
+    # time this repo has been bitten by a test assuming the local layout.
+    scripts = None
+    for parent in pathlib.Path(__file__).resolve().parents:
+        candidate = parent / "docs" / "superpowers" / "scripts"
+        if candidate.is_dir():
+            scripts = candidate
+            break
+    if scripts is None:
+        pytest.skip("proof scripts not present (expected in the container)")
     proven = " ".join(
         " ".join(p.read_text(encoding="utf-8").split())
         for p in sorted(scripts.glob("2026-07-30-prove-*.sql"))
