@@ -306,12 +306,16 @@ every new table — no exceptions.
 
 ### Two kinds of user: admins and regular users
 
-Use this ONLY when the brief implies more than one kind of user — words like
-admin, staff, manage users, moderator, roles. A single-user app must not pay
-for a `profiles` table it does not need; use `user_owns_row` above instead.
+Use this ONLY when the brief needs one kind of user to see or manage OTHER
+users' data while another kind must not. Judge the requirement, not the
+vocabulary — "a CRM for our sales staff" where every teammate shares the same
+pipeline is NOT this: that is one kind of user with shared visibility, so use
+`allow_all_anon` (behind sign-in) and do not build `profiles` at all. A
+single-user app where each person sees only their own data is also NOT this;
+use `user_owns_row` above.
 
-An admin sees every row. A regular user sees only their own. Emit these in
-order, one statement per `/db/sql` call:
+An admin sees, edits and deletes EVERY row. A regular user sees only their own.
+Emit these in order, one statement per `/db/sql` call:
 
   1. Who is who:
      `CREATE TABLE profiles (id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE, email text, role text NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')));`
@@ -325,14 +329,39 @@ order, one statement per `/db/sql` call:
      a role at all — not even an admin — so only the very first signup could
      ever be one:
      `CREATE POLICY profiles_admin_manages ON profiles FOR UPDATE TO authenticated USING (public.is_admin()) WITH CHECK (public.is_admin());`
-  6. Every other table gets a `user_id uuid NOT NULL DEFAULT auth.uid()` column
-     and this policy instead of `user_owns_row`:
-     `CREATE POLICY <table>_owner_or_admin ON <table> FOR ALL TO authenticated USING (user_id = auth.uid() OR public.is_admin()) WITH CHECK (user_id = auth.uid() OR public.is_admin());`
-  7. Bootstrap. At build time there are no users, so the FIRST person to sign up
+  6. Stop a regular user promoting itself. RLS policies COMBINE WITH OR, so if
+     you (or a later enhance) ever add a self-update policy on `profiles`, a
+     user could set their own role. This trigger holds regardless of what
+     policies exist. Do NOT rely on column privileges for this — a table-level
+     UPDATE grant already covers every column, so revoking one column does
+     nothing:
+     `CREATE FUNCTION public.guard_role_change() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$ BEGIN IF NEW.role IS DISTINCT FROM OLD.role AND NOT public.is_admin() THEN RAISE EXCEPTION 'only an admin can change a role'; END IF; RETURN NEW; END $$;`
+  7. `CREATE TRIGGER profiles_guard_role BEFORE UPDATE ON profiles FOR EACH ROW EXECUTE FUNCTION public.guard_role_change();`
+  8. Every other table needs ALL THREE of these, in this order. The policy alone
+     is INERT without step 8b — an unprotected table is readable by anyone
+     holding the app's public anon key:
+     8a. `ALTER TABLE <table> ADD COLUMN user_id uuid NOT NULL DEFAULT auth.uid();` (or include the column in its CREATE TABLE)
+     8b. `ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;`
+     8c. `CREATE POLICY <table>_owner_or_admin ON <table> FOR ALL TO authenticated USING (user_id = auth.uid() OR public.is_admin()) WITH CHECK (user_id = auth.uid() OR public.is_admin());`
+  9. If the table already carries `allow_all_anon` from an earlier build, DROP
+     IT: `DROP POLICY IF EXISTS "allow_all_anon" ON <table>;`. Policies OR, so a
+     leftover anon-allow means a visitor who never signs in still reads every
+     row — verified, this is not theoretical.
+ 10. Bootstrap. At build time there are no users, so the FIRST person to sign up
      becomes the admin and everyone after is a regular user. No manual step, no
-     dashboard visit, no service key in the browser:
-     `CREATE FUNCTION public.handle_new_user() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$ BEGIN INSERT INTO public.profiles (id, email, role) VALUES (NEW.id, NEW.email, CASE WHEN NOT EXISTS (SELECT 1 FROM public.profiles) THEN 'admin' ELSE 'user' END); RETURN NEW; END $$;`
-  8. `CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();`
+     dashboard visit, no service key in the browser. `ON CONFLICT DO NOTHING` is
+     required: any error raised in here happens inside the signup transaction
+     and blocks sign-up entirely with "Database error saving new user":
+     `CREATE OR REPLACE FUNCTION public.handle_new_user() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$ BEGIN INSERT INTO public.profiles (id, email, role) VALUES (NEW.id, NEW.email, CASE WHEN NOT EXISTS (SELECT 1 FROM public.profiles) THEN 'admin' ELSE 'user' END) ON CONFLICT (id) DO NOTHING; RETURN NEW; END $$;`
+ 11. `CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();`
+
+ENHANCING an app that already has this: `SELECT 1 FROM profiles LIMIT 1` first.
+If `profiles` exists, SKIP steps 1-2 and 10-11 (bare `CREATE` fails on a second
+run) and apply only step 8 to the new tables. If the app already had signed-up
+users BEFORE you added roles, backfill or the first NEW signup becomes admin
+instead of the owner, and every existing user is profile-less so `is_admin()` is
+false for all of them forever:
+`INSERT INTO public.profiles (id, email, role) SELECT id, email, CASE WHEN row_number() OVER (ORDER BY created_at) = 1 THEN 'admin' ELSE 'user' END FROM auth.users ON CONFLICT (id) DO NOTHING;`
 
 In the UI, read the signed-in user's role once after sign-in
 (`select role from profiles where id = <uid>`) and show admin-only controls
