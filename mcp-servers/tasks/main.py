@@ -79,6 +79,13 @@ async def lifespan(app: FastAPI):
         logger.warning("schedule_tick_loop NOT started: %s", exc)
 
     try:
+        from routes_knowledge_graph import start_nightly_prebuild
+        if start_nightly_prebuild():
+            logger.info("graph nightly prebuild scheduled")
+    except Exception as exc:
+        logger.warning("graph nightly prebuild NOT started: %s", exc)
+
+    try:
         from video_worker import video_worker_loop
         asyncio.create_task(video_worker_loop())
         logger.info("video_worker_loop scheduled")

@@ -94,6 +94,11 @@
   .panel .meta { margin-top: 10px; font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace; }
   .panel .close { position: absolute; top: 8px; right: 10px; background: none; border: none; color: var(--muted); font-size: 18px; padding: 2px 6px; }
   .panel .close:hover { color: var(--text); background: none; }
+  .panel .openlink { display: inline-block; margin-top: 12px; padding: 6px 14px; border-radius: 999px;
+    background: var(--accent); color: var(--accent-ink); font-size: 13px; font-weight: 600;
+    text-decoration: none; }
+  .panel .openlink:hover { filter: brightness(1.08); }
+  .panel .openlink[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -134,7 +139,7 @@
 
   <div class="stage">
     <canvas id="c"></canvas>
-    <div class="hint">Drag a node to move it · click a node for detail</div>
+    <div class="hint">Drag a node to move it · click a node for detail, then Open to jump to it</div>
     <div class="overlay" id="overlay"><p id="overlay-msg"></p><div id="overlay-actions"></div></div>
     <div class="panel" id="panel">
       <button class="close" id="pclose" aria-label="Close">&times;</button>
@@ -142,6 +147,7 @@
       <h3 id="plabel"></h3>
       <p id="psummary"></p>
       <div class="meta" id="pmeta"></div>
+      <a class="openlink" id="popen" target="_top" hidden>Open</a>
     </div>
   </div>
 </div>
@@ -179,6 +185,7 @@
     nodes = (data.nodes || []).map(function (n) {
       var ang = Math.random() * Math.PI * 2, r = 40 + Math.random() * 130;
       var sn = { id: n.id, label: n.label, kind: n.kind, summary: n.summary || "",
+        url: n.url || null,
         x: cx + Math.cos(ang) * r, y: cy + Math.sin(ang) * r, vx: 0, vy: 0 };
       if (n.kind === "root") { sn.x = cx; sn.y = cy; }
       byId[n.id] = sn; return sn;
@@ -326,6 +333,19 @@
       ("A " + (kinds[n.kind] || n.kind).toLowerCase() + " grouping related items.");
     var kids = links.filter(function (l) { return l.a === n; }).length;
     document.getElementById("pmeta").textContent = kids ? kids + " connected below" : "leaf node";
+    // Click-through: nodes that map to a real thing carry a url; target=_top
+    // jumps the whole app there (works embedded in the sidebar overlay too).
+    var openEl = document.getElementById("popen");
+    if (n.url) {
+      var openText = { chat: "Open chat", app: "Open app", cron: "Open cron jobs",
+                       video: "Open video", document: "Open collection",
+                       topic: "Open page" };
+      openEl.textContent = openText[n.kind] || "Open";
+      openEl.href = n.url;
+      openEl.hidden = false;
+    } else {
+      openEl.hidden = true;
+    }
     document.getElementById("panel").classList.add("open");
   }
   document.getElementById("pclose").addEventListener("click", function () {

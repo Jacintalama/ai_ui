@@ -231,8 +231,10 @@ async def build_memory_context_smart(conn, nodes: list, query: str,
 
 
 # --- denser build: attach real items as nodes (pure, unit tested) -----------
-def make_node(user_email: str, kind: str, label: str, parent_id, summary=None) -> dict:
-    """One graph node with a fresh id. Labels are trimmed/capped; blank -> tag."""
+def make_node(user_email: str, kind: str, label: str, parent_id, summary=None,
+              url=None) -> dict:
+    """One graph node with a fresh id. Labels are trimmed/capped; blank -> tag.
+    `url` is the click-through target (None for pure grouping nodes)."""
     return {
         "id": str(uuid.uuid4()),
         "user_email": user_email,
@@ -240,6 +242,7 @@ def make_node(user_email: str, kind: str, label: str, parent_id, summary=None) -
         "label": (label or "").strip()[:200] or "(untitled)",
         "summary": (summary or None),
         "parent_id": parent_id,
+        "url": (url or None),
     }
 
 
@@ -297,22 +300,24 @@ def attach_chats(user_email: str, root_id: str, topic_nodes: list, chats: list) 
             continue
         pid = best_parent_id(title + " " + (c.get("snippet") or ""), cands, root_id)
         out.append(make_node(user_email, "chat", title, pid,
-                             (c.get("snippet") or "")[:300] or None))
+                             (c.get("snippet") or "")[:300] or None,
+                             url=(f"/c/{c['id']}" if c.get("id") else None)))
     return out
 
 
 def source_branch(user_email: str, root_id: str, hub_label: str,
-                  items: list, item_kind: str) -> list:
+                  items: list, item_kind: str, hub_url: str = None) -> list:
     """Build a hub topic node under root plus one node per item. `items` =
-    dicts with 'label' (and optional 'summary'). Empty -> [] (no empty hub)."""
+    dicts with 'label' (and optional 'summary'/'url'). Empty -> [] (no empty
+    hub). `hub_url` links the hub itself to its feature page."""
     items = [i for i in items if (i.get("label") or "").strip()]
     if not items:
         return []
-    hub = make_node(user_email, "topic", hub_label, root_id)
+    hub = make_node(user_email, "topic", hub_label, root_id, url=hub_url)
     out = [hub]
     for it in items:
         out.append(make_node(user_email, item_kind, it.get("label"),
-                             hub["id"], it.get("summary")))
+                             hub["id"], it.get("summary"), url=it.get("url")))
     return out
 
 
@@ -447,10 +452,11 @@ async def _read_knowledge(conn, uid, limit: int = 200) -> list:
     if not uid:
         return []
     rows = await conn.fetch(
-        'SELECT name, description FROM public."knowledge" WHERE user_id = $1 '
+        'SELECT id, name, description FROM public."knowledge" WHERE user_id = $1 '
         'ORDER BY created_at DESC LIMIT $2', uid, limit)
     return [{"label": (r["name"] or "collection"),
-             "summary": (r["description"] or None)} for r in rows]
+             "summary": (r["description"] or None),
+             "url": f"/workspace/knowledge/{r['id']}"} for r in rows]
 
 
 async def _read_memories(conn, uid, limit: int = 200) -> list:
@@ -469,9 +475,10 @@ async def _read_chat_titles(conn, uid, limit: int = 200) -> list:
     if not uid:
         return []
     rows = await conn.fetch(
-        'SELECT title FROM public."chat" WHERE user_id = $1 '
+        'SELECT id, title FROM public."chat" WHERE user_id = $1 '
         'ORDER BY updated_at DESC LIMIT $2', uid, limit)
-    return [{"title": (r["title"] or ""), "snippet": ""} for r in rows]
+    return [{"title": (r["title"] or ""), "snippet": "", "id": str(r["id"])}
+            for r in rows]
 
 
 async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
@@ -482,7 +489,7 @@ async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
     newest task wins; slugless builds stay individual). The limit matches the
     page's fetch window; if the page's rules change, change this with it."""
     rows = await conn.fetch(
-        "SELECT DISTINCT ON (COALESCE(slug, rid)) slug, description, status "
+        "SELECT DISTINCT ON (COALESCE(slug, rid)) slug, rid, description, status "
         "FROM ("
         "  SELECT built_app_slug AS slug, id::text AS rid, description, "
         "         status, created_at FROM tasks.items "
@@ -498,7 +505,8 @@ async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
     for r in rows:
         desc = (r["description"] or "").strip()
         summ = f"{r['status']}: {desc}"[:300] if desc else (r["slug"] or None)
-        out.append({"label": app_label(r["slug"], desc), "summary": summ})
+        out.append({"label": app_label(r["slug"], desc), "summary": summ,
+                    "url": f"/tasks/static/preview.html?task={r['rid']}&tab=preview"})
     return out
 
 
@@ -512,21 +520,23 @@ async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
     for r in rows:
         state = "enabled" if r["enabled"] else "paused"
         summ = f"{r['cron_expr']} ({state}): {r['prompt'] or ''}".strip()
-        out.append({"label": (r["name"] or "automation"), "summary": summ})
+        out.append({"label": (r["name"] or "automation"), "summary": summ,
+                    "url": "/cron-jobs"})
     return out
 
 
 async def _read_videos(conn, user_email: str, limit: int = 200) -> list:
     """Videos the user generated -> nodes (title + status/prompt)."""
     rows = await conn.fetch(
-        "SELECT title, prompt, status FROM tasks.video_jobs "
+        "SELECT id, title, prompt, status FROM tasks.video_jobs "
         "WHERE lower(user_email) = lower($1) ORDER BY created_at DESC LIMIT $2",
         user_email, limit)
     out = []
     for r in rows:
         label = (r["title"] or (r["prompt"] or "video")[:80])
         summ = f"{r['status'] or 'video'}: {r['prompt'] or ''}".strip()
-        out.append({"label": label, "summary": summ})
+        out.append({"label": label, "summary": summ,
+                    "url": f"/video-generator?job={r['id']}"})
     return out
 
 
@@ -547,7 +557,8 @@ async def _assemble_live(conn, user_email: str):
         user_email, list(SKELETON_KINDS))
     skeleton = [{"id": str(r["id"]), "user_email": user_email, "kind": r["kind"],
                  "label": r["label"], "summary": r["summary"],
-                 "parent_id": str(r["parent_id"]) if r["parent_id"] else None}
+                 "parent_id": str(r["parent_id"]) if r["parent_id"] else None,
+                 "url": None}
                 for r in srows]
     # Drop stale source-hub topics left by older builds (now generated live),
     # so hubs like "Uploaded Files" never render twice.
@@ -570,11 +581,15 @@ async def _assemble_live(conn, user_email: str):
 
     nodes = list(skeleton)
     nodes += attach_chats(user_email, root_id, skeleton, chats)
-    nodes += source_branch(user_email, root_id, "App Builder Apps", apps, "app")
-    nodes += source_branch(user_email, root_id, "Automations & Cron Jobs", crons, "cron")
-    nodes += source_branch(user_email, root_id, "Generated Videos", videos, "video")
+    nodes += source_branch(user_email, root_id, "App Builder Apps", apps, "app",
+                           hub_url="/Aiuibuilder")
+    nodes += source_branch(user_email, root_id, "Automations & Cron Jobs", crons,
+                           "cron", hub_url="/cron-jobs")
+    nodes += source_branch(user_email, root_id, "Generated Videos", videos,
+                           "video", hub_url="/video-generator")
     nodes += source_branch(user_email, root_id, "Uploaded Files", files, "document")
-    nodes += source_branch(user_email, root_id, "Knowledge Collections", kbs, "document")
+    nodes += source_branch(user_email, root_id, "Knowledge Collections", kbs,
+                           "document", hub_url="/workspace/knowledge")
     nodes += source_branch(user_email, root_id, "Saved Memories", mems, "memory")
     counts = {"chats": len(chats), "apps": len(apps), "crons": len(crons),
               "videos": len(videos), "files": len(files),
@@ -686,6 +701,91 @@ def _maybe_schedule_auto_build(user_email: str, nodes: list, counts: dict,
     return True
 
 
+# --- nightly prebuild ---------------------------------------------------------
+# Rebuild every user's topic skeleton while they sleep, so the first graph
+# load (and the AI-memory injection) never waits on the LLM. Reuses the same
+# should_auto_rebuild decision as the on-demand path; users with fresh
+# skeletons or too few chats are skipped. Hour is UTC; 18 = 2am Manila.
+# Set GRAPH_PREBUILD_UTC_HOUR=-1 to disable the loop.
+PREBUILD_UTC_HOUR = float(os.environ.get("GRAPH_PREBUILD_UTC_HOUR", "18"))
+
+
+def seconds_until_utc_hour(now_ts: float, hour: float) -> float:
+    """Seconds from `now_ts` (epoch) to the next occurrence of `hour` UTC.
+    Exactly at the hour -> a full day (the current run is already firing)."""
+    day = 86400.0
+    delta = ((hour % 24.0) * 3600.0 - now_ts % day) % day
+    return delta or day
+
+
+async def prebuild_pass() -> dict:
+    """One sweep over all users: rebuild stale/missing skeletons sequentially
+    (one LLM call at a time — the box is small). Per-user failures are logged
+    and skipped; the sweep itself never raises."""
+    conn = await _connect()
+    try:
+        await ensure_table(conn)
+        rows = await conn.fetch(
+            'SELECT email FROM public."user" WHERE email IS NOT NULL')
+        emails = sorted({(r["email"] or "").strip().lower()
+                         for r in rows if r["email"]})
+    finally:
+        await conn.close()
+    checked, rebuilt = 0, 0
+    for email in emails:
+        checked += 1
+        try:
+            conn = await _connect()
+            try:
+                uid = await _user_id(conn, email)
+                chats = (await conn.fetchval(
+                    'SELECT COUNT(*) FROM public."chat" WHERE user_id = $1',
+                    uid)) if uid else 0
+                topics = await conn.fetchval(
+                    "SELECT COUNT(*) FROM knowledge_graph_node "
+                    "WHERE user_email = $1 AND kind = 'topic' "
+                    "AND NOT (label = ANY($2::text[]))",
+                    email, list(RESERVED_HUBS))
+                age = await _skeleton_age_hours(conn, email)
+            finally:
+                await conn.close()
+            if not should_auto_rebuild(topics or 0, chats or 0, age):
+                continue
+            if email in _AUTO_RUNNING:
+                continue
+            _AUTO_RUNNING.add(email)
+            _AUTO_LAST[email] = time.time()
+            await _auto_rebuild(email)   # clears _AUTO_RUNNING in its finally
+            rebuilt += 1
+            await asyncio.sleep(2)       # pace the LLM calls
+        except Exception as e:
+            print(f"[graph] prebuild skipped {email}: {e}", flush=True)
+    print(f"[graph] nightly prebuild done: {rebuilt}/{checked} users rebuilt",
+          flush=True)
+    return {"checked": checked, "rebuilt": rebuilt}
+
+
+async def _prebuild_loop() -> None:
+    while True:
+        await asyncio.sleep(seconds_until_utc_hour(time.time(), PREBUILD_UTC_HOUR))
+        try:
+            await prebuild_pass()
+        except Exception as e:
+            print(f"[graph] nightly prebuild failed: {e}", flush=True)
+
+
+def start_nightly_prebuild() -> bool:
+    """Spawn the nightly loop (called from main's lifespan). Fail-open: any
+    problem just means no prebuild, never a boot failure."""
+    if PREBUILD_UTC_HOUR < 0 or AUTO_REBUILD_HOURS <= 0:
+        return False
+    try:
+        asyncio.get_running_loop().create_task(_prebuild_loop())
+        return True
+    except RuntimeError:
+        return False
+
+
 async def _cluster_with_llm(corpus: str) -> str:
     key = _first_sk(os.environ.get("OPENAI_API_KEY", ""))
     if not key:
@@ -783,3 +883,12 @@ async def my_graph_context(
     _maybe_schedule_auto_build(user.email, nodes, counts, age)
     return {"context": ctx, "count": len(nodes), "used": bool(ctx),
             "mode": mode}
+
+
+@router.post("/prebuild")
+async def run_prebuild(user: CurrentUser = Depends(current_user)):
+    """Admin-only manual trigger of the nightly sweep (also how it's verified
+    without waiting for the scheduled hour)."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admins only.")
+    return await prebuild_pass()

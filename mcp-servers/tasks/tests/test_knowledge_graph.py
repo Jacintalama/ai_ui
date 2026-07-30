@@ -177,3 +177,61 @@ def test_app_label_no_slug_uses_description():
     assert app_label(None, "Build a landing page for a bakery") == \
         "Build a landing page for a bakery"
     assert app_label(None, "") == "app"
+
+
+# --- node click-through URLs --------------------------------------------------
+from routes_knowledge_graph import source_branch
+
+
+def test_make_node_carries_url():
+    n = make_node("u@x.com", "chat", "Trip plans", None, url="/c/abc123")
+    assert n["url"] == "/c/abc123"
+    assert make_node("u@x.com", "topic", "Travel", None)["url"] is None
+
+
+def test_attach_chats_builds_chat_urls():
+    root = make_node("u@x.com", "root", "My Knowledge", None)
+    out = attach_chats("u@x.com", root["id"], [root],
+                       [{"title": "Trip plans", "snippet": "", "id": "abc123"},
+                        {"title": "No id chat", "snippet": ""}])
+    by_label = {n["label"]: n for n in out}
+    assert by_label["Trip plans"]["url"] == "/c/abc123"
+    assert by_label["No id chat"]["url"] is None
+
+
+def test_source_branch_passes_item_and_hub_urls():
+    out = source_branch("u@x.com", "rid", "App Builder Apps",
+                        [{"label": "Shoe Site", "url": "/tasks/static/preview.html?task=1&tab=preview"},
+                         {"label": "No Link App"}],
+                        "app", hub_url="/Aiuibuilder")
+    hub = out[0]
+    assert hub["url"] == "/Aiuibuilder"
+    by_label = {n["label"]: n for n in out[1:]}
+    assert by_label["Shoe Site"]["url"] == "/tasks/static/preview.html?task=1&tab=preview"
+    assert by_label["No Link App"]["url"] is None
+
+
+# --- nightly prebuild scheduling ----------------------------------------------
+_DAY = 86400.0
+
+
+def _sched():
+    from routes_knowledge_graph import seconds_until_utc_hour
+    return seconds_until_utc_hour
+
+
+def test_seconds_until_utc_hour_before_target():
+    # 17:00 UTC, target 18:00 -> one hour away.
+    now = 3 * _DAY + 17 * 3600.0
+    assert _sched()(now, 18) == 3600.0
+
+
+def test_seconds_until_utc_hour_after_target_wraps_to_tomorrow():
+    # 19:00 UTC, target 18:00 -> 23 hours away.
+    now = 3 * _DAY + 19 * 3600.0
+    assert _sched()(now, 18) == 23 * 3600.0
+
+
+def test_seconds_until_utc_hour_exactly_at_target_waits_a_full_day():
+    now = 3 * _DAY + 18 * 3600.0
+    assert _sched()(now, 18) == _DAY
