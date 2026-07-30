@@ -1315,6 +1315,19 @@ async def rename_project(
                 _text("UPDATE tasks.project_members SET slug = :n WHERE slug = :o"),
                 {"o": slug, "n": new_slug},
             )
+            # Vercel deploys are keyed by slug too. Without this, a rename
+            # orphans the "Live" link and the next deploy creates a brand-new
+            # Vercel project instead of updating the user's existing one. The
+            # table is created lazily on first Vercel use, hence the existence
+            # check (to_regclass -> NULL keeps the transaction clean).
+            has_vc = (await s.execute(
+                _text("SELECT to_regclass('public.vercel_deployments')")
+            )).scalar_one_or_none()
+            if has_vc:
+                await s.execute(
+                    _text("UPDATE vercel_deployments SET slug = :n WHERE slug = :o"),
+                    {"o": slug, "n": new_slug},
+                )
             await s.commit()
     except Exception as exc:
         # DB update failed — roll the git rename back.
