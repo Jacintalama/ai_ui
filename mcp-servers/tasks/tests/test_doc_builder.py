@@ -36,3 +36,23 @@ def test_split_bold():
     assert split_bold("a **b** c") == [("a ", False), ("b", True), (" c", False)]
     assert split_bold("plain") == [("plain", False)]
     assert split_bold("**all**") == [("all", True)]
+
+
+def test_docx_roundtrip():
+    from docx import Document
+
+    from doc_builder import blocks_to_docx
+    blocks = parse_blocks(
+        "# Report\n\nHello **bold** world.\n\n- a\n- b\n\n| X | Y |\n|--|--|\n| 1 | 2 |")
+    data = blocks_to_docx("My Report", blocks)
+    assert isinstance(data, bytes) and len(data) > 2000
+    doc = Document(io.BytesIO(data))
+    texts = [p.text for p in doc.paragraphs]
+    assert "My Report" in texts          # title heading
+    assert "Report" in texts             # h1 from markdown
+    assert any("Hello" in t and "world." in t for t in texts)
+    bold_runs = [r.text for p in doc.paragraphs for r in p.runs if r.bold]
+    assert "bold" in bold_runs
+    assert "a" in texts and "b" in texts
+    assert doc.tables[0].cell(0, 0).text == "X"
+    assert doc.tables[0].cell(1, 1).text == "2"

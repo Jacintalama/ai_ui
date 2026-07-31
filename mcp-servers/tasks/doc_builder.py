@@ -85,3 +85,38 @@ def split_bold(text: str) -> list:
         if seg:
             out.append((seg, i % 2 == 1))
     return out or [("", False)]
+
+
+def blocks_to_docx(title: str, blocks: list) -> bytes:
+    from docx import Document
+
+    doc = Document()
+    if (title or "").strip():
+        doc.add_heading(title.strip(), level=0)
+    for b in blocks:
+        if b["t"] == "h":
+            doc.add_heading(b["text"], level=b["level"])
+        elif b["t"] == "p":
+            p = doc.add_paragraph()
+            for seg, bold in split_bold(b["text"]):
+                p.add_run(seg).bold = bold
+        elif b["t"] in ("ul", "ol"):
+            style = "List Bullet" if b["t"] == "ul" else "List Number"
+            for it in b["items"]:
+                p = doc.add_paragraph(style=style)
+                for seg, bold in split_bold(it):
+                    p.add_run(seg).bold = bold
+        elif b["t"] == "code":
+            p = doc.add_paragraph()
+            run = p.add_run(b["text"])
+            run.font.name = "Courier New"
+        elif b["t"] == "table" and b["rows"]:
+            cols = max(len(r) for r in b["rows"])
+            tbl = doc.add_table(rows=len(b["rows"]), cols=cols)
+            tbl.style = "Table Grid"
+            for ri, row in enumerate(b["rows"]):
+                for ci, cell in enumerate(row):
+                    tbl.cell(ri, ci).text = cell
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
