@@ -13,6 +13,7 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 import graph_embeddings
 from auth import current_user, CurrentUser
@@ -701,6 +702,21 @@ def _maybe_schedule_auto_build(user_email: str, nodes: list, counts: dict,
     return True
 
 
+# --- model write-back ---------------------------------------------------------
+MEMORY_MAX_CHARS = 500
+MEMORY_MIN_CHARS = 3
+
+
+def clean_memory_content(content: str) -> str:
+    """Normalize a fact before storing it as an OWUI memory: collapse all
+    whitespace runs, trim, cap at MEMORY_MAX_CHARS. Empty or trivially short
+    input raises ValueError (the endpoint turns it into a 422)."""
+    out = " ".join((content or "").split())[:MEMORY_MAX_CHARS]
+    if len(out) < MEMORY_MIN_CHARS:
+        raise ValueError("memory content is empty or too short")
+    return out
+
+
 # --- nightly prebuild ---------------------------------------------------------
 # Rebuild every user's topic skeleton while they sleep, so the first graph
 # load (and the AI-memory injection) never waits on the LLM. Reuses the same
@@ -892,3 +908,40 @@ async def run_prebuild(user: CurrentUser = Depends(current_user)):
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admins only.")
     return await prebuild_pass()
+
+
+class RememberBody(BaseModel):
+    content: str
+
+
+@router.post("/memory")
+async def remember_memory(body: RememberBody,
+                          user: CurrentUser = Depends(current_user)):
+    """Store a fact as a real OWUI memory for the signed-in user (called by
+    the "Remember" native tool). One insert lights up all three surfaces that
+    already read public.memory live: the Brain graph's Saved Memories hub,
+    the per-chat AI-memory injection, and OWUI's Settings > Personalization
+    memories page."""
+    try:
+        content = clean_memory_content(body.content)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    conn = await _connect()
+    try:
+        uid = await _user_id(conn, user.email)
+        if not uid:
+            raise HTTPException(status_code=404, detail="Unknown user.")
+        now = int(time.time())
+        mem_id = str(uuid.uuid4())
+        await conn.execute(
+            'INSERT INTO public."memory" (id, user_id, content, created_at, '
+            "updated_at) VALUES ($1, $2, $3, $4, $5)",
+            mem_id, uid, content, now, now)
+        total = await conn.fetchval(
+            'SELECT COUNT(*) FROM public."memory" WHERE user_id = $1', uid)
+    finally:
+        await conn.close()
+    print(f"[graph] memory saved for {user.email} ({len(content)} chars)",
+          flush=True)
+    return {"saved": True, "id": mem_id, "content": content,
+            "total_memories": total}

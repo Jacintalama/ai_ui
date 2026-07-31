@@ -235,3 +235,27 @@ def test_seconds_until_utc_hour_after_target_wraps_to_tomorrow():
 def test_seconds_until_utc_hour_exactly_at_target_waits_a_full_day():
     now = 3 * _DAY + 18 * 3600.0
     assert _sched()(now, 18) == _DAY
+
+
+# --- model write-back: memory content hygiene ---------------------------------
+
+def _clean():
+    from routes_knowledge_graph import clean_memory_content
+    return clean_memory_content
+
+
+def test_clean_memory_trims_and_collapses_whitespace():
+    assert _clean()("  Ralph  prefers\n\ndark   mode  ") == "Ralph prefers dark mode"
+
+
+def test_clean_memory_caps_length():
+    out = _clean()("x" * 900)
+    assert len(out) == 500
+
+
+def test_clean_memory_rejects_empty_and_too_short():
+    import pytest
+    with pytest.raises(ValueError):
+        _clean()("   ")
+    with pytest.raises(ValueError):
+        _clean()("ab")
