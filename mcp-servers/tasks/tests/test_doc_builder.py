@@ -56,3 +56,19 @@ def test_docx_roundtrip():
     assert "a" in texts and "b" in texts
     assert doc.tables[0].cell(0, 0).text == "X"
     assert doc.tables[0].cell(1, 1).text == "2"
+
+
+def test_pdf_bytes():
+    from doc_builder import blocks_to_pdf
+    blocks = parse_blocks("# Report\n\nHello **bold** world.\n\n- a\n- b")
+    data = blocks_to_pdf("My Report", blocks)
+    assert data[:5] == b"%PDF-"
+    assert len(data) > 1500
+    assert b"/Page" in data
+
+
+def test_pdf_escapes_markup():
+    from doc_builder import blocks_to_pdf
+    # < and & in user text must not break reportlab's mini-HTML parser
+    data = blocks_to_pdf("t", parse_blocks("a < b & c **d**"))
+    assert data[:5] == b"%PDF-"

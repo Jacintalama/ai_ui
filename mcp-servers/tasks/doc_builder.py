@@ -120,3 +120,55 @@ def blocks_to_docx(title: str, blocks: list) -> bytes:
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+def _pdf_rich(text: str) -> str:
+    """Escape XML, then map **bold** to <b> for reportlab paragraphs."""
+    from xml.sax.saxutils import escape
+    parts = []
+    for seg, bold in split_bold(text):
+        seg = escape(seg)
+        parts.append(f"<b>{seg}</b>" if bold else seg)
+    return "".join(parts)
+
+
+def blocks_to_pdf(title: str, blocks: list) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import (ListFlowable, ListItem, Paragraph,
+                                    Preformatted, SimpleDocTemplate, Spacer,
+                                    Table, TableStyle)
+
+    styles = getSampleStyleSheet()
+    hmap = {1: "Heading1", 2: "Heading2", 3: "Heading3"}
+    story = []
+    if (title or "").strip():
+        story += [Paragraph(_pdf_rich(title.strip()), styles["Title"]),
+                  Spacer(1, 6 * mm)]
+    for b in blocks:
+        if b["t"] == "h":
+            story.append(Paragraph(_pdf_rich(b["text"]), styles[hmap[b["level"]]]))
+        elif b["t"] == "p":
+            story.append(Paragraph(_pdf_rich(b["text"]), styles["BodyText"]))
+        elif b["t"] in ("ul", "ol"):
+            bt = "bullet" if b["t"] == "ul" else "1"
+            story.append(ListFlowable(
+                [ListItem(Paragraph(_pdf_rich(i), styles["BodyText"]))
+                 for i in b["items"]],
+                bulletType=bt))
+        elif b["t"] == "code":
+            story.append(Preformatted(b["text"], styles["Code"]))
+        elif b["t"] == "table" and b["rows"]:
+            t = Table(b["rows"], hAlign="LEFT")
+            t.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ]))
+            story.append(t)
+        story.append(Spacer(1, 2 * mm))
+    buf = io.BytesIO()
+    SimpleDocTemplate(buf, pagesize=A4, title=title or "Document").build(story)
+    return buf.getvalue()
