@@ -5768,7 +5768,12 @@
       $pubConfirm.disabled = !slug;
       $pubConfirm.title = slug ? "" : "Available once the build finishes";
       $pubUnpub.hidden = true;
-      if ($renameBlock) $renameBlock.hidden = true;
+      // Rename works before publishing too (it moves the folder and re-keys
+      // every reference), so show it whenever the build has a name.
+      if ($renameBlock) {
+        $renameBlock.hidden = !slug;
+        if (slug && $renameInput) $renameInput.value = slug;
+      }
     }
   }
 

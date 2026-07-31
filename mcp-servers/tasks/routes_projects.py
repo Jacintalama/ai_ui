@@ -25,7 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select, text
 
-from auth import AdminUser, current_admin, current_admin_or_capability_for_slug, CurrentUser, current_user
+from auth import (AdminUser, current_admin, current_admin_or_capability_for_slug,
+                  current_user_or_capability_for_slug, CurrentUser, current_user)
 from db import session
 from models import ChatMessage, ProjectMember, ProjectSupabase, PublishedApp, TaskItem
 from schemas import InviteRequest, MemberOut, RoleUpdate
@@ -856,7 +857,7 @@ def _public_url_for(slug: str) -> str:
 
 
 @router.get("/{slug}/publish", response_model=PublishStatus)
-async def get_publish(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+async def get_publish(slug: str, user: CurrentUser = Depends(current_user_or_capability_for_slug)):
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
@@ -920,10 +921,11 @@ async def _publish_slug(s, slug: str, email: str, *, is_admin: bool) -> PublishS
 
 
 @router.post("/{slug}/publish", response_model=PublishStatus)
-async def publish_app(slug: str, user: AdminUser = Depends(current_admin)):
+async def publish_app(slug: str, user: CurrentUser = Depends(current_user)):
     """Publish apps/<slug>/ at AIUI_PUBLIC_BASE_URL/apps/<slug>/.
 
-    Owner/admin only. The public app route reverse-proxies back into this
+    Any signed-in OWNER of the project (or an admin) — the role check lives
+    in _publish_slug. The public app route reverse-proxies back into this
     service's published static route.
     """
     async with session() as s:
@@ -1095,7 +1097,7 @@ def _build_status(slug: str, pub: PublishedApp | None,
 
 
 @router.get("/{slug}/publish/domain", response_model=CustomDomainStatus)
-async def get_custom_domain(slug: str, user: AdminUser = Depends(current_admin)):
+async def get_custom_domain(slug: str, user: CurrentUser = Depends(current_user)):
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
@@ -1110,7 +1112,7 @@ async def get_custom_domain(slug: str, user: AdminUser = Depends(current_admin))
 async def set_custom_domain(
     slug: str,
     body: CustomDomainRequest,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ):
     _validate_slug(slug)
     domain = _validate_custom_domain(body.domain)
@@ -1144,7 +1146,7 @@ async def set_custom_domain(
 
 
 @router.post("/{slug}/publish/domain/verify", response_model=CustomDomainStatus)
-async def verify_custom_domain(slug: str, user: AdminUser = Depends(current_admin)):
+async def verify_custom_domain(slug: str, user: CurrentUser = Depends(current_user)):
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
@@ -1212,7 +1214,7 @@ class RenameRequest(BaseModel):
 async def rename_project(
     slug: str,
     body: RenameRequest,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ):
     """Rename a project's slug.
 
@@ -1346,7 +1348,7 @@ async def rename_project(
 
 
 @router.delete("/{slug}/publish/domain", status_code=204)
-async def remove_custom_domain(slug: str, user: AdminUser = Depends(current_admin)):
+async def remove_custom_domain(slug: str, user: CurrentUser = Depends(current_user)):
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
@@ -1382,7 +1384,7 @@ async def _unpublish_slug(s, slug: str, email: str, *, is_admin: bool) -> None:
 
 
 @router.delete("/{slug}/publish", status_code=204)
-async def unpublish_app(slug: str, user: AdminUser = Depends(current_admin)):
+async def unpublish_app(slug: str, user: CurrentUser = Depends(current_user)):
     _validate_slug(slug)  # fast-fail before touching the DB pool
     async with session() as s:
         await _unpublish_slug(s, slug, user.email, is_admin=user.is_admin)

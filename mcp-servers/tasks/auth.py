@@ -84,3 +84,21 @@ def current_admin_or_capability_for_slug(slug: str, request: Request) -> AdminUs
         return AdminUser(email=(data["owner"] or "").strip().lower(),
                          is_admin=False)
     return current_admin(request)
+
+
+def current_user_or_capability_for_slug(slug: str, request: Request) -> CurrentUser:
+    """Like current_admin_or_capability_for_slug, but the no-capability path
+    accepts ANY authenticated user rather than requiring the admin header.
+    Used by the publish-status read now that publishing is open to non-admin
+    owners: the modal must be able to show state to a regular member. Safe
+    because every consumer re-checks project visibility (and role, where it
+    mutates) inside the route body."""
+    cap = request.headers.get("x-edit-capability", "").strip()
+    if cap:
+        from edit_capability import verify_capability
+        data = verify_capability(cap)
+        if not data or data["slug"] != slug:
+            raise HTTPException(status_code=403, detail="Invalid edit capability")
+        return CurrentUser(email=(data["owner"] or "").strip().lower(),
+                           is_admin=False)
+    return current_user(request)
