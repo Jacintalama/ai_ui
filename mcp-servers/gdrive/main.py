@@ -1,4 +1,5 @@
 """Google Drive MCP Server — browse and read files from Google Drive."""
+import base64
 import os
 import json
 import urllib.parse
@@ -286,8 +287,20 @@ class FileInfoInput(BaseModel):
 
 class CreateFileInput(BaseModel):
     name: str = Field(description="File name, e.g. 'notes.txt' or 'summary.md'")
-    content: str = Field(description="Text content to write into the file")
+    content: str = Field(default="", description="Text content to write into the file")
+    content_b64: str = Field(default="", description="Base64 content for binary files; wins over content")
     mime_type: str = Field(default="text/plain", description="MIME type (default text/plain)")
+
+
+def build_multipart(name: str, mime: str, payload: bytes, boundary: str) -> bytes:
+    """Google Drive multipart/related upload body, safe for binary payloads."""
+    meta = json.dumps({"name": name})
+    head = (f"--{boundary}\r\n"
+            "Content-Type: application/json; charset=UTF-8\r\n\r\n"
+            f"{meta}\r\n"
+            f"--{boundary}\r\n"
+            f"Content-Type: {mime}\r\n\r\n").encode("utf-8")
+    return head + payload + f"\r\n--{boundary}--".encode("utf-8")
 
 
 # --- Helper ---
@@ -678,16 +691,14 @@ async def create_file(input: CreateFileInput, request: Request):
         return {"error": NOT_CONNECTED_MSG.format(base_url=base, email=user_email)}
 
     boundary = "aiui-gdrive-boundary-8f3c1d"
-    metadata = json.dumps({"name": input.name})
-    body = (
-        f"--{boundary}\r\n"
-        "Content-Type: application/json; charset=UTF-8\r\n\r\n"
-        f"{metadata}\r\n"
-        f"--{boundary}\r\n"
-        f"Content-Type: {input.mime_type}\r\n\r\n"
-        f"{input.content}\r\n"
-        f"--{boundary}--"
-    )
+    if input.content_b64:
+        try:
+            payload = base64.b64decode(input.content_b64)
+        except Exception:
+            return {"error": "content_b64 is not valid base64."}
+    else:
+        payload = input.content.encode("utf-8")
+    body = build_multipart(input.name, input.mime_type, payload, boundary)
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -696,7 +707,7 @@ async def create_file(input: CreateFileInput, request: Request):
                     "Authorization": f"Bearer {access_token}",
                     "Content-Type": f"multipart/related; boundary={boundary}",
                 },
-                content=body.encode("utf-8"),
+                content=body,
                 timeout=30.0,
             )
     except Exception as e:
