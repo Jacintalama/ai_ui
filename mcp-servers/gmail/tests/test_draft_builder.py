@@ -69,3 +69,35 @@ def test_body_with_newline_is_allowed(mod):
     raw = mod.build_draft_raw("a@b.com", "s", "line one\nline two")
     msg = _decode(raw)
     assert "line one\nline two" in msg.get_payload(decode=True).decode("utf-8")
+
+
+# --- draft with a real file attachment ----------------------------------------
+
+def test_attachment_draft_builds_multipart(mod):
+    payload = b"%PDF-\x00\x01binary"
+    raw = mod.build_draft_raw_with_attachment(
+        "a@b.com", "Report attached", "Here is the file.",
+        "report.pdf", base64.b64encode(payload).decode(), "application/pdf")
+    msg = _decode(raw)
+    assert msg.is_multipart()
+    assert msg["To"] == "a@b.com"
+    assert msg["Subject"] == "Report attached"
+    parts = list(msg.walk())
+    texts = [p for p in parts if p.get_content_type() == "text/plain"]
+    assert any("Here is the file." in p.get_payload() for p in texts)
+    atts = [p for p in parts if p.get_filename() == "report.pdf"]
+    assert len(atts) == 1
+    assert atts[0].get_payload(decode=True) == payload
+    assert atts[0].get_content_type() == "application/pdf"
+
+
+def test_attachment_draft_requires_recipient(mod):
+    with pytest.raises(ValueError):
+        mod.build_draft_raw_with_attachment(
+            "", "s", "b", "f.pdf", base64.b64encode(b"x").decode(), "application/pdf")
+
+
+def test_attachment_draft_rejects_bad_base64(mod):
+    with pytest.raises(ValueError):
+        mod.build_draft_raw_with_attachment(
+            "a@b.com", "s", "b", "f.pdf", "!!!not-base64!!!", "application/pdf")

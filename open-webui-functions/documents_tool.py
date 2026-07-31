@@ -18,6 +18,7 @@ class Tools:
     class Valves(BaseModel):
         tasks_url: str = Field(default="http://tasks:8210")
         gdrive_url: str = Field(default="http://mcp-gdrive:8000")
+        gmail_url: str = Field(default="http://mcp-gmail:8000")
         internal_secret: str = Field(default="")
         timeout_seconds: int = Field(default=60)
 
@@ -30,6 +31,8 @@ class Tools:
         markdown: str,
         format: str = "docx",
         save_to_drive: bool = False,
+        email_to: str = "",
+        email_subject: str = "",
         __user__: dict = {},
     ) -> str:
         """
@@ -44,7 +47,9 @@ class Tools:
         :param markdown: The complete document content as markdown.
         :param format: "docx" for Word, "pdf", or "pptx" for PowerPoint.
         :param save_to_drive: True when the user asks to save it to Google Drive.
-        :return: HTML with a download button (and Drive link), or a plain error sentence.
+        :param email_to: Recipient address when the user asks to email the file to someone; a Gmail DRAFT with the file attached is created for the user to review and send (nothing is sent automatically).
+        :param email_subject: Subject for that draft (defaults to the title).
+        :return: HTML with a download button (and Drive/Gmail links), or a plain error sentence.
         """
         f = str(format).lower().strip()
         fmt = f if f in ("pdf", "pptx") else "docx"
@@ -101,4 +106,31 @@ class Tools:
                 # turns it into the inline Connect button. Pass it through.
                 html += ('<p style="margin:12px 0 0 0;">Drive save failed: '
                          f'{gd.get("error", "unknown error")}</p>')
+        if email_to.strip():
+            email = (__user__ or {}).get("email", "default@local")
+            try:
+                async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as c:
+                    m = await c.post(
+                        f"{self.valves.gmail_url}/gmail_create_draft_with_attachment",
+                        json={"to": email_to.strip(),
+                              "subject": (email_subject or title or d["filename"]).strip(),
+                              "body": f"Please find {d['filename']} attached.",
+                              "filename": d["filename"], "content_b64": d["b64"],
+                              "mime_type": d["mime"]},
+                        headers={"X-User-Email": email},
+                    )
+                md = m.json()
+            except Exception as e:
+                md = {"error": f"Gmail is unreachable: {e}"}
+            if md.get("success"):
+                html += (
+                    f'<p style="margin:12px 0 0 0;">Gmail draft to '
+                    f'<strong>{email_to.strip()}</strong> created with the file '
+                    'attached. <a href="https://mail.google.com/mail/#drafts" '
+                    'target="_blank" style="color:#9ecbff;">Open Gmail</a> to '
+                    'review and send it.</p>'
+                )
+            else:
+                html += ('<p style="margin:12px 0 0 0;">Email draft failed: '
+                         f'{md.get("error", md.get("detail", "unknown error"))}</p>')
         return html + "</div>"
