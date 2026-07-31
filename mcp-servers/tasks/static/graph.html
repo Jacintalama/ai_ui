@@ -10,7 +10,7 @@
     --bg: #0d0d0d; --panel: #171717; --panel-2: #212121; --border: rgba(255,255,255,.09);
     --text: #ececec; --muted: #9b9b9b; --accent: #4a9eff; --accent-ink: #fff;
     --root: #f2a340; --topic: #4a9eff; --subtopic: #35d29a; --leaf: #9aa7b8;
-    --chat: #7aa2ff; --document: #8a97a6; --memory: #b98bff;
+    --chat: #7aa2ff; --document: #8a97a6; --memory: #b98bff; --meeting: #d9a441;
     --app: #f2795b; --cron: #35c3d2; --video: #e879b9;
     --link: rgba(255,255,255,0.10); --link-hi: rgba(122,170,255,0.55);
     --shadow: 0 10px 30px rgba(0,0,0,.35);
@@ -20,7 +20,7 @@
       --bg: #f5f7fa; --panel: #fff; --panel-2: #f2f5f9; --border: #e3e9f0;
       --text: #16202b; --muted: #5c6775; --accent: #2b7fff;
       --root: #e08a1e; --topic: #2b7fff; --subtopic: #12b981; --leaf: #6b7787;
-      --chat: #3b74ff; --document: #6b7787; --memory: #9a5cff;
+      --chat: #3b74ff; --document: #6b7787; --memory: #9a5cff; --meeting: #b8860b;
       --app: #e2603f; --cron: #1aa6b5; --video: #d1509b;
       --dot: rgba(20,30,45,.07);
       --link: rgba(20,30,45,0.12); --link-hi: rgba(43,127,255,0.55);
@@ -134,6 +134,7 @@
       <span><i class="dot" style="background:var(--video)"></i> Video</span>
       <span><i class="dot" style="background:var(--document)"></i> Document</span>
       <span><i class="dot" style="background:var(--memory)"></i> Memory</span>
+      <span><i class="dot" style="background:var(--meeting)"></i> Meeting</span>
     </div>
   </div>
 
@@ -165,7 +166,7 @@
     var g = function (k) { return cs.getPropertyValue(k).trim(); };
     return { root: g("--root"), topic: g("--topic"), subtopic: g("--subtopic"), leaf: g("--leaf"),
       chat: g("--chat"), document: g("--document"), memory: g("--memory"),
-      app: g("--app"), cron: g("--cron"), video: g("--video"),
+      app: g("--app"), cron: g("--cron"), video: g("--video"), meeting: g("--meeting"),
       link: g("--link"), linkHi: g("--link-hi"), text: g("--text"), muted: g("--muted") };
   }
   var COL = colors();
@@ -316,7 +317,7 @@
     selected = n;
     var kinds = { root: "Root", topic: "Topic", subtopic: "Sub-topic", leaf: "Leaf",
                   chat: "Chat", document: "Document", memory: "Memory",
-                  app: "App", cron: "Automation", video: "Video" };
+                  app: "App", cron: "Automation", video: "Video", meeting: "Meeting" };
     document.getElementById("pkind").textContent = kinds[n.kind] || n.kind;
     document.getElementById("pkind").style.color = COL[n.kind] || COL.leaf;
     document.getElementById("plabel").textContent = n.label;
@@ -327,7 +328,8 @@
       memory: "Something you asked the assistant to remember.",
       app: "An app you built with the App Builder.",
       cron: "A scheduled automation (cron job) you set up.",
-      video: "A video you generated."
+      video: "A video you generated.",
+      meeting: "A team meeting record (admins only)."
     };
     document.getElementById("psummary").textContent = n.summary || fallback[n.kind] ||
       ("A " + (kinds[n.kind] || n.kind).toLowerCase() + " grouping related items.");
@@ -339,9 +341,10 @@
     if (n.url) {
       var openText = { chat: "Open chat", app: "Open app", cron: "Open cron jobs",
                        video: "Open video", document: "Open collection",
-                       topic: "Open page" };
+                       topic: "Open page", meeting: "Open recording" };
       openEl.textContent = openText[n.kind] || "Open";
       openEl.href = n.url;
+      openEl.target = n.url.indexOf("http") === 0 ? "_blank" : "_top";
       openEl.hidden = false;
     } else {
       openEl.hidden = true;

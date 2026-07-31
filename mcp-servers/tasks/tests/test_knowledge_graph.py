@@ -259,3 +259,28 @@ def test_clean_memory_rejects_empty_and_too_short():
         _clean()("   ")
     with pytest.raises(ValueError):
         _clean()("ab")
+
+
+# --- admin-only team meetings source ------------------------------------------
+
+def test_counts_line_skips_absent_keys_but_keeps_present_zeros():
+    from routes_knowledge_graph import counts_line
+    base = {"apps": 0, "crons": 1, "videos": 0, "files": 2,
+            "collections": 0, "memories": 0, "chats": 3}
+    line = counts_line(base)
+    assert "0 App Builder apps" in line          # present zero still shown
+    assert "team meetings" not in line           # absent key never shown
+    line2 = counts_line({**base, "team_meetings": 21})
+    assert "21 team meetings" in line2
+
+
+def test_meeting_item_composition():
+    from routes_knowledge_graph import meeting_item
+    m = meeting_item("June 23", "2026-06-23", "Discussed the roadmap.",
+                     "https://fathom.video/x")
+    assert m == {"label": "June 23",
+                 "summary": "2026-06-23 · Discussed the roadmap.",
+                 "url": "https://fathom.video/x"}
+    assert meeting_item("Standup", "", None, None) == \
+        {"label": "Standup", "summary": None, "url": None}
+    assert meeting_item("", "2026-01-01", "s", None)["label"] == "meeting"

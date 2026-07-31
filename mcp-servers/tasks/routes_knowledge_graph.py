@@ -105,15 +105,19 @@ COUNT_LABELS = (("apps", "App Builder apps"),
                 ("files", "uploaded files"),
                 ("collections", "knowledge collections"),
                 ("memories", "saved memories"),
-                ("chats", "chats"))
+                ("chats", "chats"),
+                ("team_meetings", "team meetings"))
 
 
 def counts_line(counts) -> str:
     """One authoritative sentence of live totals, so 'how many X do I have'
-    is answerable directly from memory instead of guessed at."""
+    is answerable directly from memory instead of guessed at. Keys absent
+    from `counts` are skipped entirely (e.g. team_meetings exists only for
+    admins); present-but-zero keys still print so the model states 0
+    confidently instead of guessing."""
     if not counts:
         return ""
-    parts = [f"{counts.get(k, 0)} {lbl}" for k, lbl in COUNT_LABELS]
+    parts = [f"{counts[k]} {lbl}" for k, lbl in COUNT_LABELS if k in counts]
     return ("Live totals for this user on this platform right now "
             "(authoritative; when asked how many, use these exact numbers): "
             + ", ".join(parts) + ".")
@@ -261,7 +265,18 @@ def prettify_slug(slug: str) -> str:
 # Hub labels the assembler generates live. Old builds may have stored these as
 # topic nodes; we drop stale copies so they don't render twice.
 RESERVED_HUBS = {"Uploaded Files", "Knowledge Collections", "App Builder Apps",
-                 "Automations & Cron Jobs", "Saved Memories", "Generated Videos"}
+                 "Automations & Cron Jobs", "Saved Memories", "Generated Videos",
+                 "Team Meetings"}
+
+
+def meeting_item(title, date, summary, fathom_link) -> dict:
+    """One team-meeting record -> source_branch item. Fathom recording link
+    (when present) becomes the click-through url."""
+    label = (title or "").strip() or "meeting"
+    parts = [p for p in ((date or "").strip(), (summary or "").strip()) if p]
+    return {"label": label,
+            "summary": (" · ".join(parts)[:300] or None),
+            "url": (fathom_link or "").strip() or None}
 
 def app_label(slug, description: str = "") -> str:
     """Label an App Builder card the way the page shows it: the slug (raw for
@@ -526,6 +541,21 @@ async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
     return out
 
 
+async def _read_meetings(conn, limit: int = 200) -> list:
+    """Team meeting records -> nodes. NOT per-user (the table has no owner
+    column); the admin-only gate lives in _assemble_live's include_team flag,
+    so this never runs for regular users. Fails soft if the meetings schema
+    is absent (fresh installs)."""
+    try:
+        rows = await conn.fetch(
+            "SELECT title, date, summary, fathom_link FROM meetings.records "
+            "ORDER BY created_at DESC LIMIT $1", limit)
+    except Exception:
+        return []
+    return [meeting_item(r["title"], r["date"], r["summary"], r["fathom_link"])
+            for r in rows]
+
+
 async def _read_videos(conn, user_email: str, limit: int = 200) -> list:
     """Videos the user generated -> nodes (title + status/prompt)."""
     rows = await conn.fetch(
@@ -547,10 +577,14 @@ async def _read_videos(conn, user_email: str, limit: int = 200) -> list:
 SKELETON_KINDS = ("root", "topic", "subtopic")
 
 
-async def _assemble_live(conn, user_email: str):
+async def _assemble_live(conn, user_email: str, include_team: bool = False):
     """Merge the stored topic skeleton with LIVE items read fresh each call, so
     the graph reflects what the user has right now (new/updated/deleted chats,
-    apps, cron jobs, files) with no LLM rebuild. Returns (nodes, counts)."""
+    apps, cron jobs, files) with no LLM rebuild. Returns (nodes, counts).
+
+    `include_team` adds org-wide sources with no per-user owner (currently
+    Team Meetings) and must only be True for admins: the Brain is private per
+    user, team material is admin-only by Ralph's decision (2026-07-31)."""
     uid = await _user_id(conn, user_email)
     srows = await conn.fetch(
         "SELECT id, kind, label, summary, parent_id FROM knowledge_graph_node "
@@ -595,6 +629,11 @@ async def _assemble_live(conn, user_email: str):
     counts = {"chats": len(chats), "apps": len(apps), "crons": len(crons),
               "videos": len(videos), "files": len(files),
               "collections": len(kbs), "memories": len(mems)}
+    if include_team:
+        meetings = await _read_meetings(conn)
+        nodes += source_branch(user_email, root_id, "Team Meetings", meetings,
+                               "meeting")
+        counts["team_meetings"] = len(meetings)
     return nodes, counts
 
 
@@ -846,7 +885,8 @@ async def build_my_graph(user: CurrentUser = Depends(current_user)):
             raise HTTPException(status_code=502,
                                 detail=f"Could not organize your chats: {e}")
         # Report the full live picture (skeleton + attached items).
-        nodes, counts = await _assemble_live(conn, user.email)
+        nodes, counts = await _assemble_live(conn, user.email,
+                                             include_team=user.is_admin)
         return {"built": True, "nodes": len(nodes), **built, **counts}
     finally:
         await conn.close()
@@ -859,7 +899,8 @@ async def get_my_graph(user: CurrentUser = Depends(current_user)):
     conn = await _connect()
     try:
         await ensure_table(conn)
-        nodes, counts = await _assemble_live(conn, user.email)
+        nodes, counts = await _assemble_live(conn, user.email,
+                                             include_team=user.is_admin)
         age = await _skeleton_age_hours(conn, user.email)
     finally:
         await conn.close()
@@ -890,7 +931,8 @@ async def my_graph_context(
     try:
         await ensure_table(conn)
         await graph_embeddings.ensure_embed_table(conn)
-        nodes, counts = await _assemble_live(conn, user.email)
+        nodes, counts = await _assemble_live(conn, user.email,
+                                             include_team=user.is_admin)
         ctx, mode = await build_memory_context_smart(conn, nodes, q, limit,
                                                      counts=counts)
         age = await _skeleton_age_hours(conn, user.email)
