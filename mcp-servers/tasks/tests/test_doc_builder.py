@@ -72,3 +72,31 @@ def test_pdf_escapes_markup():
     # < and & in user text must not break reportlab's mini-HTML parser
     data = blocks_to_pdf("t", parse_blocks("a < b & c **d**"))
     assert data[:5] == b"%PDF-"
+
+
+def test_pptx_roundtrip():
+    from pptx import Presentation
+
+    from doc_builder import blocks_to_pptx
+    blocks = parse_blocks(
+        "# Intro\n\nHello **bold** world.\n\n- a\n- b\n\n"
+        "# Data\n\n| X | Y |\n|--|--|\n| 1 | 2 |")
+    data = blocks_to_pptx("My Deck", blocks)
+    assert isinstance(data, bytes) and data[:2] == b"PK"   # pptx is a zip
+    prs = Presentation(io.BytesIO(data))
+    titles = [s.shapes.title.text for s in prs.slides if s.shapes.title]
+    assert "My Deck" in titles           # title slide
+    assert "Intro" in titles             # h1 -> slide
+    assert "Data" in titles
+    all_text = "\n".join(sh.text_frame.text for s in prs.slides
+                         for sh in s.shapes if sh.has_text_frame)
+    assert "Hello" in all_text and "a" in all_text and "b" in all_text
+    cells = [c.text for s in prs.slides for sh in s.shapes if sh.has_table
+             for row in sh.table.rows for c in row.cells]
+    assert "X" in cells and "2" in cells
+
+
+def test_pptx_without_headings_still_builds():
+    from doc_builder import blocks_to_pptx
+    data = blocks_to_pptx("t", parse_blocks("just a paragraph, no headings"))
+    assert data[:2] == b"PK"

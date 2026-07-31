@@ -9,7 +9,7 @@ from typing import Literal
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from doc_builder import blocks_to_docx, blocks_to_pdf, parse_blocks
+from doc_builder import blocks_to_docx, blocks_to_pdf, blocks_to_pptx, parse_blocks
 from routes_fusion import _require_internal
 
 router = APIRouter(prefix="/files")
@@ -20,7 +20,10 @@ MIMES = {
     "docx": ("application/vnd.openxmlformats-officedocument"
              ".wordprocessingml.document"),
     "pdf": "application/pdf",
+    "pptx": ("application/vnd.openxmlformats-officedocument"
+             ".presentationml.presentation"),
 }
+BUILDERS = {"docx": blocks_to_docx, "pdf": blocks_to_pdf, "pptx": blocks_to_pptx}
 
 
 def build_filename(title: str, fmt: str, now: datetime = None) -> str:
@@ -32,7 +35,7 @@ def build_filename(title: str, fmt: str, now: datetime = None) -> str:
 class GenerateBody(BaseModel):
     title: str = Field(default="", max_length=150)
     markdown: str = Field(min_length=1)
-    format: Literal["docx", "pdf"]
+    format: Literal["docx", "pdf", "pptx"]
 
 
 @router.post("/generate")
@@ -44,8 +47,7 @@ async def generate_file(body: GenerateBody,
                             detail="Document text is too long (200 KB max).")
     blocks = parse_blocks(body.markdown)
     try:
-        data = (blocks_to_docx if body.format == "docx" else blocks_to_pdf)(
-            body.title, blocks)
+        data = BUILDERS[body.format](body.title, blocks)
     except Exception as e:
         raise HTTPException(status_code=500,
                             detail=f"Could not build the {body.format}: {e}")

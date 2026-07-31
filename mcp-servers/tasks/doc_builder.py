@@ -122,6 +122,74 @@ def blocks_to_docx(title: str, blocks: list) -> bytes:
     return buf.getvalue()
 
 
+def blocks_to_pptx(title: str, blocks: list) -> bytes:
+    """Slides from blocks: every h1/h2 starts a new slide; p/lists/code become
+    bullets on the current slide; a table gets its own slide so it never
+    fights the text frame for space."""
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    prs = Presentation()
+    if (title or "").strip():
+        s = prs.slides.add_slide(prs.slide_layouts[0])   # title layout
+        s.shapes.title.text = title.strip()
+
+    cur = None          # current content slide's body text frame
+
+    def new_slide(heading: str):
+        nonlocal cur
+        s = prs.slides.add_slide(prs.slide_layouts[1])   # title + content
+        s.shapes.title.text = heading
+        body = s.placeholders[1].text_frame
+        body.clear()
+        cur = body
+        return body
+
+    def bullet(text: str, mono: bool = False):
+        body = cur if cur is not None else new_slide("")
+        p = body.paragraphs[0] if (len(body.paragraphs) == 1
+                                   and not body.paragraphs[0].runs) \
+            else body.add_paragraph()
+        for seg, bold in split_bold(text):
+            r = p.add_run()
+            r.text = seg
+            r.font.bold = bold
+            if mono:
+                r.font.name = "Courier New"
+                r.font.size = Pt(14)
+
+    for b in blocks:
+        if b["t"] == "h" and b["level"] <= 2:
+            new_slide(b["text"])
+        elif b["t"] == "h":
+            bullet(f"**{b['text']}**")
+        elif b["t"] == "p":
+            bullet(b["text"])
+        elif b["t"] in ("ul", "ol"):
+            for i, it in enumerate(b["items"], 1):
+                bullet(it if b["t"] == "ul" else f"{i}. {it}")
+        elif b["t"] == "code":
+            for line in b["text"].splitlines():
+                bullet(line, mono=True)
+        elif b["t"] == "table" and b["rows"]:
+            s = prs.slides.add_slide(prs.slide_layouts[5])   # title only
+            prev = prs.slides[-2] if len(prs.slides) > 1 else None
+            s.shapes.title.text = (prev.shapes.title.text
+                                   if prev is not None and prev.shapes.title
+                                   else "Table")
+            rows, cols = len(b["rows"]), max(len(r) for r in b["rows"])
+            shp = s.shapes.add_table(rows, cols, Inches(0.5), Inches(1.8),
+                                     Inches(9), Inches(0.4 * rows))
+            for ri, row in enumerate(b["rows"]):
+                for ci, cell in enumerate(row):
+                    shp.table.cell(ri, ci).text = cell
+    if len(prs.slides) == 0:                 # no title, no headings: 1 slide
+        new_slide("")
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
 def _pdf_rich(text: str) -> str:
     """Escape XML, then map **bold** to <b> for reportlab paragraphs."""
     from xml.sax.saxutils import escape

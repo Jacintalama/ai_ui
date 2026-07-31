@@ -2,7 +2,7 @@
 title: Documents
 author: AIUI Team
 version: 0.1.0
-description: Create real Word (.docx) or PDF files from chat and optionally save them to your Google Drive. Ask for any document, report, letter, or "export this conversation".
+description: Create real Word (.docx), PDF, or PowerPoint (.pptx) files from chat and optionally save them to your Google Drive. Ask for any document, report, letter, slide deck, or "export this conversation".
 """
 
 # Native Open WebUI tool. The model writes the document content as markdown
@@ -33,19 +33,21 @@ class Tools:
         __user__: dict = {},
     ) -> str:
         """
-        Create a Word (.docx) or PDF file from markdown content and give the
-        user a download button. Use whenever the user asks for a document,
-        report, letter, proposal, or to export this conversation as a file.
-        Write the full document content yourself in the markdown argument
-        (# headings, lists, **bold**, | tables |).
+        Create a Word (.docx), PDF, or PowerPoint (.pptx) file from markdown
+        content and give the user a download button. Use whenever the user
+        asks for a document, report, letter, proposal, slide deck, or to
+        export this conversation as a file. Write the full document content
+        yourself in the markdown argument (# headings, lists, **bold**,
+        | tables |). For PowerPoint, each # or ## heading starts a new slide.
 
         :param title: Document title, used as the filename and heading.
         :param markdown: The complete document content as markdown.
-        :param format: "docx" for Word or "pdf".
+        :param format: "docx" for Word, "pdf", or "pptx" for PowerPoint.
         :param save_to_drive: True when the user asks to save it to Google Drive.
         :return: HTML with a download button (and Drive link), or a plain error sentence.
         """
-        fmt = "pdf" if str(format).lower().strip() == "pdf" else "docx"
+        f = str(format).lower().strip()
+        fmt = f if f in ("pdf", "pptx") else "docx"
         try:
             async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as c:
                 r = await c.post(
@@ -62,7 +64,8 @@ class Tools:
                 detail = r.text[:120]
             return f"Sorry, the {fmt} could not be created. {detail}"
         d = r.json()
-        label = "Word document" if fmt == "docx" else "PDF"
+        label = {"docx": "Word document", "pdf": "PDF",
+                 "pptx": "PowerPoint deck"}[fmt]
         kb = max(1, d["size"] // 1024)
         html = (
             '<div style="padding:18px;background:linear-gradient(135deg,#1e3a5f,#2d5a87);'
