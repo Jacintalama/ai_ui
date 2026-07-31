@@ -14,6 +14,7 @@ from routes_cron import router as cron_router
 from routes_db import router as db_router
 from routes_execution import router as execution_router
 from routes_fusion_page import router as fusion_page_router
+from routes_files import router as files_router
 from routes_fusion import router as fusion_api_router
 from routes_graph import router as graph_router
 from routes_knowledge_graph import router as graph_mine_router
@@ -122,6 +123,7 @@ app.include_router(fusion_page_router)
 # Internal-only: the Open WebUI Fusion tool cannot reach fusion_engine
 # in-process, so it calls this over the docker network.
 app.include_router(fusion_api_router)  # /tasks/fusion chat page + SSE
+app.include_router(files_router)  # /files - internal, secret-gated (Documents tool)
 app.include_router(cron_router)
 app.include_router(preview_router)
 app.include_router(projects_router)
