@@ -2,11 +2,12 @@
 import asyncio
 import os
 import logging
+import secrets
 import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, delete
 
@@ -27,6 +28,71 @@ app = FastAPI(title="MCP Meetings")
 
 _engine = None
 _session_maker = None
+
+
+# ---------------------------------------------------------------------------
+# Auth
+#
+# Every endpoint here was unauthenticated until 2026-08-03, when a plain
+# `curl https://ai-ui.coolestdomain.win/meetings/` returned 21 records — full
+# transcripts, summaries, attendee names and Fathom share links — and PUT and
+# DELETE were reachable the same way.
+#
+# The gateway strips `x-user-email` from the incoming request and re-sets it
+# only after validating the JWT (api-gateway/main.py:298-309), so a non-empty
+# X-User-Email arriving here is trustworthy. Same trust model as
+# tasks/routes_schedules.py::_resolve_caller.
+#
+# Transcript ingestion is an external n8n workflow with no user session, so
+# writes additionally accept a shared secret. An UNSET secret closes that path
+# rather than opening it.
+# ---------------------------------------------------------------------------
+
+def _ingest_secret() -> str:
+    """Read at call time, not import time, so rotation takes effect on the
+    next request instead of the next container restart."""
+    return os.environ.get("MEETINGS_INGEST_SECRET", "")
+
+
+def _caller_email(x_user_email: str) -> Optional[str]:
+    """The gateway sends X-User-Email: "" for anonymous traffic, so an empty
+    or whitespace-only value is the absence of a credential, not a user."""
+    return (x_user_email or "").strip() or None
+
+
+def _is_ingester(presented: str) -> bool:
+    expected = _ingest_secret()
+    if not expected:
+        return False
+    return secrets.compare_digest((presented or "").strip(), expected)
+
+
+def _denied() -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail="Authentication required: sign in, or present the ingest secret",
+    )
+
+
+async def require_user(x_user_email: str = Header(default="")) -> str:
+    """Reading and deleting meetings is for signed-in platform users only."""
+    email = _caller_email(x_user_email)
+    if not email:
+        raise _denied()
+    return email
+
+
+async def require_user_or_ingest(
+    x_user_email: str = Header(default=""),
+    x_meetings_ingest_secret: str = Header(default=""),
+) -> str:
+    """Creating and updating additionally allows the transcript ingester."""
+    email = _caller_email(x_user_email)
+    if email:
+        return email
+    if _is_ingester(x_meetings_ingest_secret):
+        return "machine:ingest"
+    raise _denied()
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +233,10 @@ async def health():
 
 
 @app.post("/", response_model=MeetingResponse, status_code=201)
-async def create_meeting(meeting: MeetingCreate):
+async def create_meeting(
+    meeting: MeetingCreate,
+    caller: str = Depends(require_user_or_ingest),
+):
     if not _session_maker:
         raise HTTPException(status_code=503, detail="Database not initialized")
 
@@ -195,6 +264,7 @@ async def list_meetings(
     search: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    caller: str = Depends(require_user),
 ):
     if not _session_maker:
         raise HTTPException(status_code=503, detail="Database not initialized")
@@ -217,7 +287,7 @@ async def list_meetings(
 
 
 @app.get("/{meeting_id}", response_model=MeetingResponse)
-async def get_meeting(meeting_id: str):
+async def get_meeting(meeting_id: str, caller: str = Depends(require_user)):
     if not _session_maker:
         raise HTTPException(status_code=503, detail="Database not initialized")
 
@@ -239,7 +309,11 @@ async def get_meeting(meeting_id: str):
 
 
 @app.put("/{meeting_id}", response_model=MeetingResponse)
-async def update_meeting(meeting_id: str, update: MeetingUpdate):
+async def update_meeting(
+    meeting_id: str,
+    update: MeetingUpdate,
+    caller: str = Depends(require_user_or_ingest),
+):
     if not _session_maker:
         raise HTTPException(status_code=503, detail="Database not initialized")
 
@@ -270,7 +344,7 @@ async def update_meeting(meeting_id: str, update: MeetingUpdate):
 
 
 @app.delete("/{meeting_id}", status_code=204)
-async def delete_meeting(meeting_id: str):
+async def delete_meeting(meeting_id: str, caller: str = Depends(require_user)):
     if not _session_maker:
         raise HTTPException(status_code=503, detail="Database not initialized")
 
