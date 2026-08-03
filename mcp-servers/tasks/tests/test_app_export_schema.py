@@ -57,6 +57,52 @@ async def test_empty_database_yields_honest_header():
     assert "no tables found" in sql.lower()
 
 
+SERIAL = {
+    "information_schema.columns": [
+        {"table_name": "items", "column_name": "id", "data_type": "bigint",
+         "is_nullable": "NO",
+         "column_default": "nextval('items_id_seq'::regclass)"},
+        {"table_name": "items", "column_name": "hits", "data_type": "integer",
+         "is_nullable": "NO",
+         "column_default": "nextval('items_hits_seq'::regclass)"},
+        {"table_name": "items", "column_name": "title", "data_type": "text",
+         "is_nullable": "YES", "column_default": None},
+    ],
+    "relrowsecurity": [{"relname": "items", "relrowsecurity": True}],
+    "pg_policies": [],
+}
+
+
+async def test_serial_columns_do_not_reference_a_sequence_that_is_never_created():
+    """Found by docs/superpowers/scripts/2026-08-03-prove-export-replays.py
+    replaying a real dump: `bigserial` introspects as
+    `bigint DEFAULT nextval('items_id_seq'::regclass)`, and nothing ever
+    emitted CREATE SEQUENCE, so the restore died with
+
+        UndefinedTableError: relation "items_id_seq" does not exist
+
+    on the very first statement. That hits every app with an auto-increment
+    id, not only the roles apps. Emitting the serial type instead makes
+    Postgres create the sequence itself."""
+    sql = await app_export.build_schema_sql(_runner(SERIAL))
+    assert "nextval" not in sql, (
+        "a nextval default names a sequence the dump never creates"
+    )
+    assert '"id" bigserial' in sql
+    assert '"hits" serial' in sql
+    assert '"title" text' in sql, "ordinary columns must be untouched"
+
+
+async def test_serial_column_keeps_its_not_null():
+    sql = await app_export.build_schema_sql(_runner(SERIAL))
+    assert '"id" bigserial NOT NULL' in sql
+
+
+async def test_ordinary_defaults_are_still_preserved():
+    sql = await app_export.build_schema_sql(_runner(CANNED))
+    assert '"title" text DEFAULT \'untitled\'::text' in sql
+
+
 async def test_views_are_skipped_not_faked_as_tables():
     """information_schema.columns includes VIEWS; pg_class relkind='r' does
     not. A view must never render as CREATE TABLE with a bogus RLS warning."""

@@ -181,21 +181,45 @@ async def main():
         check("restored regular user sees only their own", staff_sees == 1,
               f"saw {staff_sees}, wanted 1")
 
-        # The guard trigger is the piece that was silently lost before the fix.
-        await dst.execute("SET ROLE authenticated")
-        await dst.execute("SELECT set_config('request.jwt.claim.sub',"
-                          "'22222222-2222-2222-2222-222222222222',false)")
-        escalated = False
-        try:
-            await dst.execute("UPDATE profiles SET role='admin' WHERE id=auth.uid()")
-            escalated = True
-        except Exception:
-            pass
-        await dst.execute("RESET ROLE")
-        role_now = await dst.fetchval(
-            "SELECT role FROM profiles WHERE email='staff@example.com'")
-        check("restored app still blocks self-promotion",
-              not escalated and role_now == "user", f"role is now {role_now!r}")
+        # Self-promotion, twice over.
+        #
+        # First with the policies exactly as exported. RLS filters the UPDATE
+        # to zero rows, so nothing is raised and nothing changes. Asserting on
+        # an exception here would be wrong — the outcome that matters is the
+        # role, not whether Postgres complained.
+        async def try_promote():
+            await dst.execute("SET ROLE authenticated")
+            await dst.execute("SELECT set_config('request.jwt.claim.sub',"
+                              "'22222222-2222-2222-2222-222222222222',false)")
+            raised = ""
+            try:
+                await dst.execute(
+                    "UPDATE profiles SET role='admin' WHERE id=auth.uid()")
+            except Exception as exc:
+                raised = str(exc)
+            finally:
+                await dst.execute("RESET ROLE")
+            role = await dst.fetchval(
+                "SELECT role FROM profiles WHERE email='staff@example.com'")
+            return raised, role
+
+        _, role_now = await try_promote()
+        check("restored app blocks self-promotion (RLS)", role_now == "user",
+              f"role is now {role_now!r}")
+
+        # Now the case the guard trigger exists for. If a later edit adds a
+        # permissive "users may update their own profile" policy, RLS stops
+        # filtering and only the trigger stands between a regular user and
+        # admin. This is the piece the exporter used to drop entirely, so a
+        # restored app looked fine until someone added that policy.
+        await dst.execute(
+            "CREATE POLICY profiles_update_own ON profiles FOR UPDATE TO "
+            "authenticated USING (id = auth.uid()) WITH CHECK (id = auth.uid())")
+        raised, role_now = await try_promote()
+        check("restored guard trigger blocks escalation once a permissive "
+              "policy exists",
+              role_now == "user" and "only an admin can change a role" in raised,
+              f"role={role_now!r} raised={raised[:80]!r}")
 
         print(f"\n=== {len(PASS)} passed, {len(FAIL)} failed ===")
         if FAIL:

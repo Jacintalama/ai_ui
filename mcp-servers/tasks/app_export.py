@@ -183,6 +183,33 @@ _Q_TRIGGERS = (
 )
 
 
+_SERIAL_FOR = {
+    "smallint": "smallserial",
+    "integer": "serial",
+    "bigint": "bigserial",
+}
+
+
+def _column_type_and_default(data_type: str, default):
+    """Render a column's type and DEFAULT, collapsing serials back to serial.
+
+    A `bigserial` column introspects as `bigint` with the default
+    `nextval('items_id_seq'::regclass)`. Emitting that verbatim names a
+    sequence the dump never creates, so the restore dies on the first
+    statement with `relation "items_id_seq" does not exist` — which is what a
+    real replay produced on 2026-08-03. Writing `bigserial` instead makes
+    Postgres create the sequence itself.
+
+    Caveat, and the reason this is not silently perfect: a sequence with a
+    non-default name comes back named `<table>_<column>_seq`. The data and
+    behaviour are identical; only the sequence's name can differ.
+    """
+    default = (default or "").strip()
+    if default.startswith("nextval(") and data_type in _SERIAL_FOR:
+        return _SERIAL_FOR[data_type], None
+    return data_type, default or None
+
+
 async def _read_or_disclose(run_sql, query: str, what: str) -> tuple[list, str]:
     """Run an introspection query, or disclose loudly that it could not run.
 
@@ -251,9 +278,11 @@ async def build_schema_sql(run_sql) -> str:
     for table, tcols in by_table.items():
         defs = []
         for c in tcols:
-            d = f'  "{c["column_name"]}" {c["data_type"]}'
-            if c.get("column_default"):
-                d += f' DEFAULT {c["column_default"]}'
+            col_type, default = _column_type_and_default(
+                c.get("data_type") or "", c.get("column_default"))
+            d = f'  "{c["column_name"]}" {col_type}'
+            if default:
+                d += f" DEFAULT {default}"
             if c.get("is_nullable") == "NO":
                 d += " NOT NULL"
             defs.append(d)
