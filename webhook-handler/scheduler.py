@@ -5,6 +5,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Callable, Any
 import httpx
 import logging
+import socket
+from urllib.parse import urlparse
 
 from config import settings, get_service_endpoints
 
@@ -341,6 +343,35 @@ async def _trigger_n8n_workflow(
         _user_jobs[job_id]["last_status"] = status
 
 
+def _n8n_reachable(n8n_url: str, timeout: float = 3.0) -> bool:
+    """Can we open a TCP connection to n8n at all?
+
+    A cheap pre-flight, not a health check. It exists because the create path
+    used to return success for a job that could never fire: the configured host
+    (`n8n:5678`) stopped existing when the local container was removed, so the
+    name does not even resolve, and every firing failed into a `last_status`
+    field no surface reads. The user was told it worked, permanently.
+
+    Deliberately a socket connect rather than an HTTP call: we only need to know
+    whether the address is real, and n8n answers unauthenticated requests with
+    404s that are easy to misread as healthy.
+
+    Any failure -- DNS, refused, malformed URL -- means unreachable. Never
+    raises: a broken check must not break the tool that calls it.
+    """
+    try:
+        parsed = urlparse((n8n_url or "").strip())
+        host = parsed.hostname
+        if not host:
+            return False
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        conn = socket.create_connection((host, port), timeout=timeout)
+        conn.close()
+        return True
+    except Exception:  # noqa: BLE001 - unreachable is the answer, not an error
+        return False
+
+
 def create_user_cron_job(
     job_id: str,
     cron_expression: str,
@@ -385,6 +416,26 @@ def create_user_cron_job(
     existing_count = sum(1 for jid in _user_jobs if jid != job_id)
     if existing_count >= max_user_jobs:
         return {"success": False, "error": f"Maximum of {max_user_jobs} user jobs reached"}
+
+    # Refuse rather than lie. Every one of these jobs does nothing but POST to
+    # n8n, so an unreachable n8n means the job can never do anything -- and
+    # reporting success for it is worse than reporting failure, because the
+    # user stops looking. Point them at the scheduler that actually persists:
+    # these jobs live in a plain dict and are lost on every restart, while
+    # tasks.schedules is Postgres-backed with five self-serve surfaces.
+    if not _n8n_reachable(n8n_url):
+        logger.warning(
+            "refusing cron job '%s': n8n unreachable at %r", job_id, n8n_url)
+        return {
+            "success": False,
+            "error": (
+                f"n8n is not reachable at {n8n_url or '(not configured)'}, so "
+                "this job could never run. Nothing was created. To schedule a "
+                "recurring task, ask me to schedule it directly (for example "
+                '"summarize my emails every morning at 8am") — those run on '
+                "the platform's own scheduler and survive restarts."
+            ),
+        }
 
     # Calculate expiry
     now = datetime.now(timezone.utc)

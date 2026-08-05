@@ -1702,7 +1702,7 @@ class CommandRouter:
             await ctx.respond(
                 "Gmail workflow not found in n8n. Please create a workflow named "
                 "`gmail-inbox-summary` with a Webhook trigger and Gmail node.\n"
-                "n8n UI: https://ai-ui.coolestdomain.win/n8n"
+                f"n8n UI: {settings.n8n_public_url}"
             )
             return
 
@@ -1712,7 +1712,7 @@ class CommandRouter:
                 "The Gmail workflow ran but returned no data. Likely causes:\n"
                 "- Gmail OAuth credential not connected in n8n\n"
                 "- OAuth token expired — re-authorize in n8n Credentials\n\n"
-                f"Check: https://ai-ui.coolestdomain.win/n8n"
+                f"Check: {settings.n8n_public_url}"
             )
         elif isinstance(result, dict) and "emails" in result:
             emails = result["emails"]
@@ -1795,7 +1795,7 @@ class CommandRouter:
             await ctx.respond(
                 "Sheets workflow not found in n8n. Please create a workflow named "
                 "`sheets-report` with a Webhook trigger and Google Sheets node.\n"
-                "n8n UI: https://ai-ui.coolestdomain.win/n8n"
+                f"n8n UI: {settings.n8n_public_url}"
             )
             return
 
@@ -1806,7 +1806,7 @@ class CommandRouter:
                 "- Google Sheets OAuth credential not connected\n"
                 "- Sheet ID not configured (still has placeholder)\n"
                 "- OAuth token expired\n\n"
-                "Check: https://ai-ui.coolestdomain.win/n8n"
+                f"Check: {settings.n8n_public_url}"
             )
         elif isinstance(result, dict) and result.get("sheet_url"):
             await ctx.respond(

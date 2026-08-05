@@ -78,6 +78,13 @@ class Settings(BaseSettings):
 
     # n8n
     n8n_url: str = "http://n8n:5678"
+    # Where to send a HUMAN when a workflow needs attention. `n8n_url` above is
+    # a container address and is useless in a chat message. Four error messages
+    # used to point at https://ai-ui.coolestdomain.win/n8n, which has returned
+    # 502 since the local n8n container was removed on 2026-07-09; the team's
+    # real instance is the hosted one, which routes_cron.py and outreach.py
+    # already default to.
+    n8n_public_url: str = "https://n8n.srv1041674.hstgr.cloud"
     n8n_webhook_url: str = "http://n8n:5678"
     n8n_api_key: str = ""
 
