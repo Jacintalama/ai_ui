@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import crypto_utils
-from auth import AdminUser, current_admin
+from auth import CurrentUser, current_user
 from db import session
 from models import ProjectSupabase
 from routes_projects import _require_role, _validate_slug
@@ -45,7 +45,7 @@ class SupabaseConfigStatus(BaseModel):
 
 
 @router.get("/{slug}/supabase", response_model=SupabaseConfigStatus)
-async def get_supabase(slug: str, user: AdminUser = Depends(current_admin)):
+async def get_supabase(slug: str, user: CurrentUser = Depends(current_user)):
     _validate_slug(slug)
     async with session() as s:
         await _require_role(s, slug, user.email, "viewer", is_admin=user.is_admin)
@@ -69,7 +69,7 @@ async def get_supabase(slug: str, user: AdminUser = Depends(current_admin)):
 async def set_supabase(
     slug: str,
     body: SupabaseConfigRequest,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ):
     _validate_slug(slug)
     url = body.supabase_url.strip()
@@ -152,7 +152,7 @@ async def set_supabase(
 
 
 @router.delete("/{slug}/supabase", status_code=204)
-async def delete_supabase(slug: str, user: AdminUser = Depends(current_admin)):
+async def delete_supabase(slug: str, user: CurrentUser = Depends(current_user)):
     _validate_slug(slug)
     async with session() as s:
         await _require_role(s, slug, user.email, "owner")

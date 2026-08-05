@@ -75,7 +75,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import crypto_utils
-from auth import AdminUser, current_admin
+from auth import CurrentUser, current_user
 from db import session
 from models import ChatMessage, ProjectSupabase
 from routes_projects import _require_role, _validate_slug
@@ -128,7 +128,7 @@ def _read_state(state: str) -> dict:
 
 
 @router.get("/api/projects/{slug}/supabase/oauth/start")
-async def oauth_start(slug: str, user: AdminUser = Depends(current_admin)):
+async def oauth_start(slug: str, user: CurrentUser = Depends(current_user)):
     """Begin the OAuth flow for a project. Owner-only. 302 → Supabase."""
     _validate_slug(slug)
     if not CLIENT_ID or not CLIENT_SECRET:
@@ -290,7 +290,7 @@ class SupabaseProjectListItem(BaseModel):
 
 @router.get("/api/projects/{slug}/supabase/oauth/projects",
             response_model=list[SupabaseProjectListItem])
-async def list_oauth_projects(slug: str, user: AdminUser = Depends(current_admin)):
+async def list_oauth_projects(slug: str, user: CurrentUser = Depends(current_user)):
     """List the user's Supabase projects (via Management API).
     Owner-only on our project, requires the OAuth token."""
     _validate_slug(slug)
@@ -387,7 +387,7 @@ async def _link_project(s, row: ProjectSupabase, project_ref: str,
 async def link_oauth_project(
     slug: str,
     body: LinkProjectRequest,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ):
     """Link a Supabase project: fetches its anon key + URL via Management API
     and stores them on project_supabase. Owner-only."""
@@ -448,7 +448,7 @@ class AutoLinkCreate(BaseModel):
 @router.post("/api/projects/{slug}/supabase/oauth/auto-link")
 async def auto_link_oauth(
     slug: str,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ) -> AutoLinkLinked | AutoLinkPick | AutoLinkCreate:
     """Decide what to do after OAuth based on project count.
 
@@ -533,7 +533,7 @@ class CreateProjectResponse(BaseModel):
 async def create_oauth_project(
     slug: str,
     body: CreateProjectRequest,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ):
     """Create a brand-new Supabase project on behalf of the user.
 
@@ -624,7 +624,7 @@ class CreateStatusFailed(BaseModel):
 @router.get("/api/projects/{slug}/supabase/oauth/create-status")
 async def create_status(
     slug: str,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ) -> CreateStatusCreating | CreateStatusReady | CreateStatusFailed:
     """Polled by the frontend while a newly-created project is provisioning."""
     _validate_slug(slug)
@@ -677,7 +677,7 @@ async def create_status(
 
 
 @router.delete("/api/projects/{slug}/supabase/oauth", status_code=204)
-async def disconnect_oauth(slug: str, user: AdminUser = Depends(current_admin)):
+async def disconnect_oauth(slug: str, user: CurrentUser = Depends(current_user)):
     """Drop OAuth tokens + linked_project_ref. Manual config (URL/key/db_uri)
     stays put if previously set."""
     _validate_slug(slug)
