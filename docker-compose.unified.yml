@@ -584,6 +584,21 @@ services:
       - MICROSOFT_CLIENT_TENANT_ID=${MICROSOFT_TENANT_ID:-consumers}
       - MICROSOFT_REDIRECT_URI=${WEBUI_URL:-http://localhost}/oauth/microsoft/callback
       - OPENID_PROVIDER_URL=${OPENID_PROVIDER_URL:-}
+      # Google sign-in for the PLATFORM login page (the "Continue with Google"
+      # button next to "Continue with Microsoft"). Open WebUI registers the
+      # provider only when both id and secret are non-empty
+      # (backend/open_webui/config.py:2621), so this stays dormant until
+      # WEBUI_GOOGLE_CLIENT_ID is set in .env.
+      #
+      # Deliberately NOT reusing the existing GOOGLE_CLIENT_ID: that one powers
+      # the Gmail and Drive connectors, and its authorized redirect URIs do not
+      # include this callback. Wiring it here would light up a button that fails
+      # with redirect_uri_mismatch for everyone who clicks it — verified against
+      # Google on 2026-08-05. Turning it on is a two-minute console step, see
+      # docs/runbooks/google-signin-setup.md.
+      - GOOGLE_CLIENT_ID=${WEBUI_GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${WEBUI_GOOGLE_CLIENT_SECRET:-}
+      - GOOGLE_REDIRECT_URI=${WEBUI_URL:-http://localhost}/oauth/google/callback
       - OAUTH_MERGE_ACCOUNTS_BY_EMAIL=true
       - WEBUI_URL=${WEBUI_URL:-http://localhost}
       # Group Management
