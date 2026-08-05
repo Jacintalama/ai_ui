@@ -13,7 +13,7 @@ from dataclasses import dataclass
 INTENTS = (
     "build_app", "schedule_task", "make_video", "find_jobs",
     "find_engineers", "summarize_email", "web_research", "daily_briefing",
-    "my_workspace", "question",
+    "my_workspace", "rollback_app", "question",
 )
 
 # Intents the bot runs end-to-end from chat -> these get a clarify question first.
@@ -44,6 +44,8 @@ class IntentResult:
     detail: str  # the request restated as a short instruction (carried forward)
     when: str = ""  # schedule_task only: the time/recurrence phrase ("every morning at 8am")
     task: str = ""  # schedule_task only: what to do ("summarize my emails")
+    app: str = ""    # rollback_app only: which app, if the user named one ("shop")
+    point: str = ""  # rollback_app only: where to go back to ("before the cart broke")
 
 
 @dataclass
@@ -62,7 +64,10 @@ def build_classify_messages(text: str) -> list[dict]:
         '"confidence": <number 0..1>, "detail": <the request restated as a short '
         'instruction, no greeting>, "when": <for schedule_task only: the time or '
         'recurrence phrase, e.g. "every morning at 8am"; else "">, "task": <for '
-        'schedule_task only: what to do, e.g. "summarize my emails"; else "">}. '
+        'schedule_task only: what to do, e.g. "summarize my emails"; else "">, '
+        '"app": <for rollback_app only: the app they named, e.g. "shop"; "" if '
+        'they did not name one>, "point": <for rollback_app only: where to go '
+        'back to, in their own words, e.g. "before the cart broke"; else "">}. '
         "Guidance: build_app = make a website/app/form/landing page. "
         "schedule_task = anything recurring or time-based. make_video = a video. "
         "find_jobs = the user is job hunting. find_engineers = the user wants to "
@@ -72,6 +77,10 @@ def build_classify_messages(text: str) -> list[dict]:
         "my_workspace = the user wants to see or manage their own stuff (their "
         "apps, schedules, videos; e.g. 'my workspace', 'my apps', 'what have I "
         "made', 'show my stuff'). "
+        "rollback_app = undo a change to an app they already built and go back "
+        "to an earlier version (e.g. 'go back to before the cart broke', 'undo "
+        "that', 'revert the shop to when it worked'). Put their description of "
+        'the point in time in "point" verbatim -- do not rephrase it. '
         'If it is just a question, small talk, or you are unsure, use "question" '
         "with a low confidence. Output JSON only."
     )
@@ -102,9 +111,71 @@ def parse_classification(raw: str, fallback_detail: str = "") -> IntentResult:
         detail = str(data.get("detail") or fallback_detail).strip()
         when = str(data.get("when") or "").strip()
         task = str(data.get("task") or "").strip()
-        return IntentResult(intent, conf, detail, when=when, task=task)
+        app = str(data.get("app") or "").strip()
+        point = str(data.get("point") or "").strip()
+        return IntentResult(intent, conf, detail, when=when, task=task,
+                            app=app, point=point)
     except Exception:  # noqa: BLE001 - any malformed reply degrades to a question
         return IntentResult("question", 0.0, fallback_detail)
+
+
+def build_rollback_pick_messages(phrase: str, candidates: list[dict]) -> list[dict]:
+    """Ask the model to choose among versions that ALREADY EXIST. Pure -- no I/O.
+
+    The list is supplied in the prompt and the answer is validated against it by
+    pick_from_candidates, so the model's job is ranking, never naming. It has no
+    information the deterministic rules lack (same messages, same dates); its
+    only edge is paraphrase -- matching "the checkout thing" to "add payment
+    flow" -- which is exactly what a keyword rule cannot do.
+    """
+    listing = "\n".join(
+        f"- {c.get('short_sha', '')}  {c.get('message', '')}  ({c.get('date', '')})"
+        for c in candidates
+    )
+    system = (
+        "The user wants to roll an app back to an earlier version. Below are the "
+        "ONLY versions that exist. Pick the single one they mean.\n\n"
+        f"{listing}\n\n"
+        'Reply with ONLY a JSON object: {"sha": "<the short sha of your pick>"}. '
+        "You must copy a sha from the list exactly. If none of them clearly "
+        'match what the user said, reply {"sha": ""}.'
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": phrase or ""},
+    ]
+
+
+def pick_from_candidates(raw: str, candidates: list[dict]) -> dict | None:
+    """Validate a model's pick against the real list. Pure -- no I/O.
+
+    Returns the candidate OBJECT (not a copy, not a reconstruction) or None.
+    None means "the model did not give us a usable answer" and the caller must
+    fall back to showing the list -- never to picking something itself.
+
+    This is the safety boundary. Rollback mutates the user's app, and a
+    hallucinated sha would either error in the user's face or, worse, match an
+    unrelated commit elsewhere in the monorepo.
+    """
+    if not candidates:
+        return None
+    try:
+        data = json.loads(_extract_json(raw))
+    except Exception:  # noqa: BLE001 - any malformed reply -> no pick
+        return None
+    if not isinstance(data, dict):
+        return None
+    sha = str(data.get("sha") or "").strip().lower()
+    if not sha:
+        return None
+    for cand in candidates:
+        full = str(cand.get("sha", "")).lower()
+        short = str(cand.get("short_sha", "")).lower()
+        if not full and not short:
+            continue
+        if sha == full or sha == short or (short and full.startswith(sha)):
+            return cand
+    return None
 
 
 def build_clarify_messages(intent: str, text: str) -> list[dict]:

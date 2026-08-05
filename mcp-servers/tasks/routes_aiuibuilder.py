@@ -13,7 +13,7 @@ import uuid
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select, text, update
 
@@ -23,6 +23,7 @@ from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
 from prompt_utils import clean_user_prompt
 from templates import is_valid_key
 from chat_seed import seed_user_prompt
+from rollback_pick import choose_rollback_target
 from routes_projects import (
     _delete_slug, _publish_slug, _unpublish_slug, _validate_slug,
     _require_role, _user_can_see_project,
@@ -733,6 +734,39 @@ async def list_built_app_versions(slug: str, user: CurrentUser = Depends(current
             raise HTTPException(status_code=403, detail="Not a member of this project")
         await _require_role(s, slug, user.email, "owner", is_admin=False)
     return await list_app_versions_core(slug)
+
+
+@router.get("/{slug}/rollback/resolve")
+async def resolve_rollback_target(
+    slug: str,
+    phrase: str = Query("", description="what the user said, e.g. 'before it broke'"),
+    user: CurrentUser = Depends(current_user),
+):
+    """Work out which version a plain sentence means. READ-ONLY.
+
+    Deliberately separate from POST /rollback so the user sees the target and
+    the reason BEFORE anything is written — resolving is safe and repeatable,
+    rolling back is not. Owner-only, same gate as the rollback route: a version
+    list plus which builds failed is not public information.
+
+    Returns the picker's decision as-is. `target` null with
+    `needs_user_choice` true means "ask them"; both null means "nothing is
+    possible", and `reason` says why in a sentence.
+    """
+    _validate_slug(slug)  # fast-fail before touching the DB pool
+    async with session() as s:
+        if not await _user_can_see_project(s, slug, user.email):
+            raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "owner", is_admin=False)
+
+    versions = [v.model_dump() for v in await list_app_versions_core(slug)]
+    choice = choose_rollback_target(versions, phrase)
+    return {
+        "target": choice.target,
+        "reason": choice.reason,
+        "needs_user_choice": choice.needs_user_choice,
+        "candidates": choice.candidates,
+    }
 
 
 @router.post("/{slug}/rollback")

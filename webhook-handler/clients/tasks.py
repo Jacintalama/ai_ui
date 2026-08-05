@@ -254,6 +254,29 @@ class TasksClient:
         )
         return resp.json()
 
+    async def resolve_rollback(
+        self, user_email: str, slug: str, phrase: str,
+    ) -> dict[str, Any]:
+        """Which version does this sentence mean? READ-ONLY — changes nothing.
+        Kept separate from rollback_app so the user can be shown the target and
+        the reason before agreeing to anything."""
+        resp = await self._request(
+            "GET", f"/api/aiuibuilder/{slug}/rollback/resolve", user_email,
+            params={"phrase": phrase},
+        )
+        return resp.json()
+
+    async def rollback_app(
+        self, user_email: str, slug: str, sha: str,
+    ) -> dict[str, Any]:
+        """Restore the app to `sha`. Owner-only; the service commits on top of
+        HEAD rather than rewriting history, so this stays undoable."""
+        resp = await self._request(
+            "POST", f"/api/aiuibuilder/{slug}/rollback", user_email,
+            json={"sha": sha},
+        )
+        return resp.json()
+
     async def list_templates(self, user_email: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", "/api/aiuibuilder/templates", user_email)
         return resp.json()

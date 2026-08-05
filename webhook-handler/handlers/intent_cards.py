@@ -20,7 +20,33 @@ _VERB = {
     "summarize_email": "summarize your email",
     "web_research": "research that for you",
     "daily_briefing": "set up a daily morning briefing",
+    "rollback_app": "roll an app back to an earlier version",
 }
+
+
+def rollback_confirm_line(app: str, target: dict, reason: str) -> str:
+    """Exactly what is about to happen, before anything happens.
+
+    Names the app, the version and WHY that version, so the user can check the
+    reasoning rather than trust it. Says it is undoable because it genuinely is:
+    rollback_app_core commits on top of HEAD instead of rewriting history, so
+    the newer versions stay in the log.
+
+    Present tense throughout -- nothing has happened yet at this point.
+    """
+    short = target.get("short_sha") or target.get("sha", "")[:7]
+    message = (target.get("message") or "").strip()
+    when = (target.get("date") or "").replace("T", " ")[:16]
+    head = f"I can roll **{app}** back to `{short}`"
+    if message:
+        head += f' — "{message}"'
+    if when:
+        head += f" ({when})"
+    return (
+        f"{head}.\n"
+        f"Why this one: {reason}.\n"
+        "Your newer versions stay in the history, so this is undoable."
+    )
 
 
 def confirm_line(intent: str, detail: str) -> str:
