@@ -10,10 +10,13 @@ never logged, and never returned to the client after connect.
 """
 import asyncio
 import base64
+import logging
 import os
 import re
 import secrets
 import time
+
+from dataclasses import dataclass
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -22,6 +25,8 @@ from pydantic import BaseModel
 
 import crypto_utils
 from auth import current_user, CurrentUser
+
+logger = logging.getLogger("tasks.vercel")
 
 router = APIRouter(prefix="/vercel")
 
@@ -111,6 +116,107 @@ def collect_files(root: str, max_files: int = MAX_FILES,
     if not out:
         raise ValueError("no deployable files in this app")
     return out
+
+
+@dataclass(frozen=True)
+class SupabaseDeployConfig:
+    """The only two Supabase values allowed to leave the platform.
+
+    The anon key is public by design — RLS is the security boundary. The
+    connection string and the OAuth token are NOT here and must never be: this
+    payload is uploaded to a third party and served to every visitor. Keeping
+    the shape to exactly two fields means there is nowhere for a secret to be
+    added later without deleting a test.
+    """
+    url: str
+    anon_key: str
+
+
+CONFIG_FILENAME = "aiui-config.js"
+_CONFIG_TAG = '<script src="./aiui-config.js"></script>'
+
+
+def config_js_bytes(cfg: SupabaseDeployConfig, slug: str) -> bytes:
+    """Same globals IO's hosting injects at request time and export writes to
+    disk. A fourth spelling would silently break apps that work on IO."""
+    return (
+        "// Written by IO deploy. Your own Supabase project; the anon key is\n"
+        "// public by design (RLS is the security boundary).\n"
+        f"window.SUPABASE_URL = {cfg.url!r};\n"
+        f"window.SUPABASE_ANON_KEY = {cfg.anon_key!r};\n"
+        f"window.AIUI_SLUG = {slug!r};\n"
+    ).encode("utf-8")
+
+
+def _with_config_tag(html: str) -> str:
+    if "aiui-config.js" in html:
+        return html
+    i = html.lower().find("</head>")
+    if i == -1:
+        return _CONFIG_TAG + "\n" + html
+    return html[:i] + "  " + _CONFIG_TAG + "\n" + html[i:]
+
+
+def inject_supabase_config(pairs: list, cfg, slug: str = "") -> list:
+    """Add the Supabase config to a deploy payload. Pure.
+
+    IO serves built apps with `window.SUPABASE_URL` / `_ANON_KEY` injected into
+    index.html per request, so those values are deliberately absent from the
+    app's files. Shipping the files verbatim to Vercel therefore produced an app
+    that loads with both globals undefined — deployed, and dead on arrival.
+
+    Keyed on the project HAVING a link rather than on scanning the code for
+    Supabase usage: a marker scan fails open, and an app whose usage the markers
+    miss would deploy broken again, silently. An unused global is harmless.
+    """
+    if cfg is None:
+        return pairs
+    out = list(pairs)
+    names = {rel for rel, _ in out}
+    if CONFIG_FILENAME not in names:
+        out.append((CONFIG_FILENAME, config_js_bytes(cfg, slug)))
+    for i, (rel, data) in enumerate(out):
+        if rel != "index.html":
+            continue
+        try:
+            html = data.decode("utf-8")
+        except UnicodeDecodeError:
+            # Binary or an unexpected encoding: ship the config file anyway and
+            # leave the page untouched rather than writing back something
+            # mangled.
+            logger.warning("vercel: index.html for %r is not utf-8; config "
+                           "file shipped but not linked", slug)
+            break
+        out[i] = (rel, _with_config_tag(html).encode("utf-8"))
+        break
+    return out
+
+
+async def _supabase_deploy_config(slug: str):
+    """The project's Supabase link as the two public values, or None.
+
+    Reads the same row IO's own hosting reads (`_supabase_inject_for`) and
+    decrypts only the anon key — the db_uri and OAuth token stay behind. Fails
+    soft: a deploy should never be blocked because this lookup broke, and an
+    app without a database is the normal case.
+    """
+    try:
+        from db import session as _db_session
+        from models import ProjectSupabase as _ProjSb
+        from sqlalchemy import select as _select
+        async with _db_session() as s:
+            row = (await s.execute(
+                _select(_ProjSb).where(_ProjSb.slug == slug)
+            )).scalar_one_or_none()
+        if row is None or not row.supabase_url:
+            return None
+        return SupabaseDeployConfig(
+            url=row.supabase_url,
+            anon_key=crypto_utils.decrypt(row.anon_key_encrypted),
+        )
+    except Exception as e:  # noqa: BLE001 - never block a deploy on this
+        logger.warning("vercel: supabase config lookup failed for %s: %s", slug, e)
+        return None
 
 
 def to_vercel_files(pairs: list) -> list:
@@ -369,9 +475,13 @@ async def deploy_app(slug: str, user: CurrentUser = Depends(current_user)):
         if not os.path.isdir(app_dir):
             raise HTTPException(status_code=404, detail="App files not found.")
         try:
-            files = to_vercel_files(collect_files(app_dir))
+            pairs = collect_files(app_dir)
         except ValueError as e:
             raise HTTPException(status_code=413, detail=str(e))
+        # IO injects the Supabase globals per request, so they are not in the
+        # files. Without this the app deploys and is dead on arrival.
+        files = to_vercel_files(
+            inject_supabase_config(pairs, await _supabase_deploy_config(slug), slug))
 
         params = {"teamId": tok["team_id"]} if tok.get("team_id") else {}
         headers = {"Authorization": f"Bearer {tok['token']}"}
