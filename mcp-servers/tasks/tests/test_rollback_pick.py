@@ -227,6 +227,72 @@ def test_an_empty_phrase_asks_rather_than_defaulting():
 
 
 # ---------------------------------------------------------------------------
+# Real history from apps/portfolio/, which broke two rules the canned
+# fixtures above could not. Real App Builder commits are conventional-commit
+# style, so the app's own name is inside EVERY message.
+# ---------------------------------------------------------------------------
+
+REAL = [
+    v("f1", "chore: snapshot live VPS state into git", is_current=True),
+    v("f2", "feat(portfolio): move profile image to right side of hero"),
+    v("f3", "feat(portfolio): add profile photo to hero section"),
+    v("f4", "Rollback apps/portfolio/ to 8736cd7", status="rollback"),
+    v("f5", "feat(portfolio): replace circular avatar with full-width landscape banner"),
+    v("f6", "fix(portfolio): adjust profile image position to show full face"),
+    v("f7", "feat(portfolio): integrate uploaded profile image in hero avatar"),
+    v("f8", "style(portfolio): dark navy theme with teal accents"),
+    v("f9", "fix(portfolio): load main.js before Alpine so listener registers"),
+]
+
+
+def test_the_app_name_is_not_treated_as_a_feature():
+    """'portfolio' appears in every message, so it identifies nothing. Matching
+    on it returned the newest commit and a confident WRONG answer."""
+    choice = choose_rollback_target(REAL, "go back to before the portfolio")
+    assert choice.target is None, (
+        f"matched on the app's own name and picked "
+        f"{choice.target['message'][:40]!r}")
+    assert choice.needs_user_choice
+
+
+def test_the_best_keyword_match_wins_not_merely_the_newest():
+    """'profile photo' must hit 'add profile photo to hero section' (both
+    words), not 'move profile image to right side' (one word) just because
+    that one is newer."""
+    choice = choose_rollback_target(REAL, "go back to before the profile photo")
+    assert choice.target is not None
+    assert "move profile image" not in choice.reason, (
+        f"matched only 'profile' and took the newest: {choice.reason!r}")
+    assert "add profile photo" in choice.reason
+
+
+def test_a_distinctive_phrase_still_resolves_on_real_data():
+    choice = choose_rollback_target(REAL, "go back to before the dark navy theme")
+    assert choice.target is not None
+    assert "dark navy theme" in choice.reason
+
+
+def test_a_rollback_commit_CAN_be_the_target_even_though_it_is_odd_to_read():
+    """Deliberate. The app's state at a rollback commit is a real, distinct
+    state, so skipping past it would take the user somewhere they did not ask
+    for — further back than they said. The label reads oddly; the behaviour is
+    correct, and correct beats pretty for a destructive action.
+
+    Contrast test_a_rollback_commit_is_not_treated_as_a_feature_to_go_back_before:
+    a rollback is never something to go back BEFORE, but it can be a target.
+    """
+    choice = choose_rollback_target(REAL, "go back to before the profile photo")
+    assert choice.target is not None
+    assert choice.target["message"].startswith("Rollback")
+
+
+def test_real_history_with_no_failures_does_not_invent_one():
+    choice = choose_rollback_target(REAL, "go back to before it broke")
+    assert choice.target is None
+    assert choice.needs_user_choice
+
+
+# ---------------------------------------------------------------------------
 # The result must be safe to hand to rollback_app_core.
 # ---------------------------------------------------------------------------
 

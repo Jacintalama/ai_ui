@@ -72,6 +72,46 @@ def _keywords(phrase: str) -> list[str]:
     return [w for w in _norm(phrase).split() if w not in _STOPWORDS and len(w) > 2]
 
 
+def _discriminating(words: list[str], versions: list[Version]) -> list[str]:
+    """Drop words that appear in most messages, because they identify nothing.
+
+    Real App Builder commits are conventional-commit style — every message for
+    apps/portfolio/ starts `feat(portfolio):`. So "go back to before the
+    portfolio" matched the NEWEST commit and produced a confident wrong answer.
+    Found by running this picker over the real git history rather than the
+    canned fixtures, which all used bare messages.
+
+    Frequency is the general fix: it removes the app's own name without the
+    picker needing to be told the slug, and it removes house words like "feat"
+    or "fix" for free.
+    """
+    if not versions:
+        return words
+    limit = max(1, len(versions) // 2)
+    msgs = [_norm(v.get("message", "")) for v in versions]
+    keep = [w for w in words if sum(1 for m in msgs if w in m) <= limit]
+    # If every word was too common the user still said something; better to ask
+    # than to match on noise.
+    return keep
+
+
+def _best_match(versions: list[Version], words: list[str]) -> int:
+    """Index of the version whose message matches the MOST keywords, -1 if none.
+
+    Scored rather than first-hit: "profile photo" must land on "add profile
+    photo to hero section" (2 words) rather than on the newer "move profile
+    image to right side" (1 word). Ties go to the newer version, which is the
+    one the user is more likely to be undoing.
+    """
+    best_i, best_score = -1, 0
+    for i, ver in enumerate(versions):
+        msg = _norm(ver.get("message", ""))
+        score = sum(1 for w in words if w in msg)
+        if score > best_score:
+            best_i, best_score = i, score
+    return best_i
+
+
 def _rollbackish(ver: Version) -> bool:
     """Bookkeeping commits, not builds. Going 'before' one would walk the user
     backwards through their own undo history."""
@@ -138,19 +178,19 @@ def choose_rollback_target(versions: list[Version], phrase: str) -> RollbackChoi
     # 2. A named feature: "before the cart". More specific than the error rule,
     #    so it wins even when something later failed.
     if "before" in text or "since" in text:
-        words = _keywords(phrase)
+        words = _discriminating(_keywords(phrase), versions)
         if words:
-            for i, ver in enumerate(versions):
-                msg = _norm(ver.get("message", ""))
-                if any(w in msg for w in words):
-                    older = _older_than(versions, i)
-                    if not older:
-                        return RollbackChoice(
-                            reason=f"'{ver['message']}' is the oldest version, "
-                                   "so there is nothing before it.")
+            i = _best_match(versions, words)
+            if i >= 0:
+                ver = versions[i]
+                older = _older_than(versions, i)
+                if not older:
                     return RollbackChoice(
-                        target=older[0],
-                        reason=f"the version just before '{ver['message']}'")
+                        reason=f"'{ver['message']}' is the oldest version, "
+                               "so there is nothing before it.")
+                return RollbackChoice(
+                    target=older[0],
+                    reason=f"the version just before '{ver['message']}'")
             # The user named something specific that is not in the history.
             # Falling through to another rule would look like it worked.
             if not any(w in text for w in _BROKE_WORDS):
