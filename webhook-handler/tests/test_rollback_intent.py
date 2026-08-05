@@ -51,7 +51,9 @@ def test_rollback_does_not_ask_a_clarifying_question_first():
 def test_the_classifier_prompt_teaches_the_new_intent():
     system = intent_router.build_classify_messages("x")[0]["content"]
     assert "rollback_app" in system
-    assert "app" in system and "point" in system, (
+    # Assert on the JSON KEYS. Plain "app" is a substring of build_app and
+    # rollback_app, so it passed even with the whole field clause deleted.
+    assert '"app":' in system and '"point":' in system, (
         "the prompt must ask for the two fields the resolver needs")
 
 
@@ -94,6 +96,19 @@ def test_a_malformed_reply_is_still_a_safe_question():
 
 def test_the_model_can_pick_one_of_the_real_candidates():
     assert pick_from_candidates('{"sha": "c3c3c3c"}', CANDIDATES)["short_sha"] == "c3c3c3c"
+
+
+def test_a_one_or_two_character_sha_is_not_an_answer():
+    """Review: `{"sha": "d"}` resolved to whichever candidate was newest, so a
+    model that effectively shrugged still produced a definite pick. Git's own
+    minimum unambiguous length is 7."""
+    for shrug in ("d", "d4", "d4d", "d4d4d", "d4d4d4"):
+        assert pick_from_candidates('{"sha": "%s"}' % shrug, CANDIDATES) is None, shrug
+
+
+def test_a_prefix_matching_two_candidates_is_rejected_as_ambiguous():
+    ambiguous = CANDIDATES + [_cand("d4d4d4dbeef", "a near-identical sha")]
+    assert pick_from_candidates('{"sha": "d4d4d4d"}', ambiguous) is None
 
 
 def test_a_sha_outside_the_candidate_list_is_refused():
@@ -160,6 +175,6 @@ def test_the_confirm_never_claims_a_rollback_has_already_happened():
             f"{past_tense!r} implies it is already done; nothing has happened yet")
 
 
-@pytest.mark.parametrize("verb", ["_VERB", "rollback_app"])
-def test_the_intent_has_a_human_verb_for_the_generic_cards(verb):
+def test_the_intent_has_a_human_verb_for_the_generic_cards():
     assert "rollback_app" in intent_cards._VERB
+    assert intent_cards._VERB["rollback_app"].strip()

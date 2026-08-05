@@ -166,16 +166,17 @@ def pick_from_candidates(raw: str, candidates: list[dict]) -> dict | None:
     if not isinstance(data, dict):
         return None
     sha = str(data.get("sha") or "").strip().lower()
-    if not sha:
+    # A short prefix is not an answer. Review showed `{"sha": "d"}` resolved to
+    # whichever candidate happened to be newest, so a model that effectively
+    # shrugged still produced a definite pick. Git's own minimum is 7.
+    if len(sha) < 7:
         return None
-    for cand in candidates:
-        full = str(cand.get("sha", "")).lower()
-        short = str(cand.get("short_sha", "")).lower()
-        if not full and not short:
-            continue
-        if sha == full or sha == short or (short and full.startswith(sha)):
-            return cand
-    return None
+    hits = [c for c in candidates
+            if str(c.get("sha", "")).lower().startswith(sha)
+            or sha.startswith(str(c.get("short_sha", "")).lower() or "\0")]
+    # Ambiguity is not a decision either: two candidates sharing a prefix means
+    # we do not know which was meant.
+    return hits[0] if len(hits) == 1 else None
 
 
 def build_clarify_messages(intent: str, text: str) -> list[dict]:

@@ -83,14 +83,14 @@ def _rollback_error_text(slug: str, err) -> str:
     if status == 409:
         detail = str(getattr(err, "message", "") or err)
         if "in progress" in detail.lower():
-            return (f"**{slug}** has a build running right now — let it finish "
+            return (f"{slug} has a build running right now — let it finish "
                     "and ask me again.")
-        return (f"**{slug}** has unsaved changes right now, so I didn't want to "
+        return (f"{slug} has unsaved changes right now, so I didn't want to "
                 "overwrite them.")
     if status == 403:
-        return f"You'd need to be the owner of **{slug}** to roll it back."
+        return f"You'd need to be the owner of {slug} to roll it back."
     if status == 404:
-        return f"I couldn't find that version in **{slug}**'s history any more."
+        return f"I couldn't find that version in {slug}'s history any more."
     return _ROLLBACK_UNAVAILABLE
 
 
@@ -496,7 +496,7 @@ class CommandRouter:
             return
         step = await self.plan_chat_step(
             ctx.user_id or "", text, threshold=0.6,
-            email=await self._resolve_email_for_ctx(ctx) or "")
+            resolve_email=lambda: self._resolve_email_for_ctx(ctx))
         await self._render_chat_step(ctx, step)
 
     def _persist(self, key: str, value, ttl_seconds: int | None = None) -> None:
@@ -636,16 +636,30 @@ class CommandRouter:
                 if slug.lower() == named:
                     return slug, ""
             listing = ", ".join(f"`{s}`" for s in slugs[:10])
-            return "", (f"I couldn't find an app called **{named}** that you own. "
-                        f"You have: {listing}.")
+            # "have access to", not "own": list_projects is membership-scoped.
+            return "", (f"I couldn't find an app called {named}. "
+                        f"You have access to: {listing}.")
         if len(slugs) == 1:
             return slugs[0], ""
         listing = ", ".join(f"`{s}`" for s in slugs[:10])
         return "", (f"Which app should I roll back? You have: {listing}.")
 
-    async def _plan_rollback(self, result, email: str) -> ChatStep:
+    async def _plan_rollback(self, result, resolve_email) -> ChatStep:
         """Resolve the target BEFORE asking, so the confirm can state exactly
-        what will happen and why. Nothing is written here."""
+        what will happen and why. Nothing is written here.
+
+        `resolve_email` is awaited lazily, only once we know this really is a
+        rollback. Resolving it eagerly for every chat message put an HTTP call
+        (Discord) or a rate-limited users.info call (Slack) on the hot path of
+        ordinary questions, and Discord's resolver can raise JSONDecodeError
+        when the tasks route falls through to Open WebUI's HTML catch-all —
+        which would have broken plain chat replies. Caught in review.
+        """
+        try:
+            email = await resolve_email()
+        except Exception as e:  # noqa: BLE001 - identity lookup must not break chat
+            logger.warning("rollback: email resolution failed: %s", e)
+            email = ""
         if not email:
             return ChatStep(
                 "suggest",
@@ -663,32 +677,60 @@ class CommandRouter:
         phrase = (result.point or result.detail or "").strip()
         try:
             res = await self._tasks_client.resolve_rollback(email, slug, phrase)
+        except TasksAPIError as e:
+            # list_projects returns projects the caller is a MEMBER of, but
+            # resolve requires OWNER — so a viewer on a shared app used to be
+            # told the service was down. Say the real reason.
+            logger.info("rollback: resolve rejected slug=%s: %s", slug, e)
+            return ChatStep("suggest", _rollback_error_text(slug, e))
         except Exception as e:  # noqa: BLE001
             logger.warning("rollback: resolve failed slug=%s: %s", slug, e)
             return ChatStep("suggest", _ROLLBACK_UNAVAILABLE)
 
         target = res.get("target")
+        reason = (res.get("reason") or "").strip()
         if not target:
-            reason = (res.get("reason") or "").strip()
             candidates = res.get("candidates") or []
             if res.get("needs_user_choice") and candidates:
-                lines = "\n".join(
-                    f"- `{c.get('short_sha', '')}` {c.get('message', '')}"
-                    for c in candidates
-                )
-                return ChatStep(
-                    "suggest",
-                    f"{reason or 'Which version should I go back to?'}\n{lines}\n"
-                    "Tell me which one and I'll roll it back.")
-            return ChatStep("suggest", reason or "I couldn't work out which "
-                                                "version you meant.")
+                # The rules could not decide. The model gets one shot at
+                # ranking — it sees only these candidates, and its answer is
+                # validated back against them, so it can rephrase ("the
+                # checkout thing" -> "add payment flow") but never invent.
+                picked = await self._rank_rollback_candidates(phrase, candidates)
+                if picked:
+                    target, reason = picked, "closest match to what you said"
+                else:
+                    lines = "\n".join(
+                        f"- `{c.get('short_sha', '')}` {c.get('message', '')}"
+                        for c in candidates
+                    )
+                    return ChatStep(
+                        "suggest",
+                        f"{reason or 'Which version should I go back to?'}\n{lines}\n"
+                        "Tell me which one and I'll roll it back.")
+            else:
+                return ChatStep("suggest", reason or "I couldn't work out which "
+                                                    "version you meant.")
 
         token = self.park_intent(
             "rollback_app", result.detail, app=slug, sha=str(target.get("sha", "")))
         return ChatStep(
             "confirm",
-            intent_cards.rollback_confirm_line(slug, target, res.get("reason", "")),
+            intent_cards.rollback_confirm_line(slug, target, reason),
             token)
+
+    async def _rank_rollback_candidates(self, phrase: str, candidates: list[dict]):
+        """Let the model choose among versions that already exist. Never raises;
+        a failure means "no pick", and the caller shows the list instead."""
+        try:
+            raw = await self.openwebui.chat_completion(
+                messages=intent_router.build_rollback_pick_messages(phrase, candidates),
+                model=self.ai_model,
+            )
+        except Exception as e:  # noqa: BLE001 - model/network failure -> show the list
+            logger.warning("rollback: candidate ranking failed: %s", e)
+            return None
+        return intent_router.pick_from_candidates(raw or "", candidates)
 
     async def run_rollback_from_chat(self, ctx: CommandContext, data: dict) -> None:
         """The user tapped Yes. Roll back to the SHA we showed them — not to
@@ -711,14 +753,14 @@ class CommandRouter:
             await ctx.respond(_ROLLBACK_UNAVAILABLE)
             return
         if res.get("noop"):
-            await ctx.respond(f"**{slug}** is already at that version — nothing to change.")
+            await ctx.respond(f"{slug} is already at that version — nothing to change.")
             return
         await ctx.respond(
-            f"Done — **{slug}** is back to `{sha[:7]}`. "
+            f"Done — {slug} is back to {sha[:7]}. "
             "Your newer versions are still in the history if you want them back.")
 
     async def plan_chat_step(self, uid: str, text: str, *, threshold: float,
-                             email: str = "") -> ChatStep:
+                             resolve_email=None) -> ChatStep:
         """Decide the next chat beat for a plain-English message. Platform-agnostic:
         mutates the shared pending-clarify state and parks confirm tokens, but does
         NOT post -- the caller renders the returned ChatStep. Assumes the router flag
@@ -754,7 +796,12 @@ class CommandRouter:
             return ChatStep("workspace", "")  # a read, not an action -> run it now
         if result.intent == "rollback_app":
             # Resolve now so the confirm names the exact version and the reason.
-            return await self._plan_rollback(result, email)
+            if resolve_email is None:
+                return ChatStep(
+                    "suggest",
+                    "I can't tell which account you are on here, so I can't "
+                    "roll an app back from this surface yet.")
+            return await self._plan_rollback(result, resolve_email)
         # every other actionable intent is confirm-class
         if result.intent in intent_router.EXECUTABLE:
             question = await intent_router.clarify_question(
@@ -794,7 +841,7 @@ class CommandRouter:
         async with _CHAT_SEMAPHORE:
             step = await self.plan_chat_step(
                 ctx.user_id or "", ctx.arguments or "", threshold=threshold,
-                email=await self._resolve_email_for_ctx(ctx) or "")
+                resolve_email=lambda: self._resolve_email_for_ctx(ctx))
             return await self._render_chat_step(ctx, step)
 
     async def handle_builder_thread_message(self, ctx: CommandContext, text: str) -> None:

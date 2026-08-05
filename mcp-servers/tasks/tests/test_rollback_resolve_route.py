@@ -4,7 +4,9 @@ Full behavior needs the DB tier; this pins the contract that can be checked
 without it. Assert via app.openapi(), NOT app.routes — container FastAPI 0.139
 includes routers lazily (memory lesson).
 """
+import ast
 import inspect
+import textwrap
 
 import routes_aiuibuilder
 from main import app
@@ -31,15 +33,49 @@ def test_resolve_takes_the_phrase_as_a_parameter():
     assert "slug" in names
 
 
+def _called_names(func) -> set[str]:
+    """Every name this function calls, via AST.
+
+    Rewritten after review, which pointed out that grepping the source for
+    "commit" fires on an innocent docstring edit (it did, immediately) while
+    still passing if the mutation moved into a helper. Parsing the calls is
+    both stricter and quieter.
+    """
+    src = textwrap.dedent(inspect.getsource(func))
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Call):
+            target = node.func
+            while isinstance(target, ast.Attribute):
+                names.add(target.attr)
+                target = target.value
+            if isinstance(target, ast.Name):
+                names.add(target.id)
+    return names
+
+
 def test_resolve_never_calls_the_thing_that_mutates():
     """The whole point of a separate resolve step: the user sees the target
-    before anything is written. Guard by source, so a future edit that wires
-    rollback_app_core in here fails loudly."""
-    src = inspect.getsource(routes_aiuibuilder.resolve_rollback_target)
-    assert "rollback_app_core" not in src, (
+    before anything is written."""
+    called = _called_names(routes_aiuibuilder.resolve_rollback_target)
+    assert "rollback_app_core" not in called, (
         "resolve must not roll back — it exists so the user can confirm first")
-    for verb in ("checkout", "commit"):
-        assert verb not in src, f"resolve must not run git {verb}"
+    assert "_run_git" not in called, "resolve must not touch git directly"
+
+
+def test_resolve_only_calls_things_that_read():
+    """Whitelist rather than blacklist: a NEW mutating helper is caught even
+    though nobody thought to ban it by name."""
+    allowed = {
+        "_validate_slug", "session", "_user_can_see_project", "_require_role",
+        "list_app_versions_core", "choose_rollback_target", "model_dump",
+        "HTTPException", "Depends", "current_user", "Query", "get",
+        "router", "v",  # the route decorator and a comprehension variable
+    }
+    unexpected = _called_names(routes_aiuibuilder.resolve_rollback_target) - allowed
+    assert not unexpected, (
+        f"resolve gained calls nobody vetted: {sorted(unexpected)}. If they "
+        f"read only, add them to the whitelist.")
 
 
 def test_resolve_is_owner_scoped_like_the_rollback_route():

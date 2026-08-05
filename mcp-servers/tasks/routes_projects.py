@@ -795,7 +795,15 @@ async def rollback_app_core(slug: str, sha: str, actor_email: str) -> dict:
     if rc != 0:
         raise HTTPException(status_code=500, detail=f"add failed: {out[:300]}")
 
-    rc, status_out = await _run_git("diff", "--cached", "--quiet")
+    # Both of these are scoped to this app's path. Without the pathspec the
+    # noop check read the WHOLE index and the commit swept in whatever else was
+    # staged — so a rollback on one slug could absorb another slug's staged
+    # changes under a message naming only this one. The advisory lock is keyed
+    # per-slug, so it does not serialize two different apps against each other
+    # in the shared work tree. Flagged in review once chat made rollback
+    # reachable by any owner at any moment.
+    rc, status_out = await _run_git(
+        "diff", "--cached", "--quiet", "--", f"apps/{slug}/")
     # --quiet returns 1 if there ARE changes, 0 if none. No `raise` — we
     # read the exit code.
     if rc == 0:
@@ -807,6 +815,7 @@ async def rollback_app_core(slug: str, sha: str, actor_email: str) -> dict:
         "-c", f"user.name={actor_email.split('@')[0]}",
         "commit",
         "-m", f"Rollback apps/{slug}/ to {sha[:7]}",
+        "--", f"apps/{slug}/",
     )
     if rc != 0:
         raise HTTPException(status_code=500, detail=f"commit failed: {out[:300]}")

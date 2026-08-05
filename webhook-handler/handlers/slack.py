@@ -35,14 +35,21 @@ class SlackWebhookHandler:
         normal AI reply runs."""
         if not settings.intent_router_enabled or self.router is None:
             return False
-        email = ""
-        if user_id and self.router._slack_client is not None:
-            try:
-                email = await self.router._slack_client.get_user_email(user_id) or ""
-            except Exception:  # noqa: BLE001 - no email just disables rollback
-                email = ""
+        # Lazy: resolving eagerly put a rate-limited users.info call on the hot
+        # path of every message, and only a rollback needs it.
+        async def _email() -> str:
+            if not user_id:
+                return ""
+            from handlers.commands import CommandContext
+            ctx = CommandContext(
+                user_id=user_id, user_name="", channel_id=channel, raw_text=text,
+                subcommand="", arguments=text, platform="slack",
+                respond=None, metadata={},
+            )
+            return await self.router._resolve_email_for_ctx(ctx) or ""
+
         step = await self.router.plan_chat_step(
-            user_id or channel, text, threshold=0.6, email=email)
+            user_id or channel, text, threshold=0.6, resolve_email=_email)
         if step.kind == "answer":
             return False
         if step.kind == "workspace":

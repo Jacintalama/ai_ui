@@ -37,7 +37,7 @@ def rollback_confirm_line(app: str, target: dict, reason: str) -> str:
     short = target.get("short_sha") or target.get("sha", "")[:7]
     message = (target.get("message") or "").strip()
     when = (target.get("date") or "").replace("T", " ")[:16]
-    head = f"I can roll **{app}** back to `{short}`"
+    head = f"I can roll {app} back to {short}"
     if message:
         head += f' — "{message}"'
     if when:

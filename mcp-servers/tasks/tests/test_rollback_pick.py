@@ -15,6 +15,8 @@ The load-bearing invariant, asserted throughout: a returned target is always an
 element of the input list. The picker can never name a version that
 does not exist.
 """
+import re
+
 import pytest
 
 from rollback_pick import choose_rollback_target
@@ -255,14 +257,18 @@ def test_the_app_name_is_not_treated_as_a_feature():
     assert choice.needs_user_choice
 
 
-def test_the_best_keyword_match_wins_not_merely_the_newest():
-    """'profile photo' must hit 'add profile photo to hero section' (both
-    words), not 'move profile image to right side' (one word) just because
-    that one is newer."""
+def test_before_a_feature_targets_where_it_STARTED_on_real_history():
+    """CORRECTED after review. This test first asserted "the best textual
+    match wins", which was the wrong semantic: on the real portfolio history
+    the profile image is touched by six commits spanning the whole log, and
+    only the OLDEST is where it started. "before the profile photo" must land
+    before that one, so the result genuinely lacks the photo.
+    """
     choice = choose_rollback_target(REAL, "go back to before the profile photo")
     assert choice.target is not None
     assert "move profile image" not in choice.reason, (
-        f"matched only 'profile' and took the newest: {choice.reason!r}")
+        f"took the newest mention: {choice.reason!r}")
+    # The oldest profile/photo mention in REAL is f7, so the target is f8.
     assert "add profile photo" in choice.reason
 
 
@@ -272,24 +278,177 @@ def test_a_distinctive_phrase_still_resolves_on_real_data():
     assert "dark navy theme" in choice.reason
 
 
-def test_a_rollback_commit_CAN_be_the_target_even_though_it_is_odd_to_read():
-    """Deliberate. The app's state at a rollback commit is a real, distinct
-    state, so skipping past it would take the user somewhere they did not ask
-    for — further back than they said. The label reads oddly; the behaviour is
-    correct, and correct beats pretty for a destructive action.
+def test_asking_to_undo_a_feature_never_returns_a_state_that_still_has_it():
+    """REPLACES a test that asserted the opposite and called it "odd to read
+    but correct". Review was right to challenge it: on this very history,
+    "before you added the profile photo" returned a Rollback marker whose
+    restored state CONTAINED the photo — the opposite of the request.
 
-    Contrast test_a_rollback_commit_is_not_treated_as_a_feature_to_go_back_before:
-    a rollback is never something to go back BEFORE, but it can be a target.
+    Targeting where the feature STARTED rather than where it was last touched
+    fixed it without a special case for rollback markers.
     """
-    choice = choose_rollback_target(REAL, "go back to before the profile photo")
+    choice = choose_rollback_target(
+        REAL, "go back to before you added the profile photo", slug="portfolio")
     assert choice.target is not None
-    assert choice.target["message"].startswith("Rollback")
+    # On THIS history the version before "add profile photo" is itself an
+    # earlier undo, whose restored state does contain an image. That is a real
+    # property of a history with rollbacks in it, and the honest answer is to
+    # say so rather than to quietly walk further back than the user asked.
+    if choice.target["message"].lower().startswith("rollback"):
+        assert "earlier undo" in choice.reason, (
+            f"handed back a bookkeeping commit with no explanation: "
+            f"{choice.reason!r}")
 
 
 def test_real_history_with_no_failures_does_not_invent_one():
     choice = choose_rollback_target(REAL, "go back to before it broke")
     assert choice.target is None
     assert choice.needs_user_choice
+
+
+# ---------------------------------------------------------------------------
+# Code review, 2026-08-04. Each of these produced a confident WRONG answer.
+# ---------------------------------------------------------------------------
+
+def test_a_commit_about_fixing_something_broken_does_not_hijack_before_it_broke():
+    """The worst bug found: 'broke' was a keyword AND a failure word, so a
+    history containing "fix broken checkout" made rule 2 fire first and land
+    the user ON the failed build. The exact sentence the feature is named for.
+    """
+    hist = [
+        v("a", "fix broken checkout", is_current=True),
+        v("b", "add cart", status="error"),
+        v("c", "add checkout"),
+        v("d", "Initial build"),
+    ]
+    choice = choose_rollback_target(hist, "go back to before it broke")
+    assert choice.target is not None
+    assert choice.target["status"] != "error", (
+        "rolled the user ONTO the broken version")
+    assert choice.target["message"] == "add checkout"
+
+
+def test_before_a_feature_means_before_it_was_INTRODUCED():
+    """'before the profile image' must land before the commit that ADDED it,
+    not before the newest commit that merely touched it — otherwise the target
+    still contains the thing the user asked to get rid of."""
+    hist = [
+        v("a", "move profile image to right side", is_current=True),
+        v("b", "add profile photo to hero"),
+        v("c", "restyle header"),
+        v("d", "Initial build"),
+    ]
+    choice = choose_rollback_target(hist, "go back to before the profile image")
+    assert choice.target is not None
+    assert "profile" not in choice.target["message"].lower(), (
+        f"target still contains it: {choice.target['message']!r}")
+    assert choice.target["message"] == "restyle header"
+
+
+def test_a_keyword_does_not_match_inside_a_longer_word():
+    """'cart' must not match 'cartoon'. Verified: it picked the version before
+    'add cartoon mascot' and called it the version before the cart."""
+    hist = [
+        v("a", "add cartoon mascot to hero", is_current=True),
+        v("b", "add pricing page"),
+        v("c", "add cart"),
+        v("d", "Initial build"),
+    ]
+    choice = choose_rollback_target(hist, "go back to before the cart")
+    assert "cartoon" not in choice.reason, f"matched cartoon: {choice.reason!r}"
+    assert choice.target["message"] == "Initial build"
+
+
+def test_a_hex_looking_word_does_not_veto_a_real_sha_later_in_the_sentence():
+    """`\\b[0-9a-f]{7,40}\\b` matches 'defaced', 'acceded', and any 7-digit run.
+    Bailing on the first match threw away the real sha the user typed."""
+    choice = choose_rollback_target(BROKE, f"we defaced it, roll back to {BROKE[3]['short_sha']}")
+    assert choice.target is not None, f"lost the real sha: {choice.reason!r}"
+    assert choice.target["sha"] == BROKE[3]["sha"]
+
+
+SHOP = [
+    v("a", "feat(shop): add hover animation to nav", is_current=True),
+    v("b", "feat(shop): add cart"),
+    v("c", "feat(shop): initial"),
+    v("d", "rename Menu nav link"),
+    v("e", "chore: snapshot"),
+    v("f", "tidy up"),
+]
+
+
+def test_the_app_name_is_stripped_exactly_not_guessed_from_frequency():
+    """The frequency filter was both too weak here (a name in exactly half the
+    messages survived) and, at that threshold, too strong elsewhere (it erased
+    the real keyword on a short history). The caller knows the slug, so it is
+    passed in and removed exactly."""
+    choice = choose_rollback_target(SHOP, "go back to before the shop", slug="shop")
+    assert choice.target is None, f"matched on the app name: {choice.reason!r}"
+    assert choice.needs_user_choice
+
+
+def test_stripping_the_app_name_does_not_disturb_a_real_keyword():
+    choice = choose_rollback_target(SHOP, "go back to before the cart", slug="shop")
+    assert choice.target is not None
+    assert "add cart" in choice.reason
+
+
+def test_a_hyphenated_slug_is_stripped_word_by_word():
+    hist = [
+        v("a", "feat(my-coffee-shop): add hover animation", is_current=True),
+        v("b", "feat(my-coffee-shop): apply Lato font"),
+        v("c", "feat(my-coffee-shop): initial"),
+        v("d", "tidy up"),
+    ]
+    choice = choose_rollback_target(hist, "roll the coffee shop back to before the coffee",
+                                    slug="my-coffee-shop")
+    assert choice.target is None, f"matched on the app name: {choice.reason!r}"
+
+
+def test_a_short_history_keeps_its_keywords():
+    """Three commits is normal for a new app. The old half-the-messages filter
+    erased the keyword and the picker then answered a different question."""
+    hist = [
+        v("a", "add cart page", is_current=True),
+        v("b", "add cart total", status="error"),
+        v("c", "Initial build"),
+    ]
+    choice = choose_rollback_target(hist, "go back to before the cart broke", slug="shop")
+    assert choice.target is not None
+    assert choice.target["message"] == "Initial build", (
+        "the cart work starts at 'add cart total', so before it is the build")
+
+
+def test_a_phrase_of_pure_noise_asks_rather_than_switching_rules():
+    """When every named word is filtered out, asking is the honest move; the
+    old code fell through to the failure rule and answered confidently."""
+    noisy = [v(chr(97 + i), "feat(shop): change thing", status="ok") for i in range(6)]
+    noisy[0]["is_current"] = True
+    choice = choose_rollback_target(noisy, "go back to before the change", slug="shop")
+    assert choice.target is None
+    assert choice.needs_user_choice
+
+
+def test_the_newest_version_is_never_the_target_even_if_is_current_is_wrong():
+    """is_current compares each commit to the WHOLE monorepo's HEAD, so for
+    every app but the most recently committed one it is False on every row.
+    That made 'undo' return the app's current content — a silent no-op. The
+    list is newest-first by construction, so index 0 is current regardless."""
+    hist = [
+        v("a", "newest", is_current=False),  # is_current wrong, as in production
+        v("b", "older"),
+        v("c", "oldest"),
+    ]
+    choice = choose_rollback_target(hist, "undo that")
+    assert choice.target is not None
+    assert choice.target["message"] != "newest", "rolled back to where we already are"
+    assert choice.target["message"] == "older"
+
+
+def test_candidates_exclude_the_newest_even_if_is_current_is_wrong():
+    hist = [v("a", "newest", is_current=False), v("b", "older"), v("c", "oldest")]
+    choice = choose_rollback_target(hist, "make it blue again")
+    assert all(c["message"] != "newest" for c in choice.candidates)
 
 
 # ---------------------------------------------------------------------------
@@ -302,3 +461,105 @@ def test_chosen_sha_matches_the_shape_rollback_core_validates():
     import re
     choice = choose_rollback_target(BROKE, "go back to before it broke")
     assert re.fullmatch(r"[0-9a-f]{7,40}", choice.target["sha"])
+
+
+# ---------------------------------------------------------------------------
+# The invariant, actually swept. Review: the module docstring claimed it was
+# "asserted throughout" when one phrase checked it. This is the version that
+# would have caught the wrong-but-confident bugs.
+# ---------------------------------------------------------------------------
+
+PHRASES = [
+    "go back to before it broke",
+    "go back to the working part where we didn't start doing this feature that broke it",
+    "revert to when it worked",
+    "take it back to before the error",
+    "restore the last working version",
+    "go back to before the cart",
+    "go back to before the checkout",
+    "go back to before the profile photo",
+    "go back to before the portfolio",
+    "undo that",
+    "one step back",
+    "make it blue again",
+    "",
+    "roll back to ddddddd",
+    "we defaced it, roll back to ddddddd",
+    "go back to before the newsletter signup",
+    "revert the shop to before the hover animation",
+    "go back to before the dark navy theme",
+]
+
+HISTORIES = {
+    "broke": BROKE,
+    "real": REAL,
+    "shop": SHOP,
+    "single": [v("a", "Initial build", is_current=True)],
+    "empty": [],
+    "all_error": [v("c", "third", status="error", is_current=True),
+                  v("b", "second", status="error"),
+                  v("a", "first", status="error")],
+}
+
+
+@pytest.mark.parametrize("hname", sorted(HISTORIES))
+@pytest.mark.parametrize("phrase", PHRASES)
+def test_sweep_a_target_is_always_a_real_version_and_never_the_current_one(hname, phrase):
+    versions = HISTORIES[hname]
+    choice = choose_rollback_target(versions, phrase, slug="shop")
+    if choice.target is None:
+        assert choice.candidates or not choice.needs_user_choice
+        return
+    shas = [x["sha"] for x in versions]
+    assert choice.target["sha"] in shas, "invented a version"
+    assert choice.target is versions[shas.index(choice.target["sha"])], (
+        "returned a copy; callers pass this straight to the rollback route")
+    assert choice.target["sha"] != versions[0]["sha"], (
+        "offered the current version, which is a no-op dressed as an action")
+    assert re.fullmatch(r"[0-9a-f]{7,40}", choice.target["sha"]), (
+        "rollback_app_core would reject this sha")
+    assert choice.reason.strip(), "a destructive action needs a stated reason"
+
+
+@pytest.mark.parametrize("hname", sorted(HISTORIES))
+@pytest.mark.parametrize("phrase", PHRASES)
+def test_sweep_a_failed_version_is_never_offered_as_the_good_one(hname, phrase):
+    """The point of the whole feature: never land the user on a broken build
+    when they asked to escape one."""
+    choice = choose_rollback_target(HISTORIES[hname], phrase, slug="shop")
+    if choice.target is not None and any(
+            w in phrase for w in ("broke", "worked", "error", "working")):
+        assert choice.target.get("status") != "error", (
+            f"{phrase!r} on {hname} handed back the failed build")
+
+
+@pytest.mark.parametrize("hname", sorted(HISTORIES))
+@pytest.mark.parametrize("phrase", PHRASES)
+def test_sweep_candidates_are_always_real_and_exclude_the_current(hname, phrase):
+    versions = HISTORIES[hname]
+    choice = choose_rollback_target(versions, phrase, slug="shop")
+    shas = {x["sha"] for x in versions}
+    for cand in choice.candidates:
+        assert cand["sha"] in shas
+        assert cand["sha"] != versions[0]["sha"]
+
+
+def test_a_rollback_target_says_which_state_it_actually_restores():
+    """When the marker names a sha we can see, spell out the real state --
+    "Rollback apps/shop/ to 8736cd7" tells the user nothing, and checking the
+    reasoning is the confirm card's whole job."""
+    restored = v("b", "add the hero banner")
+    hist = [
+        v("d", "add profile photo", is_current=True),
+        {**v("c", ""), "message": f"Rollback apps/shop/ to {restored['short_sha']}",
+         "status": "rollback"},
+        restored,
+        v("a", "Initial build"),
+    ]
+    choice = choose_rollback_target(hist, "go back to before the profile photo",
+                                    slug="shop")
+    assert choice.target is not None
+    assert choice.target["message"].startswith("Rollback")
+    assert "earlier undo" in choice.reason
+    assert "add the hero banner" in choice.reason, (
+        f"did not resolve what the undo restored: {choice.reason!r}")

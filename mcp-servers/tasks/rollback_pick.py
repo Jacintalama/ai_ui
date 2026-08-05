@@ -45,6 +45,12 @@ _STOPWORDS = frozenset({
     "put", "make", "get", "please", "my", "our", "app", "site", "everything",
     "since", "undo", "all", "changes", "and", "of", "on", "in", "at", "for",
     "last", "first", "add", "adds", "added", "just", "again", "still", "into",
+    # The failure vocabulary. These say WHICH RULE the user wants, never which
+    # feature. Leaving them out was the worst bug in review: a history holding
+    # "fix broken checkout" made "go back to before it broke" match on "broke",
+    # fire the feature rule, and hand back the FAILED build itself.
+    *(w for phrase in _BROKE_WORDS for w in phrase.split()),
+    *(w for phrase in _UNDO_WORDS for w in phrase.split()),
 })
 
 
@@ -67,49 +73,84 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower())
 
 
+def _words(text: str) -> set[str]:
+    """Whole words, so 'cart' cannot match inside 'cartoon'."""
+    return set(_norm(text).split())
+
+
 def _keywords(phrase: str) -> list[str]:
     """The words in the phrase that could name a feature."""
     return [w for w in _norm(phrase).split() if w not in _STOPWORDS and len(w) > 2]
 
 
+def _strip_slug(words: list[str], slug: str) -> list[str]:
+    """Remove the app's own name. It identifies the app, never a feature.
+
+    Real App Builder commits are conventional-commit style, so every message
+    for apps/portfolio/ contains "portfolio". Without this, "go back to before
+    the portfolio" matched a commit and confidently offered the wrong version.
+    Exact beats statistical here: the caller knows the slug, so there is no
+    reason to infer it from message frequency and get it wrong both ways.
+    """
+    junk = _words(slug.replace("-", " ").replace("_", " "))
+    return [w for w in words if w not in junk]
+
+
 def _discriminating(words: list[str], versions: list[Version]) -> list[str]:
-    """Drop words that appear in most messages, because they identify nothing.
+    """Drop words that appear in nearly every message, because they identify
+    nothing. Catches conventional-commit house words ("feat", "fix", "chore")
+    when they dominate a history.
 
-    Real App Builder commits are conventional-commit style — every message for
-    apps/portfolio/ starts `feat(portfolio):`. So "go back to before the
-    portfolio" matched the NEWEST commit and produced a confident wrong answer.
-    Found by running this picker over the real git history rather than the
-    canned fixtures, which all used bare messages.
-
-    Frequency is the general fix: it removes the app's own name without the
-    picker needing to be told the slug, and it removes house words like "feat"
-    or "fix" for free.
+    This used to be the defence against the app's own name too, at a
+    half-the-messages threshold. That was both too weak (a name in exactly half
+    survived) and far too strong (on a 4-commit history it erased "profile",
+    the actual keyword, and the picker then returned a version that still
+    contained the profile image). The slug is now stripped exactly instead --
+    see `_strip_slug` -- so this only has to catch the statistical case.
     """
-    if not versions:
+    if len(versions) < 4:
+        # Too few messages for frequency to mean anything. On a 3-commit
+        # history "half of them" is one commit, and the filter erased the very
+        # word the user was identifying (review finding).
         return words
-    limit = max(1, len(versions) // 2)
-    msgs = [_norm(v.get("message", "")) for v in versions]
-    keep = [w for w in words if sum(1 for m in msgs if w in m) <= limit]
-    # If every word was too common the user still said something; better to ask
-    # than to match on noise.
-    return keep
+    msgs = [_words(v.get("message", "")) for v in versions]
+    limit = 0.8 * len(msgs)
+    return [w for w in words if sum(1 for m in msgs if w in m) < limit]
 
 
-def _best_match(versions: list[Version], words: list[str]) -> int:
-    """Index of the version whose message matches the MOST keywords, -1 if none.
+def _introduced_at(versions: list[Version], words: list[str]) -> int:
+    """Index of the version that INTRODUCED what the user named, -1 if none.
 
-    Scored rather than first-hit: "profile photo" must land on "add profile
-    photo to hero section" (2 words) rather than on the newer "move profile
-    image to right side" (1 word). Ties go to the newer version, which is the
-    one the user is more likely to be undoing.
+    Two properties, and getting only one of them was wrong both times:
+
+    * SCORE first. The anchor must be a commit that matches the MOST of the
+      user's words. Matching any single word let a generic one like "theme"
+      drag the anchor to the oldest commit that happened to mention it, so
+      "before the dark navy theme" stopped resolving at all.
+    * Then OLDEST among those. "before the profile image" means before it
+      EXISTED. Taking the newest mention returned a version that still
+      contained it -- the opposite of the request.
+
+    Both failures were found on the real apps/portfolio/ log, where the profile
+    image is touched by six commits spanning the whole history. The list is
+    newest-first, so the oldest match is the highest index.
     """
-    best_i, best_score = -1, 0
-    for i, ver in enumerate(versions):
-        msg = _norm(ver.get("message", ""))
-        score = sum(1 for w in words if w in msg)
-        if score > best_score:
-            best_i, best_score = i, score
-    return best_i
+    scores = [sum(1 for w in words if w in _words(v.get("message", "")))
+              for v in versions]
+    best = max(scores, default=0)
+    if best == 0:
+        return -1
+    # Oldest commit at the top score: the strongest statement of the topic.
+    anchor = max(i for i, s in enumerate(scores) if s == best)
+    # Then walk older through the contiguous run of commits that still touch
+    # the topic at all. This is what makes a synonym work: "before the profile
+    # image" scores highest on "move profile image", but "add profile photo"
+    # sits directly under it and is where the thing actually arrived. The run
+    # stops at the first unrelated commit, so a generic word cannot drag the
+    # anchor to the bottom of the history.
+    while anchor + 1 < len(versions) and scores[anchor + 1] > 0:
+        anchor += 1
+    return anchor
 
 
 def _rollbackish(ver: Version) -> bool:
@@ -117,6 +158,25 @@ def _rollbackish(ver: Version) -> bool:
     backwards through their own undo history."""
     return (ver.get("status") == "rollback"
             or _norm(ver.get("message", "")).startswith("rollback"))
+
+
+def _explain(target: Version, versions: list[Version], reason: str) -> str:
+    """Add what a rollback marker actually restored.
+
+    "Roll back to 'Rollback apps/shop/ to 8736cd7'" tells the user nothing, and
+    the confirm card's whole job is to let them check the reasoning. The state
+    is genuinely correct -- a rollback commit is a real, distinct state of the
+    app -- so the fix is the label, not the choice. Review flagged this.
+    """
+    if not _rollbackish(target):
+        return reason
+    m = re.search(r"\b([0-9a-f]{7,40})\b", target.get("message", ""))
+    if m:
+        for ver in versions:
+            if ver["sha"].startswith(m.group(1)) or m.group(1).startswith(ver["short_sha"]):
+                return (f"{reason} — that one is an earlier undo, which puts the "
+                        f"app back to '{ver['message']}'")
+    return f"{reason} — that one is an earlier undo"
 
 
 def _older_than(versions: list[Version], index: int) -> list[Version]:
@@ -133,21 +193,37 @@ def _first_good(versions: list[Version]) -> Version | None:
 
 
 def _selectable(versions: list[Version]) -> list[Version]:
-    """Everything a user could sensibly be offered: not the current version
-    (rolling back to where you already are is a no-op dressed as an action)."""
-    return [v for v in versions if not v.get("is_current")]
+    """Everything a user could sensibly be offered: not the current version,
+    since rolling back to where you already are is a no-op dressed as an action.
+
+    Deliberately does NOT trust `is_current`. That flag compares each commit to
+    the WHOLE monorepo's HEAD (routes_projects.py, list_app_versions_core),
+    while the list is `git log -- apps/<slug>/`. So for every app except the
+    most recently committed one it is False on every row, and "undo" happily
+    returned the app's current content. The list is newest-first by
+    construction, so index 0 is the current state whatever the flag says.
+    """
+    return [v for i, v in enumerate(versions) if i > 0 and not v.get("is_current")]
 
 
 def _ask(versions: list[Version], reason: str) -> RollbackChoice:
+    """Hand the decision back. Only claims to be a question when there is
+    something to answer it with -- an app whose only version is the current one
+    has nothing to offer, and asking would be a dead end."""
+    candidates = _selectable(versions)[:_MAX_CANDIDATES]
+    if not candidates:
+        return RollbackChoice(
+            reason="There are no earlier versions of this app to go back to.")
     return RollbackChoice(
-        reason=reason,
-        needs_user_choice=True,
-        candidates=_selectable(versions)[:_MAX_CANDIDATES],
-    )
+        reason=reason, needs_user_choice=True, candidates=candidates)
 
 
-def choose_rollback_target(versions: list[Version], phrase: str) -> RollbackChoice:
+def choose_rollback_target(versions: list[Version], phrase: str,
+                           slug: str = "") -> RollbackChoice:
     """Pick the version `phrase` refers to.
+
+    `slug` is the app's name. Passing it lets the picker ignore the app's own
+    name when the user says it -- real commit messages contain it in every line.
 
     Rules are tried in order of how explicit the user was: a SHA they typed
     beats a feature they named, which beats the generic "it broke", which beats
@@ -165,22 +241,31 @@ def choose_rollback_target(versions: list[Version], phrase: str) -> RollbackChoi
 
     # 1. An explicit SHA. Only accepted if it belongs to THIS app's history —
     #    a real SHA from another app must not slip through.
-    for token in re.findall(r"\b[0-9a-f]{7,40}\b", text):
+    # `\b[0-9a-f]{7,40}\b` also matches ordinary words ("defaced", "acceded")
+    # and any run of 7+ digits. Review found that bailing on the FIRST such
+    # token threw away a real sha later in the same sentence, so every token is
+    # tried and only an all-miss is reported.
+    hex_tokens = re.findall(r"\b[0-9a-f]{7,40}\b", text)
+    for token in hex_tokens:
         for ver in versions:
             if ver["sha"].startswith(token) or token.startswith(ver["short_sha"]):
                 return RollbackChoice(
                     target=ver,
                     reason=f"the version you named ({ver['short_sha']})")
+    # Only complain when the user plainly meant a sha: a bare hex-looking word
+    # in a sentence that also names a feature should fall through to the rules.
+    if hex_tokens and not _discriminating(_strip_slug(_keywords(phrase), slug), versions):
         return _ask(
             versions,
-            f"I could not find a version {token[:7]} in this app's history.")
+            f"I could not find a version {hex_tokens[0][:7]} in this app's history.")
 
     # 2. A named feature: "before the cart". More specific than the error rule,
     #    so it wins even when something later failed.
     if "before" in text or "since" in text:
-        words = _discriminating(_keywords(phrase), versions)
+        raw_words = _strip_slug(_keywords(phrase), slug)
+        words = _discriminating(raw_words, versions)
         if words:
-            i = _best_match(versions, words)
+            i = _introduced_at(versions, words)
             if i >= 0:
                 ver = versions[i]
                 older = _older_than(versions, i)
@@ -190,13 +275,19 @@ def choose_rollback_target(versions: list[Version], phrase: str) -> RollbackChoi
                                "so there is nothing before it.")
                 return RollbackChoice(
                     target=older[0],
-                    reason=f"the version just before '{ver['message']}'")
+                    reason=_explain(older[0], versions,
+                                    f"the version just before '{ver['message']}'"))
             # The user named something specific that is not in the history.
             # Falling through to another rule would look like it worked.
-            if not any(w in text for w in _BROKE_WORDS):
-                return _ask(
-                    versions,
-                    "I could not find that in this app's history.")
+            return _ask(versions, "I could not find that in this app's history.")
+        if raw_words:
+            # They named something, but every word of it is too common to
+            # identify a version. Falling through to the failure rule would
+            # answer a DIFFERENT question confidently, which review caught.
+            return _ask(
+                versions,
+                "That could match most of the versions, so I am not sure "
+                "which one you mean.")
 
     # 3. "before it broke" — deterministic, because list_app_versions_core
     #    already marks a version 'error' when its task failed.

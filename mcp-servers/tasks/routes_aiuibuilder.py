@@ -760,7 +760,9 @@ async def resolve_rollback_target(
         await _require_role(s, slug, user.email, "owner", is_admin=False)
 
     versions = [v.model_dump() for v in await list_app_versions_core(slug)]
-    choice = choose_rollback_target(versions, phrase)
+    # The slug is passed so the picker can ignore the app's own name: real
+    # commit messages are conventional-commit style and carry it in every line.
+    choice = choose_rollback_target(versions, phrase, slug=slug)
     return {
         "target": choice.target,
         "reason": choice.reason,
