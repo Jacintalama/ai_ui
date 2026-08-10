@@ -32,6 +32,25 @@ def platform():
     return f"pytest-{uuid.uuid4().hex[:8]}"
 
 
+@pytest.fixture(autouse=True)
+def fresh_db_engine():
+    """db.py caches an engine bound to whichever event loop first used it.
+
+    pytest-asyncio hands every test a fresh loop, so a maker left over from the
+    previous test poisons this one with "another operation is in progress".
+    Abandon it rather than closing it, because closing would touch the dead
+    loop. Same reset tests/conftest.py does, for the same reason, but without
+    its db_session fixture, which TRUNCATEs eight tasks.* tables.
+    """
+    import db
+
+    db._engine = None
+    db._session_maker = None
+    yield
+    db._engine = None
+    db._session_maker = None
+
+
 @pytest.fixture
 async def client():
     app = FastAPI()
