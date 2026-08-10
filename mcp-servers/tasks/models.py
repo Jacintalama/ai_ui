@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -188,3 +188,56 @@ class BotState(Base):
     value = Column(JSONB, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     expires_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class GatewayLink(Base):
+    """A platform account (Telegram, CLI) paired to an IO account.
+
+    `owui_user_id` is the Open WebUI user id, which is what a minted token
+    carries; `email` is stored alongside it for logging and for the tasks
+    endpoints that key on email like every other route here."""
+    __tablename__ = "gateway_links"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    platform = Column(Text, nullable=False)
+    platform_user_id = Column(Text, nullable=False)
+    owui_user_id = Column(Text, nullable=False)
+    email = Column(Text, nullable=False)
+    linked_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class GatewayPairingCode(Base):
+    """A short-lived, single-use code that turns into a GatewayLink.
+
+    `code_hash` is a sha256, never the code itself."""
+    __tablename__ = "gateway_pairing_codes"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    code_hash = Column(Text, nullable=False)
+    platform = Column(Text, nullable=False)
+    platform_user_id = Column(Text, nullable=False)
+    platform_user_name = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    redeemed_at = Column(DateTime(timezone=True), nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+
+
+class GatewaySession(Base):
+    """One platform conversation mapped to one real Open WebUI chat.
+
+    Because the target is a real chat, the conversation shows up in the user's
+    sidebar, is searchable, and feeds the Brain, with no sync mechanism of our
+    own to maintain."""
+    __tablename__ = "gateway_sessions"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    platform = Column(Text, nullable=False)
+    chat_id = Column(Text, nullable=False)
+    owui_chat_id = Column(Text, nullable=False)
+    owui_user_id = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(),
+                        onupdate=func.now())
