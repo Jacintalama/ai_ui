@@ -14,6 +14,7 @@ from routes_cron import router as cron_router
 from routes_db import router as db_router
 from routes_execution import router as execution_router
 from routes_fusion_page import router as fusion_page_router
+from routes_gateway import router as gateway_router
 from routes_files import router as files_router
 from routes_fusion import router as fusion_api_router
 from routes_graph import router as graph_router
@@ -115,6 +116,9 @@ app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Sec
 # (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
 app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(discord_links_router)  # /discord-links — system path (X-Internal-Secret)
+app.include_router(gateway_router)  # /gateway, internal only (X-Internal-Secret).
+                                    # Deliberately NOT mounted under /tasks: these
+                                    # endpoints mint tokens that act as any user.
 app.include_router(state_router)  # /state — system KV for bot conversational state
 app.include_router(tasks_router)
 app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload
