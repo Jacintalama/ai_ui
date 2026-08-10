@@ -4746,12 +4746,13 @@ def test_a_missing_text_parses_to_none(adapter):
 
 
 async def test_send_is_a_no_op(adapter):
-    await adapter.send(DEVICE, "anything")      # must not raise, must not call out
+    # The route returns the reply, so send must do nothing and say nothing.
+    assert await adapter.send(DEVICE, "anything") is None
 
 
 async def test_connect_needs_nothing(adapter):
     assert await adapter.connect() is True
-    await adapter.disconnect()
+    assert await adapter.disconnect() is None
 
 
 @pytest.fixture
