@@ -13,7 +13,14 @@ from sqlalchemy import or_, select, text
 import uuid
 
 from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
-from auth import AdminUser, CurrentUser, current_admin, current_admin_or_capability, current_user
+from auth import (
+    AdminUser,
+    CurrentUser,
+    current_admin,
+    current_admin_or_capability,
+    current_user,
+    current_user_or_capability,
+)
 from db import session
 from document_extract import classify_document, extract_text
 from models import ChatMessage, ProjectSupabase, TaskItem
@@ -266,8 +273,12 @@ async def history(
 
 
 @router.get("/{task_id}", response_model=TaskOut)
-async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
+async def get_task(task_id: UUID, user: CurrentUser = Depends(current_user_or_capability)):
     """Return a single task. Used by preview.html to watch build status.
+
+    Open to any authenticated user — the checks below are what actually gate
+    it, so demanding the admin header on top only stopped a regular user from
+    watching their own build.
 
     Read access extends beyond assignee — project members (people invited
     via the 👥 Members modal) can also view tasks for projects they're
@@ -280,7 +291,14 @@ async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin_or_cap
         ).scalar_one_or_none()
         if item is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if item.assignee_email in (user.email, TEAM_EMAIL):
+        if item.assignee_email == user.email:
+            return item
+        # The team bucket is the AIUI team's shared queue, not a public one.
+        # Left open to everybody it would hand any signed-in user the team's
+        # task descriptions, plans and results for the price of guessing a
+        # UUID. An admin keeps it; so does a capability, which is already
+        # bound to this one task_id (the Visual Editor deep link).
+        if item.assignee_email == TEAM_EMAIL and (user.is_admin or user.via_capability):
             return item
         # Not the assignee — check project membership.
         if item.built_app_slug:
