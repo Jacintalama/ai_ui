@@ -510,3 +510,51 @@ class TasksClient:
             "POST", f"/api/aiuibuilder/{slug}/rollback", user_email, json={"sha": sha},
         )
         return resp.json()
+
+    # --- Multi-platform gateway ---------------------------------------------
+    # These use _internal_request (X-Internal-Secret), never _request: there is
+    # no user email yet at resolve time, and resolving IS how we learn it.
+
+    async def gateway_resolve(
+        self, platform: str, platform_user_id: str, platform_user_name: str = "",
+    ) -> dict:
+        """Who is this platform user?
+
+        Linked -> {"linked": True, "email", "owui_user_id", "owui_token"}
+        Unlinked -> {"linked": False, "code", "expires_at"}
+
+        The token is scoped to one user for 60 seconds. Do not store it, do not
+        log it, and do not reuse it across requests.
+        """
+        resp = await self._internal_request("POST", "/gateway/resolve", json={
+            "platform": platform,
+            "platform_user_id": platform_user_id,
+            "platform_user_name": platform_user_name,
+        })
+        return resp.json()
+
+    async def gateway_get_session(self, platform: str, chat_id: str) -> str | None:
+        """The Open WebUI chat this conversation maps to, or None if it is new."""
+        resp = await self._internal_request(
+            "GET", "/gateway/session",
+            params={"platform": platform, "chat_id": chat_id})
+        return resp.json().get("owui_chat_id")
+
+    async def gateway_put_session(
+        self, platform: str, chat_id: str, owui_chat_id: str, owui_user_id: str,
+    ) -> None:
+        await self._internal_request("PUT", "/gateway/session", json={
+            "platform": platform,
+            "chat_id": chat_id,
+            "owui_chat_id": owui_chat_id,
+            "owui_user_id": owui_user_id,
+        })
+
+    async def gateway_recent_sessions(
+        self, owui_user_id: str, limit: int = 10,
+    ) -> list[dict]:
+        """Backs /resume. Newest first."""
+        resp = await self._internal_request(
+            "GET", "/gateway/sessions/recent",
+            params={"owui_user_id": owui_user_id, "limit": limit})
+        return resp.json().get("sessions", [])
