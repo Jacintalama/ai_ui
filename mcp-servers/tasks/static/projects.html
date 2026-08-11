@@ -1990,16 +1990,38 @@
         //  - awaiting_supabase: chat-driven Connect flow handles it
         //  - completed: backend used the template as-is (instant build)
         if (newTask.status !== "awaiting_supabase" && newTask.status !== "completed") {
-          // Auto-kick-off the AI build. Failure is non-fatal — the task
-          // sits as pending and an admin can approve via the task panel.
+          // Auto-kick-off the AI build.
+          //
+          // This used to swallow the outcome entirely, on the assumption that
+          // "the task sits as pending and an admin can approve it". For a
+          // regular user there is no admin watching, so the real result was a
+          // project card whose build never started and never said why.
+          //
+          // Note fetch() only REJECTS on a network error — a 403 resolves
+          // normally — so the old try/catch could not have caught the case it
+          // was written for. Check resp.ok explicitly.
+          let kickoffError = null;
           try {
-            await fetch(`/api/tasks/${encodeURIComponent(newTask.id)}/execute`, {
+            const ex = await fetch(`/api/tasks/${encodeURIComponent(newTask.id)}/execute`, {
               method: "POST",
               headers: authHeaders(),
               credentials: "include",
             });
+            if (!ex.ok) {
+              let detail = "";
+              try { detail = (await ex.json()).detail || ""; }
+              catch (_) { detail = (await ex.text()).slice(0, 200); }
+              kickoffError = `HTTP ${ex.status}${detail ? " — " + detail : ""}`;
+            }
           } catch (e) {
-            console.warn("[projects] auto-execute failed; task sits as pending", e);
+            kickoffError = String(e && e.message ? e.message : e);
+          }
+          if (kickoffError) {
+            console.error("[projects] auto-execute failed", kickoffError);
+            showToast(
+              `Project "${newTask.built_app_slug || slug || "created"}" was saved, ` +
+              `but the build did not start (${kickoffError}). Open it and press ` +
+              `Retry.`, true);
           }
         }
         closeModal();
