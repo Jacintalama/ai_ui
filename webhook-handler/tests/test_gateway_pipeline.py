@@ -171,3 +171,43 @@ def test_no_copy_constant_uses_a_dash_character():
                  "UNSUPPORTED_TYPE"):
         value = getattr(pipeline, name)
         assert "—" not in value and "–" not in value, name
+
+
+async def test_a_raw_transport_error_from_tasks_still_answers(adapter, wired):
+    # tasks.py now wraps the whole TransportError family, but the pipeline must
+    # not depend on that: anything unexpected still ends in a sentence.
+    wired.tasks.gateway_resolve.side_effect = RuntimeError("connection reset")
+
+    out = await pipeline.handle_event(_event(), adapter)
+
+    assert out == pipeline.UNEXPECTED
+    adapter.send_chunked.assert_awaited_once_with("42", pipeline.UNEXPECTED)
+
+
+async def test_a_resolve_response_missing_its_token_answers(adapter, wired):
+    wired.tasks.gateway_resolve.return_value = {"linked": True,
+                                                "email": "u@example.com",
+                                                "owui_user_id": "owui-1"}
+
+    out = await pipeline.handle_event(_event(), adapter)
+
+    assert out == pipeline.UNEXPECTED
+
+
+async def test_a_resolve_response_missing_its_code_answers(adapter, wired):
+    wired.tasks.gateway_resolve.return_value = {"linked": False}
+
+    out = await pipeline.handle_event(_event(), adapter)
+
+    assert out == pipeline.UNEXPECTED
+
+
+async def test_a_failing_stop_typing_does_not_discard_the_answer(adapter, wired):
+    # An exception in a finally replaces the pending return, so the caller would
+    # see a failure for a message that was in fact delivered.
+    adapter.stop_typing.side_effect = RuntimeError("telegram hiccup")
+
+    out = await pipeline.handle_event(_event(), adapter)
+
+    assert out == "the answer"
+    adapter.send_chunked.assert_awaited_once_with("42", "the answer")

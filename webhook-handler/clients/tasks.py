@@ -46,7 +46,11 @@ class TasksClient:
                 resp = await client.request(
                     method, url, headers=self._headers(user_email), **kwargs
                 )
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
+        except httpx.TransportError as e:
+            # TransportError, not just ConnectError and TimeoutException: a reset
+            # partway through a request raises ReadError or RemoteProtocolError,
+            # and those would otherwise escape as raw httpx errors that callers
+            # catching TasksAPIError never see.
             raise TasksAPIError(0, f"tasks service unreachable: {e}") from e
         if resp.status_code >= 400:
             try:
@@ -64,7 +68,11 @@ class TasksClient:
                 resp = await client.request(
                     method, url, headers={"X-Internal-Secret": self._internal_secret}, **kwargs
                 )
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
+        except httpx.TransportError as e:
+            # TransportError, not just ConnectError and TimeoutException: a reset
+            # partway through a request raises ReadError or RemoteProtocolError,
+            # and those would otherwise escape as raw httpx errors that callers
+            # catching TasksAPIError never see.
             raise TasksAPIError(0, f"tasks service unreachable: {e}") from e
         if resp.status_code >= 400:
             try:

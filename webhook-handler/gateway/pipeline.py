@@ -7,7 +7,7 @@ sentence the person can read.
 """
 import logging
 
-from clients.tasks import TasksAPIError
+from clients.tasks import TasksAPIError, TasksClient
 from config import settings
 from gateway.base import BasePlatformAdapter
 from gateway.events import MessageEvent, MessageType
@@ -34,7 +34,7 @@ def _owui_factory(token: str) -> OWUIUserClient:
     return OWUIUserClient(settings.openwebui_url, token)
 
 
-def configure(tasks_client) -> None:
+def configure(tasks_client: TasksClient) -> None:
     """Hand the pipeline its tasks client. Called once, from the app lifespan."""
     global _tasks
     _tasks = tasks_client
@@ -49,6 +49,9 @@ async def handle_event(event: MessageEvent, adapter: BasePlatformAdapter) -> str
 
     Returning the text as well as sending it lets a synchronous caller (the CLI)
     answer inline without a second delivery mechanism.
+
+    Every exit from here delivers a sentence. The person is waiting, so an
+    exception that escaped would leave them staring at silence.
     """
     src = event.source
 
@@ -59,50 +62,9 @@ async def handle_event(event: MessageEvent, adapter: BasePlatformAdapter) -> str
         return await _say(adapter, src.chat_id, GROUP_REFUSAL)
 
     try:
-        identity = await _tasks.gateway_resolve(
-            src.platform, src.user_id or src.chat_id, src.user_name or "")
+        return await _run(event, adapter)
     except TasksAPIError as e:
-        log.warning("gateway: resolve failed (%s): %s", e.status, e.message)
-        return await _say(adapter, src.chat_id, TASKS_DOWN)
-
-    if not identity.get("linked"):
-        # Never log the code.
-        return await _say(adapter, src.chat_id,
-                          pairing_message(identity["code"], link_url()))
-
-    owui = _owui_factory(identity["owui_token"])
-
-    text = await _resolve_text(event, owui, adapter)
-    if text is None:
-        return await _say(adapter, src.chat_id, UNSUPPORTED_TYPE)
-    if not text.strip():
-        # A sticker, an empty edit, a stray keystroke. Answering would be noise.
-        return ""
-
-    await adapter.send_typing(src.chat_id)
-    try:
-        chat_id, chat = await get_or_create_chat(
-            _tasks, owui, src.platform, src.chat_id,
-            identity["owui_user_id"], text, settings.gateway_model)
-
-        messages = history_messages(chat, settings.gateway_history_turns)
-        messages.append({"role": "user", "content": text})
-        answer = await owui.chat_completion(
-            messages, settings.gateway_model, chat_id=chat_id)
-
-        # Persist before delivering, but never let a persist failure swallow a
-        # good answer: the person is waiting and the answer already exists.
-        try:
-            await owui.update_chat(
-                chat_id, append_turn(chat, text, answer, settings.gateway_model))
-        except Exception:                              # noqa: BLE001
-            log.exception("gateway: could not write the transcript to chat %s; "
-                          "delivering the answer anyway", chat_id)
-
-        return await _say(adapter, src.chat_id, answer)
-
-    except TasksAPIError as e:
-        log.warning("gateway: tasks failed mid-flow (%s): %s", e.status, e.message)
+        log.warning("gateway: tasks failed (%s): %s", e.status, e.message)
         return await _say(adapter, src.chat_id, TASKS_DOWN)
     except OWUIError as e:
         log.warning("gateway: open-webui failed (%s): %s", e.status, e.message)
@@ -112,7 +74,58 @@ async def handle_event(event: MessageEvent, adapter: BasePlatformAdapter) -> str
                       src.platform)
         return await _say(adapter, src.chat_id, UNEXPECTED)
     finally:
-        await adapter.stop_typing(src.chat_id)
+        await _stop_typing_quietly(adapter, src.chat_id)
+
+
+async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
+    """The flow proper. Errors here are caught and turned into a sentence by
+    the caller, `handle_event`, which owns the try/except/finally."""
+    src = event.source
+
+    identity = await _tasks.gateway_resolve(
+        src.platform, src.user_id or src.chat_id, src.user_name or "")
+
+    if not identity.get("linked"):
+        code = identity.get("code")
+        if not code:
+            log.error("gateway: resolve said unlinked but sent no code")
+            return await _say(adapter, src.chat_id, UNEXPECTED)
+        # Never log the code.
+        return await _say(adapter, src.chat_id, pairing_message(code, link_url()))
+
+    token = identity.get("owui_token")
+    if not token:
+        log.error("gateway: resolve said linked but sent no token")
+        return await _say(adapter, src.chat_id, UNEXPECTED)
+    owui = _owui_factory(token)
+
+    text = await _resolve_text(event, owui, adapter)
+    if text is None:
+        return await _say(adapter, src.chat_id, UNSUPPORTED_TYPE)
+    if not text.strip():
+        # A sticker, an empty edit, a stray keystroke. Answering would be noise.
+        return ""
+
+    await adapter.send_typing(src.chat_id)
+    chat_id, chat = await get_or_create_chat(
+        _tasks, owui, src.platform, src.chat_id,
+        identity["owui_user_id"], text, settings.gateway_model)
+
+    messages = history_messages(chat, settings.gateway_history_turns)
+    messages.append({"role": "user", "content": text})
+    answer = await owui.chat_completion(
+        messages, settings.gateway_model, chat_id=chat_id)
+
+    # Persist before delivering, but never let a persist failure swallow a
+    # good answer: the person is waiting and the answer already exists.
+    try:
+        await owui.update_chat(
+            chat_id, append_turn(chat, text, answer, settings.gateway_model))
+    except Exception:                              # noqa: BLE001
+        log.exception("gateway: could not write the transcript to chat %s; "
+                      "delivering the answer anyway", chat_id)
+
+    return await _say(adapter, src.chat_id, answer)
 
 
 async def _resolve_text(event: MessageEvent, owui: OWUIUserClient,
@@ -130,3 +143,17 @@ async def _resolve_text(event: MessageEvent, owui: OWUIUserClient,
 async def _say(adapter: BasePlatformAdapter, chat_id: str, text: str) -> str:
     await adapter.send_chunked(chat_id, text)
     return text
+
+
+async def _stop_typing_quietly(adapter: BasePlatformAdapter, chat_id: str) -> None:
+    """Clear the typing indicator without ever raising.
+
+    This runs in a finally, and an exception raised in a finally replaces any
+    pending return. The answer has already been delivered by then, so a failure
+    here would report a failure for a call that actually worked.
+    """
+    try:
+        await adapter.stop_typing(chat_id)
+    except Exception:                                  # noqa: BLE001
+        log.warning("gateway: could not clear the typing indicator on %s",
+                    chat_id, exc_info=True)
