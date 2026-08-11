@@ -13,6 +13,7 @@ Without EITHER header, every call returns 403.
 """
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -74,6 +75,30 @@ def _validate_kind(kind: str, video_config: dict | None) -> None:
         if not url.lower().startswith(("http://", "https://")):
             raise HTTPException(status_code=400,
                                 detail="video_config.url must be an http(s) URL")
+
+
+# A fixed base makes the calculation deterministic — otherwise the same cron
+# expression could pass or fail depending on when the request arrives.
+_INTERVAL_BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def min_interval_minutes(cron_expr: str) -> float:
+    """Smallest gap between consecutive fire times, in minutes.
+
+    Four fire times give three gaps, which is enough to catch a step
+    (`*/5`) or a comma list (`0,30`) rather than only the literal
+    `* * * * *`. Never raises: a malformed expression is rejected upstream by
+    croniter.is_valid, and this must not be what 500s a request.
+    """
+    try:
+        from croniter import croniter
+        it = croniter(cron_expr, _INTERVAL_BASE)
+        times = [it.get_next(datetime) for _ in range(4)]
+    except Exception:  # noqa: BLE001 - unparseable is handled by the caller
+        return 0.0
+    gaps = [(times[i + 1] - times[i]).total_seconds() / 60
+            for i in range(len(times) - 1)]
+    return min(gaps) if gaps else 0.0
 
 
 @router.get("")
