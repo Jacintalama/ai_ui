@@ -142,3 +142,30 @@ async def test_an_unknown_session_reads_as_null(client, platform):
     got = await client.get("/gateway/session", headers=HEADERS,
                            params={"platform": platform, "chat_id": "nope"})
     assert got.json()["owui_chat_id"] is None
+
+
+async def test_resolve_no_longer_resets_a_guessers_budget(client, platform):
+    """The old bug: an attempt-exhausted code row was invisible to resolve, so
+    the next ordinary message minted a fresh row with the counter at zero. There
+    is no per-code counter now, so re-resolving must reuse the one row."""
+    try:
+        first = await client.post("/gateway/resolve", headers=HEADERS, json={
+            "platform": platform, "platform_user_id": "u9"})
+        assert first.json()["linked"] is False
+
+        second = await client.post("/gateway/resolve", headers=HEADERS, json={
+            "platform": platform, "platform_user_id": "u9"})
+        assert second.json()["linked"] is False
+        assert second.json()["code"] != first.json()["code"], (
+            "a resend must re-mint, because only the hash is stored")
+
+        conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+        try:
+            rows = await conn.fetchval(
+                "SELECT count(*) FROM tasks.gateway_pairing_codes "
+                "WHERE platform = $1 AND platform_user_id = $2", platform, "u9")
+        finally:
+            await conn.close()
+        assert rows == 1, "resolve must reuse the row, never accumulate rows"
+    finally:
+        await _cleanup(platform)

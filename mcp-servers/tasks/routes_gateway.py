@@ -21,7 +21,7 @@ from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 
 import gateway_pairing as gp
 from db import session
@@ -68,10 +68,12 @@ async def resolve(body: ResolveIn,
     Linked   -> {linked: true, email, owui_user_id, owui_token}
     Unlinked -> {linked: false, code, expires_at}
 
-    A repeat call while a code is still live returns THAT SAME CODE rather than
-    issuing another. Otherwise someone who messages twice gets two codes, only
-    one works, and the resend cooldown reads as an error to a person who did
-    nothing wrong.
+    A repeat call while a code is still live reuses the same ROW rather than
+    inserting another, so a user only ever has one live code. The code VALUE
+    is re-minted on every call though, because only the hash is stored, so the
+    original value can never be recovered to return again. Re-minting also
+    invalidates whatever code was issued before, which is fine: the newest
+    message a bot sends always carries the working one.
     """
     _require_internal(x_internal_secret)
     async with session() as s:
@@ -97,7 +99,6 @@ async def resolve(body: ResolveIn,
                 GatewayPairingCode.platform_user_id == body.platform_user_id,
                 GatewayPairingCode.redeemed_at.is_(None),
                 GatewayPairingCode.expires_at > now,
-                GatewayPairingCode.attempts < gp.MAX_REDEEM_ATTEMPTS,
             ).order_by(GatewayPairingCode.created_at.desc()).limit(1)
         )).scalar_one_or_none()
         if live:
@@ -170,8 +171,12 @@ async def put_session(body: SessionIn,
                 owui_user_id=body.owui_user_id,
                 updated_at=now,
             ))
+        # Scoped to this user on purpose. Unscoped, every message swept every
+        # other user's rows and could not use the (owui_user_id, updated_at)
+        # index, so one person's write paid for everyone's housekeeping.
         await s.execute(delete(GatewaySession).where(
-            GatewaySession.updated_at < now - timedelta(days=SESSION_RETENTION_DAYS)
+            GatewaySession.owui_user_id == body.owui_user_id,
+            GatewaySession.updated_at < now - timedelta(days=SESSION_RETENTION_DAYS),
         ))
         await s.commit()
     return {"status": "ok"}
