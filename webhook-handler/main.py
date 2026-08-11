@@ -1,6 +1,5 @@
 """Webhook Handler Service - Main FastAPI Application."""
 import asyncio
-import inspect
 import os
 import hmac
 from fastapi import FastAPI, Request, HTTPException, Header
@@ -17,6 +16,7 @@ from clients.openwebui import OpenWebUIClient
 from clients.github import GitHubClient, verify_github_signature
 from clients.mcp_proxy import MCPProxyClient
 from clients.n8n import N8NClient
+from clients.tasks import TasksClient
 from clients.slack import SlackClient, verify_slack_signature
 from clients.discord import DiscordClient, verify_discord_signature
 from clients.loki import LokiClient
@@ -195,8 +195,14 @@ async def lifespan(app: FastAPI):
     )
 
     # Hand the gateway its tasks client, then register every enabled webhook.
-    tasks_client = getattr(command_router, "_tasks_client", None)
-    gateway_pipeline.configure(tasks_client)
+    # Our own client rather than reaching into command_router._tasks_client.
+    # That is a private attribute, and a getattr default of None would leave the
+    # gateway broken at runtime with nothing said at startup. TasksClient opens a
+    # fresh httpx client per call, so a second instance costs nothing.
+    gateway_pipeline.configure(TasksClient(
+        settings.tasks_url,
+        internal_secret=settings.internal_callback_secret,
+    ))
     for entry in gateway_registry.enabled():
         adapter = gateway_registry.adapter(entry.name)
         if adapter and not await adapter.connect():
@@ -636,14 +642,7 @@ async def telegram_webhook(request: Request):
         return JSONResponse(content={"ok": True}, status_code=200)
 
     headers = dict(request.headers)
-    # verify_webhook and parse_inbound are synchronous by contract (base.py),
-    # but a fully-mocked adapter (a bare AsyncMock in tests) hands back a
-    # coroutine for every attribute regardless. Awaiting only when the result
-    # is actually awaitable keeps this correct against both.
-    verified = adapter.verify_webhook(payload, headers)
-    if inspect.isawaitable(verified):
-        verified = await verified
-    if not verified:
+    if not adapter.verify_webhook(payload, headers):
         logger.warning("gateway: rejected a Telegram update with a bad secret")
         return JSONResponse(content={"ok": True}, status_code=200)
 
@@ -656,8 +655,6 @@ async def telegram_webhook(request: Request):
         _gateway_seen_updates.add(update_id)
 
     event = adapter.parse_inbound(payload, headers)
-    if inspect.isawaitable(event):
-        event = await event
     if event is None:
         return JSONResponse(content={"ok": True}, status_code=200)
 

@@ -5,7 +5,7 @@ before doing the work is correctness, not an optimization. A slow model call
 would otherwise have the same message processed several times.
 """
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,11 +29,15 @@ def adapter():
     a = AsyncMock()
     a.name = "telegram"
     a.max_message_length = 4096
-    a.verify_webhook.return_value = True
-    a.parse_inbound.return_value = MessageEvent(
+    # verify_webhook and parse_inbound are synchronous by contract (base.py), so
+    # they need synchronous doubles. A bare AsyncMock hands back a coroutine for
+    # every attribute, which is truthy and never None, so the bad-secret and
+    # unparseable-update tests would pass no matter what the route did.
+    a.verify_webhook = MagicMock(return_value=True)
+    a.parse_inbound = MagicMock(return_value=MessageEvent(
         text="hello", message_type=MessageType.TEXT,
         source=SessionSource(platform="telegram", chat_id="111",
-                             user_id="111", chat_type="dm"))
+                             user_id="111", chat_type="dm")))
     return a
 
 
