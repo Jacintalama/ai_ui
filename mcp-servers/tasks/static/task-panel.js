@@ -1298,24 +1298,46 @@
         if (el.tagName.toLowerCase() === "a") {
           el.removeAttribute("data-sveltekit-preload-data");
           el.removeAttribute("data-sveltekit-preload-code");
+          // The clone inherits the SOURCE row's href, so entries cloned from
+          // the Notes anchor pointed every link at /notes. The capture-phase
+          // click handler below hid this for a plain click, but hover,
+          // middle-click and ctrl-click all followed the stale URL. Embed
+          // entries have no page to open, so they lose the href entirely.
+          if (cfg.embed) el.removeAttribute("href");
+          else el.setAttribute("href", cfg.href);
         }
       });
       // Add an explicit clean tooltip in its place.
       entry.setAttribute("title", cfg.title);
-      // Replace the "Workspace" text label with our label wherever it
-      // appears inside the cloned subtree.
-      (function rewriteLabel(node) {
-        for (const child of Array.from(node.childNodes)) {
+      // Replace the cloned row's visible label.
+      //
+      // This used to match the single literal "Workspace". Which source row
+      // gets cloned depends on which anchor exists — Workspace for admins,
+      // Notes for everyone else — so for a non-admin nothing matched and all
+      // four entries rendered as "Notes", four identical-looking links. The
+      // static tests passed and the injector's own console log said
+      // "injected"; only rendering it in a browser showed it.
+      //
+      // Rewriting the FIRST non-empty text node rather than a known word
+      // keeps this working whatever the anchor row happens to say.
+      const ANCHOR_LABELS = ["Workspace", "Notes", "Calendar"];
+      const labelNodes = [];
+      (function collectText(node) {
+        for (const child of node.childNodes) {
           if (child.nodeType === 3) {
-            const t = child.nodeValue;
-            if (t && t.includes("Workspace")) {
-              child.nodeValue = t.replace("Workspace", cfg.label);
-            }
+            if (child.nodeValue && child.nodeValue.trim()) labelNodes.push(child);
           } else if (child.nodeType === 1) {
-            rewriteLabel(child);
+            collectText(child);
           }
         }
       })(entry);
+      if (labelNodes.length) {
+        const first = labelNodes[0];
+        const hit = ANCHOR_LABELS.find((l) => first.nodeValue.includes(l));
+        first.nodeValue = hit
+          ? first.nodeValue.replace(hit, cfg.label)
+          : cfg.label;
+      }
       // Swap the inherited Workspace icon for a distinct glyph so each entry
       // is visually distinguishable — including in the collapsed sidebar
       // where only icons render.
