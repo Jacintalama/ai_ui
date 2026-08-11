@@ -130,3 +130,32 @@ async def test_a_mapping_pointing_at_a_deleted_chat_recovers():
     assert chat_id == "chat-fresh"
     tasks.gateway_put_session.assert_awaited_once_with(
         "telegram", "42", "chat-fresh", "u1")
+
+
+def test_the_flat_list_and_the_history_map_agree_after_two_turns():
+    # Open WebUI keeps childrenIds on both structures: real chats there carry it
+    # on n-1 of n flat entries. Updating only the map left every earlier turn's
+    # flat entry stale forever.
+    chat = {"title": "t", "messages": [], "history": {"messages": {}, "currentId": None}}
+    first = append_turn(chat, "one", "1", "m")
+    second = append_turn(first, "two", "2", "m")
+
+    for message in second["messages"]:
+        in_history = second["history"]["messages"][message["id"]]
+        assert message["childrenIds"] == in_history["childrenIds"], message["id"]
+        assert message["parentId"] == in_history["parentId"], message["id"]
+
+
+def test_append_turn_shares_no_message_object_with_its_input():
+    # The caller may still need the original if the write fails, so an edit to
+    # the returned object must not reach back into theirs.
+    chat = {"title": "t", "messages": [], "history": {"messages": {}, "currentId": None}}
+    first = append_turn(chat, "one", "1", "m")
+    second = append_turn(first, "two", "2", "m")
+
+    assert second["messages"][0] is not first["messages"][0]
+    first_id = first["messages"][0]["id"]
+    assert second["history"]["messages"][first_id] is not first["history"]["messages"][first_id]
+
+    second["messages"][0]["content"] = "edited"
+    assert first["messages"][0]["content"] == "one"

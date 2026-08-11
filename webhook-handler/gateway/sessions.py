@@ -48,7 +48,18 @@ def append_turn(chat: dict, user_text: str, assistant_text: str,
     only one produces a chat that exists in the sidebar and renders empty.
     """
     history = dict(chat.get("history") or {})
-    hist_msgs = dict(history.get("messages") or {})
+    # Copy each entry, not just the containers. A shallow copy would leave the
+    # caller's own message dicts reachable through the returned object, so an
+    # edit to one would reach back into the other, and the "does not mutate its
+    # input" promise would only hold for the containers.
+    hist_msgs = {
+        key: (dict(value) if isinstance(value, dict) else value)
+        for key, value in (history.get("messages") or {}).items()
+    }
+    messages = [
+        dict(m) if isinstance(m, dict) else m
+        for m in (chat.get("messages") or [])
+    ]
     parent_id = history.get("currentId")
     stamp = int(time.time())
 
@@ -63,14 +74,21 @@ def append_turn(chat: dict, user_text: str, assistant_text: str,
         "model": model, "modelName": model, "modelIdx": 0, "done": True,
     }
     if parent_id and parent_id in hist_msgs:
-        prev = dict(hist_msgs[parent_id])
+        prev = hist_msgs[parent_id]
         prev["childrenIds"] = list(prev.get("childrenIds") or []) + [user_id]
-        hist_msgs[parent_id] = prev
+        # The same message lives in both structures and Open WebUI keeps them in
+        # step: real chats there carry childrenIds on n-1 of n flat entries.
+        # Updating only the map would leave every earlier turn's flat entry
+        # permanently stale.
+        for index, existing in enumerate(messages):
+            if isinstance(existing, dict) and existing.get("id") == parent_id:
+                messages[index] = prev
+                break
     hist_msgs[user_id] = user_msg
     hist_msgs[asst_id] = asst_msg
 
     out = dict(chat)
-    out["messages"] = list(chat.get("messages") or []) + [user_msg, asst_msg]
+    out["messages"] = messages + [user_msg, asst_msg]
     out["history"] = {"messages": hist_msgs, "currentId": asst_id}
     if not out.get("models"):
         out["models"] = [model]
