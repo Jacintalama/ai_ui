@@ -349,3 +349,61 @@ def test_the_operator_path_can_patch_to_every_minute(monkeypatch):
                 json={"cron_expr": "* * * * *"})
     assert r.status_code == 200, r.text
     assert len(_writes(ex)) == 1
+
+
+# --- Re-enabling: the hole that excluding spent one-offs opens -------------
+#
+# Once a fired run_once row stops counting, POST /{id}/enable can put it back
+# for free. Fire 10, create 10 more, resurrect the first 10, repeat.
+
+
+def test_resurrecting_a_spent_one_off_is_capped(monkeypatch):
+    live = _rows(MAX)
+    for r_ in live:
+        r_.run_once, r_.enabled = True, True
+    spent = _owned()
+    spent.run_once, spent.enabled = True, False
+    ex: list = []
+    c, _ = _client_with(live, monkeypatch, owned=spent, executed=ex)
+    r = c.post(f"/schedules/{spent.id}/enable",
+               headers={"X-User-Email": "u@x.com"})
+    assert r.status_code == 429, r.text
+    assert _writes(ex) == [], "refused the enable but still wrote the row"
+
+
+def test_resuming_a_paused_ordinary_schedule_is_never_capped(monkeypatch):
+    """A paused non-one-off never stopped counting, so resuming it adds
+    nothing. A user sitting exactly at the ceiling must still be able to."""
+    rows = _rows(MAX)
+    paused = rows[0]
+    paused.enabled = False          # run_once stays falsy
+    ex: list = []
+    c, _ = _client_with(rows, monkeypatch, owned=paused, executed=ex)
+    r = c.post(f"/schedules/{paused.id}/enable",
+               headers={"X-User-Email": "u@x.com"})
+    assert r.status_code == 200, r.text
+    assert len(_writes(ex)) == 1
+
+
+def test_an_admin_can_resurrect_a_spent_one_off(monkeypatch):
+    live = _rows(MAX)
+    for r_ in live:
+        r_.run_once, r_.enabled = True, True
+    spent = _owned(email="a@x.com")
+    spent.run_once, spent.enabled = True, False
+    c, _ = _client_with(live, monkeypatch, owned=spent)
+    r = c.post(f"/schedules/{spent.id}/enable",
+               headers={"X-User-Email": "a@x.com", "X-User-Admin": "true"})
+    assert r.status_code == 200, r.text
+
+
+def test_the_operator_path_can_resurrect_a_spent_one_off(monkeypatch):
+    live = _rows(MAX)
+    for r_ in live:
+        r_.run_once, r_.enabled = True, True
+    spent = _owned()
+    spent.run_once, spent.enabled = True, False
+    c, _ = _client_with(live, monkeypatch, owned=spent)
+    r = c.post(f"/schedules/{spent.id}/enable",
+               headers={"X-Cron-Secret": os.environ["CRON_SHARED_SECRET"]})
+    assert r.status_code == 200, r.text

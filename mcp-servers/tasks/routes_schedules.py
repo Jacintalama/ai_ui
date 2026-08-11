@@ -135,6 +135,29 @@ def _holds_a_slot(sched: Schedule) -> bool:
                 and not getattr(sched, "enabled", True))
 
 
+async def _enforce_count_cap(owner: str) -> None:
+    """429 when `owner` already holds every slot they are allowed.
+
+    Shared by create and by enable — a spent one-off does not count, so
+    re-enabling one takes a slot back and has to ask the same question.
+
+    Counting by fetching rows rather than func.count(): the ceiling is 10 rows,
+    it reuses the mock shape the existing route tests prove, and it lets
+    _holds_a_slot stay a plain predicate a test can drive instead of SQL no
+    mock can evaluate.
+    """
+    async with session() as s:
+        mine = (await s.execute(
+            select(Schedule).where(Schedule.user_email == owner)
+        )).scalars().all()
+    if len([r for r in mine if _holds_a_slot(r)]) >= MAX_SCHEDULES_PER_USER:
+        raise HTTPException(
+            status_code=429,
+            detail=(f"You already have {MAX_SCHEDULES_PER_USER} scheduled "
+                    f"tasks. Delete one first."),
+        )
+
+
 def _enforce_interval_floor(
     cron_expr: str, *, is_operator: bool, is_admin: bool,
 ) -> None:
@@ -214,20 +237,7 @@ async def create_schedule(
     _enforce_interval_floor(body.cron_expr, is_operator=is_operator,
                             is_admin=is_admin)
     if not is_operator and not is_admin:
-        # Counting by fetching rows rather than func.count(): the ceiling is 10
-        # rows, and it reuses the mock shape the existing route tests prove.
-        # Fetching them also lets _holds_a_slot be a plain predicate that a
-        # test can drive, instead of SQL no mock can evaluate.
-        async with session() as s:
-            mine = (await s.execute(
-                select(Schedule).where(Schedule.user_email == owner)
-            )).scalars().all()
-        if len([r for r in mine if _holds_a_slot(r)]) >= MAX_SCHEDULES_PER_USER:
-            raise HTTPException(
-                status_code=429,
-                detail=(f"You already have {MAX_SCHEDULES_PER_USER} scheduled "
-                        f"tasks. Delete one first."),
-            )
+        await _enforce_count_cap(owner)
 
     sid = uuid.uuid4()
     async with session() as s:
@@ -287,9 +297,18 @@ async def enable_schedule(
     schedule_id: str,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, str]:
-    _, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
-    await _scoped_schedule(schedule_id, scoped_email)
+    is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    sched = await _scoped_schedule(schedule_id, scoped_email)
+    # A spent one-off stopped counting (_holds_a_slot), so switching it back on
+    # takes a slot back and has to pass the cap again. Otherwise "fire ten,
+    # create ten more, resurrect the first ten" repeats without bound. A row
+    # that still holds its slot — an ordinary paused schedule — is untouched:
+    # it was never released, so resuming it adds nothing.
+    if (not is_operator and not _is_admin(x_user_admin)
+            and not _holds_a_slot(sched)):
+        await _enforce_count_cap(sched.user_email)
     async with session() as s:
         await s.execute(
             update(Schedule).where(Schedule.id == uuid.UUID(schedule_id)).values(enabled=True)
