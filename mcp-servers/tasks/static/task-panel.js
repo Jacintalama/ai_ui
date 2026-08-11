@@ -1347,16 +1347,34 @@
         // Skip the expensive DOM work once every visible entry is present.
         if (visibleEntries.every((cfg) => document.querySelector("[" + cfg.attr + "]"))) return;
 
-        // Find Workspace row via its href first — survives the collapsed
-        // sidebar state (label text may be visually hidden, but href stays
-        // in the DOM). Fall back to the text-content scan for older Open
-        // WebUI versions where the route differs.
-        let workspaceRow = document.querySelector('a[href="/workspace"]');
+        // Anchor chain, first match wins.
+        //
+        // This used to look ONLY for a[href="/workspace"], which is why
+        // regular users saw none of these entries: Open WebUI renders that
+        // link only for admins or users holding at least one workspace
+        // permission (upstream Sidebar.svelte -> isMenuItemVisible), and this
+        // deployment sets all five workspace permissions to false. No anchor
+        // meant nothing was injected at all, even for entries flagged
+        // allUsers. Admins are unaffected — /workspace is still tried first,
+        // so their entries stay exactly where they were.
+        const ANCHOR_SELECTORS = [
+          'a[href="/workspace"]',
+          'a[href="/notes"]',
+          'a[href="/calendar"]',
+        ];
+        let workspaceRow = null;
+        for (const selector of ANCHOR_SELECTORS) {
+          workspaceRow = document.querySelector(selector);
+          if (workspaceRow) break;
+        }
         if (!workspaceRow) {
+          // Older Open WebUI versions, or a renamed route: fall back to
+          // scanning for the row's label text. If neither label is present
+          // we inject nothing — there is no anchor we could trust.
           const candidates = document.querySelectorAll("a, button, [role='link']");
           for (const el of candidates) {
             const txt = (el.textContent || "").trim();
-            if (txt !== "Workspace") continue;
+            if (txt !== "Workspace" && txt !== "Notes") continue;
             workspaceRow = el;
             break;
           }
