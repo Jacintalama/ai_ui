@@ -222,7 +222,23 @@ class GatewayPairingCode(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
     redeemed_at = Column(DateTime(timezone=True), nullable=True)
-    attempts = Column(Integer, nullable=False, default=0)
+
+
+class GatewayRedeemBudget(Base):
+    """Failed pairing-code redemptions, counted against the account that made
+    them rather than against the code.
+
+    A wrong code matches no row, so counting on the code was only possible by
+    incrementing every live code, which let one guesser lock out every pending
+    pairing. The guesser is always a signed-in user, so they are the right thing
+    to charge."""
+    __tablename__ = "gateway_redeem_budget"
+    __table_args__ = {"schema": "tasks"}
+
+    email = Column(Text, primary_key=True)
+    failures = Column(Integer, nullable=False, default=0)
+    window_started_at = Column(DateTime(timezone=True), server_default=func.now())
+    locked_until = Column(DateTime(timezone=True), nullable=True)
 
 
 class GatewaySession(Base):

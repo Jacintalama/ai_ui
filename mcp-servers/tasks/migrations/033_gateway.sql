@@ -31,8 +31,7 @@ CREATE TABLE IF NOT EXISTS tasks.gateway_pairing_codes (
     platform_user_name TEXT,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at         TIMESTAMPTZ NOT NULL,
-    redeemed_at        TIMESTAMPTZ,
-    attempts           INT         NOT NULL DEFAULT 0
+    redeemed_at        TIMESTAMPTZ
 );
 
 -- Both hot paths: "does this platform user already have a live code" on every

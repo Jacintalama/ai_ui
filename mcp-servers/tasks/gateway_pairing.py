@@ -2,7 +2,7 @@
 
 Hardening lifted from NousResearch/hermes-agent's pairing.py, which had already
 done the reading: hash at rest, a confusable-free alphabet, short expiry, single
-use, a resend cooldown and a redemption lockout.
+use, and a redemption lockout.
 
 Pure functions only. The rows live in routes_gateway.py so this module stays
 testable without a database.
@@ -15,8 +15,12 @@ import secrets
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 CODE_LENGTH = 8
 CODE_TTL_SECONDS = 3600
-RESEND_COOLDOWN_SECONDS = 600
 MAX_REDEEM_ATTEMPTS = 5
+# Failures older than this start a fresh window, so an honest typo months ago
+# does not count against someone today.
+REDEEM_WINDOW_SECONDS = 3600
+# How long an account is locked out once it burns MAX_REDEEM_ATTEMPTS.
+REDEEM_LOCKOUT_SECONDS = 900
 
 # Domain separator, so a gateway code hash can never be confused with any other
 # sha256 digest this codebase stores.
