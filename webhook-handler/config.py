@@ -139,6 +139,11 @@ class Settings(BaseSettings):
             )
         return self._discord_map_cache
 
+    # Telegram (multi-platform gateway). Both unset by default, which keeps the
+    # platform dormant: the registry refuses to enable it and the route 503s.
+    telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
+    telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
+
     # Just-chat intent router. Off by default; flip with env INTENT_ROUTER=1.
     # Off = exactly today's behavior (plain text -> generic answer).
     intent_router_enabled: bool = Field(default=False, alias="INTENT_ROUTER")

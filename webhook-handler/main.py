@@ -1,5 +1,6 @@
 """Webhook Handler Service - Main FastAPI Application."""
 import asyncio
+import inspect
 import os
 import hmac
 from fastapi import FastAPI, Request, HTTPException, Header
@@ -36,6 +37,9 @@ from scheduler import (
     create_user_cron_job, delete_user_cron_job,
     update_user_cron_job, get_user_jobs,
 )
+from gateway import pipeline as gateway_pipeline
+from gateway.platforms.telegram import TELEGRAM_MAX_MESSAGE, TelegramAdapter
+from gateway.registry import PlatformEntry, registry as gateway_registry
 
 # Configure logging
 logging.basicConfig(
@@ -78,6 +82,24 @@ slack_interactions_handler: Optional[SlackInteractionsHandler] = None
 discord_client: Optional[DiscordClient] = None
 discord_command_handler: Optional[DiscordCommandHandler] = None
 loki_client: Optional[LokiClient] = None
+
+# --- Multi-platform gateway --------------------------------------------------
+# Registered at import time; each entry stays dormant until its required_env is
+# present, so this changes nothing visible until a token exists.
+gateway_registry.register(PlatformEntry(
+    name="telegram",
+    label="Telegram",
+    adapter_factory=TelegramAdapter,
+    required_env=["TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"],
+    max_message_length=TELEGRAM_MAX_MESSAGE,
+    emoji="✈️",
+))
+
+# Telegram re-delivers an update until it sees a 200, and we answer before the
+# work is done, so the same update_id can arrive several times. Bounded: this
+# is a dedupe window, not a log.
+_gateway_seen_updates: set[int] = set()
+_GATEWAY_SEEN_MAX = 2000
 
 
 class CreateCronJobRequest(BaseModel):
@@ -171,6 +193,15 @@ async def lifespan(app: FastAPI):
         mcp_client=mcp_client,
         loki_client=loki_client,
     )
+
+    # Hand the gateway its tasks client, then register every enabled webhook.
+    tasks_client = getattr(command_router, "_tasks_client", None)
+    gateway_pipeline.configure(tasks_client)
+    for entry in gateway_registry.enabled():
+        adapter = gateway_registry.adapter(entry.name)
+        if adapter and not await adapter.connect():
+            logger.error("gateway: %s did not connect; its route will 503",
+                         entry.name)
 
     # Let the Slack events handler offer the intent router (it parks/builds via
     # the shared router). Mirrors how the Discord client is attached below.
@@ -561,6 +592,77 @@ async def discord_webhook(
 
     result = await discord_command_handler.handle_interaction(payload)
     return JSONResponse(content=result, status_code=200)
+
+
+_gateway_tasks: set = set()
+
+
+def _spawn_gateway(coro) -> "asyncio.Task":
+    """Run background work with a strong reference and a logged exception.
+
+    An unreferenced task can be collected mid-flight (CPython docs) and a raise
+    inside one is swallowed unless somebody retrieves it. Both have bitten this
+    service before.
+    """
+    task = asyncio.create_task(coro)
+    _gateway_tasks.add(task)
+
+    def _done(t: "asyncio.Task") -> None:
+        _gateway_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.error("gateway: background handler failed: %r", t.exception(),
+                         exc_info=t.exception())
+
+    task.add_done_callback(_done)
+    return task
+
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """Inbound Telegram updates.
+
+    Returns 200 before the work happens. Telegram re-delivers anything that does
+    not get a fast 200, so a slow model call would otherwise cause the same
+    message to be answered several times. Every failure path is also a 200 for
+    the same reason: a 4xx or 5xx would make Telegram retry it forever.
+    """
+    adapter = gateway_registry.adapter("telegram")
+    if adapter is None:
+        raise HTTPException(status_code=503, detail="Telegram is not configured")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    headers = dict(request.headers)
+    # verify_webhook and parse_inbound are synchronous by contract (base.py),
+    # but a fully-mocked adapter (a bare AsyncMock in tests) hands back a
+    # coroutine for every attribute regardless. Awaiting only when the result
+    # is actually awaitable keeps this correct against both.
+    verified = adapter.verify_webhook(payload, headers)
+    if inspect.isawaitable(verified):
+        verified = await verified
+    if not verified:
+        logger.warning("gateway: rejected a Telegram update with a bad secret")
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    update_id = payload.get("update_id")
+    if isinstance(update_id, int):
+        if update_id in _gateway_seen_updates:
+            return JSONResponse(content={"ok": True}, status_code=200)
+        if len(_gateway_seen_updates) >= _GATEWAY_SEEN_MAX:
+            _gateway_seen_updates.clear()
+        _gateway_seen_updates.add(update_id)
+
+    event = adapter.parse_inbound(payload, headers)
+    if inspect.isawaitable(event):
+        event = await event
+    if event is None:
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    _spawn_gateway(gateway_pipeline.handle_event(event, adapter))
+    return JSONResponse(content={"ok": True}, status_code=200)
 
 
 # Last voice-started build (single voice identity by design). Lets the agent's
