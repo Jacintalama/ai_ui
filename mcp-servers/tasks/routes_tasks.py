@@ -13,7 +13,7 @@ from sqlalchemy import or_, select, text
 import uuid
 
 from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
-from auth import AdminUser, current_admin, current_admin_or_capability
+from auth import AdminUser, CurrentUser, current_admin, current_admin_or_capability, current_user
 from db import session
 from document_extract import classify_document, extract_text
 from models import ChatMessage, ProjectSupabase, TaskItem
@@ -126,7 +126,7 @@ async def list_tasks(
     has_built_app: bool = False,
     is_project: bool = False,
     limit: int = 50,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ):
     """List tasks with flexible filters.
 
@@ -136,8 +136,15 @@ async def list_tasks(
       strictly private to their owner + explicitly-invited members.
     - `has_built_app=true`: legacy filter for projects with a completed
       slug; now also excludes the team bucket.
-    - Default (neither flag): the admin task-panel view — all tasks for
-      this user plus the shared team bucket.
+    - Default (neither flag): the task-panel view — all tasks for this
+      user, plus the shared team bucket for admins only.
+
+    Open to any authenticated user, not just admins: projects are per-user
+    and a user must be able to manage their own. The two project branches
+    were already scoped to owner-or-member, so dropping the admin header
+    relaxes "admin AND owner" to "owner" and widens nothing. The default
+    branch is NOT redundant that way — it reaches into the shared team
+    bucket, which is other people's work — so that part stays admin-only.
     """
     if status not in STATUS_BY_TAB and not is_project:
         raise HTTPException(status_code=400, detail="Invalid status filter")
@@ -193,8 +200,11 @@ async def list_tasks(
                 .limit(limit)
             )
         else:
-            # Default: admin task panel — includes team bucket.
-            access_clause = TaskItem.assignee_email.in_([user.email, TEAM_EMAIL])
+            # Default: task panel. The shared team bucket belongs to the AIUI
+            # team, so only an admin sees it; a regular user gets their own
+            # tasks and nothing else.
+            scope = [user.email] + ([TEAM_EMAIL] if user.is_admin else [])
+            access_clause = TaskItem.assignee_email.in_(scope)
             q = (
                 select(TaskItem)
                 .where(
