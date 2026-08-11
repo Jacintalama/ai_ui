@@ -5,12 +5,27 @@ which the browser could rewrite (prompt-injection vector). They now live
 in templates.py and are looked up server-side. These tests pin the shape
 of that catalog and the secrecy of the rules field over the wire.
 """
+import inspect
+
 from httpx import ASGITransport, AsyncClient
 
+import routes_templates
+from auth import current_admin, current_user
 from main import app
 from templates import TEMPLATES, build_rules_for, get_template
 
 ADMIN_HEADERS = {"X-User-Email": "ralph@aiui.com", "X-User-Admin": "true"}
+USER_HEADERS = {"X-User-Email": "mia@example.com"}
+
+
+def _deps(func):
+    """The dependency callables declared in a route's signature."""
+    out = []
+    for param in inspect.signature(func).parameters.values():
+        default = param.default
+        if default is not inspect.Parameter.empty and hasattr(default, "dependency"):
+            out.append(default.dependency)
+    return out
 
 EXPECTED_KEYS = {
     "landing", "dashboard", "crud", "crm", "portfolio", "docs",
@@ -131,3 +146,45 @@ async def test_get_endpoint_requires_admin():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         r = await c.get("/api/templates")
     assert r.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# The catalog is not secret, but the route demanded the admin header, so the
+# App Builder's "Select template" gallery was empty for a regular user.
+# Nothing new is exposed: `rules` is already omitted from the response and the
+# SAME catalog is already served to non-admins by /api/aiuibuilder/templates.
+# ---------------------------------------------------------------------------
+
+def test_templates_route_does_not_demand_the_admin_header():
+    assert current_admin not in _deps(routes_templates.list_templates), (
+        "GET /api/templates still requires the admin header, so the template "
+        "gallery is empty for a regular user")
+
+
+def test_templates_route_still_requires_a_signed_in_user():
+    assert current_user in _deps(routes_templates.list_templates), (
+        "GET /api/templates lost its authentication")
+
+
+async def test_regular_user_can_read_the_catalog():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get("/api/templates", headers=USER_HEADERS)
+    assert r.status_code == 200
+    assert len(r.json()) == len(EXPECTED_KEYS)
+
+
+async def test_regular_user_still_never_sees_the_rules_text():
+    """The rules are the prompt-injection surface — they stay agent-side."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get("/api/templates", headers=USER_HEADERS)
+    assert r.status_code == 200
+    for item in r.json():
+        assert "rules" not in item
+
+
+async def test_regular_user_sees_exactly_what_an_admin_sees():
+    """No hidden admin-only entries, so opening the route leaks nothing."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        as_user = await c.get("/api/templates", headers=USER_HEADERS)
+        as_admin = await c.get("/api/templates", headers=ADMIN_HEADERS)
+    assert as_user.json() == as_admin.json()
