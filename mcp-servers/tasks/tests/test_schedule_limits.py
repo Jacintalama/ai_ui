@@ -50,6 +50,39 @@ def test_a_garbage_expression_does_not_raise():
     assert min_interval_minutes("not a cron") == 0.0
 
 
+@pytest.mark.parametrize("expr", [
+    "0,30,59 0,23 * * *",   # 23:59 -> next 00:00 is one minute apart
+    "0,15,59 0,23 * * *",
+])
+def test_the_midnight_wrap_is_not_hidden_by_the_base_time(expr):
+    """Four samples taken from midnight all land inside the same day, so the
+    window closes before the 23:59 -> 00:00 wrap and these read as 29 and 15
+    minutes. Both really fire one minute apart. A base late in the day sees the
+    wrap in the very first gap, which is why the base time is 23:45 and not
+    00:00 — with the same four samples."""
+    assert min_interval_minutes(expr) == 1
+
+
+def test_a_day_of_week_wrap_is_still_a_blind_spot():
+    """KNOWN LIMIT, pinned so a future change to the base is deliberate.
+
+    Sunday 23:59 -> Monday 00:00 is also one minute, but 2026-01-01 is a
+    Thursday: the first matching fire is Sunday 00:00 and all four samples land
+    on that Sunday, so the wrap is never sampled. Moving the base onto a Sunday
+    fixes THIS expression and breaks Sunday-only ones (`0,15,59 * * * 0`) by
+    the same mechanism, so it is not a trade worth making. Closing it properly
+    needs a different algorithm, not a different constant."""
+    assert min_interval_minutes("0,59 0,23 * * 0,1") == 59
+
+
+def test_an_expression_that_can_never_fire_reports_zero():
+    """Feb 30 passes croniter.is_valid but raises inside get_next, so the
+    helper returns 0.0. Zero means "no interval could be measured", NOT "zero
+    minutes apart" — the guard has to say so explicitly rather than lean on
+    0.0 being falsy."""
+    assert min_interval_minutes("0 0 30 2 *") == 0.0
+
+
 from unittest.mock import MagicMock  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -127,6 +160,17 @@ def test_too_frequent_is_rejected(monkeypatch):
     assert r.status_code == 400, r.text
     assert "15 minutes" in r.json()["detail"]
     assert created == []
+
+
+def test_an_unmeasurable_expression_is_let_through_on_purpose(monkeypatch):
+    """`0 0 30 2 *` can never fire, so it costs the box nothing and is allowed.
+    It reaches the guard with gap == 0.0 — the point is that the guard says
+    "unmeasurable, allow" out loud instead of falling through a falsy zero."""
+    c, created = _client_with([], monkeypatch)
+    r = c.post("/schedules", headers={"X-User-Email": "u@x.com"},
+               json=_body(cron_expr="0 0 30 2 *"))
+    assert r.status_code == 201, r.text
+    assert len(created) == 1
 
 
 def test_exactly_fifteen_minutes_is_allowed(monkeypatch):

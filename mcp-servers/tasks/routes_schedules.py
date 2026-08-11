@@ -86,7 +86,15 @@ def _validate_kind(kind: str, video_config: dict | None) -> None:
 
 # A fixed base makes the calculation deterministic — otherwise the same cron
 # expression could pass or fail depending on when the request arrives.
-_INTERVAL_BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+#
+# Late in the day, not midnight: from 00:00 all four samples land inside the
+# same day, so the window closes before the 23:59 -> 00:00 wrap and
+# `0,30,59 0,23 * * *` reads as 29 minutes when it really fires one minute
+# apart. Starting at 23:45 puts that wrap in the very first gap. It does not
+# close the equivalent day-of-week wrap (`0,59 0,23 * * 0,1`, still read as
+# 59) — 2026-01-01 is a Thursday, and moving the base onto a Sunday just trades
+# that miss for Sunday-only expressions. That one needs a different algorithm.
+_INTERVAL_BASE = datetime(2026, 1, 1, 23, 45, tzinfo=timezone.utc)
 
 
 def min_interval_minutes(cron_expr: str) -> float:
@@ -130,13 +138,18 @@ def _enforce_interval_floor(
     if is_operator or is_admin:
         return
     gap = min_interval_minutes(cron_expr)
-    if gap and gap < MIN_INTERVAL_MINUTES:
-        raise HTTPException(
-            status_code=400,
-            detail=(f"The shortest repeat is every {MIN_INTERVAL_MINUTES} "
-                    f"minutes. That schedule would run every "
-                    f"{int(gap)} minute(s)."),
-        )
+    # gap <= 0 means "could not be measured", not "fires instantly": an
+    # expression like `0 0 30 2 *` is valid to croniter but raises inside
+    # get_next, so it lands here as 0.0. It can never fire, so let it through —
+    # explicitly, rather than by falling through a falsy zero.
+    if gap <= 0 or gap >= MIN_INTERVAL_MINUTES:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(f"The shortest repeat is every {MIN_INTERVAL_MINUTES} "
+                f"minutes. That schedule would run every "
+                f"{int(gap)} minute(s)."),
+    )
 
 
 @router.get("")
