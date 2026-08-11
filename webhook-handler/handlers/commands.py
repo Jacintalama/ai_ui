@@ -595,12 +595,13 @@ class CommandRouter:
         message into `when` (time phrase) and `task` (what to do); parse_when turns
         the phrase into cron, then run_schedule_create makes it (delivering runs to
         the ctx's private thread). On a missing/garbled time, ask for what + when."""
-        from handlers.schedule_parse import parse_when
+        from handlers.schedule_parse import parse_when, too_frequent_error
         when = (data.get("when") or "").strip()
         task = (data.get("task") or data.get("detail") or "").strip()
         parsed = parse_when(when) if when else None
         if not parsed or not task:
             await ctx.respond(
+                (task and too_frequent_error(when)) or
                 "I can set that up — tell me what to do and when, e.g. "
                 "*summarize my emails every morning at 8am*."
             )

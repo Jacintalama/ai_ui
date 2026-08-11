@@ -3,7 +3,9 @@ Schedules UX. parse_when(text) returns (cron_expr, human_readable) or None.
 """
 import pytest
 
-from handlers.schedule_parse import parse_when
+from handlers.schedule_parse import (
+    MIN_INTERVAL_MINUTES, parse_when, too_frequent_error,
+)
 
 
 @pytest.mark.parametrize(
@@ -55,3 +57,55 @@ def test_parse_when_unparseable_returns_none(text):
 
 def test_parse_when_strips_and_is_case_insensitive():
     assert parse_when("  Every Morning  ") == ("0 8 * * *", "every day at 8:00 AM")
+
+
+# --- The 15-minute floor, enforced where the input is collected -------------
+#
+# The tasks API rejects these too (routes_schedules._enforce_interval_floor),
+# but only after a round trip and with an error the user has to interpret.
+# Catching them here is what turns a rejection into guidance.
+
+
+@pytest.mark.parametrize("text", [
+    "every 1 minutes",
+    "every 5 minutes",
+    "every 14 minutes",
+    "* * * * *",            # typed straight into the raw-cron passthrough
+    "*/5 * * * *",
+    "0,15,59 0,23 * * *",   # 23:59 -> 00:00 is one minute
+])
+def test_parse_when_refuses_anything_under_the_floor(text):
+    assert parse_when(text) is None
+
+
+@pytest.mark.parametrize("text,cron", [
+    ("every 15 minutes", "*/15 * * * *"),   # exactly the boundary
+    ("every 30 minutes", "*/30 * * * *"),
+    ("*/15 * * * *", "*/15 * * * *"),
+    ("0,59 0 * * *", "0,59 0 * * *"),       # twice a day, 59 apart — fine
+])
+def test_parse_when_still_allows_the_floor_and_above(text, cron):
+    result = parse_when(text)
+    assert result is not None, f"{text!r} should still parse"
+    assert result[0] == cron
+
+
+@pytest.mark.parametrize("text", ["every 5 minutes", "* * * * *", "every 1 minutes"])
+def test_too_frequent_error_names_the_minimum(text):
+    """parse_when returns None for "too often" and for "I don't understand"
+    alike; without this the first is reported as the second."""
+    msg = too_frequent_error(text)
+    assert msg, f"{text!r} should get a reason, not silence"
+    assert str(MIN_INTERVAL_MINUTES) in msg
+
+
+@pytest.mark.parametrize(
+    "text", ["", "   ", "sometime next week maybe", "asap", "99 99 * * *"])
+def test_too_frequent_error_stays_silent_on_an_unreadable_phrase(text):
+    """Not the frequency's fault — the caller keeps its own wording for this."""
+    assert too_frequent_error(text) is None
+
+
+@pytest.mark.parametrize("text", ["every morning", "every 30 minutes", "0,59 0 * * *"])
+def test_too_frequent_error_stays_silent_on_an_acceptable_schedule(text):
+    assert too_frequent_error(text) is None

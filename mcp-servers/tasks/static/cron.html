@@ -519,7 +519,7 @@
 
             <div class="field" id="row-everyn" hidden>
               <label class="form-label" for="every-n">Every how many minutes</label>
-              <input class="form-input" id="every-n" name="every-n" type="number" min="1" max="59" value="15">
+              <input class="form-input" id="every-n" name="every-n" type="number" min="15" max="59" value="15">
               <span class="form-hint">A number from 1 to 59.</span>
             </div>
 
@@ -870,8 +870,11 @@
         }
         case "hourly":  return min + " * * * *";
         case "everyn": {
+          // Floor of 15 mirrors the API (routes_schedules.MIN_INTERVAL_MINUTES).
+          // Building "*/5" here only to have the save rejected is a worse way
+          // to learn the limit than not being able to pick it.
           const n = parseInt(everyNInput.value, 10);
-          if (isNaN(n) || n < 1 || n > 59) return "";
+          if (isNaN(n) || n < 15 || n > 59) return "";
           return "*/" + n + " * * * *";
         }
         default: return "";  // "custom" uses the raw cron input directly
