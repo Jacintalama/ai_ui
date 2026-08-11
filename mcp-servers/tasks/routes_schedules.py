@@ -25,6 +25,13 @@ from models import Schedule
 
 router = APIRouter(prefix="/schedules")
 
+# Each schedule spawns a Claude Code agent run and concurrency is capped at 3
+# (scheduler.py) to avoid OOM on a 3.8GB box, so an unbounded number of
+# frequent schedules is a self-DoS. Mirrors what webhook-handler's own cron
+# already enforces (max_user_jobs / min_interval_minutes).
+MAX_SCHEDULES_PER_USER = 10
+MIN_INTERVAL_MINUTES = 15
+
 
 def _cron_secret() -> str:
     """Read the secret from env at call time so tests can monkeypatch it."""
@@ -123,6 +130,7 @@ async def create_schedule(
     body: CreateScheduleIn,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, Any]:
     is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
     # For end-user calls, force the schedule onto the JWT-authenticated email.
@@ -144,6 +152,31 @@ async def create_schedule(
         raise HTTPException(status_code=400, detail="invalid cron_expr")
 
     _validate_kind(body.kind, body.video_config)
+
+    # Operators (X-Cron-Secret) and admins keep the old unbounded behaviour:
+    # the cap exists to stop casual self-DoS, not as a security boundary.
+    is_admin = x_user_admin.strip().lower() == "true"
+    if not is_operator and not is_admin:
+        gap = min_interval_minutes(body.cron_expr)
+        if gap and gap < MIN_INTERVAL_MINUTES:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"The shortest repeat is every {MIN_INTERVAL_MINUTES} "
+                        f"minutes. That schedule would run every "
+                        f"{int(gap)} minute(s)."),
+            )
+        # Counting by fetching rows rather than func.count(): the ceiling is 10
+        # rows, and it reuses the mock shape the existing route tests prove.
+        async with session() as s:
+            mine = (await s.execute(
+                select(Schedule).where(Schedule.user_email == owner)
+            )).scalars().all()
+        if len(mine) >= MAX_SCHEDULES_PER_USER:
+            raise HTTPException(
+                status_code=429,
+                detail=(f"You already have {MAX_SCHEDULES_PER_USER} scheduled "
+                        f"tasks. Delete one first."),
+            )
 
     sid = uuid.uuid4()
     async with session() as s:
