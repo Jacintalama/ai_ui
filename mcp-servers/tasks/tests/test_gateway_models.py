@@ -56,6 +56,10 @@ def test_all_three_tables_are_created():
         assert f"tasks.{table}" in MIGRATION
 
 
+def test_the_redeem_budget_table_is_created():
+    assert "tasks.gateway_redeem_budget" in MIGRATION_034
+
+
 def test_models_point_at_the_tasks_schema():
     for model in (GatewayLink, GatewayPairingCode, GatewayRedeemBudget, GatewaySession):
         assert model.__table_args__["schema"] == "tasks"

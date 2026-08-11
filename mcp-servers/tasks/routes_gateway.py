@@ -171,9 +171,15 @@ async def put_session(body: SessionIn,
                 owui_user_id=body.owui_user_id,
                 updated_at=now,
             ))
-        # Scoped to this user on purpose. Unscoped, every message swept every
+        # Scoped to this user on purpose: unscoped, every message swept every
         # other user's rows and could not use the (owui_user_id, updated_at)
         # index, so one person's write paid for everyone's housekeeping.
+        # The tradeoff is that a user who starts one conversation and never
+        # returns leaves a row nothing will collect, since only their own next
+        # write matches. Accepted: the row is a pointer, and the conversation it
+        # points at is an Open WebUI chat we never delete anyway, so the cost is
+        # a few dozen bytes and no data is retained that would not be retained
+        # regardless.
         await s.execute(delete(GatewaySession).where(
             GatewaySession.owui_user_id == body.owui_user_id,
             GatewaySession.updated_at < now - timedelta(days=SESSION_RETENTION_DAYS),
