@@ -407,3 +407,33 @@ def test_the_operator_path_can_resurrect_a_spent_one_off(monkeypatch):
     r = c.post(f"/schedules/{spent.id}/enable",
                headers={"X-Cron-Secret": os.environ["CRON_SHARED_SECRET"]})
     assert r.status_code == 200, r.text
+
+
+# --- The web form must not build a request the API is going to refuse ------
+#
+# cron.html is browser code and there is no JS harness in this repo (the same
+# constraint test_nav_entries.py works around), so this pins the numbers out of
+# the source. Weaker than driving the page, but it catches the silent edit that
+# puts the form back out of step with MIN_INTERVAL_MINUTES.
+
+
+def _cron_page() -> str:
+    import pathlib
+    return (pathlib.Path(__file__).resolve().parents[1]
+            / "static" / "cron.html").read_text(encoding="utf-8")
+
+
+def test_the_every_n_minutes_control_cannot_go_below_the_floor():
+    import re
+    from routes_schedules import MIN_INTERVAL_MINUTES
+    html = _cron_page()
+
+    m = re.search(r'id="every-n"[^>]*\smin="(\d+)"', html)
+    assert m, "the Every N minutes input lost its min attribute"
+    assert int(m.group(1)) == MIN_INTERVAL_MINUTES, m.group(0)
+
+    # The input attribute is only advisory — a value typed past it still
+    # reaches buildCronFromFriendly, which has to reject it as well.
+    m = re.search(r"n < (\d+) \|\| n > 59", html)
+    assert m, "buildCronFromFriendly lost its Every-N bounds check"
+    assert int(m.group(1)) == MIN_INTERVAL_MINUTES, m.group(0)
