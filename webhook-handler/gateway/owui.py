@@ -45,12 +45,33 @@ class OWUIUserClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.request(
                     method, url, headers=self._headers(), **kwargs)
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
+        except httpx.TransportError as e:
+            # TransportError, not just ConnectError and TimeoutException: a reset
+            # partway through an upload raises ReadError or RemoteProtocolError,
+            # and those would otherwise escape untyped. The caller branches on
+            # .status, so an exception without one leaves it unable to tell a
+            # network failure from a model failure.
             raise OWUIError(0, f"open-webui unreachable: {e}") from e
         if resp.status_code >= 400:
             # resp.text, not the JSON detail: a 502 from the proxy is HTML.
             raise OWUIError(resp.status_code, resp.text[:400])
         return resp
+
+    @staticmethod
+    def _json(resp: httpx.Response) -> dict:
+        """Parse a 200 body, or raise a typed error.
+
+        A 200 carrying something that is not JSON is what a proxy returning an
+        HTML error page with the wrong status looks like. Letting the decode
+        error escape would hand the caller an exception with no status to
+        branch on.
+        """
+        try:
+            return resp.json()
+        except ValueError as e:
+            raise OWUIError(
+                502, f"open-webui returned a non-JSON body: {resp.text[:200]}"
+            ) from e
 
     async def chat_completion(
         self, messages: list[dict], model: str, chat_id: str | None = None,
@@ -60,7 +81,7 @@ class OWUIUserClient:
             # Lets Open WebUI's own filters associate the turn with the chat.
             payload["chat_id"] = chat_id
         resp = await self._request("POST", "/api/chat/completions", json=payload)
-        data = resp.json()
+        data = self._json(resp)
         choices = data.get("choices") or []
         if not choices:
             raise OWUIError(502, f"no choices in response: {json.dumps(data)[:300]}")
@@ -88,7 +109,7 @@ class OWUIUserClient:
             "files": [],
         }
         resp = await self._request("POST", "/api/v1/chats/new", json={"chat": chat})
-        chat_id = resp.json().get("id")
+        chat_id = self._json(resp).get("id")
         if not chat_id:
             raise OWUIError(502, "chat creation returned no id")
         return chat_id
@@ -96,7 +117,13 @@ class OWUIUserClient:
     async def get_chat(self, chat_id: str) -> dict:
         """The inner chat object, which is what update_chat expects back."""
         resp = await self._request("GET", f"/api/v1/chats/{chat_id}")
-        return resp.json().get("chat") or {}
+        chat = self._json(resp).get("chat")
+        if not chat:
+            # Every other accessor here raises on a malformed 200, and this one
+            # must too. Returning an empty object would let a caller round-trip
+            # it into update_chat and overwrite a real chat with nothing.
+            raise OWUIError(502, f"chat {chat_id} came back with no chat object")
+        return chat
 
     async def update_chat(self, chat_id: str, chat: dict) -> None:
         await self._request("POST", f"/api/v1/chats/{chat_id}", json={"chat": chat})
@@ -117,7 +144,7 @@ class OWUIUserClient:
             files = {"file": (os.path.basename(path), fh.read(), mime)}
         resp = await self._request(
             "POST", "/api/v1/audio/transcriptions", files=files)
-        text = (resp.json() or {}).get("text")
+        text = (self._json(resp) or {}).get("text")
         if not text:
             raise OWUIError(502, "transcription returned no text")
         return text

@@ -137,3 +137,34 @@ async def test_transcribe_raises_when_the_response_has_no_text(tmp_path):
         return_value=httpx.Response(200, json={}))
     with pytest.raises(OWUIError):
         await _client().transcribe(str(clip))
+
+
+@respx.mock
+async def test_a_transport_error_other_than_connect_raises_with_status_zero():
+    # A reset mid-request. Previously escaped untyped, leaving the caller unable
+    # to tell a network failure from a model failure.
+    respx.post(f"{BASE}/api/chat/completions").mock(
+        side_effect=httpx.ReadError("connection reset"))
+    with pytest.raises(OWUIError) as exc:
+        await _client().chat_completion([{"role": "user", "content": "hi"}], "m")
+    assert exc.value.status == 0
+
+
+@respx.mock
+async def test_a_non_json_200_raises_a_typed_error():
+    # What a proxy returning an HTML error page with the wrong status looks like.
+    respx.post(f"{BASE}/api/chat/completions").mock(
+        return_value=httpx.Response(200, text="<html>gateway timeout</html>"))
+    with pytest.raises(OWUIError) as exc:
+        await _client().chat_completion([{"role": "user", "content": "hi"}], "m")
+    assert exc.value.status == 502
+
+
+@respx.mock
+async def test_get_chat_raises_when_the_chat_object_is_missing():
+    # Must not return {}: a caller could round-trip that into update_chat and
+    # overwrite the user's real chat history with nothing.
+    respx.get(f"{BASE}/api/v1/chats/chat-9").mock(
+        return_value=httpx.Response(200, json={"id": "chat-9"}))
+    with pytest.raises(OWUIError):
+        await _client().get_chat("chat-9")
