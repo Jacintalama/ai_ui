@@ -108,6 +108,37 @@ def min_interval_minutes(cron_expr: str) -> float:
     return min(gaps) if gaps else 0.0
 
 
+def _is_admin(x_user_admin: str) -> bool:
+    """The gateway strips X-User-Admin from the client request and re-sets it
+    after validating the JWT (api-gateway/main.py), so the route can trust it."""
+    return x_user_admin.strip().lower() == "true"
+
+
+def _enforce_interval_floor(
+    cron_expr: str, *, is_operator: bool, is_admin: bool,
+) -> None:
+    """400 when a regular user asks for a repeat faster than the floor.
+
+    Shared by create AND update. Checking only croniter.is_valid on the update
+    path let a user create `0 9 * * *`, then PATCH it to `* * * * *` from
+    either bot's Edit modal — which made the whole cap decorative. Keeping one
+    helper is what stops the two paths drifting apart again.
+
+    Operators (X-Cron-Secret) and admins keep the old unbounded behaviour: the
+    cap exists to stop casual self-DoS, not as a security boundary.
+    """
+    if is_operator or is_admin:
+        return
+    gap = min_interval_minutes(cron_expr)
+    if gap and gap < MIN_INTERVAL_MINUTES:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"The shortest repeat is every {MIN_INTERVAL_MINUTES} "
+                    f"minutes. That schedule would run every "
+                    f"{int(gap)} minute(s)."),
+        )
+
+
 @router.get("")
 async def list_schedules(
     platform: str = Query(default=""),
@@ -153,18 +184,10 @@ async def create_schedule(
 
     _validate_kind(body.kind, body.video_config)
 
-    # Operators (X-Cron-Secret) and admins keep the old unbounded behaviour:
-    # the cap exists to stop casual self-DoS, not as a security boundary.
-    is_admin = x_user_admin.strip().lower() == "true"
+    is_admin = _is_admin(x_user_admin)
+    _enforce_interval_floor(body.cron_expr, is_operator=is_operator,
+                            is_admin=is_admin)
     if not is_operator and not is_admin:
-        gap = min_interval_minutes(body.cron_expr)
-        if gap and gap < MIN_INTERVAL_MINUTES:
-            raise HTTPException(
-                status_code=400,
-                detail=(f"The shortest repeat is every {MIN_INTERVAL_MINUTES} "
-                        f"minutes. That schedule would run every "
-                        f"{int(gap)} minute(s)."),
-            )
         # Counting by fetching rows rather than func.count(): the ceiling is 10
         # rows, and it reuses the mock shape the existing route tests prove.
         async with session() as s:
@@ -291,8 +314,9 @@ async def update_schedule(
     body: UpdateScheduleIn,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, str]:
-    _, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
     await _scoped_schedule(schedule_id, scoped_email)  # 404 if missing / not owner
     values: dict[str, Any] = {}
     if body.name is not None:
@@ -301,6 +325,10 @@ async def update_schedule(
         from croniter import croniter
         if not croniter.is_valid(body.cron_expr):
             raise HTTPException(status_code=400, detail="invalid cron_expr")
+        # The same floor as create — otherwise the Edit modal is a bypass.
+        # The COUNT cap deliberately does not apply: editing a row adds none.
+        _enforce_interval_floor(body.cron_expr, is_operator=is_operator,
+                                is_admin=_is_admin(x_user_admin))
         values["cron_expr"] = body.cron_expr
     if body.prompt is not None:
         values["prompt"] = body.prompt

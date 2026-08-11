@@ -56,11 +56,13 @@ from fastapi.testclient import TestClient  # noqa: E402
 MAX = 10
 
 
-def _client_with(rows, monkeypatch):
+def _client_with(rows, monkeypatch, owned=None, executed=None):
     """A TestClient whose DB returns `rows` for the owner-count query.
 
     Reuses the _FakeSession shape from test_routes_schedules.py rather than
-    inventing a second one.
+    inventing a second one. `owned` is what _scoped_schedule finds (the PATCH
+    path); `executed`, when a list is passed, collects every statement the
+    route issued so a test can assert on the query itself.
     """
     from main import app
     from models import Schedule
@@ -74,12 +76,16 @@ def _client_with(rows, monkeypatch):
             if isinstance(obj, Schedule):
                 created.append(obj)
         async def commit(self): return None
-        async def execute(self, _stmt):
+        async def execute(self, stmt):
+            if executed is not None:
+                executed.append(stmt)
+
             class _R:
                 def scalars(self):
                     class _S:
                         def all(self_): return list(rows)
                     return _S()
+                def scalar_one_or_none(self): return owned
             return _R()
 
     monkeypatch.setattr("routes_schedules.session", lambda: _FakeSession())
@@ -158,3 +164,77 @@ def test_a_forged_admin_header_cannot_reach_the_service(monkeypatch):
     import routes_schedules
     src = inspect.getsource(routes_schedules.create_schedule)
     assert "x_user_admin" in src
+
+
+# --- PATCH /schedules/{id}: the same floor, or the cap is decorative -------
+#
+# A non-admin creates `0 9 * * *` (accepted), then edits it to `* * * * *`.
+# Both bots ship an Edit modal that PATCHes a user-supplied cron
+# (webhook-handler/handlers/commands.py::run_schedule_edit and the
+# SCHED_EDITMODAL_PREFIX branch of slack_interactions.py), so this needs no
+# tooling — it is two clicks in Discord or Slack.
+
+
+def _owned(cron_expr="0 9 * * *", email="u@x.com"):
+    """A schedule that _scoped_schedule will hand back to the caller."""
+    import uuid
+    from models import Schedule
+    return Schedule(id=uuid.uuid4(), user_email=email, name="n",
+                    cron_expr=cron_expr, prompt="p")
+
+
+def _writes(executed):
+    """Only the UPDATE statements — the route also SELECTs to check ownership."""
+    from sqlalchemy.sql.dml import Update
+    return [s for s in executed if isinstance(s, Update)]
+
+
+def test_patching_to_every_minute_is_rejected(monkeypatch):
+    sched, ex = _owned(), []
+    c, _ = _client_with([sched], monkeypatch, owned=sched, executed=ex)
+    r = c.patch(f"/schedules/{sched.id}", headers={"X-User-Email": "u@x.com"},
+                json={"cron_expr": "* * * * *"})
+    assert r.status_code == 400, r.text
+    assert "15 minutes" in r.json()["detail"]
+    assert _writes(ex) == [], "rejected the edit but still wrote the row"
+
+
+def test_patching_to_fifteen_minutes_is_allowed(monkeypatch):
+    sched, ex = _owned(), []
+    c, _ = _client_with([sched], monkeypatch, owned=sched, executed=ex)
+    r = c.patch(f"/schedules/{sched.id}", headers={"X-User-Email": "u@x.com"},
+                json={"cron_expr": "*/15 * * * *"})
+    assert r.status_code == 200, r.text
+    assert len(_writes(ex)) == 1
+
+
+def test_patching_without_a_cron_expr_still_works(monkeypatch):
+    """Renaming a schedule must not be dragged through the interval guard."""
+    sched, ex = _owned(), []
+    c, _ = _client_with([sched], monkeypatch, owned=sched, executed=ex)
+    r = c.patch(f"/schedules/{sched.id}", headers={"X-User-Email": "u@x.com"},
+                json={"name": "a nicer name"})
+    assert r.status_code == 200, r.text
+    assert len(_writes(ex)) == 1
+
+
+def test_an_admin_can_patch_to_every_minute(monkeypatch):
+    """Same exemption as create — the cap is not a security boundary."""
+    sched, ex = _owned(email="a@x.com"), []
+    c, _ = _client_with([sched], monkeypatch, owned=sched, executed=ex)
+    r = c.patch(f"/schedules/{sched.id}",
+                headers={"X-User-Email": "a@x.com", "X-User-Admin": "true"},
+                json={"cron_expr": "* * * * *"})
+    assert r.status_code == 200, r.text
+    assert len(_writes(ex)) == 1
+
+
+def test_the_operator_path_can_patch_to_every_minute(monkeypatch):
+    """scripts/manage_schedules.py must keep working unchanged."""
+    sched, ex = _owned(), []
+    c, _ = _client_with([sched], monkeypatch, owned=sched, executed=ex)
+    r = c.patch(f"/schedules/{sched.id}",
+                headers={"X-Cron-Secret": os.environ["CRON_SHARED_SECRET"]},
+                json={"cron_expr": "* * * * *"})
+    assert r.status_code == 200, r.text
+    assert len(_writes(ex)) == 1
