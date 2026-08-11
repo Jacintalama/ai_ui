@@ -1130,6 +1130,10 @@
       },
       {
         attr: "data-aiui-cron-jobs",
+        // Visible to ALL signed-in users. The schedules API is owner-scoped
+        // (X-User-Email) and now caps regular users at 10 schedules with a
+        // 15-minute floor, so an unbounded agent-run loop is not reachable.
+        allUsers: true,
         label: "Cron Jobs",
         title: "Cron Jobs: schedule recurring AI tasks",
         href: "/cron-jobs",
