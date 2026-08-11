@@ -19,6 +19,7 @@ These tests read the real FastAPI dependency objects and the real SQL the route
 builds, so neither a comment nor a renamed helper can satisfy them.
 """
 import inspect
+import os
 from contextlib import asynccontextmanager
 
 import pytest
@@ -172,3 +173,12 @@ async def test_project_branch_never_includes_the_team_bucket_even_for_an_admin(
     """Projects stay private to owner + invited members, admin or not."""
     await _get("/api/tasks?is_project=true", ADMIN_HEADERS)
     assert TEAM not in _sql(seen_queries[0])
+
+
+def test_the_page_no_longer_claims_admin_is_required():
+    """The exact sentence the user reported. current_user never raises 403, so
+    the only way to reach this branch now is to be signed out entirely —
+    telling that person they need to be an admin sends them to the wrong fix."""
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    html = open(os.path.join(here, "static", "projects.html"), encoding="utf-8").read()
+    assert "signed in as an admin to view projects" not in html

@@ -3003,7 +3003,7 @@
           credentials: "include",
         });
         if (resp.status === 401 || resp.status === 403) {
-          content.innerHTML = `<div class="error">You must be signed in as an admin to view projects.</div>`;
+          content.innerHTML = `<div class="error">You must be signed in to view your projects.</div>`;
           return;
         }
         if (!resp.ok) {
