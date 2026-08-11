@@ -101,6 +101,17 @@ class Settings(BaseSettings):
     # the visual editor from the Discord build-ready card.
     tasks_public_url: str = "https://ai-ui.coolestdomain.win"
 
+    # Multi-platform gateway. The model every gateway conversation uses.
+    # auto_router.auto is the "Auto (Free)" pipe: active on prod, free, so a
+    # runaway loop costs nothing.
+    gateway_model: str = Field(default="auto_router.auto", alias="GATEWAY_MODEL")
+    # Browser-visible base for the pairing link. Not tasks_public_url, so the
+    # two can diverge without silently breaking pairing.
+    gateway_public_url: str = "https://ai-ui.coolestdomain.win"
+    # Prior turns replayed into each completion. The full transcript stays in
+    # Open WebUI; this only bounds what each call pays for.
+    gateway_history_turns: int = 20
+
     # Google connectors (Gmail/Drive). Internal URLs (backend network) for the
     # /auth/status check; public URLs (via Caddy -> api-gateway) for the browser
     # connect link the user opens.
