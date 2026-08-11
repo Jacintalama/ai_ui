@@ -25,6 +25,12 @@ _CRON_RANGES = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
 # difference between telling someone the limit and handing them a 400.
 MIN_INTERVAL_MINUTES = 15
 
+# The other half of the same cap (routes_schedules.MAX_SCHEDULES_PER_USER).
+# Nothing in this service enforces it — the API owns that — but the bots quote
+# it when the API says 429, so it lives beside its sibling rather than inline
+# in a message string.
+MAX_SCHEDULES_PER_USER = 10
+
 
 def _to_24h(hour: int, ampm: str | None) -> int:
     if ampm:
