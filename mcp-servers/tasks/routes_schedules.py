@@ -122,6 +122,19 @@ def _is_admin(x_user_admin: str) -> bool:
     return x_user_admin.strip().lower() == "true"
 
 
+def _holds_a_slot(sched: Schedule) -> bool:
+    """Does this row still cost the box anything?
+
+    A one-off that has fired does not: scheduler.fire_values sets
+    enabled=False on it and nothing ever deletes the row, so ten of them would
+    pin a user at the ceiling forever — told they "already have 10 scheduled
+    tasks" about schedules that can never run again. A one-off that has NOT
+    fired yet is still a queued agent run and does hold its slot.
+    """
+    return not (getattr(sched, "run_once", False)
+                and not getattr(sched, "enabled", True))
+
+
 def _enforce_interval_floor(
     cron_expr: str, *, is_operator: bool, is_admin: bool,
 ) -> None:
@@ -203,11 +216,13 @@ async def create_schedule(
     if not is_operator and not is_admin:
         # Counting by fetching rows rather than func.count(): the ceiling is 10
         # rows, and it reuses the mock shape the existing route tests prove.
+        # Fetching them also lets _holds_a_slot be a plain predicate that a
+        # test can drive, instead of SQL no mock can evaluate.
         async with session() as s:
             mine = (await s.execute(
                 select(Schedule).where(Schedule.user_email == owner)
             )).scalars().all()
-        if len(mine) >= MAX_SCHEDULES_PER_USER:
+        if len([r for r in mine if _holds_a_slot(r)]) >= MAX_SCHEDULES_PER_USER:
             raise HTTPException(
                 status_code=429,
                 detail=(f"You already have {MAX_SCHEDULES_PER_USER} scheduled "

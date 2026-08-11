@@ -23,7 +23,10 @@ async def main():
         r = await c.post(
             f"{BASE}/schedules",
             headers={"X-User-Email": EMAIL},
-            json={"name": "e2e-smoke", "cron_expr": "*/5 * * * *", "prompt": "ping"},
+            # Must clear MIN_INTERVAL_MINUTES (15): this posts as a plain user,
+            # with no X-Cron-Secret and no X-User-Admin, so it is capped like
+            # one. `*/5` now 400s and every later step here depends on the id.
+            json={"name": "e2e-smoke", "cron_expr": "*/15 * * * *", "prompt": "ping"},
         )
         print(f"  status={r.status_code} body={r.text[:200]}")
         sid = r.json().get("id") if r.status_code in (200, 201) else None

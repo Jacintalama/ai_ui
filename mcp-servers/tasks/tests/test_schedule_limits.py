@@ -83,8 +83,8 @@ def test_an_expression_that_can_never_fire_reports_zero():
     assert min_interval_minutes("0 0 30 2 *") == 0.0
 
 
-from unittest.mock import MagicMock  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy.sql.selectable import Select  # noqa: E402
 
 MAX = 10
 
@@ -199,15 +199,82 @@ def test_the_operator_path_is_exempt(monkeypatch):
     assert r.status_code == 201, r.text
 
 
-def test_a_forged_admin_header_cannot_reach_the_service(monkeypatch):
-    """Documents WHY trusting X-User-Admin is safe here: the gateway strips it
-    from the client request and re-sets it after validating the JWT
-    (api-gateway/main.py:298-309). This test pins that the route reads the
-    header at all, so the exemption is real rather than accidental."""
-    import inspect
-    import routes_schedules
-    src = inspect.getsource(routes_schedules.create_schedule)
-    assert "x_user_admin" in src
+def test_the_admin_exemption_comes_from_the_x_user_admin_header(monkeypatch):
+    """The exemption is driven by that header and nothing else: the identical
+    request is refused without it and accepted with it.
+
+    This replaces a test named "a forged admin header cannot reach the
+    service", which asserted `"x_user_admin" in inspect.getsource(...)` — true
+    from the signature alone, so it passed with the entire guard deleted
+    (verified by mutation). Whether a forged header can reach the service is a
+    GATEWAY property and is now proved where it lives, in
+    api-gateway/tests/test_trust_headers.py.
+    """
+    c, created = _client_with(_rows(MAX), monkeypatch)
+    body = _body(cron_expr="* * * * *")
+    assert c.post("/schedules", headers={"X-User-Email": "a@x.com"},
+                  json=body).status_code == 400
+    assert created == []
+    assert c.post("/schedules",
+                  headers={"X-User-Email": "a@x.com", "X-User-Admin": "true"},
+                  json=body).status_code == 201
+    assert len(created) == 1
+
+
+def test_the_count_is_scoped_to_the_caller(monkeypatch):
+    """The one thing that makes this a PER-USER cap rather than a global one.
+
+    _FakeSession.execute used to throw the statement away, so `Schedule.
+    user_email == owner` could have been dropped entirely and every test here
+    would still have passed. Read the query back instead.
+    """
+    ex: list = []
+    c, created = _client_with(_rows(1), monkeypatch, executed=ex)
+    r = c.post("/schedules", headers={"X-User-Email": "u@x.com"}, json=_body())
+    assert r.status_code == 201, r.text
+    queries = [str(s.compile(compile_kwargs={"literal_binds": True}))
+               for s in ex if isinstance(s, Select)]
+    assert queries, "the cap never ran a query"
+    assert any("user_email" in q and "'u@x.com'" in q for q in queries), queries
+
+
+def test_the_operator_path_counts_against_the_body_owner(monkeypatch):
+    """Operators are exempt from the cap, so they must not even ask — but if
+    that ever changes, the owner is the body's user_email, not the caller."""
+    ex: list = []
+    c, _ = _client_with(_rows(1), monkeypatch, executed=ex)
+    r = c.post("/schedules",
+               headers={"X-Cron-Secret": os.environ["CRON_SHARED_SECRET"]},
+               json=_body(user_email="someone@x.com"))
+    assert r.status_code == 201, r.text
+    assert [s for s in ex if isinstance(s, Select)] == [], \
+        "operators are exempt; the count query should not run at all"
+
+
+def test_a_spent_one_off_does_not_hold_a_slot_forever(monkeypatch):
+    """scheduler.fire_values sets enabled=False on a fired run_once row, and
+    only the explicit DELETE endpoint ever removes rows. Ten fired one-offs
+    would pin a user at the ceiling permanently, told they "already have 10
+    scheduled tasks" about schedules that can never run again."""
+    spent = _rows(MAX)
+    for r_ in spent:
+        r_.run_once, r_.enabled = True, False
+    c, created = _client_with(spent, monkeypatch)
+    r = c.post("/schedules", headers={"X-User-Email": "u@x.com"}, json=_body())
+    assert r.status_code == 201, r.text
+    assert len(created) == 1
+
+
+def test_a_live_one_off_still_counts(monkeypatch):
+    """Only SPENT ones are free — a one-off that has not fired yet is still a
+    queued agent run and holds its slot."""
+    pending = _rows(MAX)
+    for r_ in pending:
+        r_.run_once, r_.enabled = True, True
+    c, created = _client_with(pending, monkeypatch)
+    r = c.post("/schedules", headers={"X-User-Email": "u@x.com"}, json=_body())
+    assert r.status_code == 429, r.text
+    assert created == []
 
 
 # --- PATCH /schedules/{id}: the same floor, or the cap is decorative -------
