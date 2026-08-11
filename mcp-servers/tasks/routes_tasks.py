@@ -359,6 +359,20 @@ def _check_slug_shape(slug: str) -> None:
         )
 
 
+def _app_dir_exists(slug: str) -> bool:
+    """True if apps/<slug>/ is already on disk.
+
+    Postgres is not the whole picture: `built_app_slug` used to stay NULL when
+    the agent didn't echo `apps/<slug>/` in its completion message, and the
+    team creates app folders directly on the VPS. Those apps have files worth
+    protecting even when nothing in the database points at them. Called only
+    after the slug passed `_check_slug_shape`, so it cannot be a traversal.
+    """
+    import os
+    workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
+    return os.path.isdir(os.path.join(workspace, "apps", slug))
+
+
 async def _check_slug_is_not_someone_elses(s, slug: str, email: str) -> None:
     """Refuse a slug that already belongs to a project this caller doesn't own.
 
@@ -373,7 +387,7 @@ async def _check_slug_is_not_someone_elses(s, slug: str, email: str) -> None:
     Reusing a slug you already own is allowed — that's rebuilding your own app.
     """
     from routes_aiuibuilder import _slug_taken
-    if not await _slug_taken(s, slug):
+    if not (await _slug_taken(s, slug) or _app_dir_exists(slug)):
         return
     from routes_projects import _require_role
     try:

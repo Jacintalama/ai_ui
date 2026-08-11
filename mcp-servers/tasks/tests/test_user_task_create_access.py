@@ -275,6 +275,27 @@ async def test_hijacked_slug_never_reaches_disk(db, monkeypatch, tmp_path):
         "the rejected build still overwrote the victim's app directory")
 
 
+async def test_regular_user_cannot_overwrite_an_app_that_only_exists_on_disk(
+    db, tmp_path
+):
+    """Not every apps/<slug>/ has a DB row: built_app_slug used to stay NULL
+    when the agent didn't echo the path, and teammates create app folders
+    directly on the VPS. _copy_template_app overwrites its destination, so the
+    collision check has to look at the workspace too, not only at Postgres."""
+    victim = tmp_path / "apps" / "hand-made-app"
+    victim.mkdir(parents=True)
+    (victim / "index.html").write_text("<h1>someone's work</h1>", encoding="utf-8")
+
+    r = await _post(
+        _body(action_type="BUILD", template_key="landing", storage="none",
+              slug="hand-made-app"),
+        USER_HEADERS,
+    )
+    assert r.status_code == 409, "a regular user overwrote an app folder on disk"
+    assert (victim / "index.html").read_text(encoding="utf-8") == (
+        "<h1>someone's work</h1>")
+
+
 async def test_regular_user_can_reuse_a_slug_they_already_own(db, monkeypatch):
     async def _taken(s, slug):
         return True
