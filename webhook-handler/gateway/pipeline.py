@@ -6,6 +6,7 @@ at a chat window waiting, so NOTHING may fail silently: every path ends in a
 sentence the person can read.
 """
 import logging
+import os
 
 from clients.tasks import TasksAPIError, TasksClient
 from config import settings
@@ -24,7 +25,24 @@ GROUP_REFUSAL = (
 TASKS_DOWN = "I can't reach my memory right now. Try again in a moment."
 MODEL_DOWN = "The model didn't answer just now. Try again in a moment."
 UNEXPECTED = "Something went wrong on my side. Try again in a moment."
-UNSUPPORTED_TYPE = "I can only read text and voice messages right now."
+UNSUPPORTED_TYPE = (
+    "I can read text and voice messages. I can't do anything with that one yet."
+)
+TRANSCRIBE_FAILED = (
+    "I couldn't make out that voice message. Could you send it again or type it?"
+)
+CLIP_TOO_LONG = (
+    "That voice message is too long for me. I can handle up to 2 minutes."
+)
+
+# Whisper on this box is CPU only, so a long clip would hold a worker for
+# minutes while the sender stares at nothing. Keep this in step with the
+# sentence in CLIP_TOO_LONG.
+MAX_VOICE_SECONDS = 120
+
+# Distinguishable from any real message text, so a person cannot type them.
+_FAILED = "\x00gateway-transcribe-failed"
+_TOO_LONG = "\x00gateway-clip-too-long"
 
 #: Seams. main.py sets _tasks at startup; tests replace both.
 _tasks = None
@@ -102,6 +120,10 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     text = await _resolve_text(event, owui, adapter)
     if text is None:
         return await _say(adapter, src.chat_id, UNSUPPORTED_TYPE)
+    if text == _FAILED:
+        return await _say(adapter, src.chat_id, TRANSCRIBE_FAILED)
+    if text == _TOO_LONG:
+        return await _say(adapter, src.chat_id, CLIP_TOO_LONG)
     if not text.strip():
         # A sticker, an empty edit, a stray keystroke. Answering would be noise.
         return ""
@@ -132,12 +154,64 @@ async def _resolve_text(event: MessageEvent, owui: OWUIUserClient,
                         adapter: BasePlatformAdapter) -> str | None:
     """The text to send the model, or None for a type we do not handle.
 
-    Voice is filled in by the transcription task; everything except TEXT falls
-    through to None until then.
+    Returns the sentinel _FAILED when the type IS handled but this particular
+    message could not be turned into text. That distinction matters: an
+    unhandled type and a broken voice memo need different sentences.
     """
     if event.message_type is MessageType.TEXT:
         return event.text
+    if event.message_type is MessageType.VOICE:
+        return await _transcribe_voice(event, owui, adapter)
     return None
+
+
+def voice_prompt(transcript: str) -> str:
+    """Mark a transcript as speech so the model answers like it was spoken.
+
+    Without this the model reads a transcription artifact as if it were typed,
+    and hedges about the odd punctuation instead of just answering.
+    """
+    return f'[The user sent a voice message. Here is what they said: "{transcript}"]'
+
+
+async def _transcribe_voice(event: MessageEvent, owui: OWUIUserClient,
+                            adapter: BasePlatformAdapter) -> str:
+    """Download the clip, transcribe it, and always remove the temp file."""
+    if not event.media_ref:
+        log.warning("gateway: a voice event arrived with no media reference")
+        return _FAILED
+
+    # Refused before the download, not after. The duration arrives in the
+    # inbound payload, so a ten minute clip costs us nothing to reject; waiting
+    # for the byte count would mean fetching the whole thing first.
+    if event.media_duration and event.media_duration > MAX_VOICE_SECONDS:
+        return _TOO_LONG
+
+    # Transcription is the slow part of a voice turn, so the indicator goes up
+    # here rather than after it.
+    await adapter.send_typing(event.source.chat_id)
+
+    path = None
+    try:
+        path = await adapter.download_media(event.media_ref)
+        transcript = await owui.transcribe(path)
+    except ValueError:
+        # The adapter's own size guard. A distinct sentence, because "too long"
+        # is something the sender can act on and "it broke" is not.
+        return _TOO_LONG
+    except Exception as e:                              # noqa: BLE001
+        log.warning("gateway: transcription failed: %r", e)
+        return _FAILED
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                log.warning("gateway: could not remove the temp clip %s", path)
+
+    if not transcript.strip():
+        return _FAILED
+    return voice_prompt(transcript)
 
 
 async def _say(adapter: BasePlatformAdapter, chat_id: str, text: str) -> str:
