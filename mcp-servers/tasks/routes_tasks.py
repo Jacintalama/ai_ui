@@ -297,21 +297,87 @@ async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin_or_cap
         raise HTTPException(status_code=403, detail="Not your task")
 
 
-@router.post("", response_model=TaskOut, status_code=201)
-async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current_admin)):
-    """Admin-created task from the panel. Not tied to a real meeting —
-    uses a synthetic meeting_id so it shows up as normal in the panel."""
-    amap = AssigneeMap.from_env()
-    assignee_raw = (body.assignee or "self").strip()
+def _resolve_assignee(user: CurrentUser, raw: str | None) -> tuple[str, str]:
+    """Map the request's `assignee` to (display name, email).
+
+    "self" is the caller, "team" is the shared bucket, and anything else goes
+    through AssigneeMap to ANOTHER person's inbox (falling back to the team
+    bucket for a name it doesn't know). A regular user may only file work
+    against themselves — not at a colleague, and not at the shared bucket.
+    Admins keep the full range.
+    """
+    assignee_raw = (raw or "self").strip()
     if assignee_raw.lower() == "self":
-        assignee_name = user.email.split("@")[0]
-        assignee_email = user.email
+        assignee_name, assignee_email = user.email.split("@")[0], user.email
     elif assignee_raw.lower() == "team":
-        assignee_name = "team"
-        assignee_email = TEAM_EMAIL_CONST
+        assignee_name, assignee_email = "team", TEAM_EMAIL_CONST
     else:
         assignee_name = assignee_raw
-        assignee_email = amap.resolve(assignee_raw)
+        assignee_email = AssigneeMap.from_env().resolve(assignee_raw)
+    if not user.is_admin and assignee_email != user.email:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only create tasks assigned to yourself.",
+        )
+    return assignee_name, assignee_email
+
+
+def _check_slug_shape(slug: str) -> None:
+    """Reject a caller-supplied slug that isn't a plain kebab-case name.
+
+    The slug is joined onto `apps/` by _ensure_app_skeleton and
+    _copy_template_app, so an unvalidated value ("../../x") writes outside the
+    workspace. CreateTaskRequest declares it as a bare `str | None`, so this is
+    the only check. Reuses routes_aiuibuilder's regex — the same one the
+    Discord/Slack/voice build path already enforces — so the two entry points
+    agree on what a project name is.
+    """
+    from routes_aiuibuilder import _SLUG_RE
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid project name — use lowercase letters, digits and "
+                   "hyphens, starting with a letter or digit.",
+        )
+
+
+async def _check_slug_is_not_someone_elses(s, slug: str, email: str) -> None:
+    """Refuse a slug that already belongs to a project this caller doesn't own.
+
+    Two things go wrong otherwise, and neither is theoretical:
+      - `_copy_template_app` overwrites destination files, so the victim's app
+        source is clobbered (the same hazard routes_aiuibuilder documents on
+        `_bind_slug_description`);
+      - routes_projects._require_role treats "a TaskItem with this
+        built_app_slug is assigned to me" as implicit OWNERSHIP, so the caller
+        would gain publish/rollback/delete/invite/link-a-database rights on
+        someone else's project.
+    Reusing a slug you already own is allowed — that's rebuilding your own app.
+    """
+    from routes_aiuibuilder import _slug_taken
+    if not await _slug_taken(s, slug):
+        return
+    from routes_projects import _require_role
+    try:
+        await _require_role(s, slug, email, "owner")
+    except HTTPException:
+        raise HTTPException(
+            status_code=409,
+            detail="That project name is already taken — pick another.",
+        )
+
+
+@router.post("", response_model=TaskOut, status_code=201)
+async def create_task(body: CreateTaskRequest, user: CurrentUser = Depends(current_user)):
+    """Create a task from the panel / App Builder. Not tied to a real meeting —
+    uses a synthetic meeting_id so it shows up as normal in the panel.
+
+    Open to any authenticated user so a regular user can start their own
+    project, with two guards that only bind non-admins: the task must be
+    assigned to the caller, and a caller-supplied `slug` must be well-formed
+    and not already belong to somebody else. Admin behaviour is unchanged.
+    """
+    assignee_name, assignee_email = _resolve_assignee(user, body.assignee)
 
     # Legacy `rules` / `template_rules` fields are accepted but ignored —
     # rules now come from the server-side template lookup (Phase D).
@@ -323,6 +389,8 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
 
     description = (body.description or "").strip()
     slug = (body.slug or "").strip()
+    if slug and not user.is_admin:
+        _check_slug_shape(slug)
     if body.action_type == "BUILD" and body.template_key:
         if not is_valid_key(body.template_key):
             raise HTTPException(
@@ -345,6 +413,9 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
     )
 
     async with session() as s:
+        if slug and not user.is_admin:
+            await _check_slug_is_not_someone_elses(s, slug, user.email)
+
         needs_supabase_gate = False
         if needs_supabase_gate_candidate:
             existing = (await s.execute(
