@@ -230,3 +230,48 @@ async def test_a_success_clears_the_budget(client, platform):
         assert await _budget(email) is None, "a success means they are not guessing"
     finally:
         await _cleanup(platform, email)
+
+
+async def test_one_account_can_never_see_or_unlink_anothers_channels(client, platform):
+    """Per-user separation, proven rather than assumed.
+
+    Everything the page can do is scoped to the caller's email. This links a
+    channel to one account and then checks a second account can neither see it
+    nor delete it.
+    """
+    mine = await _a_real_email()
+    theirs = f"pytest-{uuid.uuid4().hex[:8]}@example.invalid"
+    try:
+        issued = await client.post(
+            "/gateway/resolve", headers={"X-Internal-Secret": SECRET},
+            json={"platform": platform, "platform_user_id": "sep1",
+                  "platform_user_name": "Ralph"})
+        ok = await client.post("/tasks/gateway/link",
+                               json={"code": issued.json()["code"]},
+                               headers={"X-User-Email": mine})
+        assert ok.status_code == 200
+
+        # The owner sees it, named.
+        seen = await client.get("/tasks/gateway/connections",
+                                headers={"X-User-Email": mine})
+        connected = [c for c in seen.json()["connections"]
+                     if c["status"] == "connected"]
+        assert any(c["platform"] == platform for c in connected), connected
+
+        # A different account sees nothing of theirs.
+        other = await client.get("/tasks/gateway/connections",
+                                 headers={"X-User-Email": theirs})
+        assert all(c["status"] != "connected"
+                   for c in other.json()["connections"])
+
+        # And cannot delete it.
+        attack = await client.delete(f"/tasks/gateway/connections/{platform}",
+                                     headers={"X-User-Email": theirs})
+        assert attack.status_code == 404
+
+        still = await client.get("/tasks/gateway/connections",
+                                 headers={"X-User-Email": mine})
+        assert any(c["platform"] == platform and c["status"] == "connected"
+                   for c in still.json()["connections"])
+    finally:
+        await _cleanup(platform, mine, theirs)

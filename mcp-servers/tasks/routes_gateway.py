@@ -404,17 +404,37 @@ async def redeem(body: RedeemIn,
 # "ready" is decided at request time, not here: a channel is offerable only if
 # this server is actually configured for it. See _channel_status.
 CHANNEL_CATALOGUE = (
-    {"platform": "telegram", "label": "Telegram", "icon": "✈️"},
-    {"platform": "cli", "label": "Terminal", "icon": "⌨️"},
+    # Built and routed through the gateway.
+    {"platform": "telegram", "label": "Telegram", "icon": "✈️",
+     "blurb": "Chat with IO from Telegram direct messages, including voice memos."},
+    {"platform": "cli", "label": "Terminal", "icon": "⌨️",
+     "blurb": "Talk to IO from any shell with a single dependency-free script."},
+
+    # Code already exists in this platform, but not behind the gateway yet.
     {"platform": "slack", "label": "Slack", "icon": "💬",
-     "planned": "Already wired to IO, not yet routed through Channels."},
+     "blurb": "Use IO from Slack direct messages.",
+     "planned": "Slack already talks to IO, but not yet through Channels."},
     {"platform": "discord", "label": "Discord", "icon": "🎮",
-     "planned": "Already wired to IO, not yet routed through Channels."},
+     "blurb": "Use IO from Discord direct messages.",
+     "planned": "Discord already talks to IO, but not yet through Channels."},
+
+    # Specified, blocked on things that are not code.
     {"platform": "whatsapp", "label": "WhatsApp", "icon": "📱",
+     "blurb": "Message IO from WhatsApp.",
      "planned": "Needs Meta business verification and template approval."},
     {"platform": "signal", "label": "Signal", "icon": "🔒",
+     "blurb": "Message IO from Signal.",
      "planned": "Needs a daemon this server does not have the memory for."},
+
+    # Plausible next, because the platform already has the hard part.
+    {"platform": "email", "label": "Email", "icon": "✉️",
+     "blurb": "Send IO an email and get a reply.",
+     "planned": "Not started. The Gmail connector already exists to build on."},
+    {"platform": "teams", "label": "Microsoft Teams", "icon": "👥",
+     "blurb": "Use IO from Teams chats.",
+     "planned": "Not started. Microsoft sign-in already exists to build on."},
 )
+
 
 
 def _channel_status(entry: dict, linked: dict) -> dict:
@@ -428,7 +448,8 @@ def _channel_status(entry: dict, linked: dict) -> dict:
     """
     platform = entry["platform"]
     row = {"platform": platform, "label": entry["label"], "icon": entry["icon"],
-           "name": "", "linked_at": None, "note": ""}
+           "blurb": entry.get("blurb", ""), "name": "", "linked_at": None,
+           "note": ""}
 
     if platform in linked:
         row.update(linked[platform], status="connected")
