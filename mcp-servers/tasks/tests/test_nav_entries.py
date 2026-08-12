@@ -1,8 +1,8 @@
-"""The sidebar nav config must expose all four features to regular users.
+"""The sidebar nav config must expose all five features to regular users.
 
 task-panel.js is browser JS with no JS test harness in this repo, so this
 parses the config out of the source. That is weaker than running it — it
-cannot prove the entries actually appear — but it does pin the four flags
+cannot prove the entries actually appear — but it does pin the five flags
 against a silent edit, which is the failure this file exists to catch.
 """
 import pathlib
@@ -11,7 +11,7 @@ import re
 JS = (pathlib.Path(__file__).resolve().parents[1]
       / "static" / "task-panel.js").read_text(encoding="utf-8")
 
-EXPECTED = {"App Builder", "Video Generation", "Cron Jobs", "Graph"}
+EXPECTED = {"App Builder", "Video Generation", "Cron Jobs", "Graph", "Chat Apps"}
 
 
 def _entries():
@@ -25,7 +25,7 @@ def _entries():
     return out
 
 
-def test_all_four_entries_exist():
+def test_all_five_entries_exist():
     assert {label for label, _ in _entries()} >= EXPECTED
 
 
