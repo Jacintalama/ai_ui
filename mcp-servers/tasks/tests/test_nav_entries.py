@@ -11,7 +11,7 @@ import re
 JS = (pathlib.Path(__file__).resolve().parents[1]
       / "static" / "task-panel.js").read_text(encoding="utf-8")
 
-EXPECTED = {"App Builder", "Video Generation", "Cron Jobs", "Graph", "Gateway"}
+EXPECTED = {"App Builder", "Video Generation", "Cron Jobs", "Graph", "Channels"}
 
 
 def _entries():

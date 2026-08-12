@@ -1149,13 +1149,13 @@
         },
       },
       {
-        attr: "data-aiui-gateway",
+        attr: "data-aiui-channels",
         // Visible to ALL signed-in users. Everything behind it is scoped to the
         // caller: the page lists only their own links and can only unlink their
         // own. There is nothing here an admin sees that a user does not.
         allUsers: true,
-        label: "Gateway",
-        title: "Gateway: one connection point for Telegram, terminal and more",
+        label: "Channels",
+        title: "Channels: talk to IO from Telegram, a terminal and more",
         href: "/tasks/gateway/link",
         // speech bubble glyph
         setIcon: (svg) => {
