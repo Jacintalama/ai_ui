@@ -35,6 +35,25 @@ class TasksClient:
 
     def _headers(self, user_email: str) -> dict[str, str]:
         # ONLY X-User-Email. Never X-Cron-Secret here.
+        #
+        # And never X-User-Admin, even for a user who IS an admin. This is
+        # deliberate, not an oversight: it means an admin scheduling from
+        # Discord or Slack is capped like anyone else (MAX_SCHEDULES_PER_USER,
+        # the interval floor) while the same person is exempt on the web.
+        #
+        # The tasks service trusts X-User-Admin only because the API gateway
+        # strips it from the client request and re-sets it after validating
+        # the JWT, so the client can never assert it. The webhook-handler is
+        # not the gateway: it takes the email from a Discord/Slack identity it
+        # has already resolved, but it holds no JWT and validates nothing about
+        # admin-ness. If it started sending the header, the header would become
+        # forgeable-by-proxy and would stop being trustworthy ANYWHERE — every
+        # route in the tasks service that reads it would be weakened, to buy an
+        # admin a cap they can already bypass through the web UI or the
+        # operator secret (X-Cron-Secret).
+        #
+        # So: an admin who needs more than the cap uses the web UI. Do not
+        # "fix" this by adding the header here.
         return {"X-User-Email": user_email}
 
     async def _request(
