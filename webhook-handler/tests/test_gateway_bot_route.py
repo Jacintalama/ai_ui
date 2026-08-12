@@ -97,6 +97,17 @@ def test_tasks_being_down_is_503_so_telegram_redelivers(client, tasks_says, spaw
     assert resp.status_code == 503
 
 
+def test_a_broken_bot_config_is_dropped_rather_than_retried_forever(
+        client, tasks_says, spawned):
+    # A missing key is a bug or a bad row, and it will still be broken on the
+    # next attempt. 503 here would make Telegram retry this message forever.
+    tasks_says({k: v for k, v in CONFIG.items() if k != "token"})
+    resp = client.post("/webhook/telegram/abc", json=UPDATE,
+                       headers={"x-telegram-bot-api-secret-token": "s3cret"})
+    assert resp.status_code == 200
+    assert spawned == []
+
+
 def test_a_wrong_secret_is_rejected(client, tasks_says, spawned):
     tasks_says(CONFIG)
     resp = client.post("/webhook/telegram/abc", json=UPDATE,

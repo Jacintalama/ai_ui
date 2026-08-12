@@ -16,7 +16,7 @@ from clients.openwebui import OpenWebUIClient
 from clients.github import GitHubClient, verify_github_signature
 from clients.mcp_proxy import MCPProxyClient
 from clients.n8n import N8NClient
-from clients.tasks import TasksClient
+from clients.tasks import TasksClient, TasksAPIError
 from clients.slack import SlackClient, verify_slack_signature
 from clients.discord import DiscordClient, verify_discord_signature
 from clients.loki import LokiClient
@@ -744,8 +744,10 @@ def _bot_sender_allowed(config: dict, sender_id: str) -> bool:
 async def _bot_adapter(bot_key: str):
     """(adapter, config) for a user's own bot, or None if there is no such bot.
 
-    Raises TasksAPIError when tasks cannot be reached, which the caller turns
-    into a 503 so Telegram redelivers rather than losing the message."""
+    Raises TasksAPIError only when tasks cannot be reached (network failure),
+    which the caller turns into a 503 so Telegram redelivers rather than losing
+    the message. Other exceptions (code bugs, malformed config rows) are the
+    caller's responsibility; a 503 for them would make Telegram retry forever."""
     cached = _bot_adapters.get(bot_key)
     if cached is not None:
         return cached
@@ -781,9 +783,18 @@ async def telegram_webhook_for_bot(bot_key: str, request: Request):
     """
     try:
         entry = await _bot_adapter(bot_key)
-    except Exception:  # noqa: BLE001
+    except TasksAPIError:
+        # tasks is unreachable. Transient, so ask Telegram to redeliver rather
+        # than eat the message.
         logger.warning("gateway: could not load bot config, asking for a retry")
         return JSONResponse(content={"ok": False}, status_code=503)
+    except Exception:  # noqa: BLE001
+        # Anything else is a bug in us or a malformed row, and it will still be
+        # broken on the next attempt. A 503 here would make Telegram retry this
+        # message forever, so drop it loudly instead. Same rule the parse
+        # handler on the shared route already follows.
+        logger.exception("gateway: could not build an adapter for a user bot")
+        return JSONResponse(content={"ok": True}, status_code=200)
 
     if entry is None:
         return JSONResponse(content={"ok": False}, status_code=404)
