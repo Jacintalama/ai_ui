@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect a chat app</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 34rem; margin: 4rem auto; padding: 0 1.25rem;
+  }
+  h1 { font-size: 1.35rem; margin-bottom: .25rem; }
+  p.sub { opacity: .7; margin-top: 0; }
+  input {
+    font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .18em; text-transform: uppercase;
+    width: 100%; padding: .7rem .85rem; box-sizing: border-box;
+    border: 1px solid rgba(128,128,128,.45); border-radius: .4rem;
+    background: transparent; color: inherit;
+  }
+  button {
+    font: inherit; margin-top: .75rem; padding: .6rem 1.1rem;
+    border: 0; border-radius: .4rem; cursor: pointer;
+    background: #2f6fe4; color: #fff;
+  }
+  button[disabled] { opacity: .55; cursor: default; }
+  #msg { margin-top: 1rem; min-height: 1.5rem; }
+  .ok { color: #1a7f43; }
+  .bad { color: #c0392b; }
+</style>
+</head>
+<body>
+  <h1>Connect a chat app</h1>
+  <p class="sub">Paste the code the bot sent you. It works once and expires in an hour.</p>
+
+  <form id="f" autocomplete="off">
+    <input id="code" name="code" maxlength="14" placeholder="ABCD2345"
+           aria-label="Pairing code" required>
+    <button id="go" type="submit">Connect</button>
+  </form>
+  <p id="msg" role="status" aria-live="polite"></p>
+
+<script>
+const form = document.getElementById('f');
+const msg  = document.getElementById('msg');
+const go   = document.getElementById('go');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  go.disabled = true;
+  msg.className = '';
+  msg.textContent = 'Checking...';
+  try {
+    // Same-origin on purpose: the browser sends the Open WebUI session cookie
+    // and api-gateway turns it into X-User-Email. An absolute URL would not.
+    const res = await fetch('/tasks/gateway/link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: document.getElementById('code').value }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.ok) {
+      msg.className = 'ok';
+      msg.textContent = 'Connected. Go back to ' + (body.platform || 'your chat app')
+                      + ' and send a message.';
+      form.hidden = true;
+      return;
+    }
+    if (res.status === 401) {
+      msg.className = 'bad';
+      msg.textContent = 'Sign in to IO first, then reload this page.';
+    } else {
+      msg.className = 'bad';
+      msg.textContent = body.detail || 'That did not work. Ask the bot for a new code.';
+    }
+  } catch (err) {
+    msg.className = 'bad';
+    msg.textContent = 'Could not reach the server. Try again in a moment.';
+  }
+  go.disabled = false;
+});
+</script>
+</body>
+</html>

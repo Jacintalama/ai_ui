@@ -14,7 +14,7 @@ from routes_cron import router as cron_router
 from routes_db import router as db_router
 from routes_execution import router as execution_router
 from routes_fusion_page import router as fusion_page_router
-from routes_gateway import router as gateway_router
+from routes_gateway import page_router as gateway_page_router, router as gateway_router
 from routes_files import router as files_router
 from routes_fusion import router as fusion_api_router
 from routes_graph import router as graph_router
@@ -119,6 +119,7 @@ app.include_router(discord_links_router)  # /discord-links — system path (X-In
 app.include_router(gateway_router)  # /gateway, internal only (X-Internal-Secret).
                                     # Deliberately NOT mounted under /tasks: these
                                     # endpoints mint tokens that act as any user.
+app.include_router(gateway_page_router)  # /tasks/gateway/link, signed-in user
 app.include_router(state_router)  # /state — system KV for bot conversational state
 app.include_router(tasks_router)
 app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload

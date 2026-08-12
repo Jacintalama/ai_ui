@@ -207,3 +207,169 @@ async def recent_sessions(owui_user_id: str, limit: int = 10,
          "updated_at": r.updated_at.isoformat() if r.updated_at else None}
         for r in rows
     ]}
+
+
+# ---------------------------------------------------------------------------
+# User-facing. X-User-Email is injected by api-gateway from the caller's Open
+# WebUI session cookie, so reaching these endpoints already proves who you are.
+# That is what makes redeeming a code inherently an act by a known account: the
+# gateway never learns a password and the user never pastes a token.
+# ---------------------------------------------------------------------------
+from fastapi import Depends                             # noqa: E402
+from fastapi.responses import FileResponse              # noqa: E402
+
+from auth import CurrentUser, current_user              # noqa: E402
+from models import GatewayRedeemBudget                  # noqa: E402
+
+page_router = APIRouter(prefix="/tasks/gateway")
+
+
+class RedeemIn(BaseModel):
+    # Bounded on purpose. An 8 character code pasted with spaces or dashes fits
+    # easily, and normalize_code scans every character it is given, so an
+    # unbounded body would buy an O(n) scan on a public endpoint.
+    code: str = Field(min_length=1, max_length=24)
+
+
+@page_router.get("/link", include_in_schema=False)
+def link_page() -> FileResponse:
+    """Inert HTML. Everything it can do goes back through POST /link."""
+    return FileResponse("static/gateway-link.html", media_type="text/html")
+
+
+async def _owui_user_id_for(email: str) -> str | None:
+    """The Open WebUI user id behind an email.
+
+    A minted token carries the id, not the address, so pairing resolves it once
+    here. Raw asyncpg because public."user" is Open WebUI's own table and has no
+    model in this service; same approach as routes_knowledge_graph.py.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(os.environ.get("DATABASE_URL", ""))
+    try:
+        row = await conn.fetchrow(
+            'SELECT id FROM public."user" WHERE lower(email) = lower($1) LIMIT 1',
+            email)
+    finally:
+        await conn.close()
+    return row["id"] if row else None
+
+
+async def _locked_minutes(s, email: str, now: datetime) -> int | None:
+    """Whole minutes left on this account's lockout, or None if it is not locked."""
+    row = (await s.execute(
+        select(GatewayRedeemBudget).where(GatewayRedeemBudget.email == email)
+    )).scalar_one_or_none()
+    if row is None or row.locked_until is None or row.locked_until <= now:
+        return None
+    return max(1, int((row.locked_until - now).total_seconds() // 60) + 1)
+
+
+async def _record_failure(s, email: str, now: datetime) -> None:
+    """Charge a wrong guess to the account that made it.
+
+    Counting on the account rather than the code is the whole point: a wrong
+    code matches no row, so the only way to count it on the code would be to
+    increment every live one, which would let one guesser lock out every
+    pending pairing on the platform.
+
+    A served lock resets the window. Re-locking on the first later typo would
+    punish someone who already waited out a lockout far more than an attacker,
+    who simply waits either way.
+    """
+    row = (await s.execute(
+        select(GatewayRedeemBudget).where(GatewayRedeemBudget.email == email)
+    )).scalar_one_or_none()
+
+    if row is None:
+        s.add(GatewayRedeemBudget(email=email, failures=1, window_started_at=now))
+        await s.commit()
+        return
+
+    window_expired = (
+        row.window_started_at is None
+        or row.window_started_at < now - timedelta(seconds=gp.REDEEM_WINDOW_SECONDS)
+    )
+    lock_served = row.locked_until is not None and row.locked_until <= now
+
+    if window_expired or lock_served:
+        row.failures = 1
+        row.window_started_at = now
+        row.locked_until = None
+    else:
+        row.failures = (row.failures or 0) + 1
+        if row.failures >= gp.MAX_REDEEM_ATTEMPTS:
+            row.locked_until = now + timedelta(seconds=gp.REDEEM_LOCKOUT_SECONDS)
+            row.failures = 0
+            row.window_started_at = now
+    await s.commit()
+
+
+@page_router.post("/link")
+async def redeem(body: RedeemIn,
+                 user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
+    """Turn a pairing code into a link, as the signed-in user."""
+    code = gp.normalize_code(body.code)
+    now = _now()
+
+    async with session() as s:
+        locked_for = await _locked_minutes(s, user.email, now)
+        if locked_for is not None:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many wrong codes. Try again in {locked_for} minutes.")
+
+        if len(code) != gp.CODE_LENGTH:
+            await _record_failure(s, user.email, now)
+            raise HTTPException(status_code=400,
+                                detail="That code does not look right.")
+
+        row = (await s.execute(
+            select(GatewayPairingCode).where(
+                GatewayPairingCode.code_hash == gp.hash_code(code),
+                GatewayPairingCode.redeemed_at.is_(None),
+            ).limit(1)
+        )).scalar_one_or_none()
+
+        if row is None:
+            await _record_failure(s, user.email, now)
+            raise HTTPException(status_code=404,
+                                detail="That code is not valid. Ask for a new one.")
+        if row.expires_at <= now:
+            await _record_failure(s, user.email, now)
+            raise HTTPException(status_code=410,
+                                detail="That code has expired. Ask for a new one.")
+
+        owui_user_id = await _owui_user_id_for(user.email)
+        if not owui_user_id:
+            raise HTTPException(status_code=404,
+                                detail="No IO account for that address.")
+
+        existing = (await s.execute(
+            select(GatewayLink).where(
+                GatewayLink.platform == row.platform,
+                GatewayLink.platform_user_id == row.platform_user_id,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            existing.owui_user_id = owui_user_id
+            existing.email = user.email
+            existing.linked_at = now
+        else:
+            s.add(GatewayLink(
+                platform=row.platform,
+                platform_user_id=row.platform_user_id,
+                owui_user_id=owui_user_id,
+                email=user.email,
+            ))
+        row.redeemed_at = now
+        platform, name = row.platform, row.platform_user_name or ""
+
+        # A success wipes the slate: the account clearly is not guessing.
+        await s.execute(
+            delete(GatewayRedeemBudget).where(GatewayRedeemBudget.email == user.email))
+        await s.commit()
+
+    log.info("gateway: linked a %s account to %s", platform, user.email)
+    return {"status": "linked", "platform": platform, "platform_user_name": name}
