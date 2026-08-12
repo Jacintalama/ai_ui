@@ -120,6 +120,25 @@ async def test_transport_error_is_reported_with_its_type(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_an_empty_file_id_is_a_failure(monkeypatch):
+    """A 200 with no usable id is not a success. The caller would store an
+    empty kb_file_id, and the meeting would read as pushed forever."""
+    def blank_id(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/files/":
+            return httpx.Response(200, json={"id": ""})
+        return _happy_path(request)
+
+    monkeypatch.setattr(kb_sync.httpx, "AsyncClient", _mock_client(blank_id))
+
+    with pytest.raises(kb_sync.KbPushError) as exc_info:
+        await kb_sync.push_to_kb(URL, KEY, "meeting-2026-05-05-x.md", "# x")
+
+    reason = str(exc_info.value)
+    assert "file id" in reason.lower(), reason
+    assert reason.count("KB push failed") == 1, f"reason wrapped twice: {reason}"
+
+
+@pytest.mark.asyncio
 async def test_reason_is_bounded(monkeypatch):
     """OpenWebUI can return an HTML error page. The reason is written to a DB
     column and read by a human; it must not carry a whole page."""

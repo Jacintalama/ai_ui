@@ -121,6 +121,11 @@ async def push_to_kb(
             )
             resp.raise_for_status()
             file_id = resp.json()["id"]
+            if not file_id:
+                raise KbPushError(
+                    f"KB push failed for {filename}: OpenWebUI accepted the upload "
+                    "but returned no file id"
+                )
 
             # Poll for processing completion
             for _ in range(30):
@@ -145,6 +150,8 @@ async def push_to_kb(
             logger.info(f"Pushed to KB: {filename} (file_id={file_id})")
             return file_id
 
+    except KbPushError:
+        raise  # already a reason; do not wrap it in another one
     except Exception as exc:
         reason = f"KB push failed for {filename}: {_describe(exc)}"
         logger.error(reason)
