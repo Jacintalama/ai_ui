@@ -116,12 +116,23 @@ STATUS_BY_TAB: dict[str, list[str]] = {
 }
 
 
-async def _get_owned_task(s, task_id: UUID, email: str) -> TaskItem:
+async def _get_owned_task(s, task_id: UUID, email: str,
+                          is_admin: bool = False) -> TaskItem:
+    """The task, if this caller may act on it.
+
+    `is_admin` gates the TEAM_EMAIL shortcut. That shortcut was harmless while
+    every caller was an admin; once these routes accept any signed-in user it
+    would let a stranger read a team build's full log by guessing a UUID.
+    Defaults to False so a caller that forgets to pass it fails closed.
+    """
     res = await s.execute(select(TaskItem).where(TaskItem.id == task_id))
     item = res.scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    if item.assignee_email != email and item.assignee_email != TEAM_EMAIL:
+    allowed = {email}
+    if is_admin:
+        allowed.add(TEAM_EMAIL)
+    if item.assignee_email not in allowed:
         raise HTTPException(status_code=403, detail="Not your task")
     return item
 
@@ -228,11 +239,23 @@ async def list_tasks(
 
 
 @router.get("/{task_id}/executions")
-async def list_executions(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
-    """Return execution history for a task — used by the panel to show what AI did."""
+async def list_executions(
+    task_id: UUID,
+    user: CurrentUser = Depends(current_user_or_capability),
+):
+    """Return execution history for a task — used by the panel to show what AI did.
+
+    Opened to owners on 2026-08-12. A user reported their build stuck on QUEUED
+    forever; the build had in fact failed in 487ms ("Credit balance is too
+    low"), and this endpoint — the only one that carries the log and the error —
+    answered 403 on all 282 of the page's progress polls. The body already
+    scopes to the caller via `_get_owned_task`, so the admin header only ever
+    stopped a user from seeing their own build.
+    """
     from models import TaskExecution
     async with session() as s:
-        item = await _get_owned_task(s, task_id, user.email)
+        item = await _get_owned_task(s, task_id, user.email,
+                                     is_admin=user.is_admin)
         rows = (await s.execute(
             select(TaskExecution)
             .where(TaskExecution.task_id == item.id)
