@@ -766,3 +766,53 @@ async def remove_bot(bot_key: str,
         await s.commit()
     log.info("gateway: %s removed their own bot", user.email)
     return {"status": "removed"}
+
+
+# --- What webhook-handler needs to serve an inbound update --------------------
+# Internal only. This hands back a DECRYPTED token, so it lives on `router`,
+# which is mounted bare at http://tasks:8210 and is unreachable from a browser.
+
+
+class BotClaimIn(BaseModel):
+    platform_user_id: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/bots/{bot_key}")
+async def bot_config(bot_key: str,
+                     x_internal_secret: str = Header(default="")) -> dict[str, Any]:
+    """Everything needed to answer one inbound update on this bot."""
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        row = (await s.execute(
+            select(GatewayBot).where(GatewayBot.bot_key == bot_key)
+        )).scalars().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown bot")
+    return {
+        "platform": row.platform,
+        "owner_email": row.email,
+        "token": gbots.decrypt_token(row.token_encrypted),
+        "webhook_secret": row.webhook_secret,
+        "allowed_ids": row.allowed_ids or "",
+        "owner_platform_user_id": row.owner_platform_user_id or "",
+        "enabled": bool(row.enabled),
+    }
+
+
+@router.post("/bots/{bot_key}/claim")
+async def bot_claim(bot_key: str, body: BotClaimIn,
+                    x_internal_secret: str = Header(default="")) -> dict[str, bool]:
+    """The first account to message a bot becomes the one it serves.
+
+    Conditional on the column still being NULL, so two updates arriving
+    together cannot race one another into overwriting the claim. Claiming does
+    NOT link an IO account: that still needs a pairing code."""
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        result = await s.execute(
+            update(GatewayBot)
+            .where(GatewayBot.bot_key == bot_key,
+                   GatewayBot.owner_platform_user_id.is_(None))
+            .values(owner_platform_user_id=body.platform_user_id))
+        await s.commit()
+    return {"claimed": bool(result.rowcount)}

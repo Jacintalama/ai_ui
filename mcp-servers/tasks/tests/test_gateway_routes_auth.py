@@ -27,6 +27,8 @@ CALLS = [
     ("put", "/gateway/session", {"platform": "telegram", "chat_id": "1",
                                  "owui_chat_id": "c", "owui_user_id": "u"}),
     ("get", "/gateway/sessions/recent?owui_user_id=u", None),
+    ("get", "/gateway/bots/abc", None),
+    ("post", "/gateway/bots/abc/claim", {"platform_user_id": "1"}),
 ]
 
 
