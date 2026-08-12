@@ -210,6 +210,31 @@ class GatewayLink(Base):
     linked_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class GatewayBot(Base):
+    """A bot a user brought themselves, rather than the one IO operates.
+
+    `token_encrypted` is Fernet ciphertext, never plaintext. `bot_key` is the
+    opaque segment in /webhook/telegram/{bot_key} and is deliberately not a
+    secret: authentication is `webhook_secret`, which Telegram echoes back in a
+    header."""
+    __tablename__ = "gateway_bots"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bot_key = Column(Text, nullable=False, unique=True)
+    email = Column(Text, nullable=False)
+    platform = Column(Text, nullable=False)
+    token_encrypted = Column(Text, nullable=False)
+    webhook_secret = Column(Text, nullable=False)
+    bot_username = Column(Text)
+    allowed_ids = Column(Text, nullable=False, default="")
+    owner_platform_user_id = Column(Text)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False,
+                        server_default=func.now())
+    last_error = Column(Text)
+
+
 class GatewayPairingCode(Base):
     """A short-lived, single-use code that turns into a GatewayLink.
 
