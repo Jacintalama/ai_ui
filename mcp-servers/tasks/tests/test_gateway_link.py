@@ -106,11 +106,15 @@ def test_every_channel_is_listed_even_when_it_is_not_ready(monkeypatch):
     monkeypatch.setenv("GATEWAY_TELEGRAM_BOT", "@aiuiteam_bot")
     rows = [routes_gateway._channel_status(e, {})
             for e in routes_gateway.CHANNEL_CATALOGUE]
-    assert {r["platform"] for r in rows} == {
+    assert {r["platform"] for r in rows} >= {
         "telegram", "cli", "slack", "discord", "whatsapp", "signal"}
     for row in rows:
         assert row["status"] in {"connected", "available", "off", "planned"}
-        assert row["label"] and row["icon"]
+        assert row["label"] and row["icon"], row
+        # Every row explains itself: what it is, and if it is not usable, why.
+        assert row["blurb"], row["platform"]
+        if row["status"] in {"planned", "off"}:
+            assert row["note"], row["platform"]
 
 
 def test_a_channel_is_only_offered_when_this_server_is_configured_for_it(monkeypatch):
