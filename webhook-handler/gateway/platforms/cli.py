@@ -18,7 +18,10 @@ log = logging.getLogger(__name__)
 
 #: secrets.token_hex(16). The device id IS the credential on this path, so the
 #: format is checked strictly: garbage must not be able to mint pairing rows.
-DEVICE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+#: secrets.token_hex(16). Matched with fullmatch, not match: Python's `$` also
+#: matches immediately before a single trailing newline, so `match` would accept
+#: a 33 byte value ending in "\n" as though it were 32 hex characters.
+DEVICE_ID_PATTERN = re.compile(r"[0-9a-f]{32}")
 
 
 class CliAdapter(BasePlatformAdapter):
@@ -30,7 +33,7 @@ class CliAdapter(BasePlatformAdapter):
 
     def parse_inbound(self, payload: dict, headers: dict) -> MessageEvent | None:
         device_id = (payload or {}).get("device_id")
-        if not isinstance(device_id, str) or not DEVICE_ID_PATTERN.match(device_id):
+        if not isinstance(device_id, str) or not DEVICE_ID_PATTERN.fullmatch(device_id):
             return None
         text = (payload or {}).get("text")
         if not isinstance(text, str) or not text.strip():

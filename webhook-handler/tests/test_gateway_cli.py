@@ -99,3 +99,12 @@ def test_the_route_is_synchronous_unlike_telegram(client, monkeypatch):
     monkeypatch.setattr(main.gateway_pipeline, "handle_event", fake_handle)
     assert client.post("/webhook/gateway/cli",
                        json={"device_id": DEVICE, "text": "x"}).json()["reply"] == "done"
+
+
+@pytest.mark.parametrize("trailing", ["\n", "\r\n", "\n\n", " ", "\t"])
+def test_a_device_id_with_trailing_whitespace_is_refused(adapter, trailing):
+    # Python's `$` also matches immediately before ONE trailing newline, so a
+    # `match` against r"^...$" accepted a 33 byte value as 32 hex characters.
+    # fullmatch is what actually means "the whole string and nothing else".
+    assert adapter.parse_inbound(
+        {"device_id": DEVICE + trailing, "text": "hi"}, {}) is None
