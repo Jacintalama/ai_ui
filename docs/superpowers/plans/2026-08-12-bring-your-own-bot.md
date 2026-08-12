@@ -723,11 +723,14 @@ def test_an_unsupported_platform_is_refused_before_any_network_call(client, no_w
     assert "not" in resp.json()["detail"].lower()
 
 
-def test_an_empty_token_is_refused(client, no_writes):
+def test_a_whitespace_token_is_refused_before_telegram_is_asked(client, no_writes):
+    # Field(min_length=1) passes three spaces, so the strip() check is what
+    # catches this. Deterministically a 400, not a 422.
     resp = client.post("/tasks/gateway/bots",
                        json={"platform": "telegram", "token": "   ",
                              "allowed_ids": ""})
-    assert resp.status_code == 422 or resp.status_code == 400
+    assert resp.status_code == 400
+    assert "token" in resp.json()["detail"].lower()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
