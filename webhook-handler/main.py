@@ -747,7 +747,7 @@ def _bot_sender_allowed(config: dict, sender_id: str) -> bool:
 async def _bot_adapter(bot_key: str):
     """(adapter, config) for a user's own bot, or None if there is no such bot.
 
-    Raises TasksAPIError only when tasks cannot be reached (network failure),
+    Raises TasksAPIError when tasks is unreachable or returns a non-2xx response,
     which the caller turns into a 503 so Telegram redelivers rather than losing
     the message. Other exceptions (code bugs, malformed config rows) are the
     caller's responsibility; a 503 for them would make Telegram retry forever."""

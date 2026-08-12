@@ -165,3 +165,16 @@ def test_the_shared_route_is_untouched_by_all_of_this(client, tasks_says, spawne
                        headers={"x-telegram-bot-api-secret-token": "s3cret"})
     assert resp.status_code == 503
     assert spawned == []
+
+
+def test_two_bots_can_emit_the_same_update_id(client, tasks_says, spawned):
+    # update_id is a per-bot counter, so two users' bots both count 1, 2, 3.
+    # Keyed on the bare integer, the second bot's message vanished as a
+    # duplicate, and nothing surfaced it: the drop path returns 200 and logs
+    # nothing.
+    tasks_says(CONFIG)
+    for bot_key in ("aaa111", "bbb222"):
+        resp = client.post(f"/webhook/telegram/{bot_key}", json=UPDATE,
+                           headers={"x-telegram-bot-api-secret-token": "s3cret"})
+        assert resp.status_code == 200
+    assert len(spawned) == 2
