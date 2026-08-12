@@ -122,6 +122,19 @@ gateway_registry.register(PlatformEntry(
 _gateway_seen_updates: set[int] = set()
 _GATEWAY_SEEN_MAX = 2000
 
+# A user's own bot, one adapter per bot_key, built on first contact.
+# Bounded because a cold entry costs one internal call, not because it is a log.
+# Nothing invalidates this on a change made in the browser: the cost of a stale
+# entry is bounded by _BOT_CACHE_MAX evictions, and a removed bot 404s on
+# lookup, which is what clears it.
+_bot_adapters: dict[str, tuple] = {}
+_BOT_CACHE_MAX = 200
+
+#: The gateway's tasks client, set at startup. A module-level name because the
+#: per-bot route needs it and reaching into gateway_pipeline._tasks would be
+#: touching a private attribute of another module.
+gateway_tasks = None
+
 
 class CreateCronJobRequest(BaseModel):
     job_id: str
@@ -220,10 +233,12 @@ async def lifespan(app: FastAPI):
     # That is a private attribute, and a getattr default of None would leave the
     # gateway broken at runtime with nothing said at startup. TasksClient opens a
     # fresh httpx client per call, so a second instance costs nothing.
-    gateway_pipeline.configure(TasksClient(
+    global gateway_tasks
+    gateway_tasks = TasksClient(
         settings.tasks_url,
         internal_secret=settings.internal_callback_secret,
-    ))
+    )
+    gateway_pipeline.configure(gateway_tasks)
     for entry in gateway_registry.enabled():
         adapter = gateway_registry.adapter(entry.name)
         if adapter and not await adapter.connect():
@@ -704,6 +719,128 @@ async def telegram_webhook(request: Request):
         return JSONResponse(content={"ok": True}, status_code=200)
     if event is None:
         return JSONResponse(content={"ok": True}, status_code=200)
+
+    _spawn_gateway(gateway_pipeline.handle_event(event, adapter))
+    return JSONResponse(content={"ok": True}, status_code=200)
+
+
+def _forget_bot(bot_key: str) -> None:
+    _bot_adapters.pop(bot_key, None)
+
+
+def _bot_sender_allowed(config: dict, sender_id: str) -> bool:
+    """An explicit allow list wins. With none, the bot serves only the account
+    that claimed it, and an unclaimed bot serves whoever arrives first so the
+    owner can claim their own bot by messaging it."""
+    allowed = [p for p in (config.get("allowed_ids") or "").split(",") if p]
+    if allowed:
+        return sender_id in allowed
+    claimed = config.get("owner_platform_user_id") or ""
+    if not claimed:
+        return True
+    return sender_id == str(claimed)
+
+
+async def _bot_adapter(bot_key: str):
+    """(adapter, config) for a user's own bot, or None if there is no such bot.
+
+    Raises TasksAPIError when tasks cannot be reached, which the caller turns
+    into a 503 so Telegram redelivers rather than losing the message."""
+    cached = _bot_adapters.get(bot_key)
+    if cached is not None:
+        return cached
+
+    if gateway_tasks is None:
+        raise RuntimeError("gateway tasks client is not configured yet")
+
+    config = await gateway_tasks.gateway_bot_config(bot_key)
+    if config is None:
+        return None
+
+    adapter = TelegramAdapter(
+        token=config["token"],
+        webhook_secret=config["webhook_secret"],
+    )
+    adapter.name = "telegram"
+    adapter.max_message_length = TELEGRAM_MAX_MESSAGE
+
+    if len(_bot_adapters) >= _BOT_CACHE_MAX:
+        _bot_adapters.clear()
+    _bot_adapters[bot_key] = (adapter, config)
+    return _bot_adapters[bot_key]
+
+
+@app.post("/webhook/telegram/{bot_key}")
+async def telegram_webhook_for_bot(bot_key: str, request: Request):
+    """Inbound updates on a bot that belongs to one user.
+
+    Same 200-before-the-work contract as the shared route, with two
+    deliberate exceptions: an unknown key is a 404 so a stale webhook stops
+    costing us a lookup, and tasks being unreachable is a 503 so Telegram
+    redelivers instead of us silently eating the message.
+    """
+    try:
+        entry = await _bot_adapter(bot_key)
+    except Exception:  # noqa: BLE001
+        logger.warning("gateway: could not load bot config, asking for a retry")
+        return JSONResponse(content={"ok": False}, status_code=503)
+
+    if entry is None:
+        return JSONResponse(content={"ok": False}, status_code=404)
+
+    adapter, config = entry
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    headers = dict(request.headers)
+    if not adapter.verify_webhook(payload, headers):
+        logger.warning("gateway: rejected an update with a bad secret")
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    if not config.get("enabled"):
+        # The user switched their bot off. deleteWebhook stops this at source;
+        # anything already in flight lands here.
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    update_id = payload.get("update_id")
+    if isinstance(update_id, int):
+        seen_key = (bot_key, update_id)
+        if seen_key in _gateway_seen_updates:
+            return JSONResponse(content={"ok": True}, status_code=200)
+        if len(_gateway_seen_updates) >= _GATEWAY_SEEN_MAX:
+            _gateway_seen_updates.clear()
+        _gateway_seen_updates.add(seen_key)
+
+    try:
+        event = adapter.parse_inbound(payload, headers)
+    except Exception:  # noqa: BLE001
+        logger.exception("gateway: parse failed on a user bot, dropping the update")
+        return JSONResponse(content={"ok": True}, status_code=200)
+    if event is None:
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    # MessageEvent carries the person on event.source.user_id, NOT on the event
+    # itself: source.chat_id is the conversation and source.user_id is the
+    # human. On a Telegram DM they happen to be the same number, which is
+    # exactly why reading the wrong one would pass every test and be wrong in a
+    # group.
+    sender_id = str(event.source.user_id or "")
+    if not _bot_sender_allowed(config, sender_id):
+        logger.info("gateway: a user bot ignored a sender it does not serve")
+        return JSONResponse(content={"ok": True}, status_code=200)
+
+    if not config.get("owner_platform_user_id") and sender_id:
+        try:
+            if await gateway_tasks.gateway_bot_claim(bot_key, sender_id):
+                config["owner_platform_user_id"] = sender_id
+        except Exception:  # noqa: BLE001
+            # A failed claim leaves the bot unclaimed and still serving. It is
+            # a narrowing step, so failing open here loses nothing that was not
+            # already open.
+            logger.warning("gateway: could not record a bot claim")
 
     _spawn_gateway(gateway_pipeline.handle_event(event, adapter))
     return JSONResponse(content={"ok": True}, status_code=200)
