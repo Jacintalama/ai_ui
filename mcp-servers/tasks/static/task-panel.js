@@ -1130,6 +1130,10 @@
       },
       {
         attr: "data-aiui-cron-jobs",
+        // Visible to ALL signed-in users. The schedules API is owner-scoped
+        // (X-User-Email) and now caps regular users at 10 schedules with a
+        // 15-minute floor, so an unbounded agent-run loop is not reachable.
+        allUsers: true,
         label: "Cron Jobs",
         title: "Cron Jobs: schedule recurring AI tasks",
         href: "/cron-jobs",
@@ -1294,24 +1298,46 @@
         if (el.tagName.toLowerCase() === "a") {
           el.removeAttribute("data-sveltekit-preload-data");
           el.removeAttribute("data-sveltekit-preload-code");
+          // The clone inherits the SOURCE row's href, so entries cloned from
+          // the Notes anchor pointed every link at /notes. The capture-phase
+          // click handler below hid this for a plain click, but hover,
+          // middle-click and ctrl-click all followed the stale URL. Embed
+          // entries have no page to open, so they lose the href entirely.
+          if (cfg.embed) el.removeAttribute("href");
+          else el.setAttribute("href", cfg.href);
         }
       });
       // Add an explicit clean tooltip in its place.
       entry.setAttribute("title", cfg.title);
-      // Replace the "Workspace" text label with our label wherever it
-      // appears inside the cloned subtree.
-      (function rewriteLabel(node) {
-        for (const child of Array.from(node.childNodes)) {
+      // Replace the cloned row's visible label.
+      //
+      // This used to match the single literal "Workspace". Which source row
+      // gets cloned depends on which anchor exists — Workspace for admins,
+      // Notes for everyone else — so for a non-admin nothing matched and all
+      // four entries rendered as "Notes", four identical-looking links. The
+      // static tests passed and the injector's own console log said
+      // "injected"; only rendering it in a browser showed it.
+      //
+      // Rewriting the FIRST non-empty text node rather than a known word
+      // keeps this working whatever the anchor row happens to say.
+      const ANCHOR_LABELS = ["Workspace", "Notes", "Calendar"];
+      const labelNodes = [];
+      (function collectText(node) {
+        for (const child of node.childNodes) {
           if (child.nodeType === 3) {
-            const t = child.nodeValue;
-            if (t && t.includes("Workspace")) {
-              child.nodeValue = t.replace("Workspace", cfg.label);
-            }
+            if (child.nodeValue && child.nodeValue.trim()) labelNodes.push(child);
           } else if (child.nodeType === 1) {
-            rewriteLabel(child);
+            collectText(child);
           }
         }
       })(entry);
+      if (labelNodes.length) {
+        const first = labelNodes[0];
+        const hit = ANCHOR_LABELS.find((l) => first.nodeValue.includes(l));
+        first.nodeValue = hit
+          ? first.nodeValue.replace(hit, cfg.label)
+          : cfg.label;
+      }
       // Swap the inherited Workspace icon for a distinct glyph so each entry
       // is visually distinguishable — including in the collapsed sidebar
       // where only icons render.
@@ -1343,16 +1369,34 @@
         // Skip the expensive DOM work once every visible entry is present.
         if (visibleEntries.every((cfg) => document.querySelector("[" + cfg.attr + "]"))) return;
 
-        // Find Workspace row via its href first — survives the collapsed
-        // sidebar state (label text may be visually hidden, but href stays
-        // in the DOM). Fall back to the text-content scan for older Open
-        // WebUI versions where the route differs.
-        let workspaceRow = document.querySelector('a[href="/workspace"]');
+        // Anchor chain, first match wins.
+        //
+        // This used to look ONLY for a[href="/workspace"], which is why
+        // regular users saw none of these entries: Open WebUI renders that
+        // link only for admins or users holding at least one workspace
+        // permission (upstream Sidebar.svelte -> isMenuItemVisible), and this
+        // deployment sets all five workspace permissions to false. No anchor
+        // meant nothing was injected at all, even for entries flagged
+        // allUsers. Admins are unaffected — /workspace is still tried first,
+        // so their entries stay exactly where they were.
+        const ANCHOR_SELECTORS = [
+          'a[href="/workspace"]',
+          'a[href="/notes"]',
+          'a[href="/calendar"]',
+        ];
+        let workspaceRow = null;
+        for (const selector of ANCHOR_SELECTORS) {
+          workspaceRow = document.querySelector(selector);
+          if (workspaceRow) break;
+        }
         if (!workspaceRow) {
+          // Older Open WebUI versions, or a renamed route: fall back to
+          // scanning for the row's label text. If neither label is present
+          // we inject nothing — there is no anchor we could trust.
           const candidates = document.querySelectorAll("a, button, [role='link']");
           for (const el of candidates) {
             const txt = (el.textContent || "").trim();
-            if (txt !== "Workspace") continue;
+            if (txt !== "Workspace" && txt !== "Notes") continue;
             workspaceRow = el;
             break;
           }
