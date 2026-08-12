@@ -541,12 +541,19 @@ class TasksClient:
         })
         return resp.json()
 
-    async def gateway_get_session(self, platform: str, chat_id: str) -> str | None:
-        """The Open WebUI chat this conversation maps to, or None if it is new."""
+    async def gateway_get_session(self, platform: str, chat_id: str) -> dict[str, Any]:
+        """The stored mapping for this conversation.
+
+        {"owui_chat_id": None} when there is no session yet, otherwise
+        {"owui_chat_id": ..., "owui_user_id": ...}. Callers need BOTH fields:
+        owui_user_id is what lets get_or_create_chat notice a session that
+        points at a different user's chat (a re-paired account) instead of
+        trusting Open WebUI's ownership check alone.
+        """
         resp = await self._internal_request(
             "GET", "/gateway/session",
             params={"platform": platform, "chat_id": chat_id})
-        return resp.json().get("owui_chat_id")
+        return resp.json()
 
     async def gateway_put_session(
         self, platform: str, chat_id: str, owui_chat_id: str, owui_user_id: str,

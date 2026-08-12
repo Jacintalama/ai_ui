@@ -319,6 +319,24 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     shutdown_scheduler()
+
+    # Undo connect() for every enabled gateway adapter (e.g. Telegram's
+    # setWebhook). Without this, the documented off-switch (remove the token,
+    # recreate the container) leaves the webhook registered at the platform:
+    # the route now 503s, but Telegram does not know that and retries every
+    # delivery forever, so pending_update_count grows without bound and users
+    # get silence instead of an error. One adapter's disconnect failing must
+    # not stop the others or the rest of shutdown.
+    for entry in gateway_registry.enabled():
+        adapter = gateway_registry.adapter(entry.name)
+        if not adapter:
+            continue
+        try:
+            await adapter.disconnect()
+        except Exception:                                # noqa: BLE001
+            logger.error("gateway: %s did not disconnect cleanly", entry.name,
+                        exc_info=True)
+
     logger.info("Shutting down webhook handler...")
 
 

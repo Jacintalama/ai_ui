@@ -47,17 +47,23 @@ async def test_resolve_passes_the_platform_user_through():
 
 
 @respx.mock
-async def test_get_session_returns_the_chat_id():
+async def test_get_session_returns_the_whole_mapping():
+    # Both fields matter to the caller: owui_user_id is what lets
+    # get_or_create_chat notice a session pointing at a different user's chat
+    # (a re-paired account), not just the chat id.
     respx.get(f"{BASE}/gateway/session").mock(
-        return_value=httpx.Response(200, json={"owui_chat_id": "chat-1"}))
-    assert await _client().gateway_get_session("telegram", "42") == "chat-1"
+        return_value=httpx.Response(
+            200, json={"owui_chat_id": "chat-1", "owui_user_id": "u1"}))
+    assert await _client().gateway_get_session("telegram", "42") == {
+        "owui_chat_id": "chat-1", "owui_user_id": "u1"}
 
 
 @respx.mock
-async def test_get_session_returns_none_when_unmapped():
+async def test_get_session_returns_a_null_chat_id_when_unmapped():
     respx.get(f"{BASE}/gateway/session").mock(
         return_value=httpx.Response(200, json={"owui_chat_id": None}))
-    assert await _client().gateway_get_session("telegram", "42") is None
+    result = await _client().gateway_get_session("telegram", "42")
+    assert result.get("owui_chat_id") is None
 
 
 @respx.mock

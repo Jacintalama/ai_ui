@@ -82,7 +82,8 @@ def test_append_turn_does_not_mutate_the_input():
 
 async def test_get_or_create_reuses_an_existing_mapping():
     tasks = AsyncMock()
-    tasks.gateway_get_session.return_value = "chat-1"
+    tasks.gateway_get_session.return_value = {"owui_chat_id": "chat-1",
+                                               "owui_user_id": "u1"}
     owui = AsyncMock()
     owui.get_chat.return_value = {"title": "old", "messages": [{"role": "user",
                                                                 "content": "hi"}]}
@@ -118,7 +119,8 @@ async def test_a_mapping_pointing_at_a_deleted_chat_recovers():
     from gateway.owui import OWUIError
 
     tasks = AsyncMock()
-    tasks.gateway_get_session.return_value = "chat-gone"
+    tasks.gateway_get_session.return_value = {"owui_chat_id": "chat-gone",
+                                               "owui_user_id": "u1"}
     owui = AsyncMock()
     owui.get_chat.side_effect = [OWUIError(404, "not found"), {"title": "t",
                                                                "messages": []}]
@@ -130,6 +132,65 @@ async def test_a_mapping_pointing_at_a_deleted_chat_recovers():
     assert chat_id == "chat-fresh"
     tasks.gateway_put_session.assert_awaited_once_with(
         "telegram", "42", "chat-fresh", "u1")
+
+
+async def test_a_mapping_that_401s_recovers_the_same_as_a_404():
+    # Upstream Open WebUI's get_chat_by_id_and_user_id raises 401, not 404,
+    # whenever the chat is absent OR belongs to someone else. Before this fix
+    # the recovery branch only caught 404 and re-raised 401, so this exact
+    # scenario (a deleted chat) wedged the conversation on MODEL_DOWN forever.
+    from gateway.owui import OWUIError
+
+    tasks = AsyncMock()
+    tasks.gateway_get_session.return_value = {"owui_chat_id": "chat-gone",
+                                               "owui_user_id": "u1"}
+    owui = AsyncMock()
+    owui.get_chat.side_effect = [OWUIError(401, "unauthorized"), {"title": "t",
+                                                                  "messages": []}]
+    owui.create_chat.return_value = "chat-fresh"
+
+    chat_id, _ = await get_or_create_chat(
+        tasks, owui, "telegram", "42", "u1", "hi", "m")
+
+    assert chat_id == "chat-fresh"
+    tasks.gateway_put_session.assert_awaited_once_with(
+        "telegram", "42", "chat-fresh", "u1")
+
+
+async def test_a_mapping_that_500s_still_raises():
+    # Only 401/404 mean "gone". Anything else is a real failure and must
+    # surface, not be silently swallowed into "start a new chat".
+    from gateway.owui import OWUIError
+
+    tasks = AsyncMock()
+    tasks.gateway_get_session.return_value = {"owui_chat_id": "chat-1",
+                                               "owui_user_id": "u1"}
+    owui = AsyncMock()
+    owui.get_chat.side_effect = OWUIError(500, "boom")
+
+    with pytest.raises(OWUIError):
+        await get_or_create_chat(tasks, owui, "telegram", "42", "u1", "hi", "m")
+
+
+async def test_a_mismatched_owner_starts_a_fresh_chat_instead_of_reading_it():
+    # A re-paired platform account: the stored session still points at user
+    # A's chat, but the current caller resolves to user B. Reading B's turn
+    # against A's chat would be a cross-user read, so this must not even try
+    # owui.get_chat on the stored id.
+    tasks = AsyncMock()
+    tasks.gateway_get_session.return_value = {"owui_chat_id": "chat-of-a",
+                                               "owui_user_id": "user-a"}
+    owui = AsyncMock()
+    owui.create_chat.return_value = "chat-for-b"
+    owui.get_chat.return_value = {"title": "t", "messages": []}
+
+    chat_id, _ = await get_or_create_chat(
+        tasks, owui, "telegram", "42", "user-b", "hi", "m")
+
+    assert chat_id == "chat-for-b"
+    owui.get_chat.assert_awaited_once_with("chat-for-b")
+    tasks.gateway_put_session.assert_awaited_once_with(
+        "telegram", "42", "chat-for-b", "user-b")
 
 
 def test_the_flat_list_and_the_history_map_agree_after_two_turns():

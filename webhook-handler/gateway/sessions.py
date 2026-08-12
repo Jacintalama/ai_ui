@@ -100,20 +100,41 @@ async def get_or_create_chat(tasks, owui, platform: str, chat_id: str,
                              model: str) -> tuple[str, dict]:
     """Resolve this conversation to an Open WebUI chat, creating one if needed.
 
-    Recovers when the mapping points at a chat the user has since deleted in the
-    browser. Without that, one deletion would wedge the conversation on a 404
-    forever and the only fix would be a database edit.
+    Recovers in two situations that would otherwise wedge the conversation
+    forever, leaving a database edit as the only fix:
+
+    - The user deleted the mapped chat in the browser. Upstream Open WebUI's
+      `GET /api/v1/chats/{id}` calls get_chat_by_id_and_user_id, which raises
+      401, not 404, whenever the chat is absent OR belongs to someone else.
+      That looks like an auth bug to a reader who doesn't know it, so both
+      statuses are treated the same: the chat is gone, start a new one.
+    - The platform account was re-paired to a different Open WebUI user (A
+      unlinks, B links the same Telegram account). The stored session still
+      names A as the owner, so a mismatch between the stored owui_user_id and
+      the current one is treated exactly like no session at all. This is the
+      only defense on OUR side against a cross-user chat read; without it,
+      the sole thing stopping B from reading A's chat is Open WebUI's own
+      ownership check.
     """
-    owui_chat_id = await tasks.gateway_get_session(platform, chat_id)
+    stored = await tasks.gateway_get_session(platform, chat_id)
+    owui_chat_id = (stored or {}).get("owui_chat_id")
+    stored_owner = (stored or {}).get("owui_user_id")
 
     if owui_chat_id:
-        try:
-            return owui_chat_id, await owui.get_chat(owui_chat_id)
-        except OWUIError as e:
-            if e.status != 404:
-                raise
-            log.info("gateway: mapped chat %s is gone, starting a new one",
-                     owui_chat_id)
+        if stored_owner != owui_user_id:
+            log.warning(
+                "gateway: session %s/%s pointed at owui_user_id=%s but the "
+                "current user is %s; starting a new chat instead of reading "
+                "theirs (likely a re-paired account)",
+                platform, chat_id, stored_owner, owui_user_id)
+        else:
+            try:
+                return owui_chat_id, await owui.get_chat(owui_chat_id)
+            except OWUIError as e:
+                if e.status not in (401, 404):
+                    raise
+                log.info("gateway: mapped chat %s is gone, starting a new one",
+                         owui_chat_id)
 
     new_id = await owui.create_chat(title_from(first_text), model)
     await tasks.gateway_put_session(platform, chat_id, new_id, owui_user_id)

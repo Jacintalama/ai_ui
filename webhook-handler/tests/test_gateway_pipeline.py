@@ -100,7 +100,8 @@ async def test_the_user_message_is_appended_to_the_completion_call(adapter, wire
         "messages": [{"role": "user", "content": "earlier"},
                      {"role": "assistant", "content": "earlier answer"}],
         "history": {"messages": {}, "currentId": None}}
-    wired.tasks.gateway_get_session.return_value = "chat-1"
+    wired.tasks.gateway_get_session.return_value = {
+        "owui_chat_id": "chat-1", "owui_user_id": "owui-1"}
 
     await pipeline.handle_event(_event("what about now"), adapter)
 
