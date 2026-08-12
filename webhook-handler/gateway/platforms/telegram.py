@@ -26,6 +26,15 @@ SECRET_HEADER = "x-telegram-bot-api-secret-token"
 MAX_VOICE_BYTES = 10 * 1024 * 1024
 
 
+class ClipTooLarge(Exception):
+    """Raised by download_media when getFile reports a size over the guard.
+
+    A specific type rather than a bare ValueError, so the pipeline's "too
+    long" handling in _transcribe_voice catches exactly this and not any
+    other ValueError that happens to be raised nearby later.
+    """
+
+
 class TelegramAdapter(BasePlatformAdapter):
     def __init__(self, token: str = "", webhook_secret: str = "",
                  public_url: str = ""):
@@ -173,7 +182,7 @@ class TelegramAdapter(BasePlatformAdapter):
             raise RuntimeError("Telegram getFile returned no path")
         size = result.get("file_size") or 0
         if size > MAX_VOICE_BYTES:
-            raise ValueError("file too large")
+            raise ClipTooLarge("file too large")
 
         url = f"https://api.telegram.org/file/bot{self._token}/{file_path}"
         async with httpx.AsyncClient(timeout=60.0) as client:

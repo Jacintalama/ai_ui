@@ -11,8 +11,6 @@ from gateway.events import SessionSource
 
 log = logging.getLogger(__name__)
 
-KNOWN = ("/resume", "/help", "/start")
-
 
 def is_command(text: str) -> bool:
     return (text or "").strip().startswith("/")

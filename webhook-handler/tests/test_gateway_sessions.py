@@ -43,6 +43,19 @@ def test_history_messages_is_capped_to_the_most_recent():
     assert out[-1]["content"] == "49"
 
 
+def test_history_messages_with_a_zero_limit_sends_none():
+    # GATEWAY_HISTORY_TURNS=0 means "send no history". out[-0:] is the WHOLE
+    # list, not none, so a naive `limit > 0 else out` would betray that and
+    # send the entire transcript instead of nothing.
+    chat = {"messages": [{"role": "user", "content": "keep me out"}]}
+    assert history_messages(chat, limit=0) == []
+
+
+def test_history_messages_with_a_negative_limit_sends_none_too():
+    chat = {"messages": [{"role": "user", "content": "keep me out"}]}
+    assert history_messages(chat, limit=-1) == []
+
+
 def test_history_messages_skips_empty_and_malformed_entries():
     chat = {"messages": [
         {"role": "user", "content": ""},

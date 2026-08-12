@@ -15,6 +15,7 @@ from gateway.base import BasePlatformAdapter
 from gateway.events import MessageEvent, MessageType
 from gateway.owui import OWUIError, OWUIUserClient
 from gateway.pairing import pairing_message
+from gateway.platforms.telegram import ClipTooLarge
 from gateway.sessions import append_turn, get_or_create_chat, history_messages
 
 log = logging.getLogger(__name__)
@@ -221,9 +222,12 @@ async def _transcribe_voice(event: MessageEvent, owui: OWUIUserClient,
     try:
         path = await adapter.download_media(event.media_ref)
         transcript = await owui.transcribe(path)
-    except ValueError:
-        # The adapter's own size guard. A distinct sentence, because "too long"
-        # is something the sender can act on and "it broke" is not.
+    except (ClipTooLarge, ValueError):
+        # ClipTooLarge is the adapter's own size guard (Telegram's
+        # download_media). ValueError is kept too, belt and braces, for any
+        # adapter that has not been migrated to the specific exception yet.
+        # A distinct sentence, because "too long" is something the sender can
+        # act on and "it broke" is not.
         return _TOO_LONG
     except Exception as e:                              # noqa: BLE001
         log.warning("gateway: transcription failed: %r", e)

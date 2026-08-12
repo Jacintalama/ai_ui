@@ -48,8 +48,6 @@ class MessageEvent:
     # clip on this, BEFORE downloading it: the duration is in the inbound
     # payload and the byte count is not known until the file is already fetched.
     media_duration: int | None = None
-    # Filled in after download. Temp paths; the pipeline deletes them.
-    media_paths: list[str] = field(default_factory=list)
     message_id: str | None = None
     timestamp: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc))

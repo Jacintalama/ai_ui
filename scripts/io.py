@@ -30,7 +30,9 @@ def device_id() -> str:
         existing = DEVICE_FILE.read_text(encoding="utf-8").strip()
         if len(existing) == 32:
             return existing
-    DEVICE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # 0700: this directory holds a bearer credential, so it must not be
+    # world-listable even before the file inside it is written.
+    DEVICE_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fresh = secrets.token_hex(16)
     # 0600 before anything is written, not after: a credential must never exist
     # world-readable, not even for one syscall.

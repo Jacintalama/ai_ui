@@ -36,7 +36,13 @@ def history_messages(chat: dict, limit: int = 20) -> list[dict]:
         if not role or not isinstance(content, str) or not content.strip():
             continue
         out.append({"role": role, "content": content})
-    return out[-limit:] if limit > 0 else out
+    # limit <= 0 means "send none", not "send everything". out[-0:] is the
+    # WHOLE list, not none, so that case has to be handled explicitly or an
+    # operator setting GATEWAY_HISTORY_TURNS=0 to mean "no history" would send
+    # the entire transcript to the model instead.
+    if limit <= 0:
+        return []
+    return out[-limit:]
 
 
 def append_turn(chat: dict, user_text: str, assistant_text: str,

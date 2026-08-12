@@ -153,6 +153,21 @@ async def test_disconnect_deletes_the_webhook(adapter):
     assert route.called
 
 
+@respx.mock
+async def test_download_media_refuses_a_file_over_the_size_guard(adapter):
+    # A specific exception, not a bare ValueError, so the pipeline's "too
+    # long" handling catches exactly this and nothing else that happens to
+    # also raise ValueError.
+    from gateway.platforms.telegram import MAX_VOICE_BYTES, ClipTooLarge
+
+    respx.post(f"{API}/getFile").mock(return_value=httpx.Response(200, json={
+        "ok": True, "result": {"file_path": "voice/file_1.oga",
+                               "file_size": MAX_VOICE_BYTES + 1}}))
+
+    with pytest.raises(ClipTooLarge):
+        await adapter.download_media("AwACAgQ")
+
+
 @pytest.mark.parametrize("bad_from", ["not-a-dict", 12345, ["a"], True])
 def test_a_non_dict_sender_does_not_raise(adapter, bad_from):
     # `X or {}` only degrades on a FALSY value, so a truthy non-dict used to
