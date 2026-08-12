@@ -12,7 +12,6 @@ These tests drive the outcome — either branch — into the row.
 import asyncio
 import sys
 import pathlib
-import uuid
 from datetime import datetime
 
 import pytest
@@ -22,76 +21,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
 from kb_sync import KbPushError  # noqa: E402
-from models import MeetingRecord  # noqa: E402
-
-
-# --------------------------------------------------------------------------
-# A session maker over a single in-memory row. There is no Postgres here, and
-# the behaviour under test is "what gets written", not SQL.
-# --------------------------------------------------------------------------
-
-class _FakeResult:
-    def __init__(self, record):
-        self._record = record
-
-    def scalar_one_or_none(self):
-        return self._record
-
-
-class _FakeSession:
-    def __init__(self, holder):
-        self.holder = holder
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return False
-
-    async def execute(self, _stmt):
-        return _FakeResult(self.holder.record)
-
-    def add(self, record):
-        self.holder.record = record
-
-    async def commit(self):
-        self.holder.commits += 1
-
-    async def refresh(self, record):
-        record.id = record.id or uuid.uuid4()
-        record.created_at = record.created_at or datetime.utcnow()
-        record.updated_at = record.updated_at or datetime.utcnow()
-
-
-class _Holder:
-    def __init__(self, record=None):
-        self.record = record
-        self.commits = 0
-
-    def __call__(self):
-        return _FakeSession(self)
-
-
-def _record(**kwargs):
-    values = {
-        "id": uuid.uuid4(),
-        "title": "Standup",
-        "date": "2026-05-05",
-        "summary": "already summarised, so the AI step is skipped",
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-    }
-    values.update(kwargs)
-    return MeetingRecord(**values)
-
-
-@pytest.fixture
-def quiet_decision_engine(monkeypatch):
-    """The decision engine posts to Discord; it is not what is under test."""
-    async def _noop(**_kwargs):
-        return {"processed": 0, "results": []}
-
-    monkeypatch.setattr(main, "process_action_items", _noop)
+from conftest import Holder as _Holder, make_record as _record  # noqa: E402
 
 
 # --------------------------------------------------------------------------
