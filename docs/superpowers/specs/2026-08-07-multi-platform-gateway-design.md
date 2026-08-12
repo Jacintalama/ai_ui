@@ -172,15 +172,24 @@ webhook-handler/gateway/
   events.py      MessageEvent, SessionSource, MessageType
   base.py        BasePlatformAdapter
   registry.py    PlatformEntry, PlatformRegistry
-  pairing.py     issue and redeem codes (calls tasks)
+  pairing.py     the reply an unrecognized person gets
   sessions.py    conversation -> Open WebUI chat id (calls tasks)
+  owui.py        Open WebUI calls carrying a per-user token
+  pipeline.py    the one flow every platform runs, and all the error copy
+  commands.py    /resume, /help, /start
   platforms/
     telegram.py
     cli.py
 ```
 
-Estimated 1,500 to 2,000 lines. `webhook-handler` runs at 110MB of its 512MB cap, so
-there is room.
+`owui.py`, `pipeline.py` and `commands.py` were not in the first draft of this
+list. The first two are load-bearing: `owui.py` exists precisely so the gateway
+never reaches for the shared admin key, and `pipeline.py` is where the flow and
+the error sentences live.
+
+Actual size on landing: about 4,400 lines including tests, against an estimate of
+1,500 to 2,000 for the code alone. `webhook-handler` runs at 110MB of its 512MB
+cap, so there is room.
 
 ### events.py
 
@@ -204,7 +213,8 @@ class MessageEvent:
     text: str
     source: SessionSource
     message_type: MessageType = MessageType.TEXT
-    media_paths: list[str] = field(default_factory=list)   # already downloaded
+    media_ref: str | None = None        # unfetched handle, e.g. a Telegram file_id
+    media_duration: int | None = None   # seconds, when the platform says up front
     message_id: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
 ```
@@ -284,8 +294,18 @@ CREATE TABLE tasks.gateway_pairing_codes (
     platform_user_name TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at        TIMESTAMPTZ NOT NULL,
-    redeemed_at       TIMESTAMPTZ,
-    attempts          INT         NOT NULL DEFAULT 0
+    redeemed_at       TIMESTAMPTZ
+);
+
+-- Failed redemptions are counted against the ACCOUNT that made them, not
+-- against the code. A wrong code matches no row, so counting on the code would
+-- mean incrementing every live one, which hands a single guesser a
+-- platform-wide lockout. Added in migration 034.
+CREATE TABLE tasks.gateway_redeem_budget (
+    email             TEXT        PRIMARY KEY,
+    failures          INT         NOT NULL DEFAULT 0,
+    window_started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    locked_until      TIMESTAMPTZ
 );
 CREATE INDEX ON tasks.gateway_pairing_codes (platform, platform_user_id);
 
@@ -314,9 +334,11 @@ Internal, authenticated with `X-Internal-Secret`:
 - `POST /gateway/resolve` given `{platform, platform_user_id, platform_user_name}`,
   returns either `{linked: true, email, owui_user_id, owui_token}` with a 60 second
   token, or `{linked: false, code, expires_at}`.
-  When an unexpired unredeemed code already exists for that platform user, it returns
-  **that same code** rather than issuing another. Otherwise a user who messages twice
-  gets two codes and the rate limit reads as an error to someone doing nothing wrong.
+  When an unexpired unredeemed code already exists for that platform user, the
+  **row is reused** and the code value is **re-minted**. It cannot return the same
+  value: only the hash is stored and it is not reversible. So a user only ever has
+  one live code, the newest message always carries the working one, and no second
+  row accumulates.
 - `GET  /gateway/session` given `{platform, chat_id}`, returns `{owui_chat_id}` or null.
 - `PUT  /gateway/session` upserts the mapping.
 - `GET  /gateway/sessions/recent` lists a user's recent gateway chats, for `/resume`.
@@ -347,7 +369,10 @@ Hardening, taken from hermes's `pairing.py` because they did the reading:
 - Codes hashed at rest, so a database leak grants nothing.
 - 8 characters from a 32-character alphabet excluding `0/O/1/I`.
 - 1 hour expiry, single use.
-- One code per platform user per 10 minutes.
+- One live code per platform user, enforced by reusing the row. There is no
+  resend cooldown: an earlier draft claimed one and nothing implemented it, so the
+  claim was removed rather than the machinery added. Re-minting costs an UPDATE,
+  not an INSERT.
 - Lockout after 5 failed redemption attempts.
 - Codes never written to logs.
 
@@ -405,10 +430,49 @@ fail silently**. Every failure produces a sentence.
 | Group or channel chat | "I only work in direct messages for now." |
 | Unpaired user | The pairing code reply. |
 | tasks unreachable | "I can't reach my memory right now, try again in a moment." |
-| Open WebUI timeout or 5xx | Same shape, naming the model. |
+| Open WebUI timeout or 5xx | "The model didn't answer just now." The model is not named: it is an internal id like `auto_router.auto` and means nothing to the reader. |
 | Transcription failed | Say so explicitly. Never drop a voice memo silently. |
 | Clip too long | State the 2 minute limit. |
 | Reply over 4096 chars | Chunk on paragraph boundaries. |
+
+## How the CLI authenticates, and why that needed saying
+
+The first draft of this spec drew the CLI as a line into the diagram and said
+nothing else about it. That omission was the single most consequential thing in
+the document: the riskiest surface in the feature got no design review, the
+implementation had to invent a scheme unaided, and the result shipped switched
+on. A whole-branch review caught it before deploy. Writing it down now.
+
+The CLI route is reachable from the internet. Caddy's `/webhook/*` rule sends it
+straight to webhook-handler, bypassing api-gateway, so there is no session
+cookie, no `X-User-Email`, and no rate limiter. There is also no signature to
+verify, because a terminal has no platform behind it to sign anything.
+
+So **the device id is the credential**: 32 hex characters from
+`secrets.token_hex(16)`, roughly 128 bits, written to `~/.io/device` at mode
+0600 in a directory at 0700, sent in the request body and never in a URL, and
+never logged. An unrecognized device gets a pairing code and nothing else, the
+same as an unrecognized Telegram account.
+
+Three consequences that follow from that, and are implemented:
+
+- **The format check is strict and comes first.** `fullmatch` against
+  `[0-9a-f]{32}`, before any database work, so garbage cannot mint pairing rows.
+  `fullmatch` rather than `match`, because Python's `$` also matches before a
+  single trailing newline.
+- **Pairing codes are pruned on the write path.** Nothing else prunes that
+  table, and an unauthenticated endpoint writes to it, so without a sweep a
+  caller could grow it without bound on a box whose Docker data root is an
+  attached volume.
+- **The platform is dormant behind `GATEWAY_CLI_ENABLED`.** Unlike Telegram,
+  the CLI needs no configuration to function, so an empty `required_env` would
+  have meant permanently enabled. The flag exists solely so that "deploying
+  changes nothing visible" is true of the CLI too.
+
+What this design accepts: anyone holding a device file can talk to IO as its
+owner, exactly as anyone holding an unlocked phone can use its Telegram. Deleting
+`~/.io/device` unpairs the machine; the row is removed with a
+`DELETE FROM tasks.gateway_links`.
 
 ## Security
 
@@ -419,13 +483,20 @@ fail silently**. Every failure produces a sentence.
 - Pairing codes are hashed at rest and never logged.
 - The Telegram webhook uses a secret header, checked on every request.
 - Group chats are refused, so personal memory has no path to a shared room.
-- No new inbound port. Telegram arrives through the existing Caddy and api-gateway path.
+- No new inbound port. Telegram arrives through the existing Caddy path, which
+  reverse-proxies `/webhook/*` **directly to webhook-handler and bypasses
+  api-gateway**. That is worth knowing rather than glossing: api-gateway is where
+  the rate limiter and the session-cookie auth live, so neither applies to these
+  routes. The Telegram route is protected by its secret header instead, and the
+  CLI route by its device id, which is why the CLI ships behind
+  `GATEWAY_CLI_ENABLED` rather than on by default.
 
 ## Testing
 
-Following the repo's existing seam pattern, `_owui_call`, `_transcribe` and
-`_tasks_client` are module-level seams so tests monkeypatch instead of hitting the
-network or a browser.
+Following the repo's existing seam pattern, `_tasks` and `_owui_factory` in
+`gateway/pipeline.py` are module-level seams so tests monkeypatch instead of
+hitting the network. There is no separate transcription seam: voice goes through
+the same `_owui_factory` client.
 
 Runs anywhere:
 
@@ -494,5 +565,7 @@ real codebase on 2026-08-07, not inferred from documentation.
 - New env: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` on webhook-handler,
   `WEBUI_SECRET_KEY` on tasks. All three go in the server `.env`, which is never
   committed and never overwritten.
-- Telegram's webhook is registered by `connect()` at startup, so the public URL must
-  exist in Caddy before first boot.
+- Telegram's webhook is registered by `connect()` at startup. No Caddy change is
+  needed: `/etc/caddy/Caddyfile` already reverse-proxies `/webhook/*` to port 8086,
+  so the public URL exists as soon as the code deploys. Do not put any part of this
+  under a bare `/gateway/` path, which Caddy sends to api-gateway instead.
