@@ -47,6 +47,12 @@ def test_a_short_token_masks_to_nothing_readable():
     assert gb.mask_token("abc") == "..."
 
 
+def test_a_token_of_exactly_eight_shows_its_last_four():
+    # The boundary between the two branches. Real Telegram tokens are far
+    # longer, so this pins behavior rather than guarding a live case.
+    assert gb.mask_token("abcd4f2a") == "...4f2a"
+
+
 def test_allowed_ids_are_normalized():
     assert gb.parse_allowed_ids(" 111, 222 ,333 ") == "111,222,333"
 
@@ -63,6 +69,13 @@ def test_allowed_ids_of_nothing_is_empty():
 
 def test_an_unclaimed_bot_lets_the_first_sender_in():
     assert gb.is_allowed("", None, "999") is True
+
+
+def test_an_empty_owner_also_means_unclaimed():
+    # The caller reads this straight out of a nullable TEXT column, where both
+    # NULL and '' occur. Pinned down because the implementation gets this right
+    # only through truthiness, and `is None` would look like a safe tidy-up.
+    assert gb.is_allowed("", "", "999") is True
 
 
 def test_a_claimed_bot_only_serves_its_claimer():
