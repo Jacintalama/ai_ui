@@ -21,11 +21,13 @@ from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
+import gateway_bots as gbots
 import gateway_pairing as gp
+import telegram_api
 from db import session
-from models import GatewayLink, GatewayPairingCode, GatewaySession
+from models import GatewayBot, GatewayLink, GatewayPairingCode, GatewaySession
 from owui_token import mint_owui_token
 
 log = logging.getLogger(__name__)
@@ -396,6 +398,33 @@ async def redeem(body: RedeemIn,
     return {"status": "linked", "platform": platform, "platform_user_name": name}
 
 
+#: Platforms that can actually honour a saved token today. Every other channel
+#: shows the controls in an inert state, so the page never grows a button that
+#: lies.
+BOT_CAPABLE_PLATFORMS = {"telegram"}
+
+
+def _public_url() -> str:
+    """Where Telegram should deliver. Seam so tests need no env."""
+    return os.environ.get("GATEWAY_PUBLIC_URL", "").rstrip("/")
+
+
+def _bot_view(row: GatewayBot) -> dict[str, Any]:
+    """What the browser is allowed to know. Never the token.
+
+    `token_hint` is empty here on purpose and is NOT derivable from a stored
+    row: only the save response ever knows the plaintext, and only once."""
+    return {
+        "bot_key": row.bot_key,
+        "platform": row.platform,
+        "bot_username": row.bot_username or "",
+        "token_hint": "",
+        "enabled": bool(row.enabled),
+        "allowed_ids": row.allowed_ids or "",
+        "last_error": row.last_error or "",
+    }
+
+
 # Every channel the gateway knows about, whether or not it can be used here.
 # Showing the ones that are not ready, with the reason, turns this page from a
 # login box into something a person can read to understand what is coming. The
@@ -524,3 +553,212 @@ async def disconnect(platform: str,
         raise HTTPException(status_code=404, detail="That was not connected.")
     log.info("gateway: disconnected %s from %s", platform, user.email)
     return {"status": "disconnected", "platform": platform}
+
+
+# --- A bot the user brought themselves ---------------------------------------
+# Hermes configures one bot per server. Here a bot belongs to one account, so
+# every read below filters on the session email and never on a path value.
+
+class BotIn(BaseModel):
+    platform: str = Field(min_length=1, max_length=32)
+    token: str = Field(min_length=1, max_length=200)
+    allowed_ids: str = Field(default="", max_length=500)
+
+
+class BotToggleIn(BaseModel):
+    enabled: bool
+
+
+@page_router.post("/bots")
+async def save_bot(body: BotIn,
+                   user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
+    """Store a user's own bot token and point it at this server.
+
+    getMe runs BEFORE anything is written, so a stored row always means a token
+    that worked at least once. If setWebhook then fails the row survives but
+    disabled, with the reason on it: a half-live bot that silently swallows
+    messages is worse than one the page can tell you is broken."""
+    platform = body.platform.strip().lower()
+    if platform not in BOT_CAPABLE_PLATFORMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{platform} cannot take your own bot yet.")
+
+    token = body.token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Paste your bot token.")
+
+    try:
+        identity = await telegram_api.get_me(token)
+    except telegram_api.TelegramError as exc:
+        raise HTTPException(status_code=400,
+                            detail=f"Telegram said: {exc.description}")
+
+    bot_key = gbots.new_bot_key()
+    secret = gbots.new_webhook_secret()
+
+    try:
+        encrypted = gbots.encrypt_token(token)
+    except RuntimeError as exc:
+        # AIUI_FERNET_KEY is missing. Refuse rather than store plaintext.
+        log.error("gateway: cannot store a bot token: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="This server cannot store bot tokens securely right now.")
+
+    async with session() as s:
+        await s.execute(
+            delete(GatewayBot).where(GatewayBot.email == user.email,
+                                     GatewayBot.platform == platform))
+        row = GatewayBot(
+            bot_key=bot_key, email=user.email, platform=platform,
+            token_encrypted=encrypted, webhook_secret=secret,
+            bot_username=identity.get("username", ""),
+            allowed_ids=gbots.parse_allowed_ids(body.allowed_ids),
+            enabled=True, last_error=None,
+        )
+        s.add(row)
+        await s.commit()
+
+    hook_url = f"{_public_url()}/webhook/telegram/{bot_key}"
+    try:
+        await telegram_api.set_webhook(token, hook_url, secret)
+    except telegram_api.TelegramError as exc:
+        async with session() as s:
+            await s.execute(
+                update(GatewayBot).where(GatewayBot.bot_key == bot_key)
+                .values(enabled=False, last_error=exc.description))
+            await s.commit()
+        log.warning("gateway: setWebhook failed for %s", user.email)
+        return {"bot_key": bot_key, "platform": platform,
+                "bot_username": identity.get("username", ""),
+                "token_hint": gbots.mask_token(token),
+                "enabled": False, "allowed_ids": gbots.parse_allowed_ids(body.allowed_ids),
+                "last_error": exc.description}
+
+    log.info("gateway: %s saved their own %s bot", user.email, platform)
+    return {"bot_key": bot_key, "platform": platform,
+            "bot_username": identity.get("username", ""),
+            "token_hint": gbots.mask_token(token),
+            "enabled": True,
+            "allowed_ids": gbots.parse_allowed_ids(body.allowed_ids),
+            "last_error": ""}
+
+
+@page_router.get("/bots")
+async def list_bots(user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
+    async with session() as s:
+        rows = (await s.execute(
+            select(GatewayBot).where(GatewayBot.email == user.email)
+        )).scalars().all()
+    return {"bots": [_bot_view(r) for r in rows]}
+
+
+async def _owned_bot(s, email: str, bot_key: str) -> GatewayBot:
+    """One bot, or a 404. Filtered on the session email, never on the path
+    alone, so bot_key is a lookup handle and not an authorisation."""
+    row = (await s.execute(
+        select(GatewayBot).where(GatewayBot.bot_key == bot_key,
+                                 GatewayBot.email == email)
+    )).scalars().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such bot.")
+    return row
+
+
+@page_router.post("/bots/{bot_key}/test")
+async def test_bot(bot_key: str,
+                   user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
+    """Prove the bot works and say exactly what Telegram said.
+
+    Two modes, because a bot saved thirty seconds ago has nobody to talk to
+    yet: unpaired, getMe proves the credential; paired, a real message proves
+    the whole path."""
+    async with session() as s:
+        row = await _owned_bot(s, user.email, bot_key)
+        token = gbots.decrypt_token(row.token_encrypted)
+        link = (await s.execute(
+            select(GatewayLink).where(GatewayLink.email == user.email,
+                                      GatewayLink.platform == row.platform)
+        )).scalars().first()
+        chat_id = row.owner_platform_user_id or (
+            link.platform_user_id if link else "")
+
+    try:
+        if chat_id:
+            await telegram_api.send_message(
+                token, chat_id, "IO is connected. This message came from your own bot.")
+            detail = "Sent. Check your Telegram."
+        else:
+            identity = await telegram_api.get_me(token)
+            detail = (f"Your bot @{identity.get('username','')} is alive. "
+                      "Now message it and send your code.")
+    except telegram_api.TelegramError as exc:
+        async with session() as s:
+            await s.execute(
+                update(GatewayBot).where(GatewayBot.bot_key == bot_key)
+                .values(last_error=exc.description))
+            await s.commit()
+        return {"ok": False, "detail": f"Telegram said: {exc.description}"}
+
+    async with session() as s:
+        await s.execute(update(GatewayBot)
+                        .where(GatewayBot.bot_key == bot_key)
+                        .values(last_error=None))
+        await s.commit()
+    return {"ok": True, "detail": detail}
+
+
+@page_router.patch("/bots/{bot_key}")
+async def toggle_bot(bot_key: str, body: BotToggleIn,
+                     user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
+    """Off deletes the webhook, so Telegram stops delivering at source rather
+    than us dropping updates we keep receiving."""
+    async with session() as s:
+        row = await _owned_bot(s, user.email, bot_key)
+        token = gbots.decrypt_token(row.token_encrypted)
+        secret = row.webhook_secret
+
+    error = ""
+    try:
+        if body.enabled:
+            await telegram_api.set_webhook(
+                token, f"{_public_url()}/webhook/telegram/{bot_key}", secret)
+        else:
+            await telegram_api.delete_webhook(token)
+    except telegram_api.TelegramError as exc:
+        error = exc.description
+
+    async with session() as s:
+        await s.execute(
+            update(GatewayBot).where(GatewayBot.bot_key == bot_key)
+            .values(enabled=bool(body.enabled) and not error,
+                    last_error=error or None))
+        await s.commit()
+        row = await _owned_bot(s, user.email, bot_key)
+        return _bot_view(row)
+
+
+@page_router.delete("/bots/{bot_key}")
+async def remove_bot(bot_key: str,
+                     user: CurrentUser = Depends(current_user)) -> dict[str, str]:
+    """Remove the row even if Telegram will not let go of the webhook.
+
+    An orphaned webhook points at a bot_key that no longer resolves, which
+    404s, so it is inert. Keeping the row because a remote call failed would
+    leave the user unable to get rid of their own token."""
+    async with session() as s:
+        row = await _owned_bot(s, user.email, bot_key)
+        token = gbots.decrypt_token(row.token_encrypted)
+
+    try:
+        await telegram_api.delete_webhook(token)
+    except telegram_api.TelegramError:
+        log.warning("gateway: could not clear the webhook while removing a bot")
+
+    async with session() as s:
+        await s.execute(delete(GatewayBot).where(
+            GatewayBot.bot_key == bot_key, GatewayBot.email == user.email))
+        await s.commit()
+    log.info("gateway: %s removed their own bot", user.email)
+    return {"status": "removed"}
