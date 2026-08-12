@@ -447,6 +447,14 @@ CHANNEL_CATALOGUE = (
      "blurb": "Use IO from Discord direct messages.",
      "planned": "Discord already talks to IO, but not yet through Channels."},
 
+    # Not started, and nothing else in this codebase to build on.
+    {"platform": "mattermost", "label": "Mattermost", "icon": "💠",
+     "blurb": "Use IO from Mattermost channels and direct messages.",
+     "planned": "Not started. Needs a bot account and a webhook route."},
+    {"platform": "matrix", "label": "Matrix", "icon": "🔷",
+     "blurb": "Use IO from Matrix rooms and direct messages.",
+     "planned": "Not started. Needs a homeserver login this box does not hold."},
+
     # Specified, blocked on things that are not code.
     {"platform": "whatsapp", "label": "WhatsApp", "icon": "📱",
      "blurb": "Message IO from WhatsApp.",
@@ -478,7 +486,11 @@ def _channel_status(entry: dict, linked: dict) -> dict:
     platform = entry["platform"]
     row = {"platform": platform, "label": entry["label"], "icon": entry["icon"],
            "blurb": entry.get("blurb", ""), "name": "", "linked_at": None,
-           "note": ""}
+           "note": "",
+           # The page draws the same three controls on every row. These two say
+           # which of them can actually do anything here.
+           "can_bring_bot": platform in BOT_CAPABLE_PLATFORMS,
+           "bot": None}
 
     if platform in linked:
         row.update(linked[platform], status="connected")
@@ -517,6 +529,9 @@ async def list_connections(
             select(GatewayLink).where(GatewayLink.email == user.email)
             .order_by(GatewayLink.linked_at.desc())
         )).scalars().all()
+        bots = (await s.execute(
+            select(GatewayBot).where(GatewayBot.email == user.email)
+        )).scalars().all()
 
     linked = {
         r.platform: {
@@ -525,9 +540,17 @@ async def list_connections(
         }
         for r in rows
     }
+    by_platform = {b.platform: _bot_view(b) for b in bots}
+
+    connections = []
+    for entry in CHANNEL_CATALOGUE:
+        row = _channel_status(entry, linked)
+        row["bot"] = by_platform.get(row["platform"])
+        connections.append(row)
+
     return {
         "telegram_bot": os.environ.get("GATEWAY_TELEGRAM_BOT", ""),
-        "connections": [_channel_status(e, linked) for e in CHANNEL_CATALOGUE],
+        "connections": connections,
     }
 
 
