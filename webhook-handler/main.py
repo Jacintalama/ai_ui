@@ -731,10 +731,6 @@ async def telegram_webhook(request: Request):
     return JSONResponse(content={"ok": True}, status_code=200)
 
 
-def _forget_bot(bot_key: str) -> None:
-    _bot_adapters.pop(bot_key, None)
-
-
 def _bot_sender_allowed(config: dict, sender_id: str) -> bool:
     """An explicit allow list wins. With none, the bot serves only the account
     that claimed it, and an unclaimed bot serves whoever arrives first so the
