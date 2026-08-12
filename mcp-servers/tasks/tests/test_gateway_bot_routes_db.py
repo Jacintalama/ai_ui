@@ -163,3 +163,20 @@ async def test_testing_a_paired_bot_messages_the_owners_own_chat(
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
     assert [chat for _token, chat, _text in sent] == ["4242"]
+
+
+async def test_a_stranger_never_sees_your_bot_on_the_channels_page(owner_bot, app_for):
+    # The regression this guards: dropping the email filter on the bots query
+    # would stitch one account's bot onto another account's Telegram row.
+    rows = app_for(STRANGER).get("/tasks/gateway/connections").json()["connections"]
+    assert rows, "the page must still list every channel for a stranger"
+    assert all(r["bot"] is None for r in rows)
+
+
+async def test_your_own_bot_lands_on_your_telegram_row_and_nowhere_else(owner_bot, app_for):
+    rows = app_for(OWNER).get("/tasks/gateway/connections").json()["connections"]
+    telegram = next(r for r in rows if r["platform"] == "telegram")
+    assert telegram["bot"]["bot_key"] == owner_bot
+    assert all(r["bot"] is None for r in rows if r["platform"] != "telegram")
+    # The page never receives a token, only enough to recognise the bot.
+    assert "111:AAHownertokenvalue" not in str(rows)
