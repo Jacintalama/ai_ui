@@ -38,6 +38,7 @@ from scheduler import (
     update_user_cron_job, get_user_jobs,
 )
 from gateway import pipeline as gateway_pipeline
+from gateway.platforms.cli import CliAdapter
 from gateway.platforms.telegram import TELEGRAM_MAX_MESSAGE, TelegramAdapter
 from gateway.registry import PlatformEntry, registry as gateway_registry
 
@@ -93,6 +94,15 @@ gateway_registry.register(PlatformEntry(
     required_env=["TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"],
     max_message_length=TELEGRAM_MAX_MESSAGE,
     emoji="✈️",
+))
+
+gateway_registry.register(PlatformEntry(
+    name="cli",
+    label="Terminal",
+    adapter_factory=CliAdapter,
+    required_env=[],        # nothing to configure, so it is always enabled
+    max_message_length=0,   # a terminal has no message cap
+    emoji="⌨️",
 ))
 
 # Telegram re-delivers an update until it sees a 200, and we answer before the
@@ -668,6 +678,32 @@ async def telegram_webhook(request: Request):
 
     _spawn_gateway(gateway_pipeline.handle_event(event, adapter))
     return JSONResponse(content={"ok": True}, status_code=200)
+
+
+@app.post("/webhook/gateway/cli")
+async def gateway_cli(request: Request):
+    """The terminal client. Synchronous: the caller is blocked on the answer.
+
+    Unlike Telegram there is no re-delivery to defend against, so there is no
+    reason to answer before the work is done.
+    """
+    adapter = gateway_registry.adapter("cli")
+    if adapter is None:
+        raise HTTPException(status_code=503, detail="CLI gateway is not available")
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    event = adapter.parse_inbound(payload, dict(request.headers))
+    if event is None:
+        raise HTTPException(status_code=400,
+                            detail="A 32 character hex device_id and a non-empty "
+                                   "text are both required")
+
+    reply = await gateway_pipeline.handle_event(event, adapter)
+    return JSONResponse(content={"reply": reply}, status_code=200)
 
 
 # Last voice-started build (single voice identity by design). Lets the agent's
