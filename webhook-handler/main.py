@@ -100,7 +100,13 @@ gateway_registry.register(PlatformEntry(
     name="cli",
     label="Terminal",
     adapter_factory=CliAdapter,
-    required_env=[],        # nothing to configure, so it is always enabled
+    # NOT empty, despite there being nothing to configure. An empty list means
+    # always enabled, which would have shipped a publicly reachable endpoint
+    # switched on: Caddy's /webhook/* rule reaches this service directly,
+    # bypassing api-gateway and therefore its auth and its rate limiter, and an
+    # unrecognized device writes a pairing-code row. This flag is what makes
+    # "deploying changes nothing visible" true for the CLI as well as Telegram.
+    required_env=["GATEWAY_CLI_ENABLED"],
     max_message_length=0,   # a terminal has no message cap
     emoji="⌨️",
 ))

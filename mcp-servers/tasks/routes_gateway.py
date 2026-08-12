@@ -36,6 +36,20 @@ router = APIRouter(prefix="/gateway")
 # point at is never deleted: it is the user's data and lives in their sidebar.
 SESSION_RETENTION_DAYS = 30
 
+# One token covers every Open WebUI call in a turn, not one call, so it has to
+# outlive the slowest turn rather than the slowest request. A voice memo can
+# spend a minute in CPU transcription before the model is even asked. COUPLED to
+# OWUIUserClient's timeout in webhook-handler/gateway/owui.py, which must stay
+# comfortably below this: a call that outlives its own credential succeeds and
+# then the write after it gets a 401, silently costing the user that turn in
+# their sidebar. Still per-request and still short-lived.
+GATEWAY_TOKEN_TTL_SECONDS = 300
+
+# Expired and redeemed codes are swept on the write path. Nothing else prunes
+# this table, and resolve is reachable from an unauthenticated public route, so
+# without this a caller could grow it without bound.
+PAIRING_CODE_RETENTION_HOURS = 24
+
 
 def _require_internal(secret: str) -> None:
     expected = os.environ.get("INTERNAL_CALLBACK_SECRET", "")
@@ -89,10 +103,15 @@ async def resolve(body: ResolveIn,
                 "linked": True,
                 "email": link.email,
                 "owui_user_id": link.owui_user_id,
-                "owui_token": mint_owui_token(link.owui_user_id),
+                "owui_token": mint_owui_token(
+                    link.owui_user_id, ttl_seconds=GATEWAY_TOKEN_TTL_SECONDS),
             }
 
         now = _now()
+        await s.execute(delete(GatewayPairingCode).where(
+            GatewayPairingCode.expires_at
+            < now - timedelta(hours=PAIRING_CODE_RETENTION_HOURS)))
+
         live = (await s.execute(
             select(GatewayPairingCode).where(
                 GatewayPairingCode.platform == body.platform,

@@ -30,7 +30,13 @@ class OWUIError(Exception):
 
 
 class OWUIUserClient:
-    def __init__(self, base_url: str, token: str, timeout: float = 120.0):
+    # COUPLED to GATEWAY_TOKEN_TTL_SECONDS in mcp-servers/tasks/routes_gateway.py.
+    # One token covers every call in a turn, so the slowest single call must fit
+    # inside the token's life with room for the calls around it. A timeout longer
+    # than the TTL means a slow completion succeeds and the transcript write that
+    # follows it gets a 401, which is silent: the user gets their answer and the
+    # turn vanishes from their sidebar.
+    def __init__(self, base_url: str, token: str, timeout: float = 90.0):
         self.base_url = base_url.rstrip("/")
         self._token = token
         self.timeout = timeout

@@ -90,3 +90,18 @@ def test_registering_twice_replaces_rather_than_duplicates(monkeypatch):
     reg.register(_entry(label="Fake 2"))
     assert reg.all_names() == ["fake"]
     assert reg.enabled()[0].label == "Fake 2"
+
+
+def test_the_cli_platform_is_dormant_without_its_flag(monkeypatch):
+    # Regression guard for a real defect: the CLI shipped with required_env=[],
+    # which means always enabled. Caddy routes /webhook/* straight to this
+    # service, bypassing api-gateway and its rate limiter, so an always-on CLI
+    # is a public unauthenticated endpoint that writes pairing rows.
+    import main
+
+    monkeypatch.delenv("GATEWAY_CLI_ENABLED", raising=False)
+    assert main.gateway_registry.is_enabled("cli") is False
+    assert main.gateway_registry.adapter("cli") is None
+
+    monkeypatch.setenv("GATEWAY_CLI_ENABLED", "1")
+    assert main.gateway_registry.is_enabled("cli") is True

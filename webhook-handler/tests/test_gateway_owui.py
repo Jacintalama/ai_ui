@@ -168,3 +168,17 @@ async def test_get_chat_raises_when_the_chat_object_is_missing():
         return_value=httpx.Response(200, json={"id": "chat-9"}))
     with pytest.raises(OWUIError):
         await _client().get_chat("chat-9")
+
+
+def test_the_client_timeout_fits_inside_the_token_life():
+    # These live in two different services and are coupled. One token covers a
+    # whole turn, so a single call allowed to outlive it means the call succeeds
+    # and the write after it gets a 401, which is silent: the user gets their
+    # answer and loses that turn from their sidebar.
+    import inspect
+
+    signature = inspect.signature(OWUIUserClient.__init__)
+    timeout = signature.parameters["timeout"].default
+    assert timeout < 300, (
+        "must stay below GATEWAY_TOKEN_TTL_SECONDS in "
+        "mcp-servers/tasks/routes_gateway.py")
