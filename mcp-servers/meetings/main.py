@@ -216,6 +216,11 @@ async def _push_record_to_kb(record: MeetingRecord) -> str:
     return await push_to_kb(OPENWEBUI_URL, OPENWEBUI_API_KEY, filename, content)
 
 
+def _failure_reason(exc: Exception) -> str:
+    """KbPushError already reads as a reason; anything else needs its type."""
+    return str(exc) if isinstance(exc, KbPushError) else f"{type(exc).__name__}: {exc}"
+
+
 async def _guarded_process_and_push(record: MeetingRecord):
     """Run the pipeline and make sure the outcome outlives it.
 
@@ -227,16 +232,43 @@ async def _guarded_process_and_push(record: MeetingRecord):
     try:
         await _process_and_push(record)
     except Exception as exc:
-        reason = str(exc) if isinstance(exc, KbPushError) else f"{type(exc).__name__}: {exc}"
+        reason = _failure_reason(exc)
         logger.error("KB pipeline failed for '%s': %s", record.title, reason)
         await _record_kb_outcome(record.id, error=reason)
 
 
-def _dispatch_kb_pipeline(record: MeetingRecord) -> None:
-    """The only way this pipeline is ever scheduled — always guarded."""
-    task = asyncio.create_task(_guarded_process_and_push(record))
+async def _guarded_kb_push(record: MeetingRecord):
+    """The KB push on its own, for a retry.
+
+    Deliberately NOT the full pipeline: re-running the decision engine would
+    post every action item of an old meeting to Discord again, which is not an
+    acceptable price for repairing a knowledge-base link.
+    """
+    try:
+        file_id = await _push_record_to_kb(record)
+    except Exception as exc:
+        reason = _failure_reason(exc)
+        logger.error("KB retry failed for '%s': %s", record.title, reason)
+        await _record_kb_outcome(record.id, error=reason)
+        return
+
+    await _record_kb_outcome(record.id, file_id=file_id)
+
+
+def _dispatch(coro) -> None:
+    """Schedule background work and keep hold of the task until it is done."""
+    task = asyncio.create_task(coro)
     _BACKGROUND_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+def _dispatch_kb_pipeline(record: MeetingRecord) -> None:
+    """The only way this pipeline is ever scheduled — always guarded."""
+    _dispatch(_guarded_process_and_push(record))
+
+
+def _dispatch_kb_retry(record: MeetingRecord) -> None:
+    _dispatch(_guarded_kb_push(record))
 
 
 async def _process_and_push(record: MeetingRecord):
@@ -416,6 +448,64 @@ async def update_meeting(
     logger.info(f"Meeting updated: {record.title} ({record.id})")
     _dispatch_kb_pipeline(record)
     return _to_response(record)
+
+
+@app.post("/{meeting_id}/kb-retry", status_code=202)
+async def retry_kb_push(
+    meeting_id: str,
+    force: bool = False,
+    caller: str = Depends(require_user_or_ingest),
+):
+    """Push a meeting to the knowledge base again.
+
+    A NULL kb_file_id used to mean "never pushed, and nothing will ever push
+    it" — 8 production records sat that way from 5 May to 2 July 2026, because
+    the only trigger was creating or updating the meeting.
+
+    PUT would re-dispatch the whole pipeline, including the decision engine,
+    which would re-post an old meeting's action items to Discord; this runs the
+    KB push alone.
+
+    It answers 202, not the outcome: api-gateway proxies this service with a
+    30s timeout (api-gateway/main.py:317) while push_to_kb polls OpenWebUI for
+    up to 60s, so waiting inline would 504 on exactly the slow cases. The
+    outcome is durable — read it from GET /{meeting_id}.
+    """
+    if not _session_maker:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+
+    try:
+        uid = uuid.UUID(meeting_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid meeting ID")
+
+    async with _session_maker() as session:
+        result = await session.execute(
+            select(MeetingRecord).where(MeetingRecord.id == uid)
+        )
+        record = result.scalar_one_or_none()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    if record.kb_file_id and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Already in the knowledge base (file_id={record.kb_file_id}). "
+                "Every push uploads a new file and OpenWebUI does not dedupe by "
+                "filename, so this would leave a duplicate. Pass force=true to "
+                "push anyway."
+            ),
+        )
+
+    logger.info(f"KB retry requested for {meeting_id} by {caller}")
+    _dispatch_kb_retry(record)
+    return {
+        "status": "queued",
+        "meeting_id": str(record.id),
+        "outcome": f"GET /{record.id} — kb_file_id on success, kb_error on failure",
+    }
 
 
 @app.delete("/{meeting_id}", status_code=204)
