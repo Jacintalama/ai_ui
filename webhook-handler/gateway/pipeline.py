@@ -10,6 +10,7 @@ import os
 
 from clients.tasks import TasksAPIError, TasksClient
 from config import settings
+from gateway import commands as gateway_commands
 from gateway.base import BasePlatformAdapter
 from gateway.events import MessageEvent, MessageType
 from gateway.owui import OWUIError, OWUIUserClient
@@ -127,6 +128,16 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     if not text.strip():
         # A sticker, an empty edit, a stray keystroke. Answering would be noise.
         return ""
+
+    # Commands run before the model, so /resume and /help still work when the
+    # model is down. Those are how someone recovers, so routing them through a
+    # model call would make them useless exactly when they are needed. A command
+    # never reaches Open WebUI and never lands in the user's chat history.
+    if gateway_commands.is_command(text):
+        reply = await gateway_commands.handle(
+            text, _tasks, src, identity["owui_user_id"])
+        if reply is not None:
+            return await _say(adapter, src.chat_id, reply)
 
     await adapter.send_typing(src.chat_id)
     chat_id, chat = await get_or_create_chat(

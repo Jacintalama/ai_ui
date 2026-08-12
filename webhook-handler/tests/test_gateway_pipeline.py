@@ -211,3 +211,24 @@ async def test_a_failing_stop_typing_does_not_discard_the_answer(adapter, wired)
 
     assert out == "the answer"
     adapter.send_chunked.assert_awaited_once_with("42", "the answer")
+
+
+async def test_a_command_is_answered_without_calling_the_model(adapter, wired):
+    wired.tasks.gateway_recent_sessions.return_value = []
+
+    out = await pipeline.handle_event(_event("/resume"), adapter)
+
+    assert "resume" in out.lower()
+    wired.owui.chat_completion.assert_not_called()
+    wired.owui.create_chat.assert_not_called()
+
+
+async def test_a_command_still_works_when_the_model_is_down(adapter, wired):
+    # /help and /resume are how someone recovers, so they must not depend on the
+    # thing that is broken.
+    wired.owui.chat_completion.side_effect = OWUIError(503, "unavailable")
+    wired.tasks.gateway_recent_sessions.return_value = []
+
+    out = await pipeline.handle_event(_event("/help"), adapter)
+
+    assert "/resume" in out
