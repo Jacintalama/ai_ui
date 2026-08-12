@@ -338,14 +338,40 @@ async def run_now(
     schedule_id: str,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, str]:
     """Bypass cron and fire this schedule immediately. Useful for smoke
-    tests and for kicking off a one-off run from the CLI or chat."""
-    _, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    tests and for kicking off a one-off run from the CLI or chat.
+
+    Refused while a run for this schedule is already in flight. Each run spawns
+    a Claude Code agent; scheduler._RUN_SEMAPHORE caps concurrency at 3 so the
+    box will not OOM, but a semaphore is a queue rather than a bound — without
+    this, a burst of clicks piles up behind it and the genuine cron-scheduled
+    runs starve at the back. "It is already running" is both the honest answer
+    and the bound, and needs no quota to tune.
+
+    The signal is scheduler._IN_FLIGHT, marked by dispatch_run for the cron
+    tick and this route alike, so a live cron run counts too. Not the
+    `last_run_status` column: that outlives the asyncio.Task it would describe,
+    so a crash would wedge run-now permanently (see scheduler._IN_FLIGHT).
+
+    Operators and admins are exempt from the refusal — as with every other
+    schedule limit — but never from the marking, or a run they started would
+    look like an idle schedule to its owner.
+    """
+    is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    # Scoped first, so a stranger cannot learn from a 409 that someone else's
+    # schedule exists and is busy.
     sched = await _scoped_schedule(schedule_id, scoped_email)
-    import asyncio
-    from scheduler import _finalize_run
-    asyncio.create_task(_finalize_run(sched))
+    from scheduler import dispatch_run, is_run_in_flight
+    if (not is_operator and not _is_admin(x_user_admin)
+            and is_run_in_flight(sched.id)):
+        raise HTTPException(
+            status_code=409,
+            detail=("This scheduled task is already running. Wait for it to "
+                    "finish, then run it again."),
+        )
+    dispatch_run(sched)
     return {"status": "dispatched"}
 
 
