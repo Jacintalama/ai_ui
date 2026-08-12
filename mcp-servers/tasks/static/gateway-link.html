@@ -48,6 +48,12 @@
   .ok { color: #1a7f43; }
   .bad { color: #c0392b; }
   code { font-size: .9em; }
+  li.dim .who strong { opacity: .6; }
+  .tag {
+    font-size: .72rem; opacity: .6; white-space: nowrap;
+    border: 1px solid rgba(128,128,128,.35); border-radius: 1rem;
+    padding: .15rem .6rem;
+  }
 </style>
 </head>
 <body>
@@ -75,18 +81,10 @@
   <p id="msg" role="status" aria-live="polite"></p>
 
 <script>
-const LABELS = {
-  telegram: { icon: "✈️", name: "Telegram",
-              how: (bot) => bot ? `Message ${bot} on Telegram and it will send you a code.`
-                                : "Message the IO bot on Telegram and it will send you a code." },
-  cli:      { icon: "⌨️", name: "Terminal",
-              how: () => "Run python scripts/io.py in a terminal and it will print a code." },
-};
 
 const listEl = document.getElementById("list");
 const msg = document.getElementById("msg");
 const go = document.getElementById("go");
-let botName = "";
 
 function say(text, cls) {
   msg.className = cls || "";
@@ -96,37 +94,43 @@ function say(text, cls) {
 function render(connections) {
   listEl.replaceChildren();
   for (const c of connections) {
-    const meta = LABELS[c.platform] || { icon: "🔌", name: c.platform, how: () => "" };
     const li = document.createElement("li");
+    if (c.status !== "connected" && c.status !== "available") li.classList.add("dim");
 
     const icon = document.createElement("span");
     icon.className = "icon";
-    icon.textContent = meta.icon;
+    icon.textContent = c.icon || "*";
 
     const who = document.createElement("span");
     who.className = "who";
     const title = document.createElement("strong");
-    title.textContent = meta.name;
+    title.textContent = c.label || c.platform;
     const detail = document.createElement("span");
-    if (c.linked_at) {
+    if (c.status === "connected") {
       // Naming the account matters: it is the only way to notice that a code
       // you were talked into pasting linked somebody else's app to your Brain.
       detail.className = "dot on";
-      detail.textContent = c.name ? `Connected as ${c.name}` : "Connected";
+      detail.textContent = c.name ? "Connected as " + c.name : "Connected";
     } else {
       detail.className = "dot off";
-      detail.textContent = meta.how(botName);
+      detail.textContent = c.note || "";
     }
     who.append(title, detail);
-
     li.append(icon, who);
 
-    if (c.linked_at) {
+    if (c.status === "connected") {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = "Disconnect";
       btn.addEventListener("click", () => disconnect(c.platform, btn));
       li.append(btn);
+    } else {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = c.status === "available" ? "Ready to connect"
+                      : c.status === "planned"   ? "Coming later"
+                      : "Not enabled here";
+      li.append(tag);
     }
     listEl.append(li);
   }
@@ -141,12 +145,7 @@ async function load() {
       return;
     }
     const body = await res.json();
-    botName = body.telegram_bot || "";
     render(body.connections || []);
-    if (botName) {
-      document.getElementById("howto").textContent =
-        `Message ${botName} on Telegram, or run python scripts/io.py in a terminal, then paste the code it gives you.`;
-    }
   } catch (err) {
     listEl.replaceChildren();
     say("Could not load your connections. Try again in a moment.", "bad");
@@ -186,7 +185,7 @@ document.getElementById("f").addEventListener("submit", async (e) => {
     });
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
-      const label = (LABELS[body.platform] || {}).name || body.platform || "your chat app";
+      const label = body.platform || "your channel";
       say(body.platform_user_name
             ? `Connected ${label} as ${body.platform_user_name}. Go back and send a message.`
             : `Connected ${label}. Go back and send a message.`, "ok");

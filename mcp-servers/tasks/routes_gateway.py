@@ -396,15 +396,72 @@ async def redeem(body: RedeemIn,
     return {"status": "linked", "platform": platform, "platform_user_name": name}
 
 
+# Every channel the gateway knows about, whether or not it can be used here.
+# Showing the ones that are not ready, with the reason, turns this page from a
+# login box into something a person can read to understand what is coming. The
+# alternative, listing only what works, quietly hides the roadmap.
+#
+# "ready" is decided at request time, not here: a channel is offerable only if
+# this server is actually configured for it. See _channel_status.
+CHANNEL_CATALOGUE = (
+    {"platform": "telegram", "label": "Telegram", "icon": "✈️"},
+    {"platform": "cli", "label": "Terminal", "icon": "⌨️"},
+    {"platform": "slack", "label": "Slack", "icon": "💬",
+     "planned": "Already wired to IO, not yet routed through Channels."},
+    {"platform": "discord", "label": "Discord", "icon": "🎮",
+     "planned": "Already wired to IO, not yet routed through Channels."},
+    {"platform": "whatsapp", "label": "WhatsApp", "icon": "📱",
+     "planned": "Needs Meta business verification and template approval."},
+    {"platform": "signal", "label": "Signal", "icon": "🔒",
+     "planned": "Needs a daemon this server does not have the memory for."},
+)
+
+
+def _channel_status(entry: dict, linked: dict) -> dict:
+    """One row for the page: what this channel is and what you can do with it.
+
+    status is one of:
+      connected   this account has linked it
+      available   configured on this server, ready to link
+      off         built, but not switched on here
+      planned     not built yet, with a reason
+    """
+    platform = entry["platform"]
+    row = {"platform": platform, "label": entry["label"], "icon": entry["icon"],
+           "name": "", "linked_at": None, "note": ""}
+
+    if platform in linked:
+        row.update(linked[platform], status="connected")
+        return row
+
+    if "planned" in entry:
+        return {**row, "status": "planned", "note": entry["planned"]}
+
+    # Presence of the config is the signal, so this cannot drift from reality
+    # the way a hand-maintained list would. Telegram is keyed on the bot handle
+    # rather than the token, which keeps secrets off this service entirely.
+    if platform == "telegram":
+        bot = os.environ.get("GATEWAY_TELEGRAM_BOT", "").strip()
+        if bot:
+            return {**row, "status": "available",
+                    "note": f"Message {bot} on Telegram and it will send you a code."}
+        return {**row, "status": "off",
+                "note": "No Telegram bot is configured on this server yet."}
+
+    if platform == "cli":
+        if os.environ.get("GATEWAY_CLI_ENABLED", "").strip():
+            return {**row, "status": "available",
+                    "note": "Run python scripts/io.py and it will print a code."}
+        return {**row, "status": "off",
+                "note": "The terminal client is switched off on this server."}
+
+    return {**row, "status": "off", "note": ""}
+
+
 @page_router.get("/connections")
 async def list_connections(
         user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
-    """Which chat surfaces this account has connected.
-
-    Drives the page's top half. Returns every platform the registry knows about,
-    connected or not, so the page can render "Connect" for the ones that are not
-    rather than silently omitting them.
-    """
+    """Every channel, with this account's status for each."""
     async with session() as s:
         rows = (await s.execute(
             select(GatewayLink).where(GatewayLink.email == user.email)
@@ -413,7 +470,6 @@ async def list_connections(
 
     linked = {
         r.platform: {
-            "platform": r.platform,
             "name": r.platform_user_name or "",
             "linked_at": r.linked_at.isoformat() if r.linked_at else None,
         }
@@ -421,10 +477,7 @@ async def list_connections(
     }
     return {
         "telegram_bot": os.environ.get("GATEWAY_TELEGRAM_BOT", ""),
-        "connections": [
-            linked.get(name, {"platform": name, "name": "", "linked_at": None})
-            for name in ("telegram", "cli")
-        ],
+        "connections": [_channel_status(e, linked) for e in CHANNEL_CATALOGUE],
     }
 
 

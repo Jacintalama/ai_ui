@@ -98,3 +98,43 @@ def test_the_page_builds_rows_without_innerhtml():
     with open(page, encoding="utf-8") as fh:
         html = fh.read()
     assert "innerHTML" not in html
+
+
+def test_every_channel_is_listed_even_when_it_is_not_ready(monkeypatch):
+    # Listing only what works hides the roadmap. A person should be able to see
+    # that Signal exists and why it is not here yet.
+    monkeypatch.setenv("GATEWAY_TELEGRAM_BOT", "@aiuiteam_bot")
+    rows = [routes_gateway._channel_status(e, {})
+            for e in routes_gateway.CHANNEL_CATALOGUE]
+    assert {r["platform"] for r in rows} == {
+        "telegram", "cli", "slack", "discord", "whatsapp", "signal"}
+    for row in rows:
+        assert row["status"] in {"connected", "available", "off", "planned"}
+        assert row["label"] and row["icon"]
+
+
+def test_a_channel_is_only_offered_when_this_server_is_configured_for_it(monkeypatch):
+    # Presence of the config IS the signal, so the page cannot drift from
+    # reality the way a hand-maintained list would.
+    monkeypatch.delenv("GATEWAY_TELEGRAM_BOT", raising=False)
+    monkeypatch.delenv("GATEWAY_CLI_ENABLED", raising=False)
+    by_platform = {e["platform"]: routes_gateway._channel_status(e, {})
+                   for e in routes_gateway.CHANNEL_CATALOGUE}
+    assert by_platform["telegram"]["status"] == "off"
+    assert by_platform["cli"]["status"] == "off"
+
+    monkeypatch.setenv("GATEWAY_TELEGRAM_BOT", "@aiuiteam_bot")
+    monkeypatch.setenv("GATEWAY_CLI_ENABLED", "1")
+    by_platform = {e["platform"]: routes_gateway._channel_status(e, {})
+                   for e in routes_gateway.CHANNEL_CATALOGUE}
+    assert by_platform["telegram"]["status"] == "available"
+    assert by_platform["cli"]["status"] == "available"
+
+
+def test_a_connected_channel_outranks_its_catalogue_status(monkeypatch):
+    monkeypatch.delenv("GATEWAY_TELEGRAM_BOT", raising=False)
+    entry = routes_gateway.CHANNEL_CATALOGUE[0]
+    row = routes_gateway._channel_status(
+        entry, {"telegram": {"name": "Ralph", "linked_at": "2026-08-12T00:00:00"}})
+    assert row["status"] == "connected"
+    assert row["name"] == "Ralph"
