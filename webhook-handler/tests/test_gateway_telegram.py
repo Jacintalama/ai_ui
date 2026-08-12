@@ -186,3 +186,16 @@ def test_a_malformed_photo_entry_does_not_raise(adapter):
 
 def test_the_secret_check_rejects_a_non_string_header(adapter):
     assert not adapter.verify_webhook({}, {"x-telegram-bot-api-secret-token": None})
+
+
+def test_httpx_logging_cannot_leak_the_bot_token():
+    # The Telegram Bot API puts the token in the URL path, and httpx logs every
+    # request URL at INFO. Observed in production: one setWebhook call wrote the
+    # live token into the container log, and every sendMessage would have too.
+    import logging
+
+    import main  # noqa: F401  (importing configures the loggers)
+
+    for name in ("httpx", "httpcore"):
+        assert logging.getLogger(name).level >= logging.WARNING, (
+            f"{name} at INFO writes the bot token into the container log")

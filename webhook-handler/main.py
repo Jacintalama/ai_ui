@@ -52,6 +52,11 @@ logging.basicConfig(
 # in minutes. Voice-layer loggers stay at the root level on purpose.
 for _noisy in ("discord.gateway", "discord.client", "discord.http", "websockets"):
     logging.getLogger(_noisy).setLevel(logging.INFO)
+# httpx logs every request URL at INFO, and the Telegram Bot API puts the bot
+# token IN the path, so at INFO this writes the token into the container log on
+# every single call. WARNING keeps failures visible without the credential.
+for _leaky in ("httpx", "httpcore"):
+    logging.getLogger(_leaky).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
