@@ -46,18 +46,37 @@ def app_for(monkeypatch):
 
 
 @pytest.fixture
-async def owner_bot(db_session, app_for):
+def sent(monkeypatch):
+    """Spies on every telegram_api.send_message call so a test can tell which
+    chat id a bot actually messaged, without opening a socket."""
+    calls: list[tuple[str, str, str]] = []
+
+    async def _record(token, chat_id, text):
+        calls.append((token, chat_id, text))
+
+    monkeypatch.setattr(routes_gateway.telegram_api, "send_message", _record)
+    return calls
+
+
+@pytest.fixture
+async def clean_bots(db_session):
+    """The one place that deletes the GatewayBot rows these tests create,
+    matched only on the two email constants above. Never broaden this delete."""
+    yield
+    await db_session.execute(
+        GatewayBot.__table__.delete().where(GatewayBot.email.in_([OWNER, STRANGER])))
+    await db_session.commit()
+
+
+@pytest.fixture
+async def owner_bot(app_for, clean_bots):
     client = app_for(OWNER)
     resp = client.post("/tasks/gateway/bots",
                        json={"platform": "telegram",
                              "token": "111:AAHownertokenvalue",
                              "allowed_ids": ""})
     assert resp.status_code == 200
-    key = resp.json()["bot_key"]
-    yield key
-    await db_session.execute(
-        GatewayBot.__table__.delete().where(GatewayBot.email.in_([OWNER, STRANGER])))
-    await db_session.commit()
+    return resp.json()["bot_key"]
 
 
 async def test_the_owner_sees_their_own_bot(owner_bot, app_for):
@@ -96,3 +115,51 @@ async def test_saving_twice_replaces_rather_than_duplicates(owner_bot, app_for):
                 json={"platform": "telegram", "token": "222:AAHsecondtoken",
                       "allowed_ids": ""})
     assert len(client.get("/tasks/gateway/bots").json()["bots"]) == 1
+
+
+async def test_a_webhook_failure_leaves_the_bot_saved_but_disabled(
+        db_session, app_for, monkeypatch, clean_bots):
+    # A half-live bot silently swallows messages. Better to keep the row and
+    # let the page say it is broken.
+    async def _boom(*a, **kw):
+        raise routes_gateway.telegram_api.TelegramError("Bad webhook URL")
+    monkeypatch.setattr(routes_gateway.telegram_api, "set_webhook", _boom)
+
+    client = app_for(OWNER)
+    resp = client.post("/tasks/gateway/bots",
+                       json={"platform": "telegram",
+                             "token": "333:AAHwebhookfails",
+                             "allowed_ids": ""})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is False
+    assert "Bad webhook URL" in body["last_error"]
+
+    listed = client.get("/tasks/gateway/bots").json()["bots"]
+    assert len(listed) == 1
+    assert listed[0]["enabled"] is False
+    assert "Bad webhook URL" in listed[0]["last_error"]
+
+
+async def test_testing_an_unpaired_bot_checks_the_token_and_sends_nothing(
+        owner_bot, app_for, sent):
+    resp = app_for(OWNER).post(f"/tasks/gateway/bots/{owner_bot}/test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert "alive" in body["detail"]
+    assert sent == []     # nowhere to send yet, and no arbitrary id invented
+
+
+async def test_testing_a_paired_bot_messages_the_owners_own_chat(
+        db_session, owner_bot, app_for, sent):
+    await db_session.execute(
+        GatewayBot.__table__.update()
+        .where(GatewayBot.bot_key == owner_bot)
+        .values(owner_platform_user_id="4242"))
+    await db_session.commit()
+
+    resp = app_for(OWNER).post(f"/tasks/gateway/bots/{owner_bot}/test")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert [chat for _token, chat, _text in sent] == ["4242"]
