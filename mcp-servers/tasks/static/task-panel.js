@@ -1157,6 +1157,9 @@
         label: "Channels",
         title: "Channels: talk to IO from Telegram, a terminal and more",
         href: "/tasks/gateway/link",
+        // Open inside the OWUI shell: the left sidebar stays and only the
+        // right-hand content area is swapped, rather than navigating away.
+        embed: true,
         // speech bubble glyph
         setIcon: (svg) => {
           svg.setAttribute("viewBox", "0 0 24 24");

@@ -6,209 +6,287 @@
 <title>Channels</title>
 <style>
   :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
   body {
-    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
-    max-width: 38rem; margin: 3.5rem auto; padding: 0 1.25rem;
-  }
-  h1 { font-size: 1.4rem; margin-bottom: .2rem; }
-  h2 { font-size: 1rem; margin: 2.25rem 0 .5rem; opacity: .75; font-weight: 600; }
-  p.sub { opacity: .7; margin-top: 0; }
-  ul { list-style: none; padding: 0; margin: 0; }
-  li {
-    display: flex; align-items: center; gap: .85rem;
-    padding: .85rem 0; border-bottom: 1px solid rgba(128,128,128,.22);
-  }
-  li:last-child { border-bottom: 0; }
-  .icon { font-size: 1.5rem; width: 1.9rem; text-align: center; }
-  .who { flex: 1; min-width: 0; }
-  .who strong { display: block; }
-  .who span { font-size: .875rem; opacity: .7; }
-  .dot { font-size: .8rem; }
-  .on  { color: #1a7f43; }
-  .off { opacity: .55; }
-  button {
-    font: inherit; padding: .4rem .85rem; border-radius: .4rem; cursor: pointer;
-    border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit;
-  }
-  button.primary { border: 0; background: #2f6fe4; color: #fff; }
-  button[disabled] { opacity: .5; cursor: default; }
-  input {
-    font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    letter-spacing: .18em; text-transform: uppercase;
-    width: 100%; padding: .7rem .85rem; box-sizing: border-box;
-    border: 1px solid rgba(128,128,128,.45); border-radius: .4rem;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0; padding: 1.75rem 2rem 4rem;
     background: transparent; color: inherit;
   }
-  form { margin-top: .5rem; }
-  .warn {
-    font-size: .875rem; opacity: .8; border-left: 3px solid #d08b1e;
-    padding: .5rem .8rem; margin: .9rem 0 0;
+  header { margin-bottom: 1.5rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
+  .lede { opacity: .7; margin: 0; max-width: 46rem; }
+  .count { font-size: .85rem; opacity: .6; margin-top: .4rem; }
+
+  ul { list-style: none; padding: 0; margin: 0; }
+  .row {
+    border: 1px solid rgba(128,128,128,.25); border-radius: .55rem;
+    margin-bottom: .6rem; padding: .85rem 1rem;
   }
-  #msg { margin-top: .9rem; min-height: 1.4rem; }
+  .row.dim { opacity: .62; }
+  .head { display: flex; align-items: center; gap: .8rem; }
+  .icon { font-size: 1.2rem; width: 1.6rem; text-align: center; flex: none; }
+  .naming { flex: 1; min-width: 0; }
+  .titleline { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+  .name { font-weight: 600; }
+  .badge {
+    font-size: .7rem; letter-spacing: .04em; text-transform: uppercase;
+    border: 1px solid rgba(128,128,128,.4); border-radius: .25rem;
+    padding: .1rem .45rem; opacity: .8; white-space: nowrap;
+  }
+  .badge.on { border-color: #1a7f43; color: #1a7f43; opacity: 1; }
+  .blurb { font-size: .85rem; opacity: .7; margin-top: .2rem; }
+  .why { font-size: .85rem; opacity: .7; margin-top: .2rem; }
+
+  button {
+    font: inherit; font-size: .875rem; padding: .35rem .8rem; cursor: pointer;
+    border-radius: .35rem; border: 1px solid rgba(128,128,128,.45);
+    background: transparent; color: inherit; white-space: nowrap;
+  }
+  button.primary { border-color: transparent; background: #2f6fe4; color: #fff; }
+  button[disabled] { opacity: .5; cursor: default; }
+
+  .panel {
+    margin-top: .85rem; padding-top: .85rem;
+    border-top: 1px solid rgba(128,128,128,.22);
+  }
+  .step { font-size: .875rem; opacity: .8; margin: 0 0 .6rem; }
+  .entry { display: flex; gap: .5rem; flex-wrap: wrap; }
+  input {
+    font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .16em; text-transform: uppercase;
+    flex: 1; min-width: 12rem; padding: .45rem .7rem;
+    border: 1px solid rgba(128,128,128,.45); border-radius: .35rem;
+    background: transparent; color: inherit;
+  }
+  .warn {
+    font-size: .82rem; opacity: .85; margin: .7rem 0 0;
+    border-left: 3px solid #d08b1e; padding: .4rem .7rem;
+  }
+  .msg { font-size: .875rem; margin-top: .6rem; min-height: 1.2rem; }
   .ok { color: #1a7f43; }
   .bad { color: #c0392b; }
-  code { font-size: .9em; }
-  li.dim .who strong { opacity: .6; }
-  .blurb { display: block; font-size: .8rem; opacity: .6; }
-  .tag {
-    font-size: .72rem; opacity: .6; white-space: nowrap;
-    border: 1px solid rgba(128,128,128,.35); border-radius: 1rem;
-    padding: .15rem .6rem;
-  }
 </style>
 </head>
 <body>
-  <h1>Channels</h1>
-  <p class="sub">The places you can talk to IO from, besides this browser.
-  Every channel you connect runs as your account alone, with your own memory,
-  tools and models.</p>
+  <header>
+    <h1>Channels</h1>
+    <p class="lede">The places you can talk to IO from, besides this browser.
+    Every channel you connect runs as your account alone, with your own memory,
+    tools and models. Nobody else can see or use what you connect.</p>
+    <p class="count" id="count"></p>
+  </header>
 
-  <h2>Connected</h2>
-  <ul id="list"><li><span class="who">Loading...</span></li></ul>
-
-  <h2>Add a channel</h2>
-  <p class="sub" id="howto">Get a code from the app you want to connect, then paste it here.</p>
-
-  <form id="f" autocomplete="off">
-    <input id="code" name="code" maxlength="24" placeholder="ABCD2345"
-           aria-label="Pairing code" required>
-    <button id="go" class="primary" type="submit">Connect</button>
-  </form>
-
-  <p class="warn">A code links whichever account requested it to <em>yours</em>,
-  giving it your memory, your email assistant and your files. Only paste a code
-  you asked for yourself. If someone sent you one, do not use it.</p>
-
-  <p id="msg" role="status" aria-live="polite"></p>
+  <ul id="list"><li class="row"><span class="blurb">Loading...</span></li></ul>
 
 <script>
-
 const listEl = document.getElementById("list");
-const msg = document.getElementById("msg");
-const go = document.getElementById("go");
+const countEl = document.getElementById("count");
+let openPanel = null;
 
-function say(text, cls) {
-  msg.className = cls || "";
-  msg.textContent = text;
+const BADGE = {
+  connected: "Connected",
+  available: "Ready to connect",
+  off: "Not enabled here",
+  planned: "Coming later",
+};
+
+function setMsg(el, text, cls) {
+  el.className = "msg" + (cls ? " " + cls : "");
+  el.textContent = text;
+}
+
+function buildPanel(c) {
+  const panel = document.createElement("div");
+  panel.className = "panel";
+
+  const step = document.createElement("p");
+  step.className = "step";
+  step.textContent = c.note || "Get a code, then paste it here.";
+  panel.append(step);
+
+  const entry = document.createElement("div");
+  entry.className = "entry";
+  const input = document.createElement("input");
+  input.setAttribute("aria-label", "Pairing code for " + (c.label || c.platform));
+  input.placeholder = "ABCD2345";
+  input.maxLength = 24;
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "primary";
+  go.textContent = "Connect";
+  entry.append(input, go);
+  panel.append(entry);
+
+  const warn = document.createElement("p");
+  warn.className = "warn";
+  warn.textContent =
+    "A code links whichever account asked for it to yours, giving it your "
+    + "memory, your email assistant and your files. "
+    + "Only paste a code you asked for yourself. "
+    + "If someone sent you one, do not use it.";
+  panel.append(warn);
+
+  const msg = document.createElement("p");
+  msg.className = "msg";
+  panel.append(msg);
+
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    setMsg(msg, "Checking...");
+    try {
+      // Same-origin on purpose: the browser sends the Open WebUI session
+      // cookie and api-gateway turns it into X-User-Email.
+      const res = await fetch("/tasks/gateway/link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: input.value }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setMsg(msg, "Connected. Go back and send a message.", "ok");
+        load();
+        return;
+      }
+      setMsg(msg, res.status === 401
+        ? "Sign in to IO first, then reload."
+        : (body.detail || "That did not work. Ask for a new code."), "bad");
+    } catch (err) {
+      setMsg(msg, "Could not reach the server. Try again in a moment.", "bad");
+    }
+    go.disabled = false;
+  });
+
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
+  return panel;
+}
+
+async function disconnect(platform, btn, msg) {
+  btn.disabled = true;
+  try {
+    const res = await fetch("/tasks/gateway/connections/"
+                            + encodeURIComponent(platform), { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setMsg(msg, body.detail || "Could not disconnect that.", "bad");
+      btn.disabled = false;
+      return;
+    }
+    load();
+  } catch (err) {
+    setMsg(msg, "Could not reach the server. Try again in a moment.", "bad");
+    btn.disabled = false;
+  }
 }
 
 function render(connections) {
   listEl.replaceChildren();
+  let joined = 0;
   for (const c of connections) {
-    const li = document.createElement("li");
-    if (c.status !== "connected" && c.status !== "available") li.classList.add("dim");
+    if (c.status === "connected") joined += 1;
+
+    const row = document.createElement("li");
+    row.className = "row";
+    if (c.status === "planned" || c.status === "off") row.classList.add("dim");
+
+    const head = document.createElement("div");
+    head.className = "head";
 
     const icon = document.createElement("span");
     icon.className = "icon";
     icon.textContent = c.icon || "*";
 
-    const who = document.createElement("span");
-    who.className = "who";
-    const title = document.createElement("strong");
-    title.textContent = c.label || c.platform;
-    if (c.blurb) {
-      const blurb = document.createElement("span");
-      blurb.className = "blurb";
-      blurb.textContent = c.blurb;
-      who.append(title, blurb);
+    const naming = document.createElement("div");
+    naming.className = "naming";
+    const titleline = document.createElement("div");
+    titleline.className = "titleline";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = c.label || c.platform;
+    const badge = document.createElement("span");
+    badge.className = "badge" + (c.status === "connected" ? " on" : "");
+    badge.textContent = BADGE[c.status] || c.status;
+    titleline.append(name, badge);
+
+    const blurb = document.createElement("div");
+    blurb.className = "blurb";
+    blurb.textContent = c.blurb || "";
+    naming.append(titleline, blurb);
+
+    if (c.status === "connected" && c.name) {
+      // Naming the account is the only way to notice that a code you were
+      // talked into pasting linked somebody else's app to your Brain.
+      const who = document.createElement("div");
+      who.className = "why";
+      who.textContent = "Connected as " + c.name;
+      naming.append(who);
+    } else if (c.status !== "available" && c.note) {
+      const why = document.createElement("div");
+      why.className = "why";
+      why.textContent = c.note;
+      naming.append(why);
     }
 
-    const detail = document.createElement("span");
-    if (c.status === "connected") {
-      // Naming the account matters: it is the only way to notice that a code
-      // you were talked into pasting linked somebody else's app to your Brain.
-      detail.className = "dot on";
-      detail.textContent = c.name ? "Connected as " + c.name : "Connected";
-    } else {
-      detail.className = "dot off";
-      detail.textContent = c.note || "";
-    }
-    if (c.blurb) who.append(detail); else who.append(title, detail);
-    li.append(icon, who);
+    head.append(icon, naming);
+
+    const msg = document.createElement("p");
+    msg.className = "msg";
 
     if (c.status === "connected") {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = "Disconnect";
-      btn.addEventListener("click", () => disconnect(c.platform, btn));
-      li.append(btn);
-    } else {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = c.status === "available" ? "Ready to connect"
-                      : c.status === "planned"   ? "Coming later"
-                      : "Not enabled here";
-      li.append(tag);
+      btn.addEventListener("click", () => disconnect(c.platform, btn, msg));
+      head.append(btn);
+    } else if (c.status === "available") {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Connect";
+      btn.addEventListener("click", () => {
+        // Expands in place. Opening a second one closes the first, so there is
+        // only ever one code box on screen to paste into.
+        const mine = row.querySelector(".panel");
+        if (mine) {
+          mine.remove();
+          openPanel = null;
+          btn.textContent = "Connect";
+          return;
+        }
+        if (openPanel) {
+          const other = openPanel.row.querySelector(".panel");
+          if (other) other.remove();
+          openPanel.btn.textContent = "Connect";
+        }
+        row.append(buildPanel(c));
+        btn.textContent = "Cancel";
+        openPanel = { row: row, btn: btn };
+        row.querySelector("input").focus();
+      });
+      head.append(btn);
     }
-    listEl.append(li);
+
+    row.append(head, msg);
+    listEl.append(row);
   }
+  countEl.textContent = joined + " of " + connections.length
+    + " channels connected to your account.";
 }
 
 async function load() {
+  openPanel = null;
   try {
     const res = await fetch("/tasks/gateway/connections");
     if (res.status === 401) {
       listEl.replaceChildren();
-      say("Sign in to IO first, then reload this page.", "bad");
+      countEl.textContent = "Sign in to IO first, then reload this page.";
       return;
     }
     const body = await res.json();
     render(body.connections || []);
   } catch (err) {
     listEl.replaceChildren();
-    say("Could not load your connections. Try again in a moment.", "bad");
+    countEl.textContent = "Could not load your channels. Try again in a moment.";
   }
 }
-
-async function disconnect(platform, btn) {
-  btn.disabled = true;
-  try {
-    const res = await fetch(`/tasks/gateway/connections/${encodeURIComponent(platform)}`,
-                            { method: "DELETE" });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      say(body.detail || "Could not disconnect that.", "bad");
-      btn.disabled = false;
-      return;
-    }
-    say("Disconnected.", "ok");
-    load();
-  } catch (err) {
-    say("Could not reach the server. Try again in a moment.", "bad");
-    btn.disabled = false;
-  }
-}
-
-document.getElementById("f").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  go.disabled = true;
-  say("Checking...");
-  try {
-    // Same-origin on purpose: the browser sends the Open WebUI session cookie
-    // and api-gateway turns it into X-User-Email. An absolute URL would not.
-    const res = await fetch("/tasks/gateway/link", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: document.getElementById("code").value }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (res.ok) {
-      const label = body.platform || "your channel";
-      say(body.platform_user_name
-            ? `Connected ${label} as ${body.platform_user_name}. Go back and send a message.`
-            : `Connected ${label}. Go back and send a message.`, "ok");
-      document.getElementById("code").value = "";
-      load();
-    } else if (res.status === 401) {
-      say("Sign in to IO first, then reload this page.", "bad");
-    } else {
-      say(body.detail || "That did not work. Ask for a new code.", "bad");
-    }
-  } catch (err) {
-    say("Could not reach the server. Try again in a moment.", "bad");
-  }
-  go.disabled = false;
-});
 
 load();
 </script>
