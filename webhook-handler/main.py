@@ -119,7 +119,13 @@ gateway_registry.register(PlatformEntry(
 # Telegram re-delivers an update until it sees a 200, and we answer before the
 # work is done, so the same update_id can arrive several times. Bounded: this
 # is a dedupe window, not a log.
-_gateway_seen_updates: set[int] = set()
+#
+# Keyed on (bot_key, update_id), NOT update_id alone. update_id is a per-bot
+# counter, so once users bring their own bots a bare integer collides across
+# them and silently swallows one person's message. The shared bot uses a fixed
+# key so it shares the same window without colliding with anyone.
+SHARED_BOT_KEY = "shared"
+_gateway_seen_updates: set[tuple[str, int]] = set()
 _GATEWAY_SEEN_MAX = 2000
 
 # A user's own bot, one adapter per bot_key, built on first contact.
@@ -702,11 +708,12 @@ async def telegram_webhook(request: Request):
 
     update_id = payload.get("update_id")
     if isinstance(update_id, int):
-        if update_id in _gateway_seen_updates:
+        seen_key = (SHARED_BOT_KEY, update_id)
+        if seen_key in _gateway_seen_updates:
             return JSONResponse(content={"ok": True}, status_code=200)
         if len(_gateway_seen_updates) >= _GATEWAY_SEEN_MAX:
             _gateway_seen_updates.clear()
-        _gateway_seen_updates.add(update_id)
+        _gateway_seen_updates.add(seen_key)
 
     try:
         event = adapter.parse_inbound(payload, headers)
