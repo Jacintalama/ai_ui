@@ -74,12 +74,6 @@ async def handle_event(event: MessageEvent, adapter: BasePlatformAdapter) -> str
     """
     src = event.source
 
-    # Refused before anything else runs. The Brain is injected into every model
-    # call, so answering in a group would print one person's private memory to
-    # the whole room, with no warning and no way to know in advance.
-    if src.chat_type != "dm":
-        return await _say(adapter, src.chat_id, GROUP_REFUSAL)
-
     try:
         return await _run(event, adapter)
     except TasksAPIError as e:
@@ -101,6 +95,14 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     the caller, `handle_event`, which owns the try/except/finally."""
     src = event.source
 
+    # First, and inside the caller's try so even a delivery failure here is
+    # reported. The Brain is injected into every model call, so answering in a
+    # group would print one person's private memory to the whole room, with no
+    # warning and no way to know in advance. Refusing before identity is even
+    # resolved means no code path exists for that to happen.
+    if src.chat_type != "dm":
+        return await _say(adapter, src.chat_id, GROUP_REFUSAL)
+
     identity = await _tasks.gateway_resolve(
         src.platform, src.user_id or src.chat_id, src.user_name or "")
 
@@ -115,6 +117,11 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     token = identity.get("owui_token")
     if not token:
         log.error("gateway: resolve said linked but sent no token")
+        return await _say(adapter, src.chat_id, UNEXPECTED)
+
+    owui_user_id = identity.get("owui_user_id")
+    if not owui_user_id:
+        log.error("gateway: resolve said linked but sent no user id")
         return await _say(adapter, src.chat_id, UNEXPECTED)
     owui = _owui_factory(token)
 
@@ -135,14 +142,14 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     # never reaches Open WebUI and never lands in the user's chat history.
     if gateway_commands.is_command(text):
         reply = await gateway_commands.handle(
-            text, _tasks, src, identity["owui_user_id"])
+            text, _tasks, src, owui_user_id)
         if reply is not None:
             return await _say(adapter, src.chat_id, reply)
 
     await adapter.send_typing(src.chat_id)
     chat_id, chat = await get_or_create_chat(
         _tasks, owui, src.platform, src.chat_id,
-        identity["owui_user_id"], text, settings.gateway_model)
+        owui_user_id, text, settings.gateway_model)
 
     messages = history_messages(chat, settings.gateway_history_turns)
     messages.append({"role": "user", "content": text})

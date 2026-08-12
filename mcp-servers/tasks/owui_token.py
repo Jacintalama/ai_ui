@@ -45,6 +45,11 @@ def mint_owui_token(user_id: str, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> str
         raise RuntimeError("WEBUI_SECRET_KEY not set")
     if not user_id:
         raise ValueError("user_id required")
+    if ttl_seconds <= 0:
+        # An already-expired token would be rejected downstream and read as a
+        # model outage. Cheap insurance in a module whose whole job is bounding
+        # how long an impersonation token lives.
+        raise ValueError("ttl_seconds must be positive")
 
     now = int(time.time())
     signing_input = (

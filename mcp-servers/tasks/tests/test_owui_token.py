@@ -67,3 +67,12 @@ def test_rejects_an_empty_user_id(monkeypatch):
     monkeypatch.setenv("WEBUI_SECRET_KEY", "test-secret")
     with pytest.raises(ValueError):
         owui_token.mint_owui_token("")
+
+
+@pytest.mark.parametrize("ttl", [0, -1, -3600])
+def test_rejects_a_non_positive_ttl(monkeypatch, ttl):
+    # An already-expired token would be rejected downstream and read as a model
+    # outage, which is a confusing way to learn about a caller's bad argument.
+    monkeypatch.setenv("WEBUI_SECRET_KEY", "test-secret")
+    with pytest.raises(ValueError):
+        owui_token.mint_owui_token("user-abc", ttl_seconds=ttl)
