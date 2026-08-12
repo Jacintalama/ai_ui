@@ -264,6 +264,14 @@ services:
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - TASKS_WEBHOOK_URL=${TASKS_WEBHOOK_URL:-http://tasks:8210/webhooks/meeting-action-items}
+      # Lets the n8n ingest workflow POST without a signed-in user. Added to
+      # the code on 2026-08-03 with the auth fix and never plumbed here, so
+      # `_is_ingester` — which fails closed on an empty secret — 403'd every
+      # ingest for nine days. Deliberately NOT defaulted: an unset value must
+      # keep the path closed rather than open it, and the test in
+      # mcp-servers/meetings/tests asserts this line exists, because the auth
+      # tests could not see the gap (they monkeypatch the value themselves).
+      - MEETINGS_INGEST_SECRET=${MEETINGS_INGEST_SECRET}
     networks:
       - backend
     depends_on:
@@ -1029,7 +1037,14 @@ services:
     command: -config.file=/etc/promtail/config.yaml
     volumes:
       - ./promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Docker's data-root moved to the attached volume on 2026-07-20, so this
+      # mount pointed at an empty directory and promtail collected NOTHING for
+      # three weeks while reporting "Up" and Loki/Grafana reporting "healthy".
+      # Discovered 2026-08-12 only because a log query for an unrelated
+      # investigation came back empty. The path is templated off DOCKER_ROOT so
+      # a future data-root move breaks loudly (compose errors on an unset var)
+      # instead of silently going blind again.
+      - ${DOCKER_ROOT:-/mnt/HC_Volume_106271703/docker}/containers:${DOCKER_ROOT:-/mnt/HC_Volume_106271703/docker}/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail-positions:/tmp
     depends_on:
