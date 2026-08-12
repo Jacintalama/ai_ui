@@ -232,3 +232,14 @@ async def test_a_command_still_works_when_the_model_is_down(adapter, wired):
     out = await pipeline.handle_event(_event("/help"), adapter)
 
     assert "/resume" in out
+
+
+async def test_a_tasks_failure_during_a_command_says_so(adapter, wired):
+    # Correct by code trace, but nothing pinned it down: someone later wrapping
+    # the dispatch in a try/except that swallows would break it silently.
+    wired.tasks.gateway_recent_sessions.side_effect = TasksAPIError(0, "unreachable")
+
+    out = await pipeline.handle_event(_event("/resume"), adapter)
+
+    assert out == pipeline.TASKS_DOWN
+    adapter.send_chunked.assert_awaited_once_with("42", pipeline.TASKS_DOWN)

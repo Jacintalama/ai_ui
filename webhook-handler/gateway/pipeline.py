@@ -141,8 +141,16 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     # model call would make them useless exactly when they are needed. A command
     # never reaches Open WebUI and never lands in the user's chat history.
     if gateway_commands.is_command(text):
-        reply = await gateway_commands.handle(
-            text, _tasks, src, owui_user_id)
+        try:
+            reply = await gateway_commands.handle(
+                text, _tasks, src, owui_user_id)
+        except TasksAPIError:
+            # Logged here and re-raised, not handled here. handle_event still
+            # owns the single conversion to TASKS_DOWN, but its message cannot
+            # say whether a command or the chat flow failed, and an operator
+            # reading logs needs to know which.
+            log.warning("gateway: %s failed against tasks", text.split()[0])
+            raise
         if reply is not None:
             return await _say(adapter, src.chat_id, reply)
 

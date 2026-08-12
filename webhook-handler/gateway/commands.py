@@ -64,7 +64,7 @@ async def _resume(tasks, source: SessionSource, owui_user_id: str,
     await tasks.gateway_put_session(
         source.platform, source.chat_id, chosen["owui_chat_id"], owui_user_id)
     return (
-        f"Picked up your {chosen['platform']} conversation. "
+        f"Picked up your {chosen.get('platform', 'previous')} conversation. "
         "Carry on from where you left off."
     )
 
