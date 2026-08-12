@@ -204,6 +204,9 @@ class GatewayLink(Base):
     platform_user_id = Column(Text, nullable=False)
     owui_user_id = Column(Text, nullable=False)
     email = Column(Text, nullable=False)
+    # Carried over from the pairing code so the UI can show WHICH account is
+    # linked, not just that one is. Added in migration 035.
+    platform_user_name = Column(Text, nullable=True)
     linked_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

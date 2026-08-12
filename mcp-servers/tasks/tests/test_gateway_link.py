@@ -67,3 +67,34 @@ def test_the_page_has_no_dash_characters():
     with open(page, encoding="utf-8") as fh:
         html = fh.read()
     assert "—" not in html and "–" not in html
+
+
+def test_connections_needs_a_signed_in_user(client):
+    assert client.get("/tasks/gateway/connections").status_code == 401
+
+
+def test_disconnect_needs_a_signed_in_user(client):
+    assert client.delete("/tasks/gateway/connections/telegram").status_code == 401
+
+
+def test_the_page_names_the_linked_account():
+    # The only way a user can notice that a code they were talked into pasting
+    # linked somebody else's app to their Brain.
+    page = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "static", "gateway-link.html")
+    with open(page, encoding="utf-8") as fh:
+        html = fh.read()
+    assert "Connected as" in html
+    assert "Only paste a code" in html
+
+
+def test_the_page_builds_rows_without_innerhtml():
+    # Names come from a chat platform and are attacker-influenced, so they must
+    # never be interpolated into markup.
+    page = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "static", "gateway-link.html")
+    with open(page, encoding="utf-8") as fh:
+        html = fh.read()
+    assert "innerHTML" not in html

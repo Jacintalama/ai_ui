@@ -374,6 +374,7 @@ async def redeem(body: RedeemIn,
         if existing:
             existing.owui_user_id = owui_user_id
             existing.email = user.email
+            existing.platform_user_name = row.platform_user_name
             existing.linked_at = now
         else:
             s.add(GatewayLink(
@@ -381,6 +382,7 @@ async def redeem(body: RedeemIn,
                 platform_user_id=row.platform_user_id,
                 owui_user_id=owui_user_id,
                 email=user.email,
+                platform_user_name=row.platform_user_name,
             ))
         row.redeemed_at = now
         platform, name = row.platform, row.platform_user_name or ""
@@ -392,3 +394,59 @@ async def redeem(body: RedeemIn,
 
     log.info("gateway: linked a %s account to %s", platform, user.email)
     return {"status": "linked", "platform": platform, "platform_user_name": name}
+
+
+@page_router.get("/connections")
+async def list_connections(
+        user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
+    """Which chat surfaces this account has connected.
+
+    Drives the page's top half. Returns every platform the registry knows about,
+    connected or not, so the page can render "Connect" for the ones that are not
+    rather than silently omitting them.
+    """
+    async with session() as s:
+        rows = (await s.execute(
+            select(GatewayLink).where(GatewayLink.email == user.email)
+            .order_by(GatewayLink.linked_at.desc())
+        )).scalars().all()
+
+    linked = {
+        r.platform: {
+            "platform": r.platform,
+            "name": r.platform_user_name or "",
+            "linked_at": r.linked_at.isoformat() if r.linked_at else None,
+        }
+        for r in rows
+    }
+    return {
+        "telegram_bot": os.environ.get("GATEWAY_TELEGRAM_BOT", ""),
+        "connections": [
+            linked.get(name, {"platform": name, "name": "", "linked_at": None})
+            for name in ("telegram", "cli")
+        ],
+    }
+
+
+@page_router.delete("/connections/{platform}")
+async def disconnect(platform: str,
+                     user: CurrentUser = Depends(current_user)) -> dict[str, str]:
+    """Unlink one surface from this account.
+
+    Deletes only the link. Session rows are left alone deliberately: they point
+    at real Open WebUI chats which are the user's own data, and if this account
+    re-pairs the same surface it picks the conversation back up. If a DIFFERENT
+    account pairs it, the owner check in get_or_create_chat starts them a fresh
+    chat rather than showing them this one.
+    """
+    async with session() as s:
+        result = await s.execute(
+            delete(GatewayLink).where(
+                GatewayLink.email == user.email,
+                GatewayLink.platform == platform,
+            ))
+        await s.commit()
+    if not result.rowcount:
+        raise HTTPException(status_code=404, detail="That was not connected.")
+    log.info("gateway: disconnected %s from %s", platform, user.email)
+    return {"status": "disconnected", "platform": platform}

@@ -3,15 +3,35 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect a chat app</title>
+<title>Chat apps</title>
 <style>
   :root { color-scheme: light dark; }
   body {
     font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
-    max-width: 34rem; margin: 4rem auto; padding: 0 1.25rem;
+    max-width: 38rem; margin: 3.5rem auto; padding: 0 1.25rem;
   }
-  h1 { font-size: 1.35rem; margin-bottom: .25rem; }
+  h1 { font-size: 1.4rem; margin-bottom: .2rem; }
+  h2 { font-size: 1rem; margin: 2.25rem 0 .5rem; opacity: .75; font-weight: 600; }
   p.sub { opacity: .7; margin-top: 0; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li {
+    display: flex; align-items: center; gap: .85rem;
+    padding: .85rem 0; border-bottom: 1px solid rgba(128,128,128,.22);
+  }
+  li:last-child { border-bottom: 0; }
+  .icon { font-size: 1.5rem; width: 1.9rem; text-align: center; }
+  .who { flex: 1; min-width: 0; }
+  .who strong { display: block; }
+  .who span { font-size: .875rem; opacity: .7; }
+  .dot { font-size: .8rem; }
+  .on  { color: #1a7f43; }
+  .off { opacity: .55; }
+  button {
+    font: inherit; padding: .4rem .85rem; border-radius: .4rem; cursor: pointer;
+    border: 1px solid rgba(128,128,128,.45); background: transparent; color: inherit;
+  }
+  button.primary { border: 0; background: #2f6fe4; color: #fff; }
+  button[disabled] { opacity: .5; cursor: default; }
   input {
     font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     letter-spacing: .18em; text-transform: uppercase;
@@ -19,67 +39,170 @@
     border: 1px solid rgba(128,128,128,.45); border-radius: .4rem;
     background: transparent; color: inherit;
   }
-  button {
-    font: inherit; margin-top: .75rem; padding: .6rem 1.1rem;
-    border: 0; border-radius: .4rem; cursor: pointer;
-    background: #2f6fe4; color: #fff;
+  form { margin-top: .5rem; }
+  .warn {
+    font-size: .875rem; opacity: .8; border-left: 3px solid #d08b1e;
+    padding: .5rem .8rem; margin: .9rem 0 0;
   }
-  button[disabled] { opacity: .55; cursor: default; }
-  #msg { margin-top: 1rem; min-height: 1.5rem; }
+  #msg { margin-top: .9rem; min-height: 1.4rem; }
   .ok { color: #1a7f43; }
   .bad { color: #c0392b; }
+  code { font-size: .9em; }
 </style>
 </head>
 <body>
-  <h1>Connect a chat app</h1>
-  <p class="sub">Paste the code the bot sent you. It works once and expires in an hour.</p>
+  <h1>Chat apps</h1>
+  <p class="sub">Talk to IO from somewhere other than this browser. Each one is
+  connected to your account only, and answers using your own memory and tools.</p>
+
+  <h2>Connected</h2>
+  <ul id="list"><li><span class="who">Loading...</span></li></ul>
+
+  <h2>Add one</h2>
+  <p class="sub" id="howto">Get a code from the app you want to connect, then paste it here.</p>
 
   <form id="f" autocomplete="off">
-    <input id="code" name="code" maxlength="14" placeholder="ABCD2345"
+    <input id="code" name="code" maxlength="24" placeholder="ABCD2345"
            aria-label="Pairing code" required>
-    <button id="go" type="submit">Connect</button>
+    <button id="go" class="primary" type="submit">Connect</button>
   </form>
+
+  <p class="warn">A code links whichever account requested it to <em>yours</em>,
+  giving it your memory, your email assistant and your files. Only paste a code
+  you asked for yourself. If someone sent you one, do not use it.</p>
+
   <p id="msg" role="status" aria-live="polite"></p>
 
 <script>
-const form = document.getElementById('f');
-const msg  = document.getElementById('msg');
-const go   = document.getElementById('go');
+const LABELS = {
+  telegram: { icon: "✈️", name: "Telegram",
+              how: (bot) => bot ? `Message ${bot} on Telegram and it will send you a code.`
+                                : "Message the IO bot on Telegram and it will send you a code." },
+  cli:      { icon: "⌨️", name: "Terminal",
+              how: () => "Run python scripts/io.py in a terminal and it will print a code." },
+};
 
-form.addEventListener('submit', async (e) => {
+const listEl = document.getElementById("list");
+const msg = document.getElementById("msg");
+const go = document.getElementById("go");
+let botName = "";
+
+function say(text, cls) {
+  msg.className = cls || "";
+  msg.textContent = text;
+}
+
+function render(connections) {
+  listEl.replaceChildren();
+  for (const c of connections) {
+    const meta = LABELS[c.platform] || { icon: "🔌", name: c.platform, how: () => "" };
+    const li = document.createElement("li");
+
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.textContent = meta.icon;
+
+    const who = document.createElement("span");
+    who.className = "who";
+    const title = document.createElement("strong");
+    title.textContent = meta.name;
+    const detail = document.createElement("span");
+    if (c.linked_at) {
+      // Naming the account matters: it is the only way to notice that a code
+      // you were talked into pasting linked somebody else's app to your Brain.
+      detail.className = "dot on";
+      detail.textContent = c.name ? `Connected as ${c.name}` : "Connected";
+    } else {
+      detail.className = "dot off";
+      detail.textContent = meta.how(botName);
+    }
+    who.append(title, detail);
+
+    li.append(icon, who);
+
+    if (c.linked_at) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Disconnect";
+      btn.addEventListener("click", () => disconnect(c.platform, btn));
+      li.append(btn);
+    }
+    listEl.append(li);
+  }
+}
+
+async function load() {
+  try {
+    const res = await fetch("/tasks/gateway/connections");
+    if (res.status === 401) {
+      listEl.replaceChildren();
+      say("Sign in to IO first, then reload this page.", "bad");
+      return;
+    }
+    const body = await res.json();
+    botName = body.telegram_bot || "";
+    render(body.connections || []);
+    if (botName) {
+      document.getElementById("howto").textContent =
+        `Message ${botName} on Telegram, or run python scripts/io.py in a terminal, then paste the code it gives you.`;
+    }
+  } catch (err) {
+    listEl.replaceChildren();
+    say("Could not load your connections. Try again in a moment.", "bad");
+  }
+}
+
+async function disconnect(platform, btn) {
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/tasks/gateway/connections/${encodeURIComponent(platform)}`,
+                            { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      say(body.detail || "Could not disconnect that.", "bad");
+      btn.disabled = false;
+      return;
+    }
+    say("Disconnected.", "ok");
+    load();
+  } catch (err) {
+    say("Could not reach the server. Try again in a moment.", "bad");
+    btn.disabled = false;
+  }
+}
+
+document.getElementById("f").addEventListener("submit", async (e) => {
   e.preventDefault();
   go.disabled = true;
-  msg.className = '';
-  msg.textContent = 'Checking...';
+  say("Checking...");
   try {
     // Same-origin on purpose: the browser sends the Open WebUI session cookie
     // and api-gateway turns it into X-User-Email. An absolute URL would not.
-    const res = await fetch('/tasks/gateway/link', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: document.getElementById('code').value }),
+    const res = await fetch("/tasks/gateway/link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: document.getElementById("code").value }),
     });
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
-      msg.className = 'ok';
-      msg.textContent = 'Connected. Go back to ' + (body.platform || 'your chat app')
-                      + ' and send a message.';
-      form.hidden = true;
-      return;
-    }
-    if (res.status === 401) {
-      msg.className = 'bad';
-      msg.textContent = 'Sign in to IO first, then reload this page.';
+      const label = (LABELS[body.platform] || {}).name || body.platform || "your chat app";
+      say(body.platform_user_name
+            ? `Connected ${label} as ${body.platform_user_name}. Go back and send a message.`
+            : `Connected ${label}. Go back and send a message.`, "ok");
+      document.getElementById("code").value = "";
+      load();
+    } else if (res.status === 401) {
+      say("Sign in to IO first, then reload this page.", "bad");
     } else {
-      msg.className = 'bad';
-      msg.textContent = body.detail || 'That did not work. Ask the bot for a new code.';
+      say(body.detail || "That did not work. Ask for a new code.", "bad");
     }
   } catch (err) {
-    msg.className = 'bad';
-    msg.textContent = 'Could not reach the server. Try again in a moment.';
+    say("Could not reach the server. Try again in a moment.", "bad");
   }
   go.disabled = false;
 });
+
+load();
 </script>
 </body>
 </html>

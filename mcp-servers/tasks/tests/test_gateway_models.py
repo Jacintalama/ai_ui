@@ -10,13 +10,11 @@ import re
 from models import (GatewayLink, GatewayPairingCode, GatewayRedeemBudget,
                      GatewaySession)
 
-MIGRATION = (
-    pathlib.Path(__file__).parent.parent / "migrations" / "033_gateway.sql"
-).read_text(encoding="utf-8")
+MIGRATIONS_DIR = pathlib.Path(__file__).parent.parent / "migrations"
+
+MIGRATION = (MIGRATIONS_DIR / "033_gateway.sql").read_text(encoding="utf-8")
 MIGRATION_034 = (
-    pathlib.Path(__file__).parent.parent / "migrations" /
-    "034_gateway_redeem_budget.sql"
-).read_text(encoding="utf-8")
+    MIGRATIONS_DIR / "034_gateway_redeem_budget.sql").read_text(encoding="utf-8")
 
 
 def _sql_columns(table: str, sql: str = MIGRATION) -> set[str]:
@@ -41,7 +39,25 @@ def _sql_columns(table: str, sql: str = MIGRATION) -> set[str]:
         if first.lower() in keywords:
             continue
         names.add(first)
+
+    # A later migration can ADD COLUMN, so the CREATE block alone is not the
+    # effective schema. Fold in every ALTER across all migrations, or the model
+    # legitimately gains a column and this test reports a phantom mismatch.
+    names |= _altered_in_columns(table)
     return names
+
+
+def _altered_in_columns(table: str) -> set[str]:
+    """Columns added to `table` by ALTER in any migration file."""
+    added = set()
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        sql = path.read_text(encoding="utf-8")
+        for match in re.finditer(
+                rf"ALTER TABLE\s+tasks\.{table}\s+"
+                r"ADD COLUMN(?:\s+IF NOT EXISTS)?\s+([a-z_]+)",
+                sql, re.IGNORECASE):
+            added.add(match.group(1))
+    return added
 
 
 def test_every_create_is_idempotent():
@@ -80,7 +96,10 @@ def test_the_column_parser_actually_finds_columns():
     # Guards the test above: a parser that silently returned an empty set would
     # make it pass for any model at all.
     assert _sql_columns("gateway_links") == {
-        "id", "platform", "platform_user_id", "owui_user_id", "email", "linked_at"}
+        "id", "platform", "platform_user_id", "owui_user_id", "email",
+        # Added by 035's ALTER, not by 033's CREATE, so this also proves the
+        # parser folds later migrations into the effective schema.
+        "platform_user_name", "linked_at"}
     assert len(_sql_columns("gateway_pairing_codes")) == 8
     assert len(_sql_columns("gateway_sessions")) == 6
     assert _sql_columns("gateway_redeem_budget", MIGRATION_034) == {
