@@ -4,6 +4,7 @@ Long polling would need a permanently running task holding an open connection.
 Caddy already routes /webhook/* to this service, so a webhook costs nothing and
 survives a restart.
 """
+import hmac
 import logging
 import os
 import tempfile
@@ -73,9 +74,17 @@ class TelegramAdapter(BasePlatformAdapter):
             log.warning("gateway: could not remove the Telegram webhook: %r", e)
 
     def verify_webhook(self, payload: dict, headers: dict) -> bool:
-        """Telegram echoes the secret we set in setWebhook on every delivery."""
+        """Telegram echoes the secret we set in setWebhook on every delivery.
+
+        Constant-time compare, matching what clients/github.py and
+        clients/slack.py already do for the same job. This is the only
+        authentication on a publicly reachable route, and a plain == leaks a
+        prefix through timing. Still fails closed when the secret is unset.
+        """
         got = {k.lower(): v for k, v in (headers or {}).items()}.get(SECRET_HEADER)
-        return bool(self._secret) and got == self._secret
+        if not self._secret or not isinstance(got, str):
+            return False
+        return hmac.compare_digest(got, self._secret)
 
     def parse_inbound(self, payload: dict, headers: dict) -> MessageEvent | None:
         """One Telegram update to a MessageEvent, or None if we do not handle it.
@@ -87,9 +96,14 @@ class TelegramAdapter(BasePlatformAdapter):
         if not isinstance(message, dict):
             return None
         chat = message.get("chat")
-        sender = message.get("from") or {}
         if not isinstance(chat, dict) or not chat.get("id"):
             return None
+        # isinstance, not `or {}`: that idiom only degrades on a FALSY value, so
+        # a truthy non-dict reached .get() and raised, which the route turned
+        # into a 500 and Telegram then re-delivered forever.
+        sender = message.get("from")
+        if not isinstance(sender, dict):
+            sender = {}
 
         raw_type = chat.get("type") or ""
         source = SessionSource(
@@ -115,10 +129,12 @@ class TelegramAdapter(BasePlatformAdapter):
         photo = message.get("photo")
         if isinstance(photo, list) and photo:
             # Telegram sends sizes smallest first; the last is the largest.
-            return MessageEvent(text=message.get("caption") or "",
-                                message_type=MessageType.PHOTO,
-                                media_ref=(photo[-1] or {}).get("file_id"),
-                                **common)
+            largest = photo[-1]
+            return MessageEvent(
+                text=message.get("caption") or "",
+                message_type=MessageType.PHOTO,
+                media_ref=largest.get("file_id") if isinstance(largest, dict) else None,
+                **common)
 
         document = message.get("document")
         if isinstance(document, dict) and document.get("file_id"):

@@ -109,3 +109,17 @@ def test_an_unparseable_update_is_200_and_does_nothing(client, adapter, monkeypa
 
     assert resp.status_code == 200
     assert called == []
+
+
+def test_a_parse_failure_is_still_200(client, adapter, monkeypatch):
+    # The route's contract is that Telegram always gets a 200. Anything else and
+    # it re-delivers the same update forever.
+    adapter.parse_inbound.side_effect = AttributeError("boom")
+    called = []
+    monkeypatch.setattr(main.gateway_pipeline, "handle_event",
+                        AsyncMock(side_effect=lambda *a: called.append(1)))
+
+    resp = client.post("/webhook/telegram", json=_update(), headers=GOOD)
+
+    assert resp.status_code == 200
+    assert called == []

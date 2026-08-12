@@ -151,3 +151,23 @@ async def test_disconnect_deletes_the_webhook(adapter):
         return_value=httpx.Response(200, json={"ok": True}))
     await adapter.disconnect()
     assert route.called
+
+
+@pytest.mark.parametrize("bad_from", ["not-a-dict", 12345, ["a"], True])
+def test_a_non_dict_sender_does_not_raise(adapter, bad_from):
+    # `X or {}` only degrades on a FALSY value, so a truthy non-dict used to
+    # reach .get() and raise AttributeError, which the route turned into a 500.
+    event = adapter.parse_inbound(_dm(**{"from": bad_from}), {})
+    assert event is not None
+    assert event.source.chat_id == "111"
+
+
+def test_a_malformed_photo_entry_does_not_raise(adapter):
+    payload = _dm(text=None, photo=["not-a-dict"], caption="look")
+    event = adapter.parse_inbound(payload, {})
+    assert event.message_type is MessageType.PHOTO
+    assert event.media_ref is None
+
+
+def test_the_secret_check_rejects_a_non_string_header(adapter):
+    assert not adapter.verify_webhook({}, {"x-telegram-bot-api-secret-token": None})

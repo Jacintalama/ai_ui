@@ -654,7 +654,15 @@ async def telegram_webhook(request: Request):
             _gateway_seen_updates.clear()
         _gateway_seen_updates.add(update_id)
 
-    event = adapter.parse_inbound(payload, headers)
+    try:
+        event = adapter.parse_inbound(payload, headers)
+    except Exception:  # noqa: BLE001
+        # Always 200. Telegram re-delivers anything else forever, so a parse bug
+        # would turn one malformed update into an endless retry loop. The
+        # adapter is meant to return None rather than raise, and this is the
+        # backstop for when it does not.
+        logger.exception("gateway: Telegram parse failed, dropping the update")
+        return JSONResponse(content={"ok": True}, status_code=200)
     if event is None:
         return JSONResponse(content={"ok": True}, status_code=200)
 
