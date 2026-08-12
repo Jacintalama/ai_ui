@@ -573,3 +573,28 @@ class TasksClient:
             "GET", "/gateway/sessions/recent",
             params={"owui_user_id": owui_user_id, "limit": limit})
         return resp.json().get("sessions", [])
+
+    async def gateway_bot_config(self, bot_key: str) -> dict | None:
+        """Everything needed to serve one inbound update on a user's own bot.
+
+        Returns None when the key is unknown, which is normal: a removed bot
+        can still have a webhook pointing here for a while. Any other failure
+        raises, because the caller must be able to tell "no such bot" from "I
+        could not ask", and only the second one may return a 503.
+
+        The `token` in the response is plaintext. Do not log this dict.
+        """
+        try:
+            resp = await self._internal_request("GET", f"/gateway/bots/{bot_key}")
+        except TasksAPIError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        return resp.json()
+
+    async def gateway_bot_claim(self, bot_key: str, platform_user_id: str) -> bool:
+        """First contact decides who an unclaimed bot serves."""
+        resp = await self._internal_request(
+            "POST", f"/gateway/bots/{bot_key}/claim",
+            json={"platform_user_id": platform_user_id})
+        return bool(resp.json().get("claimed"))
