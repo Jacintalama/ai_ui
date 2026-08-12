@@ -77,6 +77,7 @@ New table `tasks.gateway_bots`, migration `036_gateway_bots.sql`:
 | `webhook_secret` | per bot, sent to Telegram as `secret_token` |
 | `bot_username` | from `getMe`, shown on the card |
 | `allowed_ids` | comma-separated numeric Telegram user IDs that may pair through this bot, empty means owner only |
+| `owner_platform_user_id` | the Telegram account that claimed this bot, set by first contact, NULL until then |
 | `enabled` | the toggle |
 | `created_at`, `last_error` | for the Needs attention state |
 
@@ -125,14 +126,27 @@ trust-on-first-use would be an account takeover: a stranger could find
 answers an unknown sender with "send me the code from your Channels page,"
 which is the flow that already exists.
 
-`allowed_ids` defaults to owner only. Adding IDs lets named people pair through
-your bot, each to their own IO account, never to yours.
+`allowed_ids` defaults to owner only, enforced through `owner_platform_user_id`.
+A bot is unclaimed the moment it is saved, and the first Telegram account to
+message it claims it. That is safe in a way that first-contact *linking* is
+not: claiming decides only who the bot will talk to, and the IO account link
+still requires a code. A stranger who finds your bot and messages it first can
+at worst lock you out of your own bot, which Remove and re-save fixes, and can
+never reach your account.
+
+Adding IDs to `allowed_ids` overrides the claim and lets named people talk to
+the bot, each pairing to their own IO account, never to yours.
 
 ### Both bots coexist
 
-A reply always goes back on whichever bot the message arrived on. Where IO
-starts the conversation, such as cron results and notifications, the user's own
-bot wins if they have one.
+A reply always goes back on whichever bot the message arrived on, which falls
+out of serving each update through its own bot's adapter and needs no rule.
+
+Where IO starts the conversation, such as cron results and notifications, the
+user's own bot should win. That is stated here for the record but is not built
+in this pass, because nothing sends an unsolicited Telegram message today:
+every send in the pipeline is a reply. It becomes real work only when Telegram
+delivery is added to the scheduler.
 
 ## UI
 
