@@ -626,7 +626,8 @@ async def save_bot(body: BotIn,
     except telegram_api.TelegramError as exc:
         async with session() as s:
             await s.execute(
-                update(GatewayBot).where(GatewayBot.bot_key == bot_key)
+                update(GatewayBot).where(GatewayBot.bot_key == bot_key,
+                                         GatewayBot.email == user.email)
                 .values(enabled=False, last_error=exc.description))
             await s.commit()
         log.warning("gateway: setWebhook failed for %s", user.email)
@@ -696,14 +697,16 @@ async def test_bot(bot_key: str,
     except telegram_api.TelegramError as exc:
         async with session() as s:
             await s.execute(
-                update(GatewayBot).where(GatewayBot.bot_key == bot_key)
+                update(GatewayBot).where(GatewayBot.bot_key == bot_key,
+                                         GatewayBot.email == user.email)
                 .values(last_error=exc.description))
             await s.commit()
         return {"ok": False, "detail": f"Telegram said: {exc.description}"}
 
     async with session() as s:
         await s.execute(update(GatewayBot)
-                        .where(GatewayBot.bot_key == bot_key)
+                        .where(GatewayBot.bot_key == bot_key,
+                               GatewayBot.email == user.email)
                         .values(last_error=None))
         await s.commit()
     return {"ok": True, "detail": detail}
@@ -731,7 +734,8 @@ async def toggle_bot(bot_key: str, body: BotToggleIn,
 
     async with session() as s:
         await s.execute(
-            update(GatewayBot).where(GatewayBot.bot_key == bot_key)
+            update(GatewayBot).where(GatewayBot.bot_key == bot_key,
+                                     GatewayBot.email == user.email)
             .values(enabled=bool(body.enabled) and not error,
                     last_error=error or None))
         await s.commit()
