@@ -413,6 +413,7 @@ function commandLine(text) {
       const sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
+      // Text stays selected, so the instruction stays true: user sees "Press Ctrl+C" and the code is ready to copy.
       copy.textContent = "Press Ctrl+C";
     }
   });
@@ -462,8 +463,7 @@ function buildExpand(c) {
     if (c.platform === "cli") {
       panel.append(terminalSteps());
     } else if (c.note) {
-      panel.append(steps([c.note, "It replies with a code",
-                          "Paste it below"]));
+      panel.append(steps([c.note, "Paste the code below"]));
     }
 
     panel.append(buildConnectFields(c));

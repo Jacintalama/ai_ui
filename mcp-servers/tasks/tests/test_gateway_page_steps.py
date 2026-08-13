@@ -23,8 +23,27 @@ def test_the_page_never_hardcodes_the_production_domain_in_the_command():
     assert "https://ai-ui.coolestdomain.win/tasks/static/io.py" not in HTML
 
 
-def test_the_old_checkout_only_instruction_is_gone():
-    assert "python scripts/io.py" not in HTML
+def test_the_page_never_hardcodes_a_checkout_only_path():
+    # Not a historical guard: this string never lived in this file. The old
+    # "Run python scripts/io.py" instruction came from the server as a runtime
+    # value. This guards the future, where someone could type that path
+    # straight into the page, which would again leave anyone without the
+    # repository unable to use the channel.
+    assert "scripts/io.py" not in HTML
+
+
+def test_the_terminal_steps_never_mention_a_bot():
+    # You connect a DEVICE to the terminal, not a bot. An earlier build of this
+    # page printed "IO's bot @aiuiteam_bot" on the Terminal row, which was
+    # false, and it was caught by eye rather than by a test.
+    start = HTML.index("function terminalSteps(")
+    # Find the closing brace by searching for "return steps(" (unique to this function)
+    # and then finding the closing } that ends it.
+    return_pos = HTML.index("return steps(", start)
+    end = HTML.index("}", return_pos) + 1
+    body = HTML[start:end]
+    assert "bot" not in body.lower(), (
+        "terminalSteps must not name a bot: the terminal connects a device")
 
 
 def test_copying_falls_back_when_the_clipboard_is_denied():
