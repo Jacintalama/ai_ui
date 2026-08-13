@@ -867,6 +867,11 @@ async def telegram_webhook_for_bot(bot_key: str, request: Request):
         try:
             if await gateway_tasks.gateway_bot_claim(bot_key, sender_id):
                 config["owner_platform_user_id"] = sender_id
+            else:
+                # Someone else owns this bot. Our cached config still says
+                # unclaimed, and an unclaimed bot serves everyone, so drop
+                # the entry rather than leave the gate open until a restart.
+                _bot_adapters.pop(bot_key, None)
         except Exception:  # noqa: BLE001
             # A failed claim leaves the bot unclaimed and still serving. It is
             # a narrowing step, so failing open here loses nothing that was not

@@ -146,6 +146,21 @@ def test_a_good_update_reaches_the_pipeline(client, tasks_says, spawned):
     assert len(spawned) == 1
 
 
+def test_a_lost_claim_evicts_the_cache_entry(client, tasks_says, spawned):
+    """gateway_bot_claim returning False means someone else already claimed
+    the bot. The cached config still shows unclaimed, and an unclaimed bot
+    serves everyone, so the stale entry must be dropped rather than left to
+    serve open until the process restarts."""
+    # Explicit owner_platform_user_id, not just a copy of CONFIG: an earlier
+    # test in this module (test_a_good_update_reaches_the_pipeline) passes
+    # CONFIG straight through, and a successful claim mutates that dict in
+    # place, so CONFIG itself can no longer be trusted to read as unclaimed.
+    tasks_says({**CONFIG, "owner_platform_user_id": ""}, claimed=False)
+    client.post("/webhook/telegram/abc", json=UPDATE,
+                headers={"x-telegram-bot-api-secret-token": "s3cret"})
+    assert "abc" not in main._bot_adapters
+
+
 def test_the_config_is_fetched_once_and_then_cached(client, tasks_says, spawned):
     fake = tasks_says(CONFIG)
     for update_id in (1, 2):
