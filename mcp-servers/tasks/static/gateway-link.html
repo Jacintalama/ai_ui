@@ -61,6 +61,17 @@
     border-top: 1px solid rgba(128,128,128,.22);
   }
   .step { font-size: .875rem; opacity: .8; margin: 0 0 .6rem; }
+  .steps { margin: .2rem 0 .8rem; padding-left: 1.3rem; font-size: .875rem; }
+  .steps li { margin-bottom: .5rem; }
+  .cmd {
+    display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+    margin: .35rem 0;
+  }
+  .cmd code {
+    flex: 1; min-width: 0; overflow-x: auto; white-space: pre;
+    background: #0d141b; border: 1px solid #1e2b36; border-radius: 4px;
+    padding: .35rem .5rem; font-size: .8125rem;
+  }
   .entry { display: flex; gap: .5rem; flex-wrap: wrap; }
   input {
     font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -361,6 +372,75 @@ function buildDisconnectBlock(c) {
   return box;
 }
 
+// One renderer for both paths, so a channel that gains a second way in later
+// gets the same shape without new code.
+function steps(items) {
+  const list = document.createElement("ol");
+  list.className = "steps";
+  for (const item of items) {
+    const li = document.createElement("li");
+    if (typeof item === "string") {
+      li.textContent = item;
+    } else {
+      li.append(...item);
+    }
+    list.append(li);
+  }
+  return list;
+}
+
+// A command someone has to type. Copy is a convenience, never the only way to
+// get the text: this page runs inside an iframe, where clipboard-write can be
+// refused, so the fallback selects the command for a manual copy.
+function commandLine(text) {
+  const wrap = document.createElement("div");
+  wrap.className = "cmd";
+
+  const code = document.createElement("code");
+  code.textContent = text;
+
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.textContent = "Copy";
+  copy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      copy.textContent = "Copied";
+      setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+    } catch (err) {
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      copy.textContent = "Press Ctrl+C";
+    }
+  });
+
+  wrap.append(code, copy);
+  return wrap;
+}
+
+// The terminal is the one channel where the first step is "get the program".
+// Built from location.origin so it stays correct on any host.
+function terminalSteps() {
+  const url = window.location.origin + "/tasks/static/io.py";
+
+  const download = document.createElement("div");
+  download.append(document.createTextNode("Download the client"),
+                  commandLine("curl -fsSL " + url + " -o io.py"));
+
+  const windows = document.createElement("div");
+  windows.className = "why";
+  windows.textContent = "On older Windows: iwr " + url + " -OutFile io.py";
+  download.append(windows);
+
+  const run = document.createElement("div");
+  run.append(document.createTextNode("Run it"), commandLine("python io.py"));
+
+  return steps([[download], [run], [document.createTextNode("Paste the code it prints below")]]);
+}
+
 // What a row shows once you open it. None of this exists until a click, which
 // is what keeps a collapsed row to a single line and the page scannable.
 //
@@ -374,8 +454,19 @@ function buildExpand(c) {
   if (c.status === "available") {
     const quick = document.createElement("div");
     quick.className = "botheadline";
-    quick.textContent = "Quick connect";
-    panel.append(quick, buildConnectFields(c));
+    quick.textContent = c.can_bring_bot
+      ? "Quick connect \u00b7 use IO's bot"
+      : "Quick connect \u00b7 from your shell";
+    panel.append(quick);
+
+    if (c.platform === "cli") {
+      panel.append(terminalSteps());
+    } else if (c.note) {
+      panel.append(steps([c.note, "It replies with a code",
+                          "Paste it below"]));
+    }
+
+    panel.append(buildConnectFields(c));
   }
 
   if (c.status === "connected") {
@@ -608,6 +699,14 @@ function render(connections) {
         ? c.via_label + ", connected as " + c.name
         : "Connected as " + c.name;
       naming.append(who);
+    } else if (c.via === "offer" && c.via_label) {
+      // Says which bot would carry you BEFORE you connect. Without this the
+      // row reads only "ready to connect" and nothing on the page reveals
+      // that bringing your own bot is possible at all.
+      const offer = document.createElement("div");
+      offer.className = "why";
+      offer.textContent = c.via_label;
+      naming.append(offer);
     } else if (c.status !== "available" && c.note) {
       const why = document.createElement("div");
       why.className = "why";
