@@ -155,6 +155,29 @@ def test_the_config_is_fetched_once_and_then_cached(client, tasks_says, spawned)
     assert fake.config_calls == ["abc"]
 
 
+def test_a_stale_cache_entry_is_refetched_after_the_ttl(
+        client, tasks_says, spawned, monkeypatch):
+    """The cache must expire, or turning a bot Off / Remove / editing it in
+    the browser never takes effect while the process keeps running."""
+    fake = tasks_says(CONFIG)
+    client.post("/webhook/telegram/abc",
+                json={**UPDATE, "update_id": 1},
+                headers={"x-telegram-bot-api-secret-token": "s3cret"})
+    assert fake.config_calls == ["abc"]
+
+    # Advance the module's clock past the TTL without a real sleep.
+    real_monotonic = main._monotonic
+    monkeypatch.setattr(
+        main, "_monotonic",
+        lambda: real_monotonic() + main._BOT_CACHE_TTL_SECONDS + 1,
+    )
+
+    client.post("/webhook/telegram/abc",
+                json={**UPDATE, "update_id": 2},
+                headers={"x-telegram-bot-api-secret-token": "s3cret"})
+    assert fake.config_calls == ["abc", "abc"]
+
+
 def test_the_shared_route_is_untouched_by_all_of_this(client, tasks_says, spawned):
     # The keyless route must keep serving @aiuiteam_bot on the env-var path.
     # It is registered from TELEGRAM_BOT_TOKEN, which is unset in tests, so a

@@ -2,6 +2,7 @@
 import asyncio
 import os
 import hmac
+import time
 from fastapi import FastAPI, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -130,11 +131,22 @@ _GATEWAY_SEEN_MAX = 2000
 
 # A user's own bot, one adapter per bot_key, built on first contact.
 # Bounded because a cold entry costs one internal call, not because it is a log.
-# Nothing invalidates this on a change made in the browser: the cost of a stale
-# entry is bounded by _BOT_CACHE_MAX evictions, and a removed bot 404s on
-# lookup, which is what clears it.
+# Entries also expire after _BOT_CACHE_TTL_SECONDS (see below), so a change
+# made in the browser (Off, Remove, or an edit that mints a new bot_key) is
+# picked up within that window instead of only on a bulk clear.
 _bot_adapters: dict[str, tuple] = {}
 _BOT_CACHE_MAX = 200
+
+# How long a cached (adapter, config) entry is trusted before a lookup treats
+# it as a miss and re-fetches from tasks. This is the window during which a
+# bot the user just switched off, removed, or edited may still answer with
+# the stale config already in memory.
+_BOT_CACHE_TTL_SECONDS = 60
+
+#: Clock the cache reads through. A module-level name (rather than a bare
+#: time.monotonic() call at each site) so a test can substitute a fake clock
+#: instead of sleeping 60 real seconds.
+_monotonic = time.monotonic
 
 #: The gateway's tasks client, set at startup. A module-level name because the
 #: per-bot route needs it and reaching into gateway_pipeline._tasks would be
@@ -753,7 +765,12 @@ async def _bot_adapter(bot_key: str):
     caller's responsibility; a 503 for them would make Telegram retry forever."""
     cached = _bot_adapters.get(bot_key)
     if cached is not None:
-        return cached
+        adapter, config, cached_at = cached
+        if _monotonic() - cached_at < _BOT_CACHE_TTL_SECONDS:
+            return adapter, config
+        # Stale: fall through and re-fetch rather than keep serving a config
+        # that may have been switched off, removed, or edited in the browser.
+        _bot_adapters.pop(bot_key, None)
 
     if gateway_tasks is None:
         raise RuntimeError("gateway tasks client is not configured yet")
@@ -771,8 +788,8 @@ async def _bot_adapter(bot_key: str):
 
     if len(_bot_adapters) >= _BOT_CACHE_MAX:
         _bot_adapters.clear()
-    _bot_adapters[bot_key] = (adapter, config)
-    return _bot_adapters[bot_key]
+    _bot_adapters[bot_key] = (adapter, config, _monotonic())
+    return adapter, config
 
 
 @app.post("/webhook/telegram/{bot_key}")
