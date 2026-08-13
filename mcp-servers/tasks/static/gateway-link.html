@@ -25,6 +25,7 @@
   .row.dim { opacity: .62; }
   .head { display: flex; align-items: center; gap: .8rem; }
   .icon { font-size: 1.2rem; width: 1.6rem; text-align: center; flex: none; }
+  .icon svg { display: block; margin: 0 auto; }
   .naming { flex: 1; min-width: 0; }
   .titleline { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
   .name { font-weight: 600; }
@@ -87,6 +88,147 @@
 const listEl = document.getElementById("list");
 const countEl = document.getElementById("count");
 let openPanel = null;
+
+// --- Brand marks -------------------------------------------------------
+// One entry per platform, built as plain SVG shapes: no external image, no
+// icon font, nothing fetched over the network. Adding a channel later is
+// one entry here; a platform with no entry falls back to its catalogue
+// emoji in buildIcon() below, so it never renders blank.
+//
+// Every shape is turned into a real element with document.createElementNS
+// and plain attributes/textContent, never assembled as an HTML string. That
+// rule holds everywhere on this page, including here, because this same
+// page also has to print a bot's username and Telegram's own error text,
+// both of which come from outside this server.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const LOGOS = {
+  // Telegram blue circle with a white paper-plane mark.
+  telegram: { shapes: [
+    { tag: "circle", attrs: { cx: 12, cy: 12, r: 12, fill: "#2AABEE" } },
+    { tag: "path", attrs: { d: "M19 6 L5 12.6 L11.5 14.6 L15 18.3 Z", fill: "#fff" } },
+    { tag: "path", attrs: { d: "M5 12.6 L11.5 14.6 L9.3 11.3 Z", fill: "#2AABEE" } },
+    { tag: "path", attrs: { d: "M11.5 14.6 L15 18.3 L13.1 13.6 Z", fill: "#cfe8fb" } },
+  ]},
+  // No brand of its own: a plain prompt glyph in the page's own text color.
+  cli: { shapes: [
+    { tag: "path", attrs: { d: "M4 6 L10 12 L4 18", fill: "none",
+      stroke: "currentColor", "stroke-width": "2",
+      "stroke-linecap": "round", "stroke-linejoin": "round" } },
+    { tag: "path", attrs: { d: "M12 18 L19 18", fill: "none",
+      stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round" } },
+  ]},
+  // Slack's four-color pinwheel: one rounded arm, offset from center so it
+  // reads as a swirl rather than a cross, repeated at four rotations.
+  slack: { shapes: [
+    { tag: "g", attrs: { transform: "rotate(0 12 12)" }, children: [
+      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#E01E5A" } },
+      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#E01E5A" } },
+    ]},
+    { tag: "g", attrs: { transform: "rotate(90 12 12)" }, children: [
+      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#2EB67D" } },
+      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#2EB67D" } },
+    ]},
+    { tag: "g", attrs: { transform: "rotate(180 12 12)" }, children: [
+      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#36C5F0" } },
+      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#36C5F0" } },
+    ]},
+    { tag: "g", attrs: { transform: "rotate(270 12 12)" }, children: [
+      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#ECB22E" } },
+      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#ECB22E" } },
+    ]},
+  ]},
+  // Discord's mask mark, in Discord blurple.
+  discord: { shapes: [
+    { tag: "path", attrs: { fill: "#5865F2", d:
+      "M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" } },
+  ]},
+  // Not a pictorial mark on this server: a fanned cluster of wisps in
+  // Mattermost blue, evoking the flare in their logo rather than a bar chart.
+  mattermost: { shapes: [
+    { tag: "g", attrs: { transform: "rotate(-21 8 15)" }, children: [
+      { tag: "rect", attrs: { x: 6.4, y: 5.5, width: 3, height: 13.5, rx: 1.5, fill: "#0058CC", "fill-opacity": "0.75" } },
+    ]},
+    { tag: "g", attrs: { transform: "rotate(-7 10 15)" }, children: [
+      { tag: "rect", attrs: { x: 8.6, y: 3.2, width: 3, height: 15.8, rx: 1.5, fill: "#0058CC" } },
+    ]},
+    { tag: "g", attrs: { transform: "rotate(7 14 15)" }, children: [
+      { tag: "rect", attrs: { x: 12.4, y: 3.2, width: 3, height: 15.8, rx: 1.5, fill: "#0058CC" } },
+    ]},
+    { tag: "g", attrs: { transform: "rotate(21 16 15)" }, children: [
+      { tag: "rect", attrs: { x: 14.6, y: 5.5, width: 3, height: 13.5, rx: 1.5, fill: "#0058CC", "fill-opacity": "0.75" } },
+    ]},
+  ]},
+  // Matrix's bracket wordmark, "[m]", in Matrix green.
+  matrix: { shapes: [
+    { tag: "path", attrs: { d: "M6 4 L4 4 L4 20 L6 20", fill: "none",
+      stroke: "#0DBD8B", "stroke-width": "2",
+      "stroke-linecap": "round", "stroke-linejoin": "round" } },
+    { tag: "path", attrs: { d: "M18 4 L20 4 L20 20 L18 20", fill: "none",
+      stroke: "#0DBD8B", "stroke-width": "2",
+      "stroke-linecap": "round", "stroke-linejoin": "round" } },
+    { tag: "text", text: "m", attrs: { x: 12, y: 16.5, fill: "#0DBD8B",
+      "text-anchor": "middle", "font-size": "10", "font-weight": "700",
+      "font-family": "system-ui,sans-serif" } },
+  ]},
+  // WhatsApp's speech bubble and handset, in WhatsApp green.
+  whatsapp: { shapes: [
+    { tag: "path", attrs: { fill: "#25D366", d:
+      "M12 2 C6.5 2 2 6.4 2 12 c0 1.9 .5 3.7 1.5 5.3 L2 22 l4.9 -1.4 C8.4 21.5 10.1 22 12 22 c5.5 0 10 -4.4 10 -10 S17.5 2 12 2 Z" } },
+    { tag: "path", attrs: { fill: "#fff", d:
+      "M9.1 7.4 c-.3 -.6 -.5 -.6 -.8 -.6 h-.6 c-.3 0 -.7 .1 -1 .5 c-.3 .4 -1.3 1.2 -1.3 3 s1.3 3.5 1.5 3.7 c.2 .3 2.6 4 6.4 5.4 c3.1 1.2 3.8 1 4.5 .9 c.7 -.1 2.2 -.9 2.5 -1.8 c.3 -.9 .3 -1.6 .2 -1.8 c-.1 -.2 -.3 -.3 -.7 -.5 c-.4 -.2 -2.2 -1.1 -2.5 -1.2 c-.3 -.1 -.6 -.2 -.8 .2 c-.3 .4 -1 1.2 -1.2 1.5 c-.2 .2 -.4 .3 -.8 .1 c-.4 -.2 -1.6 -.6 -3 -1.9 c-1.1 -1 -1.9 -2.2 -2.1 -2.6 c-.2 -.4 0 -.6 .2 -.8 c.2 -.2 .4 -.4 .5 -.6 c.2 -.2 .2 -.4 .3 -.6 c.1 -.2 .1 -.5 0 -.7 c-.1 -.2 -.8 -2 -1.2 -2.8 Z" } },
+  ]},
+  // Signal's ring-shaped bubble mark, in Signal blue.
+  signal: { shapes: [
+    { tag: "circle", attrs: { cx: 12, cy: 12, r: 12, fill: "#3A76F0" } },
+    { tag: "circle", attrs: { cx: 12, cy: 11, r: 5.5, fill: "none", stroke: "#fff", "stroke-width": "2.4" } },
+    { tag: "path", attrs: { d: "M9.3 15.8 L7.3 18.3 L10.6 17.1 Z", fill: "#fff" } },
+  ]},
+  // No single brand owner for "email": a plain envelope in the page's text color.
+  email: { shapes: [
+    { tag: "rect", attrs: { x: 3, y: 5, width: 18, height: 14, rx: 2, fill: "none",
+      stroke: "currentColor", "stroke-width": "1.6" } },
+    { tag: "path", attrs: { d: "M4 6.5 L12 13 L20 6.5", fill: "none",
+      stroke: "currentColor", "stroke-width": "1.6",
+      "stroke-linecap": "round", "stroke-linejoin": "round" } },
+  ]},
+  // Microsoft Teams' purple badge with a bold "T" and its people dot, the
+  // dot placed clear of the crossbar so it reads as a separate accent.
+  teams: { shapes: [
+    { tag: "rect", attrs: { x: 1, y: 1, width: 22, height: 22, rx: 5, fill: "#6264A7" } },
+    { tag: "circle", attrs: { cx: 17.3, cy: 5.1, r: 1.9, fill: "#fff" } },
+    { tag: "rect", attrs: { x: 5.5, y: 8, width: 11, height: 2.6, rx: 1.3, fill: "#fff" } },
+    { tag: "rect", attrs: { x: 9.6, y: 8, width: 2.6, height: 10.4, rx: 1.3, fill: "#fff" } },
+  ]},
+};
+
+function buildSvgNode(spec) {
+  const el = document.createElementNS(SVG_NS, spec.tag);
+  for (const key in spec.attrs || {}) el.setAttribute(key, spec.attrs[key]);
+  if (spec.text !== undefined) el.textContent = spec.text;
+  for (const child of spec.children || []) el.appendChild(buildSvgNode(child));
+  return el;
+}
+
+// The channel icon: a real brand mark if LOGOS has one, otherwise the
+// catalogue's emoji, so a channel added to CHANNEL_CATALOGUE without a
+// matching entry here still shows something rather than an empty box.
+function buildIcon(platform, fallbackEmoji) {
+  const def = LOGOS[platform];
+  if (!def) {
+    const span = document.createElement("span");
+    span.textContent = fallbackEmoji || "*";
+    return span;
+  }
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  for (const shape of def.shapes) svg.appendChild(buildSvgNode(shape));
+  return svg;
+}
 
 const BADGE = {
   connected: "Connected",
@@ -370,7 +512,7 @@ function render(connections) {
 
     const icon = document.createElement("span");
     icon.className = "icon";
-    icon.textContent = c.icon || "*";
+    icon.appendChild(buildIcon(c.platform, c.icon));
 
     const naming = document.createElement("div");
     naming.className = "naming";
