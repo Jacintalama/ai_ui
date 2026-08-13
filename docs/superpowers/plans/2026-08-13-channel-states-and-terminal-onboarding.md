@@ -306,8 +306,11 @@ def test_the_old_checkout_only_instruction_is_gone():
 
 def test_copying_falls_back_when_the_clipboard_is_denied():
     # This page runs inside an iframe, where clipboard-write can be refused.
-    assert "clipboard" in HTML
-    assert "select" in HTML.lower()
+    # Asserting on selectNodeContents specifically, not on "select": the page
+    # is full of querySelector calls, so a looser check would pass with no
+    # fallback present at all.
+    assert "navigator.clipboard" in HTML
+    assert "selectNodeContents" in HTML
 
 
 def test_both_paths_render_as_steps():
