@@ -267,6 +267,15 @@ def link_page() -> HTMLResponse:
     all ten rows are already in the HTML response and paint before the
     browser has made a single request.
 
+    Each row also gets _route_for(row, shared): without it, `via`/`via_label`
+    stay empty on every row (the two fields the page's script needs to draw
+    the "via IO's bot, or bring your own" line under an unconnected but
+    offerable channel like Telegram). That line would then only ever appear
+    once GET /connections returns, so on a slow or failed request the first,
+    fastest-painting version of the page silently under-explains itself. The
+    shared bot handle is a server-wide env var, never a per-user value, so
+    calling it here adds no user identity to this route.
+
     That empty dict is also what keeps this route free of any user identity:
     no current_user dependency, no database session. The per-user status
     (which channels this account actually linked, and any bot it saved)
@@ -277,7 +286,12 @@ def link_page() -> HTMLResponse:
     with open(path, "r", encoding="utf-8") as f:
         html = f.read()
 
-    rows = [_channel_status(entry, {}) for entry in CHANNEL_CATALOGUE]
+    shared = _shared_bot_handle()
+    rows = []
+    for entry in CHANNEL_CATALOGUE:
+        row = _channel_status(entry, {})
+        row.update(_route_for(row, shared))
+        rows.append(row)
     payload = json.dumps(rows)
     # A raw </script> inside the JSON would close the tag early and let the
     # rest of the payload run as markup. The data is ours today (it comes
