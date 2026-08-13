@@ -803,11 +803,17 @@ async def telegram_webhook_for_bot(bot_key: str, request: Request):
     """
     try:
         entry = await _bot_adapter(bot_key)
-    except TasksAPIError:
-        # tasks is unreachable. Transient, so ask Telegram to redeliver rather
-        # than eat the message.
-        logger.warning("gateway: could not load bot config, asking for a retry")
-        return JSONResponse(content={"ok": False}, status_code=503)
+    except TasksAPIError as exc:
+        # .status == 0 is a network failure; 502/503/504 are a restarting or
+        # overloaded tasks service. Those are worth a redelivery. Anything
+        # else (a 403 from a bad internal secret, a 500 from a decrypt
+        # failure) will be just as broken next time, so retrying forever
+        # only buries the real error.
+        if exc.status in (0, 502, 503, 504):
+            logger.warning("gateway: could not load bot config, asking for a retry")
+            return JSONResponse(content={"ok": False}, status_code=503)
+        logger.error("gateway: bot lookup failed permanently (status %s)", exc.status)
+        return JSONResponse(content={"ok": True}, status_code=200)
     except Exception:  # noqa: BLE001
         # Anything else is a bug in us or a malformed row, and it will still be
         # broken on the next attempt. A 503 here would make Telegram retry this

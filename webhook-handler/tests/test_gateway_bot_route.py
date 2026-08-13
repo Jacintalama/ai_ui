@@ -97,6 +97,17 @@ def test_tasks_being_down_is_503_so_telegram_redelivers(client, tasks_says, spaw
     assert resp.status_code == 503
 
 
+def test_a_permanent_lookup_failure_is_not_retried_forever(client, tasks_says, spawned):
+    # A 403 from a bad internal secret, or a 500 from a decrypt failure, will
+    # be just as broken on the next redelivery. 503 here would make Telegram
+    # retry forever and bury the real error.
+    tasks_says(None, error=TasksAPIError(403, "bad internal secret"))
+    resp = client.post("/webhook/telegram/abc", json=UPDATE,
+                       headers={"x-telegram-bot-api-secret-token": "s3cret"})
+    assert resp.status_code == 200
+    assert spawned == []
+
+
 def test_a_broken_bot_config_is_dropped_rather_than_retried_forever(
         client, tasks_says, spawned):
     # A missing key is a bug or a bad row, and it will still be broken on the
