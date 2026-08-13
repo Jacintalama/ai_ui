@@ -154,6 +154,18 @@ services:
       - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
       - OAUTH_STATE_SECRET=${OAUTH_STATE_SECRET:-}
       - INTENT_ROUTER=1
+      # RESTORED 2026-08-13. All four already exist in the RUNNING container
+      # from the 2026-08-12 deploy, but were never persisted here. Compose
+      # only injects what a service declares; .env alone does not reach the
+      # container. So the next rebuild would have recreated webhook-handler
+      # without the Telegram credentials and taken @aiuiteam_bot down.
+      # GATEWAY_CLI_ENABLED stays blank on purpose: an empty value is what
+      # keeps the terminal client dormant.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      - GATEWAY_MODEL=${GATEWAY_MODEL:-auto_router.auto}
+      - GATEWAY_CLI_ENABLED=${GATEWAY_CLI_ENABLED:-}
+      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
     networks:
       - backend
     depends_on:
@@ -264,6 +276,14 @@ services:
       - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
       - TASKS_WEBHOOK_URL=${TASKS_WEBHOOK_URL:-http://tasks:8210/webhooks/meeting-action-items}
+      # Lets the n8n ingest workflow POST without a signed-in user. Added to
+      # the code on 2026-08-03 with the auth fix and never plumbed here, so
+      # `_is_ingester` — which fails closed on an empty secret — 403'd every
+      # ingest for nine days. Deliberately NOT defaulted: an unset value must
+      # keep the path closed rather than open it, and the test in
+      # mcp-servers/meetings/tests asserts this line exists, because the auth
+      # tests could not see the gap (they monkeypatch the value themselves).
+      - MEETINGS_INGEST_SECRET=${MEETINGS_INGEST_SECRET}
     networks:
       - backend
     depends_on:
@@ -319,6 +339,12 @@ services:
       # Piece C: AI-writes-the-video path. ON. The worker still falls back to the
       # template on any codegen failure, and the render container is mem-bounded.
       - AI_VIDEO_CODEGEN=1
+      # The Channels page names the shared bot from GATEWAY_TELEGRAM_BOT, and
+      # tasks builds the webhook URL it registers with Telegram from
+      # GATEWAY_PUBLIC_URL. Neither is in .env, and .env is not ours to edit,
+      # so both carry a default rather than silently resolving to empty.
+      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
+      - GATEWAY_TELEGRAM_BOT=${GATEWAY_TELEGRAM_BOT:-@aiuiteam_bot}
     volumes:
       - ./:/workspace/ai_ui
       - /etc/proxy-server/agent_ssh_key:/run/secrets/agent_ssh_key:ro
@@ -1029,7 +1055,14 @@ services:
     command: -config.file=/etc/promtail/config.yaml
     volumes:
       - ./promtail/promtail-config.yaml:/etc/promtail/config.yaml:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Docker's data-root moved to the attached volume on 2026-07-20, so this
+      # mount pointed at an empty directory and promtail collected NOTHING for
+      # three weeks while reporting "Up" and Loki/Grafana reporting "healthy".
+      # Discovered 2026-08-12 only because a log query for an unrelated
+      # investigation came back empty. The path is templated off DOCKER_ROOT so
+      # a future data-root move breaks loudly (compose errors on an unset var)
+      # instead of silently going blind again.
+      - ${DOCKER_ROOT:-/mnt/HC_Volume_106271703/docker}/containers:${DOCKER_ROOT:-/mnt/HC_Volume_106271703/docker}/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - promtail-positions:/tmp
     depends_on:
