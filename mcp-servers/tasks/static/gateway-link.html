@@ -106,7 +106,7 @@ function buildPanel(c) {
 
   const step = document.createElement("p");
   step.className = "step";
-  step.textContent = c.note || "Get a code, then paste it here.";
+  step.textContent = c.note ? c.note : "Get a code, then paste it here.";
   panel.append(step);
 
   const entry = document.createElement("div");
@@ -197,7 +197,10 @@ function botSection(c, refresh) {
   if (!c.can_bring_bot) {
     const why = document.createElement("p");
     why.className = "why";
-    why.textContent = c.note || (c.label + " cannot take your own bot yet.");
+    // Deliberately NOT c.note. That is the channel's general status, already
+    // shown above, and reusing it prints the same sentence twice, or worse,
+    // shows Terminal's pairing instructions as if they explained bot support.
+    why.textContent = c.label + " cannot take your own bot yet.";
     box.appendChild(why);
     return box;
   }
@@ -303,6 +306,7 @@ function botForm(c, refresh) {
   const ids = document.createElement("input");
   ids.type = "text";
   ids.placeholder = "leave empty for just you";
+  ids.value = (c.bot && c.bot.allowed_ids) || "";
 
   const msg = document.createElement("p");
   msg.className = "msg";

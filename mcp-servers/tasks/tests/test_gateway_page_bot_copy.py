@@ -33,3 +33,12 @@ def test_the_page_never_ships_a_hardcoded_token():
 
 def test_the_quick_connect_path_is_still_offered():
     assert "Quick connect" in HTML
+
+
+def test_a_channel_that_cannot_take_a_bot_says_so_in_its_own_words():
+    # Not the channel's general status note, which is shown elsewhere on the
+    # card. Reusing that printed the same sentence twice, and printed
+    # Terminal's pairing instructions under "Use my own bot", where they are
+    # wrong.
+    assert "cannot take your own bot yet" in HTML
+    assert "c.note ||" not in HTML
