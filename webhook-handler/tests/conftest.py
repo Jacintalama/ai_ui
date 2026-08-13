@@ -22,3 +22,18 @@ import pytest
 def discord_id_to_email():
     """The default Discord-ID → email map used in tests."""
     return {"100": "alice@example.com", "200": "bob@example.com"}
+
+
+@pytest.fixture(autouse=True)
+def _reset_cli_rate_limits():
+    """The terminal endpoint's limiters are module-level, so without this the
+    tests share one budget and whichever test runs 31st gets a 429 that has
+    nothing to do with what it is checking."""
+    try:
+        import main
+    except Exception:  # noqa: BLE001 - tests that never import main are fine
+        yield
+        return
+    main._CLI_PER_IP._hits.clear()
+    main._CLI_PER_DEVICE._hits.clear()
+    yield

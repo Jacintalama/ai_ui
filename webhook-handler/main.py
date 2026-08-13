@@ -41,6 +41,7 @@ from scheduler import (
 from gateway import pipeline as gateway_pipeline
 from gateway.platforms.cli import CliAdapter
 from gateway.platforms.telegram import TELEGRAM_MAX_MESSAGE, TelegramAdapter
+from gateway.rate_limit import SlidingWindow, client_key
 from gateway.registry import PlatformEntry, registry as gateway_registry
 
 # Configure logging
@@ -125,6 +126,14 @@ gateway_registry.register(PlatformEntry(
 # counter, so once users bring their own bots a bare integer collides across
 # them and silently swallows one person's message. The shared bot uses a fixed
 # key so it shares the same window without colliding with anyone.
+# The terminal endpoint is the one public path here that no auth stands in
+# front of, so it gets its own brakes. Deliberately generous: a person typing
+# into a shell will never see these, and a script hammering pairing-code rows
+# will. Per IP first because it is the cheapest to refuse; per device second
+# because one host behind a shared address must not starve the others.
+_CLI_PER_IP = SlidingWindow(limit=30, window_seconds=60)
+_CLI_PER_DEVICE = SlidingWindow(limit=20, window_seconds=60)
+
 SHARED_BOT_KEY = "shared"
 _gateway_seen_updates: set[tuple[str, int]] = set()
 _GATEWAY_SEEN_MAX = 2000
@@ -917,16 +926,36 @@ async def gateway_cli(request: Request):
     if adapter is None:
         raise HTTPException(status_code=503, detail="CLI gateway is not available")
 
+    headers = dict(request.headers)
+
+    # Charged before the body is even read, because the cheapest request to
+    # refuse is the one nothing has been spent on yet.
+    caller = client_key(headers, request.client.host if request.client else "")
+    if not _CLI_PER_IP.allow(caller):
+        logger.warning("gateway: cli rate limit hit for a caller")
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests from your network. Wait a minute and try again.")
+
     try:
         payload = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    event = adapter.parse_inbound(payload, dict(request.headers))
+    event = adapter.parse_inbound(payload, headers)
     if event is None:
         raise HTTPException(status_code=400,
                             detail="A 32 character hex device_id and a non-empty "
                                    "text are both required")
+
+    # A second, tighter budget per device. The IP limit alone would let one
+    # host behind a shared address starve the others; this one is what a single
+    # runaway terminal actually runs into.
+    if not _CLI_PER_DEVICE.allow(event.source.chat_id):
+        logger.warning("gateway: cli rate limit hit for a device")
+        raise HTTPException(
+            status_code=429,
+            detail="You are sending faster than IO can answer. Wait a moment.")
 
     reply = await gateway_pipeline.handle_event(event, adapter)
     return JSONResponse(content={"reply": reply}, status_code=200)
