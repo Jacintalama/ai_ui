@@ -21,6 +21,8 @@ import urllib.error
 import urllib.request
 
 DEFAULT_URL = os.environ.get("IO_URL", "https://ai-ui.coolestdomain.win")
+#: Anything but urllib's default. See the comment in ask().
+USER_AGENT = "io-cli/1 (+https://ai-ui.coolestdomain.win)"
 DEVICE_FILE = pathlib.Path(os.environ.get("IO_HOME", pathlib.Path.home() / ".io")) / "device"
 
 
@@ -51,7 +53,15 @@ def ask(base_url: str, text: str) -> str:
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/webhook/gateway/cli",
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            # Cloudflare sits in front of the public host and answers
+            # "error code: 1010" to urllib's default Python-urllib/3.x agent,
+            # so without this every request 403s before it reaches IO at all.
+            # Verified against production: this exact agent gets through and
+            # Python-urllib does not.
+            "User-Agent": USER_AGENT,
+        },
         method="POST",
     )
     try:

@@ -164,7 +164,13 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
       - GATEWAY_MODEL=${GATEWAY_MODEL:-auto_router.auto}
-      - GATEWAY_CLI_ENABLED=${GATEWAY_CLI_ENABLED:-}
+      # Switched ON 2026-08-13. This makes /webhook/gateway/cli live, and
+      # Caddy routes /webhook/* straight here, bypassing api-gateway's auth
+      # and rate limiter. An unpaired device can therefore mint a pairing
+      # code row without authenticating; those are swept after 24h and cost
+      # no model tokens, since an unpaired device only ever gets a code back.
+      # Blank this line to make the terminal channel dormant again.
+      - GATEWAY_CLI_ENABLED=${GATEWAY_CLI_ENABLED:-1}
       - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
     networks:
       - backend
@@ -313,6 +319,15 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AIUI_FERNET_KEY=${AIUI_FERNET_KEY:-}
+      # tasks mints an Open WebUI token per gateway turn, so it must sign
+      # with the SAME secret Open WebUI verifies with. Declared for
+      # api-gateway, mcp-proxy and open-webui but never for tasks: it was
+      # added to the running container by hand on 2026-08-12 and lived
+      # only there, so the 2026-08-13 rebuild dropped it and every paired
+      # gateway user got 'I can't reach my memory right now'. No default:
+      # an empty value must fail loudly in mint_owui_token, not sign
+      # tokens nobody can verify.
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
       - AIUI_SUPABASE_CLIENT_SECRET=${AIUI_SUPABASE_CLIENT_SECRET:-}
       # Vercel one-click Connect (AIUI Deploy integration). Empty = the UI
