@@ -304,7 +304,19 @@ def link_page() -> HTMLResponse:
     idx = html.find("<script>")
     html = seed + html if idx == -1 else html[:idx] + seed + html[idx:]
 
-    return HTMLResponse(content=html)
+    # Never cache this page. It went out with no cache directives at all, so a
+    # browser was free to hold its own copy and did: after a deploy that
+    # replaced every channel logo, the page kept rendering the old marks and
+    # looked like the deploy had simply not worked.
+    #
+    # It is also the wrong page to cache on the merits. The markup carries
+    # window.__CHANNELS__, which is computed per request from the catalogue
+    # and from env vars, so a stale copy can claim a channel is off when it
+    # is live, or name a bot the server no longer has.
+    return HTMLResponse(content=html, headers={
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+    })
 
 
 async def _owui_user_id_for(email: str) -> str | None:

@@ -133,3 +133,18 @@ def test_the_fallback_loading_markup_is_still_in_the_raw_file():
     # breaking, so that markup has to stay in the file untouched.
     assert '<li class="row"><span class="blurb">Loading...</span></li>' in HTML
     assert "if (window.__CHANNELS__)" in HTML
+
+
+def test_the_page_is_never_cached():
+    """A stale copy of this page is indistinguishable from a failed deploy.
+
+    It shipped with no cache directives, so a browser kept its own copy and
+    went on rendering the previous channel logos after a deploy replaced every
+    one of them. The markup also carries window.__CHANNELS__, computed per
+    request from the catalogue and env vars, so a cached copy can claim a
+    channel is off when it is live.
+    """
+    import routes_gateway as rg
+    resp = rg.link_page()
+    cache = resp.headers.get("cache-control", "")
+    assert "no-store" in cache, f"page is cacheable: {cache!r}"
