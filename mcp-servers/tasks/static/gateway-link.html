@@ -231,14 +231,18 @@ function botSection(c, refresh) {
     toggle.textContent = c.bot.enabled ? "Turn off" : "Turn on";
     toggle.onclick = async () => {
       toggle.disabled = true;
-      const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key), {
-        method: "PATCH",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({enabled: !c.bot.enabled}),
-      });
+      try {
+        const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key), {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({enabled: !c.bot.enabled}),
+        });
+        if (res.ok) { refresh(); return; }
+        setMsg(msg, "That did not take. Try again.");
+      } catch (err) {
+        setMsg(msg, "Could not reach the server. Try again in a moment.", "bad");
+      }
       toggle.disabled = false;
-      if (res.ok) refresh();
-      else setMsg(msg, "That did not take. Try again.");
     };
 
     const test = document.createElement("button");
@@ -247,11 +251,15 @@ function botSection(c, refresh) {
     test.onclick = async () => {
       test.disabled = true;
       setMsg(msg, "Asking Telegram...");
-      const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key) + "/test",
-                              {method: "POST"});
-      const body = await res.json().catch(() => ({}));
+      try {
+        const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key) + "/test",
+                                {method: "POST"});
+        const body = await res.json().catch(() => ({}));
+        setMsg(msg, body.detail || "Could not reach the server.");
+      } catch (err) {
+        setMsg(msg, "Could not reach the server. Try again in a moment.", "bad");
+      }
       test.disabled = false;
-      setMsg(msg, body.detail || "Could not reach the server.");
     };
 
     const edit = document.createElement("button");
@@ -264,11 +272,15 @@ function botSection(c, refresh) {
     remove.textContent = "Remove bot";
     remove.onclick = async () => {
       remove.disabled = true;
-      const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key),
-                              {method: "DELETE"});
+      try {
+        const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key),
+                                {method: "DELETE"});
+        if (res.ok) { refresh(); return; }
+        setMsg(msg, "Could not remove it. Try again.");
+      } catch (err) {
+        setMsg(msg, "Could not reach the server. Try again in a moment.", "bad");
+      }
       remove.disabled = false;
-      if (res.ok) refresh();
-      else setMsg(msg, "Could not remove it. Try again.");
     };
 
     row.append(toggle, test, edit, remove);
@@ -320,17 +332,23 @@ function botForm(c, refresh) {
     if (!value) { setMsg(msg, "Paste your bot token first."); return; }
     save.disabled = true;
     setMsg(msg, "Checking it with Telegram...");
-    const res = await fetch("/tasks/gateway/bots", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({platform: c.platform, token: value,
-                            allowed_ids: ids.value}),
-    });
-    const body = await res.json().catch(() => ({}));
+    try {
+      const res = await fetch("/tasks/gateway/bots", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({platform: c.platform, token: value,
+                              allowed_ids: ids.value}),
+      });
+      const body = await res.json().catch(() => ({}));
+      token.value = "";
+      if (!res.ok) { setMsg(msg, body.detail || "That did not work."); save.disabled = false; return; }
+      refresh();
+      return;
+    } catch (err) {
+      token.value = "";
+      setMsg(msg, "Could not reach the server. Try again in a moment.", "bad");
+    }
     save.disabled = false;
-    token.value = "";
-    if (!res.ok) { setMsg(msg, body.detail || "That did not work."); return; }
-    refresh();
   };
 
   form.append(tokenLabel, token, tokenHelp, idsLabel, ids, save, msg);
