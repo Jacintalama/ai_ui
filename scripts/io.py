@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 """Talk to IO from a terminal.
 
-    python scripts/io.py                 interactive
-    python scripts/io.py "what's on today"    one shot
-    echo "summarise this" | python scripts/io.py
+    python io.py                      interactive
+    python io.py "what's on today"    one shot
+    echo "summarise this" | python io.py
 
-Standard library only, so it runs anywhere Python does with nothing installed.
+Standard library only, so it needs nothing installed beyond Python 3.6 or
+newer. That means macOS, Linux, and Windows: on Windows 10 build 1803 and
+later, and on Windows 11, curl is already there to fetch this file; on older
+Windows use the PowerShell line the Channels page prints instead.
+
+NOT phones. iOS and iPadOS have no shell and no Python, so this channel cannot
+run there at all. Use Telegram from a phone.
 
 First run writes a random device id to ~/.io/device. That file IS your
-credential: anyone holding it can talk to IO as you. It is created 0600. Delete
-it to unpair, then pair again from the link page.
+credential: anyone holding it can talk to IO as you. Delete it to unpair, then
+pair again from the link page.
+
+The file is created 0600 and its directory 0700, which protects it on macOS
+and Linux. Windows ignores POSIX modes, so there it lands with whatever the
+parent directory's ACL gives it, typically readable by your user's processes
+and by an administrator. Treat it as a password on a shared or managed
+Windows machine.
 """
 import argparse
 import json

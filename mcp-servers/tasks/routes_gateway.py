@@ -497,8 +497,12 @@ CHANNEL_CATALOGUE = (
     # Built and routed through the gateway.
     {"platform": "telegram", "label": "Telegram", "icon": "✈️",
      "blurb": "Chat with IO from Telegram direct messages, including voice memos."},
+    # "any shell" was true and unhelpful: someone on a phone read it, tried,
+    # and had nowhere to type. Naming the machines it needs is shorter than
+    # the support conversation that follows when it does not.
     {"platform": "cli", "label": "Terminal", "icon": "⌨️",
-     "blurb": "Talk to IO from any shell with a single dependency-free script."},
+     "blurb": "Talk to IO from a shell on Mac, Windows or Linux. "
+              "One script, nothing to install but Python. Not phones."},
 
     # Code already exists in this platform, but not behind the gateway yet.
     {"platform": "slack", "label": "Slack", "icon": "💬",
