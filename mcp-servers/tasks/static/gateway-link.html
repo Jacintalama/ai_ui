@@ -238,6 +238,18 @@ const BADGE = {
   planned: "Coming later",
 };
 
+// "Connected" alone does not answer the question a user actually has, which is
+// whose bot is carrying their messages: the one IO runs and can see, or their
+// own. That distinction is the whole point of bringing your own bot, so the
+// badge names it. `via` is computed server-side, so every channel inherits this
+// the moment it can carry a personal bot.
+function badgeText(c) {
+  if (c.status !== "connected") return BADGE[c.status] || c.status;
+  if (c.via === "own") return "Connected · your bot";
+  if (c.via === "shared") return "Connected · IO's bot";
+  return BADGE.connected;
+}
+
 function setMsg(el, text, cls) {
   el.className = "msg" + (cls ? " " + cls : "");
   el.textContent = text;
@@ -579,7 +591,7 @@ function render(connections) {
     name.textContent = c.label || c.platform;
     const badge = document.createElement("span");
     badge.className = "badge" + (c.status === "connected" ? " on" : "");
-    badge.textContent = BADGE[c.status] || c.status;
+    badge.textContent = badgeText(c);
     titleline.append(name, badge);
 
     const blurb = document.createElement("div");
@@ -592,7 +604,9 @@ function render(connections) {
       // talked into pasting linked somebody else's app to your Brain.
       const who = document.createElement("div");
       who.className = "why";
-      who.textContent = "Connected as " + c.name;
+      who.textContent = c.via_label
+        ? c.via_label + ", connected as " + c.name
+        : "Connected as " + c.name;
       naming.append(who);
     } else if (c.status !== "available" && c.note) {
       const why = document.createElement("div");

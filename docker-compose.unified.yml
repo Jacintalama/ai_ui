@@ -360,6 +360,12 @@ services:
       # so both carry a default rather than silently resolving to empty.
       - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
       - GATEWAY_TELEGRAM_BOT=${GATEWAY_TELEGRAM_BOT:-@aiuiteam_bot}
+      # tasks renders the Channels page and decides from THIS var whether to
+      # offer the Terminal row. webhook-handler serves the channel and reads
+      # the same name. Set on only one of them, the channel is live while the
+      # page says 'switched off on this server' and greys out Connect, so a
+      # user cannot get a pairing code for a channel that is actually working.
+      - GATEWAY_CLI_ENABLED=${GATEWAY_CLI_ENABLED:-1}
     volumes:
       - ./:/workspace/ai_ui
       - /etc/proxy-server/agent_ssh_key:/run/secrets/agent_ssh_key:ro

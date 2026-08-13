@@ -509,6 +509,46 @@ CHANNEL_CATALOGUE = (
 
 
 
+def _shared_bot_handle() -> str:
+    """The bot IO operates, for channels that have one."""
+    return os.environ.get("GATEWAY_TELEGRAM_BOT", "").strip()
+
+
+def _route_for(row: dict, shared: str) -> dict[str, str]:
+    """WHICH bot IO uses to reach this account on this channel.
+
+    "Connected" alone does not tell a user the thing they actually want to
+    know, which is whose bot is carrying their messages: the one IO runs and
+    can see, or their own. That distinction is the entire point of bringing
+    your own bot, so the page has to name it.
+
+    Derived rather than stored, and it matches the routing rule: an enabled
+    personal bot is where IO reaches you, so it wins the moment it exists,
+    even before the pairing that follows.
+
+    Generic on purpose. Every channel gets this the moment it can carry a
+    personal bot; nothing here is Telegram-specific.
+    """
+    # No personal bot is possible here, so there is no whose-bot question to
+    # answer. The terminal is the case that makes this obvious: you connect a
+    # device, not a bot, and naming IO's Telegram bot on that row would be
+    # simply false.
+    if not row.get("can_bring_bot"):
+        return {"via": "", "via_label": ""}
+
+    bot = row.get("bot")
+    if bot and bot.get("enabled"):
+        handle = (bot.get("bot_username") or "").strip()
+        return {"via": "own",
+                "via_label": f"Your bot @{handle}" if handle else "Your own bot"}
+
+    if row.get("status") == "connected":
+        return {"via": "shared",
+                "via_label": f"IO's bot {shared}" if shared else "IO's own bot"}
+
+    return {"via": "", "via_label": ""}
+
+
 def _channel_status(entry: dict, linked: dict) -> dict:
     """One row for the page: what this channel is and what you can do with it.
 
@@ -525,7 +565,11 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # The page draws the same three controls on every row. These two say
            # which of them can actually do anything here.
            "can_bring_bot": platform in BOT_CAPABLE_PLATFORMS,
-           "bot": None}
+           "bot": None,
+           # Filled by _route_for once this account's bots are known. Present
+           # here so every row carries one shape, including the user-free
+           # catalogue injected into the page.
+           "via": "", "via_label": ""}
 
     if platform in linked:
         row.update(linked[platform], status="connected")
@@ -577,14 +621,16 @@ async def list_connections(
     }
     by_platform = {b.platform: _bot_view(b) for b in bots}
 
+    shared = _shared_bot_handle()
     connections = []
     for entry in CHANNEL_CATALOGUE:
         row = _channel_status(entry, linked)
         row["bot"] = by_platform.get(row["platform"])
+        row.update(_route_for(row, shared))
         connections.append(row)
 
     return {
-        "telegram_bot": os.environ.get("GATEWAY_TELEGRAM_BOT", ""),
+        "telegram_bot": shared,
         "connections": connections,
     }
 
