@@ -85,3 +85,19 @@ def test_mattermost_and_matrix_are_honest_about_being_unbuilt():
             for c in rg.CHANNEL_CATALOGUE}
     assert rows["mattermost"]["status"] == "planned"
     assert rows["matrix"]["status"] == "planned"
+
+
+def test_a_relayed_channel_names_who_relays_it():
+    # The page's lede promises nobody else can see what you connect. That is
+    # true of the IO account and not of the platform carrying the message, so
+    # a channel that relays has to say so on the row.
+    row = rg._channel_status(_buzz(), {})
+    assert "Buzz" in row["caveat"]
+    assert "pass through" in row["caveat"]
+
+
+def test_every_row_carries_the_caveat_field():
+    # Present on every row, empty where nothing relays, so the page draws one
+    # shape and a new channel cannot silently omit it.
+    for entry in rg.CHANNEL_CATALOGUE:
+        assert "caveat" in rg._channel_status(entry, {})

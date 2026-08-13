@@ -688,6 +688,18 @@ function render(connections) {
     blurb.textContent = c.blurb || "";
     naming.append(titleline, blurb);
 
+    if (c.caveat) {
+      // Who else handles your messages on this channel, said before you
+      // connect it rather than discovered afterwards. The lede promises
+      // nobody else can see what you connect; that is true of your IO
+      // account, and not of the platform carrying the message, so the row
+      // has to say which is which.
+      const who = document.createElement("div");
+      who.className = "why";
+      who.textContent = c.caveat;
+      naming.append(who);
+    }
+
     if (c.status === "connected" && c.name) {
       // Naming the account is the only way to notice that a code you were
       // talked into pasting linked somebody else's app to your Brain.

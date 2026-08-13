@@ -542,7 +542,14 @@ CHANNEL_CATALOGUE = (
     # nothing to write an adapter for yet.
     {"platform": "buzz", "label": "Buzz", "icon": "🐝",
      "blurb": "Use IO from Buzz, where your people, agents and projects "
-              "sit in one place."},
+              "sit in one place.",
+     # Every channel that is not this browser relays through somebody, and a
+     # user deserves to know who before they connect it rather than after.
+     # Buzz carries the message AND vouches for who sent it, which is the
+     # same trust Slack and Teams ask for. Nothing cryptographic changes that:
+     # the message was typed into Buzz.
+     "caveat": "Messages you send from Buzz pass through Buzz, and Buzz "
+               "vouches for who you are."},
 )
 
 
@@ -621,6 +628,9 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # which of them can actually do anything here.
            "can_bring_bot": platform in BOT_CAPABLE_PLATFORMS,
            "bot": None,
+           # Who else handles your messages on this channel. Empty for the
+           # ones that relay through nobody.
+           "caveat": entry.get("caveat", ""),
            # Filled by _route_for once this account's bots are known. Present
            # here so every row carries one shape, including the user-free
            # catalogue injected into the page.
