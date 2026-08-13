@@ -255,7 +255,13 @@ const BADGE = {
 // badge names it. `via` is computed server-side, so every channel inherits this
 // the moment it can carry a personal bot.
 function badgeText(c) {
-  if (c.status !== "connected") return BADGE[c.status] || c.status;
+  if (c.status !== "connected") {
+    // A saved-but-unpaired bot is NOT the same as an untouched channel, and
+    // the two used to wear the same "ready to connect" badge. There is work
+    // left here and the badge should say so.
+    if (c.via === "own") return "One step left";
+    return BADGE[c.status] || c.status;
+  }
   if (c.via === "own") return "Connected · your bot";
   if (c.via === "shared") return "Connected · IO's bot";
   return BADGE.connected;
@@ -699,10 +705,12 @@ function render(connections) {
         ? c.via_label + ", connected as " + c.name
         : "Connected as " + c.name;
       naming.append(who);
-    } else if (c.via === "offer" && c.via_label) {
-      // Says which bot would carry you BEFORE you connect. Without this the
-      // row reads only "ready to connect" and nothing on the page reveals
-      // that bringing your own bot is possible at all.
+    } else if (c.via_label) {
+      // Any route the server can name for an unconnected row: the offer of
+      // both ways in, or a saved bot still waiting to be paired. Keyed on the
+      // label rather than on via === "offer", because that narrower test left
+      // a saved-but-unpaired bot rendering nothing at all while the panel
+      // below it showed the bot by name.
       const offer = document.createElement("div");
       offer.className = "why";
       offer.textContent = c.via_label;

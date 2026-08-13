@@ -553,8 +553,15 @@ def _route_for(row: dict, shared: str) -> dict[str, str]:
     bot = row.get("bot")
     if bot and bot.get("enabled"):
         handle = (bot.get("bot_username") or "").strip()
-        return {"via": "own",
-                "via_label": f"Your bot @{handle}" if handle else "Your own bot"}
+        named = f"Your bot @{handle}" if handle else "Your own bot"
+        if row.get("status") != "connected":
+            # Saved a bot but never paired: the row used to say only "ready to
+            # connect" and nothing else, while the panel below it plainly
+            # showed the saved bot. Two states that look identical on the row
+            # and are not: one has work left, the other does not.
+            return {"via": "own",
+                    "via_label": named + " is saved. Message it to finish."}
+        return {"via": "own", "via_label": named}
 
     if row.get("status") == "connected":
         return {"via": "shared",

@@ -133,3 +133,21 @@ def test_a_channel_that_cannot_carry_a_bot_offers_nothing():
 def test_a_saved_bot_still_wins_over_the_offer():
     out = rg._route_for(row(status="available", bot=enabled_bot()), SHARED)
     assert out["via"] == "own"
+
+
+def test_a_saved_but_unpaired_bot_says_there_is_work_left():
+    # Ralph hit this live: he had saved his own bot, the panel below the row
+    # named it, and the row itself said only "ready to connect" with no line
+    # at all. Saved-and-unpaired and never-touched are different states and
+    # must not read identically.
+    out = rg._route_for(row(status="available", bot=enabled_bot()), SHARED)
+    assert out["via"] == "own"
+    assert "@ralphs_io_bot" in out["via_label"]
+    assert "finish" in out["via_label"].lower(), (
+        "the label must tell the user what is still left to do")
+
+
+def test_a_connected_own_bot_does_not_nag_about_finishing():
+    out = rg._route_for(row(status="connected", bot=enabled_bot()), SHARED)
+    assert out["via"] == "own"
+    assert "finish" not in out["via_label"].lower()

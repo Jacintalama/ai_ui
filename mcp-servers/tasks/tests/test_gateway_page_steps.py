@@ -72,7 +72,16 @@ def test_the_page_still_builds_dom_safely():
     assert "innerHTML" not in HTML
 
 
-def test_an_unconnected_row_renders_its_offer_line():
-    # The server computes via_label for these rows; without this branch the
-    # page computes it and shows nobody.
-    assert 'c.via === "offer"' in HTML
+def test_an_unconnected_row_renders_its_route_line():
+    # The server computes via_label for these rows; without this branch it is
+    # computed and shown to nobody. Keyed on the label rather than on
+    # via === "offer": that narrower test passed while a saved-but-unpaired
+    # bot still rendered nothing at all.
+    assert "else if (c.via_label)" in HTML
+
+
+def test_a_saved_but_unpaired_bot_gets_its_own_badge():
+    # "Ready to connect" on a row whose bot is already saved understates the
+    # state: there IS work left, and it is one step.
+    assert "One step left" in HTML
+
