@@ -214,3 +214,59 @@ async def test_toggling_a_bot_with_an_undecryptable_token_fails_cleanly(
                                 json={"enabled": False})
     assert resp.status_code == 503
     assert "could not be read" in resp.json()["detail"]
+
+
+async def test_internal_endpoint_returns_500_on_decrypt_failure(
+        owner_bot, monkeypatch):
+    """A decrypt failure on the internal bot_config endpoint must return 500
+    (permanent), not 503 (transient). webhook-handler treats 502/503/504 as
+    transient and asks Telegram to redeliver. A decrypt failure will fail
+    identically on every retry, so reporting it as transient would create an
+    infinite retry loop. 500 signals permanent failure."""
+    def _boom(blob):
+        raise InvalidToken()
+    monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
+
+    # Create an internal client (bare router, not page_router)
+    app = FastAPI()
+    app.include_router(routes_gateway.router)
+    internal_client = TestClient(app, raise_server_exceptions=False)
+
+    # Call the internal endpoint with the required header
+    resp = internal_client.get(
+        f"/gateway/bots/{owner_bot}",
+        headers={"X-Internal-Secret": "test-internal-secret"})
+
+    # Must be 500, not 503
+    assert resp.status_code == 500, (
+        f"Expected 500 (permanent) but got {resp.status_code}. "
+        "Decrypt failure is permanent and must not be retried by webhook-handler.")
+
+
+async def test_internal_endpoint_returns_500_on_decrypt_failure(
+        owner_bot, app_for, monkeypatch):
+    """A decrypt failure on the internal bot_config endpoint must return 500
+    (permanent), not 503 (transient). webhook-handler treats 502/503/504 as
+    transient and asks Telegram to redeliver. A decrypt failure will fail
+    identically on every retry, so reporting it as transient would create an
+    infinite retry loop. 500 signals permanent failure."""
+    from fastapi import Header
+
+    def _boom(blob):
+        raise InvalidToken()
+    monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
+
+    # Create an internal client (bare router, not page_router)
+    app = FastAPI()
+    app.include_router(routes_gateway.router)
+    internal_client = TestClient(app, raise_server_exceptions=False)
+
+    # Call the internal endpoint with the required header
+    resp = internal_client.get(
+        f"/gateway/bots/{owner_bot}",
+        headers={"X-Internal-Secret": "test-internal-secret"})
+    
+    # Must be 500, not 503
+    assert resp.status_code == 500, (
+        f"Expected 500 (permanent) but got {resp.status_code}. "
+        "Decrypt failure is permanent and must not be retried by webhook-handler.")

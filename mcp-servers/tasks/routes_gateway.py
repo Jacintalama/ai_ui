@@ -714,6 +714,29 @@ def _decrypt_or_503(row: GatewayBot) -> str:
                    "reconnect it.")
 
 
+def _decrypt_internal(row: GatewayBot) -> str:
+    """Decrypt one bot's token for an internal endpoint, raising 500 on failure.
+
+    Differs from _decrypt_or_503 in status code: webhook-handler treats
+    502/503/504 as transient and asks Telegram to redeliver. A decryption
+    failure is permanent: the key rotated or the row is corrupt, and it will
+    fail identically on every retry. Reporting it as transient would make
+    Telegram retry that message forever. Returning 500 (permanent failure)
+    prevents that infinite loop.
+
+    Covers the same errors as _decrypt_or_503: rotated AIUI_FERNET_KEY,
+    corrupt blob, and malformed key in the env.
+    """
+    try:
+        return gbots.decrypt_token(row.token_encrypted)
+    except (InvalidToken, ValueError, RuntimeError) as exc:
+        log.error("gateway: could not decrypt a bot token for %s: %s",
+                  row.email, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="This bot's saved token could not be read.")
+
+
 @page_router.post("/bots/{bot_key}/test")
 async def test_bot(bot_key: str,
                    user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
@@ -850,7 +873,7 @@ async def bot_config(bot_key: str,
     return {
         "platform": row.platform,
         "owner_email": row.email,
-        "token": _decrypt_or_503(row),
+        "token": _decrypt_internal(row),
         "webhook_secret": row.webhook_secret,
         "allowed_ids": row.allowed_ids or "",
         "owner_platform_user_id": row.owner_platform_user_id or "",
