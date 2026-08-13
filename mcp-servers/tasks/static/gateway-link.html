@@ -273,10 +273,10 @@ function setMsg(el, text, cls) {
 function buildConnectFields(c) {
   const holder = document.createElement("div");
 
-  const step = document.createElement("p");
-  step.className = "step";
-  step.textContent = c.note ? c.note : "Get a code, then paste it here.";
-  holder.append(step);
+  // No instruction line here. buildExpand always renders numbered steps above
+  // this block, and those steps already carry it, so printing c.note again
+  // said the same sentence twice on Telegram and, on the terminal row, told
+  // you to download a client you had already downloaded in step 1.
 
   const entry = document.createElement("div");
   entry.className = "entry";
