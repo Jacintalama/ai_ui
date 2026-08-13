@@ -546,6 +546,16 @@ def _route_for(row: dict, shared: str) -> dict[str, str]:
         return {"via": "shared",
                 "via_label": f"IO's bot {shared}" if shared else "IO's own bot"}
 
+    # Not connected but available, and this channel CAN carry a personal bot, so
+    # the row can still answer the whose-bot question instead of saying only "ready".
+    # Without this, nothing on the page reveals that bringing your own bot is
+    # possible until after someone has already paired the other way.
+    if row.get("status") == "available":
+        if shared:
+            return {"via": "offer",
+                    "via_label": f"via IO's bot {shared}, or bring your own"}
+        return {"via": "offer", "via_label": "bring your own bot"}
+
     return {"via": "", "via_label": ""}
 
 
@@ -592,7 +602,7 @@ def _channel_status(entry: dict, linked: dict) -> dict:
     if platform == "cli":
         if os.environ.get("GATEWAY_CLI_ENABLED", "").strip():
             return {**row, "status": "available",
-                    "note": "Run python scripts/io.py and it will print a code."}
+                    "note": "Download the one-file client and it will print a code."}
         return {**row, "status": "off",
                 "note": "The terminal client is switched off on this server."}
 

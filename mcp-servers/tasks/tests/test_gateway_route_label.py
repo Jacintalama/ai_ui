@@ -103,3 +103,33 @@ def test_the_terminal_row_never_claims_a_telegram_bot():
                                             "linked_at": None}})
     out = rg._route_for(base, SHARED)
     assert SHARED not in out["via_label"]
+
+
+def test_an_unconnected_bot_channel_offers_both_ways_in():
+    # Before this, the row said only "ready to connect", so nothing on the page
+    # revealed that bringing your own bot was even possible.
+    out = rg._route_for(row(status="available", bot=None), SHARED)
+    assert out["via"] == "offer"
+    assert SHARED in out["via_label"]
+    assert "your own" in out["via_label"].lower()
+
+
+def test_the_offer_drops_the_handle_when_no_shared_bot_exists():
+    out = rg._route_for(row(status="available", bot=None), "")
+    assert out["via"] == "offer"
+    assert "@" not in out["via_label"], "must not print a bare @ with no handle"
+    assert out["via_label"].strip()
+
+
+def test_a_channel_that_cannot_carry_a_bot_offers_nothing():
+    # The terminal connects a DEVICE. An offer line naming a Telegram bot here
+    # would be false, which is exactly what shipped once already.
+    out = rg._route_for(row(status="available", bot=None, can_bring_bot=False),
+                        SHARED)
+    assert out["via"] == ""
+    assert out["via_label"] == ""
+
+
+def test_a_saved_bot_still_wins_over_the_offer():
+    out = rg._route_for(row(status="available", bot=enabled_bot()), SHARED)
+    assert out["via"] == "own"
