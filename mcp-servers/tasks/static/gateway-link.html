@@ -125,22 +125,26 @@ const LOGOS = {
   ]},
   // Slack's four-color pinwheel: one rounded arm, offset from center so it
   // reads as a swirl rather than a cross, repeated at four rotations.
+  // Four rounded bars, each with a square cap at its OUTER end, rotated about
+  // the centre. The caps are what make it a pinwheel, and the bars stopping
+  // short of the middle are what leave Slack's square hole. An earlier version
+  // put a circle at the INNER end instead, which read as four loose pills.
   slack: { shapes: [
     { tag: "g", attrs: { transform: "rotate(0 12 12)" }, children: [
-      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#E01E5A" } },
-      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#E01E5A" } },
+      { tag: "rect", attrs: { x: 10.1, y: 1.7, width: 2.9, height: 8.4, rx: 1.45, fill: "#36C5F0" } },
+      { tag: "rect", attrs: { x: 7.2, y: 1.7, width: 2.9, height: 2.9, rx: 1.45, fill: "#36C5F0" } },
     ]},
     { tag: "g", attrs: { transform: "rotate(90 12 12)" }, children: [
-      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#2EB67D" } },
-      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#2EB67D" } },
+      { tag: "rect", attrs: { x: 10.1, y: 1.7, width: 2.9, height: 8.4, rx: 1.45, fill: "#2EB67D" } },
+      { tag: "rect", attrs: { x: 7.2, y: 1.7, width: 2.9, height: 2.9, rx: 1.45, fill: "#2EB67D" } },
     ]},
     { tag: "g", attrs: { transform: "rotate(180 12 12)" }, children: [
-      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#36C5F0" } },
-      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#36C5F0" } },
+      { tag: "rect", attrs: { x: 10.1, y: 1.7, width: 2.9, height: 8.4, rx: 1.45, fill: "#ECB22E" } },
+      { tag: "rect", attrs: { x: 7.2, y: 1.7, width: 2.9, height: 2.9, rx: 1.45, fill: "#ECB22E" } },
     ]},
     { tag: "g", attrs: { transform: "rotate(270 12 12)" }, children: [
-      { tag: "rect", attrs: { x: 13.0, y: 2.2, width: 2.8, height: 6.6, rx: 1.4, fill: "#ECB22E" } },
-      { tag: "circle", attrs: { cx: 14.4, cy: 8.8, r: 2.3, fill: "#ECB22E" } },
+      { tag: "rect", attrs: { x: 10.1, y: 1.7, width: 2.9, height: 8.4, rx: 1.45, fill: "#E01E5A" } },
+      { tag: "rect", attrs: { x: 7.2, y: 1.7, width: 2.9, height: 2.9, rx: 1.45, fill: "#E01E5A" } },
     ]},
   ]},
   // Discord's mask mark, in Discord blurple.
