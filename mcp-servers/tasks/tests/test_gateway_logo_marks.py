@@ -34,7 +34,11 @@ def test_every_catalogue_platform_has_a_logo_entry():
     # falls back to emoji at render time (by design), but it must never be
     # silently forgotten from the map that is supposed to cover it.
     block = _logos_block()
-    keys = set(re.findall(r"\n\s*(\w+): \{ shapes:", block))
+    # Allows an optional viewBox before shapes. Slack draws on a 127 canvas and
+    # Teams on a 2228 one, because those are the official files' own coordinate
+    # systems, and rescaling them by hand would reintroduce exactly the
+    # from-memory guesswork these marks were replaced to get rid of.
+    keys = set(re.findall(r"\n\s*(\w+): \{[^\n]*shapes:", block))
     platforms = {c["platform"] for c in rg.CHANNEL_CATALOGUE}
     assert platforms == keys, platforms.symmetric_difference(keys)
 
