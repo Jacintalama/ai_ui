@@ -119,6 +119,25 @@ def test_a_broken_bot_config_is_dropped_rather_than_retried_forever(
     assert spawned == []
 
 
+def test_a_config_missing_a_token_is_treated_as_no_bot(client, tasks_says, spawned):
+    # TelegramAdapter falls back to the shared bot's settings when either
+    # argument is empty. A malformed row here must not build an adapter that
+    # would silently authenticate and send as the shared bot.
+    tasks_says({**CONFIG, "token": ""})
+    resp = client.post("/webhook/telegram/abc", json=UPDATE,
+                       headers={"x-telegram-bot-api-secret-token": "s3cret"})
+    assert resp.status_code == 404
+    assert spawned == []
+
+
+def test_a_config_missing_a_webhook_secret_is_treated_as_no_bot(client, tasks_says, spawned):
+    tasks_says({**CONFIG, "webhook_secret": ""})
+    resp = client.post("/webhook/telegram/abc", json=UPDATE,
+                       headers={"x-telegram-bot-api-secret-token": "s3cret"})
+    assert resp.status_code == 404
+    assert spawned == []
+
+
 def test_a_wrong_secret_is_rejected(client, tasks_says, spawned):
     tasks_says(CONFIG)
     resp = client.post("/webhook/telegram/abc", json=UPDATE,

@@ -779,9 +779,27 @@ async def _bot_adapter(bot_key: str):
     if config is None:
         return None
 
+    # Bracket access (not .get): an entirely missing key is a different bug
+    # than a present-but-empty value, and stays on the KeyError path below,
+    # which the caller already turns into a dropped-not-retried 200.
+    token = config["token"]
+    webhook_secret = config["webhook_secret"]
+    if not token or not webhook_secret:
+        # Should not be reachable: both columns are NOT NULL and non-empty at
+        # the DB level. But TelegramAdapter falls back to the shared bot's
+        # settings when either argument is empty (gateway/platforms/telegram.py),
+        # so a bad row here would silently make this user's bot authenticate
+        # and send as @aiuiteam_bot. Treat it as no bot at all instead.
+        logger.error("gateway: bot config for %s has an empty token or webhook "
+                     "secret, refusing to build an adapter", bot_key)
+        return None
+
+    # NEVER call .connect() on this adapter: it registers the webhook against
+    # the KEYLESS /webhook/telegram path, which would point this user's bot at
+    # the shared route instead of their own /webhook/telegram/{bot_key}.
     adapter = TelegramAdapter(
-        token=config["token"],
-        webhook_secret=config["webhook_secret"],
+        token=token,
+        webhook_secret=webhook_secret,
     )
     adapter.name = "telegram"
     adapter.max_message_length = TELEGRAM_MAX_MESSAGE
