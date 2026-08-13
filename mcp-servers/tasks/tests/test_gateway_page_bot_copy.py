@@ -13,8 +13,14 @@ def test_the_page_offers_a_way_to_bring_your_own_bot():
     assert "Use my own bot" in HTML
 
 
-def test_the_page_names_botfather_so_a_user_knows_where_to_get_a_token():
-    assert "BotFather" in HTML
+def test_the_page_renders_whatever_help_the_server_gives_a_field():
+    # The wording moved to the server so every channel gets a setup form
+    # without new UI. What the page must still guarantee is that it SHOWS
+    # each field's help; the wording itself is asserted in
+    # test_gateway_connect_forms.py, at its source.
+    assert "f.help" in HTML
+    assert "f.label" in HTML
+    assert "f.secret" in HTML
 
 
 def test_the_page_says_the_bot_is_private_to_the_user():

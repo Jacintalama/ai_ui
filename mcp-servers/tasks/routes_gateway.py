@@ -464,6 +464,47 @@ async def redeem(body: RedeemIn,
 #: lies.
 BOT_CAPABLE_PLATFORMS = {"telegram"}
 
+# What a user has to fill in to connect a channel with their own credentials,
+# described here rather than drawn in the page. Every channel that can carry a
+# personal connection needs a form, and hardcoding one channel's fields into
+# the markup meant the next channel needed new UI before anyone could set it
+# up. Adding a channel is now an entry here.
+#
+# `secret` decides two things at once: the field renders as a password, and
+# its value is the one encrypted at rest. `pitch` is what the user is told
+# they are agreeing to, which is not boilerplate: it is the only place they
+# learn what saving this actually grants.
+CONNECT_FORMS: dict[str, dict] = {
+    "telegram": {
+        "pitch": "Your bot, your token, your data. Nobody else can see it or "
+                 "configure it. Saving it lets IO send messages as that bot.",
+        "submit": "Save & enable",
+        "fields": [
+            {"name": "token", "label": "Bot token", "secret": True,
+             "placeholder": "paste the token",
+             "help": "Get one from BotFather on Telegram."},
+            {"name": "allowed_ids", "label": "Allowed Telegram user IDs",
+             "secret": False, "placeholder": "leave empty for just you",
+             "help": ""},
+        ],
+    },
+    "buzz": {
+        "pitch": "Your workspace, your key, your data. Nobody else can see it "
+                 "or configure it. IO joins your Buzz relay as an agent and "
+                 "answers only the people you allow.",
+        "submit": "Save & connect",
+        "fields": [
+            {"name": "endpoint", "label": "Relay URL", "secret": False,
+             "placeholder": "wss://buzz.yourteam.com/relay",
+             "help": "Your Buzz workspace's relay, the same URL its app uses."},
+            {"name": "token", "label": "Agent key", "secret": True,
+             "placeholder": "nsec1...",
+             "help": "The private key of the agent identity you created for IO."},
+        ],
+    },
+}
+
+
 
 def _public_url() -> str:
     """Where Telegram should deliver. Seam so tests need no env."""
@@ -639,6 +680,10 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # personal bot was possible, which is a binary that was wrong
            # the moment a third kind of channel existed.
            "connect_headline": entry.get("connect_headline", "Quick connect"),
+           # The form for bringing your own connection, so the page
+           # renders whatever a channel needs instead of one
+           # channel's fields written into the markup.
+           "connect_form": CONNECT_FORMS.get(platform),
            # Filled by _route_for once this account's bots are known. Present
            # here so every row carries one shape, including the user-free
            # catalogue injected into the page.
