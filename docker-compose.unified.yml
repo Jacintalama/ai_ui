@@ -299,6 +299,28 @@ services:
       - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
       - CLAUDE_WORKSPACE=/workspace/ai_ui
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Route the build agent through an Anthropic-compatible gateway
+      # (OpenRouter) instead of Anthropic directly. All three unset = the stock
+      # Anthropic API, byte-for-byte unchanged — this is a toggle, not a
+      # migration, so the Anthropic path stays available for when its credit is
+      # restored.
+      #
+      # AGENT_BASE_URL must NOT end in /v1. The CLI appends `/v1/messages`
+      # itself, so `.../api/v1` becomes `.../api/v1/v1/messages` and 404s —
+      # which the CLI then misreports as "the model may not exist", sending you
+      # after a model-name problem that does not exist. Correct value is
+      # `https://openrouter.ai/api`.
+      #
+      # AGENT_MODEL must be an id the CLI accepts (e.g. `claude-sonnet-4-5`),
+      # NOT an OpenRouter slug like `anthropic/claude-sonnet-4.5` — the CLI
+      # validates the name locally before sending. OpenRouter resolves bare
+      # Anthropic ids fine, so the CLI-friendly name works on both sides.
+      #
+      # ANTHROPIC_AUTH_TOKEN rather than reusing ANTHROPIC_API_KEY: the key
+      # stays pointed at Anthropic so the toggle is one variable, not a swap.
+      - ANTHROPIC_BASE_URL=${AGENT_BASE_URL:-}
+      - ANTHROPIC_AUTH_TOKEN=${AGENT_AUTH_TOKEN:-}
+      - ANTHROPIC_MODEL=${AGENT_MODEL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AIUI_FERNET_KEY=${AIUI_FERNET_KEY:-}
       - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
