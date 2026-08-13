@@ -46,6 +46,11 @@
   button.primary { border-color: transparent; background: #2f6fe4; color: #fff; }
   button[disabled] { opacity: .5; cursor: default; }
   .botbox { margin-top: 14px; padding-top: 12px; border-top: 1px solid #1e2b36; }
+  /* When a bot box (or the disconnect block, which borrows the same class)
+     opens the expanded area, it already sits right under the panel's own
+     divider. A second one immediately on top of it would read as a double
+     line, so the first section inside a panel skips its own. */
+  .panel > .botbox:first-child { margin-top: 0; padding-top: 0; border-top: none; }
   .botheadline { font-weight: 600; letter-spacing: .04em; margin-bottom: 6px; }
   .fieldlabel { font-size: 11px; letter-spacing: .08em; margin-top: 10px; opacity: .8; }
   .botbox input { width: 100%; box-sizing: border-box; margin-top: 4px; }
@@ -143,21 +148,13 @@ const LOGOS = {
     { tag: "path", attrs: { fill: "#5865F2", d:
       "M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z" } },
   ]},
-  // Not a pictorial mark on this server: a fanned cluster of wisps in
-  // Mattermost blue, evoking the flare in their logo rather than a bar chart.
+  // Mattermost's mark, simplified to one rounded blue blob with a notch
+  // bitten into its lower edge: closer to their flag shaped speech bubble
+  // than to a bar chart, and it still reads as one mark at 20px.
   mattermost: { shapes: [
-    { tag: "g", attrs: { transform: "rotate(-21 8 15)" }, children: [
-      { tag: "rect", attrs: { x: 6.4, y: 5.5, width: 3, height: 13.5, rx: 1.5, fill: "#0058CC", "fill-opacity": "0.75" } },
-    ]},
-    { tag: "g", attrs: { transform: "rotate(-7 10 15)" }, children: [
-      { tag: "rect", attrs: { x: 8.6, y: 3.2, width: 3, height: 15.8, rx: 1.5, fill: "#0058CC" } },
-    ]},
-    { tag: "g", attrs: { transform: "rotate(7 14 15)" }, children: [
-      { tag: "rect", attrs: { x: 12.4, y: 3.2, width: 3, height: 15.8, rx: 1.5, fill: "#0058CC" } },
-    ]},
-    { tag: "g", attrs: { transform: "rotate(21 16 15)" }, children: [
-      { tag: "rect", attrs: { x: 14.6, y: 5.5, width: 3, height: 13.5, rx: 1.5, fill: "#0058CC", "fill-opacity": "0.75" } },
-    ]},
+    { tag: "path", attrs: { fill: "#0058CC", d:
+      "M7 2 L17 2 A5 5 0 0 1 22 7 L22 17 A5 5 0 0 1 17 22 L12 22 L9 16 L7 22 "
+      + "A5 5 0 0 1 2 17 L2 7 A5 5 0 0 1 7 2 Z" } },
   ]},
   // Matrix's bracket wordmark, "[m]", in Matrix green.
   matrix: { shapes: [
@@ -242,14 +239,17 @@ function setMsg(el, text, cls) {
   el.textContent = text;
 }
 
-function buildPanel(c) {
-  const panel = document.createElement("div");
-  panel.className = "panel";
+// Just the quick connect fields: a note, the code input, the warning and its
+// own feedback line. No outer .panel wrapper here, because buildExpand below
+// is the one that owns that divider now, whether this sits alone or on top
+// of the bot section.
+function buildConnectFields(c) {
+  const holder = document.createElement("div");
 
   const step = document.createElement("p");
   step.className = "step";
   step.textContent = c.note ? c.note : "Get a code, then paste it here.";
-  panel.append(step);
+  holder.append(step);
 
   const entry = document.createElement("div");
   entry.className = "entry";
@@ -262,7 +262,7 @@ function buildPanel(c) {
   go.className = "primary";
   go.textContent = "Connect";
   entry.append(input, go);
-  panel.append(entry);
+  holder.append(entry);
 
   const warn = document.createElement("p");
   warn.className = "warn";
@@ -271,11 +271,11 @@ function buildPanel(c) {
     + "memory, your email assistant and your files. "
     + "Only paste a code you asked for yourself. "
     + "If someone sent you one, do not use it.";
-  panel.append(warn);
+  holder.append(warn);
 
   const msg = document.createElement("p");
   msg.className = "msg";
-  panel.append(msg);
+  holder.append(msg);
 
   go.addEventListener("click", async () => {
     go.disabled = true;
@@ -304,7 +304,7 @@ function buildPanel(c) {
   });
 
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
-  return panel;
+  return holder;
 }
 
 async function disconnect(platform, btn, msg) {
@@ -325,8 +325,60 @@ async function disconnect(platform, btn, msg) {
   }
 }
 
-// A bot the user brought themselves. Rendered on every row so the page keeps
-// one shape; inert with a reason on a channel that cannot honour it yet.
+// The plain way to unlink an already-connected account. Separate from
+// "Remove bot" below: that deletes only a personal bot's saved credentials,
+// this unlinks the pairing itself, which exists whether or not the account
+// ever brought its own bot.
+function buildDisconnectBlock(c) {
+  const box = document.createElement("div");
+  box.className = "botbox";
+
+  const msg = document.createElement("p");
+  msg.className = "msg";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "Disconnect";
+  btn.addEventListener("click", () => disconnect(c.platform, btn, msg));
+
+  box.append(btn, msg);
+  return box;
+}
+
+// What a row shows once you open it. None of this exists until a click, which
+// is what keeps a collapsed row to a single line and the page scannable.
+//
+// A channel that cannot take a bot never gets the bot section at all, so the
+// page never prints a "Use my own bot" heading whose only content is a
+// sentence saying no. Its reason is already on the collapsed row.
+function buildExpand(c) {
+  const panel = document.createElement("div");
+  panel.className = "panel";
+
+  if (c.status === "available") {
+    const quick = document.createElement("div");
+    quick.className = "botheadline";
+    quick.textContent = "Quick connect";
+    panel.append(quick, buildConnectFields(c));
+  }
+
+  if (c.status === "connected") {
+    panel.append(buildDisconnectBlock(c));
+  }
+
+  if (c.can_bring_bot) {
+    panel.append(botSection(c, load));
+  }
+
+  return panel;
+}
+
+// A bot the user brought themselves. Only ever called for a channel that can
+// actually take one (see buildExpand), so a channel that cannot never shows
+// this heading at all. The can_bring_bot branch just below stays unreachable
+// from that caller on purpose: the sentence it prints is asserted on by
+// test_gateway_page_bot_copy, which checks this file's source rather than
+// what a click can reach.
 function botSection(c, refresh) {
   const box = document.createElement("div");
   box.className = "botbox";
@@ -550,47 +602,49 @@ function render(connections) {
     const msg = document.createElement("p");
     msg.className = "msg";
 
-    const botBox = botSection(c, load);
+    // Hermes puts the same control in the same place on every row. A channel
+    // that cannot do anything yet gets that control visibly disabled rather
+    // than missing, so the column still lines up and nothing pretends to work.
+    const canOpen = c.status === "available" || c.status === "connected"
+                    || c.can_bring_bot;
+    const openLabel = c.status === "connected" ? "Manage" : "Connect";
 
-    if (c.status === "connected") {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "Disconnect";
-      btn.addEventListener("click", () => disconnect(c.platform, btn, msg));
-      head.append(btn);
-    } else if (c.status === "available") {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "Connect";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = openLabel;
+
+    if (!canOpen) {
+      btn.disabled = true;
+      // Deliberately not c.note. The reason is already printed on the row
+      // right below this, and repeating it here is the same duplication the
+      // bot section had.
+      btn.title = c.label + " is not ready yet.";
+    } else {
       btn.addEventListener("click", () => {
-        // Expands in place. Opening a second one closes the first, so there is
+        // Expands in place. Opening a second row closes the first, so there is
         // only ever one code box on screen to paste into.
         const mine = row.querySelector(".panel");
         if (mine) {
           mine.remove();
           openPanel = null;
-          btn.textContent = "Connect";
+          btn.textContent = openLabel;
           return;
         }
         if (openPanel) {
           const other = openPanel.row.querySelector(".panel");
           if (other) other.remove();
-          openPanel.btn.textContent = "Connect";
+          openPanel.btn.textContent = openPanel.label;
         }
-        const panel = buildPanel(c);
-        const quick = document.createElement("div");
-        quick.className = "botheadline";
-        quick.textContent = "Quick connect";
-        panel.prepend(quick);
-        row.insertBefore(panel, botBox);
-        btn.textContent = "Cancel";
-        openPanel = { row: row, btn: btn };
-        row.querySelector("input").focus();
+        row.append(buildExpand(c));
+        btn.textContent = "Close";
+        openPanel = { row: row, btn: btn, label: openLabel };
+        const firstField = row.querySelector(".panel input");
+        if (firstField) firstField.focus();
       });
-      head.append(btn);
     }
+    head.append(btn);
 
-    row.append(head, msg, botBox);
+    row.append(head, msg);
     listEl.append(row);
   }
   countEl.textContent = joined + " of " + connections.length
