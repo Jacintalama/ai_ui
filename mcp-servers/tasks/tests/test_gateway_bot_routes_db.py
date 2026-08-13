@@ -9,6 +9,7 @@ Locally every test here ERRORs at setup with no Postgres, which is expected.
 import os
 
 import pytest
+from cryptography.fernet import InvalidToken
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -180,3 +181,36 @@ async def test_your_own_bot_lands_on_your_telegram_row_and_nowhere_else(owner_bo
     assert all(r["bot"] is None for r in rows if r["platform"] != "telegram")
     # The page never receives a token, only enough to recognise the bot.
     assert "111:AAHownertokenvalue" not in str(rows)
+
+
+async def test_removing_a_bot_with_an_undecryptable_token_still_deletes_it(
+        db_session, owner_bot, app_for, monkeypatch):
+    """A rotated AIUI_FERNET_KEY or a corrupt blob must not trap a user with a
+    bot they can no longer get rid of: deleteWebhook is skipped, the row is
+    deleted anyway."""
+    def _boom(blob):
+        raise InvalidToken()
+    monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
+
+    resp = app_for(OWNER).delete(f"/tasks/gateway/bots/{owner_bot}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "removed"
+
+    remaining = (await db_session.execute(
+        GatewayBot.__table__.select().where(GatewayBot.bot_key == owner_bot)
+    )).first()
+    assert remaining is None
+
+
+async def test_toggling_a_bot_with_an_undecryptable_token_fails_cleanly(
+        owner_bot, app_for, monkeypatch):
+    """A decrypt failure on a route that still needs the token (unlike
+    remove) must be a clean, actionable error, not a 500."""
+    def _boom(blob):
+        raise InvalidToken()
+    monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
+
+    resp = app_for(OWNER).patch(f"/tasks/gateway/bots/{owner_bot}",
+                                json={"enabled": False})
+    assert resp.status_code == 503
+    assert "could not be read" in resp.json()["detail"]

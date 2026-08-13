@@ -19,6 +19,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
@@ -622,8 +623,10 @@ async def save_bot(body: BotIn,
 
     try:
         encrypted = gbots.encrypt_token(token)
-    except RuntimeError as exc:
-        # AIUI_FERNET_KEY is missing. Refuse rather than store plaintext.
+    except (RuntimeError, ValueError) as exc:
+        # RuntimeError: AIUI_FERNET_KEY is missing. ValueError: it is set but
+        # is not a valid Fernet key (wrong length, not base64). Either way,
+        # refuse rather than store plaintext.
         log.error("gateway: cannot store a bot token: %s", exc)
         raise HTTPException(
             status_code=503,
@@ -690,6 +693,27 @@ async def _owned_bot(s, email: str, bot_key: str) -> GatewayBot:
     return row
 
 
+def _decrypt_or_503(row: GatewayBot) -> str:
+    """Decrypt one bot's token, turning any failure into a clean error a user
+    can act on instead of a 500.
+
+    Covers a rotated AIUI_FERNET_KEY (InvalidToken: the blob was encrypted
+    under a key that no longer exists), a corrupt blob (InvalidToken), and a
+    malformed key value in the env (crypto_utils raises RuntimeError when
+    AIUI_FERNET_KEY is missing, ValueError when it is present but not a valid
+    Fernet key; either only surfaces on the first decrypt call in this
+    process, since the module caches its Fernet instance after that)."""
+    try:
+        return gbots.decrypt_token(row.token_encrypted)
+    except (InvalidToken, ValueError, RuntimeError) as exc:
+        log.error("gateway: could not decrypt a bot token for %s: %s",
+                  row.email, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="This bot's saved token could not be read. Remove it and "
+                   "reconnect it.")
+
+
 @page_router.post("/bots/{bot_key}/test")
 async def test_bot(bot_key: str,
                    user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
@@ -700,7 +724,7 @@ async def test_bot(bot_key: str,
     the whole path."""
     async with session() as s:
         row = await _owned_bot(s, user.email, bot_key)
-        token = gbots.decrypt_token(row.token_encrypted)
+        token = _decrypt_or_503(row)
         link = (await s.execute(
             select(GatewayLink).where(GatewayLink.email == user.email,
                                       GatewayLink.platform == row.platform)
@@ -742,7 +766,7 @@ async def toggle_bot(bot_key: str, body: BotToggleIn,
     than us dropping updates we keep receiving."""
     async with session() as s:
         row = await _owned_bot(s, user.email, bot_key)
-        token = gbots.decrypt_token(row.token_encrypted)
+        token = _decrypt_or_503(row)
         secret = row.webhook_secret
 
     error = ""
@@ -776,12 +800,24 @@ async def remove_bot(bot_key: str,
     leave the user unable to get rid of their own token."""
     async with session() as s:
         row = await _owned_bot(s, user.email, bot_key)
-        token = gbots.decrypt_token(row.token_encrypted)
+        try:
+            token = gbots.decrypt_token(row.token_encrypted)
+        except (InvalidToken, ValueError, RuntimeError) as exc:
+            # A token we cannot decrypt is one we cannot call deleteWebhook
+            # with either. That must not block removal: the row disappearing
+            # is what the user asked for, and an orphaned webhook 404s once
+            # bot_key no longer resolves, same as any other undeleted hook
+            # below.
+            log.warning(
+                "gateway: could not decrypt a bot token while removing it, "
+                "deleting the row without clearing the webhook: %s", exc)
+            token = None
 
-    try:
-        await telegram_api.delete_webhook(token)
-    except telegram_api.TelegramError:
-        log.warning("gateway: could not clear the webhook while removing a bot")
+    if token:
+        try:
+            await telegram_api.delete_webhook(token)
+        except telegram_api.TelegramError:
+            log.warning("gateway: could not clear the webhook while removing a bot")
 
     async with session() as s:
         await s.execute(delete(GatewayBot).where(
@@ -814,7 +850,7 @@ async def bot_config(bot_key: str,
     return {
         "platform": row.platform,
         "owner_email": row.email,
-        "token": gbots.decrypt_token(row.token_encrypted),
+        "token": _decrypt_or_503(row),
         "webhook_secret": row.webhook_secret,
         "allowed_ids": row.allowed_ids or "",
         "owner_platform_user_id": row.owner_platform_user_id or "",
