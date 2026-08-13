@@ -14,6 +14,7 @@ Two routers, deliberately separate:
 
 Never log a pairing code and never log a minted token.
 """
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -238,7 +239,7 @@ async def recent_sessions(owui_user_id: str, limit: int = 10,
 # gateway never learns a password and the user never pastes a token.
 # ---------------------------------------------------------------------------
 from fastapi import Depends                             # noqa: E402
-from fastapi.responses import FileResponse              # noqa: E402
+from fastapi.responses import HTMLResponse               # noqa: E402
 
 from auth import CurrentUser, current_user              # noqa: E402
 from models import GatewayRedeemBudget                  # noqa: E402
@@ -254,9 +255,42 @@ class RedeemIn(BaseModel):
 
 
 @page_router.get("/link", include_in_schema=False)
-def link_page() -> FileResponse:
-    """Inert HTML. Everything it can do goes back through POST /link."""
-    return FileResponse("static/gateway-link.html", media_type="text/html")
+def link_page() -> HTMLResponse:
+    """Inert HTML. Everything it can do goes back through POST /link.
+
+    CHANNEL_CATALOGUE is a hardcoded tuple: the list of channels, and every
+    row's status/note/blurb/icon/can_bring_bot, never depends on who is
+    asking. So none of that needs the round trip to GET /connections before
+    it can draw. It is computed here, with _channel_status(entry, {}) -- the
+    SAME function /connections calls, with an empty `linked` dict standing in
+    for "no user" -- and injected into the page as window.__CHANNELS__, so
+    all ten rows are already in the HTML response and paint before the
+    browser has made a single request.
+
+    That empty dict is also what keeps this route free of any user identity:
+    no current_user dependency, no database session. The per-user status
+    (which channels this account actually linked, and any bot it saved)
+    still only ever comes from GET /connections, called by the page's own
+    script after it draws the static shell.
+    """
+    path = os.path.join(os.path.dirname(__file__), "static", "gateway-link.html")
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    rows = [_channel_status(entry, {}) for entry in CHANNEL_CATALOGUE]
+    payload = json.dumps(rows)
+    # A raw </script> inside the JSON would close the tag early and let the
+    # rest of the payload run as markup. The data is ours today (it comes
+    # from CHANNEL_CATALOGUE and env vars, nothing a user supplied), but the
+    # escape is what keeps that true if this ever picks up a user-shaped
+    # field.
+    payload = payload.replace("<", "\\u003c")
+    seed = f"<script>window.__CHANNELS__ = {payload};</script>\n"
+
+    idx = html.find("<script>")
+    html = seed + html if idx == -1 else html[:idx] + seed + html[idx:]
+
+    return HTMLResponse(content=html)
 
 
 async def _owui_user_id_for(email: str) -> str | None:

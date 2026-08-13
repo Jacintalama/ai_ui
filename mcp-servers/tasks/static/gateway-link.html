@@ -472,6 +472,17 @@ async function load() {
   }
 }
 
+// The channel list is static (CHANNEL_CATALOGUE never varies per request),
+// so the server injects it as window.__CHANNELS__ ahead of this script. Draw
+// from that immediately, with no per-user status yet (every row's linked_at
+// is null), and let load() below fill in this account's real status once
+// the network call returns. If the page was served without injection (the
+// raw file, opened some other way), window.__CHANNELS__ is missing and the
+// list is simply left at its "Loading..." markup until load() finishes.
+if (window.__CHANNELS__) {
+  render(window.__CHANNELS__);
+}
+
 load();
 </script>
 </body>
