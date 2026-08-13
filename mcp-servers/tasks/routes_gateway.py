@@ -496,11 +496,13 @@ def _bot_view(row: GatewayBot) -> dict[str, Any]:
 CHANNEL_CATALOGUE = (
     # Built and routed through the gateway.
     {"platform": "telegram", "label": "Telegram", "icon": "✈️",
+     "connect_headline": "Quick connect · use IO's bot",
      "blurb": "Chat with IO from Telegram direct messages, including voice memos."},
     # "any shell" was true and unhelpful: someone on a phone read it, tried,
     # and had nowhere to type. Naming the machines it needs is shorter than
     # the support conversation that follows when it does not.
     {"platform": "cli", "label": "Terminal", "icon": "⌨️",
+     "connect_headline": "Quick connect · from your shell",
      "blurb": "Talk to IO from a shell on Mac, Windows or Linux. "
               "One script, nothing to install but Python. Not phones."},
 
@@ -541,6 +543,7 @@ CHANNEL_CATALOGUE = (
     # against; buzz.xyz is in early access and publishes none, so there is
     # nothing to write an adapter for yet.
     {"platform": "buzz", "label": "Buzz", "icon": "🐝",
+     "connect_headline": "Quick connect · from Buzz",
      "blurb": "Use IO from Buzz, where your people, agents and projects "
               "sit in one place.",
      # Every channel that is not this browser relays through somebody, and a
@@ -631,6 +634,11 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # Who else handles your messages on this channel. Empty for the
            # ones that relay through nobody.
            "caveat": entry.get("caveat", ""),
+           # What the expanded row calls its first path in. Named per
+           # channel because the page used to infer it from whether a
+           # personal bot was possible, which is a binary that was wrong
+           # the moment a third kind of channel existed.
+           "connect_headline": entry.get("connect_headline", "Quick connect"),
            # Filled by _route_for once this account's bots are known. Present
            # here so every row carries one shape, including the user-free
            # catalogue injected into the page.

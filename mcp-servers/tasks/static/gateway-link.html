@@ -453,9 +453,11 @@ function buildExpand(c) {
   if (c.status === "available") {
     const quick = document.createElement("div");
     quick.className = "botheadline";
-    quick.textContent = c.can_bring_bot
-      ? "Quick connect \u00b7 use IO's bot"
-      : "Quick connect \u00b7 from your shell";
+    // The server names this per channel. It used to be a two-way choice on
+    // can_bring_bot, which silently meant "bot or shell" and put "from your
+    // shell" on the Buzz row, where there is no shell involved at all. A
+    // binary was wrong the moment a third kind of channel existed.
+    quick.textContent = c.connect_headline || "Quick connect";
     panel.append(quick);
 
     if (c.platform === "cli") {

@@ -101,3 +101,23 @@ def test_every_row_carries_the_caveat_field():
     # shape and a new channel cannot silently omit it.
     for entry in rg.CHANNEL_CATALOGUE:
         assert "caveat" in rg._channel_status(entry, {})
+
+
+def test_every_channel_names_its_own_connect_headline():
+    # The page used to infer this from can_bring_bot, a binary that put
+    # "from your shell" on the Buzz row, where no shell is involved.
+    for entry in rg.CHANNEL_CATALOGUE:
+        row = rg._channel_status(entry, {})
+        assert row["connect_headline"].strip()
+
+
+def test_buzz_does_not_claim_a_shell():
+    row = rg._channel_status(_buzz(), {})
+    assert "shell" not in row["connect_headline"].lower()
+    assert "Buzz" in row["connect_headline"]
+
+
+def test_the_terminal_is_the_only_channel_that_mentions_a_shell():
+    shells = [c["platform"] for c in rg.CHANNEL_CATALOGUE
+              if "shell" in rg._channel_status(c, {})["connect_headline"].lower()]
+    assert shells == ["cli"]
