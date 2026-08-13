@@ -35,6 +35,11 @@ from routes_video import router as video_router
 from routes_webhook import router as webhook_router
 
 logging.basicConfig(level=logging.INFO)
+# httpx logs every request URL at INFO, and the Telegram Bot API puts the bot
+# token IN the path, so at INFO this writes the token into the container log on
+# every single call. WARNING keeps failures visible without the credential.
+for _leaky in ("httpx", "httpcore"):
+    logging.getLogger(_leaky).setLevel(logging.WARNING)
 logger = logging.getLogger("tasks")
 
 
