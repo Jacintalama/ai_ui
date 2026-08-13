@@ -535,6 +535,16 @@ CHANNEL_CATALOGUE = (
     {"platform": "teams", "label": "Microsoft Teams", "icon": "👥",
      "blurb": "Use IO from Teams chats.",
      "planned": "Not started. Microsoft sign-in already exists to build on."},
+
+    # The only channel here blocked by the OTHER side rather than by us. Every
+    # entry above has a documented bot or webhook API we simply have not built
+    # against; buzz.xyz is in early access and publishes none, so there is
+    # nothing to write an adapter for yet.
+    {"platform": "buzz", "label": "Buzz", "icon": "🐝",
+     "blurb": "Use IO from Buzz, where your people, agents and projects "
+              "sit in one place.",
+     "planned": "Not started. Buzz is in early access and does not publish a "
+                "bot or webhook API to connect to yet."},
 )
 
 

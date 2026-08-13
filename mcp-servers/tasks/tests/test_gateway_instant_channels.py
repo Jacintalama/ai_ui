@@ -42,7 +42,9 @@ def test_link_page_injects_window_channels(client):
     rows = _extract_channels_payload(resp.text)
     platforms = {row["platform"] for row in rows}
     assert platforms == {c["platform"] for c in rg.CHANNEL_CATALOGUE}
-    assert len(rows) == 10
+    # Derived, not hardcoded: adding a channel is a catalogue edit and
+    # should not also mean editing a magic number in two test files.
+    assert len(rows) == len(rg.CHANNEL_CATALOGUE)
 
 
 def test_the_injected_seed_sits_immediately_before_the_script_tag(client):
@@ -95,7 +97,9 @@ def test_link_page_never_opens_a_database_session(monkeypatch, client):
     resp = client.get("/tasks/gateway/link")
     assert resp.status_code == 200
     rows = _extract_channels_payload(resp.text)
-    assert len(rows) == 10
+    # Derived, not hardcoded: adding a channel is a catalogue edit and
+    # should not also mean editing a magic number in two test files.
+    assert len(rows) == len(rg.CHANNEL_CATALOGUE)
 
 
 def test_link_page_has_no_current_user_dependency():

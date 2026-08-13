@@ -14,9 +14,23 @@ import routes_gateway as rg
 
 
 def test_the_catalogue_matches_the_hermes_list():
+    # Hermes' own list, in its order, plus Buzz on the end. Buzz is not a
+    # Hermes channel: it is here because Ralph asked for it, and it sits last
+    # because it is the only one blocked by the other side rather than by us.
     names = [c["platform"] for c in rg.CHANNEL_CATALOGUE]
     assert names == ["telegram", "cli", "slack", "discord", "mattermost",
-                     "matrix", "whatsapp", "signal", "email", "teams"]
+                     "matrix", "whatsapp", "signal", "email", "teams", "buzz"]
+
+
+def test_buzz_does_not_pretend_to_be_connectable():
+    # Every other row's blocker is work we have not done. Buzz's is that there
+    # is no API on the other end yet, and the reason has to say so rather than
+    # implying someone here is simply behind.
+    buzz = next(c for c in rg.CHANNEL_CATALOGUE if c["platform"] == "buzz")
+    row = rg._channel_status(buzz, {})
+    assert row["status"] == "planned"
+    assert row["can_bring_bot"] is False
+    assert "api" in row["note"].lower()
 
 
 def test_every_channel_says_what_it_is():
