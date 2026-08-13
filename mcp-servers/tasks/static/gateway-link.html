@@ -44,6 +44,11 @@
   }
   button.primary { border-color: transparent; background: #2f6fe4; color: #fff; }
   button[disabled] { opacity: .5; cursor: default; }
+  .botbox { margin-top: 14px; padding-top: 12px; border-top: 1px solid #1e2b36; }
+  .botheadline { font-weight: 600; letter-spacing: .04em; margin-bottom: 6px; }
+  .fieldlabel { font-size: 11px; letter-spacing: .08em; margin-top: 10px; opacity: .8; }
+  .botbox input { width: 100%; box-sizing: border-box; margin-top: 4px; }
+  .botactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
   .panel {
     margin-top: .85rem; padding-top: .85rem;
@@ -178,6 +183,156 @@ async function disconnect(platform, btn, msg) {
   }
 }
 
+// A bot the user brought themselves. Rendered on every row so the page keeps
+// one shape; inert with a reason on a channel that cannot honour it yet.
+function botSection(c, refresh) {
+  const box = document.createElement("div");
+  box.className = "botbox";
+
+  const head = document.createElement("div");
+  head.className = "botheadline";
+  head.textContent = "Use my own bot";
+  box.appendChild(head);
+
+  if (!c.can_bring_bot) {
+    const why = document.createElement("p");
+    why.className = "why";
+    why.textContent = c.note || (c.label + " cannot take your own bot yet.");
+    box.appendChild(why);
+    return box;
+  }
+
+  if (c.bot) {
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = c.bot.bot_username
+      ? "Your bot @" + c.bot.bot_username
+      : "Your bot is saved.";
+    box.appendChild(who);
+
+    if (c.bot.last_error) {
+      const bad = document.createElement("p");
+      bad.className = "why";
+      bad.textContent = "Telegram said: " + c.bot.last_error;
+      box.appendChild(bad);
+    }
+
+    const msg = document.createElement("p");
+    msg.className = "msg";
+
+    const row = document.createElement("div");
+    row.className = "botactions";
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.textContent = c.bot.enabled ? "Turn off" : "Turn on";
+    toggle.onclick = async () => {
+      toggle.disabled = true;
+      const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key), {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({enabled: !c.bot.enabled}),
+      });
+      toggle.disabled = false;
+      if (res.ok) refresh();
+      else setMsg(msg, "That did not take. Try again.");
+    };
+
+    const test = document.createElement("button");
+    test.type = "button";
+    test.textContent = "Test";
+    test.onclick = async () => {
+      test.disabled = true;
+      setMsg(msg, "Asking Telegram...");
+      const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key) + "/test",
+                              {method: "POST"});
+      const body = await res.json().catch(() => ({}));
+      test.disabled = false;
+      setMsg(msg, body.detail || "Could not reach the server.");
+    };
+
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.onclick = () => { box.replaceChildren(head, botForm(c, refresh)); };
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Remove bot";
+    remove.onclick = async () => {
+      remove.disabled = true;
+      const res = await fetch("/tasks/gateway/bots/" + encodeURIComponent(c.bot.bot_key),
+                              {method: "DELETE"});
+      remove.disabled = false;
+      if (res.ok) refresh();
+      else setMsg(msg, "Could not remove it. Try again.");
+    };
+
+    row.append(toggle, test, edit, remove);
+    box.append(row, msg);
+    return box;
+  }
+
+  box.appendChild(botForm(c, refresh));
+  return box;
+}
+
+function botForm(c, refresh) {
+  const form = document.createElement("div");
+
+  const pitch = document.createElement("p");
+  pitch.className = "why";
+  pitch.textContent =
+    "Your bot, your token, your data. Nobody else can see it or configure it. " +
+    "Saving it lets IO send messages as that bot.";
+  form.appendChild(pitch);
+
+  const tokenLabel = document.createElement("div");
+  tokenLabel.className = "fieldlabel";
+  tokenLabel.textContent = "BOT TOKEN";
+  const token = document.createElement("input");
+  token.type = "password";
+  token.placeholder = "paste the token";
+  const tokenHelp = document.createElement("p");
+  tokenHelp.className = "why";
+  tokenHelp.textContent = "Get one from BotFather on Telegram.";
+
+  const idsLabel = document.createElement("div");
+  idsLabel.className = "fieldlabel";
+  idsLabel.textContent = "ALLOWED TELEGRAM USER IDS";
+  const ids = document.createElement("input");
+  ids.type = "text";
+  ids.placeholder = "leave empty for just you";
+
+  const msg = document.createElement("p");
+  msg.className = "msg";
+
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "primary";
+  save.textContent = "SAVE & ENABLE";
+  save.onclick = async () => {
+    const value = token.value.trim();
+    if (!value) { setMsg(msg, "Paste your bot token first."); return; }
+    save.disabled = true;
+    setMsg(msg, "Checking it with Telegram...");
+    const res = await fetch("/tasks/gateway/bots", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({platform: c.platform, token: value,
+                            allowed_ids: ids.value}),
+    });
+    const body = await res.json().catch(() => ({}));
+    save.disabled = false;
+    token.value = "";
+    if (!res.ok) { setMsg(msg, body.detail || "That did not work."); return; }
+    refresh();
+  };
+
+  form.append(tokenLabel, token, tokenHelp, idsLabel, ids, save, msg);
+  return form;
+}
+
 function render(connections) {
   listEl.replaceChildren();
   let joined = 0;
@@ -231,6 +386,8 @@ function render(connections) {
     const msg = document.createElement("p");
     msg.className = "msg";
 
+    const botBox = botSection(c, load);
+
     if (c.status === "connected") {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -256,7 +413,12 @@ function render(connections) {
           if (other) other.remove();
           openPanel.btn.textContent = "Connect";
         }
-        row.append(buildPanel(c));
+        const panel = buildPanel(c);
+        const quick = document.createElement("div");
+        quick.className = "botheadline";
+        quick.textContent = "Quick connect";
+        panel.prepend(quick);
+        row.insertBefore(panel, botBox);
         btn.textContent = "Cancel";
         openPanel = { row: row, btn: btn };
         row.querySelector("input").focus();
@@ -264,7 +426,7 @@ function render(connections) {
       head.append(btn);
     }
 
-    row.append(head, msg);
+    row.append(head, msg, botBox);
     listEl.append(row);
   }
   countEl.textContent = joined + " of " + connections.length
