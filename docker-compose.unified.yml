@@ -172,6 +172,8 @@ services:
       # Blank this line to make the terminal channel dormant again.
       - GATEWAY_CLI_ENABLED=${GATEWAY_CLI_ENABLED:-1}
       - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
+      - BUZZ_ENABLED=${BUZZ_ENABLED:-1}
+      - BUZZ_WEBHOOK_SECRET=${BUZZ_WEBHOOK_SECRET}
     networks:
       - backend
     depends_on:
@@ -359,6 +361,7 @@ services:
       # GATEWAY_PUBLIC_URL. Neither is in .env, and .env is not ours to edit,
       # so both carry a default rather than silently resolving to empty.
       - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
+      - BUZZ_ENABLED=${BUZZ_ENABLED:-1}
       - GATEWAY_TELEGRAM_BOT=${GATEWAY_TELEGRAM_BOT:-@aiuiteam_bot}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads
