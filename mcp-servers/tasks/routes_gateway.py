@@ -542,9 +542,7 @@ CHANNEL_CATALOGUE = (
     # nothing to write an adapter for yet.
     {"platform": "buzz", "label": "Buzz", "icon": "🐝",
      "blurb": "Use IO from Buzz, where your people, agents and projects "
-              "sit in one place.",
-     "planned": "Not started. Buzz is in early access and does not publish a "
-                "bot or webhook API to connect to yet."},
+              "sit in one place."},
 )
 
 
@@ -645,6 +643,19 @@ def _channel_status(entry: dict, linked: dict) -> dict:
                     "note": f"Message {bot} on Telegram and it will send you a code."}
         return {**row, "status": "off",
                 "note": "No Telegram bot is configured on this server yet."}
+
+    if platform == "buzz":
+        # Buzz publishes no API, so this contract is one we wrote and handed
+        # them; see docs/runbooks/buzz-integration.md. The flag is read by
+        # BOTH services on purpose. webhook-handler holds the shared secret
+        # and serves the endpoint; this service only renders the row, and
+        # setting the flag on one of them is exactly how the terminal channel
+        # ended up live while the page called it switched off.
+        if os.environ.get("BUZZ_ENABLED", "").strip():
+            return {**row, "status": "available",
+                    "note": "Message IO from Buzz and it will reply with a code."}
+        return {**row, "status": "off",
+                "note": "Buzz is not connected to this server yet."}
 
     if platform == "cli":
         if os.environ.get("GATEWAY_CLI_ENABLED", "").strip():

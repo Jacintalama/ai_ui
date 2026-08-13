@@ -143,6 +143,10 @@ class Settings(BaseSettings):
     # platform dormant: the registry refuses to enable it and the route 503s.
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
+    # Shared with Buzz. Empty keeps the channel dormant: the registry
+    # hands out no adapter, and the endpoint refuses rather than
+    # accepting unsigned traffic from a public path.
+    buzz_webhook_secret: str = Field(default="", alias="BUZZ_WEBHOOK_SECRET")
 
     # Just-chat intent router. Off by default; flip with env INTENT_ROUTER=1.
     # Off = exactly today's behavior (plain text -> generic answer).

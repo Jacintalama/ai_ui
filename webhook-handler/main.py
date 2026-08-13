@@ -1,5 +1,6 @@
 """Webhook Handler Service - Main FastAPI Application."""
 import asyncio
+import json
 import os
 import hmac
 import time
@@ -39,6 +40,7 @@ from scheduler import (
     update_user_cron_job, get_user_jobs,
 )
 from gateway import pipeline as gateway_pipeline
+from gateway.platforms.buzz import BuzzAdapter
 from gateway.platforms.cli import CliAdapter
 from gateway.platforms.telegram import TELEGRAM_MAX_MESSAGE, TelegramAdapter
 from gateway.rate_limit import SlidingWindow, client_key
@@ -104,6 +106,18 @@ gateway_registry.register(PlatformEntry(
 ))
 
 gateway_registry.register(PlatformEntry(
+    name="buzz",
+    label="Buzz",
+    adapter_factory=lambda: BuzzAdapter(secret=settings.buzz_webhook_secret),
+    # Dormant until a shared secret exists here, so deploying this changes
+    # nothing visible and the public endpoint refuses rather than accepting
+    # unsigned traffic.
+    required_env=["BUZZ_WEBHOOK_SECRET"],
+    max_message_length=0,
+    emoji="🐝",
+))
+
+gateway_registry.register(PlatformEntry(
     name="cli",
     label="Terminal",
     adapter_factory=CliAdapter,
@@ -133,6 +147,11 @@ gateway_registry.register(PlatformEntry(
 # because one host behind a shared address must not starve the others.
 _CLI_PER_IP = SlidingWindow(limit=30, window_seconds=60)
 _CLI_PER_DEVICE = SlidingWindow(limit=20, window_seconds=60)
+
+# Buzz reaches this service from its own servers, so there is no useful caller
+# address to charge: every one of their users would share it. The budget is per
+# Buzz user, the only thing that tells a runaway apart from normal traffic here.
+_BUZZ_PER_USER = SlidingWindow(limit=20, window_seconds=60)
 
 SHARED_BOT_KEY = "shared"
 _gateway_seen_updates: set[tuple[str, int]] = set()
@@ -913,6 +932,58 @@ async def telegram_webhook_for_bot(bot_key: str, request: Request):
 
     _spawn_gateway(gateway_pipeline.handle_event(event, adapter))
     return JSONResponse(content={"ok": True}, status_code=200)
+
+
+@app.post("/webhook/gateway/buzz")
+async def gateway_buzz(request: Request):
+    """Buzz, on a contract we defined and handed them.
+
+    Synchronous like the terminal: Buzz is blocked on the answer and there is
+    no re-delivery to defend against, so there is no reason to answer before
+    the work is done.
+
+    A bad signature is a 401 here, not the silent 200 Telegram gets. Telegram
+    retries anything that is not a 200 forever, so a 4xx there would loop.
+    Buzz is a service we can expect to notice a 401 and fix its signing, and
+    telling it nothing would leave a misconfiguration looking like success.
+    """
+    adapter = gateway_registry.adapter("buzz")
+    if adapter is None:
+        raise HTTPException(status_code=503, detail="Buzz is not available")
+
+    headers = dict(request.headers)
+
+    # The RAW bytes, not a re-serialised parse. Signing covers exactly what
+    # was sent: two JSON encoders disagree about spacing and key order, so
+    # re-encoding before checking would accept a body nobody signed.
+    raw = await request.body()
+
+    if not adapter.verify_webhook_body(raw, headers):
+        logger.warning("gateway: rejected a Buzz message with a bad signature")
+        raise HTTPException(status_code=401, detail="Bad signature")
+
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    event = adapter.parse_inbound(payload, headers)
+    if event is None:
+        raise HTTPException(
+            status_code=400,
+            detail="A non-empty user_id and text are both required")
+
+    # Keyed on the Buzz user, NOT on the caller address. Every request arrives
+    # from Buzz's own servers, so an address key would put their entire user
+    # base in one bucket and let one loud person silence everyone.
+    if not _BUZZ_PER_USER.allow(event.source.user_id or ""):
+        logger.warning("gateway: buzz rate limit hit for a user")
+        raise HTTPException(
+            status_code=429,
+            detail="Sending faster than IO can answer. Wait a moment.")
+
+    reply = await gateway_pipeline.handle_event(event, adapter)
+    return JSONResponse(content={"reply": reply}, status_code=200)
 
 
 @app.post("/webhook/gateway/cli")

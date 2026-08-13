@@ -22,15 +22,35 @@ def test_the_catalogue_matches_the_hermes_list():
                      "matrix", "whatsapp", "signal", "email", "teams", "buzz"]
 
 
-def test_buzz_does_not_pretend_to_be_connectable():
-    # Every other row's blocker is work we have not done. Buzz's is that there
-    # is no API on the other end yet, and the reason has to say so rather than
-    # implying someone here is simply behind.
-    buzz = next(c for c in rg.CHANNEL_CATALOGUE if c["platform"] == "buzz")
-    row = rg._channel_status(buzz, {})
-    assert row["status"] == "planned"
+def _buzz():
+    return next(c for c in rg.CHANNEL_CATALOGUE if c["platform"] == "buzz")
+
+
+def test_buzz_is_dormant_until_this_server_is_connected_to_it(monkeypatch):
+    # Deploying the adapter must change nothing visible. The endpoint it
+    # serves is public, so a channel that switched itself on would be one that
+    # started accepting traffic nobody asked it to accept.
+    monkeypatch.delenv("BUZZ_ENABLED", raising=False)
+    row = rg._channel_status(_buzz(), {})
+    assert row["status"] == "off"
+    assert row["note"].strip()
+
+
+def test_buzz_is_offerable_once_it_is_switched_on(monkeypatch):
+    monkeypatch.setenv("BUZZ_ENABLED", "1")
+    row = rg._channel_status(_buzz(), {})
+    assert row["status"] == "available"
+    assert "code" in row["note"].lower(), (
+        "the note has to tell a Buzz user how to get a pairing code")
+
+
+def test_buzz_carries_no_personal_bot(monkeypatch):
+    # Buzz users reach IO through the one integration, not through a bot each,
+    # so the row must never offer to take a token.
+    monkeypatch.setenv("BUZZ_ENABLED", "1")
+    row = rg._channel_status(_buzz(), {})
     assert row["can_bring_bot"] is False
-    assert "api" in row["note"].lower()
+    assert rg._route_for(row, "@aiuiteam_bot")["via_label"] == ''
 
 
 def test_every_channel_says_what_it_is():
