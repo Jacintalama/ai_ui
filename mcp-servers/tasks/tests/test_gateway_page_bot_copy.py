@@ -28,7 +28,9 @@ def test_the_page_says_the_bot_is_private_to_the_user():
 
 
 def test_the_page_offers_all_three_hermes_controls():
-    for control in ("Test", "Edit", "Remove bot"):
+    # "Remove " is now completed by the channel's own word for a connection:
+    # "Remove bot" on a Nostr keypair is the wrong noun.
+    for control in ("Test", "Edit", '"Remove " + (c.identity_noun'):
         assert control in HTML
 
 

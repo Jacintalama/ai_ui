@@ -545,15 +545,32 @@ function botSection(c, refresh) {
   if (c.bot) {
     const who = document.createElement("div");
     who.className = "who";
-    who.textContent = c.bot.bot_username
-      ? "Your bot @" + c.bot.bot_username
-      : "Your bot is saved.";
-    box.appendChild(who);
+    // The server names the identity, because what one IS differs per channel:
+    // Telegram's is a bot with an @handle, Buzz's is a keypair with an npub.
+    who.textContent = c.bot.display || "Your connection is saved.";
+    // Skipped where the labelled copy box below says the same thing better.
+    // Printed together they were the same identity twice, once truncated.
+    if (!c.identity_public) box.appendChild(who);
+
+    // An identity the user has to put somewhere else. Buzz is the case: a
+    // workspace that only admits members it knows needs IO's public key, and
+    // a 63 character npub is not something anyone retypes, so it is offered
+    // the same way every command on this page is: copyable, with a fallback.
+    if (c.identity_public && c.bot.bot_username) {
+      const label = document.createElement("div");
+      label.className = "fieldlabel";
+      label.textContent = c.identity_public.label;
+      box.append(label, commandLine(c.bot.bot_username));
+      const hint = document.createElement("p");
+      hint.className = "why";
+      hint.textContent = c.identity_public.help;
+      box.appendChild(hint);
+    }
 
     if (c.bot.last_error) {
       const bad = document.createElement("p");
       bad.className = "why";
-      bad.textContent = "Telegram said: " + c.bot.last_error;
+      bad.textContent = c.bot.error_text || c.bot.last_error;
       box.appendChild(bad);
     }
 
@@ -606,7 +623,7 @@ function botSection(c, refresh) {
 
     const remove = document.createElement("button");
     remove.type = "button";
-    remove.textContent = "Remove bot";
+    remove.textContent = "Remove " + (c.identity_noun || "bot");
     remove.onclick = async () => {
       remove.disabled = true;
       try {

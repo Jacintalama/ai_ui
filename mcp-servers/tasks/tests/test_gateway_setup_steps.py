@@ -53,19 +53,55 @@ def test_the_pairing_instruction_waits_until_io_is_actually_there(monkeypatch):
     assert "message io from buzz" in _row("buzz")["note"].lower()
 
 
-def test_the_steps_name_both_things_a_user_has_to_fetch(monkeypatch):
-    # A key without a relay, or a relay without a key, connects to nothing.
+def test_the_only_thing_a_user_has_to_find_is_the_relay_url(monkeypatch):
+    # The steps used to send someone into Buzz to "create an agent identity",
+    # which Buzz has no way to do: Nostr identities are not issued by anyone.
+    # Asking for one made the form require something a user could not produce.
+    # IO mints its own, so the relay URL is the whole search.
     joined = " ".join(_buzz_off(monkeypatch)["setup"]["steps"]).lower()
-    assert "nsec1" in joined, "the user has to be told what the key looks like"
-    assert "wss://" in joined, "and where the relay URL comes from"
+    assert "wss://" in joined, "the user still has to be told what to look for"
+    assert "create an agent identity" not in joined
 
 
-def test_the_last_step_leads_into_the_form_below_it(monkeypatch):
-    # The steps used to end by describing a disabled preview. They now end
-    # where the user actually continues, which is the form and then a pairing
-    # code from Buzz.
+def test_the_key_is_optional_and_says_so(monkeypatch):
+    key = next(f for f in rg.CONNECT_FORMS["buzz"]["fields"] if f["name"] == "token")
+    assert "optional" in key["label"].lower()
+    assert key["secret"] is True, "it is still stored encrypted when given"
+
+
+def test_a_generated_key_is_a_usable_nostr_identity():
+    # Retried inside new_agent_key if random bytes land outside the group
+    # order, which would produce a key that cannot sign.
+    import nostr_nip19
+    import nostr_schnorr
+    seen = set()
+    for _ in range(25):
+        nsec = rg.new_agent_key()
+        assert nsec.startswith("nsec1")
+        raw = nostr_nip19.decode(nsec, "nsec")
+        assert len(nostr_schnorr.pubkey_from_seckey(raw)) == 32
+        seen.add(nsec)
+    assert len(seen) == 25, "generated the same identity twice"
+
+
+def test_the_saved_identity_is_offered_to_be_copied_elsewhere(monkeypatch):
+    # A workspace that only admits invited members needs IO's public key, and
+    # a 63 character npub is not something anyone retypes.
+    row = _buzz_off(monkeypatch)
+    assert row["identity_public"]["label"].strip()
+    assert "npub" in row["identity_public"]["help"]
+    assert "c.identity_public" in HTML
+
+
+def test_only_buzz_asks_a_user_to_carry_an_identity_elsewhere():
+    carriers = [c["platform"] for c in rg.CHANNEL_CATALOGUE
+                if rg._channel_status(c, {})["identity_public"]]
+    assert carriers == ["buzz"]
+
+
+def test_the_last_step_ends_where_the_user_actually_continues(monkeypatch):
     last = _buzz_off(monkeypatch)["setup"]["steps"][-1].lower()
-    assert "below" in last and "code" in last
+    assert "code" in last
 
 
 def test_the_preview_asks_for_the_same_fields_the_real_form_will(monkeypatch):

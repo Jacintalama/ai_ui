@@ -17,6 +17,7 @@ Never log a pairing code and never log a minted token.
 import json
 import logging
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -493,17 +494,19 @@ CONNECT_FORMS: dict[str, dict] = {
     },
     "buzz": {
         "title": "Connect my Buzz workspace",
-        "pitch": "Your workspace, your key, your data. Nobody else can see it "
-                 "or configure it. IO joins your Buzz relay as an agent and "
+        "pitch": "Your workspace, your data. Nobody else can see it or "
+                 "configure it. IO joins your Buzz relay as its own agent and "
                  "answers only the people you allow.",
         "submit": "Save & connect",
         "fields": [
             {"name": "endpoint", "label": "Relay URL", "secret": False,
              "placeholder": "wss://buzz.yourteam.com/relay",
              "help": "Your Buzz workspace's relay, the same URL its app uses."},
-            {"name": "token", "label": "Agent key", "secret": True,
-             "placeholder": "nsec1...",
-             "help": "The private key of the agent identity you created for IO."},
+            {"name": "token", "label": "Agent key (optional)", "secret": True,
+             "placeholder": "leave empty and IO creates its own",
+             "help": "Only if you already have one. Nostr identities are not "
+                     "issued by anyone, so IO can make its own and show you "
+                     "its public key."},
         ],
     },
 }
@@ -513,6 +516,20 @@ CONNECT_FORMS: dict[str, dict] = {
 def _public_url() -> str:
     """Where Telegram should deliver. Seam so tests need no env."""
     return os.environ.get("GATEWAY_PUBLIC_URL", "").rstrip("/")
+
+
+def _saved_label(row: GatewayBot) -> str:
+    noun = IDENTITY_NOUN.get(row.platform, "bot")
+    label = _identity_label(row.platform, (row.bot_username or "").strip())
+    return f"Your {noun} {label}" if label else f"Your {noun} is saved."
+
+
+def _error_label(row: GatewayBot) -> str:
+    if not row.last_error:
+        return ""
+    if row.platform == "buzz":
+        return f"Last connection attempt failed: {row.last_error}"
+    return f"Telegram said: {row.last_error}"
 
 
 def _bot_view(row: GatewayBot) -> dict[str, Any]:
@@ -528,6 +545,12 @@ def _bot_view(row: GatewayBot) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "allowed_ids": row.allowed_ids or "",
         "last_error": row.last_error or "",
+        # Whole sentences, decided here rather than assembled in the page.
+        # What a connection IS differs per channel, and so does who is
+        # reporting a failure: Telegram rejects a token, while a Buzz error is
+        # our own connection attempt failing, so "Buzz said" would be a lie.
+        "display": _saved_label(row),
+        "error_text": _error_label(row),
         # Not a secret, so it comes back and prefills the field on edit. A user
         # editing their allow list should not have to retype their relay URL.
         "endpoint": row.endpoint or "",
@@ -606,17 +629,25 @@ CHANNEL_CATALOGUE = (
      "setup": {
          "headline": "How Buzz connects",
          "steps": [
-             "In your Buzz workspace, create an agent identity for IO and copy "
-             "its private key. It starts with nsec1.",
              "Copy your workspace's relay URL, the wss:// address the Buzz app "
-             "itself connects to.",
-             "Paste both below. IO joins your workspace as that agent, then "
-             "message it from Buzz and it will reply with a pairing code.",
+             "itself connects to. That is the only thing you need to find.",
+             "Paste it below and save. IO creates its own identity and shows "
+             "you its public key, an npub. Nobody issues these, so there is "
+             "nothing to create in Buzz first.",
+             "If your workspace only accepts members you invite, add that npub "
+             "there. Then message IO from Buzz and it replies with a code.",
          ],
      },
      # Every other channel offers IO's own bot as the easy way in. Buzz has no
      # such thing to offer, so the row says what is actually on offer here.
      "offer_label": "connect your own Buzz workspace",
+     # Shown once saved. IO generated this identity itself, and a workspace
+     # that only admits invited members needs the public half of it.
+     "identity_public": {
+         "label": "IO's identity in your workspace",
+         "help": "If your Buzz workspace only accepts members you invite, add "
+                 "this npub there. Then message IO from Buzz.",
+     },
      "blurb": "Use IO from Buzz, where your people, agents and projects "
               "sit in one place.",
      # Every channel that is not this browser relays through somebody, and a
@@ -640,6 +671,23 @@ def _shared_bot_handle() -> str:
 #: inside somebody's workspace and IO is not a member of anyone's until they
 #: invite it. So a Buzz row must never offer "IO's bot" as a way in.
 SHARED_BOT_PLATFORMS = {"telegram"}
+
+
+#: What a personal connection IS on each channel. Telegram's is a bot with an
+#: @handle; Buzz's is a keypair with an npub, and calling that "your bot" sends
+#: someone looking for something Buzz does not have.
+IDENTITY_NOUN = {"buzz": "agent"}
+
+
+def _identity_label(platform: str, handle: str) -> str:
+    """How to print a saved connection's identity on a row."""
+    if not handle:
+        return ""
+    if platform == "buzz":
+        # An npub is 63 characters. The ends are what a person compares
+        # against what Buzz shows them.
+        return nostr_nip19.shorten(handle)
+    return "@" + handle
 
 
 def _route_for(row: dict, shared: str) -> dict[str, str]:
@@ -672,8 +720,9 @@ def _route_for(row: dict, shared: str) -> dict[str, str]:
 
     bot = row.get("bot")
     if bot and bot.get("enabled"):
-        handle = (bot.get("bot_username") or "").strip()
-        named = f"Your bot @{handle}" if handle else "Your own bot"
+        noun = IDENTITY_NOUN.get(row["platform"], "bot")
+        label = _identity_label(row["platform"], (bot.get("bot_username") or "").strip())
+        named = f"Your {noun} {label}" if label else f"Your own {noun}"
         if row.get("status") != "connected":
             # Saved a bot but never paired: the row used to say only "ready to
             # connect" and nothing else, while the panel below it plainly
@@ -696,7 +745,7 @@ def _route_for(row: dict, shared: str) -> dict[str, str]:
             return {"via": "offer",
                     "via_label": f"via IO's bot {shared}, or bring your own"}
         return {"via": "offer", "via_label": row.get("offer_label")
-                or "bring your own bot"}
+                or f"bring your own {IDENTITY_NOUN.get(row['platform'], 'bot')}"}
 
     return {"via": "", "via_label": ""}
 
@@ -738,6 +787,13 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # What this channel offers instead of IO's own bot, where there
            # isn't one. Read by _route_for.
            "offer_label": entry.get("offer_label", ""),
+           # An identity the user must carry somewhere else once it exists.
+           # Only Buzz: a workspace that admits known members needs IO's
+           # public key, and nothing else on this page has that shape.
+           "identity_public": entry.get("identity_public"),
+           # What a personal connection is called here. "Remove bot" on a
+           # keypair is the same wrong word as "Use my own bot" was.
+           "identity_noun": IDENTITY_NOUN.get(platform, "bot"),
            # What the user must do on the far side first, for the channels
            # where connecting is not something this server can do alone.
            # None on every channel we reach by calling an API.
@@ -863,7 +919,10 @@ async def disconnect(platform: str,
 
 class BotIn(BaseModel):
     platform: str = Field(min_length=1, max_length=32)
-    token: str = Field(min_length=1, max_length=200)
+    #: May be empty where the platform lets IO mint its own credential. Which
+    #: platforms those are is decided per platform below, not by this field:
+    #: a blank Telegram token is still refused.
+    token: str = Field(default="", max_length=200)
     allowed_ids: str = Field(default="", max_length=500)
     #: Only platforms IO connects OUT to send one. Telegram never does.
     endpoint: str = Field(default="", max_length=300)
@@ -895,18 +954,42 @@ def _buzz_test(row: GatewayBot, token: str) -> dict[str, Any]:
     return {"ok": True, "detail": f"{who} Connected. Message it from Buzz."}
 
 
-def _prepare_buzz(body: BotIn) -> tuple[str, str]:
-    """Validate a Buzz connection and return (display name, relay url).
+def new_agent_key() -> str:
+    """A fresh Nostr identity for IO, as an `nsec1...`.
 
-    Everything here is checked before a row is written, matching Telegram's
-    rule that a stored row always means credentials that were good at least
-    once. The difference is that Telegram can be asked; a relay cannot be
-    reached from this service, so validation is what can be proven locally:
-    the key's checksum, its length, and that it is a real point on the curve.
+    A Nostr identity is a keypair and nothing else. Nobody issues one: there is
+    no registry, no approval, and no API to ask. So IO can mint its own, and
+    that is the ordinary path rather than a fallback, because it means a user
+    never has to obtain or paste a private key at all.
 
-    That is worth more than it sounds. A mistyped nsec would otherwise be
-    stored happily, and the user would see "saved" followed by a channel that
-    never works, with the reason buried in a background loop's log.
+    Retried on the vanishing chance that 32 random bytes land outside the
+    group order, which would be an unusable key.
+    """
+    for _ in range(8):
+        raw = secrets.token_bytes(32)
+        try:
+            nostr_schnorr.pubkey_from_seckey(raw)
+        except ValueError:                              # pragma: no cover
+            continue
+        return nostr_nip19.encode(raw, "nsec")
+    raise RuntimeError("could not generate a usable key")   # pragma: no cover
+
+
+def _prepare_buzz(body: BotIn) -> tuple[str, str, str]:
+    """Validate a Buzz connection. Returns (npub, relay url, nsec to store).
+
+    The key is OPTIONAL, and leaving it empty is the normal path. Buzz has no
+    "create an agent" step to send someone to, and requiring one made the form
+    ask for something a user could not produce. A keypair is self-minted, so
+    IO makes its own and shows the public half, which is all a workspace needs
+    in order to let it in.
+
+    A pasted key is still accepted for anyone who does have one. It is checked
+    before a row is written, matching Telegram's rule that a stored row means
+    credentials that were good at least once. Telegram can be asked directly;
+    a relay cannot be reached from this service, so what is proven here is what
+    can be proven locally: the checksum, the length, and that the key is a real
+    point on the curve.
     """
     endpoint = (body.endpoint or "").strip()
     if not endpoint:
@@ -918,8 +1001,9 @@ def _prepare_buzz(body: BotIn) -> tuple[str, str]:
     if len(endpoint) > 300:
         raise HTTPException(status_code=400, detail="That relay URL is too long.")
 
+    nsec = (body.token or "").strip() or new_agent_key()
     try:
-        seckey = nostr_nip19.decode(body.token, "nsec")
+        seckey = nostr_nip19.decode(nsec, "nsec")
     except nostr_nip19.Bech32Error as exc:
         # The message is written for a person and says which mistake it was.
         raise HTTPException(status_code=400, detail=str(exc))
@@ -928,12 +1012,12 @@ def _prepare_buzz(body: BotIn) -> tuple[str, str]:
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail="That key is not a usable Nostr key. Create the agent "
-                   "identity again in Buzz and copy its key.")
+            detail="That key is not a usable Nostr key. Leave the field empty "
+                   "and IO will create one for you.")
 
-    # Shown on the row so a user can check IO is connected as the identity they
-    # meant, rather than trusting that the paste worked.
-    return nostr_nip19.shorten(nostr_nip19.encode(pubkey, "npub")), endpoint
+    # The FULL npub, not a shortened one: this is what the user copies into
+    # Buzz to let IO in, so it has to be the real thing.
+    return nostr_nip19.encode(pubkey, "npub"), endpoint, nsec
 
 
 class BotToggleIn(BaseModel):
@@ -956,7 +1040,8 @@ async def save_bot(body: BotIn,
             detail=f"{platform} cannot take your own bot yet.")
 
     token = body.token.strip()
-    if not token:
+    if not token and platform != "buzz":
+        # Buzz is the exception: an empty key there means "make me one".
         raise HTTPException(status_code=400, detail="Paste your bot token.")
 
     # Each platform proves the credentials before anything is stored, in
@@ -964,7 +1049,7 @@ async def save_bot(body: BotIn,
     # is a relay this service cannot reach, so it is checked arithmetically.
     endpoint = ""
     if platform == "buzz":
-        display_name, endpoint = _prepare_buzz(body)
+        display_name, endpoint, token = _prepare_buzz(body)
     else:
         try:
             display_name = (await telegram_api.get_me(token)).get("username", "")
