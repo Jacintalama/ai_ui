@@ -178,6 +178,14 @@ services:
       # channel is live while the page calls it off, which is how the terminal
       # channel once shipped. No shared secret: each user brings their own key.
       - BUZZ_ENABLED=${BUZZ_ENABLED:-1}
+      # Slack and Discord answer a DM as the sender's own IO account. Separate
+      # from the tokens on purpose: both integrations already carry real
+      # traffic, so having credentials must never be enough to reroute
+      # somebody's messages. Blank these to put the old behaviour back with no
+      # code change. Declared on tasks too, or the channel runs while the page
+      # calls it off.
+      - GATEWAY_SLACK_ENABLED=${GATEWAY_SLACK_ENABLED:-1}
+      - GATEWAY_DISCORD_ENABLED=${GATEWAY_DISCORD_ENABLED:-1}
     networks:
       - backend
     depends_on:
@@ -412,6 +420,10 @@ services:
       # Same flag as webhook-handler above, which is the point: that service
       # holds the sockets, this one renders the row.
       - BUZZ_ENABLED=${BUZZ_ENABLED:-1}
+      # Same reasoning: this service decides what the Channels row says, the
+      # other one serves the channel. Set on one only and they disagree.
+      - GATEWAY_SLACK_ENABLED=${GATEWAY_SLACK_ENABLED:-1}
+      - GATEWAY_DISCORD_ENABLED=${GATEWAY_DISCORD_ENABLED:-1}
       - GATEWAY_TELEGRAM_BOT=${GATEWAY_TELEGRAM_BOT:-@aiuiteam_bot}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads

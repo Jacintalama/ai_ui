@@ -1156,7 +1156,14 @@
         allUsers: true,
         label: "Channels",
         title: "Channels: talk to IO from Telegram, a terminal and more",
-        href: "/tasks/gateway/link",
+        // What the iframe loads. Under the gateway router's own prefix,
+        // which is what the api-gateway routes to the tasks service.
+        href: "/tasks/gateway/channels",
+        // What the ADDRESS BAR shows while this is open, so the page can be
+        // linked to and survives a reload. Deliberately different from href
+        // and deliberately short: this is the URL a person copies. See
+        // openAiuiEmbed.
+        urlPath: "/channels",
         // Open inside the OWUI shell: the left sidebar stays and only the
         // right-hand content area is swapped, rather than navigating away.
         embed: true,
@@ -1220,6 +1227,13 @@
       const w = document.querySelector("[data-aiui-embed]");
       if (w) w.remove();
       if (window.__aiuiEmbedCleanup) { window.__aiuiEmbedCleanup(); window.__aiuiEmbedCleanup = null; }
+      // Put the address bar back where it was. Only when WE changed it, so a
+      // close never rewrites a URL somebody else owns.
+      if (window.__aiuiEmbedPrevUrl != null) {
+        const back = window.__aiuiEmbedPrevUrl;
+        window.__aiuiEmbedPrevUrl = null;
+        try { history.pushState({}, "", back); } catch (e) {}
+      }
     }
 
     function openAiuiEmbed(cfg) {
@@ -1229,6 +1243,16 @@
         if (existing.getAttribute("data-src") === cfg.href) return;
         closeAiuiEmbed();
       }
+      // Give the open page a URL. The overlay is an iframe inside the shell,
+      // so without this the address bar keeps saying whatever it said before
+      // and the page cannot be linked to at all.
+      if (cfg.urlPath && location.pathname !== cfg.urlPath) {
+        if (window.__aiuiEmbedPrevUrl == null) {
+          window.__aiuiEmbedPrevUrl = location.pathname + location.search;
+        }
+        try { history.pushState({ aiuiEmbed: cfg.attr }, "", cfg.urlPath); } catch (e) {}
+      }
+
       const meas = aiuiSidebarRightEdge();
       const wrap = document.createElement("div");
       wrap.setAttribute("data-aiui-embed", "");
@@ -1389,6 +1413,16 @@
         const admin = await isAdmin();
         const visibleEntries = NAV_ENTRIES.filter((cfg) => cfg.allUsers || admin);
         if (!visibleEntries.length) return;
+
+        // Landing on /channels directly, by reload, bookmark or a link
+        // somebody shared, opens the page rather than a blank shell. The
+        // server hands the SPA back for any unknown path, so without this the
+        // address bar says /channels and nothing is on screen.
+        const wanted = visibleEntries.find(
+          (cfg) => cfg.urlPath && cfg.urlPath === location.pathname);
+        if (wanted && !document.querySelector("[data-aiui-embed]")) {
+          openAiuiEmbed(wanted);
+        }
         // Skip the expensive DOM work once every visible entry is present.
         if (visibleEntries.every((cfg) => document.querySelector("[" + cfg.attr + "]"))) return;
 

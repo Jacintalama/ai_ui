@@ -257,6 +257,14 @@ class RedeemIn(BaseModel):
     code: str = Field(min_length=1, max_length=24)
 
 
+# Two paths, one page. "/channels" is what the sidebar links to and what the
+# address bar shows, because "gateway/link" describes the mechanism rather than
+# the thing, and it is the URL a user would copy to a colleague.
+#
+# "/link" stays forever: it is baked into every pairing message already sent,
+# including ones sitting unread in somebody's Telegram, and webhook-handler
+# builds it from GATEWAY_PUBLIC_URL. Breaking it would strand those.
+@page_router.get("/channels", include_in_schema=False)
 @page_router.get("/link", include_in_schema=False)
 def link_page() -> HTMLResponse:
     """Inert HTML. Everything it can do goes back through POST /link.

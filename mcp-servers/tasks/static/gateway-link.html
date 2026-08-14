@@ -23,6 +23,12 @@
     margin-bottom: .6rem; padding: .85rem 1rem;
   }
   .row.dim { opacity: .62; }
+  /* The row IS the control: clicking anywhere on it opens the channel, so it
+     has to say so before the click. Only rows that can actually open get the
+     hand; a disabled one keeps the default arrow, which is the same honesty
+     the disabled button already carries. */
+  .row.openable { cursor: pointer; }
+  .row.openable:hover { border-color: rgba(128,128,128,.5); }
   .head { display: flex; align-items: center; gap: .8rem; }
   .icon { font-size: 1.2rem; width: 1.6rem; text-align: center; flex: none; }
   .icon svg { display: block; margin: 0 auto; }
@@ -840,7 +846,8 @@ function render(connections) {
       // bot section had.
       btn.title = c.label + " is not ready yet.";
     } else {
-      btn.addEventListener("click", () => {
+      row.classList.add("openable");
+      const toggle = () => {
         // Expands in place. Opening a second row closes the first, so there is
         // only ever one code box on screen to paste into.
         const mine = row.querySelector(".panel");
@@ -860,6 +867,18 @@ function render(connections) {
         openPanel = { row: row, btn: btn, label: openLabel };
         const firstField = row.querySelector(".panel input");
         if (firstField) firstField.focus();
+      };
+
+      btn.addEventListener("click", toggle);
+
+      // Clicking anywhere on the row does the same thing, EXCEPT on something
+      // that already does its own: a field being clicked to type in, a Copy
+      // button, a link. Without that exclusion, opening a row and then
+      // clicking its code box would close the row under the cursor.
+      row.addEventListener("click", (ev) => {
+        if (ev.target === btn || ev.target.closest(
+              "button, input, a, label, code, .panel")) return;
+        toggle();
       });
     }
     head.append(btn);

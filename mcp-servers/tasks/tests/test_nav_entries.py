@@ -52,3 +52,26 @@ def test_the_fallback_targets_something_non_admins_can_see():
     deployment; workspace.* are all false."""
     anchors = set(re.findall(r'a\[href="(/[a-z-]+)"\]', JS))
     assert anchors & {"/notes", "/calendar"}
+
+
+def test_channels_is_reachable_at_a_url_a_person_would_type():
+    # The page used to be at /tasks/gateway/link, which describes the mechanism
+    # rather than the thing, and the overlay never touched the address bar at
+    # all, so it could not be linked to.
+    entries = JS.split("const NAV_ENTRIES = [", 1)[1]
+    channels = entries.split('label: "Channels"', 1)[1].split("attr:", 1)[0]
+    assert 'href: "/tasks/gateway/channels"' in channels
+    assert 'urlPath: "/channels"' in channels
+
+
+def test_only_embedded_pages_claim_a_url():
+    # A full navigation already has a URL; pushing one for it would fight the
+    # browser.
+    for chunk in JS.split("const NAV_ENTRIES = [", 1)[1].split("attr:")[1:]:
+        if "urlPath:" in chunk:
+            assert "embed: true" in chunk, chunk[:120]
+
+
+def test_the_overlay_restores_the_previous_url_when_closed():
+    assert "__aiuiEmbedPrevUrl" in JS
+    assert "cfg.urlPath && location.pathname !== cfg.urlPath" in JS
