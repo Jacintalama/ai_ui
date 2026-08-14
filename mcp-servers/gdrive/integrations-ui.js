@@ -623,21 +623,23 @@
           '<h2 style="color:#fff;font-size:20px;font-weight:600;margin:0;">Connections</h2>' +
           '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;">&times;</button>' +
         '</div>' +
-        '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Sign in once with your Google account to enable Gmail, Calendar, and Drive. Each connection is personal to your account.</p>' +
+        '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Sign in once with your Google account to enable Gmail, Calendar, and Drive. Each connection is personal to your account. Looking for Slack, Discord or Telegram? Those are channels you talk to IO from, on the Channels page.</p>' +
         '<input id="aiui-conn-search" type="text" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
         '<div id="aiui-conn-tabs" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"></div>' +
       '</div>' +
       '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;padding:16px 24px 24px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;"></div>';
 
-    var CATS = ['All', 'Chat', 'Productivity', 'Tools & Automation', 'Social', 'Platform'];
+    // Chat is gone with the cards that filled it. Slack, Discord and Telegram
+    // are CHANNELS, places you talk to IO FROM, and they live on the Channels
+    // page where they can actually be connected. Listing them here as "coming
+    // soon" was wrong twice over: they are built and working, and this dialog
+    // cannot connect them.
+    var CATS = ['All', 'Productivity', 'Tools & Automation', 'Social', 'Platform'];
     // domain drives the real logo (Clearbit, then Google favicon, then a letter).
     // One "Google" card connects Gmail + Calendar + Drive in a single consent.
     var APPS = [
       { id: 'google', name: 'Google', sub: 'Gmail, Calendar, Drive', domain: 'google.com',
         apis: [GMAIL_API, CALENDAR_API, GDRIVE_API], cat: 'Productivity', real: true },
-      { id: 'slack', name: 'Slack', domain: 'slack.com', cat: 'Chat' },
-      { id: 'discord', name: 'Discord', domain: 'discord.com', cat: 'Chat' },
-      { id: 'telegram', name: 'Telegram', domain: 'telegram.org', cat: 'Chat' },
       { id: 'notion', name: 'Notion', domain: 'notion.so', cat: 'Productivity' },
       { id: 'clickup', name: 'ClickUp', domain: 'clickup.com', cat: 'Productivity' },
       { id: 'trello', name: 'Trello', domain: 'trello.com', cat: 'Productivity' },
