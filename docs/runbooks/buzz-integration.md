@@ -32,15 +32,24 @@ That last row is why there is a cap.
 
 Three steps, all on the Channels page, no admin and no deploy:
 
-1. In their Buzz workspace, create an agent identity for IO and copy its
-   private key (`nsec1...`).
-2. Copy the relay URL their own Buzz app connects to (`wss://...`).
-3. Paste both into the Buzz row and save. IO joins as that agent. They then
-   message it from Buzz and it replies with a pairing code, which they paste
+1. Copy the relay URL their own Buzz app connects to (`wss://...`). This is the
+   only thing they have to go and find.
+2. Paste it into the Buzz row and save. **IO generates its own identity** and
+   shows the public half, an `npub`, with a copy button.
+3. If their workspace only admits invited members, add that npub there. Then
+   message IO from Buzz and it replies with a pairing code, which they paste
    back on the same page.
 
-The key is encrypted per account with Fernet and is visible to nobody else. The
-relay URL is not a secret and prefills on edit.
+**IO mints the keypair, and this is the ordinary path rather than a fallback.**
+An earlier version asked the user to "create an agent identity in Buzz and copy
+its private key", which Buzz has no way to do. A Nostr identity is a keypair
+and nothing else: there is no registry, no approval and no API to ask, so
+nobody issues one. Requiring one made the form ask for something a user could
+not produce, and it needlessly put a live private key in a copy buffer.
+
+A pasted key is still accepted for anyone who has one, checksum-checked and
+encrypted at rest. Either way the key is Fernet-encrypted per account and
+visible to nobody else. The relay URL is not a secret and prefills on edit.
 
 **Do not build a way for one user to enter another's code.** A code links
 whichever IO account asked for it, and it hands the holder that account's
