@@ -39,7 +39,10 @@ from scheduler import (
     create_user_cron_job, delete_user_cron_job,
     update_user_cron_job, get_user_jobs,
 )
+from gateway import buzz_manager as buzz_manager_module
+from gateway import nip19
 from gateway import pipeline as gateway_pipeline
+from gateway.buzz_manager import BuzzManager
 from gateway.platforms.cli import CliAdapter
 from gateway.platforms.telegram import TELEGRAM_MAX_MESSAGE, TelegramAdapter
 from gateway.rate_limit import SlidingWindow, client_key
@@ -164,6 +167,10 @@ _monotonic = time.monotonic
 #: touching a private attribute of another module.
 gateway_tasks = None
 
+#: Buzz's connection manager, or None when the channel is switched off. Owns
+#: every open relay socket; see gateway/buzz_manager.py for why there is a cap.
+buzz_manager = None
+
 
 class CreateCronJobRequest(BaseModel):
     job_id: str
@@ -273,6 +280,19 @@ async def lifespan(app: FastAPI):
         if adapter and not await adapter.connect():
             logger.error("gateway: %s did not connect; its route will 503",
                          entry.name)
+
+    # Buzz is not a webhook, so it has no route to register and nothing here
+    # can be done "on connect": the manager holds one websocket per user and
+    # reconciles them against what tasks says is enabled. Dormant unless the
+    # flag is set, like every other channel.
+    global buzz_manager
+    if os.environ.get("BUZZ_ENABLED", "").strip():
+        buzz_manager = BuzzManager(
+            gateway_tasks, _on_buzz_message,
+            decode_key=_buzz_seckey, allow_factory=_buzz_allow)
+        buzz_manager.start()
+        logger.info("gateway: buzz manager started (cap %d)",
+                    buzz_manager_module.MAX_CONNECTIONS)
 
     # Let the Slack events handler offer the intent router (it parks/builds via
     # the shared router). Mirrors how the Discord client is attached below.
@@ -385,6 +405,16 @@ async def lifespan(app: FastAPI):
         except Exception:                                # noqa: BLE001
             logger.error("gateway: %s did not disconnect cleanly", entry.name,
                         exc_info=True)
+
+    if buzz_manager is not None:
+        # Before the event loop goes away. Each relay says goodbye by
+        # publishing offline presence, which is the only signal a Buzz
+        # workspace gets that an agent has gone.
+        try:
+            await buzz_manager.stop()
+        except Exception:                                # noqa: BLE001
+            logger.error("gateway: buzz manager did not stop cleanly",
+                         exc_info=True)
 
     logger.info("Shutting down webhook handler...")
 
@@ -752,6 +782,38 @@ async def telegram_webhook(request: Request):
 
     _spawn_gateway(gateway_pipeline.handle_event(event, adapter))
     return JSONResponse(content={"ok": True}, status_code=200)
+
+
+# --- Buzz: the one channel we hold a socket open for -------------------------
+
+def _buzz_seckey(nsec: str) -> bytes:
+    """A stored `nsec1...` to raw key bytes. Raises on anything malformed."""
+    return nip19.decode(nsec, "nsec")
+
+
+def _buzz_allow(config: dict):
+    """Who this connection answers.
+
+    Reuses the same rule as a personal Telegram bot rather than inventing a
+    second one: an explicit allow list wins, otherwise the account that claimed
+    the connection, otherwise whoever arrives first so the owner can claim it
+    by messaging their own agent.
+
+    This matters more here than on Telegram. A Buzz relay is a shared
+    workspace, so without a rule every colleague who messages the agent would
+    reach the owner's IO account, with their memory and their email.
+    """
+    return lambda pubkey: _bot_sender_allowed(config, pubkey)
+
+
+async def _on_buzz_message(event, adapter) -> None:
+    """One inbound Buzz message, through the same pipeline as every channel.
+
+    Spawned rather than awaited: the read loop must go back to the socket
+    immediately, or one slow model call would stall every other message on that
+    relay behind it.
+    """
+    _spawn_gateway(gateway_pipeline.handle_event(event, adapter))
 
 
 def _bot_sender_allowed(config: dict, sender_id: str) -> bool:

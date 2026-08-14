@@ -27,6 +27,8 @@ from sqlalchemy import delete, select, update
 
 import gateway_bots as gbots
 import gateway_pairing as gp
+import nostr_nip19
+import nostr_schnorr
 import telegram_api
 from db import session
 from models import GatewayBot, GatewayLink, GatewayPairingCode, GatewaySession
@@ -462,7 +464,7 @@ async def redeem(body: RedeemIn,
 #: Platforms that can actually honour a saved token today. Every other channel
 #: shows the controls in an inert state, so the page never grows a button that
 #: lies.
-BOT_CAPABLE_PLATFORMS = {"telegram"}
+BOT_CAPABLE_PLATFORMS = {"telegram", "buzz"}
 
 # What a user has to fill in to connect a channel with their own credentials,
 # described here rather than drawn in the page. Every channel that can carry a
@@ -476,6 +478,7 @@ BOT_CAPABLE_PLATFORMS = {"telegram"}
 # learn what saving this actually grants.
 CONNECT_FORMS: dict[str, dict] = {
     "telegram": {
+        "title": "Use my own bot",
         "pitch": "Your bot, your token, your data. Nobody else can see it or "
                  "configure it. Saving it lets IO send messages as that bot.",
         "submit": "Save & enable",
@@ -489,6 +492,7 @@ CONNECT_FORMS: dict[str, dict] = {
         ],
     },
     "buzz": {
+        "title": "Connect my Buzz workspace",
         "pitch": "Your workspace, your key, your data. Nobody else can see it "
                  "or configure it. IO joins your Buzz relay as an agent and "
                  "answers only the people you allow.",
@@ -524,6 +528,11 @@ def _bot_view(row: GatewayBot) -> dict[str, Any]:
         "enabled": bool(row.enabled),
         "allowed_ids": row.allowed_ids or "",
         "last_error": row.last_error or "",
+        # Not a secret, so it comes back and prefills the field on edit. A user
+        # editing their allow list should not have to retype their relay URL.
+        "endpoint": row.endpoint or "",
+        # Whether the connection this service does NOT hold is actually up.
+        "connected_at": row.connected_at.isoformat() if row.connected_at else "",
     }
 
 
@@ -585,7 +594,10 @@ CHANNEL_CATALOGUE = (
     # person who owns that workspace has to mint it an identity there first.
     # That is why this row carries setup steps and the others do not.
     {"platform": "buzz", "label": "Buzz", "icon": "🐝",
-     "connect_headline": "Quick connect · from Buzz",
+     # Reads as what it is once the workspace form sits above it: the second
+     # half. It used to say "Quick connect", above a form without which no
+     # code can ever arrive.
+     "connect_headline": "Then pair your account",
      # What the user has to do on the far side before anything here can work.
      # It lives on the row because it used to live only in a chat message, and
      # the row instead said "message IO from Buzz and it will reply with a
@@ -598,17 +610,13 @@ CHANNEL_CATALOGUE = (
              "its private key. It starts with nsec1.",
              "Copy your workspace's relay URL, the wss:// address the Buzz app "
              "itself connects to.",
-             "Paste both here. IO joins your workspace as that agent and "
-             "answers the people you allow, using your IO account.",
+             "Paste both below. IO joins your workspace as that agent, then "
+             "message it from Buzz and it will reply with a pairing code.",
          ],
-         # Shown in place of a live form. Taking custody of a private key that
-         # nothing can yet use would be a real risk in exchange for nothing, so
-         # this row shows the fields and refuses to accept them rather than
-         # storing a secret to sit idle.
-         "blocked": "Not live yet. IO's Buzz agent is still being built, so "
-                    "this does not take your key: holding a private key "
-                    "nothing can use would be a risk with no upside.",
      },
+     # Every other channel offers IO's own bot as the easy way in. Buzz has no
+     # such thing to offer, so the row says what is actually on offer here.
+     "offer_label": "connect your own Buzz workspace",
      "blurb": "Use IO from Buzz, where your people, agents and projects "
               "sit in one place.",
      # Every channel that is not this browser relays through somebody, and a
@@ -625,6 +633,13 @@ CHANNEL_CATALOGUE = (
 def _shared_bot_handle() -> str:
     """The bot IO operates, for channels that have one."""
     return os.environ.get("GATEWAY_TELEGRAM_BOT", "").strip()
+
+
+#: Channels where IO operates an identity everyone can use. Telegram has one
+#: bot serving every account; Buzz cannot, because an identity there lives
+#: inside somebody's workspace and IO is not a member of anyone's until they
+#: invite it. So a Buzz row must never offer "IO's bot" as a way in.
+SHARED_BOT_PLATFORMS = {"telegram"}
 
 
 def _route_for(row: dict, shared: str) -> dict[str, str]:
@@ -648,6 +663,12 @@ def _route_for(row: dict, shared: str) -> dict[str, str]:
     # simply false.
     if not row.get("can_bring_bot"):
         return {"via": "", "via_label": ""}
+
+    # A channel where IO runs no identity of its own. Naming a shared bot on
+    # such a row would offer a way in that does not exist, which is exactly
+    # what the Buzz row did when it borrowed Telegram's sentence.
+    if row["platform"] not in SHARED_BOT_PLATFORMS:
+        shared = ""
 
     bot = row.get("bot")
     if bot and bot.get("enabled"):
@@ -674,7 +695,8 @@ def _route_for(row: dict, shared: str) -> dict[str, str]:
         if shared:
             return {"via": "offer",
                     "via_label": f"via IO's bot {shared}, or bring your own"}
-        return {"via": "offer", "via_label": "bring your own bot"}
+        return {"via": "offer", "via_label": row.get("offer_label")
+                or "bring your own bot"}
 
     return {"via": "", "via_label": ""}
 
@@ -695,6 +717,11 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # The page draws the same three controls on every row. These two say
            # which of them can actually do anything here.
            "can_bring_bot": platform in BOT_CAPABLE_PLATFORMS,
+           # Whether IO runs an identity on this channel that anyone can use.
+           # Where it does not, bringing your own is not an alternative to the
+           # quick path, it IS the path, and the page has to order the two
+           # accordingly or it shows step two above step one.
+           "has_shared_bot": platform in SHARED_BOT_PLATFORMS,
            "bot": None,
            # Who else handles your messages on this channel. Empty for the
            # ones that relay through nobody.
@@ -708,6 +735,9 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # renders whatever a channel needs instead of one
            # channel's fields written into the markup.
            "connect_form": CONNECT_FORMS.get(platform),
+           # What this channel offers instead of IO's own bot, where there
+           # isn't one. Read by _route_for.
+           "offer_label": entry.get("offer_label", ""),
            # What the user must do on the far side first, for the channels
            # where connecting is not something this server can do alone.
            # None on every channel we reach by calling an API.
@@ -747,11 +777,15 @@ def _channel_status(entry: dict, linked: dict) -> dict:
         # workspace to be messaged. The pairing note below is only true once IO
         # is an agent there, so it lives behind the same flag.
         if os.environ.get("BUZZ_ENABLED", "").strip():
+            # Note the ORDER. On Telegram you message IO's bot first and pair
+            # second. Here there is nothing to message until you have given IO
+            # an identity in your workspace, so connecting comes first and the
+            # note must not imply otherwise.
             return {**row, "status": "available",
-                    "note": "Message IO from Buzz and it will reply with a code."}
+                    "note": "Once your workspace is connected, message IO "
+                            "from Buzz and it will reply with a code."}
         return {**row, "status": "off",
-                "note": "IO is not an agent in a Buzz workspace yet. "
-                        "Open this to see what connecting will need."}
+                "note": "The Buzz channel is switched off on this server."}
 
     if platform == "cli":
         if os.environ.get("GATEWAY_CLI_ENABLED", "").strip():
@@ -831,6 +865,75 @@ class BotIn(BaseModel):
     platform: str = Field(min_length=1, max_length=32)
     token: str = Field(min_length=1, max_length=200)
     allowed_ids: str = Field(default="", max_length=500)
+    #: Only platforms IO connects OUT to send one. Telegram never does.
+    endpoint: str = Field(default="", max_length=300)
+
+
+def _buzz_test(row: GatewayBot, token: str) -> dict[str, Any]:
+    """What we can honestly say about a Buzz connection from this service.
+
+    Deliberately does not claim more than it knows. `connected_at` is written
+    by whichever process actually holds the socket, so an empty one means "not
+    up yet" and never "broken", and the two read very differently to someone
+    who just pressed a button.
+    """
+    try:
+        npub = nostr_nip19.encode(
+            nostr_schnorr.pubkey_from_seckey(nostr_nip19.decode(token, "nsec")),
+            "npub")
+    except Exception:                                          # noqa: BLE001
+        return {"ok": False,
+                "detail": "The saved key could not be read. Remove this "
+                          "connection and paste the key again."}
+
+    who = f"IO connects to {row.endpoint} as {nostr_nip19.shorten(npub)}."
+    if row.last_error:
+        return {"ok": False, "detail": f"{who} Last attempt failed: {row.last_error}"}
+    if not row.connected_at:
+        return {"ok": True,
+                "detail": f"{who} Connecting now, it takes up to a minute."}
+    return {"ok": True, "detail": f"{who} Connected. Message it from Buzz."}
+
+
+def _prepare_buzz(body: BotIn) -> tuple[str, str]:
+    """Validate a Buzz connection and return (display name, relay url).
+
+    Everything here is checked before a row is written, matching Telegram's
+    rule that a stored row always means credentials that were good at least
+    once. The difference is that Telegram can be asked; a relay cannot be
+    reached from this service, so validation is what can be proven locally:
+    the key's checksum, its length, and that it is a real point on the curve.
+
+    That is worth more than it sounds. A mistyped nsec would otherwise be
+    stored happily, and the user would see "saved" followed by a channel that
+    never works, with the reason buried in a background loop's log.
+    """
+    endpoint = (body.endpoint or "").strip()
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="Paste your relay URL.")
+    if not endpoint.startswith(("wss://", "ws://")):
+        raise HTTPException(
+            status_code=400,
+            detail="A relay URL starts with wss://. Copy the one your Buzz app uses.")
+    if len(endpoint) > 300:
+        raise HTTPException(status_code=400, detail="That relay URL is too long.")
+
+    try:
+        seckey = nostr_nip19.decode(body.token, "nsec")
+    except nostr_nip19.Bech32Error as exc:
+        # The message is written for a person and says which mistake it was.
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        pubkey = nostr_schnorr.pubkey_from_seckey(seckey)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="That key is not a usable Nostr key. Create the agent "
+                   "identity again in Buzz and copy its key.")
+
+    # Shown on the row so a user can check IO is connected as the identity they
+    # meant, rather than trusting that the paste worked.
+    return nostr_nip19.shorten(nostr_nip19.encode(pubkey, "npub")), endpoint
 
 
 class BotToggleIn(BaseModel):
@@ -856,11 +959,18 @@ async def save_bot(body: BotIn,
     if not token:
         raise HTTPException(status_code=400, detail="Paste your bot token.")
 
-    try:
-        identity = await telegram_api.get_me(token)
-    except telegram_api.TelegramError as exc:
-        raise HTTPException(status_code=400,
-                            detail=f"Telegram said: {exc.description}")
+    # Each platform proves the credentials before anything is stored, in
+    # whatever way that platform allows. Telegram can be asked directly; Buzz
+    # is a relay this service cannot reach, so it is checked arithmetically.
+    endpoint = ""
+    if platform == "buzz":
+        display_name, endpoint = _prepare_buzz(body)
+    else:
+        try:
+            display_name = (await telegram_api.get_me(token)).get("username", "")
+        except telegram_api.TelegramError as exc:
+            raise HTTPException(status_code=400,
+                                detail=f"Telegram said: {exc.description}")
 
     bot_key = gbots.new_bot_key()
     secret = gbots.new_webhook_secret()
@@ -883,12 +993,24 @@ async def save_bot(body: BotIn,
         row = GatewayBot(
             bot_key=bot_key, email=user.email, platform=platform,
             token_encrypted=encrypted, webhook_secret=secret,
-            bot_username=identity.get("username", ""),
+            bot_username=display_name, endpoint=endpoint,
             allowed_ids=gbots.parse_allowed_ids(body.allowed_ids),
             enabled=True, last_error=None,
         )
         s.add(row)
         await s.commit()
+
+    if platform == "buzz":
+        # Nothing to register. webhook-handler reconciles what is open against
+        # what is enabled here, so the connection comes up on its own within
+        # one poll. A push from this service would be one more thing to get out
+        # of step, and would not survive either service restarting.
+        log.info("gateway: %s saved their own %s connection", user.email, platform)
+        return {"bot_key": bot_key, "platform": platform,
+                "bot_username": display_name, "endpoint": endpoint,
+                "token_hint": gbots.mask_token(token), "enabled": True,
+                "allowed_ids": gbots.parse_allowed_ids(body.allowed_ids),
+                "last_error": ""}
 
     hook_url = f"{_public_url()}/webhook/telegram/{bot_key}"
     try:
@@ -902,14 +1024,14 @@ async def save_bot(body: BotIn,
             await s.commit()
         log.warning("gateway: setWebhook failed for %s", user.email)
         return {"bot_key": bot_key, "platform": platform,
-                "bot_username": identity.get("username", ""),
+                "bot_username": display_name,
                 "token_hint": gbots.mask_token(token),
                 "enabled": False, "allowed_ids": gbots.parse_allowed_ids(body.allowed_ids),
                 "last_error": exc.description}
 
     log.info("gateway: %s saved their own %s bot", user.email, platform)
     return {"bot_key": bot_key, "platform": platform,
-            "bot_username": identity.get("username", ""),
+            "bot_username": display_name,
             "token_hint": gbots.mask_token(token),
             "enabled": True,
             "allowed_ids": gbots.parse_allowed_ids(body.allowed_ids),
@@ -998,6 +1120,14 @@ async def test_bot(bot_key: str,
         )).scalars().first()
         chat_id = row.owner_platform_user_id or (
             link.platform_user_id if link else "")
+
+    if row.platform == "buzz":
+        # This service holds no Buzz socket, so it cannot prove the connection
+        # by using it. What it CAN do is answer the two questions a user
+        # actually has: is the key I pasted the identity I meant, and is the
+        # connection up. The first is arithmetic, the second is whatever
+        # webhook-handler last reported.
+        return _buzz_test(row, token)
 
     try:
         if chat_id:
@@ -1123,6 +1253,73 @@ async def bot_config(bot_key: str,
         "owner_platform_user_id": row.owner_platform_user_id or "",
         "enabled": bool(row.enabled),
     }
+
+
+@router.get("/bots")
+async def bots_for_platform(platform: str,
+                            x_internal_secret: str = Header(default="")
+                            ) -> dict[str, Any]:
+    """Every enabled connection on one platform, with its credentials.
+
+    Telegram never needs this: an inbound webhook names its own bot_key, so the
+    config is fetched one at a time on demand. Buzz has no inbound call at all,
+    so webhook-handler has to be told which relays to hold open, and it asks
+    here rather than being pushed at. Polling converges after a restart on
+    either side; a push does not.
+
+    A row whose token cannot be decrypted is skipped rather than failing the
+    whole listing, or one user's rotated key would take every other user's
+    connection down with it.
+    """
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        rows = (await s.execute(
+            select(GatewayBot).where(GatewayBot.platform == platform,
+                                     GatewayBot.enabled.is_(True))
+        )).scalars().all()
+
+    out = []
+    for row in rows:
+        try:
+            token = _decrypt_internal(row)
+        except HTTPException:
+            log.error("gateway: skipping %s, its token could not be read",
+                      row.bot_key)
+            continue
+        out.append({
+            "bot_key": row.bot_key,
+            "owner_email": row.email,
+            "token": token,
+            "endpoint": row.endpoint or "",
+            "allowed_ids": row.allowed_ids or "",
+            "owner_platform_user_id": row.owner_platform_user_id or "",
+        })
+    return {"bots": out}
+
+
+class BotStateIn(BaseModel):
+    connected: bool
+    error: str = Field(default="", max_length=300)
+
+
+@router.post("/bots/{bot_key}/state")
+async def bot_state(bot_key: str, body: BotStateIn,
+                    x_internal_secret: str = Header(default="")) -> dict[str, bool]:
+    """webhook-handler reporting whether a held-open connection is actually up.
+
+    Without this the page can only say what was SAVED, never what is running,
+    and a relay that has been refusing us for a day looks identical to one
+    working perfectly. Telegram needs no equivalent: it reports failures by
+    simply not calling us, which the user notices immediately.
+    """
+    _require_internal(x_internal_secret)
+    async with session() as s:
+        await s.execute(
+            update(GatewayBot).where(GatewayBot.bot_key == bot_key)
+            .values(last_error=(body.error or None) if not body.connected else None,
+                    connected_at=_now() if body.connected else None))
+        await s.commit()
+    return {"ok": True}
 
 
 @router.post("/bots/{bot_key}/claim")

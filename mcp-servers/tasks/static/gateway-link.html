@@ -443,53 +443,19 @@ function terminalSteps() {
   return steps([[download], [run], [document.createTextNode("Paste the code it prints below")]]);
 }
 
-// What connecting needs from the user on the far side, for a channel this
-// server cannot reach on its own. Buzz is the case: IO does not call Buzz, it
-// joins a Buzz workspace as an agent, so somebody has to mint it an identity
-// there before any of this can run.
+// What a user has to do on the far side before the form below them can work.
 //
-// The fields are drawn from the same connect_form every live channel uses, and
-// drawn disabled, so a user can see exactly what they will be asked for
-// without the page pretending to accept it. Storing a private key that nothing
-// can yet use would be a risk in exchange for nothing.
-function setupBlock(c) {
-  // Same wrapper the live form uses, so the preview of a field is the field.
+// Buzz is the case that needs it. Every other channel is reached by IO calling
+// somebody's API, so there is nothing for the user to prepare; Buzz is a
+// workspace IO joins as an agent, and that identity has to be minted by
+// whoever owns the workspace. Without these steps the form asks for a relay
+// URL and a key with no clue where either comes from.
+function setupSteps(c) {
   const box = document.createElement("div");
-  box.className = "botbox";
   const head = document.createElement("div");
-  head.className = "botheadline";
+  head.className = "fieldlabel";
   head.textContent = c.setup.headline || "How this connects";
   box.append(head, steps(c.setup.steps || []));
-
-  const spec = c.connect_form;
-  if (spec) {
-    for (const f of spec.fields) {
-      const label = document.createElement("div");
-      label.className = "fieldlabel";
-      label.textContent = f.label;
-      const input = document.createElement("input");
-      input.type = "text";
-      input.placeholder = f.placeholder || "";
-      input.disabled = true;
-      box.append(label, input);
-      if (f.help) {
-        const help = document.createElement("p");
-        help.className = "why";
-        help.textContent = f.help;
-        box.append(help);
-      }
-    }
-  }
-
-  if (c.setup.blocked) {
-    // Why the fields above are inert. Without this the row is a form that
-    // silently does nothing, which is the one thing every control on this
-    // page is not allowed to be.
-    const why = document.createElement("p");
-    why.className = "warn";
-    why.textContent = c.setup.blocked;
-    box.append(why);
-  }
   return box;
 }
 
@@ -503,6 +469,13 @@ function buildExpand(c) {
   const panel = document.createElement("div");
   panel.className = "panel";
 
+  // Where IO runs no identity of its own, connecting YOUR credentials is not
+  // an alternative to the quick path, it is the only way a pairing code can
+  // ever be sent. So it goes first. Rendered the other way round, as it was,
+  // the page showed a code box above the form that makes codes possible.
+  const bringFirst = c.can_bring_bot && !c.has_shared_bot;
+  if (bringFirst) panel.append(botSection(c, load));
+
   if (c.status === "available") {
     const quick = document.createElement("div");
     quick.className = "botheadline";
@@ -515,8 +488,15 @@ function buildExpand(c) {
 
     if (c.platform === "cli") {
       panel.append(terminalSteps());
-    } else if (c.note) {
+    } else if (c.note && !bringFirst) {
       panel.append(steps([c.note, "Paste the code below"]));
+    } else if (c.note) {
+      // The numbered steps above already carry the story, so this is the one
+      // remaining sentence rather than a second list restarting at 1.
+      const line = document.createElement("p");
+      line.className = "step";
+      line.textContent = c.note;
+      panel.append(line);
     }
 
     panel.append(buildConnectFields(c));
@@ -526,14 +506,7 @@ function buildExpand(c) {
     panel.append(buildDisconnectBlock(c));
   }
 
-  // A channel nobody can connect yet, but whose setup a user can start on the
-  // far side today. Shown only while there is no live path in, so the moment
-  // the channel goes available the ordinary quick-connect block replaces it.
-  if (c.setup && c.status !== "available" && c.status !== "connected") {
-    panel.append(setupBlock(c));
-  }
-
-  if (c.can_bring_bot) {
+  if (c.can_bring_bot && !bringFirst) {
     panel.append(botSection(c, load));
   }
 
@@ -552,7 +525,10 @@ function botSection(c, refresh) {
 
   const head = document.createElement("div");
   head.className = "botheadline";
-  head.textContent = "Use my own bot";
+  // Telegram's word for it is "bot". Buzz's is a workspace, and a heading
+  // that calls it a bot sends someone looking for a bot token they will not
+  // find. Named by the server alongside the fields it belongs to.
+  head.textContent = (c.connect_form && c.connect_form.title) || "Use my own bot";
   box.appendChild(head);
 
   if (!c.can_bring_bot) {
@@ -649,6 +625,7 @@ function botSection(c, refresh) {
     return box;
   }
 
+  if (c.setup) box.appendChild(setupSteps(c));
   box.appendChild(botForm(c, refresh));
   return box;
 }

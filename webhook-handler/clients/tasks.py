@@ -592,6 +592,34 @@ class TasksClient:
             raise
         return resp.json()
 
+    async def gateway_bots_for_platform(self, platform: str) -> list[dict]:
+        """Every enabled connection on one platform, with credentials.
+
+        Only for platforms IO connects OUT to. A webhook platform names its own
+        bot on the way in, so it never needs the whole list; a relay we hold
+        open has no inbound call to name anything, so this is how the manager
+        learns what should be connected.
+
+        The `token` in each entry is plaintext. Do not log these.
+        """
+        resp = await self._internal_request(
+            "GET", "/gateway/bots", params={"platform": platform})
+        return resp.json().get("bots") or []
+
+    async def gateway_bot_state(self, bot_key: str, connected: bool,
+                                error: str = "") -> None:
+        """Report whether a held-open connection is actually up.
+
+        Best effort on purpose: this is status reporting, and failing to report
+        must never take down the connection it is reporting on.
+        """
+        try:
+            await self._internal_request(
+                "POST", f"/gateway/bots/{bot_key}/state",
+                json={"connected": connected, "error": error[:300]})
+        except Exception:                                       # noqa: BLE001
+            logger.warning("gateway: could not report state for %s", bot_key)
+
     async def gateway_bot_claim(self, bot_key: str, platform_user_id: str) -> bool:
         """First contact decides who an unclaimed bot serves."""
         resp = await self._internal_request(

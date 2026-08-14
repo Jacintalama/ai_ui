@@ -44,13 +44,17 @@ def test_buzz_is_offerable_once_it_is_switched_on(monkeypatch):
         "the note has to tell a Buzz user how to get a pairing code")
 
 
-def test_buzz_carries_no_personal_bot(monkeypatch):
-    # Buzz users reach IO through the one integration, not through a bot each,
-    # so the row must never offer to take a token.
+def test_buzz_never_offers_ios_own_bot(monkeypatch):
+    # Buzz carries a personal connection, like Telegram. What it does NOT have
+    # is a shared identity: an identity there lives inside somebody's
+    # workspace, and IO is a member of nobody's until it is invited. Offering
+    # "IO's bot" on this row would be a way in that does not exist, which is
+    # the mistake the row shipped with.
     monkeypatch.setenv("BUZZ_ENABLED", "1")
     row = rg._channel_status(_buzz(), {})
-    assert row["can_bring_bot"] is False
-    assert rg._route_for(row, "@aiuiteam_bot")["via_label"] == ''
+    assert row["can_bring_bot"] is True
+    assert "aiuiteam" not in rg._route_for(row, "@aiuiteam_bot")["via_label"]
+    assert "Buzz" in rg._route_for(row, "@aiuiteam_bot")["via_label"]
 
 
 def test_every_channel_says_what_it_is():
@@ -67,10 +71,16 @@ def test_every_channel_that_is_not_ready_says_why():
             assert row["note"].strip(), f"{row['platform']} is silent about why"
 
 
-def test_only_telegram_can_take_your_own_bot_today():
-    for entry in rg.CHANNEL_CATALOGUE:
-        row = rg._channel_status(entry, {})
-        assert row["can_bring_bot"] is (entry["platform"] == "telegram")
+def test_only_the_channels_that_can_honour_a_credential_ask_for_one():
+    # A form on a channel that cannot use what it stores is a button that
+    # lies. These two are the ones with a working transport.
+    takers = {c["platform"] for c in rg.CHANNEL_CATALOGUE
+              if rg._channel_status(c, {})["can_bring_bot"]}
+    assert takers == {"telegram", "buzz"}
+
+
+def test_only_telegram_has_a_bot_io_runs_for_everyone():
+    assert rg.SHARED_BOT_PLATFORMS == {"telegram"}
 
 
 def test_a_row_carries_a_bot_slot_even_when_empty():
@@ -112,9 +122,10 @@ def test_every_channel_names_its_own_connect_headline():
 
 
 def test_buzz_does_not_claim_a_shell():
-    row = rg._channel_status(_buzz(), {})
-    assert "shell" not in row["connect_headline"].lower()
-    assert "Buzz" in row["connect_headline"]
+    # The headline no longer names Buzz, because it now sits under the Buzz
+    # workspace form and describes what comes after it. What still matters is
+    # that it does not borrow the terminal's words.
+    assert "shell" not in rg._channel_status(_buzz(), {})["connect_headline"].lower()
 
 
 def test_the_terminal_is_the_only_channel_that_mentions_a_shell():

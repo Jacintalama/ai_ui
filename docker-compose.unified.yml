@@ -172,13 +172,12 @@ services:
       # Blank this line to make the terminal channel dormant again.
       - GATEWAY_CLI_ENABLED=${GATEWAY_CLI_ENABLED:-1}
       - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
-      # BUZZ_ENABLED is deliberately NOT declared. It defaulted to 1 here, which
-      # switched the channel on before anything could serve it, and the row told
-      # users to "message IO from Buzz" when IO was in nobody's workspace. Buzz
-      # is a Nostr relay we join as an agent, so this goes back only once that
-      # transport exists: see docs/runbooks/buzz-integration.md. Declare it on
-      # BOTH tasks and webhook-handler when it does, never one.
-      # BUZZ_WEBHOOK_SECRET is gone with the endpoint it signed.
+      # Buzz is a Nostr workspace IO joins as an agent, one held-open websocket
+      # per user, capped in gateway/buzz_manager.py. This service runs those
+      # connections; tasks renders the row and must carry the SAME flag, or the
+      # channel is live while the page calls it off, which is how the terminal
+      # channel once shipped. No shared secret: each user brings their own key.
+      - BUZZ_ENABLED=${BUZZ_ENABLED:-1}
     networks:
       - backend
     depends_on:
@@ -388,9 +387,9 @@ services:
       # GATEWAY_PUBLIC_URL. Neither is in .env, and .env is not ours to edit,
       # so both carry a default rather than silently resolving to empty.
       - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-https://ai-ui.coolestdomain.win}
-      # BUZZ_ENABLED undeclared on purpose, matching webhook-handler above. It
-      # defaulted to 1, so this service rendered Buzz as ready to connect while
-      # no service could carry a Buzz message.
+      # Same flag as webhook-handler above, which is the point: that service
+      # holds the sockets, this one renders the row.
+      - BUZZ_ENABLED=${BUZZ_ENABLED:-1}
       - GATEWAY_TELEGRAM_BOT=${GATEWAY_TELEGRAM_BOT:-@aiuiteam_bot}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads

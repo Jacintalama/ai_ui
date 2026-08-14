@@ -18,6 +18,10 @@ def test_every_column_the_design_needs_exists():
         "id", "bot_key", "email", "platform", "token_encrypted",
         "webhook_secret", "bot_username", "allowed_ids",
         "owner_platform_user_id", "enabled", "created_at", "last_error",
+        # Channels IO connects OUT to rather than being called by. `endpoint`
+        # is where to connect; `connected_at` is whether it worked, which only
+        # the process holding the socket can know.
+        "endpoint", "connected_at",
     }
 
 

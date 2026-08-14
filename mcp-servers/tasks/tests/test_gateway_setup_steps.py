@@ -35,10 +35,9 @@ def _buzz_off(monkeypatch):
 
 # --- what the server describes ----------------------------------------------
 
-def test_buzz_explains_its_setup_even_though_it_cannot_be_connected(monkeypatch):
+def test_buzz_explains_its_setup(monkeypatch):
     row = _buzz_off(monkeypatch)
-    assert row["status"] == "off"
-    assert row["setup"]["steps"], "an off row with no steps answers nothing"
+    assert row["setup"]["steps"], "a row with no steps answers nothing"
 
 
 def test_the_off_row_no_longer_gives_an_instruction_nobody_can_follow(monkeypatch):
@@ -61,10 +60,12 @@ def test_the_steps_name_both_things_a_user_has_to_fetch(monkeypatch):
     assert "wss://" in joined, "and where the relay URL comes from"
 
 
-def test_the_setup_says_why_it_will_not_take_the_key_yet(monkeypatch):
-    # The fields render disabled. A form that silently does nothing is the one
-    # thing no control on this page is allowed to be.
-    assert _buzz_off(monkeypatch)["setup"]["blocked"].strip()
+def test_the_last_step_leads_into_the_form_below_it(monkeypatch):
+    # The steps used to end by describing a disabled preview. They now end
+    # where the user actually continues, which is the form and then a pairing
+    # code from Buzz.
+    last = _buzz_off(monkeypatch)["setup"]["steps"][-1].lower()
+    assert "below" in last and "code" in last
 
 
 def test_the_preview_asks_for_the_same_fields_the_real_form_will(monkeypatch):
@@ -97,22 +98,47 @@ def test_a_row_with_setup_can_be_opened():
     assert "|| !!c.setup" in HTML
 
 
-def test_the_setup_fields_are_rendered_disabled():
-    assert "input.disabled = true" in HTML
+def test_the_steps_sit_directly_above_the_form_they_explain():
+    # Separated, they read as two unrelated things and a user fills in fields
+    # whose values they have not been told how to get.
+    assert "if (c.setup) box.appendChild(setupSteps(c));" in HTML
 
 
-def test_the_button_says_set_up_rather_than_connect():
-    # It does not connect anything. Calling it Connect is the same lie in a
-    # smaller place.
+def test_the_form_is_named_for_what_it_connects():
+    # "Use my own bot" over the Buzz fields sends someone looking for a bot
+    # token that does not exist in Buzz.
+    assert 'c.connect_form.title' in HTML
+    assert rg.CONNECT_FORMS["buzz"]["title"] == "Connect my Buzz workspace"
+
+
+def test_a_channel_with_setup_but_no_way_in_still_says_set_up():
+    # Kept for the next channel in this position. Buzz has a live form now, so
+    # its own button reads Connect.
     assert '"Set up"' in HTML
-
-
-def test_setup_gives_way_to_the_real_path_once_the_channel_goes_live():
-    # Otherwise the day Buzz works, the row still shows preparation steps
-    # instead of the way in.
-    assert 'c.setup && c.status !== "available"' in HTML
 
 
 def test_the_setup_block_still_builds_its_dom_safely():
     # Everything here is a server-supplied string rendered into the page.
     assert "innerHTML" not in HTML
+
+
+def test_a_channel_with_no_shared_bot_puts_its_own_form_first():
+    # Buzz has no identity IO runs for everyone, so pasting a pairing code is
+    # impossible until the user's own workspace is connected. Rendered in the
+    # other order, the page showed a code box above the form that makes codes
+    # possible, which is step two above step one.
+    assert "const bringFirst = c.can_bring_bot && !c.has_shared_bot;" in HTML
+    assert "if (bringFirst) panel.append(botSection(c, load));" in HTML
+
+
+def test_telegram_keeps_the_quick_path_first():
+    # There IS a bot anyone can message, so the fastest way in stays on top and
+    # bringing your own stays the alternative below it.
+    rows = {c["platform"]: rg._channel_status(c, {}) for c in rg.CHANNEL_CATALOGUE}
+    assert rows["telegram"]["has_shared_bot"] is True
+    assert rows["buzz"]["has_shared_bot"] is False
+
+
+def test_every_row_says_whether_io_runs_a_bot_there():
+    for entry in rg.CHANNEL_CATALOGUE:
+        assert "has_shared_bot" in rg._channel_status(entry, {})

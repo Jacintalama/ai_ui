@@ -227,12 +227,21 @@ class GatewayBot(Base):
     token_encrypted = Column(Text, nullable=False)
     webhook_secret = Column(Text, nullable=False)
     bot_username = Column(Text)
+    #: Where this connection goes, for a platform we reach out to rather than
+    #: one that calls us. Buzz's relay URL lives here; Telegram leaves it empty
+    #: because Telegram's address is Telegram's, not the user's. Not a secret,
+    #: so it comes back to the browser and prefills on edit.
+    endpoint = Column(Text, nullable=False, default="")
     allowed_ids = Column(Text, nullable=False, default="")
     owner_platform_user_id = Column(Text)
     enabled = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False,
                         server_default=func.now())
     last_error = Column(Text)
+    #: When a held-open connection last reported itself up. NULL for Telegram,
+    #: which holds nothing open and reports failure by not calling us. Written
+    #: only by webhook-handler, through the internal state endpoint.
+    connected_at = Column(DateTime(timezone=True))
 
 
 class GatewayPairingCode(Base):
