@@ -1,134 +1,107 @@
 # Connecting Buzz to IO
 
-**For whoever builds the Buzz side.** The IO side is already built and
-deployed. Buzz needs one outbound call, described below. Nothing else.
+**Status: not live.** The protocol layer is built and tested. The signing
+primitive, the websocket client and the connection manager are not. Nothing on
+the Channels page accepts a Buzz credential yet, and the row says so.
 
-When it works, a Buzz user talks to IO in Buzz and IO answers with that
-user's own memory, tools and models. Their IO account, not a shared one.
+Read this before touching the Buzz row. An earlier version of this file
+described a webhook contract that IO would serve and Buzz would call. That was
+wrong about how Buzz works and the code implementing it has been removed. If
+you find a `/webhook/gateway/buzz` endpoint anywhere, it is a leftover.
 
-## What Buzz has to do
+## What Buzz actually is
 
-Send every message meant for IO to:
+Buzz is a Nostr workspace, not a chat product with an API. There is no endpoint
+to call and no bot to register. A relay is reached over a websocket, every
+message is a signed event, and identity is a secp256k1 keypair. Buzz's own
+documentation puts it plainly: the relay treats external services identically
+to agents, by keypair, not by permission flags.
 
-```
-POST https://ai-ui.coolestdomain.win/webhook/gateway/buzz
-Content-Type: application/json
-X-Buzz-Signature: sha256=<hex>
-```
+So IO is never *called* by Buzz. IO **joins a workspace as an agent** and holds
+a connection open, which inverts everything the old design assumed:
 
-Body:
+| The old design assumed | What is actually true |
+|---|---|
+| Buzz calls us when a user speaks | We hold a websocket and receive events |
+| A shared secret authenticates Buzz | A keypair authenticates *us*, per workspace |
+| One integration serves every workspace | One connection per workspace, each with its own key |
+| Idle costs nothing | Every connected user costs an open socket |
 
-```json
-{
-  "user_id": "the Buzz user's stable id",
-  "user_name": "Ralph Benitez",
-  "text": "what's on today",
-  "conversation_id": "the thread or room id"
-}
-```
+That last row is why the cap below exists.
 
-Show the `reply` from the response back to the user:
+## What a workspace owner has to provide
 
-```json
-{ "reply": "You have three things today..." }
-```
+Two things, and only the owner of that workspace can produce them:
 
-That is the whole integration. Request and response, no callback, no polling,
-no websocket to hold open.
+1. **An agent identity for IO.** They create it in their Buzz workspace and
+   copy its private key, which starts with `nsec1`.
+2. **The relay URL.** The `wss://` address their own Buzz app connects to.
 
-### The fields
+Both are entered by the user on IO's Channels page, encrypted per account, and
+visible to nobody else. This is the same shape as bringing your own Telegram
+bot: your workspace, your key, your data.
 
-| Field | Required | Notes |
-|---|---|---|
-| `user_id` | yes | Must be **stable for that person forever**. It is what IO pairs to an account. If it changes, that user silently becomes a stranger and has to pair again. Max 128 chars. |
-| `text` | yes | What the person typed. Trimmed to 8000 chars. |
-| `user_name` | no | Display name, used so a person can see whose account is linked. |
-| `conversation_id` | no | The thread. One IO chat is kept per value. Omit it and IO keeps one conversation per user, which is usually what you want for a direct message. |
+**Each user connects their own workspace.** There is no server-wide Buzz
+credential and there should never be one. A single shared identity would put
+every user's traffic through one keypair, and one workspace owner's key would
+reach another's people.
 
-## Signing
+## What is built
 
-`X-Buzz-Signature` is `sha256=` followed by the lowercase hex HMAC-SHA256 of
-the **exact request body bytes**, keyed with the shared secret.
+`webhook-handler/gateway/nostr.py`, with `tests/test_gateway_nostr.py` beside
+it. Pure functions, no crypto primitive and no I/O, which is the whole point of
+the split: it runs on a developer machine. The signing primitive needs
+`coincurve`, which has no Windows wheel, and this repository already carries one
+tier of tests that never ran anywhere because it was coupled to something the
+machine could not provide.
 
-```python
-import hashlib, hmac
-sig = "sha256=" + hmac.new(SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
-```
+It covers NIP-01 event ids and canonical serialization, NIP-42 auth events,
+NIP-OA owner attestation, presence, and the REQ/EVENT/CLOSE frames.
 
-```javascript
-const sig = "sha256=" + crypto.createHmac("sha256", SECRET)
-                              .update(rawBody).digest("hex");
-```
+The event-id test asserts against the worked example published in block/buzz
+`docs/nips/NIP-OA.md`, so a change to the serialization fails against Buzz's
+own output rather than against our reading of their prose.
 
-Sign the bytes you actually send, not a re-serialised object. Two JSON
-encoders disagree about spacing and key order, and IO verifies against the raw
-bytes it received, so re-encoding produces a signature that will not match.
+## What is not built
 
-The secret is shared out of band. Never put it in client code: anything
-holding it can speak as any Buzz user.
+- **Signing.** `unsigned_event` deliberately stops short of a signature.
+  Schnorr signing needs `coincurve`, confirmed working on the production Linux
+  box and unavailable on Windows, so it belongs behind a seam that the pure
+  layer never imports.
+- **The websocket client.** Connect, answer the NIP-42 challenge, subscribe to
+  mentions, publish replies, reconnect with a bounded `since` so a reconnect
+  does not replay and re-answer hours of history.
+- **The connection manager.** Per user, **cap 25**, connect on demand, drop on
+  idle, and refuse politely past the cap. Every live connection is an open
+  socket on a 3.8GB box.
+- **Storage for the relay URL.** `gateway_bots` has no `endpoint` column yet.
 
-## Responses
+## Why the page does not take the key yet
 
-| Status | Meaning | What to do |
-|---|---|---|
-| `200` | Handled. Body has `reply`. | Show `reply` to the user. |
-| `400` | `user_id` or `text` missing, empty, or not a string. Or the body was not JSON. | Fix the payload. Retrying unchanged will not help. |
-| `401` | Signature missing or wrong. | Fix the signing. This is the one to check first if nothing works. |
-| `429` | That user is sending faster than IO can answer, 20 a minute. | Back off. The limit is per `user_id`, so other users are unaffected. |
-| `503` | Buzz is not switched on for this IO server. | Ask IO to set it up. |
+The Channels row shows the two fields, disabled, with the reason printed under
+them. Accepting a private key that nothing can use would mean taking custody of
+a live secret in exchange for nothing: all of the risk of holding it, none of
+the benefit of using it. The fields are drawn from the same `connect_form` the
+live channels use, so the preview cannot drift from what is eventually
+accepted.
 
-## Pairing, and why the first reply looks odd
+## Switching it on, when it exists
 
-IO does not know who a Buzz `user_id` belongs to until the person says so.
+`BUZZ_ENABLED` is read by **both** services on purpose. webhook-handler runs
+the agent connection; tasks only renders the row. Setting it on one of them is
+exactly how the Terminal channel once ended up live while the page called it
+switched off.
 
-1. A Buzz user messages IO for the first time.
-2. IO replies with a short pairing code instead of an answer.
-3. They open IO's **Channels** page while signed in, and paste the code.
-4. Every later message is answered as that account.
+It must stay unset until the transport exists. Flipping it early is what put
+*"Message IO from Buzz and it will reply with a code"* on the row, an
+instruction no Buzz user could carry out, because IO was not in their workspace
+to be messaged.
 
-Nothing special is required from Buzz for this. The code arrives as an
-ordinary `reply` and the user does the rest.
+Once IO is an agent there, that sentence becomes true and pairing works like
+every other channel: first message returns a code, the user pastes it into the
+Channels page while signed in, and every later message is answered as that
+account.
 
 **Do not build a way for one user to enter another's code.** A code links
 whichever IO account asked for it, and it hands the holder that account's
 memory, email assistant and files.
-
-## Switching it on
-
-Two things, both on the IO server:
-
-- `BUZZ_WEBHOOK_SECRET` on **webhook-handler**, the shared secret. Until it
-  exists the endpoint returns 503 and accepts nothing.
-- `BUZZ_ENABLED=1` on **both webhook-handler and tasks**.
-
-Both services read that flag deliberately. webhook-handler serves the
-endpoint; tasks renders the Channels row. Setting it on only one is exactly
-how the Terminal channel once ended up live while the page called it switched
-off.
-
-## Checking it end to end
-
-```bash
-SECRET='the shared secret'
-BODY='{"user_id":"test-user-1","user_name":"Test","text":"hello"}'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | awk '{print $2}')
-
-curl -sS https://ai-ui.coolestdomain.win/webhook/gateway/buzz \
-  -H "Content-Type: application/json" \
-  -H "X-Buzz-Signature: sha256=$SIG" \
-  -d "$BODY"
-```
-
-First run returns a pairing code. Paste it into IO's Channels page, then run
-it again and you get a real answer.
-
-## What is deliberately not here
-
-- **No push from IO.** IO only ever answers a message. Nothing arrives in Buzz
-  unprompted, so Buzz needs no inbound endpoint at all.
-- **No per-user bot tokens.** Telegram lets a user bring their own bot; Buzz
-  users share this one integration, which is why the Channels row never offers
-  to take a token.
-- **No attachments or voice.** Text only for now. Telegram carries voice memos
-  through the same pipeline, so adding them later is work on this side, not a
-  change to the contract above.

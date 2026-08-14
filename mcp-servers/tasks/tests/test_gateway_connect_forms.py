@@ -72,3 +72,22 @@ def test_a_channel_that_cannot_carry_a_connection_offers_no_form():
 def test_every_form_belongs_to_a_real_channel():
     known = {c["platform"] for c in rg.CHANNEL_CATALOGUE}
     assert set(rg.CONNECT_FORMS) <= known
+
+
+def test_a_credential_is_never_displayed_in_capitals_it_must_not_be_typed_in():
+    # The page styles the pairing code uppercase, because a code is
+    # case-insensitive and easier to read spaced out. That rule was written
+    # against every input on the page, so a bot token, a relay URL and an
+    # nsec key were all displayed in capitals while storing what was actually
+    # typed. Case matters in all three, and the mismatch is invisible: the
+    # value is right and looks wrong.
+    import pathlib
+    html = (pathlib.Path(__file__).resolve().parents[1]
+            / "static" / "gateway-link.html").read_text(encoding="utf-8")
+    assert ".entry input { letter-spacing" in html
+    for line in html.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("input {"):
+            block = html.split(stripped, 1)[1].split("}", 1)[0]
+            assert "text-transform" not in block, (
+                "uppercase belongs to the code box, not to every field")

@@ -73,9 +73,12 @@
     padding: .35rem .5rem; font-size: .8125rem;
   }
   .entry { display: flex; gap: .5rem; flex-wrap: wrap; }
+  /* Only the pairing code is case-insensitive and spaced for reading aloud.
+     Applying this to every input, as it once did, displayed a bot token, a
+     relay URL and an nsec key in capitals they must not be typed in. */
+  .entry input { letter-spacing: .16em; text-transform: uppercase; }
   input {
     font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    letter-spacing: .16em; text-transform: uppercase;
     flex: 1; min-width: 12rem; padding: .45rem .7rem;
     border: 1px solid rgba(128,128,128,.45); border-radius: .35rem;
     background: transparent; color: inherit;
@@ -440,6 +443,56 @@ function terminalSteps() {
   return steps([[download], [run], [document.createTextNode("Paste the code it prints below")]]);
 }
 
+// What connecting needs from the user on the far side, for a channel this
+// server cannot reach on its own. Buzz is the case: IO does not call Buzz, it
+// joins a Buzz workspace as an agent, so somebody has to mint it an identity
+// there before any of this can run.
+//
+// The fields are drawn from the same connect_form every live channel uses, and
+// drawn disabled, so a user can see exactly what they will be asked for
+// without the page pretending to accept it. Storing a private key that nothing
+// can yet use would be a risk in exchange for nothing.
+function setupBlock(c) {
+  // Same wrapper the live form uses, so the preview of a field is the field.
+  const box = document.createElement("div");
+  box.className = "botbox";
+  const head = document.createElement("div");
+  head.className = "botheadline";
+  head.textContent = c.setup.headline || "How this connects";
+  box.append(head, steps(c.setup.steps || []));
+
+  const spec = c.connect_form;
+  if (spec) {
+    for (const f of spec.fields) {
+      const label = document.createElement("div");
+      label.className = "fieldlabel";
+      label.textContent = f.label;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = f.placeholder || "";
+      input.disabled = true;
+      box.append(label, input);
+      if (f.help) {
+        const help = document.createElement("p");
+        help.className = "why";
+        help.textContent = f.help;
+        box.append(help);
+      }
+    }
+  }
+
+  if (c.setup.blocked) {
+    // Why the fields above are inert. Without this the row is a form that
+    // silently does nothing, which is the one thing every control on this
+    // page is not allowed to be.
+    const why = document.createElement("p");
+    why.className = "warn";
+    why.textContent = c.setup.blocked;
+    box.append(why);
+  }
+  return box;
+}
+
 // What a row shows once you open it. None of this exists until a click, which
 // is what keeps a collapsed row to a single line and the page scannable.
 //
@@ -471,6 +524,13 @@ function buildExpand(c) {
 
   if (c.status === "connected") {
     panel.append(buildDisconnectBlock(c));
+  }
+
+  // A channel nobody can connect yet, but whose setup a user can start on the
+  // far side today. Shown only while there is no live path in, so the moment
+  // the channel goes available the ordinary quick-connect block replaces it.
+  if (c.setup && c.status !== "available" && c.status !== "connected") {
+    panel.append(setupBlock(c));
   }
 
   if (c.can_bring_bot) {
@@ -763,9 +823,17 @@ function render(connections) {
     // Hermes puts the same control in the same place on every row. A channel
     // that cannot do anything yet gets that control visibly disabled rather
     // than missing, so the column still lines up and nothing pretends to work.
+    // A row with setup steps opens too, even though it cannot connect. Its
+    // reason for being closed used to be a single line on the row, which left
+    // the question the row exists to raise, how do I connect this, answered
+    // nowhere on the page.
     const canOpen = c.status === "available" || c.status === "connected"
-                    || c.can_bring_bot;
-    const openLabel = c.status === "connected" ? "Manage" : "Connect";
+                    || c.can_bring_bot || !!c.setup;
+    // "Set up" only where opening leads to setup steps rather than a way in.
+    // The disabled rows keep saying Connect, so the column reads the same.
+    const openLabel = c.status === "connected" ? "Manage"
+                    : (c.setup && c.status !== "available") ? "Set up"
+                    : "Connect";
 
     const btn = document.createElement("button");
     btn.type = "button";

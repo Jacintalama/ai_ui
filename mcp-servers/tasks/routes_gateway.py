@@ -579,12 +579,36 @@ CHANNEL_CATALOGUE = (
      "blurb": "Use IO from Teams chats.",
      "planned": "Not started. Microsoft sign-in already exists to build on."},
 
-    # The only channel here blocked by the OTHER side rather than by us. Every
-    # entry above has a documented bot or webhook API we simply have not built
-    # against; buzz.xyz is in early access and publishes none, so there is
-    # nothing to write an adapter for yet.
+    # The only channel here where the work is not ours alone. Every entry above
+    # is reached by us calling somebody's API; Buzz is a Nostr workspace, so IO
+    # is not called at all. It joins the workspace as an agent, which means the
+    # person who owns that workspace has to mint it an identity there first.
+    # That is why this row carries setup steps and the others do not.
     {"platform": "buzz", "label": "Buzz", "icon": "🐝",
      "connect_headline": "Quick connect · from Buzz",
+     # What the user has to do on the far side before anything here can work.
+     # It lives on the row because it used to live only in a chat message, and
+     # the row instead said "message IO from Buzz and it will reply with a
+     # code" — which no Buzz user could ever make happen, since IO was not in
+     # their workspace to be messaged.
+     "setup": {
+         "headline": "How Buzz connects",
+         "steps": [
+             "In your Buzz workspace, create an agent identity for IO and copy "
+             "its private key. It starts with nsec1.",
+             "Copy your workspace's relay URL, the wss:// address the Buzz app "
+             "itself connects to.",
+             "Paste both here. IO joins your workspace as that agent and "
+             "answers the people you allow, using your IO account.",
+         ],
+         # Shown in place of a live form. Taking custody of a private key that
+         # nothing can yet use would be a real risk in exchange for nothing, so
+         # this row shows the fields and refuses to accept them rather than
+         # storing a secret to sit idle.
+         "blocked": "Not live yet. IO's Buzz agent is still being built, so "
+                    "this does not take your key: holding a private key "
+                    "nothing can use would be a risk with no upside.",
+     },
      "blurb": "Use IO from Buzz, where your people, agents and projects "
               "sit in one place.",
      # Every channel that is not this browser relays through somebody, and a
@@ -684,6 +708,10 @@ def _channel_status(entry: dict, linked: dict) -> dict:
            # renders whatever a channel needs instead of one
            # channel's fields written into the markup.
            "connect_form": CONNECT_FORMS.get(platform),
+           # What the user must do on the far side first, for the channels
+           # where connecting is not something this server can do alone.
+           # None on every channel we reach by calling an API.
+           "setup": entry.get("setup"),
            # Filled by _route_for once this account's bots are known. Present
            # here so every row carries one shape, including the user-free
            # catalogue injected into the page.
@@ -708,17 +736,22 @@ def _channel_status(entry: dict, linked: dict) -> dict:
                 "note": "No Telegram bot is configured on this server yet."}
 
     if platform == "buzz":
-        # Buzz publishes no API, so this contract is one we wrote and handed
-        # them; see docs/runbooks/buzz-integration.md. The flag is read by
-        # BOTH services on purpose. webhook-handler holds the shared secret
-        # and serves the endpoint; this service only renders the row, and
-        # setting the flag on one of them is exactly how the terminal channel
-        # ended up live while the page called it switched off.
+        # The flag is read by BOTH services on purpose. webhook-handler runs
+        # the agent connection; this service only renders the row, and setting
+        # the flag on one of them is exactly how the terminal channel ended up
+        # live while the page called it switched off.
+        #
+        # It stays unset until the agent transport exists. Flipping it early is
+        # what put "message IO from Buzz and it will reply with a code" on this
+        # row, an instruction no Buzz user could carry out: IO was not in their
+        # workspace to be messaged. The pairing note below is only true once IO
+        # is an agent there, so it lives behind the same flag.
         if os.environ.get("BUZZ_ENABLED", "").strip():
             return {**row, "status": "available",
                     "note": "Message IO from Buzz and it will reply with a code."}
         return {**row, "status": "off",
-                "note": "Buzz is not connected to this server yet."}
+                "note": "IO is not an agent in a Buzz workspace yet. "
+                        "Open this to see what connecting will need."}
 
     if platform == "cli":
         if os.environ.get("GATEWAY_CLI_ENABLED", "").strip():
