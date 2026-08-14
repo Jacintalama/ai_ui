@@ -8,10 +8,12 @@ Locally every test here ERRORs at setup with no Postgres, which is expected.
 """
 import os
 
+import pytest_asyncio
+
 import pytest
 from cryptography.fernet import InvalidToken
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 os.environ.setdefault("AIUI_FERNET_KEY",
                       "hUZ3RkVvY0JmS3FnWlp4TXcyN0RkNTZWc1RCQzNKS1E=")
@@ -25,8 +27,8 @@ OWNER = "owner-byob@example.com"
 STRANGER = "stranger-byob@example.com"
 
 
-@pytest.fixture
-def app_for(monkeypatch):
+@pytest_asyncio.fixture
+async def app_for(monkeypatch):
     async def _get_me(token):
         return {"id": 1, "username": "someones_bot"}
 
@@ -37,13 +39,24 @@ def app_for(monkeypatch):
     monkeypatch.setattr(routes_gateway.telegram_api, "set_webhook", _noop)
     monkeypatch.setattr(routes_gateway.telegram_api, "delete_webhook", _noop)
 
+    made = []
+
     def _build(email):
         app = FastAPI()
         app.include_router(routes_gateway.page_router)
         app.dependency_overrides[current_user] = lambda: CurrentUser(email=email)
-        return TestClient(app, raise_server_exceptions=False)
+        # raise_app_exceptions=False mirrors TestClient's
+        # raise_server_exceptions=False: a route that returns 500 is the
+        # assertion in one test below, not an error to re-raise here.
+        client = AsyncClient(
+            transport=ASGITransport(app=app, raise_app_exceptions=False),
+            base_url="http://test")
+        made.append(client)
+        return client
 
-    return _build
+    yield _build
+    for client in made:
+        await client.aclose()
 
 
 @pytest.fixture
@@ -60,19 +73,19 @@ def sent(monkeypatch):
 
 
 @pytest.fixture
-async def clean_bots(db_session):
+async def clean_bots(db_session_nondestructive):
     """The one place that deletes the GatewayBot rows these tests create,
     matched only on the two email constants above. Never broaden this delete."""
     yield
-    await db_session.execute(
+    await db_session_nondestructive.execute(
         GatewayBot.__table__.delete().where(GatewayBot.email.in_([OWNER, STRANGER])))
-    await db_session.commit()
+    await db_session_nondestructive.commit()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def owner_bot(app_for, clean_bots):
     client = app_for(OWNER)
-    resp = client.post("/tasks/gateway/bots",
+    resp = await client.post("/tasks/gateway/bots",
                        json={"platform": "telegram",
                              "token": "111:AAHownertokenvalue",
                              "allowed_ids": ""})
@@ -81,45 +94,45 @@ async def owner_bot(app_for, clean_bots):
 
 
 async def test_the_owner_sees_their_own_bot(owner_bot, app_for):
-    body = app_for(OWNER).get("/tasks/gateway/bots").json()
+    body = (await app_for(OWNER).get("/tasks/gateway/bots")).json()
     assert [b["bot_key"] for b in body["bots"]] == [owner_bot]
 
 
 async def test_a_stranger_sees_nothing(owner_bot, app_for):
-    assert app_for(STRANGER).get("/tasks/gateway/bots").json()["bots"] == []
+    assert (await app_for(STRANGER).get("/tasks/gateway/bots")).json()["bots"] == []
 
 
 async def test_a_stranger_cannot_toggle_it(owner_bot, app_for):
-    resp = app_for(STRANGER).patch(f"/tasks/gateway/bots/{owner_bot}",
+    resp = await app_for(STRANGER).patch(f"/tasks/gateway/bots/{owner_bot}",
                                    json={"enabled": False})
     assert resp.status_code == 404
 
 
 async def test_a_stranger_cannot_test_it(owner_bot, app_for):
-    resp = app_for(STRANGER).post(f"/tasks/gateway/bots/{owner_bot}/test")
+    resp = await app_for(STRANGER).post(f"/tasks/gateway/bots/{owner_bot}/test")
     assert resp.status_code == 404
 
 
 async def test_a_stranger_cannot_delete_it(owner_bot, app_for):
-    resp = app_for(STRANGER).delete(f"/tasks/gateway/bots/{owner_bot}")
+    resp = await app_for(STRANGER).delete(f"/tasks/gateway/bots/{owner_bot}")
     assert resp.status_code == 404
 
 
 async def test_the_token_never_comes_back_in_a_listing(owner_bot, app_for):
-    body = app_for(OWNER).get("/tasks/gateway/bots").json()
+    body = (await app_for(OWNER).get("/tasks/gateway/bots")).json()
     assert "111:AAHownertokenvalue" not in str(body)
 
 
 async def test_saving_twice_replaces_rather_than_duplicates(owner_bot, app_for):
     client = app_for(OWNER)
-    client.post("/tasks/gateway/bots",
+    await client.post("/tasks/gateway/bots",
                 json={"platform": "telegram", "token": "222:AAHsecondtoken",
                       "allowed_ids": ""})
-    assert len(client.get("/tasks/gateway/bots").json()["bots"]) == 1
+    assert len((await client.get("/tasks/gateway/bots")).json()["bots"]) == 1
 
 
 async def test_a_webhook_failure_leaves_the_bot_saved_but_disabled(
-        db_session, app_for, monkeypatch, clean_bots):
+        db_session_nondestructive, app_for, monkeypatch, clean_bots):
     # A half-live bot silently swallows messages. Better to keep the row and
     # let the page say it is broken.
     async def _boom(*a, **kw):
@@ -127,7 +140,7 @@ async def test_a_webhook_failure_leaves_the_bot_saved_but_disabled(
     monkeypatch.setattr(routes_gateway.telegram_api, "set_webhook", _boom)
 
     client = app_for(OWNER)
-    resp = client.post("/tasks/gateway/bots",
+    resp = await client.post("/tasks/gateway/bots",
                        json={"platform": "telegram",
                              "token": "333:AAHwebhookfails",
                              "allowed_ids": ""})
@@ -136,7 +149,7 @@ async def test_a_webhook_failure_leaves_the_bot_saved_but_disabled(
     assert body["enabled"] is False
     assert "Bad webhook URL" in body["last_error"]
 
-    listed = client.get("/tasks/gateway/bots").json()["bots"]
+    listed = (await client.get("/tasks/gateway/bots")).json()["bots"]
     assert len(listed) == 1
     assert listed[0]["enabled"] is False
     assert "Bad webhook URL" in listed[0]["last_error"]
@@ -144,7 +157,7 @@ async def test_a_webhook_failure_leaves_the_bot_saved_but_disabled(
 
 async def test_testing_an_unpaired_bot_checks_the_token_and_sends_nothing(
         owner_bot, app_for, sent):
-    resp = app_for(OWNER).post(f"/tasks/gateway/bots/{owner_bot}/test")
+    resp = await app_for(OWNER).post(f"/tasks/gateway/bots/{owner_bot}/test")
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
@@ -153,14 +166,14 @@ async def test_testing_an_unpaired_bot_checks_the_token_and_sends_nothing(
 
 
 async def test_testing_a_paired_bot_messages_the_owners_own_chat(
-        db_session, owner_bot, app_for, sent):
-    await db_session.execute(
+        db_session_nondestructive, owner_bot, app_for, sent):
+    await db_session_nondestructive.execute(
         GatewayBot.__table__.update()
         .where(GatewayBot.bot_key == owner_bot)
         .values(owner_platform_user_id="4242"))
-    await db_session.commit()
+    await db_session_nondestructive.commit()
 
-    resp = app_for(OWNER).post(f"/tasks/gateway/bots/{owner_bot}/test")
+    resp = await app_for(OWNER).post(f"/tasks/gateway/bots/{owner_bot}/test")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
     assert [chat for _token, chat, _text in sent] == ["4242"]
@@ -169,13 +182,13 @@ async def test_testing_a_paired_bot_messages_the_owners_own_chat(
 async def test_a_stranger_never_sees_your_bot_on_the_channels_page(owner_bot, app_for):
     # The regression this guards: dropping the email filter on the bots query
     # would stitch one account's bot onto another account's Telegram row.
-    rows = app_for(STRANGER).get("/tasks/gateway/connections").json()["connections"]
+    rows = (await app_for(STRANGER).get("/tasks/gateway/connections")).json()["connections"]
     assert rows, "the page must still list every channel for a stranger"
     assert all(r["bot"] is None for r in rows)
 
 
 async def test_your_own_bot_lands_on_your_telegram_row_and_nowhere_else(owner_bot, app_for):
-    rows = app_for(OWNER).get("/tasks/gateway/connections").json()["connections"]
+    rows = (await app_for(OWNER).get("/tasks/gateway/connections")).json()["connections"]
     telegram = next(r for r in rows if r["platform"] == "telegram")
     assert telegram["bot"]["bot_key"] == owner_bot
     assert all(r["bot"] is None for r in rows if r["platform"] != "telegram")
@@ -184,7 +197,7 @@ async def test_your_own_bot_lands_on_your_telegram_row_and_nowhere_else(owner_bo
 
 
 async def test_removing_a_bot_with_an_undecryptable_token_still_deletes_it(
-        db_session, owner_bot, app_for, monkeypatch):
+        db_session_nondestructive, owner_bot, app_for, monkeypatch):
     """A rotated AIUI_FERNET_KEY or a corrupt blob must not trap a user with a
     bot they can no longer get rid of: deleteWebhook is skipped, the row is
     deleted anyway."""
@@ -192,11 +205,11 @@ async def test_removing_a_bot_with_an_undecryptable_token_still_deletes_it(
         raise InvalidToken()
     monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
 
-    resp = app_for(OWNER).delete(f"/tasks/gateway/bots/{owner_bot}")
+    resp = await app_for(OWNER).delete(f"/tasks/gateway/bots/{owner_bot}")
     assert resp.status_code == 200
     assert resp.json()["status"] == "removed"
 
-    remaining = (await db_session.execute(
+    remaining = (await db_session_nondestructive.execute(
         GatewayBot.__table__.select().where(GatewayBot.bot_key == owner_bot)
     )).first()
     assert remaining is None
@@ -210,7 +223,7 @@ async def test_toggling_a_bot_with_an_undecryptable_token_fails_cleanly(
         raise InvalidToken()
     monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
 
-    resp = app_for(OWNER).patch(f"/tasks/gateway/bots/{owner_bot}",
+    resp = await app_for(OWNER).patch(f"/tasks/gateway/bots/{owner_bot}",
                                 json={"enabled": False})
     assert resp.status_code == 503
     assert "could not be read" in resp.json()["detail"]
@@ -226,14 +239,21 @@ async def test_internal_endpoint_returns_500_on_decrypt_failure(
     def _boom(blob):
         raise InvalidToken()
     monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
+    # The test supplies its own internal secret rather than depending on
+    # whatever the environment holds. Without this it authenticates against the
+    # real one, gets a 403, and the assertion below reports a decrypt problem
+    # that was never reached.
+    monkeypatch.setenv("INTERNAL_CALLBACK_SECRET", "test-internal-secret")
 
     # Create an internal client (bare router, not page_router)
     app = FastAPI()
     app.include_router(routes_gateway.router)
-    internal_client = TestClient(app, raise_server_exceptions=False)
+    internal_client = AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test")
 
     # Call the internal endpoint with the required header
-    resp = internal_client.get(
+    resp = await internal_client.get(
         f"/gateway/bots/{owner_bot}",
         headers={"X-Internal-Secret": "test-internal-secret"})
 
@@ -255,14 +275,21 @@ async def test_internal_endpoint_returns_500_on_decrypt_failure(
     def _boom(blob):
         raise InvalidToken()
     monkeypatch.setattr(routes_gateway.gbots, "decrypt_token", _boom)
+    # The test supplies its own internal secret rather than depending on
+    # whatever the environment holds. Without this it authenticates against the
+    # real one, gets a 403, and the assertion below reports a decrypt problem
+    # that was never reached.
+    monkeypatch.setenv("INTERNAL_CALLBACK_SECRET", "test-internal-secret")
 
     # Create an internal client (bare router, not page_router)
     app = FastAPI()
     app.include_router(routes_gateway.router)
-    internal_client = TestClient(app, raise_server_exceptions=False)
+    internal_client = AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test")
 
     # Call the internal endpoint with the required header
-    resp = internal_client.get(
+    resp = await internal_client.get(
         f"/gateway/bots/{owner_bot}",
         headers={"X-Internal-Secret": "test-internal-secret"})
     

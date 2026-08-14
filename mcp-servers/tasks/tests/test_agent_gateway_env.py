@@ -39,7 +39,9 @@ import re
 
 import pytest
 
-COMPOSE = pathlib.Path(__file__).resolve().parents[3] / "docker-compose.unified.yml"
+from conftest import repo_root_or_skip
+
+COMPOSE = repo_root_or_skip() / "docker-compose.unified.yml"
 
 pytestmark = pytest.mark.skipif(
     not COMPOSE.exists(), reason="compose file not present in this checkout")

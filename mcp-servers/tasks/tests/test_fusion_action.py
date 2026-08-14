@@ -11,7 +11,9 @@ import pathlib
 
 import pytest
 
-ACTION_PATH = (pathlib.Path(__file__).resolve().parents[3]
+from conftest import repo_root_or_skip
+
+ACTION_PATH = (repo_root_or_skip()
                / "open-webui-functions" / "fusion_action.py")
 
 

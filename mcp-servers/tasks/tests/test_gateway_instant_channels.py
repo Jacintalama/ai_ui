@@ -70,7 +70,21 @@ def test_injected_payload_carries_no_per_user_data(client):
         assert row.get("linked_at") is None, row
         assert row.get("name") == "", row
         assert row.get("bot") is None, row
-    assert "@" not in resp.text.split("window.__CHANNELS__")[1].split(";")[0]
+
+    # No address and no personal handle. This used to forbid "@" outright,
+    # which reads as the same thing and is not: where a shared bot IS
+    # configured, its handle is in the note, identical for every user and
+    # therefore not per-user data at all. The test passed only because no
+    # local environment sets that variable, and failed the first time it ran
+    # somewhere that does.
+    payload = resp.text.split("window.__CHANNELS__")[1].split(";")[0]
+    assert "@example" not in payload
+    # Whatever the shared handle is here, not a hardcoded one: this file has
+    # to pass on a box that configures a different bot.
+    shared = rg._shared_bot_handle()
+    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+",
+                         payload.replace(shared, "") if shared else payload), (
+        "an address reached the page")
 
 
 def test_the_escape_neutralizes_a_closing_script_tag(monkeypatch, client):

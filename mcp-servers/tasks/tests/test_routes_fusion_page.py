@@ -152,7 +152,20 @@ def test_page_route_returns_html(monkeypatch, tmp_path):
     # The page route serves static/fusion.html; assert it is wired even before
     # the file exists by checking the route is registered (404 vs missing route).
     app, _ = _app(monkeypatch)
-    routes = {r.path for r in app.routes}
+    # Newer FastAPI wraps an included router in an object that has no `path`
+    # and holds its routes one level down, so reading r.path raised
+    # AttributeError and this asserted nothing. Only ever surfaced in the
+    # container, whose FastAPI is newer than the one this was written against.
+    def _paths(node):
+        found = set()
+        for r in getattr(node, "routes", []):
+            path = getattr(r, "path", None)
+            if path:
+                found.add(path)
+            found |= _paths(r)
+        return found
+
+    routes = _paths(app)
     assert "/tasks/fusion" in routes
 
 

@@ -1,6 +1,7 @@
 """Shared pytest fixtures."""
 import base64
 import os
+import pathlib
 import sys
 import uuid
 
@@ -11,6 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 # Make app modules importable from tests/
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# And make THIS file importable by name, so the handful of tests that need a
+# shared helper can say `from conftest import ...` rather than each carrying
+# its own copy. pytest loads conftest as a plugin, which shares fixtures but
+# not plain functions.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Ensure tests that don't touch the DB can be collected without DATABASE_URL set.
 # Must happen BEFORE importing db — db.py captures DATABASE_URL at import time,
@@ -95,6 +101,64 @@ async def db_session():
     await engine.dispose()
 
 
+@pytest_asyncio.fixture
+async def db_session_nondestructive():
+    """A real session that TRUNCATES nothing.
+
+    `db_session` above wipes eight tables to give a test a blank database. That
+    is the right tool for a test that needs to count every row, and it is why
+    the safety guard exists, but it also means such a test can only ever run
+    against a database nobody minds losing.
+
+    Most tests do not need a blank database. They need a session, and they
+    create rows they can identify and delete themselves. Those tests were
+    borrowing `db_session` purely for the session, inheriting a TRUNCATE they
+    never wanted, and were therefore refused on any real database. Fifteen of
+    them had consequently never executed anywhere.
+
+    This fixture has no guard because it destroys nothing. A test using it must
+    delete exactly the rows it created, matched on a value it chose, which is
+    the same rule the repository already applies to anything touching the live
+    database.
+    """
+    # Same loop-binding dance as db_session: the app's lazy maker binds its
+    # engine to the first event loop that touches it, and pytest-asyncio hands
+    # every test a fresh loop, so a maker left from a previous test poisons
+    # this one with cross-loop errors.
+    import db as _db
+    _db._engine = None
+    _db._session_maker = None
+    await init_db()
+    engine = create_async_engine(SQLA_DB_URL)
+    maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with maker() as s:
+        yield s
+    await engine.dispose()
+
+
 @pytest.fixture
 def fake_meeting_id() -> uuid.UUID:
     return uuid.uuid4()
+
+
+def repo_root_or_skip():
+    """The checkout root, or skip the module when there isn't one.
+
+    Six test files read files that live outside this service: the compose file,
+    the Open WebUI pipes, the terminal client's mirror. They found them with
+    `parents[3]`, which is the repo root in a checkout and does not exist inside
+    the container, where /app IS this service.
+
+    An IndexError at import time is a COLLECTION error, and pytest aborts the
+    whole run on those. So `pytest tests/` has never been runnable in the
+    container, which is the only place the database tier can run at all. These
+    files have nothing to say about a deployed container, so they skip there
+    instead of taking every other test down with them.
+    """
+    import pytest
+    here = pathlib.Path(__file__).resolve()
+    for candidate in here.parents:
+        if (candidate / "docker-compose.unified.yml").exists():
+            return candidate
+    pytest.skip("not a checkout: these files read the repository, not the app",
+                allow_module_level=True)

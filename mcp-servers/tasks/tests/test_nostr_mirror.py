@@ -13,7 +13,9 @@ and the service that validates would accept keys the signer cannot use.
 """
 import pathlib
 
-ROOT = pathlib.Path(__file__).resolve().parents[3]
+from conftest import repo_root_or_skip
+
+ROOT = repo_root_or_skip()
 PAIRS = [
     (ROOT / "webhook-handler" / "gateway" / "nip19.py",
      ROOT / "mcp-servers" / "tasks" / "nostr_nip19.py"),

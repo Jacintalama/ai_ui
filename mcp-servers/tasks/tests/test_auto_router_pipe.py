@@ -7,7 +7,9 @@ import pathlib
 
 import pytest
 
-PIPE_PATH = (pathlib.Path(__file__).resolve().parents[3]
+from conftest import repo_root_or_skip
+
+PIPE_PATH = (repo_root_or_skip()
              / "open-webui-functions" / "auto_router_pipe.py")
 
 

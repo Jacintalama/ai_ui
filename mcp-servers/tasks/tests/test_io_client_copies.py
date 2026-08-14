@@ -12,8 +12,10 @@ stops them drifting apart.
 """
 import pathlib
 
-TASKS = pathlib.Path(__file__).resolve().parents[1]
-REPO = TASKS.parents[1]
+from conftest import repo_root_or_skip
+
+REPO = repo_root_or_skip()
+TASKS = REPO / "mcp-servers" / "tasks"
 
 SERVED = TASKS / "static" / "io.py"
 MIRROR = REPO / "scripts" / "io.py"
