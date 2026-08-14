@@ -68,13 +68,11 @@ def test_a_platform_with_no_logo_entry_falls_back_to_its_emoji():
     assert 'span.textContent = fallbackEmoji || "*"' in HTML
 
 
-def test_cli_and_email_use_the_page_text_color_not_a_brand_color():
-    # Neither has one owner of a brand color, so both should ride the page's
-    # own currentColor rather than a hardcoded hex.
+def test_the_terminal_uses_the_page_text_color_not_a_brand_color():
+    # It has no brand owner, so it rides the page's own currentColor rather
+    # than a hardcoded hex. Email was checked here too and is no longer a
+    # channel.
     block = _logos_block()
     cli_start = block.index("cli: { shapes:")
     cli_end = block.index("},\n", cli_start)
     assert "currentColor" in block[cli_start:cli_end]
-    email_start = block.index("email: { shapes:")
-    email_end = block.index("},\n", email_start)
-    assert "currentColor" in block[email_start:email_end]

@@ -619,9 +619,6 @@ CHANNEL_CATALOGUE = (
      "planned": "Needs a daemon this server does not have the memory for."},
 
     # Plausible next, because the platform already has the hard part.
-    {"platform": "email", "label": "Email", "icon": "✉️",
-     "blurb": "Send IO an email and get a reply.",
-     "planned": "Not started. The Gmail connector already exists to build on."},
     {"platform": "teams", "label": "Microsoft Teams", "icon": "👥",
      "blurb": "Use IO from Teams chats.",
      "planned": "Not started. Microsoft sign-in already exists to build on."},

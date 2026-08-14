@@ -178,13 +178,6 @@ const LOGOS = {
   ]},
   // Generic on purpose: this channel is "Email", not one provider, so a
   // provider's mark would be wrong.
-  email: { shapes: [
-    { tag: "rect", attrs: { x: 2.5, y: 5, width: 19, height: 14, rx: 2,
-      fill: "none", stroke: "currentColor", "stroke-width": "1.8" } },
-    { tag: "path", attrs: { d: "M3 7 L12 13.5 L21 7", fill: "none",
-      stroke: "currentColor", "stroke-width": "1.8",
-      "stroke-linecap": "round", "stroke-linejoin": "round" } },
-  ]},
   // PLACEHOLDER, and labelled as one on purpose. buzz.xyz publishes no brand
   // asset yet: no favicon, no logo file, nothing in its markup. Every other
   // mark here came from simple-icons or the official file on Wikimedia, and
@@ -516,6 +509,18 @@ function buildExpand(c) {
     panel.append(botSection(c, load));
   }
 
+  // Nothing above matched, so this channel cannot be connected here. Say what
+  // it would be and what is missing, rather than opening onto an empty box.
+  if (!panel.childNodes.length) {
+    const head = document.createElement("div");
+    head.className = "botheadline";
+    head.textContent = "Not ready yet";
+    const why = document.createElement("p");
+    why.className = "why";
+    why.textContent = c.note || (c.label + " is not built yet.");
+    panel.append(head, why);
+  }
+
   return panel;
 }
 
@@ -808,12 +813,11 @@ function render(connections) {
       offer.className = "why";
       offer.textContent = c.via_label;
       naming.append(offer);
-    } else if (c.status !== "available" && c.note) {
-      const why = document.createElement("div");
-      why.className = "why";
-      why.textContent = c.note;
-      naming.append(why);
     }
+    // The reason a channel is not ready used to sit here, on the collapsed
+    // row, AND again in the panel when it opened, which is the same sentence
+    // twice. It lives in the panel now: the collapsed row says what the
+    // channel is and what state it is in, and the click says why.
 
     head.append(icon, naming);
 
@@ -827,8 +831,11 @@ function render(connections) {
     // reason for being closed used to be a single line on the row, which left
     // the question the row exists to raise, how do I connect this, answered
     // nowhere on the page.
-    const canOpen = c.status === "available" || c.status === "connected"
-                    || c.can_bring_bot || !!c.setup;
+    // Every row opens. A channel that cannot be connected still has something
+    // to say, and it is the thing a person clicking it wants: what this would
+    // be, and what is missing. Rows used to be inert, which meant most of the
+    // list ignored the click and the cursor could not honestly be a hand.
+    const canOpen = true;
     // "Set up" only where opening leads to setup steps rather than a way in.
     // The disabled rows keep saying Connect, so the column reads the same.
     const openLabel = c.status === "connected" ? "Manage"
@@ -839,13 +846,19 @@ function render(connections) {
     btn.type = "button";
     btn.textContent = openLabel;
 
-    if (!canOpen) {
+    // The BUTTON still says what is true: a channel that cannot be connected
+    // gets a disabled one, because pressing it connects nothing. Opening the
+    // row is a different act from connecting it, so the row stays clickable.
+    const connectable = c.status === "available" || c.status === "connected"
+                        || c.can_bring_bot || !!c.setup;
+    if (!connectable) {
       btn.disabled = true;
       // Deliberately not c.note. The reason is already printed on the row
       // right below this, and repeating it here is the same duplication the
       // bot section had.
       btn.title = c.label + " is not ready yet.";
-    } else {
+    }
+    {
       row.classList.add("openable");
       const toggle = () => {
         // Expands in place. Opening a second row closes the first, so there is
@@ -854,16 +867,18 @@ function render(connections) {
         if (mine) {
           mine.remove();
           openPanel = null;
-          btn.textContent = openLabel;
+          if (!btn.disabled) btn.textContent = openLabel;
           return;
         }
         if (openPanel) {
           const other = openPanel.row.querySelector(".panel");
           if (other) other.remove();
-          openPanel.btn.textContent = openPanel.label;
+          if (!openPanel.btn.disabled) openPanel.btn.textContent = openPanel.label;
         }
         row.append(buildExpand(c));
-        btn.textContent = "Close";
+        // A disabled button keeps saying what it would do, not what the row is
+        // doing. "Close" on a control you cannot press reads as broken.
+        if (!btn.disabled) btn.textContent = "Close";
         openPanel = { row: row, btn: btn, label: openLabel };
         const firstField = row.querySelector(".panel input");
         if (firstField) firstField.focus();

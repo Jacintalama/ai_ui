@@ -49,4 +49,14 @@ def test_a_channel_that_cannot_take_a_bot_says_so_in_its_own_words():
     # Terminal's pairing instructions under "Use my own bot", where they are
     # wrong.
     assert "cannot take your own bot yet" in HTML
-    assert "c.note ||" not in HTML
+    # Scoped to botSection, which is what this protects. A whole-file ban was
+    # too broad: the not-ready panel legitimately prints c.note, because there
+    # the note IS the reason and nothing else says it.
+    body = HTML.split("function botSection", 1)[1]
+    section = body.split("\nfunction ", 1)[0]
+    # Comments stripped: this section explains in prose WHY it must not use
+    # c.note, and matching that sentence would fail on the explanation rather
+    # than on the code.
+    code = "\n".join(line for line in section.splitlines()
+                     if not line.strip().startswith("//"))
+    assert "c.note" not in code

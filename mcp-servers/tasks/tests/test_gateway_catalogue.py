@@ -19,7 +19,14 @@ def test_the_catalogue_matches_the_hermes_list():
     # because it is the only one blocked by the other side rather than by us.
     names = [c["platform"] for c in rg.CHANNEL_CATALOGUE]
     assert names == ["telegram", "cli", "slack", "discord", "mattermost",
-                     "matrix", "whatsapp", "signal", "email", "teams", "buzz"]
+                     "matrix", "whatsapp", "signal", "teams", "buzz"]
+
+
+def test_email_is_not_a_channel():
+    # Removed at Ralph's request. Email is a connector you attach to your
+    # account, not a place you talk to IO from, and listing it here promised a
+    # way in that was never going to be built on this page.
+    assert "email" not in [c["platform"] for c in rg.CHANNEL_CATALOGUE]
 
 
 def _buzz():
