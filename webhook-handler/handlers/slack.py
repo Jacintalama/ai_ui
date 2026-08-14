@@ -184,6 +184,34 @@ class SlackWebhookHandler:
             platform="slack", respond=respond, notify_channel=respond,
         )
 
+    async def _try_gateway(self, event: dict[str, Any]) -> bool:
+        """Answer as the sender's own IO account, if the channel is switched on.
+
+        False means "not mine", and the caller falls back to the generic reply
+        exactly as before. That is the whole safety property: this integration
+        is already carrying real traffic, so a dormant flag, an unregistered
+        adapter, or a failure here must all leave the previous behaviour
+        untouched rather than swallowing somebody's message.
+        """
+        from gateway import pipeline as gateway_pipeline
+        from gateway.registry import registry as gateway_registry
+
+        adapter = gateway_registry.adapter("slack")
+        if adapter is None:
+            return False
+        parsed = adapter.parse_inbound(event, {})
+        if parsed is None:
+            return False
+        try:
+            await gateway_pipeline.handle_event(parsed, adapter)
+            return True
+        except Exception:                                # noqa: BLE001
+            # handle_event already turns every failure it can into a sentence
+            # the person can read, so reaching here means something outside it
+            # broke. Fall through rather than leave the DM unanswered.
+            logger.exception("slack gateway failed; falling back to the generic reply")
+            return False
+
     async def _handle_direct_message(self, event: dict[str, Any]) -> dict[str, Any]:
         """Handle direct message to bot."""
         # Only respond to a freshly-typed user message. Skip bot echoes (bot_id)
@@ -224,6 +252,15 @@ class SlackWebhookHandler:
 
         if await self._try_intent(text, channel, user_id=user):
             return {"success": True, "message": "Intent handled"}
+
+        # Everything above still gets first refusal. This replaces only the
+        # generic answer below it: one shared model with one shared prompt,
+        # identical for every person, carrying nobody's memory, tools or files.
+        # Through the gateway the same message is answered by the SENDER's own
+        # IO account, or returns a pairing code if we do not know them yet.
+        handled = await self._try_gateway(event)
+        if handled:
+            return {"success": True, "message": "Gateway handled"}
 
         system_prompt = self.ai_system_prompt or (
             "You are a helpful AI assistant responding to direct messages in Slack. "

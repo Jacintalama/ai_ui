@@ -543,6 +543,17 @@ class ConversationalVoiceBot(discord.Client):
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("video url intake failed: %s", exc)
 
+        # A direct message, answered by the sender's own IO account. Purely
+        # additive: a Discord DM that is not a command and not an intent gets
+        # no reply at all today, so this fills silence rather than replacing an
+        # answer. Guild channels are never touched, here or in the pipeline.
+        if getattr(message.channel, "type", None) is discord.ChannelType.private:
+            try:
+                if await self._try_gateway_dm(message):
+                    return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("discord gateway DM failed: %s", exc)
+
         # Plain-English request in any channel -> the intent router. It stays
         # silent unless it detects a real request (build, schedule, briefing...).
         # Best-effort; an error here must never crash the gateway loop.
@@ -554,6 +565,32 @@ class ConversationalVoiceBot(discord.Client):
                     await self._video_intake.handle_chat(**info)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("chat intent routing failed: %s", exc)
+
+    async def _try_gateway_dm(self, message) -> bool:
+        """Route one Discord DM through the gateway. False means "not mine".
+
+        The bot is flattened to a plain dict here so the adapter's decision
+        about what counts as a message stays testable without constructing
+        discord.py objects.
+        """
+        from gateway import pipeline as gateway_pipeline
+        from gateway.registry import registry as gateway_registry
+
+        adapter = gateway_registry.adapter("discord")
+        if adapter is None:
+            return False
+        parsed = adapter.parse_inbound({
+            "is_bot": bool(message.author.bot),
+            "is_dm": True,
+            "text": message.content or "",
+            "user_id": message.author.id,
+            "user_name": getattr(message.author, "display_name", "") or "",
+            "message_id": message.id,
+        }, {})
+        if parsed is None:
+            return False
+        await gateway_pipeline.handle_event(parsed, adapter)
+        return True
 
     def _pick_text_channel(self, voice_channel):
         """Transcripts and build links go where the user is looking: the text

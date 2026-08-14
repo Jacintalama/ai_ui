@@ -44,6 +44,8 @@ from gateway import nip19
 from gateway import pipeline as gateway_pipeline
 from gateway.buzz_manager import BuzzManager
 from gateway.platforms.cli import CliAdapter
+from gateway.platforms.discord import DISCORD_MAX_MESSAGE, DiscordAdapter
+from gateway.platforms.slack import SLACK_MAX_MESSAGE, SlackAdapter
 from gateway.platforms.telegram import TELEGRAM_MAX_MESSAGE, TelegramAdapter
 from gateway.rate_limit import SlidingWindow, client_key
 from gateway.registry import PlatformEntry, registry as gateway_registry
@@ -120,6 +122,40 @@ gateway_registry.register(PlatformEntry(
     required_env=["GATEWAY_CLI_ENABLED"],
     max_message_length=0,   # a terminal has no message cap
     emoji="⌨️",
+))
+
+# Slack and Discord already talked to IO before Channels existed, through the
+# command router. What they did NOT have is an answer from the sender's own IO
+# account: Slack fell through to a shared model with a shared prompt, and
+# Discord fell through to silence. These entries are what put a person's own
+# memory, tools and files behind a direct message.
+#
+# The factories read the module globals lazily because both clients are built
+# in the lifespan, long after this import-time registration, and the registry
+# only calls a factory on first use.
+#
+# GATEWAY_SLACK_ENABLED / GATEWAY_DISCORD_ENABLED are separate from the tokens
+# on purpose. Both integrations are already live and carrying real traffic, so
+# the credentials being present must NOT be enough to reroute a DM. Deploying
+# this changes nothing until the flag is set, and blanking the flag puts the
+# old behaviour back without a code change.
+gateway_registry.register(PlatformEntry(
+    name="slack",
+    label="Slack",
+    adapter_factory=lambda: SlackAdapter(slack_client),
+    required_env=["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET",
+                  "GATEWAY_SLACK_ENABLED"],
+    max_message_length=SLACK_MAX_MESSAGE,
+    emoji="💬",
+))
+
+gateway_registry.register(PlatformEntry(
+    name="discord",
+    label="Discord",
+    adapter_factory=lambda: DiscordAdapter(discord_client),
+    required_env=["DISCORD_BOT_TOKEN", "GATEWAY_DISCORD_ENABLED"],
+    max_message_length=DISCORD_MAX_MESSAGE,
+    emoji="🎮",
 ))
 
 # Telegram re-delivers an update until it sees a 200, and we answer before the

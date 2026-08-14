@@ -580,12 +580,19 @@ CHANNEL_CATALOGUE = (
               "One script, nothing to install but Python. Not phones."},
 
     # Code already exists in this platform, but not behind the gateway yet.
+    # Both were already talking to IO before Channels existed, through the
+    # command router. What they lacked is an answer from the sender's OWN
+    # account: Slack fell through to one shared model with one shared prompt,
+    # the same for everybody, and Discord fell through to silence. No `planned`
+    # key, because these are switched on per server like the terminal is.
     {"platform": "slack", "label": "Slack", "icon": "💬",
      "blurb": "Use IO from Slack direct messages.",
-     "planned": "Slack already talks to IO, but not yet through Channels."},
+     "caveat": "Messages you send from Slack pass through Slack, and Slack "
+               "vouches for who you are."},
     {"platform": "discord", "label": "Discord", "icon": "🎮",
      "blurb": "Use IO from Discord direct messages.",
-     "planned": "Discord already talks to IO, but not yet through Channels."},
+     "caveat": "Messages you send from Discord pass through Discord, and "
+               "Discord vouches for who you are."},
 
     # Not started, and nothing else in this codebase to build on.
     {"platform": "mattermost", "label": "Mattermost", "icon": "💠",
@@ -842,6 +849,19 @@ def _channel_status(entry: dict, linked: dict) -> dict:
                             "from Buzz and it will reply with a code."}
         return {**row, "status": "off",
                 "note": "The Buzz channel is switched off on this server."}
+
+    # Both read the SAME flag their service reads. Setting it on one service
+    # only is exactly how the terminal channel ended up live while the page
+    # called it switched off.
+    if platform in ("slack", "discord"):
+        flag = f"GATEWAY_{platform.upper()}_ENABLED"
+        if os.environ.get(flag, "").strip():
+            return {**row, "status": "available",
+                    "note": f"Message IO on {entry['label']} and it will "
+                            "reply with a code."}
+        return {**row, "status": "off",
+                "note": f"{entry['label']} talks to IO already, but not yet "
+                        "as your own account. Not switched on here."}
 
     if platform == "cli":
         if os.environ.get("GATEWAY_CLI_ENABLED", "").strip():
