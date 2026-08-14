@@ -29,6 +29,12 @@ def current_admin(request: Request) -> AdminUser:
 class CurrentUser:
     email: str
     is_admin: bool = False
+    # True only when the principal was proved by a signed, task-scoped edit
+    # capability instead of the gateway headers. Routes use it to keep an
+    # authorization branch that a capability legitimately satisfies (it is
+    # bound to one exact task) without also opening that branch to every
+    # signed-in user. Never implies admin.
+    via_capability: bool = False
 
 
 def current_user(request: Request) -> CurrentUser:
@@ -68,6 +74,28 @@ def current_admin_or_capability(task_id: UUID, request: Request) -> AdminUser:
         return AdminUser(email=(data["owner"] or "").strip().lower(),
                          is_admin=False)
     return current_admin(request)
+
+
+def current_user_or_capability(task_id: UUID, request: Request) -> CurrentUser:
+    """Like current_admin_or_capability, but the no-capability path accepts ANY
+    authenticated user rather than requiring the admin header.
+
+    Used by the single-task read the App Builder polls to watch a build: the
+    route body already gates on assignee / project membership, so demanding the
+    admin header on top of it only stopped a user from watching their own build.
+    The capability path is unchanged — still bound to this exact `task_id`,
+    still non-admin — except that it is flagged `via_capability` so a route can
+    tell "the Visual Editor deep link, scoped to one task" apart from "any
+    logged-in person"."""
+    cap = request.headers.get("x-edit-capability", "").strip()
+    if cap:
+        from edit_capability import verify_capability
+        data = verify_capability(cap)
+        if not data or data["task_id"] != str(task_id):
+            raise HTTPException(status_code=403, detail="Invalid edit capability")
+        return CurrentUser(email=(data["owner"] or "").strip().lower(),
+                           is_admin=False, via_capability=True)
+    return current_user(request)
 
 
 def current_admin_or_capability_for_slug(slug: str, request: Request) -> AdminUser:

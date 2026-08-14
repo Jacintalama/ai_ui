@@ -127,3 +127,40 @@ async def test_run_schedule_action_tasks_error_is_friendly():
     ctx, cap = _ctx("100")
     await _router({"100": "a@x.com"}, tc).run_schedule_action(ctx, "del", "sid-1")
     assert cap["text"]
+
+
+# --- _format_tasks_error: the two new API refusals ------------------------
+
+
+def _fmt(status, message=""):
+    return _router({}, MagicMock())._format_tasks_error(
+        TasksAPIError(status, message))
+
+
+def test_the_count_cap_is_matched_by_status_not_prose():
+    """429 had no branch at all, so a user at the ceiling got the raw
+    'Tasks API error (429).' The copy for it already existed - nested
+    unreachably inside the status == 400 branch."""
+    msg = _fmt(429, "You already have 10 scheduled tasks. Delete one first.")
+    assert "10" in msg, msg
+    assert "429" not in msg, msg
+
+
+def test_the_interval_floor_message_is_matched_and_accurate():
+    """The API says 'The shortest repeat is every 15 minutes' - it never says
+    'interval', which is the word the old substring match looked for, so this
+    fell through to 'Bad request'. And the old copy quoted 5 minutes."""
+    msg = _fmt(400, "The shortest repeat is every 15 minutes. That schedule "
+                    "would run every 1 minute(s).")
+    assert "15" in msg, msg
+    assert "Min interval is 5" not in msg, msg
+    assert "Bad request" not in msg, msg
+
+
+def test_an_invalid_cron_is_still_reported_as_a_cron_problem():
+    assert "cron" in _fmt(400, "invalid cron_expr").lower()
+
+
+def test_an_unrecognised_400_still_falls_back():
+    assert "check your input" in _fmt(
+        400, "kind must be 'agent' or 'video'").lower()

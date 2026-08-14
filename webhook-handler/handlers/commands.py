@@ -595,12 +595,13 @@ class CommandRouter:
         message into `when` (time phrase) and `task` (what to do); parse_when turns
         the phrase into cron, then run_schedule_create makes it (delivering runs to
         the ctx's private thread). On a missing/garbled time, ask for what + when."""
-        from handlers.schedule_parse import parse_when
+        from handlers.schedule_parse import parse_when, too_frequent_error
         when = (data.get("when") or "").strip()
         task = (data.get("task") or data.get("detail") or "").strip()
         parsed = parse_when(when) if when else None
         if not parsed or not task:
             await ctx.respond(
+                (task and too_frequent_error(when)) or
                 "I can set that up — tell me what to do and when, e.g. "
                 "*summarize my emails every morning at 8am*."
             )
@@ -2717,7 +2718,7 @@ class CommandRouter:
             await self._tasks_client.capture_video_screenshots(email, job_id, url)
             res = await self._tasks_client.queue_video(email, job_id)
         except TasksAPIError as e:
-            await ctx.respond(self._format_tasks_error(e))
+            await ctx.respond(self._format_video_error(e))
             return
         qp = res.get("queue_position", 0)
         tail = f" (queue position {qp})" if qp else ""
@@ -3230,22 +3231,47 @@ class CommandRouter:
 
         Never echoes the request body, secrets, or other users' identifiers.
         """
+        from handlers.schedule_parse import (
+            MAX_SCHEDULES_PER_USER, MIN_INTERVAL_MINUTES,
+        )
         if e.status == 0:
             return "Tasks service unreachable, try again."
         if e.status == 404:
             return "No such schedule: not found"
+        # The count cap is a status, not a phrase. It used to be recognised only
+        # by the word "max" inside the 400 branch, which 429 never reaches — so
+        # a user at the ceiling got the bare "Tasks API error (429)."
+        if e.status == 429:
+            return (f"You've hit the limit of {MAX_SCHEDULES_PER_USER} scheduled "
+                    "tasks. Delete one to make room, then try again.")
         if e.status == 400:
             msg = e.message
             if "cron_expr" in msg:
                 return f"Invalid cron: {msg}"
-            if "interval" in msg.lower():
-                return "Min interval is 5 min."
-            if "max" in msg.lower() or "quota" in msg.lower():
-                return "You hit the max schedules limit."
+            # Matching prose is what broke this: the API says "The shortest
+            # repeat is every 15 minutes" and never says "interval", so the
+            # too-frequent case fell through to "Bad request". Both wordings
+            # are accepted now, and the limit is quoted from one constant
+            # instead of the hardcoded (and by then wrong) "5 min".
+            if "shortest repeat" in msg.lower() or "interval" in msg.lower():
+                return (f"That's a bit too often — the shortest repeat is every "
+                        f"{MIN_INTERVAL_MINUTES} minutes.")
             return "Bad request — check your input."
         if e.status == 401 or e.status == 403:
             return "Permission denied by tasks service."
         return f"Tasks API error ({e.status})."
+
+    def _format_video_error(self, e: TasksAPIError) -> str:
+        """Video-flavored error text.
+
+        The walkthrough path used to share _format_tasks_error outright, which
+        was harmless while nothing there answered 429. routes_video.py does
+        ("Daily video limit reached"), and _format_tasks_error's 429 is the
+        SCHEDULE count cap — so the two have to be told apart here.
+        """
+        if e.status == 429:
+            return ("You've hit today's video limit. Try again tomorrow.")
+        return self._format_tasks_error(e)
 
     def _format_build_error(self, e: TasksAPIError) -> str:
         """Build-flavored error text (NOT the schedule-flavored _format_tasks_error)."""

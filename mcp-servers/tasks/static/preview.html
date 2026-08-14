@@ -3371,14 +3371,46 @@
               $bovStart.hidden = false;
             }
           } else {
-            // Pending but it already has an execution (a prior run likely died
-            // mid-build). Don't hang on "building…" forever — reveal a manual
-            // Start so the user can resume it.
-            $bovTitle.textContent = "This build is paused";
-            $bovSub.textContent = "It didn't finish starting. Click Start below to resume it.";
+            // Pending WITH an execution means a run already died. Say why.
+            //
+            // A user reported "never ending loading" on 2026-08-12: their
+            // build had failed in 487ms and this overlay still read "building
+            // your app…". The reason was already on the task (`result`) and on
+            // the execution (`error`/`log`) — it was simply never shown. 45
+            // builds had died this way since 2026-08-10.
+            const lastRunFailed = execs.find((e) => e.status === "failed") || execs[0];
+            const runFailureReason =
+              (task.result || "").trim() ||
+              (lastRunFailed && (lastRunFailed.error || "").trim()) ||
+              "";
+            // The one failure that has actually happened at scale. Name it, so
+            // nobody spends another three days rewording their prompt.
+            if (/credit balance/i.test(runFailureReason)) {
+              $bovTitle.textContent = "Build stopped — AI credit ran out";
+              $bovSub.textContent =
+                "This is a billing limit on the platform, not a problem with " +
+                "your request. Your project is saved. Tell an admin the " +
+                "Anthropic credit needs topping up, then press Start.";
+            } else {
+              $bovTitle.textContent = "Build stopped before it finished";
+              $bovSub.textContent = runFailureReason
+                ? "Reason: " + runFailureReason.slice(0, 300) +
+                  " — your project is saved. Press Start to try again."
+                : "It didn't finish starting. Click Start below to resume it.";
+            }
             $bovStart.hidden = false;
           }
-        } catch (_) { /* ignore — we'll retry the overall poll */ }
+        } catch (e) {
+          // Never swallow this. The 403 that used to land here is exactly why
+          // a dead build looked like a live one: the branch above could not
+          // run, and _bovAutoKicked had already been set, so it never retried.
+          console.error("[build overlay] could not read build status", e);
+          $bovTitle.textContent = "Can't read this build's status";
+          $bovSub.textContent =
+            "The build may have stopped. Press Start to try again, or go back " +
+            "to your projects. (" + String((e && e.message) || e).slice(0, 160) + ")";
+          $bovStart.hidden = false;
+        }
       }
 
       // Pull the latest execution log to stream into the overlay.

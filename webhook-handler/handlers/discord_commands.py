@@ -12,7 +12,7 @@ from config import settings
 from handlers.commands import CommandRouter, CommandContext
 from handlers import connector_intent
 from handlers import intent_cards
-from handlers.schedule_parse import parse_when
+from handlers.schedule_parse import parse_when, too_frequent_error
 from handlers import schedule_picker
 from datetime import datetime, timedelta, timezone
 
@@ -1761,7 +1761,7 @@ class DiscordCommandHandler:
         parsed = parse_when(when)
         if not what or parsed is None:
             return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
-                "content": (
+                "content": (what and too_frequent_error(when)) or (
                     "I couldn't read that. Tell me **what** to do and **when** — "
                     "e.g. *every morning*, *every Monday 9am*, or *every 30 minutes*."
                 ),
@@ -1787,8 +1787,9 @@ class DiscordCommandHandler:
         parsed = parse_when(when)
         if parsed is None:
             return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
-                "content": ("I couldn't read that schedule. Try *every morning*, "
-                            "*every Monday 9am*, or *every 30 minutes*."),
+                "content": too_frequent_error(when) or (
+                    "I couldn't read that schedule. Try *every morning*, "
+                    "*every Monday 9am*, or *every 30 minutes*."),
                 "flags": 64}}
         cron, human = parsed
         host = urlparse(url).hostname or url
@@ -2456,8 +2457,9 @@ class DiscordCommandHandler:
         parsed = parse_when(when)
         if not what or parsed is None:
             return {"type": CHANNEL_MESSAGE_WITH_SOURCE, "data": {
-                "content": ("I couldn't read that time. Try 'every morning', "
-                            "'every Monday 9am', or 'every 30 minutes'."),
+                "content": (what and too_frequent_error(when)) or (
+                    "I couldn't read that time. Try 'every morning', "
+                    "'every Monday 9am', or 'every 30 minutes'."),
                 "flags": 64,
             }}
         cron, human = parsed

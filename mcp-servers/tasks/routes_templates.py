@@ -1,13 +1,19 @@
 """GET /api/templates — returns the template catalog for the frontend dropdown.
 
-Public-ish: any authenticated admin can see the catalog (it's not secret).
+Public-ish: any authenticated user can see the catalog (it's not secret).
 The `rules` field is intentionally omitted from the response — those only
 travel agent-side to close a prompt-injection vector.
+
+The admin header used to be required as well, which left the App Builder's
+"Select template" gallery empty for a regular user. It never protected
+anything: the same catalog is already served to non-admins by
+/api/aiuibuilder/templates, and the secret part (`rules`) is not in either
+response.
 """
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from auth import AdminUser, current_admin
+from auth import CurrentUser, current_user
 from templates import TEMPLATES
 
 router = APIRouter(prefix="/api")
@@ -27,7 +33,7 @@ class TemplateOut(BaseModel):
 
 
 @router.get("/templates", response_model=list[TemplateOut])
-async def list_templates(user: AdminUser = Depends(current_admin)) -> list[TemplateOut]:
+async def list_templates(user: CurrentUser = Depends(current_user)) -> list[TemplateOut]:
     from templates import _has_template_app
     return [
         TemplateOut(

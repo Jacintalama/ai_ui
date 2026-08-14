@@ -251,3 +251,24 @@ async def test_modal_submit_gmail_unlinked_shows_link_card(monkeypatch):
     assert not any(i.startswith(SCHED_CONFIRM_PREFIX) for i in ids)  # not a confirm card
     assert any(i == LINK_START_ID for i in ids)                      # the Link card
     is_conn.assert_not_awaited()                                     # gated before connector check
+
+
+@pytest.mark.asyncio
+async def test_a_too_frequent_when_is_told_the_minimum(monkeypatch):
+    # "every 5 minutes" parses fine and is simply not allowed. Reporting it as
+    # "I couldn't read that" sends the user off editing wording that was never
+    # the problem, so the modal has to name the floor.
+    resp = await _handler(MagicMock()).handle_interaction(
+        _sched_submit("do a thing", "every 5 minutes"))
+    content = resp["data"]["content"]
+    assert "15" in content, content
+    assert "couldn't read" not in content.lower(), content
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_when_keeps_the_generic_message(monkeypatch):
+    resp = await _handler(MagicMock()).handle_interaction(
+        _sched_submit("do a thing", "sometime next week maybe"))
+    content = resp["data"]["content"]
+    assert "couldn't read" in content.lower(), content
+    assert "15" not in content, content

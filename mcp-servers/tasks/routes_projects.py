@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select, text
 
-from auth import (AdminUser, current_admin, current_admin_or_capability_for_slug,
+from auth import (AdminUser, current_admin,
                   current_user_or_capability_for_slug, CurrentUser, current_user)
 from db import session
 from models import ChatMessage, ProjectMember, ProjectSupabase, PublishedApp, TaskItem
@@ -638,28 +638,40 @@ async def list_app_versions_core(slug: str) -> list[VersionEntry]:
 
 
 @router.get("/{slug}/versions", response_model=list[VersionEntry])
-async def list_versions(slug: str, user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+async def list_versions(slug: str,
+                        user: CurrentUser = Depends(current_user_or_capability_for_slug)):
     """List all commits that touched apps/<slug>/. Membership-gated; the git
     log + task cross-reference logic lives in list_app_versions_core (shared
-    with the owner-scoped aiuibuilder route)."""
+    with the owner-scoped aiuibuilder route).
+
+    Open to any signed-in user at the dependency layer so a project's own
+    members can read their history, then gated twice in the body — the pattern
+    _publish_slug already uses. The second check is not redundant here:
+    _user_can_see_project matches `user_email IN (email, TEAM_EMAIL)`, so on
+    its own it would hand every signed-in user the AIUI team's history. A pure
+    read is viewer-level, following get_supabase.
+    """
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "viewer", is_admin=user.is_admin)
     return await list_app_versions_core(slug)
 
 
 @router.get("/{slug}/docs")
 async def get_docs(slug: str,
-                   user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+                   user: CurrentUser = Depends(current_user_or_capability_for_slug)):
     """The app's README.md as raw markdown, for the Docs tab.
 
-    Membership-gated like the version history next door. Returns the text only;
-    the client renders it, the same way the Fusion page renders an answer."""
+    Membership-gated like the version history next door — same two checks, same
+    viewer-level read. Returns the text only; the client renders it, the same
+    way the Fusion page renders an answer."""
     _validate_slug(slug)
     async with session() as s:
         if not await _user_can_see_project(s, slug, user.email):
             raise HTTPException(status_code=403, detail="Not a member of this project")
+        await _require_role(s, slug, user.email, "viewer", is_admin=user.is_admin)
     from app_docs import app_readme_path
     path = app_readme_path(slug)
     try:
@@ -713,9 +725,13 @@ async def _supabase_info_for(s, slug: str):
 
 @router.get("/{slug}/export/guide")
 async def export_guide(slug: str,
-                       user: AdminUser = Depends(current_admin_or_capability_for_slug)):
-    """Deploy-guide markdown for the gallery modal."""
+                       user: CurrentUser = Depends(current_user_or_capability_for_slug)):
+    """Deploy-guide markdown for the gallery modal. Owner-only, like the
+    bundle it describes — and checked BEFORE analyze_app touches the disk, so
+    a stranger cannot learn from a 404-vs-200 which slugs exist."""
     _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
     profile = _app_export.analyze_app(slug)
     if profile is None:
         raise HTTPException(status_code=404, detail="App not found on disk")
@@ -724,14 +740,26 @@ async def export_guide(slug: str,
 
 @router.get("/{slug}/export")
 async def export_bundle(slug: str,
-                        user: AdminUser = Depends(current_admin_or_capability_for_slug)):
+                        user: CurrentUser = Depends(current_user_or_capability_for_slug)):
     """Download the app as a working git repository (zip).
+
+    Owner-only. This route had no ownership check at all while it sat behind
+    the admin header, so opening it to signed-in users needed the check
+    WRITTEN, not moved: it hands over the app's full source, its git history
+    and the Supabase config that is otherwise injected at request time and
+    never lives in the app's files. Viewer and editor are deliberately not
+    enough — being allowed to look at a project, or change it, is not being
+    allowed to take it.
+
+    The role check comes before the advisory lock so a stranger can neither
+    contend for another user's build lock nor probe it through the 409.
 
     User-initiated: a good bundle or a clear error, never a silent partial.
     Holds the per-slug build lock for the duration so we never zip a
     half-written tree; a live build/enhance means 409, not a wait."""
     _validate_slug(slug)
     async with session() as s:
+        await _require_role(s, slug, user.email, "owner", is_admin=user.is_admin)
         got = (await s.execute(
             text("SELECT pg_try_advisory_xact_lock(hashtext(:k))"),
             {"k": f"build:{slug}"})).scalar()

@@ -433,3 +433,25 @@ async def test_connect_resume_still_missing_keeps_parked_no_create():
     router._tasks_client.create_schedule.assert_not_awaited()
     assert "tok9" in handler._pending_schedules
     assert "Still not connected" in slack.post_to_response_url.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_edit_submission_too_frequent_names_the_floor_and_does_not_update():
+    """The Edit modal PATCHes a user-supplied cron, so it is the bypass path.
+    Slack must say why rather than blame the wording."""
+    router = _sched_router()
+    handler, slack = _handler(router)
+
+    resp = await handler.handle_interaction(
+        _view_submission_payload(
+            f"{SCHED_EDITMODAL_PREFIX}7",
+            what="updated prompt text",
+            when="every 5 minutes",
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert resp.get("response_action") == "errors"
+    message = resp["errors"][SCHED_WHEN_BLOCK_ID]
+    assert "15" in message, message
+    router._tasks_client.update_schedule.assert_not_awaited()

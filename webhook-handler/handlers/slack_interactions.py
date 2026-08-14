@@ -83,7 +83,7 @@ from handlers.slack_schedule_panel import (
     SCHED_VID_WHAT_BLOCK_ID,
     SCHED_VID_WHAT_INPUT_ID,
 )
-from handlers.schedule_parse import parse_when
+from handlers.schedule_parse import parse_when, too_frequent_error
 from handlers import schedule_picker
 from datetime import datetime, timedelta, timezone
 from handlers import connector_intent
@@ -1216,7 +1216,7 @@ class SlackInteractionsHandler:
             when = self._sched_value(view, SCHED_WHEN_BLOCK_ID, SCHED_WHEN_INPUT_ID)
             parsed = parse_when(when)
             if parsed is None:
-                return self._sched_when_error()
+                return self._sched_when_error(too_frequent_error(when) or "")
             cron, human = parsed
             name = self._sched_name_from_prompt(what)
 
@@ -1544,14 +1544,19 @@ class SlackInteractionsHandler:
         return name[:40] if name else "Scheduled task"
 
     @staticmethod
-    def _sched_when_error() -> dict[str, Any]:
-        """Slack modal validation error on the 'when' block (no schedule created)."""
+    def _sched_when_error(message: str = "") -> dict[str, Any]:
+        """Slack modal validation error on the 'when' block (no schedule created).
+
+        `message` overrides the default when we know WHY — a schedule that was
+        understood but is faster than the floor needs the limit, not advice on
+        rewording something that was already fine.
+        """
         return {
             "response_action": "errors",
             "errors": {
-                SCHED_WHEN_BLOCK_ID:
+                SCHED_WHEN_BLOCK_ID: message or (
                     "Couldn't understand that schedule time — try e.g. "
-                    "'every morning at 8am'.",
+                    "'every morning at 8am'."),
             },
         }
 

@@ -13,7 +13,14 @@ from sqlalchemy import or_, select, text
 import uuid
 
 from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
-from auth import AdminUser, current_admin, current_admin_or_capability
+from auth import (
+    AdminUser,
+    CurrentUser,
+    current_admin,
+    current_admin_or_capability,
+    current_user,
+    current_user_or_capability,
+)
 from db import session
 from document_extract import classify_document, extract_text
 from models import ChatMessage, ProjectSupabase, TaskItem
@@ -109,12 +116,23 @@ STATUS_BY_TAB: dict[str, list[str]] = {
 }
 
 
-async def _get_owned_task(s, task_id: UUID, email: str) -> TaskItem:
+async def _get_owned_task(s, task_id: UUID, email: str,
+                          is_admin: bool = False) -> TaskItem:
+    """The task, if this caller may act on it.
+
+    `is_admin` gates the TEAM_EMAIL shortcut. That shortcut was harmless while
+    every caller was an admin; once these routes accept any signed-in user it
+    would let a stranger read a team build's full log by guessing a UUID.
+    Defaults to False so a caller that forgets to pass it fails closed.
+    """
     res = await s.execute(select(TaskItem).where(TaskItem.id == task_id))
     item = res.scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    if item.assignee_email != email and item.assignee_email != TEAM_EMAIL:
+    allowed = {email}
+    if is_admin:
+        allowed.add(TEAM_EMAIL)
+    if item.assignee_email not in allowed:
         raise HTTPException(status_code=403, detail="Not your task")
     return item
 
@@ -126,7 +144,7 @@ async def list_tasks(
     has_built_app: bool = False,
     is_project: bool = False,
     limit: int = 50,
-    user: AdminUser = Depends(current_admin),
+    user: CurrentUser = Depends(current_user),
 ):
     """List tasks with flexible filters.
 
@@ -136,8 +154,15 @@ async def list_tasks(
       strictly private to their owner + explicitly-invited members.
     - `has_built_app=true`: legacy filter for projects with a completed
       slug; now also excludes the team bucket.
-    - Default (neither flag): the admin task-panel view — all tasks for
-      this user plus the shared team bucket.
+    - Default (neither flag): the task-panel view — all tasks for this
+      user, plus the shared team bucket for admins only.
+
+    Open to any authenticated user, not just admins: projects are per-user
+    and a user must be able to manage their own. The two project branches
+    were already scoped to owner-or-member, so dropping the admin header
+    relaxes "admin AND owner" to "owner" and widens nothing. The default
+    branch is NOT redundant that way — it reaches into the shared team
+    bucket, which is other people's work — so that part stays admin-only.
     """
     if status not in STATUS_BY_TAB and not is_project:
         raise HTTPException(status_code=400, detail="Invalid status filter")
@@ -193,8 +218,11 @@ async def list_tasks(
                 .limit(limit)
             )
         else:
-            # Default: admin task panel — includes team bucket.
-            access_clause = TaskItem.assignee_email.in_([user.email, TEAM_EMAIL])
+            # Default: task panel. The shared team bucket belongs to the AIUI
+            # team, so only an admin sees it; a regular user gets their own
+            # tasks and nothing else.
+            scope = [user.email] + ([TEAM_EMAIL] if user.is_admin else [])
+            access_clause = TaskItem.assignee_email.in_(scope)
             q = (
                 select(TaskItem)
                 .where(
@@ -211,11 +239,23 @@ async def list_tasks(
 
 
 @router.get("/{task_id}/executions")
-async def list_executions(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
-    """Return execution history for a task — used by the panel to show what AI did."""
+async def list_executions(
+    task_id: UUID,
+    user: CurrentUser = Depends(current_user_or_capability),
+):
+    """Return execution history for a task — used by the panel to show what AI did.
+
+    Opened to owners on 2026-08-12. A user reported their build stuck on QUEUED
+    forever; the build had in fact failed in 487ms ("Credit balance is too
+    low"), and this endpoint — the only one that carries the log and the error —
+    answered 403 on all 282 of the page's progress polls. The body already
+    scopes to the caller via `_get_owned_task`, so the admin header only ever
+    stopped a user from seeing their own build.
+    """
     from models import TaskExecution
     async with session() as s:
-        item = await _get_owned_task(s, task_id, user.email)
+        item = await _get_owned_task(s, task_id, user.email,
+                                     is_admin=user.is_admin)
         rows = (await s.execute(
             select(TaskExecution)
             .where(TaskExecution.task_id == item.id)
@@ -256,8 +296,12 @@ async def history(
 
 
 @router.get("/{task_id}", response_model=TaskOut)
-async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
+async def get_task(task_id: UUID, user: CurrentUser = Depends(current_user_or_capability)):
     """Return a single task. Used by preview.html to watch build status.
+
+    Open to any authenticated user — the checks below are what actually gate
+    it, so demanding the admin header on top only stopped a regular user from
+    watching their own build.
 
     Read access extends beyond assignee — project members (people invited
     via the 👥 Members modal) can also view tasks for projects they're
@@ -270,7 +314,14 @@ async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin_or_cap
         ).scalar_one_or_none()
         if item is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if item.assignee_email in (user.email, TEAM_EMAIL):
+        if item.assignee_email == user.email:
+            return item
+        # The team bucket is the AIUI team's shared queue, not a public one.
+        # Left open to everybody it would hand any signed-in user the team's
+        # task descriptions, plans and results for the price of guessing a
+        # UUID. An admin keeps it; so does a capability, which is already
+        # bound to this one task_id (the Visual Editor deep link).
+        if item.assignee_email == TEAM_EMAIL and (user.is_admin or user.via_capability):
             return item
         # Not the assignee — check project membership.
         if item.built_app_slug:
@@ -287,21 +338,101 @@ async def get_task(task_id: UUID, user: AdminUser = Depends(current_admin_or_cap
         raise HTTPException(status_code=403, detail="Not your task")
 
 
-@router.post("", response_model=TaskOut, status_code=201)
-async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current_admin)):
-    """Admin-created task from the panel. Not tied to a real meeting —
-    uses a synthetic meeting_id so it shows up as normal in the panel."""
-    amap = AssigneeMap.from_env()
-    assignee_raw = (body.assignee or "self").strip()
+def _resolve_assignee(user: CurrentUser, raw: str | None) -> tuple[str, str]:
+    """Map the request's `assignee` to (display name, email).
+
+    "self" is the caller, "team" is the shared bucket, and anything else goes
+    through AssigneeMap to ANOTHER person's inbox (falling back to the team
+    bucket for a name it doesn't know). A regular user may only file work
+    against themselves — not at a colleague, and not at the shared bucket.
+    Admins keep the full range.
+    """
+    assignee_raw = (raw or "self").strip()
     if assignee_raw.lower() == "self":
-        assignee_name = user.email.split("@")[0]
-        assignee_email = user.email
+        assignee_name, assignee_email = user.email.split("@")[0], user.email
     elif assignee_raw.lower() == "team":
-        assignee_name = "team"
-        assignee_email = TEAM_EMAIL_CONST
+        assignee_name, assignee_email = "team", TEAM_EMAIL_CONST
     else:
         assignee_name = assignee_raw
-        assignee_email = amap.resolve(assignee_raw)
+        assignee_email = AssigneeMap.from_env().resolve(assignee_raw)
+    if not user.is_admin and assignee_email != user.email:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only create tasks assigned to yourself.",
+        )
+    return assignee_name, assignee_email
+
+
+def _check_slug_shape(slug: str) -> None:
+    """Reject a caller-supplied slug that isn't a plain kebab-case name.
+
+    The slug is joined onto `apps/` by _ensure_app_skeleton and
+    _copy_template_app, so an unvalidated value ("../../x") writes outside the
+    workspace. CreateTaskRequest declares it as a bare `str | None`, so this is
+    the only check. Reuses routes_aiuibuilder's regex — the same one the
+    Discord/Slack/voice build path already enforces — so the two entry points
+    agree on what a project name is.
+    """
+    from routes_aiuibuilder import _SLUG_RE
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid project name — use lowercase letters, digits and "
+                   "hyphens, starting with a letter or digit.",
+        )
+
+
+def _app_dir_exists(slug: str) -> bool:
+    """True if apps/<slug>/ is already on disk.
+
+    Postgres is not the whole picture: `built_app_slug` used to stay NULL when
+    the agent didn't echo `apps/<slug>/` in its completion message, and the
+    team creates app folders directly on the VPS. Those apps have files worth
+    protecting even when nothing in the database points at them. Called only
+    after the slug passed `_check_slug_shape`, so it cannot be a traversal.
+    """
+    import os
+    workspace = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
+    return os.path.isdir(os.path.join(workspace, "apps", slug))
+
+
+async def _check_slug_is_not_someone_elses(s, slug: str, email: str) -> None:
+    """Refuse a slug that already belongs to a project this caller doesn't own.
+
+    Two things go wrong otherwise, and neither is theoretical:
+      - `_copy_template_app` overwrites destination files, so the victim's app
+        source is clobbered (the same hazard routes_aiuibuilder documents on
+        `_bind_slug_description`);
+      - routes_projects._require_role treats "a TaskItem with this
+        built_app_slug is assigned to me" as implicit OWNERSHIP, so the caller
+        would gain publish/rollback/delete/invite/link-a-database rights on
+        someone else's project.
+    Reusing a slug you already own is allowed — that's rebuilding your own app.
+    """
+    from routes_aiuibuilder import _slug_taken
+    if not (await _slug_taken(s, slug) or _app_dir_exists(slug)):
+        return
+    from routes_projects import _require_role
+    try:
+        await _require_role(s, slug, email, "owner")
+    except HTTPException:
+        raise HTTPException(
+            status_code=409,
+            detail="That project name is already taken — pick another.",
+        )
+
+
+@router.post("", response_model=TaskOut, status_code=201)
+async def create_task(body: CreateTaskRequest, user: CurrentUser = Depends(current_user)):
+    """Create a task from the panel / App Builder. Not tied to a real meeting —
+    uses a synthetic meeting_id so it shows up as normal in the panel.
+
+    Open to any authenticated user so a regular user can start their own
+    project, with two guards that only bind non-admins: the task must be
+    assigned to the caller, and a caller-supplied `slug` must be well-formed
+    and not already belong to somebody else. Admin behaviour is unchanged.
+    """
+    assignee_name, assignee_email = _resolve_assignee(user, body.assignee)
 
     # Legacy `rules` / `template_rules` fields are accepted but ignored —
     # rules now come from the server-side template lookup (Phase D).
@@ -313,6 +444,8 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
 
     description = (body.description or "").strip()
     slug = (body.slug or "").strip()
+    if slug and not user.is_admin:
+        _check_slug_shape(slug)
     if body.action_type == "BUILD" and body.template_key:
         if not is_valid_key(body.template_key):
             raise HTTPException(
@@ -335,6 +468,9 @@ async def create_task(body: CreateTaskRequest, user: AdminUser = Depends(current
     )
 
     async with session() as s:
+        if slug and not user.is_admin:
+            await _check_slug_is_not_someone_elses(s, slug, user.email)
+
         needs_supabase_gate = False
         if needs_supabase_gate_candidate:
             existing = (await s.execute(

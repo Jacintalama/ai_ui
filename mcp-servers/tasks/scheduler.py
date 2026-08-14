@@ -131,6 +131,37 @@ async def _connector_access_note(user_email: str) -> str:
 # the 3.8GB Hetzner VM OOMs. 3 is a conservative bound; tune via env later.
 _RUN_SEMAPHORE = asyncio.Semaphore(3)
 
+# Schedule ids with a run dispatched or executing right now, in THIS process.
+# The semaphore above caps concurrency but is a QUEUE, not a bound: without
+# this, repeated /run-now calls pile up behind it and real cron-scheduled runs
+# starve at the back. `run_now` refuses while an id is in here.
+#
+# Deliberately in memory rather than `Schedule.last_run_status == "running"`,
+# which looks like the obvious signal. A run is an asyncio.Task that does not
+# survive a restart; the row does. Gating on the row would mean a crash
+# mid-run leaves the schedule refusing run-now forever with nothing to clear
+# it — and permanently for a spent one-off, which no tick will fire again.
+# This set has exactly the lifetime of the thing it describes.
+_IN_FLIGHT: set[str] = set()
+
+
+def is_run_in_flight(schedule_id) -> bool:
+    return str(schedule_id) in _IN_FLIGHT
+
+
+def dispatch_run(sched) -> "asyncio.Task":
+    """Mark the schedule in flight and start its run.
+
+    The marking is synchronous, and that is the point: `create_task` does not
+    execute a single line of the coroutine until the event loop next yields, so
+    a check made inside `_finalize_run` would let a double-click through. Both
+    dispatch paths — the cron tick and /run-now — go through here, so "already
+    running" means what it says regardless of who started it.
+    """
+    _IN_FLIGHT.add(str(sched.id))
+    return asyncio.create_task(_finalize_run(sched))
+
+
 VIDEO_SCHEDULE_WAIT_SECONDS = int(os.environ.get("VIDEO_SCHEDULE_WAIT_SECONDS", "900"))
 VIDEO_SCHEDULE_POLL_SECONDS = 10
 
@@ -404,7 +435,11 @@ async def _finalize_run(sched: Schedule) -> None:
 
     Dispatched detached via create_task, so guard everything: an unhandled
     raise would vanish into the discarded task and leave the schedule stuck
-    on the pre-dispatch last_run_status='running' (audit 2026-06-15)."""
+    on the pre-dispatch last_run_status='running' (audit 2026-06-15).
+
+    Releases the schedule's _IN_FLIGHT slot in a `finally`, not on success: a
+    run that blows up must not leave run-now permanently refused, since that is
+    the button a user presses precisely when a run has gone wrong."""
     try:
         status, result, extras = await _run_scheduled_task(sched)
         async with session() as s:
@@ -432,6 +467,8 @@ async def _finalize_run(sched: Schedule) -> None:
                 await s.commit()
         except Exception:  # noqa: BLE001
             logger.error("could not mark schedule %s failed", sched.id, exc_info=True)
+    finally:
+        _IN_FLIGHT.discard(str(sched.id))
 
 
 def fire_values(sched, now) -> dict:
@@ -478,7 +515,7 @@ async def _tick_once() -> None:
                 )
             )
             await s.commit()
-        asyncio.create_task(_finalize_run(sched))
+        dispatch_run(sched)
 
 
 async def _sweep_prebuild_question_timeouts() -> None:

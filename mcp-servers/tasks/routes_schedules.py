@@ -13,6 +13,7 @@ Without EITHER header, every call returns 403.
 """
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -23,6 +24,13 @@ from db import session
 from models import Schedule
 
 router = APIRouter(prefix="/schedules")
+
+# Each schedule spawns a Claude Code agent run and concurrency is capped at 3
+# (scheduler.py) to avoid OOM on a 3.8GB box, so an unbounded number of
+# frequent schedules is a self-DoS. Mirrors what webhook-handler's own cron
+# already enforces (max_user_jobs / min_interval_minutes).
+MAX_SCHEDULES_PER_USER = 10
+MIN_INTERVAL_MINUTES = 15
 
 
 def _cron_secret() -> str:
@@ -76,6 +84,110 @@ def _validate_kind(kind: str, video_config: dict | None) -> None:
                                 detail="video_config.url must be an http(s) URL")
 
 
+# A fixed base makes the calculation deterministic — otherwise the same cron
+# expression could pass or fail depending on when the request arrives.
+#
+# Late in the day, not midnight: from 00:00 all four samples land inside the
+# same day, so the window closes before the 23:59 -> 00:00 wrap and
+# `0,30,59 0,23 * * *` reads as 29 minutes when it really fires one minute
+# apart. Starting at 23:45 puts that wrap in the very first gap. It does not
+# close the equivalent day-of-week wrap (`0,59 0,23 * * 0,1`, still read as
+# 59) — 2026-01-01 is a Thursday, and moving the base onto a Sunday just trades
+# that miss for Sunday-only expressions. That one needs a different algorithm.
+_INTERVAL_BASE = datetime(2026, 1, 1, 23, 45, tzinfo=timezone.utc)
+
+
+def min_interval_minutes(cron_expr: str) -> float:
+    """Smallest gap between consecutive fire times, in minutes.
+
+    Four fire times give three gaps, which is enough to catch a step
+    (`*/5`) or a comma list (`0,30`) rather than only the literal
+    `* * * * *`. Never raises: a malformed expression is rejected upstream by
+    croniter.is_valid, and this must not be what 500s a request.
+    """
+    try:
+        from croniter import croniter
+        it = croniter(cron_expr, _INTERVAL_BASE)
+        times = [it.get_next(datetime) for _ in range(4)]
+    except Exception:  # noqa: BLE001 - unparseable is handled by the caller
+        return 0.0
+    gaps = [(times[i + 1] - times[i]).total_seconds() / 60
+            for i in range(len(times) - 1)]
+    return min(gaps) if gaps else 0.0
+
+
+def _is_admin(x_user_admin: str) -> bool:
+    """The gateway strips X-User-Admin from the client request and re-sets it
+    after validating the JWT (api-gateway/main.py), so the route can trust it."""
+    return x_user_admin.strip().lower() == "true"
+
+
+def _holds_a_slot(sched: Schedule) -> bool:
+    """Does this row still cost the box anything?
+
+    A one-off that has fired does not: scheduler.fire_values sets
+    enabled=False on it and nothing ever deletes the row, so ten of them would
+    pin a user at the ceiling forever — told they "already have 10 scheduled
+    tasks" about schedules that can never run again. A one-off that has NOT
+    fired yet is still a queued agent run and does hold its slot.
+    """
+    return not (getattr(sched, "run_once", False)
+                and not getattr(sched, "enabled", True))
+
+
+async def _enforce_count_cap(owner: str) -> None:
+    """429 when `owner` already holds every slot they are allowed.
+
+    Shared by create and by enable — a spent one-off does not count, so
+    re-enabling one takes a slot back and has to ask the same question.
+
+    Counting by fetching rows rather than func.count(): the ceiling is 10 rows,
+    it reuses the mock shape the existing route tests prove, and it lets
+    _holds_a_slot stay a plain predicate a test can drive instead of SQL no
+    mock can evaluate.
+    """
+    async with session() as s:
+        mine = (await s.execute(
+            select(Schedule).where(Schedule.user_email == owner)
+        )).scalars().all()
+    if len([r for r in mine if _holds_a_slot(r)]) >= MAX_SCHEDULES_PER_USER:
+        raise HTTPException(
+            status_code=429,
+            detail=(f"You already have {MAX_SCHEDULES_PER_USER} scheduled "
+                    f"tasks. Delete one first."),
+        )
+
+
+def _enforce_interval_floor(
+    cron_expr: str, *, is_operator: bool, is_admin: bool,
+) -> None:
+    """400 when a regular user asks for a repeat faster than the floor.
+
+    Shared by create AND update. Checking only croniter.is_valid on the update
+    path let a user create `0 9 * * *`, then PATCH it to `* * * * *` from
+    either bot's Edit modal — which made the whole cap decorative. Keeping one
+    helper is what stops the two paths drifting apart again.
+
+    Operators (X-Cron-Secret) and admins keep the old unbounded behaviour: the
+    cap exists to stop casual self-DoS, not as a security boundary.
+    """
+    if is_operator or is_admin:
+        return
+    gap = min_interval_minutes(cron_expr)
+    # gap <= 0 means "could not be measured", not "fires instantly": an
+    # expression like `0 0 30 2 *` is valid to croniter but raises inside
+    # get_next, so it lands here as 0.0. It can never fire, so let it through —
+    # explicitly, rather than by falling through a falsy zero.
+    if gap <= 0 or gap >= MIN_INTERVAL_MINUTES:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(f"The shortest repeat is every {MIN_INTERVAL_MINUTES} "
+                f"minutes. That schedule would run every "
+                f"{int(gap)} minute(s)."),
+    )
+
+
 @router.get("")
 async def list_schedules(
     platform: str = Query(default=""),
@@ -98,6 +210,7 @@ async def create_schedule(
     body: CreateScheduleIn,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, Any]:
     is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
     # For end-user calls, force the schedule onto the JWT-authenticated email.
@@ -119,6 +232,12 @@ async def create_schedule(
         raise HTTPException(status_code=400, detail="invalid cron_expr")
 
     _validate_kind(body.kind, body.video_config)
+
+    is_admin = _is_admin(x_user_admin)
+    _enforce_interval_floor(body.cron_expr, is_operator=is_operator,
+                            is_admin=is_admin)
+    if not is_operator and not is_admin:
+        await _enforce_count_cap(owner)
 
     sid = uuid.uuid4()
     async with session() as s:
@@ -178,9 +297,18 @@ async def enable_schedule(
     schedule_id: str,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, str]:
-    _, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
-    await _scoped_schedule(schedule_id, scoped_email)
+    is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    sched = await _scoped_schedule(schedule_id, scoped_email)
+    # A spent one-off stopped counting (_holds_a_slot), so switching it back on
+    # takes a slot back and has to pass the cap again. Otherwise "fire ten,
+    # create ten more, resurrect the first ten" repeats without bound. A row
+    # that still holds its slot — an ordinary paused schedule — is untouched:
+    # it was never released, so resuming it adds nothing.
+    if (not is_operator and not _is_admin(x_user_admin)
+            and not _holds_a_slot(sched)):
+        await _enforce_count_cap(sched.user_email)
     async with session() as s:
         await s.execute(
             update(Schedule).where(Schedule.id == uuid.UUID(schedule_id)).values(enabled=True)
@@ -210,14 +338,40 @@ async def run_now(
     schedule_id: str,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, str]:
     """Bypass cron and fire this schedule immediately. Useful for smoke
-    tests and for kicking off a one-off run from the CLI or chat."""
-    _, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    tests and for kicking off a one-off run from the CLI or chat.
+
+    Refused while a run for this schedule is already in flight. Each run spawns
+    a Claude Code agent; scheduler._RUN_SEMAPHORE caps concurrency at 3 so the
+    box will not OOM, but a semaphore is a queue rather than a bound — without
+    this, a burst of clicks piles up behind it and the genuine cron-scheduled
+    runs starve at the back. "It is already running" is both the honest answer
+    and the bound, and needs no quota to tune.
+
+    The signal is scheduler._IN_FLIGHT, marked by dispatch_run for the cron
+    tick and this route alike, so a live cron run counts too. Not the
+    `last_run_status` column: that outlives the asyncio.Task it would describe,
+    so a crash would wedge run-now permanently (see scheduler._IN_FLIGHT).
+
+    Operators and admins are exempt from the refusal — as with every other
+    schedule limit — but never from the marking, or a run they started would
+    look like an idle schedule to its owner.
+    """
+    is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    # Scoped first, so a stranger cannot learn from a 409 that someone else's
+    # schedule exists and is busy.
     sched = await _scoped_schedule(schedule_id, scoped_email)
-    import asyncio
-    from scheduler import _finalize_run
-    asyncio.create_task(_finalize_run(sched))
+    from scheduler import dispatch_run, is_run_in_flight
+    if (not is_operator and not _is_admin(x_user_admin)
+            and is_run_in_flight(sched.id)):
+        raise HTTPException(
+            status_code=409,
+            detail=("This scheduled task is already running. Wait for it to "
+                    "finish, then run it again."),
+        )
+    dispatch_run(sched)
     return {"status": "dispatched"}
 
 
@@ -233,8 +387,9 @@ async def update_schedule(
     body: UpdateScheduleIn,
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
+    x_user_admin: str = Header(default=""),
 ) -> dict[str, str]:
-    _, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
     await _scoped_schedule(schedule_id, scoped_email)  # 404 if missing / not owner
     values: dict[str, Any] = {}
     if body.name is not None:
@@ -243,6 +398,10 @@ async def update_schedule(
         from croniter import croniter
         if not croniter.is_valid(body.cron_expr):
             raise HTTPException(status_code=400, detail="invalid cron_expr")
+        # The same floor as create — otherwise the Edit modal is a bypass.
+        # The COUNT cap deliberately does not apply: editing a row adds none.
+        _enforce_interval_floor(body.cron_expr, is_operator=is_operator,
+                                is_admin=_is_admin(x_user_admin))
         values["cron_expr"] = body.cron_expr
     if body.prompt is not None:
         values["prompt"] = body.prompt

@@ -129,8 +129,17 @@ ssh root@46.224.193.25 "cd /root/proxy-server && docker compose -f docker-compos
 - **Docker's data-root is on the attached volume** (`/mnt/HC_Volume_106271703/docker`,
   moved 2026-07-20). A systemd drop-in makes docker require that mount, so it
   refuses to start rather than come up on an empty data-root.
-- **Prod Caddy is a HOST systemd service** (`/etc/caddy/Caddyfile`), not the
-  compose container. The repo `Caddyfile` is inert for routing.
+- **Prod Caddy is the COMPOSE CONTAINER, so the repo `Caddyfile` IS live.**
+  This note said the opposite until 2026-08-12. Verify before trusting either
+  claim — it inverted once and cost a wrong security conclusion:
+  ```
+  systemctl is-active caddy   -> inactive
+  ss -lntp | grep :443        -> docker-proxy
+  docker ps --filter name=caddy -> Up (healthy)
+  ```
+  `/etc/caddy/Caddyfile` still exists and still contains routes, which is what
+  made the old note look right — but the service reading it is not running, so
+  editing it changes nothing. Editing the repo `Caddyfile` does.
 - The server's git tree diverges from `main` and makes its own snapshot commits.
   Teammates edit files directly on the box, so **hash-sweep server vs repo
   (CRLF-normalized) before any repo-wins deploy** or you will silently revert

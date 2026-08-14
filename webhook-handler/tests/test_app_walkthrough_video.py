@@ -83,3 +83,24 @@ async def test_run_app_walkthrough_video_status_error_is_clean():
     await r.run_app_walkthrough_video(ctx, "myapp")
     tc.create_video_draft.assert_not_awaited()
     ctx.respond.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_daily_video_limit_is_not_reported_as_a_schedule_cap():
+    """This path shares the schedule-flavored error mapper, and routes_video.py
+    raises 429 for "Daily video limit reached". A 429 branch written for the
+    schedule count cap would tell a video user to delete scheduled tasks."""
+    from clients.tasks import TasksAPIError
+    tc = MagicMock()
+    tc.get_project_status = AsyncMock(
+        return_value={"name": "myapp", "public_url": "https://live.app/"})
+    tc.create_video_draft = AsyncMock(return_value={"id": "v1"})
+    tc.capture_video_screenshots = AsyncMock()
+    tc.queue_video = AsyncMock(
+        side_effect=TasksAPIError(429, "Daily video limit reached"))
+    r = _router(tc)
+    ctx = _ctx()
+    await r.run_app_walkthrough_video(ctx, "myapp")
+    said = ctx.respond.await_args.args[0]
+    assert "scheduled task" not in said.lower(), said
+    assert "video" in said.lower(), said

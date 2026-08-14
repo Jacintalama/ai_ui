@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, delete
 
 from models import init_db, get_session_maker, MeetingRecord
-from kb_sync import format_meeting_markdown, push_to_kb
+from kb_sync import format_meeting_markdown, push_to_kb, KbPushError
 from ai_processor import process_transcript
 from decision_engine import process_action_items
 
@@ -28,6 +28,14 @@ app = FastAPI(title="MCP Meetings")
 
 _engine = None
 _session_maker = None
+
+# asyncio holds only a weak reference to a task, so a fire-and-forget task can
+# be garbage collected mid-flight. Keep a strong reference until it finishes.
+_BACKGROUND_TASKS: set = set()
+
+# kb_error is TEXT, but it is read by a human and OpenWebUI can answer with a
+# whole HTML page.
+MAX_KB_ERROR_CHARS = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +134,10 @@ class MeetingResponse(BaseModel):
     transcript: Optional[str] = None
     fathom_link: Optional[str] = None
     kb_file_id: Optional[str] = None
+    # An operator reads the API, not the database. A NULL kb_file_id with no
+    # reason next to it is what let 8 records stay broken for two months.
+    kb_error: Optional[str] = None
+    kb_attempted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -140,9 +152,123 @@ def _to_response(record: MeetingRecord) -> MeetingResponse:
         transcript=record.transcript,
         fathom_link=record.fathom_link,
         kb_file_id=record.kb_file_id,
+        kb_error=record.kb_error,
+        kb_attempted_at=record.kb_attempted_at,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
+
+
+async def _record_kb_outcome(
+    meeting_id,
+    *,
+    file_id: Optional[str] = None,
+    error: Optional[str] = None,
+) -> None:
+    """Write the outcome of a KB push attempt onto the meeting.
+
+    Never raises. This is the thing that records failures, so it must not be
+    able to become one — if the database is what is broken, the log line is
+    all that is left, but the caller still returns normally.
+    """
+    try:
+        if not _session_maker:
+            logger.error("No database — KB outcome for %s not recorded: %s", meeting_id, error)
+            return
+
+        async with _session_maker() as session:
+            result = await session.execute(
+                select(MeetingRecord).where(MeetingRecord.id == meeting_id)
+            )
+            rec = result.scalar_one_or_none()
+            if not rec:
+                logger.warning("Meeting %s vanished before its KB outcome was recorded", meeting_id)
+                return
+
+            rec.kb_attempted_at = datetime.utcnow()
+            if file_id:
+                rec.kb_file_id = file_id
+                rec.kb_error = None
+            else:
+                rec.kb_error = (error or "KB push failed for an unrecorded reason")[
+                    :MAX_KB_ERROR_CHARS
+                ]
+            await session.commit()
+
+    except Exception as exc:
+        logger.error("Could not record the KB outcome for %s: %s", meeting_id, exc)
+
+
+async def _push_record_to_kb(record: MeetingRecord) -> str:
+    """Render the meeting and push it. Returns the file_id or raises."""
+    content = format_meeting_markdown(
+        title=record.title,
+        date=str(record.date),
+        attendees=record.attendees,
+        summary=record.summary,
+        transcript=record.transcript,
+        fathom_link=record.fathom_link,
+    )
+    slug = record.title.lower().replace(" ", "-")[:50]
+    date_slug = record.date[:10] if len(record.date) >= 10 else record.date
+    filename = f"meeting-{date_slug}-{slug}.md"
+
+    return await push_to_kb(OPENWEBUI_URL, OPENWEBUI_API_KEY, filename, content)
+
+
+def _failure_reason(exc: Exception) -> str:
+    """KbPushError already reads as a reason; anything else needs its type."""
+    return str(exc) if isinstance(exc, KbPushError) else f"{type(exc).__name__}: {exc}"
+
+
+async def _guarded_process_and_push(record: MeetingRecord):
+    """Run the pipeline and make sure the outcome outlives it.
+
+    `_process_and_push` was fired as a bare `asyncio.create_task`. Nothing
+    awaited it, so anything raised inside — a dead OpenWebUI key, a NameError
+    in this file — was handed to the event loop and lost. The meeting was then
+    indistinguishable from one that had never been pushed.
+    """
+    try:
+        await _process_and_push(record)
+    except Exception as exc:
+        reason = _failure_reason(exc)
+        logger.error("KB pipeline failed for '%s': %s", record.title, reason)
+        await _record_kb_outcome(record.id, error=reason)
+
+
+async def _guarded_kb_push(record: MeetingRecord):
+    """The KB push on its own, for a retry.
+
+    Deliberately NOT the full pipeline: re-running the decision engine would
+    post every action item of an old meeting to Discord again, which is not an
+    acceptable price for repairing a knowledge-base link.
+    """
+    try:
+        file_id = await _push_record_to_kb(record)
+    except Exception as exc:
+        reason = _failure_reason(exc)
+        logger.error("KB retry failed for '%s': %s", record.title, reason)
+        await _record_kb_outcome(record.id, error=reason)
+        return
+
+    await _record_kb_outcome(record.id, file_id=file_id)
+
+
+def _dispatch(coro) -> None:
+    """Schedule background work and keep hold of the task until it is done."""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+def _dispatch_kb_pipeline(record: MeetingRecord) -> None:
+    """The only way this pipeline is ever scheduled — always guarded."""
+    _dispatch(_guarded_process_and_push(record))
+
+
+def _dispatch_kb_retry(record: MeetingRecord) -> None:
+    _dispatch(_guarded_kb_push(record))
 
 
 async def _process_and_push(record: MeetingRecord):
@@ -182,30 +308,11 @@ async def _process_and_push(record: MeetingRecord):
             meeting_id=str(record.id),
         )
 
-    # Step 3: Push to KB (uses AI-processed summary if available)
-    content = format_meeting_markdown(
-        title=record.title,
-        date=str(record.date),
-        attendees=record.attendees,
-        summary=record.summary,
-        transcript=record.transcript,
-        fathom_link=record.fathom_link,
-    )
-    slug = record.title.lower().replace(" ", "-")[:50]
-    date_slug = record.date[:10] if len(record.date) >= 10 else record.date
-    filename = f"meeting-{date_slug}-{slug}.md"
-
-    file_id = await push_to_kb(OPENWEBUI_URL, OPENWEBUI_API_KEY, filename, content)
-
-    if file_id and _session_maker:
-        async with _session_maker() as session:
-            result = await session.execute(
-                select(MeetingRecord).where(MeetingRecord.id == record.id)
-            )
-            rec = result.scalar_one_or_none()
-            if rec:
-                rec.kb_file_id = file_id
-                await session.commit()
+    # Step 3: Push to KB (uses AI-processed summary if available).
+    # A failure raises out of here into _guarded_process_and_push, which
+    # records the reason on the meeting.
+    file_id = await _push_record_to_kb(record)
+    await _record_kb_outcome(record.id, file_id=file_id)
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +362,7 @@ async def create_meeting(
         await session.refresh(record)
 
     logger.info(f"Meeting saved: {record.title} ({record.id})")
-    asyncio.create_task(_process_and_push(record))
+    _dispatch_kb_pipeline(record)
     return _to_response(record)
 
 
@@ -339,8 +446,66 @@ async def update_meeting(
         await session.refresh(record)
 
     logger.info(f"Meeting updated: {record.title} ({record.id})")
-    asyncio.create_task(_process_and_push(record))
+    _dispatch_kb_pipeline(record)
     return _to_response(record)
+
+
+@app.post("/{meeting_id}/kb-retry", status_code=202)
+async def retry_kb_push(
+    meeting_id: str,
+    force: bool = False,
+    caller: str = Depends(require_user_or_ingest),
+):
+    """Push a meeting to the knowledge base again.
+
+    A NULL kb_file_id used to mean "never pushed, and nothing will ever push
+    it" — 8 production records sat that way from 5 May to 2 July 2026, because
+    the only trigger was creating or updating the meeting.
+
+    PUT would re-dispatch the whole pipeline, including the decision engine,
+    which would re-post an old meeting's action items to Discord; this runs the
+    KB push alone.
+
+    It answers 202, not the outcome: api-gateway proxies this service with a
+    30s timeout (api-gateway/main.py:317) while push_to_kb polls OpenWebUI for
+    up to 60s, so waiting inline would 504 on exactly the slow cases. The
+    outcome is durable — read it from GET /{meeting_id}.
+    """
+    if not _session_maker:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+
+    try:
+        uid = uuid.UUID(meeting_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid meeting ID")
+
+    async with _session_maker() as session:
+        result = await session.execute(
+            select(MeetingRecord).where(MeetingRecord.id == uid)
+        )
+        record = result.scalar_one_or_none()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+
+    if record.kb_file_id and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Already in the knowledge base (file_id={record.kb_file_id}). "
+                "Every push uploads a new file and OpenWebUI does not dedupe by "
+                "filename, so this would leave a duplicate. Pass force=true to "
+                "push anyway."
+            ),
+        )
+
+    logger.info(f"KB retry requested for {meeting_id} by {caller}")
+    _dispatch_kb_retry(record)
+    return {
+        "status": "queued",
+        "meeting_id": str(record.id),
+        "outcome": f"GET /{record.id} — kb_file_id on success, kb_error on failure",
+    }
 
 
 @app.delete("/{meeting_id}", status_code=204)

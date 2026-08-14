@@ -22,7 +22,10 @@ from app_regression import (
 )
 from app_docs import sweep_app_docs as _sweep_app_docs_default
 from app_smoke import smoke_app as _smoke_app_default
-from auth import AdminUser, current_admin, current_admin_or_capability
+from auth import (
+    AdminUser, CurrentUser, current_admin, current_admin_or_capability,
+    current_user_or_capability,
+)
 from claude_executor import (
     build_prompt, build_resume_prompt, build_enhance_prompt,
     build_clarify_prompt, build_plan_prompt,
@@ -684,7 +687,8 @@ async def resume_with_answer(s, item: TaskItem, answer: str) -> None:
 
 
 @router.post("/{task_id}/execute", response_model=TaskOut)
-async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(current_admin_or_capability)):
+async def execute(task_id: UUID, request: Request,
+                  user: CurrentUser = Depends(current_user_or_capability)):
     async with session() as s:
         item = (
             await s.execute(select(TaskItem).where(TaskItem.id == task_id))
@@ -700,8 +704,17 @@ async def execute(task_id: UUID, request: Request, user: AdminUser = Depends(cur
             from routes_projects import _require_role
             await _require_role(s, item.built_app_slug, user.email, "editor",
                                 is_admin=user.is_admin)
-        elif item.assignee_email not in (user.email, TEAM_EMAIL):
-            raise HTTPException(status_code=403, detail="Not your task")
+        else:
+            # The team bucket stays admin-only here, unlike the READ in
+            # aa669cd92. Executing is a WRITE: it spends the agent budget and
+            # rewrites files on disk, so a signed-in stranger who guesses a
+            # UUID must not be able to fire one at the shared queue. A
+            # capability is fine — it is minted for this exact task_id.
+            allowed = {user.email}
+            if user.is_admin or getattr(user, "via_capability", False):
+                allowed.add(TEAM_EMAIL)
+            if item.assignee_email not in allowed:
+                raise HTTPException(status_code=403, detail="Not your task")
         if item.action_type not in ("BUILD", "INTEGRATE", "RESEARCH"):
             raise HTTPException(status_code=400, detail="AI execution not allowed for this task type")
 
