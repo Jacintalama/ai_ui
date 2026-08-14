@@ -1163,7 +1163,7 @@
         // linked to and survives a reload. Deliberately different from href
         // and deliberately short: this is the URL a person copies. See
         // openAiuiEmbed.
-        urlPath: "/channels",
+        urlPath: "/channel",
         // Open inside the OWUI shell: the left sidebar stays and only the
         // right-hand content area is swapped, rather than navigating away.
         embed: true,

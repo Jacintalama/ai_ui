@@ -61,7 +61,10 @@ def test_channels_is_reachable_at_a_url_a_person_would_type():
     entries = JS.split("const NAV_ENTRIES = [", 1)[1]
     channels = entries.split('label: "Channels"', 1)[1].split("attr:", 1)[0]
     assert 'href: "/tasks/gateway/channels"' in channels
-    assert 'urlPath: "/channels"' in channels
+    # Exactly "/channel", which is what Ralph asked for: no /tasks prefix
+    # anywhere a person can see, and singular.
+    assert 'urlPath: "/channel"' in channels
+    assert '"/tasks' not in channels.split("urlPath:")[1].split(",")[0]
 
 
 def test_only_embedded_pages_claim_a_url():
