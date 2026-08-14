@@ -11,14 +11,34 @@ _engine = None
 _session_maker: async_sessionmaker[AsyncSession] | None = None
 
 
+def migration_files() -> list[pathlib.Path]:
+    """Exactly the files startup will execute, in order.
+
+    A function rather than an expression inside the runner so a test can assert
+    on the real selection. The first version of that test re-implemented the
+    filter and therefore passed while the bug below was present.
+
+    NOT rglob, and *.down.sql is excluded: a rollback script here runs on every
+    startup like anything else, and sorting puts "012_x.down.sql" BEFORE
+    "012_x.sql" because "." sorts before "s". So each start dropped agent_host
+    and re-added it, and Postgres never reclaims a dropped column's slot. After
+    roughly 1593 restarts tasks.executions hit the hard 1600-column ceiling and
+    the service stopped booting at all, in a way no image rollback could fix:
+    every version runs this before serving anything. Rollbacks live in
+    migrations/rollbacks/ and are applied by hand.
+    """
+    migrations_dir = pathlib.Path(__file__).parent / "migrations"
+    return sorted(f for f in migrations_dir.glob("*.sql")
+                  if not f.name.endswith(".down.sql"))
+
+
 async def _run_migrations() -> None:
     """Apply migration .sql files using a raw asyncpg connection.
 
     SQLAlchemy's text() forces prepared statements, which asyncpg refuses for
     multi-statement scripts. asyncpg's native execute() handles them fine.
     """
-    migrations_dir = pathlib.Path(__file__).parent / "migrations"
-    sql_files = sorted(migrations_dir.glob("*.sql"))
+    sql_files = migration_files()
     if not sql_files:
         return
     conn = await asyncpg.connect(DATABASE_URL)
