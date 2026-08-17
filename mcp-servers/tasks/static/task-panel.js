@@ -1417,8 +1417,16 @@
          "aria-labelledby", "aria-describedby"].forEach((a) => el.removeAttribute(a));
       }
       entry.removeAttribute("href");
+      // The whole row is clickable, so it has to LOOK clickable. The browser
+      // gives a hand cursor to <a href>, not to <a>, and every one of these
+      // entries has its href stripped just below so ctrl-click cannot bypass
+      // the pane — which quietly took the hand cursor away with it. cursor is
+      // an inherited property, but it is set on the nested anchors too because
+      // a Tailwind cursor-* class on the cloned row would otherwise win.
+      entry.style.cursor = "pointer";
       _stripTooltipAttrs(entry);
       entry.querySelectorAll("*").forEach((el) => {
+        el.style.cursor = "pointer";
         _stripTooltipAttrs(el);
         if (el.tagName.toLowerCase() === "a") {
           el.removeAttribute("data-sveltekit-preload-data");

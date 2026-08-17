@@ -610,6 +610,17 @@
       <span class="badge" id="status-pill" hidden></span>
       <button class="btn sm" type="button" id="new-video-btn" hidden>New video</button>
       <a class="back" id="back-to-chat" href="/" title="Back to chat">&larr; Back to chat</a>
+      <script>
+        /* The sidebar now opens this page in a pane inside Open WebUI. In there
+           this link would load the ENTIRE app into the pane, an app inside an
+           app, and it sits underneath the pane's own close button. The pane
+           already provides the way out, so it is hidden when embedded and left
+           exactly as it was on the standalone /video-generator page. */
+        if (window.parent !== window) {
+          var _aiuiBack = document.currentScript.previousElementSibling;
+          if (_aiuiBack && _aiuiBack.matches("a.back")) _aiuiBack.style.display = "none";
+        }
+      </script>
     </div>
   </header>
 

@@ -142,6 +142,25 @@ def test_clicking_a_feature_opens_a_pane_instead_of_leaving_the_page(page):
     assert "/tasks/static/cron.html" in src
 
 
+@pytest.mark.parametrize("fixture", ["sidebar_nonadmin.html", "sidebar_admin.html"])
+@pytest.mark.parametrize("attr,label,_href", ENTRIES)
+def test_the_entry_looks_clickable(page, fixture, attr, label, _href):
+    """Ralph: "WHEN MY CURSOR IS IN THE TOP NOT CHANGING TO HAND".
+
+    The whole row is clickable, but the browser only gives a hand cursor to
+    <a href>, and these entries have their href stripped so that ctrl-click
+    cannot bypass the pane. That silently took the hand cursor with it, and
+    nothing that parses the source can see it — the computed style is the only
+    thing that knows.
+    """
+    _load(page, fixture)
+    row = page.locator(f"[{attr}]")
+    assert row.evaluate("el => getComputedStyle(el).cursor") == "pointer"
+    inner = page.locator(f"[{attr}] a")
+    if inner.count():
+        assert inner.first.evaluate("el => getComputedStyle(el).cursor") == "pointer"
+
+
 def test_the_pane_never_covers_the_sidebar(page):
     """The pane is position:fixed and starts at a MEASURED left edge. If that
     measurement misses, the pane lands on top of the nav entries and the user

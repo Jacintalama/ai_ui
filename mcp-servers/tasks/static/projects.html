@@ -971,6 +971,15 @@
       </div>
     </div>
     <a href="/" class="back">← Back to Chat</a>
+    <script>
+      /* See video.html: inside the Open WebUI pane this would load the whole
+         app into the pane and it collides with the pane's close button. Hidden
+         only when embedded, so standalone /tasks/app-builder is untouched. */
+      if (window.parent !== window) {
+        var _aiuiBack = document.currentScript.previousElementSibling;
+        if (_aiuiBack && _aiuiBack.matches("a.back")) _aiuiBack.style.display = "none";
+      }
+    </script>
   </div>
 
   <div class="container">

@@ -441,6 +441,15 @@
       </span>
     </div>
     <a class="back" href="/">&larr; Back to app</a>
+    <script>
+      /* See video.html: inside the Open WebUI pane this would load the whole
+         app into the pane and it collides with the pane's close button. Hidden
+         only when embedded, so standalone /cron-jobs is untouched. */
+      if (window.parent !== window) {
+        var _aiuiBack = document.currentScript.previousElementSibling;
+        if (_aiuiBack && _aiuiBack.matches("a.back")) _aiuiBack.style.display = "none";
+      }
+    </script>
   </header>
 
   <main class="container">
