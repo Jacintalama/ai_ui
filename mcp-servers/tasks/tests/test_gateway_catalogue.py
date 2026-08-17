@@ -80,10 +80,15 @@ def test_every_channel_that_is_not_ready_says_why():
 
 def test_only_the_channels_that_can_honour_a_credential_ask_for_one():
     # A form on a channel that cannot use what it stores is a button that
-    # lies. These two are the ones with a working transport.
+    # lies. These are the ones with a working transport.
+    #
+    # Discord and Slack joined the list because IO's own app on each lives in
+    # exactly one server and one workspace, so nobody outside them could be
+    # reached at all. Bringing your own credentials is what removes that
+    # ceiling without publishing an app anywhere.
     takers = {c["platform"] for c in rg.CHANNEL_CATALOGUE
               if rg._channel_status(c, {})["can_bring_bot"]}
-    assert takers == {"telegram", "buzz"}
+    assert takers == {"telegram", "buzz", "discord", "slack"}
 
 
 def test_only_telegram_has_a_bot_io_runs_for_everyone():

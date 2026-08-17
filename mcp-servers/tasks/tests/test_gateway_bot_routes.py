@@ -70,12 +70,16 @@ def test_the_rejection_says_what_telegram_said(client, telegram_rejects, no_writ
 
 
 def test_an_unsupported_platform_is_refused_before_any_network_call(client, no_writes):
-    # Discord and Slack rows exist on the page but cannot honour a save yet.
+    # Signal is on the page as planned, and cannot honour a save. This used to
+    # use Discord, which now CAN take your own bot — so the case had to move
+    # rather than be deleted: the guard it protects is that an unknown platform
+    # is refused by the allowlist before any credential is sent anywhere.
     resp = client.post("/tasks/gateway/bots",
-                       json={"platform": "discord", "token": "x",
+                       json={"platform": "signal", "token": "x",
                              "allowed_ids": ""})
     assert resp.status_code == 400
     assert "not" in resp.json()["detail"].lower()
+    assert no_writes == []
 
 
 def test_a_whitespace_token_is_refused_before_telegram_is_asked(client, no_writes):

@@ -43,9 +43,13 @@ from gateway import buzz_manager as buzz_manager_module
 from gateway import nip19
 from gateway import pipeline as gateway_pipeline
 from gateway.buzz_manager import BuzzManager
+from gateway.own_bot_manager import ConnectionBudget, OwnBotManager
 from gateway.platforms.cli import CliAdapter
 from gateway.platforms.discord import DISCORD_MAX_MESSAGE, DiscordAdapter
+from gateway.platforms.discord_socket import DiscordSocket
+from gateway.platforms.discord_socket import flatten as discord_flatten
 from gateway.platforms.slack import SLACK_MAX_MESSAGE, SlackAdapter
+from gateway.platforms.slack_socket import SlackSocket
 from gateway.platforms.telegram import TELEGRAM_MAX_MESSAGE, TelegramAdapter
 from gateway.rate_limit import SlidingWindow, client_key
 from gateway.registry import PlatformEntry, registry as gateway_registry
@@ -207,6 +211,14 @@ gateway_tasks = None
 #: every open relay socket; see gateway/buzz_manager.py for why there is a cap.
 buzz_manager = None
 
+#: One shared allowance for every socket opened on a user's OWN Slack app or
+#: Discord bot. Shared rather than one cap each, because two independent caps
+#: of N quietly mean 2N and the box has one pool of memory.
+own_bot_budget = ConnectionBudget()
+
+#: platform -> OwnBotManager, for the channels switched on here.
+own_bot_managers: dict = {}
+
 
 class CreateCronJobRequest(BaseModel):
     job_id: str
@@ -330,6 +342,27 @@ async def lifespan(app: FastAPI):
         logger.info("gateway: buzz manager started (cap %d)",
                     buzz_manager_module.MAX_CONNECTIONS)
 
+    # A user's OWN Slack app or Discord bot. Same shape as Buzz — a socket per
+    # user, reconciled against what tasks says is enabled — and sharing ONE
+    # budget between them, because the memory they spend is the same memory.
+    #
+    # Gated on the same flags the shared bots use, so a server with the channel
+    # switched off starts nothing. Setting a flag on only one service is
+    # exactly how the terminal channel once ran while the page called it off,
+    # so tasks reads these same two names.
+    global own_bot_managers
+    for platform, flag, build in (
+            ("slack", "GATEWAY_SLACK_ENABLED", _own_slack_socket),
+            ("discord", "GATEWAY_DISCORD_ENABLED", _own_discord_socket)):
+        if not os.environ.get(flag, "").strip():
+            continue
+        manager = OwnBotManager(platform, gateway_tasks, build,
+                                budget=own_bot_budget)
+        manager.start()
+        own_bot_managers[platform] = manager
+        logger.info("gateway: %s own-bot manager started (shared cap %d)",
+                    platform, own_bot_budget.limit)
+
     # Let the Slack events handler offer the intent router (it parks/builds via
     # the shared router). Mirrors how the Discord client is attached below.
     if settings.slack_bot_token:
@@ -451,6 +484,17 @@ async def lifespan(app: FastAPI):
         except Exception:                                # noqa: BLE001
             logger.error("gateway: buzz manager did not stop cleanly",
                          exc_info=True)
+
+    for platform, manager in list(own_bot_managers.items()):
+        # Closed before the event loop goes away, so a user's own bot goes
+        # offline rather than being left as a socket the platform still thinks
+        # is live.
+        try:
+            await manager.stop()
+        except Exception:                                # noqa: BLE001
+            logger.error("gateway: %s own-bot manager did not stop cleanly",
+                         platform, exc_info=True)
+    own_bot_managers.clear()
 
     logger.info("Shutting down webhook handler...")
 
@@ -840,6 +884,69 @@ def _buzz_allow(config: dict):
     reach the owner's IO account, with their memory and their email.
     """
     return lambda pubkey: _bot_sender_allowed(config, pubkey)
+
+
+# --- Discord and Slack: a user's OWN bot, on a socket we hold open ----------
+#
+# Different from the shared Slack app and Discord bot above, which live in one
+# workspace and one server and therefore cannot reach anybody outside them.
+# These are connections opened with credentials the user supplied, so IO turns
+# up in THEIR workspace without anything being published or installed by us.
+#
+# Identity is unchanged and deliberately so: gateway_resolve keys on (platform,
+# platform user id), so whose bot delivered a message and who sent it stay
+# separate questions. Bringing a bot does not bring an account, and a first
+# message still gets a pairing code.
+
+
+def _own_slack_socket(bot_key: str, config: dict):
+    """Build one user's Slack connection, or None if the row cannot run.
+
+    Returning None rather than raising for a missing token: the manager records
+    it as skipped-with-a-reason, which is visible, where an exception here would
+    only be a log line.
+    """
+    token = (config.get("token") or "").strip()
+    app_token = (config.get("app_token") or "").strip()
+    if not token or not app_token:
+        return None
+    return SlackSocket(bot_key, token, app_token, _on_own_slack_message,
+                       allow=lambda uid: _bot_sender_allowed(config, uid))
+
+
+async def _on_own_slack_message(conn, event: dict) -> None:
+    """One DM to a user's own Slack app, through the same pipeline as every
+    other channel.
+
+    Spawned rather than awaited: the socket's read loop must get back to the
+    wire immediately, or one slow model call stalls every other message behind
+    it — and Slack would start retrying the envelope we already acked.
+    """
+    adapter = SlackAdapter(conn.client)
+    adapter.name = "slack"
+    adapter.max_message_length = SLACK_MAX_MESSAGE
+    parsed = adapter.parse_inbound(event, {})
+    if parsed is None:
+        return
+    _spawn_gateway(gateway_pipeline.handle_event(parsed, adapter))
+
+
+def _own_discord_socket(bot_key: str, config: dict):
+    token = (config.get("token") or "").strip()
+    if not token:
+        return None
+    return DiscordSocket(bot_key, token, _on_own_discord_message,
+                         allow=lambda uid: _bot_sender_allowed(config, uid))
+
+
+async def _on_own_discord_message(conn, message) -> None:
+    adapter = DiscordAdapter(conn.client)
+    adapter.name = "discord"
+    adapter.max_message_length = DISCORD_MAX_MESSAGE
+    parsed = adapter.parse_inbound(discord_flatten(message), {})
+    if parsed is None:
+        return
+    _spawn_gateway(gateway_pipeline.handle_event(parsed, adapter))
 
 
 async def _on_buzz_message(event, adapter) -> None:

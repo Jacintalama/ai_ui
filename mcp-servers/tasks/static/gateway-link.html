@@ -712,9 +712,17 @@ function botForm(c, refresh) {
     const payload = { platform: c.platform };
     for (const f of spec.fields) payload[f.name] = inputs[f.name].value.trim();
 
-    // Every secret field is required: saving a connection with a blank
-    // credential would store a row that can never work and report success.
-    const missing = spec.fields.find(f => f.secret && !payload[f.name]);
+    // A secret field is required UNLESS the platform says otherwise, because
+    // saving a connection with a blank credential would store a row that can
+    // never work and report success.
+    //
+    // `optional` is not decoration. Buzz's agent key is deliberately blank by
+    // default, because nobody issues a Nostr identity, so IO mints its own and
+    // shows the public half. Requiring every secret field made that path
+    // unreachable from the browser: the field said "(optional)" and the button
+    // answered "Fill in agent key (optional) first."
+    const missing = spec.fields.find(
+      f => f.secret && !f.optional && !payload[f.name]);
     if (missing) {
       setMsg(msg, "Fill in " + missing.label.toLowerCase() + " first.");
       return;

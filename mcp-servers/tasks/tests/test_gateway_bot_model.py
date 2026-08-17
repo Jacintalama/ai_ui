@@ -22,6 +22,11 @@ def test_every_column_the_design_needs_exists():
         # is where to connect; `connected_at` is whether it worked, which only
         # the process holding the socket can know.
         "endpoint", "connected_at",
+        # A second credential, for a channel that issues two. Slack Socket Mode
+        # is the only one: xoxb- sends and xapp- opens the websocket. It is a
+        # column rather than a private format packed into token_encrypted so
+        # that one platform's code is not the only thing able to read the row.
+        "app_token_encrypted",
     }
 
 

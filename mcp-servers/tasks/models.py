@@ -242,6 +242,11 @@ class GatewayBot(Base):
     #: which holds nothing open and reports failure by not calling us. Written
     #: only by webhook-handler, through the internal state endpoint.
     connected_at = Column(DateTime(timezone=True))
+    #: A second Fernet-encrypted credential, for a channel that needs two.
+    #: Slack Socket Mode is the only one: xoxb- sends messages and xapp- opens
+    #: the websocket, issued separately and failing separately. NULL everywhere
+    #: else. See migrations/037_gateway_bot_app_token.sql.
+    app_token_encrypted = Column(Text)
 
 
 class GatewayPairingCode(Base):

@@ -26,10 +26,12 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
 
+import discord_api
 import gateway_bots as gbots
 import gateway_pairing as gp
 import nostr_nip19
 import nostr_schnorr
+import slack_api
 import telegram_api
 from db import session
 from models import GatewayBot, GatewayLink, GatewayPairingCode, GatewaySession
@@ -473,7 +475,24 @@ async def redeem(body: RedeemIn,
 #: Platforms that can actually honour a saved token today. Every other channel
 #: shows the controls in an inert state, so the page never grows a button that
 #: lies.
-BOT_CAPABLE_PLATFORMS = {"telegram", "buzz"}
+BOT_CAPABLE_PLATFORMS = {"telegram", "buzz", "discord", "slack"}
+
+#: Channels where switching a bot ON means registering a webhook with the
+#: platform, because the platform calls us. Everything else is a connection IO
+#: holds open, which webhook-handler reconciles by polling what is enabled here
+#: — nothing to register, and no push that could get out of step.
+#:
+#: This distinction was missing, and toggle/remove called Telegram for every
+#: platform. A user toggling their Buzz connection sent its Nostr key to
+#: api.telegram.org, and Telegram's inevitable rejection was then stored as the
+#: truth: the row stayed disabled, carrying a Telegram error, and they could
+#: not switch their own connection back on.
+WEBHOOK_PLATFORMS = {"telegram"}
+
+#: Whose words an error message is quoting, so a Slack scope problem is not
+#: reported as something Telegram said.
+PLATFORM_LABEL = {"telegram": "Telegram", "discord": "Discord",
+                  "slack": "Slack", "buzz": "Buzz"}
 
 # What a user has to fill in to connect a channel with their own credentials,
 # described here rather than drawn in the page. Every channel that can carry a
@@ -500,6 +519,50 @@ CONNECT_FORMS: dict[str, dict] = {
              "help": ""},
         ],
     },
+    "discord": {
+        "title": "Use my own bot",
+        "pitch": "Your bot in your own server. Nobody else can see the token "
+                 "or configure it. IO answers direct messages sent to it, and "
+                 "never reads your server's channels.",
+        "submit": "Save & enable",
+        "fields": [
+            {"name": "token", "label": "Bot token", "secret": True,
+             "placeholder": "paste the token",
+             "help": "Discord Developer Portal, your application, Bot, Reset "
+                     "Token. Then invite the bot to a server you are in, "
+                     "because Discord only lets you DM a bot you share a "
+                     "server with."},
+            {"name": "allowed_ids", "label": "Allowed Discord user IDs",
+             "secret": False, "placeholder": "leave empty for just you",
+             "help": ""},
+        ],
+    },
+    "slack": {
+        "title": "Use my own bot",
+        "pitch": "Your Slack app in your own workspace. Nobody else can see "
+                 "the tokens or configure them. IO connects out to Slack, so "
+                 "there is nothing to publish and nothing for us to install, "
+                 "and it answers direct messages only.",
+        "submit": "Save & enable",
+        "fields": [
+            # Bot token first: it is the one a person recognises, and the one
+            # that names the workspace back to them when it works.
+            {"name": "token", "label": "Bot token", "secret": True,
+             "placeholder": "xoxb-...",
+             "help": "Your app's OAuth & Permissions page, after installing it "
+                     "to your workspace. Needs the chat:write, im:history, "
+                     "im:read, im:write and users:read scopes."},
+            {"name": "app_token", "label": "App-level token", "secret": True,
+             "placeholder": "xapp-...",
+             "help": "Basic Information, App-Level Tokens, with the "
+                     "connections:write scope. Switch Socket Mode on and "
+                     "subscribe to the message.im event, or the app connects "
+                     "and never hears anything."},
+            {"name": "allowed_ids", "label": "Allowed Slack member IDs",
+             "secret": False, "placeholder": "leave empty for just you",
+             "help": ""},
+        ],
+    },
     "buzz": {
         "title": "Connect my Buzz workspace",
         "pitch": "Your workspace, your data. Nobody else can see it or "
@@ -510,7 +573,12 @@ CONNECT_FORMS: dict[str, dict] = {
             {"name": "endpoint", "label": "Relay URL", "secret": False,
              "placeholder": "wss://buzz.yourteam.com/relay",
              "help": "Your Buzz workspace's relay, the same URL its app uses."},
+            # `optional` is what lets this be left blank in the browser. The
+            # page requires every secret field otherwise, which made the
+            # mint-my-own path — the NORMAL one here — impossible to use: the
+            # label said "(optional)" and the button refused to save.
             {"name": "token", "label": "Agent key (optional)", "secret": True,
+             "optional": True,
              "placeholder": "leave empty and IO creates its own",
              "help": "Only if you already have one. Nostr identities are not "
                      "issued by anyone, so IO can make its own and show you "
@@ -536,8 +604,11 @@ def _error_label(row: GatewayBot) -> str:
     if not row.last_error:
         return ""
     if row.platform == "buzz":
-        return f"Last connection attempt failed: {row.last_error}"
-    return f"Telegram said: {row.last_error}"
+        return f"Buzz connection failed: {row.last_error}"
+    # Name whoever actually refused. This said "Telegram said:" for every
+    # channel, so a Slack scope problem was reported as a Telegram complaint.
+    who = PLATFORM_LABEL.get(row.platform, row.platform.title())
+    return f"{who} said: {row.last_error}"
 
 
 def _bot_view(row: GatewayBot) -> dict[str, Any]:
@@ -948,6 +1019,10 @@ class BotIn(BaseModel):
     #: platforms those are is decided per platform below, not by this field:
     #: a blank Telegram token is still refused.
     token: str = Field(default="", max_length=200)
+    #: A second credential, for a channel that needs two. Slack Socket Mode is
+    #: the only one: xoxb- sends and xapp- opens the websocket. Empty
+    #: everywhere else, and refused where it is required.
+    app_token: str = Field(default="", max_length=200)
     allowed_ids: str = Field(default="", max_length=500)
     #: Only platforms IO connects OUT to send one. Telegram never does.
     endpoint: str = Field(default="", max_length=300)
@@ -979,6 +1054,47 @@ def _buzz_test(row: GatewayBot, token: str) -> dict[str, Any]:
     return {"ok": True, "detail": f"{who} Connected. Message it from Buzz."}
 
 
+async def _socket_bot_test(row: GatewayBot, token: str) -> dict[str, Any]:
+    """What we can honestly say about a Discord or Slack bot from here.
+
+    Two separate facts, kept separate on purpose:
+
+      the credential  — re-checked live, right now, against the platform
+      the connection  — whatever webhook-handler last reported, because this
+                        service does not hold the socket
+
+    Reporting only the first would call a bot "working" while its websocket has
+    been refused all day. Reporting only the second cannot tell a user whether
+    the token they just pasted is the problem. An empty `connected_at` means
+    "not up yet", never "broken": those read very differently to somebody who
+    pressed a button ten seconds after saving.
+    """
+    who = ""
+    try:
+        if row.platform == "discord":
+            me = await discord_api.get_me(token)
+            who = f"@{me.get('username', '')}" if me.get("username") else "your bot"
+        else:
+            team = (await slack_api.auth_test(token)).get("team", "")
+            who = f"the {team} workspace" if team else "your workspace"
+    except (discord_api.DiscordError, slack_api.SlackError) as exc:
+        label = PLATFORM_LABEL.get(row.platform, row.platform.title())
+        return {"ok": False, "detail": f"{label} said: {exc.description}"}
+
+    label = PLATFORM_LABEL.get(row.platform, row.platform.title())
+    if row.last_error:
+        return {"ok": False,
+                "detail": f"The credentials for {who} are good, but the last "
+                          f"connection attempt failed: {row.last_error}"}
+    if not row.connected_at:
+        return {"ok": True,
+                "detail": f"The credentials for {who} are good. Connecting "
+                          f"now, it takes up to a minute."}
+    return {"ok": True,
+            "detail": f"Connected to {who}. Send it a direct message on "
+                      f"{label}."}
+
+
 def new_agent_key() -> str:
     """A fresh Nostr identity for IO, as an `nsec1...`.
 
@@ -998,6 +1114,63 @@ def new_agent_key() -> str:
             continue
         return nostr_nip19.encode(raw, "nsec")
     raise RuntimeError("could not generate a usable key")   # pragma: no cover
+
+
+async def _prepare_discord(body: BotIn) -> tuple[str, str]:
+    """Validate a user's own Discord bot. Returns (username, token to store).
+
+    One token, checked against Discord before anything is written, so a stored
+    row always means a credential that worked at least once.
+
+    Nothing here can check the part that actually strands people: Discord will
+    not deliver a DM to a bot the sender shares no server with, so a perfectly
+    valid token can still result in silence. That is why the form's help says
+    to invite the bot somewhere rather than leaving them to find out.
+    """
+    token = (body.token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Paste your bot token.")
+    try:
+        me = await discord_api.get_me(token)
+    except discord_api.DiscordError as exc:
+        raise HTTPException(status_code=400,
+                            detail=f"Discord said: {exc.description}")
+    return me.get("username", ""), token
+
+
+async def _prepare_slack(body: BotIn) -> tuple[str, str, str]:
+    """Validate a user's own Slack app. Returns (workspace, xoxb, xapp).
+
+    BOTH tokens are checked, because they fail in different ways and only one
+    of those failures is visible later. A bad bot token is obvious the first
+    time IO tries to reply. A bad app-level token, or Socket Mode left switched
+    off, means the websocket never opens and the app simply never hears
+    anything — indistinguishable from nobody having messaged it.
+
+    The workspace name is what comes back to the row, because it is the thing
+    a person recognises. "Your bot xoxb-…" tells them nothing; "Your bot Acme"
+    tells them they connected the workspace they meant.
+    """
+    token = (body.token or "").strip()
+    app_token = (body.app_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Paste your bot token.")
+    if not app_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Paste your app-level token too. Slack needs both: the "
+                   "xoxb- token sends messages and the xapp- token opens the "
+                   "connection.")
+    try:
+        who = await slack_api.auth_test(token)
+    except slack_api.SlackError as exc:
+        raise HTTPException(status_code=400,
+                            detail=f"Slack said: {exc.description}")
+    try:
+        await slack_api.open_connection(app_token)
+    except slack_api.SlackError as exc:
+        raise HTTPException(status_code=400, detail=exc.description)
+    return who.get("team", ""), token, app_token
 
 
 def _prepare_buzz(body: BotIn) -> tuple[str, str, str]:
@@ -1065,17 +1238,25 @@ async def save_bot(body: BotIn,
             detail=f"{platform} cannot take your own bot yet.")
 
     token = body.token.strip()
-    if not token and platform != "buzz":
-        # Buzz is the exception: an empty key there means "make me one".
-        raise HTTPException(status_code=400, detail="Paste your bot token.")
 
-    # Each platform proves the credentials before anything is stored, in
-    # whatever way that platform allows. Telegram can be asked directly; Buzz
-    # is a relay this service cannot reach, so it is checked arithmetically.
+    # Each platform proves its credentials before anything is stored, in
+    # whatever way that platform allows: Telegram and Discord can be asked
+    # directly, Slack needs asking twice because it issues two tokens, and Buzz
+    # is a relay this service cannot reach so it is checked arithmetically.
+    # Each branch owns its own "you left it empty" message, because "Paste your
+    # bot token" is wrong for Buzz (which mints its own) and incomplete for
+    # Slack (which needs two).
     endpoint = ""
+    app_token = ""
     if platform == "buzz":
         display_name, endpoint, token = _prepare_buzz(body)
+    elif platform == "discord":
+        display_name, token = await _prepare_discord(body)
+    elif platform == "slack":
+        display_name, token, app_token = await _prepare_slack(body)
     else:
+        if not token:
+            raise HTTPException(status_code=400, detail="Paste your bot token.")
         try:
             display_name = (await telegram_api.get_me(token)).get("username", "")
         except telegram_api.TelegramError as exc:
@@ -1087,6 +1268,10 @@ async def save_bot(body: BotIn,
 
     try:
         encrypted = gbots.encrypt_token(token)
+        # Encrypted with the same key and by the same rule: a credential that
+        # opens a socket carrying every DM the app can see is no less sensitive
+        # than the one that sends the replies.
+        app_encrypted = gbots.encrypt_token(app_token) if app_token else None
     except (RuntimeError, ValueError) as exc:
         # RuntimeError: AIUI_FERNET_KEY is missing. ValueError: it is set but
         # is not a valid Fernet key (wrong length, not base64). Either way,
@@ -1102,7 +1287,8 @@ async def save_bot(body: BotIn,
                                      GatewayBot.platform == platform))
         row = GatewayBot(
             bot_key=bot_key, email=user.email, platform=platform,
-            token_encrypted=encrypted, webhook_secret=secret,
+            token_encrypted=encrypted, app_token_encrypted=app_encrypted,
+            webhook_secret=secret,
             bot_username=display_name, endpoint=endpoint,
             allowed_ids=gbots.parse_allowed_ids(body.allowed_ids),
             enabled=True, last_error=None,
@@ -1110,7 +1296,7 @@ async def save_bot(body: BotIn,
         s.add(row)
         await s.commit()
 
-    if platform == "buzz":
+    if platform not in WEBHOOK_PLATFORMS:
         # Nothing to register. webhook-handler reconciles what is open against
         # what is enabled here, so the connection comes up on its own within
         # one poll. A push from this service would be one more thing to get out
@@ -1239,6 +1425,14 @@ async def test_bot(bot_key: str,
         # webhook-handler last reported.
         return _buzz_test(row, token)
 
+    if row.platform in ("discord", "slack"):
+        # Same shape as Buzz and for the same reason: this service holds no
+        # socket for either, so it cannot prove the connection by using it.
+        # What it CAN do is re-prove the credentials right now and report what
+        # webhook-handler last said about the connection, which are the two
+        # questions someone pressing this button actually has.
+        return await _socket_bot_test(row, token)
+
     try:
         if chat_id:
             await telegram_api.send_message(
@@ -1269,22 +1463,36 @@ async def test_bot(bot_key: str,
 @page_router.patch("/bots/{bot_key}")
 async def toggle_bot(bot_key: str, body: BotToggleIn,
                      user: CurrentUser = Depends(current_user)) -> dict[str, Any]:
-    """Off deletes the webhook, so Telegram stops delivering at source rather
-    than us dropping updates we keep receiving."""
+    """On Telegram, off deletes the webhook, so Telegram stops delivering at
+    source rather than us dropping updates we keep receiving.
+
+    Every other channel is a connection webhook-handler holds open, and it
+    reconciles against `enabled` here, so flipping the column IS the act and
+    there is nothing to call.
+
+    Calling Telegram regardless is what this used to do, and it was already
+    broken for Buzz before Discord and Slack existed: toggling a Buzz
+    connection sent its Nostr key to api.telegram.org, then stored Telegram's
+    rejection as the row's error and left it disabled. The user could not
+    switch their own connection back on, and the reason given named the wrong
+    company.
+    """
     async with session() as s:
         row = await _owned_bot(s, user.email, bot_key)
-        token = _decrypt_or_503(row)
+        platform = row.platform
+        token = _decrypt_or_503(row) if platform in WEBHOOK_PLATFORMS else ""
         secret = row.webhook_secret
 
     error = ""
-    try:
-        if body.enabled:
-            await telegram_api.set_webhook(
-                token, f"{_public_url()}/webhook/telegram/{bot_key}", secret)
-        else:
-            await telegram_api.delete_webhook(token)
-    except telegram_api.TelegramError as exc:
-        error = exc.description
+    if platform in WEBHOOK_PLATFORMS:
+        try:
+            if body.enabled:
+                await telegram_api.set_webhook(
+                    token, f"{_public_url()}/webhook/telegram/{bot_key}", secret)
+            else:
+                await telegram_api.delete_webhook(token)
+        except telegram_api.TelegramError as exc:
+            error = exc.description
 
     async with session() as s:
         await s.execute(
@@ -1307,18 +1515,24 @@ async def remove_bot(bot_key: str,
     leave the user unable to get rid of their own token."""
     async with session() as s:
         row = await _owned_bot(s, user.email, bot_key)
-        try:
-            token = gbots.decrypt_token(row.token_encrypted)
-        except (InvalidToken, ValueError, RuntimeError) as exc:
-            # A token we cannot decrypt is one we cannot call deleteWebhook
-            # with either. That must not block removal: the row disappearing
-            # is what the user asked for, and an orphaned webhook 404s once
-            # bot_key no longer resolves, same as any other undeleted hook
-            # below.
-            log.warning(
-                "gateway: could not decrypt a bot token while removing it, "
-                "deleting the row without clearing the webhook: %s", exc)
+        if row.platform not in WEBHOOK_PLATFORMS:
+            # Nothing registered anywhere, so there is nothing to unregister.
+            # Deleting the row is the whole act: webhook-handler drops the
+            # connection within one poll because it is no longer listed.
             token = None
+        else:
+            try:
+                token = gbots.decrypt_token(row.token_encrypted)
+            except (InvalidToken, ValueError, RuntimeError) as exc:
+                # A token we cannot decrypt is one we cannot call deleteWebhook
+                # with either. That must not block removal: the row
+                # disappearing is what the user asked for, and an orphaned
+                # webhook 404s once bot_key no longer resolves, same as any
+                # other undeleted hook below.
+                log.warning(
+                    "gateway: could not decrypt a bot token while removing it, "
+                    "deleting the row without clearing the webhook: %s", exc)
+                token = None
 
     if token:
         try:
@@ -1396,10 +1610,22 @@ async def bots_for_platform(platform: str,
             log.error("gateway: skipping %s, its token could not be read",
                       row.bot_key)
             continue
+        # Slack needs both halves to run: the bot token sends and the
+        # app-level token opens the websocket. Sent only when there is one, so
+        # every other platform's payload is unchanged.
+        app_token = ""
+        if row.app_token_encrypted:
+            try:
+                app_token = gbots.decrypt_token(row.app_token_encrypted)
+            except (InvalidToken, ValueError, RuntimeError):
+                log.error("gateway: skipping %s, its app token could not be read",
+                          row.bot_key)
+                continue
         out.append({
             "bot_key": row.bot_key,
             "owner_email": row.email,
             "token": token,
+            "app_token": app_token,
             "endpoint": row.endpoint or "",
             "allowed_ids": row.allowed_ids or "",
             "owner_platform_user_id": row.owner_platform_user_id or "",
