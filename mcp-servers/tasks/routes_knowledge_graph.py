@@ -23,7 +23,29 @@ router = APIRouter(prefix="/graph/mine")
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 OPENAI_URL = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
 MAX_NODES = 800  # cap per user to bound RAM/render cost on the small box
-MAX_CHATS = 30   # most-recent conversations to build from
+MAX_CHATS = 30   # conversations that get to shape the topic skeleton
+
+#: Of those, how many are held for the newest conversations regardless of size.
+#: Substance alone would freeze the graph: one big conversation from March
+#: would outrank everything you did this morning, permanently.
+RECENT_CHATS = 8
+
+#: A conversation smaller than this is a greeting, not a topic. It contributes
+#: noise to the clustering and costs a slot a real conversation could use.
+#: Measured on the live database: a substantial chat is 8000+ characters.
+MIN_CHAT_CHARS = 1500
+
+#: How many candidates to weigh before choosing. Metadata only, so this is a
+#: cheap query; the chat bodies are fetched afterwards for the winners alone.
+CHAT_POOL = 300
+
+#: Total characters of conversation handed to the clustering model, and the
+#: most any single chat may contribute. The real constraint on a 3.8GB box is
+#: total text rather than a count of chats, so the budget is shared: 30 chats
+#: at 600 characters read 7% of a substantial conversation.
+SNIPPET_BUDGET = 36000
+MIN_SNIPPET = 400
+MAX_SNIPPET = 1500
 CLUSTER_MODEL = os.environ.get("GRAPH_CLUSTER_MODEL", "gpt-4o")
 
 
@@ -432,18 +454,79 @@ def _chat_snippet(chat_val, max_chars: int = 600) -> str:
     return " ".join(parts)[:max_chars]
 
 
+def snippet_budget(n: int) -> int:
+    """How many characters to read from each of `n` chosen conversations."""
+    if n <= 0:
+        return MAX_SNIPPET
+    return max(MIN_SNIPPET, min(MAX_SNIPPET, SNIPPET_BUDGET // n))
+
+
+def choose_chats(candidates: list, limit: int = MAX_CHATS,
+                 recent: int = RECENT_CHATS,
+                 floor: int = MIN_CHAT_CHARS) -> list:
+    """Pick which conversations shape the topic skeleton. Newest first in, and
+    newest first out.
+
+    `candidates` is metadata only: {"id", "title", "size"}, newest first.
+
+    Two rules, because either alone is wrong. Pure recency, which is what this
+    used to be, lets a chat saying "hi" displace a fortnight of real work.
+    Pure substance freezes the graph on whatever the biggest conversations ever
+    were. So the newest `recent` are held, and the rest of the budget goes to
+    the largest of what remains.
+
+    The floor is dropped entirely rather than enforced when everything is below
+    it: a brand new account has nothing substantial yet, and giving it no
+    topics at all is worse than giving it thin ones.
+    """
+    if not candidates:
+        return []
+    worthy = [c for c in candidates if (c.get("size") or 0) >= floor] or candidates
+
+    chosen_ids = set()
+    for c in worthy[:max(0, recent)]:
+        chosen_ids.add(c["id"])
+
+    if len(chosen_ids) < limit:
+        by_size = sorted(worthy, key=lambda c: -(c.get("size") or 0))
+        for c in by_size:
+            if len(chosen_ids) >= limit:
+                break
+            chosen_ids.add(c["id"])
+
+    # Back into the order they arrived in, which is newest first. The corpus is
+    # truncated downstream, so what leads it decides what the model sees most.
+    return [c for c in worthy if c["id"] in chosen_ids][:limit]
+
+
 async def _read_recent_chats(conn, user_email: str, limit: int = MAX_CHATS) -> list:
     urow = await conn.fetchrow(
         'SELECT id FROM public."user" WHERE lower(email) = lower($1) LIMIT 1',
         user_email)
     if not urow:
         return []
-    rows = await conn.fetch(
-        'SELECT title, chat FROM public."chat" WHERE user_id = $1 '
-        'ORDER BY updated_at DESC LIMIT $2',
-        urow["id"], limit)
-    return [{"title": (r["title"] or ""), "snippet": _chat_snippet(r["chat"])}
-            for r in rows]
+    # Two steps on purpose. Weighing candidates needs their SIZE, not their
+    # contents, and pulling 300 chat bodies into memory to measure them would
+    # cost far more than the graph itself on a 3.8GB box. So: measure cheaply,
+    # choose, then fetch only the winners.
+    meta = await conn.fetch(
+        'SELECT id, title, length(chat::text) AS size FROM public."chat" '
+        'WHERE user_id = $1 ORDER BY updated_at DESC LIMIT $2',
+        urow["id"], CHAT_POOL)
+    picked = choose_chats(
+        [{"id": r["id"], "title": r["title"] or "", "size": r["size"] or 0}
+         for r in meta],
+        limit=limit)
+    if not picked:
+        return []
+
+    per_chat = snippet_budget(len(picked))
+    bodies = {r["id"]: r["chat"] for r in await conn.fetch(
+        'SELECT id, chat FROM public."chat" WHERE id = ANY($1)',
+        [c["id"] for c in picked])}
+    return [{"title": c["title"],
+             "snippet": _chat_snippet(bodies.get(c["id"]), per_chat)}
+            for c in picked]
 
 
 async def _user_id(conn, user_email: str):
