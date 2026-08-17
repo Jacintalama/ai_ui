@@ -11,6 +11,65 @@
   if (window.__aiuiTaskPanelLoaded) return;
   window.__aiuiTaskPanelLoaded = true;
 
+  // ===== Feature URLs =====
+  //
+  // The pane pages (App Builder, Cron Jobs, Video Generation, Channels) each
+  // own a short URL. Open WebUI's client-side router has never heard of them,
+  // so ARRIVING at one directly — pasted link, bookmark, reload — renders
+  // SvelteKit's bare "404: Not Found" with no sidebar and no app. The server
+  // is fine and answers 200 with the app shell; the router throws it away
+  // after hydration. Clicking the sidebar was always fine, which is why this
+  // hid for as long as it did: /channel had the same hole since it shipped.
+  //
+  // So bounce once through "/", where the router is happy, and let the code
+  // below reopen the pane and put the feature URL back. Only a direct arrival
+  // pays the extra load. Kept in sync with NAV_ENTRIES by
+  // tests/test_feature_pages_embed.py::test_every_pane_url_is_rescued.
+  const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation", "/channel"];
+  const AIUI_PENDING_KEY = "__aiuiOpenPath";
+
+  // Set the moment we decide to bounce. location.replace() does NOT stop this
+  // document: script keeps running and the sidebar observer keeps firing until
+  // the new page commits. A scan on the doomed document would consume the
+  // pending key and open a pane that is about to be discarded, leaving the real
+  // load with nothing to reopen — a bare "/" instead of the feature. It is a
+  // pure race, so it looked intermittent: it lost on the second load of a run,
+  // where the cached script ran early enough to beat the navigation.
+  let aiuiLeavingForRescue = false;
+
+  (function rescueDirectFeatureUrl() {
+    try {
+      if (AIUI_URL_PATHS.indexOf(location.pathname) < 0) return;
+      // Recorded before we leave, because the bounce discards the URL. A
+      // signed-out visitor lands on /auth instead of "/", so this has to
+      // survive the sign-in too — sessionStorage does, a variable would not.
+      sessionStorage.setItem(AIUI_PENDING_KEY, JSON.stringify(
+        { path: location.pathname, at: Date.now() }));
+      aiuiLeavingForRescue = true;
+      // replace(), not assign(): the 404 must not become a back-button stop.
+      location.replace("/");
+    } catch (e) { /* storage blocked -> land on the 404, same as before */ }
+  })();
+
+  // What the pane should reopen on this load, if anything. Read once; the key
+  // is cleared only when the pane actually opens, so a detour through the
+  // sign-in page does not lose it. Stale entries expire so a pane cannot
+  // surprise someone by opening an hour later in the same tab.
+  function aiuiPendingPath() {
+    // This document is on its way out; whatever it reads here would be lost.
+    if (aiuiLeavingForRescue) return null;
+    try {
+      const raw = sessionStorage.getItem(AIUI_PENDING_KEY);
+      if (!raw) return null;
+      const rec = JSON.parse(raw);
+      if (!rec || !rec.path || Date.now() - rec.at > 5 * 60 * 1000) {
+        sessionStorage.removeItem(AIUI_PENDING_KEY);
+        return null;
+      }
+      return rec.path;
+    } catch (e) { return null; }
+  }
+
   // ===== Config =====
   const API_BASE = "/api/tasks";
 
@@ -1487,8 +1546,9 @@
     }
 
     let pending = false;
-    const observer = new MutationObserver(() => {
-      if (pending) return;
+    const scanSidebar = () => {
+      // Don't decorate a document that is being replaced (see aiuiPendingPath).
+      if (aiuiLeavingForRescue || pending) return;
       pending = true;
       requestAnimationFrame(async () => {
         pending = false;
@@ -1509,9 +1569,29 @@
         // The pane now survives a close (hidden, so its loaded pages are kept),
         // so "is one open" has to ask whether it is SHOWING. A bare
         // [data-aiui-embed] lookup answers yes forever after the first open.
+        // Either we are already sitting on the feature URL (the pane pushed it
+        // and the app never navigated away), or we were bounced here from one.
+        // NOT named `pending`: that is the re-entrancy guard in the enclosing
+        // scope, and shadowing it here put it in the temporal dead zone, so
+        // `pending = false` at the top of this callback threw and killed the
+        // entire injector — no sidebar entries at all.
+        const pendingPath = aiuiPendingPath();
         const wanted = visibleEntries.find(
-          (cfg) => cfg.urlPath && cfg.urlPath === location.pathname);
-        if (wanted && !document.querySelector("[data-aiui-embed][data-open]")) {
+          (cfg) => cfg.urlPath &&
+                   (cfg.urlPath === location.pathname || cfg.urlPath === pendingPath));
+        // Only open once the real app is on screen. A signed-out visitor who
+        // pastes a feature URL is bounced to "/" and lands on the SIGN-IN page,
+        // where opening a pane would both cover the login form and burn the
+        // request, so after signing in they would land on a plain chat. The
+        // sidebar is the honest signal that the app rendered and the user is
+        // in; until then the key just waits.
+        const appIsUp = !!document.querySelector(
+          'a[href="/"], a[href="/notes"], a[href="/calendar"], a[href="/workspace"]');
+        if (wanted && appIsUp &&
+            !document.querySelector("[data-aiui-embed][data-open]")) {
+          // Cleared only now, on the load that actually opens it, so a detour
+          // through /auth keeps the request alive across the sign-in.
+          try { sessionStorage.removeItem(AIUI_PENDING_KEY); } catch (e) {}
           openAiuiEmbed(wanted);
         }
         // Skip the expensive DOM work once every visible entry is present.
@@ -1584,8 +1664,18 @@
           console.log("[AIUI tasks] sidebar entry injected: " + cfg.label + " (wrapper=" + rowWrapper.tagName + ")");
         }
       });
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    };
+    new MutationObserver(scanSidebar).observe(
+      document.body, { childList: true, subtree: true });
+    // Run once up front. This was observer-only, so it depended entirely on the
+    // page mutating AFTER this script attached; loader.js fetches this file
+    // with a cache-busting query, so it can arrive after the render settles.
+    //
+    // Belt-and-braces, and honestly so: no test here fails when this line is
+    // removed, because something always mutates the DOM soon enough (the task
+    // panel's own init, if nothing else). Kept because it costs one guarded,
+    // idempotent call and removes a dependency on that staying true.
+    scanSidebar();
   }
   injectSidebarBuildWebsiteEntry();
 

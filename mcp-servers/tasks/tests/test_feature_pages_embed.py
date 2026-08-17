@@ -137,6 +137,38 @@ def test_the_old_standalone_urls_still_work():
         "the /Aiuibuilder alias was dropped along with /app-builder"
 
 
+def test_every_pane_url_is_rescued():
+    """The bounce list is a plain literal near the top of the file, because it
+    has to run before anything else. If a new pane URL is added to NAV_ENTRIES
+    and not to that list, the feature works from the sidebar and 404s when
+    anyone pastes its URL — which is exactly the bug this was written for, and
+    it hid in /channel for weeks."""
+    literal = JS.split("const AIUI_URL_PATHS = [", 1)[1].split("]", 1)[0]
+    rescued = set(re.findall(r'"([^"]+)"', literal))
+    declared = set(re.findall(r'urlPath:\s*"([^"]+)"',
+                              JS.split("const NAV_ENTRIES = [", 1)[1]))
+    assert rescued == declared, rescued.symmetric_difference(declared)
+
+
+def test_the_bounce_cannot_be_beaten_by_its_own_page():
+    """location.replace() leaves the current document running. Without a guard,
+    the sidebar observer fires on the doomed page, consumes the stored request
+    and opens a pane that is thrown away a moment later, so the real load finds
+    nothing and the user sits on "/". Pure race: it lost only when the script
+    was cached enough to run early."""
+    assert "aiuiLeavingForRescue" in JS
+    body = JS.split("function aiuiPendingPath", 1)[1].split("\n  }", 1)[0]
+    assert "if (aiuiLeavingForRescue) return null;" in body
+
+
+def test_a_pane_never_opens_over_the_sign_in_page():
+    """Signed out, the bounce lands on /auth. Opening there would cover the
+    login form AND spend the request, so signing in would drop the user on a
+    plain chat instead of the feature they asked for."""
+    assert "const appIsUp" in JS
+    assert "wanted && appIsUp" in JS
+
+
 # --- "no loading" -------------------------------------------------------
 
 def test_an_opened_page_is_kept_alive_instead_of_rebuilt():
