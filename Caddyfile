@@ -175,9 +175,16 @@
 	}
 
 	# Friendly aliases for the App Builder page -> the real /tasks/app-builder
-	# route. Case-insensitive so /Aiuibuilder, /aiuibuilder, /app-builder all work;
-	# without this they fall through to the Open WebUI SPA, which shows its own 404.
-	@app_builder_alias path_regexp (?i)^/(ai-?ui-?builder|app-builder)/?$
+	# route. Case-insensitive so /Aiuibuilder and /aiuibuilder both work; without
+	# this they fall through to the Open WebUI SPA, which shows its own 404.
+	#
+	# /app-builder is DELIBERATELY not in this list any more. It is now the
+	# address the sidebar puts in the bar when App Builder opens inside the
+	# shell, so it has to fall through to the SPA: redirecting it here would
+	# work perfectly until someone pressed F5, which would bounce them out of
+	# the shell and onto the bare page. Pinned by
+	# tests/test_feature_pages_embed.py::test_caddy_does_not_answer_the_feature_url_itself.
+	@app_builder_alias path_regexp (?i)^/(ai-?ui-?builder)/?$
 	handle @app_builder_alias {
 		redir * /tasks/app-builder 308
 	}

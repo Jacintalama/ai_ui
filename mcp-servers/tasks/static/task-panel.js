@@ -1079,9 +1079,16 @@
   // glyph, and drive navigation from a capture-phase click handler.
   //
   // Three entries are injected, in this order under Workspace:
-  //   1. App Builder       -> /Aiuibuilder
-  //   2. Video Generation  -> /video-generator
-  //   3. Cron Jobs         -> /cron-jobs
+  //   1. App Builder       -> /app-builder
+  //   2. Video Generation  -> /video-generation
+  //   3. Cron Jobs         -> /cronjobs
+  //
+  // All of them open INSIDE the shell (cfg.embed), like Channels and Graph.
+  // They used to navigate away, which threw the whole Open WebUI app out and
+  // rebooted it: the sidebar disappeared, the open chat was lost, and coming
+  // back cost a second full boot. `href` is the page the pane loads;
+  // `urlPath` is what the address bar shows, so the feature can still be
+  // linked to and survives a reload.
   //
   // Each entry is guarded by its own unique data-attribute so SPA re-renders
   // never double-inject it. The App Builder entry keeps its original marker
@@ -1098,7 +1105,11 @@
         allUsers: true,
         label: "App Builder",
         title: "App Builder — create and manage AI-built apps",
-        href: "/Aiuibuilder",
+        // The real page. /Aiuibuilder was an alias that 308'd here, so going
+        // straight to it drops a redirect off the open path.
+        href: "/tasks/app-builder",
+        urlPath: "/app-builder",
+        embed: true,
         // code-bracket "</>" glyph (unchanged from the original App Builder)
         setIcon: (svg) => {
           svg.setAttribute("viewBox", "0 0 24 24");
@@ -1116,7 +1127,12 @@
         allUsers: true,
         label: "Video Generation",
         title: "Video Generation: turn screenshots into a narrated video",
-        href: "/video-generator",
+        // The page itself. /video-generator stays a working standalone URL —
+        // the scheduler posts it into Discord — but the sidebar no longer
+        // needs to leave the shell to reach it.
+        href: "/tasks/static/video.html",
+        urlPath: "/video-generation",
+        embed: true,
         // film / clapperboard glyph (the 🎬 equivalent)
         setIcon: (svg) => {
           svg.setAttribute("viewBox", "0 0 24 24");
@@ -1136,7 +1152,11 @@
         allUsers: true,
         label: "Cron Jobs",
         title: "Cron Jobs: schedule recurring AI tasks",
-        href: "/cron-jobs",
+        // /cron-jobs stays a working standalone URL (the knowledge graph
+        // links it); this is the same page, loaded into the pane.
+        href: "/tasks/static/cron.html",
+        urlPath: "/cronjobs",
+        embed: true,
         // clock glyph (the ⏰ equivalent)
         setIcon: (svg) => {
           svg.setAttribute("viewBox", "0 0 24 24");
@@ -1223,9 +1243,43 @@
       return { edge: 260, el: null };
     }
 
+    // The pane, built once and kept. Reopening a feature must not rebuild it:
+    // Ralph asked for these to open "with no loading", and a fresh iframe per
+    // open means a blank pane and a full page boot every single time. So the
+    // shell is HIDDEN rather than removed on close, and each page's frame is
+    // cached here by href and merely unhidden when it comes back.
+    const AIUI_FRAMES = Object.create(null);
+
+    // Clicking any OTHER sidebar item (a chat, New Chat) returns to the app.
+    // Clicking one of OUR entries must not, or switching from Cron Jobs to App
+    // Builder would tear the pane down and reload the page being opened. This
+    // used to name the Graph entry alone, which was right only while Graph was
+    // the single embedded entry.
+    const NAV_EMBED_SELECTOR =
+      NAV_ENTRIES.map((c) => "[" + c.attr + "]").join(",");
+
+    // Same-origin advisory: a cached page that is no longer on screen should
+    // stop polling. App Builder refreshes every 8s, so without this a user who
+    // opened it once would keep hitting the server from a hidden frame for as
+    // long as the tab lived. Fails open — a page that ignores the message just
+    // behaves exactly as it did before.
+    function aiuiFrameVisible(frame, visible) {
+      try {
+        frame.contentWindow.postMessage(
+          { aiuiFrameVisible: !!visible }, location.origin);
+      } catch (e) { /* not loaded yet; the load handler re-sends */ }
+    }
+
     function closeAiuiEmbed() {
-      const w = document.querySelector("[data-aiui-embed]");
-      if (w) w.remove();
+      const wrap = document.querySelector("[data-aiui-embed]");
+      if (wrap) {
+        // Hidden, NOT removed. Removing it would throw away every cached frame
+        // and put the loading back on the very next open.
+        wrap.style.display = "none";
+        wrap.removeAttribute("data-open");
+        Object.keys(AIUI_FRAMES).forEach(
+          (k) => aiuiFrameVisible(AIUI_FRAMES[k], false));
+      }
       if (window.__aiuiEmbedCleanup) { window.__aiuiEmbedCleanup(); window.__aiuiEmbedCleanup = null; }
       // Put the address bar back where it was. Only when WE changed it, so a
       // close never rewrites a URL somebody else owns.
@@ -1236,38 +1290,18 @@
       }
     }
 
-    function openAiuiEmbed(cfg) {
-      const existing = document.querySelector("[data-aiui-embed]");
-      if (existing) {
-        // Same page already open -> treat the click as a no-op toggle.
-        if (existing.getAttribute("data-src") === cfg.href) return;
-        closeAiuiEmbed();
-      }
-      // Give the open page a URL. The overlay is an iframe inside the shell,
-      // so without this the address bar keeps saying whatever it said before
-      // and the page cannot be linked to at all.
-      if (cfg.urlPath && location.pathname !== cfg.urlPath) {
-        if (window.__aiuiEmbedPrevUrl == null) {
-          window.__aiuiEmbedPrevUrl = location.pathname + location.search;
-        }
-        try { history.pushState({ aiuiEmbed: cfg.attr }, "", cfg.urlPath); } catch (e) {}
-      }
+    // Build the pane once. Its listeners are registered once too, and every one
+    // of them no-ops while the pane is closed.
+    function aiuiEmbedShell() {
+      let wrap = document.querySelector("[data-aiui-embed]");
+      if (wrap) return wrap;
 
       const meas = aiuiSidebarRightEdge();
-      const wrap = document.createElement("div");
+      wrap = document.createElement("div");
       wrap.setAttribute("data-aiui-embed", "");
-      wrap.setAttribute("data-src", cfg.href);
       wrap.style.cssText =
         "position:fixed;top:0;right:0;bottom:0;left:" + meas.edge + "px;" +
-        "z-index:35;background:#0b0b0b;overflow:hidden;";
-
-      const frame = document.createElement("iframe");
-      // Cache-bust every open so the pane always shows the latest page
-      // (the PWA service worker/browser otherwise caches the old HTML).
-      frame.src = cfg.href + (cfg.href.indexOf("?") < 0 ? "?v=" : "&v=") + Date.now();
-      frame.setAttribute("title", cfg.title || cfg.label || "AIUI");
-      frame.style.cssText =
-        "width:100%;height:100%;border:0;display:block;background:#0b0b0b;";
+        "z-index:35;background:#0b0b0b;overflow:hidden;display:none;";
 
       const close = document.createElement("button");
       close.type = "button";
@@ -1280,43 +1314,87 @@
       close.addEventListener("mouseenter", () => { close.style.background = "rgba(255,255,255,.16)"; });
       close.addEventListener("mouseleave", () => { close.style.background = "rgba(255,255,255,.08)"; });
       close.addEventListener("click", closeAiuiEmbed);
-
-      wrap.appendChild(frame);
+      // Appended before the frames, but it is positioned with a z-index so it
+      // still paints above them.
       wrap.appendChild(close);
       document.body.appendChild(wrap);
 
-      // Keep the overlay glued to the sidebar edge on resize / collapse.
-      const reposition = () => { wrap.style.left = aiuiSidebarRightEdge().edge + "px"; };
+      const isOpen = () => wrap.hasAttribute("data-open");
+
+      // Keep the pane glued to the sidebar edge on resize / collapse.
+      const reposition = () => {
+        if (isOpen()) wrap.style.left = aiuiSidebarRightEdge().edge + "px";
+      };
       window.addEventListener("resize", reposition);
-      let ro = null;
       if (meas.el && "ResizeObserver" in window) {
-        ro = new ResizeObserver(reposition);
-        ro.observe(meas.el);
+        new ResizeObserver(reposition).observe(meas.el);
       }
-      // Poll briefly to catch the sidebar collapse/expand animation.
-      const iv = setInterval(reposition, 250);
-      setTimeout(() => { clearInterval(iv); }, 3000);
+      wrap.__aiuiReposition = reposition;
 
-      const onKey = (e) => { if (e.key === "Escape") closeAiuiEmbed(); };
-      document.addEventListener("keydown", onKey);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && isOpen()) closeAiuiEmbed();
+      });
 
-      // Clicking any OTHER sidebar item (a chat, New Chat, another nav) returns
-      // to the app. We do NOT preventDefault so their action still runs.
-      const onDocClick = (e) => {
+      document.addEventListener("click", (e) => {
+        if (!isOpen()) return;
         const t = e.target;
         if (!t || wrap.contains(t)) return;
-        if (t.closest && t.closest("[data-aiui-graph]")) return;
+        // Our own nav entries SWAP the pane; they must not close it first.
+        if (t.closest && t.closest(NAV_EMBED_SELECTOR)) return;
         closeAiuiEmbed();
-      };
-      document.addEventListener("click", onDocClick, true);
+      }, true);
 
-      window.__aiuiEmbedCleanup = () => {
-        window.removeEventListener("resize", reposition);
-        document.removeEventListener("keydown", onKey);
-        document.removeEventListener("click", onDocClick, true);
-        if (ro) ro.disconnect();
-        clearInterval(iv);
-      };
+      return wrap;
+    }
+
+    function openAiuiEmbed(cfg) {
+      const wrap = aiuiEmbedShell();
+      // Same page already showing -> treat the click as a no-op toggle.
+      if (wrap.getAttribute("data-open") === cfg.href) return;
+
+      // Give the open page a URL. The pane lives inside the shell, so without
+      // this the address bar keeps saying whatever it said before and the page
+      // cannot be linked to at all. The previous URL is remembered only once,
+      // so closing returns to the chat the user actually came from rather than
+      // to whichever feature they happened to look at just before.
+      if (cfg.urlPath && location.pathname !== cfg.urlPath) {
+        if (window.__aiuiEmbedPrevUrl == null) {
+          window.__aiuiEmbedPrevUrl = location.pathname + location.search;
+        }
+        try { history.pushState({ aiuiEmbed: cfg.attr }, "", cfg.urlPath); } catch (e) {}
+      }
+
+      wrap.setAttribute("data-open", cfg.href);
+      wrap.style.display = "block";
+      wrap.style.left = aiuiSidebarRightEdge().edge + "px";
+
+      Object.keys(AIUI_FRAMES).forEach((k) => {
+        const shown = k === cfg.href;
+        AIUI_FRAMES[k].style.display = shown ? "block" : "none";
+        aiuiFrameVisible(AIUI_FRAMES[k], shown);
+      });
+
+      let frame = AIUI_FRAMES[cfg.href];
+      if (!frame) {
+        frame = document.createElement("iframe");
+        // Cache-bust the FIRST load only. This exists to beat the PWA service
+        // worker's stale HTML; doing it on every open is what made reopening
+        // cost a full fetch and a blank pane.
+        frame.src = cfg.href + (cfg.href.indexOf("?") < 0 ? "?v=" : "&v=") + Date.now();
+        frame.setAttribute("title", cfg.title || cfg.label || "AIUI");
+        frame.style.cssText =
+          "width:100%;height:100%;border:0;display:block;background:#0b0b0b;";
+        frame.addEventListener("load", () => {
+          aiuiFrameVisible(frame, wrap.getAttribute("data-open") === cfg.href);
+        });
+        AIUI_FRAMES[cfg.href] = frame;
+        wrap.appendChild(frame);
+      }
+
+      // Poll briefly to catch the sidebar collapse/expand animation.
+      const iv = setInterval(wrap.__aiuiReposition, 250);
+      setTimeout(() => clearInterval(iv), 3000);
+      window.__aiuiEmbedCleanup = () => clearInterval(iv);
     }
 
     // Mirrors the original App Builder cloning logic exactly, parameterized
@@ -1414,13 +1492,18 @@
         const visibleEntries = NAV_ENTRIES.filter((cfg) => cfg.allUsers || admin);
         if (!visibleEntries.length) return;
 
-        // Landing on /channels directly, by reload, bookmark or a link
-        // somebody shared, opens the page rather than a blank shell. The
-        // server hands the SPA back for any unknown path, so without this the
-        // address bar says /channels and nothing is on screen.
+        // Landing on /channel, /app-builder, /cronjobs or /video-generation
+        // directly — by reload, bookmark or a link somebody shared — opens the
+        // page rather than a blank shell. The server hands the SPA back for any
+        // unknown path, so without this the address bar names a feature and
+        // nothing is on screen.
+        //
+        // The pane now survives a close (hidden, so its loaded pages are kept),
+        // so "is one open" has to ask whether it is SHOWING. A bare
+        // [data-aiui-embed] lookup answers yes forever after the first open.
         const wanted = visibleEntries.find(
           (cfg) => cfg.urlPath && cfg.urlPath === location.pathname);
-        if (wanted && !document.querySelector("[data-aiui-embed]")) {
+        if (wanted && !document.querySelector("[data-aiui-embed][data-open]")) {
           openAiuiEmbed(wanted);
         }
         // Skip the expensive DOM work once every visible entry is present.

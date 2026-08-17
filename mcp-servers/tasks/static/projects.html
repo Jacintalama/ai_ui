@@ -3049,7 +3049,20 @@
     // Poll so status badges flip from pending → building → built on their
     // own without the user needing to refresh. 8s is a good middle ground
     // between snappy updates and not hammering the API.
-    setInterval(load, 8000);
+    //
+    // The sidebar now opens this page in a pane inside Open WebUI and KEEPS it
+    // loaded when you switch to another feature, so that it reopens instantly.
+    // A hidden page that kept polling would hit the API every 8s for as long as
+    // the tab lived, for a screen nobody is looking at. The parent tells us
+    // when we are on screen; if that message never arrives we poll exactly as
+    // we always did, so a standalone /tasks/app-builder tab is unaffected.
+    let onScreen = true;
+    window.addEventListener("message", (e) => {
+      if (e.origin !== location.origin) return;
+      const d = e.data;
+      if (d && typeof d.aiuiFrameVisible === "boolean") onScreen = d.aiuiFrameVisible;
+    });
+    setInterval(() => { if (onScreen) load(); }, 8000);
   </script>
 </body>
 </html>

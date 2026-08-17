@@ -1,4 +1,20 @@
-<!doctype html><html><head><meta charset="utf-8"><title>non-admin sidebar</title></head>
+<!doctype html><html><head><meta charset="utf-8"><title>non-admin sidebar</title>
+<style>
+  /* The real Open WebUI sidebar is a tall narrow column pinned to the left,
+     and that shape is load-bearing: aiuiSidebarRightEdge() walks up from a nav
+     entry looking for left<=8, width 120-520, height>200 to decide where the
+     embedded pane starts. With no CSS at all this fixture's #sidebar spanned
+     the full 1264px window and was 144px tall, so the measurement correctly
+     rejected it, fell back to 260px, and the pane opened ON TOP of the nav
+     entries — which looked like a product bug and was purely a fixture that
+     did not resemble the thing it stood in for. */
+  body { margin: 0; }
+  #sidebar {
+    position: fixed; left: 0; top: 0; width: 260px; height: 100vh;
+    box-sizing: border-box; padding: 8px;
+  }
+</style>
+</head>
 <body>
   <!-- A NON-ADMIN Open WebUI sidebar: Notes and Calendar render, Workspace does NOT.
        That is the exact condition that broke the old injector. -->
