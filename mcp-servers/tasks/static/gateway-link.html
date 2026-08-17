@@ -9,7 +9,12 @@
   * { box-sizing: border-box; }
   body {
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-    margin: 0; padding: 1.75rem 2rem 4rem;
+    /* Capped and centred. This page is rendered in a pane that is often
+       1600px wide, where a full-bleed layout put a bot token field 1502px
+       across and ran help text the entire width of the screen. Nothing here
+       is a table; it is a settings list, and a settings list is read in a
+       column. */
+    margin: 0 auto; max-width: 60rem; padding: 1.75rem 2rem 4rem;
     background: transparent; color: inherit;
   }
   header { margin-bottom: 1.5rem; }
@@ -20,7 +25,7 @@
   ul { list-style: none; padding: 0; margin: 0; }
   .row {
     border: 1px solid rgba(128,128,128,.25); border-radius: .55rem;
-    margin-bottom: .6rem; padding: .85rem 1rem;
+    margin-bottom: .45rem; padding: .7rem .9rem;
   }
   .row.dim { opacity: .62; }
   /* The row IS the control: clicking anywhere on it opens the channel, so it
@@ -28,9 +33,20 @@
      hand; a disabled one keeps the default arrow, which is the same honesty
      the disabled button already carries. */
   .row.openable { cursor: pointer; }
-  .row.openable:hover { border-color: rgba(128,128,128,.5); }
-  .head { display: flex; align-items: center; gap: .8rem; }
-  .icon { font-size: 1.2rem; width: 1.6rem; text-align: center; flex: none; }
+  .row.openable:hover {
+    border-color: rgba(128,128,128,.5);
+    /* A hand cursor says a thing is clickable only once you are already on
+       it. A ground change says it from across the row. */
+    background: rgba(128,128,128,.06);
+  }
+  /* Top, not centre. Centring floated the mark against a two or three line
+     block, so the icon column drifted down the further a row's text ran and
+     the list lost its left edge. */
+  .head { display: flex; align-items: flex-start; gap: .8rem; }
+  .icon {
+    font-size: 1.2rem; width: 1.6rem; text-align: center; flex: none;
+    margin-top: .1rem;
+  }
   .icon svg { display: block; margin: 0 auto; }
   .naming { flex: 1; min-width: 0; }
   .titleline { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
@@ -41,8 +57,14 @@
     padding: .1rem .45rem; opacity: .8; white-space: nowrap;
   }
   .badge.on { border-color: #1a7f43; color: #1a7f43; opacity: 1; }
-  .blurb { font-size: .85rem; opacity: .7; margin-top: .2rem; }
-  .why { font-size: .85rem; opacity: .7; margin-top: .2rem; }
+  .blurb { font-size: .85rem; opacity: .7; margin-top: .15rem; line-height: 1.45; }
+  /* Secondary to the blurb rather than equal to it. These were the same size
+     and the same opacity, so a row's supporting line competed with the line
+     that says what the channel IS. */
+  .why {
+    font-size: .8rem; opacity: .58; margin-top: .15rem; line-height: 1.45;
+    max-width: 46rem;
+  }
 
   button {
     font: inherit; font-size: .875rem; padding: .35rem .8rem; cursor: pointer;
@@ -58,6 +80,22 @@
      line, so the first section inside a panel skips its own. */
   .panel > .botbox:first-child { margin-top: 0; padding-top: 0; border-top: none; }
   .botheadline { font-weight: 600; letter-spacing: .04em; margin-bottom: 6px; }
+  /* "Quick connect" is a sibling of the bot form, not a child of it, so it
+     had none of the separation .botbox gives its own heading and ended up
+     hard against the Save button above it. Direct child only: the heading
+     INSIDE a .botbox already sits under that box's divider. */
+  .panel > .botheadline {
+    margin-top: 1.3rem; padding-top: 1.1rem;
+    border-top: 1px solid rgba(128,128,128,.18);
+  }
+  /* Same exemption .botbox already has, and for the same reason: when this
+     heading opens the panel it sits directly under the panel's own divider,
+     so its border drew a second line and its margin left a band of empty
+     space above it. Telegram shows that shape, because its quick path comes
+     first and there is no relay caveat above it. */
+  .panel > .botheadline:first-child {
+    margin-top: 0; padding-top: 0; border-top: none;
+  }
   .fieldlabel { font-size: 11px; letter-spacing: .08em; margin-top: 10px; opacity: .8; }
   .botbox input { width: 100%; box-sizing: border-box; margin-top: 4px; }
   .botactions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -66,6 +104,11 @@
     margin-top: .85rem; padding-top: .85rem;
     border-top: 1px solid rgba(128,128,128,.22);
   }
+  /* The relay caveat, first thing in an opened panel. Set apart from the
+     instructions below it because it is a fact about who can read your
+     messages, not a step to follow. */
+  .why.relay { margin: 0 0 .9rem; opacity: .7; }
+  .panel > .why.relay + .botbox { margin-top: 0; padding-top: 0; border-top: none; }
   .step { font-size: .875rem; opacity: .8; margin: 0 0 .6rem; }
   .steps { margin: .2rem 0 .8rem; padding-left: 1.3rem; font-size: .875rem; }
   .steps li { margin-bottom: .5rem; }
@@ -78,7 +121,14 @@
     background: #0d141b; border: 1px solid #1e2b36; border-radius: 4px;
     padding: .35rem .5rem; font-size: .8125rem;
   }
-  .entry { display: flex; gap: .5rem; flex-wrap: wrap; }
+  /* A credential is short and is read character by character. Stretched to
+     the full width of a wide pane it becomes a stripe with a few glyphs at
+     one end, and there is nothing to check a pasted value against. */
+  .entry { display: flex; gap: .5rem; flex-wrap: wrap; max-width: 34rem; }
+  /* block, not just capped. An input is inline-level, so the moment it stopped
+     filling the whole line the Save button flowed up beside the last field and
+     the form stopped reading as a stack of labelled rows. */
+  .botbox input { display: block; max-width: 34rem; }
   /* Only the pairing code is case-insensitive and spaced for reading aloud.
      Applying this to every input, as it once did, displayed a bot token, a
      relay URL and an nsec key in capitals they must not be typed in. */
@@ -94,6 +144,12 @@
     border-left: 3px solid #d08b1e; padding: .4rem .7rem;
   }
   .msg { font-size: .875rem; margin-top: .6rem; min-height: 1.2rem; }
+  /* Every row carries one of these, ready to hold a result. Reserving its
+     height while it is empty is right INSIDE a form, where a message
+     appearing must not shove the button out from under the cursor. On a
+     collapsed row it was 29px of nothing, ten times over: a third of the
+     list's height was blank space held for text that was not there. */
+  .msg:empty { display: none; }
   .ok { color: #1a7f43; }
   .bad { color: #c0392b; }
 </style>
@@ -468,6 +524,18 @@ function buildExpand(c) {
   const panel = document.createElement("div");
   panel.className = "panel";
 
+  // Who else handles your messages here, said before anything can be
+  // connected. The page's lede promises nobody else can see what you connect;
+  // that is true of your IO account and NOT of the platform carrying the
+  // message, so the difference has to be stated somewhere a person reads it
+  // on the way in. This is that place: connecting means opening this panel.
+  if (c.caveat) {
+    const who = document.createElement("p");
+    who.className = "why relay";
+    who.textContent = c.caveat;
+    panel.append(who);
+  }
+
   // Where IO runs no identity of its own, connecting YOUR credentials is not
   // an alternative to the quick path, it is the only way a pairing code can
   // ever be sent. So it goes first. Rendered the other way round, as it was,
@@ -790,17 +858,13 @@ function render(connections) {
     blurb.textContent = c.blurb || "";
     naming.append(titleline, blurb);
 
-    if (c.caveat) {
-      // Who else handles your messages on this channel, said before you
-      // connect it rather than discovered afterwards. The lede promises
-      // nobody else can see what you connect; that is true of your IO
-      // account, and not of the platform carrying the message, so the row
-      // has to say which is which.
-      const who = document.createElement("div");
-      who.className = "why";
-      who.textContent = c.caveat;
-      naming.append(who);
-    }
+    // The caveat, who else handles your messages on this channel, moved into
+    // the panel. It is still said BEFORE you can connect, because connecting
+    // requires opening the row, which is the whole point of it being there.
+    // On the collapsed row it was a third line of near-identical boilerplate
+    // on every relayed channel ("Messages you send from X pass through X, and
+    // X vouches for who you are"), which pushed the rows apart and buried the
+    // one line that says what the channel is.
 
     if (c.status === "connected" && c.name) {
       // Naming the account is the only way to notice that a code you were
