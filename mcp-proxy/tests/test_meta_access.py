@@ -114,3 +114,70 @@ def test_no_meta_endpoint_still_gates_its_access_check_on_having_a_user():
         body = src[start:start + 2500]
         assert "if user_email:" not in body, (
             f"{endpoint} still makes its access check conditional on having a user")
+
+
+# --- the direct execution paths ------------------------------------------
+# /meta/* is not the only way to run a tool. /servers advertises
+# "POST /{server_id}/{tool_name}", and a legacy flat route runs one too. Both
+# carried the same fail-open, so fixing only the meta endpoints closed one
+# door of three: /mcp/trello/list_workspaces still answered an anonymous
+# request with a real private workspace after the first fix was live.
+
+EXECUTING_ENDPOINTS = ["execute_server_tool", "execute_tool_endpoint_legacy"]
+
+
+def _endpoint_body(name, span=3200):
+    src = _main_source()
+    start = src.index(f"async def {name}(")
+    return src[start:start + span]
+
+
+@pytest.mark.parametrize("endpoint", EXECUTING_ENDPOINTS + ["get_server_tools"])
+def test_every_executing_endpoint_demands_an_identified_caller(endpoint):
+    assert "require_identified(" in _endpoint_body(endpoint), (
+        f"{endpoint} can still be reached without a caller")
+
+
+@pytest.mark.parametrize("endpoint", EXECUTING_ENDPOINTS)
+def test_no_executing_endpoint_makes_its_access_check_optional(endpoint):
+    """`if user:` around the access check is the same bug as `if user_email:`,
+    written against the UserInfo object instead of the address."""
+    body = _endpoint_body(endpoint)
+    assert "if user:\n" not in body, (
+        f"{endpoint} still only checks access when it happens to have a user")
+
+
+def test_identity_can_never_come_from_a_query_parameter():
+    """`?user_email=` was accepted as identity "for testing/demo". It is a
+    complete authentication bypass: appending
+    ?user_email=<an MCP-Admin address> to any tool URL granted every server,
+    because MCP-Admin membership is looked up from that address alone.
+    """
+    src = _main_source()
+    assert 'query_params.get("user_email")' not in src
+    # The impersonation path constructed a UserInfo out of thin air:
+    assert 'user_id="query_param"' not in src
+
+
+def test_the_legacy_route_does_not_dump_every_request_header():
+    """It printed every header to container stdout, Cookie and Authorization
+    included. Truncating a session cookie to 50 characters does not make it
+    safe to log."""
+    body = _endpoint_body("execute_tool_endpoint_legacy")
+    assert "for key, value in request.headers.items()" not in body
+
+
+def test_no_endpoint_returns_the_raw_request_headers():
+    """/debug/headers returned dict(request.headers) to anyone who asked."""
+    assert "return dict(request.headers)" not in _main_source()
+
+
+def test_the_openapi_spec_lists_nothing_for_an_unidentified_caller():
+    """Standard mode (META_TOOLS_MODE=false) builds the spec by walking every
+    server and tool and skipping the ones the user cannot reach, guarded by
+    `if user_email:`. Unidentified therefore meant "list the entire estate".
+    It is currently masked because meta-tools mode returns earlier, but that
+    is an environment variable, not a fix.
+    """
+    src = _main_source()
+    assert "        if user_email:\n            if not await user_has_tenant_access_async" not in src

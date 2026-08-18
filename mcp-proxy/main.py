@@ -533,10 +533,11 @@ This reduces token usage by 96-99% compared to listing all tools.
 
     # Add hierarchical endpoints for each server (filtered by user access)
     for server_id, config in ALL_SERVERS.items():
-        # Filter by user access if user is identified
-        if user_email:
-            if not await user_has_tenant_access_async(user_email, server_id, entra_groups):
-                continue  # Skip servers user doesn't have access to
+        # An unidentified caller is shown nothing. This read `if user_email:`,
+        # so "we do not know who you are" listed every server on the box.
+        if not user_email or not await user_has_tenant_access_async(
+                user_email, server_id, entra_groups):
+            continue
 
         # GET /{server_id} - List tools for this server
         paths[f"/{server_id}"] = {
@@ -557,10 +558,10 @@ This reduces token usage by 96-99% compared to listing all tools.
         server_id = tool_info["tenant_id"]
         original_name = tool_info["original_name"]
 
-        # Filter by user access if user is identified
-        if user_email:
-            if not await user_has_tenant_access_async(user_email, server_id, entra_groups):
-                continue  # Skip tools from servers user doesn't have access to
+        # Same rule for the tools themselves.
+        if not user_email or not await user_has_tenant_access_async(
+                user_email, server_id, entra_groups):
+            continue
 
         # POST /{server_id}/{tool_name} - Hierarchical format (preferred)
         # Use original request_body schema if available (so AI knows what params to send)
@@ -719,13 +720,27 @@ async def debug_user(request: Request):
 
 @app.get("/debug/headers")
 async def debug_headers(request: Request):
-    """Show all incoming headers for debugging."""
-    return dict(request.headers)
+    """What the proxy sees, for the caller only.
+
+    This returned dict(request.headers) to anyone who asked. The headers are
+    the caller's own, so the leak is modest, but it also confirmed to an
+    unauthenticated prober exactly which identity headers this service trusts,
+    which is the first thing you would want before trying to forge one.
+    """
+    user = await extract_user_from_headers_optional(request)
+    require_identified(user.email if user else None)
+    return {"seen_by_proxy": sorted(request.headers.keys()), "user": user.email}
 
 
 @app.get("/debug/tools")
-async def debug_tools():
-    """List all cached tools."""
+async def debug_tools(request: Request):
+    """List all cached tools, for an identified caller.
+
+    The full tool inventory of every connected server is a map of what this
+    platform is wired into. It had no auth at all.
+    """
+    user = await extract_user_from_headers_optional(request)
+    require_identified(user.email if user else None)
     return {
         "tool_count": len(TOOLS_CACHE),
         "tools": list(TOOLS_CACHE.keys())
@@ -1380,13 +1395,14 @@ async def get_server_tools(server_id: str, request: Request):
 
     # Check user access
     user = await extract_user_from_headers_optional(request)
-    if user:
-        has_access = await user_has_tenant_access_async(user.email, server_id, user.entra_groups if user else None)
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail=f"User {user.email} does not have access to server '{server_id}'"
-            )
+    require_identified(user.email if user else None)
+    has_access = await user_has_tenant_access_async(
+        user.email, server_id, user.entra_groups)
+    if not has_access:
+        raise HTTPException(
+            status_code=403,
+            detail=f"User {user.email} does not have access to server '{server_id}'"
+        )
 
     # Fetch tools for this server
     tools = await fetch_server_tools(server)
@@ -1442,42 +1458,24 @@ async def execute_server_tool(server_id: str, tool_path: str, request: Request):
             detail=f"Server '{server_id}' is currently disabled"
         )
 
-    # DEBUG: Log ALL headers to see what Open WebUI sends
     print(f"=== Tool Execution: /{server_id}/{tool_path} ===")
 
-    # Try to get user from multiple sources:
-    # 1. X-OpenWebUI-User-Email header (preferred)
-    # 2. Query parameter ?user_email= (for testing/demo)
-    # 3. Default to None
+    # Identity comes from the authenticated headers and nowhere else. A
+    # ?user_email= fallback used to stand here "for testing/demo": it let
+    # anyone name themselves an MCP-Admin address and be believed, which
+    # granted every server on the box.
     user = await extract_user_from_headers_optional(request)
+    require_identified(user.email if user else None)
 
-    # Fallback: check query parameter for demo/testing
-    if not user:
-        query_email = request.query_params.get("user_email")
-        if query_email:
-            from auth import UserInfo
-            user = UserInfo(
-                email=query_email,
-                user_id="query_param",
-                name=query_email.split("@")[0],
-                role="user"
-            )
-            print(f"  User from query param: {user.email}")
-
-    print(f"  Extracted user: {user.email if user else 'None'}")
-
-    if user:
-        # Use async database lookup for production
-        has_access = await user_has_tenant_access_async(user.email, server_id, user.entra_groups if user else None)
-        if not has_access:
-            print(f"  ACCESS DENIED: {user.email} -> {server_id}")
-            raise HTTPException(
-                status_code=403,
-                detail=f"User {user.email} does not have access to server '{server_id}'"
-            )
-        print(f"  ACCESS GRANTED: {user.email} -> {server_id}")
-    else:
-        print(f"  WARNING: No user identified, allowing anonymous access")
+    has_access = await user_has_tenant_access_async(
+        user.email, server_id, user.entra_groups)
+    if not has_access:
+        print(f"  ACCESS DENIED: {user.email} -> {server_id}")
+        raise HTTPException(
+            status_code=403,
+            detail=f"User {user.email} does not have access to server '{server_id}'"
+        )
+    print(f"  ACCESS GRANTED: {user.email} -> {server_id}")
 
     # Parse request body
     try:
@@ -1496,19 +1494,16 @@ async def execute_server_tool(server_id: str, tool_path: str, request: Request):
 
     # Get user's groups for dynamic routing and API key lookup (US-011)
     # We need GROUP names (like 'MCP-GitHub') not tenant/server IDs (like 'github')
-    user_groups = None
-    if user:
-        # First use groups from auth (entra_groups), then fall back to database lookup
-        if user.entra_groups:
-            user_groups = user.entra_groups
-        else:
-            # Look up groups from database
-            from db import get_user_groups
-            user_groups = await get_user_groups(user.email)
-        print(f"  [ROUTING] User {user.email} groups for routing: {user_groups}")
+    if user.entra_groups:
+        user_groups = user.entra_groups
+    else:
+        # Look up groups from database
+        from db import get_user_groups
+        user_groups = await get_user_groups(user.email)
+    print(f"  [ROUTING] User {user.email} groups for routing: {user_groups}")
 
     # Execute based on server tier
-    return await execute_on_server(server, tool_path, body, user_groups, user_email=(user.email if user else None))
+    return await execute_on_server(server, tool_path, body, user_groups, user_email=user.email)
 
 
 # =============================================================================
@@ -1529,15 +1524,12 @@ async def execute_tool_endpoint_legacy(tool_name: str, request: Request):
     NOTE: Prefer using hierarchical format: /{server}/{tool}
           Example: /github/search_repositories
     """
-    # DEBUG: Log all incoming headers
     print(f"=== Legacy Tool Call: {tool_name} ===")
-    print("Headers received:")
-    for key, value in request.headers.items():
-        # Mask sensitive values but show they exist
-        if key.lower() in ['authorization', 'cookie']:
-            print(f"  {key}: {value[:50]}..." if len(value) > 50 else f"  {key}: {value}")
-        else:
-            print(f"  {key}: {value}")
+
+    # Refused before the cache is consulted, so 404-vs-403 cannot be used to
+    # enumerate tools anonymously.
+    user = await extract_user_from_headers_optional(request)
+    require_identified(user.email if user else None)
 
     # Get tool info from cache
     tool_info = TOOLS_CACHE.get(tool_name)
@@ -1547,18 +1539,13 @@ async def execute_tool_endpoint_legacy(tool_name: str, request: Request):
     tenant_id = tool_info["tenant_id"]
     original_path = tool_info["original_path"]
 
-    # Try to extract user for access control
-    user = await extract_user_from_headers_optional(request)
-    print(f"User extracted: {user.email if user else 'None'}")
-
-    if user:
-        # Enforce access control if user headers present - use async database lookup
-        has_access = await user_has_tenant_access_async(user.email, tenant_id, user.entra_groups if user else None)
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail=f"User {user.email} does not have access to tenant '{tenant_id}'"
-            )
+    has_access = await user_has_tenant_access_async(
+        user.email, tenant_id, user.entra_groups)
+    if not has_access:
+        raise HTTPException(
+            status_code=403,
+            detail=f"User {user.email} does not have access to tenant '{tenant_id}'"
+        )
 
     # Parse request body
     try:
@@ -1567,9 +1554,7 @@ async def execute_tool_endpoint_legacy(tool_name: str, request: Request):
         body = {}
 
     # Get user's tenant IDs for API key lookup (US-011)
-    tenant_ids = None
-    if user:
-        tenant_ids = await get_user_tenants_async(user.email, user.entra_groups if user else None)
+    tenant_ids = await get_user_tenants_async(user.email, user.entra_groups)
 
     # Execute the tool
     result = await execute_tool_on_tenant(tenant_id, original_path, body, tenant_ids)
