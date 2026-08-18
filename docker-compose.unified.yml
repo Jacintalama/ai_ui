@@ -186,6 +186,7 @@ services:
       # calls it off.
       - GATEWAY_SLACK_ENABLED=${GATEWAY_SLACK_ENABLED:-1}
       - GATEWAY_DISCORD_ENABLED=${GATEWAY_DISCORD_ENABLED:-1}
+      - GATEWAY_MATTERMOST_ENABLED=${GATEWAY_MATTERMOST_ENABLED:-1}
     networks:
       - backend
     depends_on:
@@ -424,6 +425,7 @@ services:
       # other one serves the channel. Set on one only and they disagree.
       - GATEWAY_SLACK_ENABLED=${GATEWAY_SLACK_ENABLED:-1}
       - GATEWAY_DISCORD_ENABLED=${GATEWAY_DISCORD_ENABLED:-1}
+      - GATEWAY_MATTERMOST_ENABLED=${GATEWAY_MATTERMOST_ENABLED:-1}
       - GATEWAY_TELEGRAM_BOT=${GATEWAY_TELEGRAM_BOT:-@aiuiteam_bot}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads

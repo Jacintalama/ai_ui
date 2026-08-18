@@ -47,6 +47,8 @@ from gateway.own_bot_manager import ConnectionBudget, OwnBotManager
 from gateway.platforms.cli import CliAdapter
 from gateway.platforms.discord import DISCORD_MAX_MESSAGE, DiscordAdapter
 from gateway.platforms.discord_socket import DiscordSocket
+from gateway.platforms.mattermost import (MATTERMOST_MAX_MESSAGE,
+                                          MattermostAdapter, MattermostSocket)
 from gateway.platforms.discord_socket import flatten as discord_flatten
 from gateway.platforms.slack import SLACK_MAX_MESSAGE, SlackAdapter
 from gateway.platforms.slack_socket import SlackSocket
@@ -354,7 +356,8 @@ async def lifespan(app: FastAPI):
     global own_bot_managers
     for platform, flag, build in (
             ("slack", "GATEWAY_SLACK_ENABLED", _own_slack_socket),
-            ("discord", "GATEWAY_DISCORD_ENABLED", _own_discord_socket)):
+            ("discord", "GATEWAY_DISCORD_ENABLED", _own_discord_socket),
+            ("mattermost", "GATEWAY_MATTERMOST_ENABLED", _own_mattermost_socket)):
         if not os.environ.get(flag, "").strip():
             continue
         manager = OwnBotManager(platform, gateway_tasks, build,
@@ -927,6 +930,27 @@ async def _on_own_slack_message(conn, event: dict) -> None:
     adapter.name = "slack"
     adapter.max_message_length = SLACK_MAX_MESSAGE
     parsed = adapter.parse_inbound(event, {})
+    if parsed is None:
+        return
+    _spawn_gateway(gateway_pipeline.handle_event(parsed, adapter))
+
+
+def _own_mattermost_socket(bot_key: str, config: dict):
+    """One user's own Mattermost. The SERVER is theirs too, so the base URL
+    travels with the credentials rather than being a constant."""
+    token = (config.get("token") or "").strip()
+    base = (config.get("endpoint") or "").strip()
+    if not token or not base:
+        return None
+    return MattermostSocket(bot_key, base, token, _on_own_mattermost_message,
+                            allow=lambda uid: _bot_sender_allowed(config, uid))
+
+
+async def _on_own_mattermost_message(conn, frame: dict) -> None:
+    adapter = MattermostAdapter(conn.client)
+    adapter.name = "mattermost"
+    adapter.max_message_length = MATTERMOST_MAX_MESSAGE
+    parsed = adapter.parse_inbound(frame, {})
     if parsed is None:
         return
     _spawn_gateway(gateway_pipeline.handle_event(parsed, adapter))

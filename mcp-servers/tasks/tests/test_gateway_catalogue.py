@@ -88,7 +88,7 @@ def test_only_the_channels_that_can_honour_a_credential_ask_for_one():
     # ceiling without publishing an app anywhere.
     takers = {c["platform"] for c in rg.CHANNEL_CATALOGUE
               if rg._channel_status(c, {})["can_bring_bot"]}
-    assert takers == {"telegram", "buzz", "discord", "slack"}
+    assert takers == {"telegram", "buzz", "discord", "slack", "mattermost"}
 
 
 def test_only_telegram_has_a_bot_io_runs_for_everyone():
@@ -102,11 +102,14 @@ def test_a_row_carries_a_bot_slot_even_when_empty():
         assert "bot" in rg._channel_status(entry, {})
 
 
-def test_mattermost_and_matrix_are_honest_about_being_unbuilt():
+def test_matrix_is_honest_about_being_unbuilt():
+    # Mattermost left this list when it was built: it is self-hosted, so it
+    # needs nobody's approval and no marketplace, only the user's own server
+    # URL and a bot token. Matrix is the same shape and is not built yet.
     rows = {c["platform"]: rg._channel_status(c, {})
             for c in rg.CHANNEL_CATALOGUE}
-    assert rows["mattermost"]["status"] == "planned"
     assert rows["matrix"]["status"] == "planned"
+    assert "planned" not in rows["mattermost"]
 
 
 def test_a_relayed_channel_names_who_relays_it():

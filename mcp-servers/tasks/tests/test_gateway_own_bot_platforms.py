@@ -23,12 +23,12 @@ import routes_gateway as rg
 
 # --- what the page offers -----------------------------------------------
 
-@pytest.mark.parametrize("platform", ["discord", "slack"])
+@pytest.mark.parametrize("platform", ["discord", "slack", "mattermost"])
 def test_the_channel_can_take_your_own_bot(platform):
     assert platform in rg.BOT_CAPABLE_PLATFORMS
 
 
-@pytest.mark.parametrize("platform", ["discord", "slack"])
+@pytest.mark.parametrize("platform", ["discord", "slack", "mattermost"])
 def test_the_channel_has_a_form_to_fill_in(platform):
     spec = rg.CONNECT_FORMS[platform]
     assert spec["title"] and spec["pitch"] and spec["submit"]
@@ -89,6 +89,50 @@ def test_every_bot_capable_platform_has_a_form():
     """Otherwise the page offers "Use my own bot" and then renders an empty
     panel with a save button."""
     assert rg.BOT_CAPABLE_PLATFORMS <= set(rg.CONNECT_FORMS)
+
+
+def test_mattermost_asks_for_the_server_before_the_token():
+    """The user picks WHICH Mattermost before the identity on it. It is the
+    only channel here where the server belongs to them, which is exactly why
+    it needs no vendor approval and no marketplace."""
+    names = [f["name"] for f in rg.CONNECT_FORMS["mattermost"]["fields"]]
+    assert names[:2] == ["endpoint", "token"]
+
+
+def test_the_mattermost_server_field_is_not_a_secret():
+    """Hiding it would stop a user checking they typed their own server."""
+    fields = {f["name"]: f for f in rg.CONNECT_FORMS["mattermost"]["fields"]}
+    assert fields["endpoint"]["secret"] is False
+    assert fields["token"]["secret"] is True
+
+
+def test_mattermost_help_names_the_admin_step_people_get_stuck_on():
+    """Bot accounts are OFF by default on a Mattermost server, and only a
+    System Admin can switch them on. Without that, "Add Bot Account" is not
+    even in the menu and the instructions read as wrong."""
+    blob = " ".join(f["help"] for f in rg.CONNECT_FORMS["mattermost"]["fields"])
+    assert "System Admin" in blob or "System Console" in blob
+
+
+def test_mattermost_is_dormant_until_switched_on(monkeypatch):
+    entry = next(c for c in rg.CHANNEL_CATALOGUE if c["platform"] == "mattermost")
+    monkeypatch.delenv("GATEWAY_MATTERMOST_ENABLED", raising=False)
+    row = rg._channel_status(entry, {})
+    assert row["status"] == "off"
+    assert row["note"].strip(), "a switched-off channel has to say why"
+
+
+def test_mattermost_tells_you_to_connect_before_it_tells_you_to_message(monkeypatch):
+    """Order matters. There is no bot of IO's on anybody's Mattermost, so
+    "message IO" first would be an instruction nobody could carry out. Buzz
+    shipped with exactly that mistake."""
+    entry = next(c for c in rg.CHANNEL_CATALOGUE if c["platform"] == "mattermost")
+    monkeypatch.setenv("GATEWAY_MATTERMOST_ENABLED", "1")
+    row = rg._channel_status(entry, {})
+    assert row["status"] == "available"
+    note = row["note"].lower()
+    assert "code" in note
+    assert note.index("connected") < note.index("message")
 
 
 # --- required vs optional credentials -----------------------------------

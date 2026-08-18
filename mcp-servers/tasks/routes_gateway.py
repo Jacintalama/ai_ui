@@ -28,6 +28,7 @@ from sqlalchemy import delete, select, update
 
 import discord_api
 import gateway_bots as gbots
+import mattermost_api
 import gateway_pairing as gp
 import nostr_nip19
 import nostr_schnorr
@@ -475,7 +476,7 @@ async def redeem(body: RedeemIn,
 #: Platforms that can actually honour a saved token today. Every other channel
 #: shows the controls in an inert state, so the page never grows a button that
 #: lies.
-BOT_CAPABLE_PLATFORMS = {"telegram", "buzz", "discord", "slack"}
+BOT_CAPABLE_PLATFORMS = {"telegram", "buzz", "discord", "slack", "mattermost"}
 
 #: Channels where switching a bot ON means registering a webhook with the
 #: platform, because the platform calls us. Everything else is a connection IO
@@ -492,7 +493,8 @@ WEBHOOK_PLATFORMS = {"telegram"}
 #: Whose words an error message is quoting, so a Slack scope problem is not
 #: reported as something Telegram said.
 PLATFORM_LABEL = {"telegram": "Telegram", "discord": "Discord",
-                  "slack": "Slack", "buzz": "Buzz"}
+                  "slack": "Slack", "buzz": "Buzz",
+                  "mattermost": "Mattermost"}
 
 # What a user has to fill in to connect a channel with their own credentials,
 # described here rather than drawn in the page. Every channel that can carry a
@@ -559,6 +561,28 @@ CONNECT_FORMS: dict[str, dict] = {
                      "subscribe to the message.im event, or the app connects "
                      "and never hears anything."},
             {"name": "allowed_ids", "label": "Allowed Slack member IDs",
+             "secret": False, "placeholder": "leave empty for just you",
+             "help": ""},
+        ],
+    },
+    "mattermost": {
+        "title": "Connect my Mattermost",
+        "pitch": "Your server, your bot, your data. Nobody else can see the "
+                 "token or configure it. IO connects out to your server, so "
+                 "there is nothing to install on it beyond a bot account, and "
+                 "it answers direct messages only.",
+        "submit": "Save & connect",
+        "fields": [
+            # Server first: you pick which Mattermost before the identity in it.
+            {"name": "endpoint", "label": "Server URL", "secret": False,
+             "placeholder": "https://mm.example.com",
+             "help": "The address you use to reach Mattermost in a browser."},
+            {"name": "token", "label": "Bot token", "secret": True,
+             "placeholder": "paste the token",
+             "help": "Integrations, Bot Accounts, Add Bot Account. A System "
+                     "Admin has to switch bot accounts on first, under System "
+                     "Console, Integrations. The token is shown once."},
+            {"name": "allowed_ids", "label": "Allowed Mattermost user IDs",
              "secret": False, "placeholder": "leave empty for just you",
              "help": ""},
         ],
@@ -675,8 +699,9 @@ CHANNEL_CATALOGUE = (
 
     # Not started, and nothing else in this codebase to build on.
     {"platform": "mattermost", "label": "Mattermost", "icon": "💠",
-     "blurb": "Use IO from Mattermost channels and direct messages.",
-     "planned": "Not started. Needs a bot account and a webhook route."},
+     "blurb": "Use IO from Mattermost direct messages.",
+     "caveat": "Messages you send from Mattermost pass through your own "
+               "Mattermost server, which vouches for who you are."},
     {"platform": "matrix", "label": "Matrix", "icon": "🔷",
      "blurb": "Use IO from Matrix rooms and direct messages.",
      "planned": "Not started. Needs a homeserver login this box does not hold."},
@@ -939,6 +964,21 @@ def _channel_status(entry: dict, linked: dict) -> dict:
                 "note": f"{entry['label']} talks to IO already, but not yet "
                         "as your own account. Not switched on here."}
 
+    if platform == "mattermost":
+        # Same flag read by BOTH services, like Slack and Discord. Setting it
+        # on one only is exactly how the terminal channel ended up live while
+        # the page called it switched off.
+        if os.environ.get("GATEWAY_MATTERMOST_ENABLED", "").strip():
+            # Note the ORDER, as with Buzz. There is no bot of IO's on anyone's
+            # Mattermost, so there is nothing to message until you have
+            # connected your own server. Saying "message IO" first would be an
+            # instruction nobody could carry out.
+            return {**row, "status": "available",
+                    "note": "Once your server is connected, message your bot "
+                            "on Mattermost and it will reply with a code."}
+        return {**row, "status": "off",
+                "note": "The Mattermost channel is switched off on this server."}
+
     if platform == "cli":
         if os.environ.get("GATEWAY_CLI_ENABLED", "").strip():
             return {**row, "status": "available",
@@ -1074,10 +1114,18 @@ async def _socket_bot_test(row: GatewayBot, token: str) -> dict[str, Any]:
         if row.platform == "discord":
             me = await discord_api.get_me(token)
             who = f"@{me.get('username', '')}" if me.get("username") else "your bot"
+        elif row.platform == "mattermost":
+            me = await mattermost_api.get_me(row.endpoint or "", token)
+            name = me.get("username", "")
+            # Names the SERVER as well as the bot: on a self-hosted channel the
+            # question "which one did I connect" has more than one answer.
+            who = (f"@{name} on {row.endpoint}" if name
+                   else f"your bot on {row.endpoint}")
         else:
             team = (await slack_api.auth_test(token)).get("team", "")
             who = f"the {team} workspace" if team else "your workspace"
-    except (discord_api.DiscordError, slack_api.SlackError) as exc:
+    except (discord_api.DiscordError, slack_api.SlackError,
+            mattermost_api.MattermostError) as exc:
         label = PLATFORM_LABEL.get(row.platform, row.platform.title())
         return {"ok": False, "detail": f"{label} said: {exc.description}"}
 
@@ -1173,6 +1221,24 @@ async def _prepare_slack(body: BotIn) -> tuple[str, str, str]:
     return who.get("team", ""), token, app_token
 
 
+async def _prepare_mattermost(body: BotIn) -> tuple[str, str, str]:
+    """Validate a user's own Mattermost. Returns (username, server url, token).
+
+    The server is theirs, which is exactly why this channel needs nobody's
+    approval: there is no vendor to ask. It also means the URL is user input
+    that this service is about to fetch, so it is validated rather than
+    trusted, in mattermost_api.normalise_url.
+    """
+    token = (body.token or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="Paste your bot token.")
+    try:
+        me = await mattermost_api.get_me(body.endpoint or "", token)
+    except mattermost_api.MattermostError as exc:
+        raise HTTPException(status_code=400, detail=exc.description)
+    return me.get("username", ""), me["url"], token
+
+
 def _prepare_buzz(body: BotIn) -> tuple[str, str, str]:
     """Validate a Buzz connection. Returns (npub, relay url, nsec to store).
 
@@ -1254,6 +1320,8 @@ async def save_bot(body: BotIn,
         display_name, token = await _prepare_discord(body)
     elif platform == "slack":
         display_name, token, app_token = await _prepare_slack(body)
+    elif platform == "mattermost":
+        display_name, endpoint, token = await _prepare_mattermost(body)
     else:
         if not token:
             raise HTTPException(status_code=400, detail="Paste your bot token.")
@@ -1425,7 +1493,7 @@ async def test_bot(bot_key: str,
         # webhook-handler last reported.
         return _buzz_test(row, token)
 
-    if row.platform in ("discord", "slack"):
+    if row.platform in ("discord", "slack", "mattermost"):
         # Same shape as Buzz and for the same reason: this service holds no
         # socket for either, so it cannot prove the connection by using it.
         # What it CAN do is re-prove the credentials right now and report what
