@@ -29,10 +29,15 @@ from typing import Callable
 
 log = logging.getLogger(__name__)
 
-#: Open sockets allowed at once across every platform this manages, all users.
-#: Buzz keeps its own separate cap in buzz_manager.py; folding that in is a
-#: follow-up, and until then the true ceiling is this plus that.
-MAX_CONNECTIONS = 20
+#: Open sockets allowed at once across EVERY channel that holds one, all users:
+#: Buzz relays and users' own Slack and Discord bots draw on this one
+#: allowance. Buzz used to keep a separate cap of 25, which meant the real
+#: ceiling was 45 while this file believed it was enforcing 20.
+#:
+#: 25 rather than 20 because 25 is the number already judged acceptable for
+#: held-open sockets on this box, and sharing must not quietly cut Buzz's
+#: capacity under cover of a safety fix.
+MAX_CONNECTIONS = 25
 
 #: How often to reconcile what is open against what tasks says should be.
 POLL_SECONDS = 30

@@ -33,7 +33,20 @@ POLL_SECONDS = 30
 class BuzzManager:
     """Owns every live relay. One instance, held by main.py."""
 
-    def __init__(self, tasks_client, on_event, *, decode_key, allow_factory) -> None:
+    def __init__(self, tasks_client, on_event, *, decode_key, allow_factory,
+                 budget=None) -> None:
+        # One allowance shared with every other channel that holds a socket
+        # open. Buzz had its own cap of 25 and the own-bot manager was given a
+        # separate 20, so the real ceiling was 45 while the newer code believed
+        # it was enforcing 20. Two independent caps of N mean 2N, and the
+        # memory they spend is the same memory.
+        #
+        # Falling back to a private budget rather than to no limit: a caller
+        # that has not been updated must not silently get an unbounded manager.
+        from gateway.own_bot_manager import ConnectionBudget
+        self._budget = budget if budget is not None else ConnectionBudget(
+            limit=MAX_CONNECTIONS)
+        self._budget.join(self)
         self._tasks = tasks_client
         self._on_event = on_event
         self._decode_key = decode_key
@@ -47,6 +60,16 @@ class BuzzManager:
         #: Last state pushed to tasks per bot, so a steady connection is not
         #: re-reported every poll.
         self._reported: dict[str, tuple] = {}
+
+    @property
+    def live(self) -> dict:
+        """What this manager currently holds open.
+
+        The name the shared budget counts. Buzz calls them relays and the
+        own-bot manager calls them connections; the budget only cares how many
+        sockets are open, so both answer to the same word.
+        """
+        return self._relays
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -111,20 +134,20 @@ class BuzzManager:
         for key, config in by_key.items():
             if key in self._relays:
                 continue
-            if len(self._relays) >= MAX_CONNECTIONS:
+            if not self._budget.has_room():
                 # Never silently. A user whose channel is switched on and not
                 # running has to be discoverable, not a mystery.
                 self.skipped[key] = (
-                    f"waiting for a free slot ({MAX_CONNECTIONS} in use)")
-                log.warning("buzz: %s is over the cap of %d and was not started",
-                            key, MAX_CONNECTIONS)
+                    f"waiting for a free slot ({self._budget.limit} in use)")
+                log.warning("buzz: %s is over the shared cap of %d and was not "
+                            "started", key, self._budget.limit)
                 continue
             relay = self._build(key, config)
             if relay is not None:
                 self._relays[key] = relay
                 relay.start()
-                log.info("buzz: connecting %s (%d/%d)", key,
-                         len(self._relays), MAX_CONNECTIONS)
+                log.info("buzz: connecting %s (%d/%d shared)", key,
+                         self._budget.in_use(), self._budget.limit)
 
     def _build(self, key: str, config: dict) -> BuzzRelay | None:
         endpoint = (config.get("endpoint") or "").strip()
@@ -146,7 +169,8 @@ class BuzzManager:
         an operator endpoint and a relay URL identifies a user's workspace."""
         return {
             "open": len(self._relays),
-            "cap": MAX_CONNECTIONS,
+            "cap": self._budget.limit,
+            "shared_in_use": self._budget.in_use(),
             "connected": sum(1 for r in self._relays.values() if r.connected),
             "skipped": dict(self.skipped),
             "errors": {k: r.last_error for k, r in self._relays.items()

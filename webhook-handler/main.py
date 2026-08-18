@@ -337,10 +337,11 @@ async def lifespan(app: FastAPI):
     if os.environ.get("BUZZ_ENABLED", "").strip():
         buzz_manager = BuzzManager(
             gateway_tasks, _on_buzz_message,
-            decode_key=_buzz_seckey, allow_factory=_buzz_allow)
+            decode_key=_buzz_seckey, allow_factory=_buzz_allow,
+            budget=own_bot_budget)
         buzz_manager.start()
-        logger.info("gateway: buzz manager started (cap %d)",
-                    buzz_manager_module.MAX_CONNECTIONS)
+        logger.info("gateway: buzz manager started (shared cap %d)",
+                    own_bot_budget.limit)
 
     # A user's OWN Slack app or Discord bot. Same shape as Buzz — a socket per
     # user, reconciled against what tasks says is enabled — and sharing ONE
