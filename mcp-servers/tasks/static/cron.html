@@ -290,7 +290,11 @@
     }
     .sched-card:hover::before { opacity: 0.9; }
 
-    .sched-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    /* nowrap, so the state badge stays pinned to the top right. With wrapping
+       it dropped onto its own line the moment a title ran to two lines, so
+       Enabled/Disabled sat in a different place on every card depending on how
+       long its name happened to be. The title block shrinks instead. */
+    .sched-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: nowrap; }
     .sched-id { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
     .sched-icon {
       flex-shrink: 0;
@@ -311,7 +315,14 @@
     .sched-human svg { width: 13px; height: 13px; flex-shrink: 0; color: var(--accent); opacity: 0.9; }
     .sched-badges { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
 
-    .sched-chips { display: flex; align-items: center; gap: 8px; margin-top: 13px; flex-wrap: wrap; }
+    /* One line for everything about the run: where it goes, which timezone,
+       how it last ended. These were three stacked rows (chips, then state,
+       then last-run), which made a card describing one small job as tall as
+       the form that creates one. */
+    .sched-chips {
+      display: flex; align-items: center; gap: 8px; margin-top: 12px;
+      flex-wrap: wrap; font-size: 12px; color: var(--text-2);
+    }
     .sched-cron {
       display: inline-flex; align-items: center; gap: 6px;
       font-family: var(--font-mono); font-size: 12.5px;
@@ -968,7 +979,15 @@
       const tz = s.tz
         ? `<span class="sched-tz" title="timezone">${ICON_GLOBE}${escapeHtml(String(s.tz))}</span>`
         : "";
-      const prompt = s.prompt
+      // The prompt, unless the name already IS the prompt. Schedules made from
+      // Discord and Slack are named after what they were asked to do, so most
+      // cards printed the same sentence twice, once as a heading and once in a
+      // box under it. Compared loosely because the name is often the prompt
+      // with a time prefix ("every day at 7:00 PM: give me ...").
+      const _name = String(s.name || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const _prompt = String(s.prompt || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const echoes = !!_prompt && (_name === _prompt || _name.endsWith(_prompt));
+      const prompt = (s.prompt && !echoes)
         ? `<div class="sched-prompt">${escapeHtml(String(s.prompt))}</div>`
         : "";
 
@@ -1006,8 +1025,8 @@
          <div class="sched-chips">
            ${tz}
            ${destChip}
+           ${lastRun}
          </div>
-         <div class="sched-meta">${lastRun}</div>
          ${prompt}
          <div class="sched-actions">
            <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>
