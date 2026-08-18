@@ -64,6 +64,8 @@ from tool_embeddings import (
     search_tools_by_query,
     get_embeddings_stats
 )
+from access import (may_use_server, require_identified,
+                    servers_for_caller)
 from mcp_http_client import get_mcp_client, MCPStreamableClient
 from admin_api import admin_router
 
@@ -758,19 +760,20 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
     print(f"  Query: {body.query}")
     print(f"  Limit: {body.limit}")
 
-    # Get user's allowed servers for access control filtering
-    allowed_servers = None
-    if user_email:
-        tenant_ids = await get_user_tenants_async(user_email, entra_groups)
-        if tenant_ids:
-            allowed_servers = tenant_ids
-        else:
-            return {"results": [], "message": "No server access configured for this user"}
+    # /meta/* is routed to the public internet, so a caller we cannot identify
+    # is refused here rather than filtered later: "unknown" must never widen
+    # into "unfiltered".
+    require_identified(user_email)
+    allowed_servers = servers_for_caller(
+        user_email, await get_user_tenants_async(user_email, entra_groups))
+    if not allowed_servers:
+        return {"query": body.query, "count": 0, "results": [],
+                "message": "No server access configured for this user"}
 
     try:
         pool = await get_pool()
         results = await search_tools_by_query(
-            pool, body.query, allowed_servers, body.limit
+            pool, body.query, sorted(allowed_servers), body.limit
         )
         print(f"  Found {len(results)} matching tools")
         return {
@@ -784,7 +787,7 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
         query_lower = body.query.lower()
         matches = []
         for tool_name, tool_info in TOOLS_CACHE.items():
-            if allowed_servers and tool_info["tenant_id"] not in allowed_servers:
+            if not may_use_server(allowed_servers, tool_info["tenant_id"]):
                 continue
             name_match = query_lower in tool_name.lower()
             desc_match = query_lower in tool_info.get("description", "").lower()
@@ -825,12 +828,9 @@ async def meta_describe_tools(body: DescribeToolsRequest, request: Request):
     print(f"  User: {user_email}")
     print(f"  Tools: {body.tool_names}")
 
-    # Get user's allowed servers
-    allowed_servers = None
-    if user_email:
-        tenant_ids = await get_user_tenants_async(user_email, entra_groups)
-        if tenant_ids:
-            allowed_servers = set(tenant_ids)
+    require_identified(user_email)
+    allowed_servers = servers_for_caller(
+        user_email, await get_user_tenants_async(user_email, entra_groups))
 
     descriptions = []
     for tool_name in body.tool_names:
@@ -843,7 +843,7 @@ async def meta_describe_tools(body: DescribeToolsRequest, request: Request):
             continue
 
         # Access control check
-        if allowed_servers and tool_info["tenant_id"] not in allowed_servers:
+        if not may_use_server(allowed_servers, tool_info["tenant_id"]):
             descriptions.append({
                 "tool_name": tool_name,
                 "error": "Access denied"
@@ -886,7 +886,10 @@ async def meta_call_tool(body: CallToolRequest, request: Request):
     print(f"=== Meta: call_tool ===")
     print(f"  User: {user_email}")
     print(f"  Tool: {body.tool_name}")
-    print(f"  Args: {body.arguments}")
+
+    # Refused before the cache is even consulted, so an unidentified caller
+    # cannot tell an existing tool from a missing one by the status code.
+    require_identified(user_email)
 
     # Look up tool in cache
     tool_info = TOOLS_CACHE.get(body.tool_name)
@@ -896,19 +899,18 @@ async def meta_call_tool(body: CallToolRequest, request: Request):
     server_id = tool_info["tenant_id"]
     original_path = tool_info["original_path"]
 
-    # Access control check
-    if user_email:
-        has_access = await user_has_tenant_access_async(user_email, server_id, entra_groups)
-        if not has_access:
-            raise HTTPException(
-                status_code=403,
-                detail=f"User {user_email} does not have access to server '{server_id}'"
-            )
+    # Access control check. Unconditional: the caller is known by now, and
+    # making this depend on having one is what let anonymous callers execute
+    # tools against the platform's own shared credentials.
+    has_access = await user_has_tenant_access_async(user_email, server_id, entra_groups)
+    if not has_access:
+        raise HTTPException(
+            status_code=403,
+            detail=f"User {user_email} does not have access to server '{server_id}'"
+        )
 
     # Get user's tenant IDs for API key lookup (US-011)
-    tenant_ids = None
-    if user_email:
-        tenant_ids = await get_user_tenants_async(user_email, entra_groups)
+    tenant_ids = await get_user_tenants_async(user_email, entra_groups)
 
     # Execute via existing infrastructure
     server = get_server(server_id)
