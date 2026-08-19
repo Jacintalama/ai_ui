@@ -961,57 +961,23 @@ def user_has_tenant_access(user_email: str, tenant_id: str,
 
 async def user_has_tenant_access_async(user_email: str, tenant_id: str,
                                         entra_groups: Optional[List[str]] = None) -> bool:
+    """May this user use this server?
+
+    Deliberately a membership test against get_user_tenants_async rather than
+    its own walk of the grant sources. It used to be its own copy, and that is
+    how a per-user server ended up searchable and then refused on execution:
+    search asked one function, /meta/call_tool asked the other, and only the
+    first had been taught about access classes.
+
+    The same shape produced the two bugs before it. The anonymous-caller hole
+    was one condition written three times and wrong in two, and the missing
+    `enabled` filter was one rule honoured in six places and skipped in the
+    seventh. There is now one place that decides, and this asks it.
     """
-    Check if user has access to a specific tenant (ASYNC version with database).
-
-    Args:
-        user_email: User's email address
-        tenant_id: Tenant ID to check access for
-        entra_groups: Optional list of Entra ID/Open WebUI groups
-
-    Returns:
-        True if user has access, False otherwise
-
-    Priority:
-        1. MCP-Admin group (grants access to ALL servers)
-        2. Entra ID/Open WebUI groups (if provided and non-empty) - via database lookup
-        3. User email lookup in database
-    """
-    import db  # Import here to avoid circular imports
-
-    # If groups not provided via headers, look them up from database
-    if not entra_groups or len(entra_groups) == 0:
-        try:
-            entra_groups = await db.get_user_groups(user_email)
-            print(f"  [DB-GROUPS] Looked up groups for {user_email}: {entra_groups}")
-        except Exception as e:
-            print(f"  [DB-GROUPS] Error looking up groups: {e}")
-            entra_groups = []
-
-    # Priority 0: MCP-Admin group grants access to ALL servers (Lukas's requirement)
-    if entra_groups and "MCP-Admin" in entra_groups:
-        print(f"  [MCP-ADMIN] {user_email} has MCP-Admin -> {tenant_id}: True (ALL ACCESS)")
-        return True
-
-    # Priority 1: Group-based access (from headers or database lookup)
-    if entra_groups and len(entra_groups) > 0:
-        try:
-            has_access = await db.group_has_tenant_access(entra_groups, tenant_id)
-            print(f"  [GROUP-BASED-DB] {user_email} groups={entra_groups} -> {tenant_id}: {has_access}")
-            if has_access:
-                return True  # Found access via group, return immediately
-            # If no group access, fall through to check email-based access
-        except Exception as e:
-            print(f"  [GROUP-BASED-DB] Error: {e}")
-
-    # Priority 2: Database lookup by email (user_tenant_access table)
-    try:
-        db_access = await db.user_has_tenant_access(user_email, tenant_id)
-        print(f"  [DATABASE] {user_email} -> {tenant_id}: {db_access}")
-        return db_access
-    except Exception as e:
-        print(f"  [DATABASE] Error checking access: {e}")
-        return False
+    allowed = await get_user_tenants_async(user_email, entra_groups)
+    result = tenant_id in set(allowed)
+    print(f"  [ACCESS] {user_email} -> {tenant_id}: {result}")
+    return result
 
 
 async def get_user_tenants_async(user_email: str, entra_groups: Optional[List[str]] = None) -> List[str]:

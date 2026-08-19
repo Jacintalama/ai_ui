@@ -287,3 +287,70 @@ async def test_a_db_failure_does_not_widen_access(fake_db):
     mod.get_user_tenants = boom
     got = await tenants_mod.get_user_tenants_async("user@example.com")
     assert set(got) == LIVE_PUBLIC
+
+
+# --- the second copy of the rule ------------------------------------------
+# Two functions answered "may this user reach this server". get_user_tenants_async
+# decides what SEARCH returns; user_has_tenant_access_async decides what EXECUTION
+# allows. Fixing only the first produced a state where a tool could be found,
+# described, and then refused with 403 by the endpoint that runs it. That is the
+# same shape as the auth hole before it and as the missing `enabled` filter: one
+# rule, several implementations, wrong in some of them. So the second no longer
+# reimplements anything, it asks the first.
+
+async def test_execution_allows_exactly_what_search_offers(fake_db):
+    fake_db()
+    email = "nobody@example.com"
+    offered = set(await tenants_mod.get_user_tenants_async(email))
+    assert offered, "fixture should offer the public set"
+    for server_id in offered:
+        assert await tenants_mod.user_has_tenant_access_async(email, server_id), \
+            server_id
+
+
+async def test_execution_refuses_exactly_what_search_withholds(fake_db):
+    fake_db()
+    email = "nobody@example.com"
+    offered = set(await tenants_mod.get_user_tenants_async(email))
+    withheld = {sid for sid, c in tenants_mod.ALL_SERVERS.items()
+                if c.enabled} - offered
+    assert withheld, "fixture should withhold the shared servers"
+    for server_id in withheld:
+        assert not await tenants_mod.user_has_tenant_access_async(
+            email, server_id), server_id
+
+
+async def test_a_per_user_server_is_executable_without_any_grant(fake_db):
+    """The regression that shipped: my-github was searchable and then 403'd on
+    call, because only the search path knew about access classes."""
+    fake_db()
+    for pid in ("my-github", "my-clickup", "my-trello", "my-notion", "my-n8n"):
+        assert await tenants_mod.user_has_tenant_access_async(
+            "nobody@example.com", pid), pid
+
+
+async def test_a_disabled_server_is_never_executable(fake_db):
+    fake_db(user_tenants=["gmail"])
+    assert not await tenants_mod.user_has_tenant_access_async(
+        "nobody@example.com", "gmail")
+
+
+async def test_an_admin_can_execute_everything_a_normal_user_cannot(fake_db):
+    """Not written against a named server: the shared ones are enabled only
+    when their vendor token is in the environment, so naming clickup here
+    passes on the server and fails on a laptop for reasons unrelated to access.
+    """
+    fake_db(owui_admin=True)
+    for server_id in (sid for sid, c in tenants_mod.ALL_SERVERS.items()
+                      if c.enabled):
+        assert await tenants_mod.user_has_tenant_access_async(
+            "boss@example.com", server_id), server_id
+
+
+async def test_only_an_admin_reaches_beyond_the_public_set(fake_db):
+    fake_db(owui_admin=True)
+    admin = set(await tenants_mod.get_user_tenants_async("boss@example.com"))
+    fake_db(owui_admin=False)
+    plain = set(await tenants_mod.get_user_tenants_async("user@example.com"))
+    assert plain == LIVE_PUBLIC
+    assert admin >= plain
