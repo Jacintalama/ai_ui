@@ -45,6 +45,19 @@ class Field:
 
 
 @dataclass(frozen=True)
+class VendorAuth:
+    """How to sign ANY request to this vendor as this user.
+
+    Verification and every per-user tool call have to authenticate the same
+    way. Two copies of "how do you sign a Trello request" is two chances to be
+    wrong and one place to fix it, so it is stated here and both paths use it.
+    """
+    base_url: str
+    headers: Dict[str, str] = _dc_field(default_factory=dict)
+    params: Dict[str, str] = _dc_field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class VerifyRequest:
     url: str
     headers: Dict[str, str] = _dc_field(default_factory=dict)
@@ -56,9 +69,12 @@ class Provider:
     id: str
     label: str
     fields: List[Field]
-    #: (values) -> VerifyRequest. Raises ValueError on input the vendor could
-    #: never accept, so a bad host is refused before a request leaves the box.
-    build_request: Callable[[Dict[str, str]], VerifyRequest]
+    #: (values) -> VendorAuth. Raises ValueError on input the vendor could
+    #: never accept, so a bad host is refused before a request leaves the box,
+    #: and on missing credentials, so nothing goes out unsigned.
+    build_auth: Callable[[Dict[str, str]], "VendorAuth"]
+    #: Path appended to base_url to ask the vendor who this credential is.
+    probe_path: str
     #: (json payload) -> the account name to show on the card.
     read_label: Callable[[dict], str]
     #: Where the user finds the credential. Shown under the form, because
@@ -69,6 +85,16 @@ class Provider:
 def _clean(values: Dict[str, str], name: str) -> str:
     v = (values or {}).get(name)
     return v.strip() if isinstance(v, str) else ""
+
+
+def _require(values: Dict[str, str], name: str) -> str:
+    """A credential field, or refuse. A tool call for someone who never
+    connected must not go out unsigned and come back as a confusing vendor
+    401."""
+    v = _clean(values, name)
+    if not v:
+        raise ValueError("Not connected: missing " + name)
+    return v
 
 
 def _http_base(values: Dict[str, str], name: str = "base_url") -> str:
@@ -83,36 +109,36 @@ def _http_base(values: Dict[str, str], name: str = "base_url") -> str:
     return raw.rstrip("/")
 
 
-def _clickup_request(v):
+def _clickup_auth(v):
     # ClickUp sends the raw token, with no Bearer prefix.
-    return VerifyRequest(url="https://api.clickup.com/api/v2/user",
-                         headers={"Authorization": _clean(v, "token")})
+    return VendorAuth(base_url="https://api.clickup.com/api/v2",
+                      headers={"Authorization": _require(v, "token")})
 
 
-def _trello_request(v):
-    return VerifyRequest(url="https://api.trello.com/1/members/me",
-                         params={"key": _clean(v, "api_key"),
-                                 "token": _clean(v, "token")})
+def _trello_auth(v):
+    return VendorAuth(base_url="https://api.trello.com/1",
+                      params={"key": _require(v, "api_key"),
+                              "token": _require(v, "token")})
 
 
-def _github_request(v):
-    return VerifyRequest(
-        url="https://api.github.com/user",
-        headers={"Authorization": "Bearer " + _clean(v, "token"),
+def _github_auth(v):
+    return VendorAuth(
+        base_url="https://api.github.com",
+        headers={"Authorization": "Bearer " + _require(v, "token"),
                  "Accept": "application/vnd.github+json"})
 
 
-def _notion_request(v):
-    return VerifyRequest(
-        url="https://api.notion.com/v1/users/me",
+def _notion_auth(v):
+    return VendorAuth(
+        base_url="https://api.notion.com/v1",
         # Notion refuses any request without this header, whatever the key is.
-        headers={"Authorization": "Bearer " + _clean(v, "token"),
+        headers={"Authorization": "Bearer " + _require(v, "token"),
                  "Notion-Version": "2022-06-28"})
 
 
-def _n8n_request(v):
-    return VerifyRequest(url=_http_base(v) + "/api/v1/workflows?limit=1",
-                         headers={"X-N8N-API-KEY": _clean(v, "api_key")})
+def _n8n_auth(v):
+    return VendorAuth(base_url=_http_base(v),
+                      headers={"X-N8N-API-KEY": _require(v, "api_key")})
 
 
 def _notion_label(d):
@@ -127,7 +153,8 @@ PROVIDERS: Dict[str, Provider] = {
         label="ClickUp",
         fields=[Field("token", "Personal API token", placeholder="pk_...")],
         where="ClickUp: avatar (bottom left), Settings, Apps, API Token.",
-        build_request=_clickup_request,
+        build_auth=_clickup_auth,
+        probe_path="/user",
         read_label=lambda d: ((d or {}).get("user") or {}).get("username", ""),
     ),
     "trello": Provider(
@@ -137,7 +164,8 @@ PROVIDERS: Dict[str, Provider] = {
                 Field("token", "Token", placeholder="64 hex characters")],
         where="Trello: trello.com/power-ups/admin, open your Power-Up for the "
               "API key, then use the Token link beside it.",
-        build_request=_trello_request,
+        build_auth=_trello_auth,
+        probe_path="/members/me",
         read_label=lambda d: (d or {}).get("username", ""),
     ),
     "github": Provider(
@@ -147,7 +175,8 @@ PROVIDERS: Dict[str, Provider] = {
                       placeholder="ghp_... or github_pat_...")],
         where="GitHub: Settings, Developer settings, Personal access tokens. "
               "Fine-grained tokens work.",
-        build_request=_github_request,
+        build_auth=_github_auth,
+        probe_path="/user",
         read_label=lambda d: (d or {}).get("login", ""),
     ),
     "notion": Provider(
@@ -157,7 +186,8 @@ PROVIDERS: Dict[str, Provider] = {
                       placeholder="secret_... or ntn_...")],
         where="Notion: notion.so/my-integrations, New integration, then share "
               "the pages you want it to reach with that integration.",
-        build_request=_notion_request,
+        build_auth=_notion_auth,
+        probe_path="/users/me",
         read_label=_notion_label,
     ),
     "n8n": Provider(
@@ -167,7 +197,8 @@ PROVIDERS: Dict[str, Provider] = {
                       placeholder="https://n8n.yourdomain.com"),
                 Field("api_key", "API key")],
         where="n8n: Settings, n8n API, Create an API key.",
-        build_request=_n8n_request,
+        build_auth=_n8n_auth,
+        probe_path="/api/v1/workflows?limit=1",
         # The workflows endpoint names no account, so the card falls back to
         # the provider label rather than showing Connected with nothing under it.
         read_label=lambda d: "",
@@ -190,11 +221,22 @@ def missing_fields(provider_id: str, values: Dict[str, str]) -> List[str]:
     return [n for n in required_fields(provider_id) if not _clean(values, n)]
 
 
-def verify_request(provider_id: str, values: Dict[str, str]) -> VerifyRequest:
+def vendor_auth(provider_id: str, values: Dict[str, str]) -> VendorAuth:
+    """How to sign a request to this vendor as this user."""
     p = provider(provider_id)
     if not p:
         raise ValueError("Unknown provider: " + str(provider_id))
-    return p.build_request(values or {})
+    return p.build_auth(values or {})
+
+
+def verify_request(provider_id: str, values: Dict[str, str]) -> VerifyRequest:
+    """The one call that asks the vendor whether a credential is real."""
+    p = provider(provider_id)
+    if not p:
+        raise ValueError("Unknown provider: " + str(provider_id))
+    auth = p.build_auth(values or {})
+    return VerifyRequest(url=auth.base_url + p.probe_path,
+                         headers=auth.headers, params=auth.params)
 
 
 def account_label(provider_id: str, payload: dict) -> str:

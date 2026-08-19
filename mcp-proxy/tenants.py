@@ -97,6 +97,12 @@ class UserTenantAccess:
 # These URLs are for Kubernetes internal service discovery
 # Format: http://<service-name>:<port>
 
+# Per-user tool servers, hosted by the tasks service. Each acts as the
+# CALLER's own third-party account (credential stored per user, encrypted),
+# never the platform's shared token, which is why they are PUBLIC: using one
+# spends nothing that belongs to anybody else.
+MCP_MYTOOLS_URL = os.getenv("MCP_MYTOOLS_URL", "http://tasks:8210/mytools")
+
 MCP_FILESYSTEM_URL = os.getenv("MCP_FILESYSTEM_URL", "http://mcp-filesystem:8001")
 MCP_GITHUB_URL = os.getenv("MCP_GITHUB_URL", "http://mcp-github:8000")
 MCPO_SSE_URL = os.getenv("MCPO_SSE_URL", "http://mcpo-sse")
@@ -710,6 +716,66 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="bearer",
         api_key_env="MCP_API_KEY",
         description="Create and manage cron jobs that trigger n8n workflows on a schedule (4 tools)",
+        enabled=True,
+    ),
+    "my-clickup": MCPServerConfig(
+        server_id="my-clickup",
+        access_class=AccessClass.PUBLIC,
+        display_name="ClickUp (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/clickup",
+        auth_type="none",
+        api_key_env=None,
+        description="ClickUp acting as the signed-in user's own account. Requires "
+                    "them to have connected ClickUp under Connections.",
+        enabled=True,
+    ),
+    "my-github": MCPServerConfig(
+        server_id="my-github",
+        access_class=AccessClass.PUBLIC,
+        display_name="GitHub (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/github",
+        auth_type="none",
+        api_key_env=None,
+        description="GitHub acting as the signed-in user's own account. Requires "
+                    "them to have connected GitHub under Connections.",
+        enabled=True,
+    ),
+    "my-trello": MCPServerConfig(
+        server_id="my-trello",
+        access_class=AccessClass.PUBLIC,
+        display_name="Trello (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/trello",
+        auth_type="none",
+        api_key_env=None,
+        description="Trello acting as the signed-in user's own account. Requires "
+                    "them to have connected Trello under Connections.",
+        enabled=True,
+    ),
+    "my-notion": MCPServerConfig(
+        server_id="my-notion",
+        access_class=AccessClass.PUBLIC,
+        display_name="Notion (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/notion",
+        auth_type="none",
+        api_key_env=None,
+        description="Notion acting as the signed-in user's own account. Requires "
+                    "them to have connected Notion under Connections.",
+        enabled=True,
+    ),
+    "my-n8n": MCPServerConfig(
+        server_id="my-n8n",
+        access_class=AccessClass.PUBLIC,
+        display_name="n8n (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/n8n",
+        auth_type="none",
+        api_key_env=None,
+        description="n8n acting as the signed-in user's own account. Requires "
+                    "them to have connected n8n under Connections.",
         enabled=True,
     ),
     "meeting-kb": MCPServerConfig(

@@ -164,3 +164,44 @@ def test_redaction_keeps_the_non_secret_field_readable():
 def test_no_provider_marks_a_credential_as_public(pid):
     p = C.provider(pid)
     assert any(f.secret for f in p.fields), pid
+
+
+# --- the vendor auth shape, stated once -----------------------------------
+# Verification and every per-user tool call have to sign the same way. Two
+# copies of "how do you authenticate to Trello" is two chances to get it wrong
+# and one chance to fix it, so the shape is declared once and reused.
+
+def test_verification_and_tool_calls_share_one_auth_shape():
+    creds = {"token": "pk_123"}
+    auth = C.vendor_auth("clickup", creds)
+    probe = C.verify_request("clickup", creds)
+    assert probe.url.startswith(auth.base_url)
+    for k, v in auth.headers.items():
+        assert probe.headers[k] == v
+
+
+@pytest.mark.parametrize("pid,creds", [
+    ("clickup", {"token": "T"}),
+    ("github", {"token": "T"}),
+    ("notion", {"token": "T"}),
+    ("trello", {"api_key": "K", "token": "T"}),
+    ("n8n", {"base_url": "https://n8n.example.com", "api_key": "K"}),
+])
+def test_every_provider_can_sign_an_arbitrary_call(pid, creds):
+    auth = C.vendor_auth(pid, creds)
+    assert auth.base_url.startswith("http")
+    assert auth.headers or auth.params
+
+
+def test_a_self_hosted_base_url_is_the_users_own_host():
+    auth = C.vendor_auth("n8n", {"base_url": "https://n8n.example.com/",
+                                 "api_key": "K"})
+    assert auth.base_url == "https://n8n.example.com"
+
+
+def test_signing_without_a_credential_is_refused():
+    """A tool call arriving for someone who never connected must not go out
+    unsigned and get a confusing 401 from the vendor."""
+    for pid in ALL:
+        with pytest.raises(ValueError):
+            C.vendor_auth(pid, {})

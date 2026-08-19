@@ -132,6 +132,13 @@ app.include_router(prefs_router)  # /prefs — per-user timezone (internal, OWUI
 app.include_router(prefs_router, prefix="/api/tasks")  # public: /api/tasks/prefs/*
 app.include_router(connections_router)  # /connections — per-user third-party creds
 app.include_router(connections_router, prefix="/api/tasks")  # public: /api/tasks/connections/*
+
+# Per-user tool servers, one sub-app per provider, each serving its own
+# openapi.json so mcp-proxy can discover it. Internal only: it is never routed
+# from the public edge, and mcp-proxy reaches it over the backend network with
+# the end-user's email forwarded.
+import mytools  # noqa: E402
+app.mount("/mytools", mytools.build_app())
 app.include_router(tasks_router)
 app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload
 app.include_router(execution_router)

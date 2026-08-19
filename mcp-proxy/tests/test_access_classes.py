@@ -160,7 +160,28 @@ def test_a_normal_user_reaches_the_expected_live_servers():
     """Guards the classification itself, against the real registry."""
     assert resolve_user_servers([], is_admin=False) == {
         "google-drive", "calendar", "filesystem", "web-search", "excel",
-        "dashboard", "meeting-kb"}
+        "dashboard", "meeting-kb",
+        # Per-user servers: each acts as the CALLER's own third-party account.
+        "my-clickup", "my-github", "my-trello", "my-notion", "my-n8n"}
+
+
+def test_the_per_user_servers_are_public_and_the_shared_ones_are_not():
+    """The pair that makes the whole design safe. my-clickup is PUBLIC because
+    it spends the caller's own credential and nothing that belongs to anyone
+    else. clickup is SHARED because it spends one token belonging to one real
+    person, so every task it creates is created by him."""
+    for pid in ("clickup", "github", "trello", "notion", "n8n"):
+        if pid in ALL_SERVERS:
+            assert ALL_SERVERS[pid].access_class is not AccessClass.PUBLIC, pid
+        assert ALL_SERVERS["my-" + pid].access_class is AccessClass.PUBLIC, pid
+
+
+def test_a_per_user_server_points_at_our_own_service_not_a_vendor():
+    """These carry decrypted credentials, so the endpoint must be the tasks
+    service on the internal network, never something reachable from outside."""
+    for pid in ("clickup", "github", "trello", "notion", "n8n"):
+        url = ALL_SERVERS["my-" + pid].endpoint_url
+        assert url.startswith("http://tasks:") or url.startswith("http://localhost"), url
 
 
 # --- the wiring, not just the expression ----------------------------------
@@ -210,7 +231,8 @@ def fake_db(monkeypatch):
 
 
 LIVE_PUBLIC = {"google-drive", "calendar", "filesystem", "web-search",
-               "excel", "dashboard", "meeting-kb"}
+               "excel", "dashboard", "meeting-kb",
+               "my-clickup", "my-github", "my-trello", "my-notion", "my-n8n"}
 
 
 async def test_a_user_with_nothing_configured_now_gets_the_public_set(fake_db):
