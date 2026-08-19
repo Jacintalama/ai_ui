@@ -61,6 +61,7 @@ from db import (
 )
 from tool_embeddings import (
     store_tool_embeddings,
+    prune_stale_tools,
     search_tools_by_query,
     get_embeddings_stats
 )
@@ -221,6 +222,14 @@ async def refresh_tools_cache():
             pool = await get_pool()
             stored = await store_tool_embeddings(pool, TOOLS_CACHE)
             print(f"Stored {stored} tool embeddings for semantic search")
+            # The index upserts and never deletes, so tools from servers that
+            # were removed or disabled stayed searchable and then failed at
+            # execution. Prune against the enabled registry, not against what
+            # answered this boot: a server that is up but momentarily failed to
+            # list its tools must keep its rows.
+            removed = await prune_stale_tools(pool, set(enabled_servers))
+            if removed:
+                print(f"Pruned {removed} tools from servers no longer live")
         except Exception as e:
             print(f"Warning: Could not store tool embeddings: {e}")
             print("Meta-tools search will use keyword fallback")

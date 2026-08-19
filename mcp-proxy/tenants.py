@@ -29,6 +29,28 @@ class ServerTier(Enum):
     LOCAL = "local"        # Local container in Kubernetes cluster
 
 
+class AccessClass(Enum):
+    """What it costs to let someone use a server.
+
+    `api_key_env` cannot answer this. It is MCP_API_KEY on nearly every server,
+    because that is the proxy's own key for reaching the container, not the
+    vendor's credential. So the answer has to be declared, and it is declared
+    here, next to the server it describes, rather than in a list somewhere else
+    that drifts. A list somewhere else is how group_tenant_mapping ended up
+    granting five servers that were never deployed.
+    """
+    #: No vendor credential and no reach into other users' data. Any signed-in
+    #: user gets these without a grant.
+    PUBLIC = "public"
+    #: No vendor credential, but it can see or change things belonging to other
+    #: users. Needs an explicit grant even though nothing is being spent.
+    RESTRICTED = "restricted"
+    #: Runs on one shared vendor token, so using it means acting as the
+    #: platform's own account. Needs an explicit grant, and the intended fix is
+    #: for the user to connect their own credential instead.
+    SHARED = "shared"
+
+
 @dataclass
 class MCPServerConfig:
     """Configuration for an MCP server endpoint."""
@@ -40,6 +62,14 @@ class MCPServerConfig:
     api_key_env: Optional[str] = None
     enabled: bool = True
     description: str = ""
+    #: Defaults to SHARED so a server added without thought is restricted
+    #: rather than handed to everyone. Widening is a deliberate edit.
+    access_class: "AccessClass" = None  # set in __post_init__
+
+
+    def __post_init__(self):
+        if self.access_class is None:
+            self.access_class = AccessClass.SHARED
 
 
 @dataclass
@@ -272,6 +302,7 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
     # -------------------------------------------------------------------------
     "sonarqube": MCPServerConfig(
         server_id="sonarqube",
+        access_class=AccessClass.SHARED,
         display_name="SonarQube",
         tier=ServerTier.STDIO,
         endpoint_url=os.getenv("MCP_SONARQUBE_URL", "http://mcp-sonarqube:8000"),
@@ -286,6 +317,7 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
     # -------------------------------------------------------------------------
     "clickup": MCPServerConfig(
         server_id="clickup",
+        access_class=AccessClass.SHARED,
         display_name="ClickUp",
         tier=ServerTier.STDIO,
         endpoint_url=os.getenv("MCP_CLICKUP_URL", "http://mcp-clickup:8000"),
@@ -296,6 +328,7 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "trello": MCPServerConfig(
         server_id="trello",
+        access_class=AccessClass.SHARED,
         display_name="Trello",
         tier=ServerTier.STDIO,
         endpoint_url=os.getenv("MCP_TRELLO_URL", "http://mcp-trello:8000"),
@@ -561,6 +594,7 @@ MCP_WEB_SEARCH_URL = os.getenv("MCP_WEB_SEARCH_URL", "http://mcp-web-search:8000
 LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     "google-drive": MCPServerConfig(
         server_id="google-drive",
+        access_class=AccessClass.PUBLIC,
         display_name="Google Drive",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_GDRIVE_URL,
@@ -585,6 +619,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "calendar": MCPServerConfig(
         server_id="calendar",
+        access_class=AccessClass.PUBLIC,
         display_name="Google Calendar",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_CALENDAR_URL,
@@ -595,6 +630,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "web-search": MCPServerConfig(
         server_id="web-search",
+        access_class=AccessClass.PUBLIC,
         display_name="Web Search",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_WEB_SEARCH_URL,
@@ -605,6 +641,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "github": MCPServerConfig(
         server_id="github",
+        access_class=AccessClass.SHARED,
         display_name="GitHub",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_GITHUB_URL,
@@ -613,19 +650,9 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         description="GitHub repositories, issues, PRs (26 tools)",
         enabled=bool(os.getenv("GITHUB_TOKEN"))  # Requires valid PAT to function
     ),
-    # US-011: Tenant-specific GitHub container for data isolation
-    "github-jacintalama": MCPServerConfig(
-        server_id="github-jacintalama",
-        display_name="GitHub (Jacintalama)",
-        tier=ServerTier.LOCAL,
-        endpoint_url=MCP_GITHUB_JACINTALAMA_URL,
-        auth_type="bearer",
-        api_key_env="MCP_API_KEY",
-        description="GitHub for Jacintalama tenant - data isolation demo",
-        enabled=bool(os.getenv("MCP_GITHUB_JACINTALAMA_URL"))
-    ),
     "filesystem": MCPServerConfig(
         server_id="filesystem",
+        access_class=AccessClass.PUBLIC,
         display_name="Filesystem",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_FILESYSTEM_URL,
@@ -635,6 +662,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "excel": MCPServerConfig(
         server_id="excel",
+        access_class=AccessClass.PUBLIC,
         display_name="Excel Creator",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_EXCEL_URL,
@@ -644,6 +672,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "dashboard": MCPServerConfig(
         server_id="dashboard",
+        access_class=AccessClass.PUBLIC,
         display_name="Executive Dashboard",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_DASHBOARD_URL,
@@ -663,6 +692,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "n8n": MCPServerConfig(
         server_id="n8n",
+        access_class=AccessClass.SHARED,
         display_name="n8n Workflows",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_N8N_URL,
@@ -673,6 +703,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "scheduler": MCPServerConfig(
         server_id="scheduler",
+        access_class=AccessClass.RESTRICTED,
         display_name="Scheduler",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_SCHEDULER_URL,
@@ -683,6 +714,7 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
     ),
     "meeting-kb": MCPServerConfig(
         server_id="meeting-kb",
+        access_class=AccessClass.PUBLIC,
         display_name="Meeting Knowledge Base",
         tier=ServerTier.LOCAL,
         endpoint_url=MCP_MEETING_KB_URL,
@@ -702,6 +734,32 @@ ALL_SERVERS: Dict[str, MCPServerConfig] = {
     **TIER3_SERVERS,
     **LOCAL_SERVERS,
 }
+
+
+def resolve_user_servers(granted, is_admin: bool, servers=None) -> set:
+    """The servers a caller may use. One expression, applied on every path.
+
+        admin:     enabled n everything
+        non-admin: enabled n (PUBLIC u granted)
+
+    The `enabled` intersection is taken here, on the way out, rather than at
+    each grant source. That is the whole fix for the admin path, which returned
+    `list(ALL_SERVERS.keys())` and so handed out 37 servers that have no
+    container. `enabled` was honoured in six other places and missed in that
+    one, which is the same shape as the auth hole before it: one rule written
+    several times, wrong in some of them.
+
+    A grant naming a server that is not registered is dropped rather than
+    trusted. group_tenant_mapping still names linear, atlassian, slack, gitlab
+    and hubspot, none of which were ever deployed.
+    """
+    servers = ALL_SERVERS if servers is None else servers
+    enabled = {sid for sid, cfg in servers.items() if cfg.enabled}
+    if is_admin:
+        return enabled
+    public = {sid for sid in enabled
+              if servers[sid].access_class is AccessClass.PUBLIC}
+    return enabled & (public | set(granted or ()))
 
 
 def get_server(server_id: str) -> Optional[MCPServerConfig]:
@@ -901,10 +959,10 @@ async def get_user_tenants_async(user_email: str, entra_groups: Optional[List[st
     Returns:
         List of tenant IDs the user has access to
 
-    Sources:
-        1. MCP-Admin group (grants ALL servers)
-        2. Entra ID/Open WebUI groups (if provided) - via group_tenant_mapping table
-        3. User email - via user_tenant_access table
+    Admins (MCP-Admin group, or Open WebUI role=admin) get every ENABLED
+    server. Everyone else gets the enabled PUBLIC servers plus whatever
+    group_tenant_mapping and user_tenant_access grant them. See
+    resolve_user_servers for the single expression that decides.
     """
     import db
 
@@ -919,11 +977,15 @@ async def get_user_tenants_async(user_email: str, entra_groups: Optional[List[st
             print(f"  [DB-GROUPS] Error looking up groups: {e}")
             entra_groups = []
 
-    # Source 0: MCP-Admin grants access to ALL servers (Lukas's requirement)
-    if entra_groups and "MCP-Admin" in entra_groups:
-        all_server_ids = list(ALL_SERVERS.keys())
-        print(f"  [MCP-ADMIN] {user_email} has MCP-Admin -> ALL {len(all_server_ids)} servers")
-        return all_server_ids
+    # An admin of the platform is an admin of its tools. Only the MCP-Admin
+    # *group* was ever consulted here, so two platform admins resolved to 4
+    # servers and 0 servers respectively while other accounts saw everything.
+    is_admin = bool(entra_groups and "MCP-Admin" in entra_groups)
+    if not is_admin:
+        try:
+            is_admin = await db.is_openwebui_admin(user_email)
+        except Exception as e:
+            print(f"  [ADMIN-CHECK] Error: {e}")
 
     # Source 1: Group-based access (from group_tenant_mapping table)
     if entra_groups and len(entra_groups) > 0:
@@ -942,7 +1004,12 @@ async def get_user_tenants_async(user_email: str, entra_groups: Optional[List[st
     except Exception as e:
         print(f"  [DATABASE] Error: {e}")
 
-    return list(tenant_ids)
+    # The grants above are raw and may name servers that are disabled or were
+    # never deployed. resolve_user_servers is the only thing that decides.
+    resolved = resolve_user_servers(tenant_ids, is_admin=is_admin)
+    print(f"  [RESOLVED] {user_email} admin={is_admin} "
+          f"granted={len(tenant_ids)} -> {len(resolved)} usable servers")
+    return list(resolved)
 
 
 # =============================================================================

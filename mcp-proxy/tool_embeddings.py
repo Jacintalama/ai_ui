@@ -337,3 +337,47 @@ async def get_embeddings_stats(pool: asyncpg.Pool) -> Dict[str, Any]:
             }
     except Exception as e:
         return {"error": str(e)}
+
+
+def unknown_server_ids(indexed_server_ids, live_server_ids) -> set:
+    """Indexed server ids that no longer name a live server.
+
+    Pure so the destructive decision can be tested without a database. An empty
+    or missing `live_server_ids` prunes nothing: "the registry did not load" and
+    "no server exists" have to stay distinct, or one bad boot empties the index.
+    """
+    live = set(live_server_ids or ())
+    if not live:
+        return set()
+    return {sid for sid in (indexed_server_ids or ()) if sid not in live}
+
+
+async def prune_stale_tools(pool: asyncpg.Pool, live_server_ids) -> int:
+    """Drop index rows whose server is gone or disabled. Returns rows removed.
+
+    store_tool_embeddings upserts and never deletes, so without this the index
+    only grows. Production carried 48 tools that could be found and described
+    and then could not be run.
+    """
+    live = set(live_server_ids or ())
+    if not live:
+        return 0
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT server_id FROM mcp_proxy.tool_embeddings")
+            stale = unknown_server_ids(
+                {r["server_id"] for r in rows}, live)
+            if not stale:
+                return 0
+            deleted = await conn.fetch(
+                "DELETE FROM mcp_proxy.tool_embeddings "
+                "WHERE server_id = ANY($1::text[]) OR server_id IS NULL "
+                "RETURNING tool_name",
+                list(stale))
+        log(f"Pruned {len(deleted)} tools from servers no longer live: "
+            f"{sorted(stale)}")
+        return len(deleted)
+    except Exception as e:
+        log(f"Prune skipped: {e}")
+        return 0

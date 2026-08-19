@@ -25,6 +25,7 @@ from routes_projects import router as projects_router
 from routes_schedules import router as schedules_router
 from routes_discord_links import router as discord_links_router
 from routes_state import router as state_router
+from routes_prefs import router as prefs_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
@@ -126,6 +127,8 @@ app.include_router(gateway_router)  # /gateway, internal only (X-Internal-Secret
                                     # endpoints mint tokens that act as any user.
 app.include_router(gateway_page_router)  # /tasks/gateway/link, signed-in user
 app.include_router(state_router)  # /state — system KV for bot conversational state
+app.include_router(prefs_router)  # /prefs — per-user timezone (internal, OWUI filter)
+app.include_router(prefs_router, prefix="/api/tasks")  # public: /api/tasks/prefs/*
 app.include_router(tasks_router)
 app.include_router(video_router)  # /api/video-jobs — member-auth screenshot upload
 app.include_router(execution_router)

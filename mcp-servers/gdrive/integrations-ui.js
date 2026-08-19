@@ -89,6 +89,40 @@
   // Resolve email on load
   setTimeout(resolveUserEmail, 1000);
 
+  // Tell the platform what timezone this browser is in, so the assistant knows
+  // what "tomorrow morning" means for THIS user. Intl reports the IANA zone
+  // name ("Asia/Manila"), which is what gets stored: a raw UTC offset is right
+  // for only half the year in any zone with daylight saving, and it fails
+  // silently.
+  //
+  // Once a day per user, not once a page view. A zone changes when someone
+  // travels, which is not something to spend a request on every navigation.
+  // The server refuses to overwrite a zone the user set by hand, so this is
+  // safe to fire unattended.
+  function reportTimezone() {
+    var tz;
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) { return; }
+    if (!tz) return;
+    var token = localStorage.getItem('token');
+    if (!token) return;
+    var stamp = 'aiui-tz-sent:' + getEffectiveEmail() + ':' + tz;
+    var last = 0;
+    try { last = parseInt(localStorage.getItem(stamp) || '0', 10); } catch (e) {}
+    if (last && (Date.now() - last) < 86400000) return;
+    fetch('/api/tasks/prefs/timezone', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json',
+                 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ timezone: tz, manual: false })
+    }).then(function (r) {
+      if (r.ok) {
+        try { localStorage.setItem(stamp, String(Date.now())); } catch (e) {}
+      }
+    }).catch(function () {});
+  }
+  // After resolveUserEmail, so the localStorage key is per real account.
+  setTimeout(reportTimezone, 2500);
+
   // Per-user localStorage keys — each user has separate connection state
   function _userKey(base) {
     var email = getEffectiveEmail();
