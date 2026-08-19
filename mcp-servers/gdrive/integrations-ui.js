@@ -11,6 +11,24 @@
   var GDRIVE_ICON_SMALL = '<svg width="16" height="16" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-20.4 35.3c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.4 9.35z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-10.1-17.5c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 23.8h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
   var GDRIVE_ICON_BIG = '<svg width="24" height="24" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/><path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-20.4 35.3c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/><path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.5l5.4 9.35z" fill="#ea4335"/><path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/><path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/><path d="m73.4 26.5-10.1-17.5c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 23.8h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/></svg>';
 
+  // Chrome repaints any autofilled input white via :-webkit-autofill, and an
+  // inline style cannot beat it. The inset shadow trick is the only way to
+  // keep a dark field dark if the browser fills it anyway.
+  (function injectAutofillGuard() {
+    if (document.getElementById('aiui-autofill-guard')) return;
+    var st = document.createElement('style');
+    st.id = 'aiui-autofill-guard';
+    st.textContent =
+      '#aiui-conn-search:-webkit-autofill, .aiui-cred-input:-webkit-autofill,' +
+      '#aiui-conn-search:-webkit-autofill:focus, .aiui-cred-input:-webkit-autofill:focus {' +
+      '  -webkit-text-fill-color: #eee !important;' +
+      '  -webkit-box-shadow: 0 0 0 1000px #0e0e0e inset !important;' +
+      '  caret-color: #eee;' +
+      '  transition: background-color 9999s ease-in-out 0s;' +
+      '}';
+    (document.head || document.documentElement).appendChild(st);
+  })();
+
   // ========== Helpers ==========
 
   // Cache the resolved email to avoid repeated API calls
@@ -658,7 +676,7 @@
           '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;">&times;</button>' +
         '</div>' +
         '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Google signs you in once for Gmail, Calendar and Drive. The rest take a personal API credential from that app, which is checked with them before it is saved and is stored encrypted. Every connection is personal to your account. Looking for Slack, Discord or Telegram? Those are channels you talk to IO from, on the Channels page.</p>' +
-        '<input id="aiui-conn-search" type="text" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
+        '<input id="aiui-conn-search" type="search" name="aiui-app-filter" autocomplete="off" data-1p-ignore="true" data-lpignore="true" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
         '<div id="aiui-conn-tabs" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"></div>' +
       '</div>' +
       '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;padding:16px 24px 24px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;"></div>';
@@ -840,17 +858,65 @@
         lab.style.cssText = 'font-size:12px;color:#bbb;margin-bottom:5px;';
         lab.textContent = f.label;
         box.appendChild(lab);
+        var holder = document.createElement('div');
+        holder.style.cssText = 'position:relative;margin-bottom:12px;';
         var inp = document.createElement('input');
-        inp.type = f.secret ? 'password' : 'text';
+        inp.type = 'text';
         inp.placeholder = f.placeholder || '';
-        inp.autocomplete = 'off';
         inp.spellcheck = false;
+        inp.autocapitalize = 'off';
+        inp.setAttribute('autocorrect', 'off');
+        // A name Chrome cannot mistake for a login field, plus the opt-outs
+        // the major password managers actually honour.
+        inp.name = 'aiui-' + app.id + '-' + f.name;
+        inp.setAttribute('autocomplete', 'off');
+        inp.setAttribute('data-1p-ignore', 'true');
+        inp.setAttribute('data-lpignore', 'true');
+        inp.setAttribute('data-bwignore', 'true');
+        inp.setAttribute('data-form-type', 'other');
+        inp.className = 'aiui-cred-input';
+        var pad = f.secret ? '10px 62px 10px 12px' : '10px 12px';
         inp.style.cssText = 'width:100%;box-sizing:border-box;background:#0e0e0e;'
-          + 'border:1px solid #303030;border-radius:9px;padding:10px 12px;color:#eee;'
-          + 'font-size:13px;margin-bottom:12px;outline:none;';
+          + 'border:1px solid #303030;border-radius:9px;padding:' + pad + ';color:#eee;'
+          + 'font-size:13px;outline:none;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;';
+        var maskUnsupported = false;
+        function setMasked(on) {
+          if (maskUnsupported) {
+            inp.type = on ? 'password' : 'text';
+          } else {
+            inp.style.setProperty('-webkit-text-security', on ? 'disc' : 'none');
+          }
+        }
+        if (f.secret) {
+          inp.style.setProperty('-webkit-text-security', 'disc');
+          // Non-standard, so confirm the browser actually took it. If it did
+          // not, the credential would sit on screen in plain text, and a real
+          // password field with its autofill nuisance is the better trade.
+          if (!inp.style.getPropertyValue('-webkit-text-security')) {
+            maskUnsupported = true;
+            inp.type = 'password';
+          }
+        }
         inp.addEventListener('focus', function () { inp.style.borderColor = '#4a6ea8'; });
         inp.addEventListener('blur', function () { inp.style.borderColor = '#303030'; });
-        box.appendChild(inp);
+        holder.appendChild(inp);
+        if (f.secret) {
+          // A pasted credential is worth being able to check. Nothing is more
+          // annoying than a silently truncated token behind dots.
+          var eye = document.createElement('button');
+          eye.type = 'button';
+          eye.textContent = 'Show';
+          eye.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);'
+            + 'background:transparent;border:none;color:#7d7d7d;font-size:11px;cursor:pointer;padding:4px 6px;';
+          var shown = false;
+          eye.addEventListener('click', function () {
+            shown = !shown;
+            setMasked(!shown);
+            eye.textContent = shown ? 'Hide' : 'Show';
+          });
+          holder.appendChild(eye);
+        }
+        box.appendChild(holder);
         inputs[f.name] = inp;
       });
 
@@ -2309,5 +2375,5 @@
   }
   linkifyConnectButtons();
 
-  console.log('[AIUI] Integrations UI v15-chatcard loaded');
+  console.log('[AIUI] Integrations UI v16-connect-your-own loaded');
 })();
