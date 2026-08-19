@@ -235,11 +235,27 @@
       font-size: 15px;
       font-weight: 600;
       color: var(--text);
-      word-break: break-all;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    /* The slug still matters: it is the app's id and appears in its URL. It
+       just is not the project's name, so it sits under it, quiet. */
+    .card .slug-chip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: -6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .card .badge {
       display: inline-flex;
       align-items: center;
+      flex-shrink: 0;
+      white-space: nowrap;
       gap: 4px;
       padding: 2px 8px;
       border-radius: var(--radius-sm);
@@ -261,10 +277,10 @@
       color: var(--text-2);
       font-size: 13px;
       display: -webkit-box;
-      -webkit-line-clamp: 3;
+      -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
-      min-height: 58px;
+      min-height: 34px;
     }
     .card .meta {
       color: var(--muted);
@@ -272,9 +288,14 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      justify-content: space-between;
     }
     .card .meta .left { display: flex; align-items: center; gap: 6px; }
+    .card .tools {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: -2px;
+    }
     .card .actions {
       display: flex;
       gap: 8px;
@@ -1381,7 +1402,11 @@
         // not the latest enhancement's internal "Enhance apps/…:" text.
         const _promptTask = promptBySlug.get(t.built_app_slug) || t;
         const userDesc = cleanPrompt(_promptTask);
-        const title = t.built_app_slug || userDesc.slice(0, 60) + (userDesc.length > 60 ? "…" : "");
+        const slug = t.built_app_slug || "";
+        const named = appNames[slug];
+        const title = slug
+          ? ((named && named.name) || readableSlug(slug))
+          : (userDesc.slice(0, 60) + (userDesc.length > 60 ? "…" : ""));
 
         let actionBtn = "";
         if (info.action === "preview") {
@@ -1418,16 +1443,15 @@
           : "";
         card.innerHTML = `
           <div class="slug-row">
-            <span class="slug">${escapeHtml(title)}</span>
+            <span class="slug" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
             <span class="badge ${info.cls}">${info.label}</span>
             <span class="spacer"></span>
             ${menuBtn}
           </div>
+          ${slug ? `<div class="slug-chip" title="The app's id, used in its URL">${escapeHtml(slug)}</div>` : ""}
           <div class="desc">${escapeHtml(userDesc)}</div>
-          <div class="meta">
-            <span class="left">${escapeHtml(relativeTime(built))}</span>
-            <span style="display:flex; gap:6px;">${docsBtn}${exportBtn}${deployBtn}${liveLink}${historyBtn}${membersBtn}</span>
-          </div>
+          <div class="meta"><span class="left">${escapeHtml(relativeTime(built))}</span></div>
+          <div class="tools">${docsBtn}${exportBtn}${deployBtn}${liveLink}${historyBtn}${membersBtn}</div>
           <div class="actions">${actionBtn}</div>`;
         grid.appendChild(card);
       }
@@ -2826,6 +2850,29 @@
     let vercelState = { connected: false, username: null };
     let vercelDeployments = {};   // slug -> live URL (drives the Live links)
 
+    // slug -> {name, tagline, source}. The card used to show the SLUG as its
+    // heading, which is a URL segment built from the prompt plus four hex
+    // characters. The apps name themselves properly in their own index.html
+    // <title> (Klakk, CoolStream HVAC, Lumen) and nothing read it.
+    let appNames = {};
+
+    async function refreshAppNames() {
+      try {
+        const r = await fetch("/api/projects/names",
+                              { headers: authHeaders(), credentials: "include" });
+        appNames = r.ok ? ((await r.json()).names || {}) : {};
+      } catch (e) { /* fail open: cards fall back to a readable slug */ }
+    }
+
+    // Same fallback the server uses, so a card is never blank while the names
+    // request is still in flight or if it failed.
+    function readableSlug(slug) {
+      const parts = String(slug || "").split(/[-_]+/).filter(Boolean);
+      if (parts.length > 1 && /^([0-9a-f]{4}|[0-9a-f]{8})$/.test(parts[parts.length - 1])) parts.pop();
+      if (!parts.length) return slug || "Untitled";
+      return parts.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    }
+
     async function refreshVercelState() {
       try {
         const [s, d] = await Promise.all([
@@ -3050,7 +3097,7 @@
     }
 
     // Load Vercel connect state first so Live links render on first paint.
-    refreshVercelState().finally(load);
+    Promise.all([refreshVercelState(), refreshAppNames()]).finally(load);
     // Warm the templates cache eagerly so the gallery opens instantly.
     ensureTemplatesLoaded().catch((e) => console.warn("[templates] eager load failed", e));
     // Honor a ?template=/#template= deep link from the standalone gallery.

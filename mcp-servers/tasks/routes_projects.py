@@ -50,6 +50,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects")
 
 
+def _apps_root_for_names() -> str:
+    """Same resolution app_docs uses, so both read the same tree."""
+    return os.environ.get(
+        "APPS_DIR",
+        os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps"),
+    )
+
+
+
 class ProjectSummary(BaseModel):
     slug: str
     name: str
@@ -236,6 +245,47 @@ async def list_my_projects(user: CurrentUser = Depends(current_user)) -> list[Pr
     """List projects where the caller is a member."""
     raw = await _list_projects_for_email(user.email)
     return [ProjectSummary(**r) for r in raw]
+
+
+@router.get("/names")
+async def app_display_names(user: CurrentUser = Depends(current_user)) -> dict:
+    """The real name of every built app, keyed by slug.
+
+    The App Builder list showed slugs, which are URL segments made from the
+    prompt plus four hex characters. The apps have had proper names all along,
+    written by the agent into their own index.html <title>: Klakk, CoolStream
+    HVAC, Lumen. This is what lets the card show one.
+
+    Declared BEFORE /{slug}/status on purpose. FastAPI matches routes in
+    declaration order, so registering it after would make "names" match the
+    slug parameter and this route unreachable.
+
+    Reads from disk rather than the database because that is where the truth
+    is: an app renamed by an enhance is renamed in its own markup, and no row
+    is updated. Fails soft per app, so one unreadable file cannot empty the
+    list.
+    """
+    import app_names
+
+    root = _apps_root_for_names()
+    out = {}
+    try:
+        entries = sorted(os.listdir(root))
+    except OSError as e:
+        logger.warning("app names: cannot list %s (%s)", root, type(e).__name__)
+        return {"names": {}}
+
+    for slug in entries:
+        index = os.path.join(root, slug, "index.html")
+        markup = ""
+        try:
+            if os.path.isfile(index):
+                with open(index, "r", encoding="utf-8", errors="replace") as fh:
+                    markup = fh.read(app_names.SCAN_BYTES)
+        except OSError:
+            markup = ""
+        out[slug] = app_names.display_name(slug, markup)
+    return {"names": out}
 
 
 @router.get("/{slug}/status", response_model=ProjectStatus)
