@@ -657,7 +657,7 @@
           '<h2 style="color:#fff;font-size:20px;font-weight:600;margin:0;">Connections</h2>' +
           '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;">&times;</button>' +
         '</div>' +
-        '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Sign in once with your Google account to enable Gmail, Calendar, and Drive. Each connection is personal to your account. Looking for Slack, Discord or Telegram? Those are channels you talk to IO from, on the Channels page.</p>' +
+        '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Google signs you in once for Gmail, Calendar and Drive. The rest take a personal API credential from that app, which is checked with them before it is saved and is stored encrypted. Every connection is personal to your account. Looking for Slack, Discord or Telegram? Those are channels you talk to IO from, on the Channels page.</p>' +
         '<input id="aiui-conn-search" type="text" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
         '<div id="aiui-conn-tabs" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"></div>' +
       '</div>' +
@@ -674,14 +674,14 @@
     var APPS = [
       { id: 'google', name: 'Google', sub: 'Gmail, Calendar, Drive', domain: 'google.com',
         apis: [GMAIL_API, CALENDAR_API, GDRIVE_API], cat: 'Productivity', real: true },
-      { id: 'notion', name: 'Notion', domain: 'notion.so', cat: 'Productivity' },
-      { id: 'clickup', name: 'ClickUp', domain: 'clickup.com', cat: 'Productivity' },
-      { id: 'trello', name: 'Trello', domain: 'trello.com', cat: 'Productivity' },
+      { id: 'notion', real: true, token: true, name: 'Notion', domain: 'notion.so', cat: 'Productivity' },
+      { id: 'clickup', real: true, token: true, name: 'ClickUp', domain: 'clickup.com', cat: 'Productivity' },
+      { id: 'trello', real: true, token: true, name: 'Trello', domain: 'trello.com', cat: 'Productivity' },
       { id: 'asana', name: 'Asana', domain: 'asana.com', cat: 'Productivity' },
       { id: 'airtable', name: 'Airtable', domain: 'airtable.com', cat: 'Productivity' },
       { id: 'hubspot', name: 'HubSpot', domain: 'hubspot.com', cat: 'Productivity' },
-      { id: 'github', name: 'GitHub', domain: 'github.com', cat: 'Tools & Automation' },
-      { id: 'n8n', name: 'n8n', domain: 'n8n.io', cat: 'Tools & Automation' },
+      { id: 'github', real: true, token: true, name: 'GitHub', domain: 'github.com', cat: 'Tools & Automation' },
+      { id: 'n8n', real: true, token: true, name: 'n8n', domain: 'n8n.io', cat: 'Tools & Automation' },
       { id: 'zapier', name: 'Zapier', domain: 'zapier.com', cat: 'Tools & Automation' },
       { id: 'jira', name: 'Jira', domain: 'atlassian.com', cat: 'Tools & Automation' },
       { id: 'x', name: 'X (Twitter)', domain: 'x.com', cat: 'Social' },
@@ -693,6 +693,13 @@
 
     var connState = {};
     var connPartial = {};
+    // Server-described token providers: fields to ask for, where to find the
+    // credential, and which account is currently connected.
+    var connMeta = {};
+    // Until the status calls land we do not know. Saying "Connect" in the
+    // meantime is a card asserting a state it has not checked, which is how a
+    // connected Google account flashes as disconnected on every open.
+    var connChecked = {};
     var activeCat = 'All';
     var searchTerm = '';
 
@@ -740,13 +747,17 @@
       nameEl.style.cssText = 'color:#eee;font-size:13px;font-weight:600;text-align:center;';
       nameEl.textContent = app.name;
       var statusEl = document.createElement('div');
-      statusEl.innerHTML = app.real
-        ? (connected
-            ? '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>'
-            : (partial
-                ? '<span style="color:#e0a72b;font-size:12px;font-weight:600;">Finish connecting</span>'
-                : '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>'))
-        : '<span style="color:#666;font-size:11px;">Coming soon</span>';
+      if (!app.real) {
+        statusEl.innerHTML = '<span style="color:#666;font-size:11px;">Coming soon</span>';
+      } else if (!connChecked[app.id]) {
+        statusEl.innerHTML = '<span style="color:#777;font-size:12px;">Checking…</span>';
+      } else if (connected) {
+        statusEl.innerHTML = '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>';
+      } else if (partial) {
+        statusEl.innerHTML = '<span style="color:#e0a72b;font-size:12px;font-weight:600;">Finish connecting</span>';
+      } else {
+        statusEl.innerHTML = '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>';
+      }
       card.appendChild(iconEl(app));
       card.appendChild(nameEl);
       if (app.sub) {
@@ -756,13 +767,23 @@
         card.appendChild(subEl);
       }
       card.appendChild(statusEl);
+      var acct = connected && connMeta[app.id] && connMeta[app.id].account_label;
+      if (acct && acct !== app.name) {
+        var acctEl = document.createElement('div');
+        acctEl.style.cssText = 'color:#7d7d7d;font-size:10px;text-align:center;margin-top:-5px;'
+          + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        acctEl.textContent = acct;
+        card.appendChild(acctEl);
+      }
       if (!app.real) {
         card.style.opacity = '0.5';
       } else {
         card.addEventListener('mouseenter', function () { card.style.background = '#242424'; });
         card.addEventListener('mouseleave', function () { card.style.background = '#1b1b1b'; });
         card.addEventListener('click', function () {
-          if (!connState[app.id]) {
+          if (app.token) {
+            openTokenPanel(app);
+          } else if (!connState[app.id]) {
             unifiedConnect();
           } else if (confirm('Disconnect ' + app.name + (app.sub ? ' (' + app.sub + ')' : '') + '?')) {
             var apis = app.apis || [app.api];
@@ -773,6 +794,146 @@
         });
       }
       return card;
+    }
+
+    // ---- connect-your-own-account panel --------------------------------
+    // ClickUp, Trello, GitHub, Notion and n8n cannot use Google's OAuth, and
+    // none of them is worth a per-vendor OAuth app before anyone has asked for
+    // one. They all issue a personal API credential, so the panel asks for
+    // whatever fields the server says that provider needs, and the server
+    // checks the credential against the vendor before storing anything.
+    function authHeaders() {
+      var t = localStorage.getItem('token');
+      var h = { 'Content-Type': 'application/json' };
+      if (t) h['Authorization'] = 'Bearer ' + t;
+      return h;
+    }
+
+    function openTokenPanel(app) {
+      var meta = connMeta[app.id] || {};
+      var fields = meta.fields || [];
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;'
+        + 'background:rgba(0,0,0,0.65);z-index:10002;display:flex;align-items:center;'
+        + 'justify-content:center;backdrop-filter:blur(3px);';
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#161616;border:1px solid #2a2a2a;border-radius:16px;'
+        + 'width:min(440px,92vw);padding:22px 24px;color:#eee;'
+        + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+
+      var connected = !!connState[app.id];
+      var head = document.createElement('div');
+      head.style.cssText = 'font-size:17px;font-weight:650;margin-bottom:4px;';
+      head.textContent = (connected ? 'Manage ' : 'Connect ') + app.name;
+      box.appendChild(head);
+
+      var sub = document.createElement('div');
+      sub.style.cssText = 'color:#8d8d8d;font-size:12px;line-height:1.5;margin-bottom:16px;';
+      sub.textContent = connected
+        ? 'Connected as ' + (meta.account_label || app.name) + '. Paste a new credential to replace it.'
+        : (meta.where || '');
+      box.appendChild(sub);
+
+      var inputs = {};
+      fields.forEach(function (f) {
+        var lab = document.createElement('div');
+        lab.style.cssText = 'font-size:12px;color:#bbb;margin-bottom:5px;';
+        lab.textContent = f.label;
+        box.appendChild(lab);
+        var inp = document.createElement('input');
+        inp.type = f.secret ? 'password' : 'text';
+        inp.placeholder = f.placeholder || '';
+        inp.autocomplete = 'off';
+        inp.spellcheck = false;
+        inp.style.cssText = 'width:100%;box-sizing:border-box;background:#0e0e0e;'
+          + 'border:1px solid #303030;border-radius:9px;padding:10px 12px;color:#eee;'
+          + 'font-size:13px;margin-bottom:12px;outline:none;';
+        inp.addEventListener('focus', function () { inp.style.borderColor = '#4a6ea8'; });
+        inp.addEventListener('blur', function () { inp.style.borderColor = '#303030'; });
+        box.appendChild(inp);
+        inputs[f.name] = inp;
+      });
+
+      var msg = document.createElement('div');
+      msg.style.cssText = 'font-size:12px;min-height:17px;margin-bottom:12px;line-height:1.45;';
+      box.appendChild(msg);
+
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:9px;justify-content:flex-end;align-items:center;';
+
+      if (connected) {
+        var dis = document.createElement('button');
+        dis.textContent = 'Disconnect';
+        dis.style.cssText = 'background:transparent;color:#c96;border:1px solid #4a3a2a;'
+          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;margin-right:auto;';
+        dis.addEventListener('click', function () {
+          dis.disabled = true; dis.textContent = 'Disconnecting\u2026';
+          fetch('/api/tasks/connections/' + app.id, { method: 'DELETE', headers: authHeaders() })
+            .then(function (r) { return r.json(); })
+            .then(function () {
+              connState[app.id] = false;
+              connMeta[app.id] = Object.assign({}, meta, { account_label: null });
+              renderGrid(); wrap.remove();
+            })
+            .catch(function () { dis.disabled = false; dis.textContent = 'Disconnect'; });
+        });
+        row.appendChild(dis);
+      }
+
+      var cancel = document.createElement('button');
+      cancel.textContent = 'Cancel';
+      cancel.style.cssText = 'background:transparent;color:#aaa;border:1px solid #303030;'
+        + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;';
+      cancel.addEventListener('click', function () { wrap.remove(); });
+      row.appendChild(cancel);
+
+      var go = document.createElement('button');
+      go.textContent = 'Connect';
+      go.style.cssText = 'background:#fff;color:#111;border:none;border-radius:9px;'
+        + 'padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;';
+      go.addEventListener('click', function () {
+        var values = {};
+        for (var k in inputs) values[k] = inputs[k].value;
+        go.disabled = true;
+        go.textContent = 'Checking\u2026';
+        msg.style.color = '#8d8d8d';
+        // Deliberately says "with <vendor>", because this really does make a
+        // request to them. If it fails, the credential was not stored.
+        msg.textContent = 'Checking with ' + app.name + '\u2026';
+        fetch('/api/tasks/connections/' + app.id, {
+          method: 'POST', headers: authHeaders(),
+          body: JSON.stringify({ values: values })
+        }).then(function (r) {
+          return r.json().then(function (d) { return { ok: r.ok, d: d }; });
+        }).then(function (res) {
+          go.disabled = false;
+          go.textContent = 'Connect';
+          if (!res.ok) {
+            msg.style.color = '#e07070';
+            msg.textContent = (res.d && res.d.detail) || 'Could not connect.';
+            return;
+          }
+          connState[app.id] = true;
+          connChecked[app.id] = true;
+          connMeta[app.id] = Object.assign({}, meta, {
+            account_label: res.d.account_label });
+          renderGrid();
+          wrap.remove();
+        }).catch(function () {
+          go.disabled = false;
+          go.textContent = 'Connect';
+          msg.style.color = '#e07070';
+          msg.textContent = 'Could not reach the server.';
+        });
+      });
+      row.appendChild(go);
+      box.appendChild(row);
+
+      wrap.appendChild(box);
+      wrap.addEventListener('click', function (e) { if (e.target === wrap) wrap.remove(); });
+      document.body.appendChild(wrap);
+      var first = fields[0] && inputs[fields[0].name];
+      if (first) first.focus();
     }
 
     function renderGrid() {
@@ -808,7 +969,25 @@
 
     renderGrid();
 
-    APPS.filter(function (a) { return a.real; }).forEach(function (app) {
+    // Token providers: one call describes them all and says which are linked.
+    fetch('/api/tasks/connections', { headers: authHeaders() })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        (d.connections || []).forEach(function (c) {
+          connMeta[c.provider] = c;
+          connState[c.provider] = !!c.connected;
+          connChecked[c.provider] = true;
+        });
+        renderGrid();
+      })
+      .catch(function () {
+        // Mark them checked anyway: a card stuck on "Checking" forever is
+        // worse than one that says Connect and finds out when clicked.
+        APPS.forEach(function (a) { if (a.token) connChecked[a.id] = true; });
+        renderGrid();
+      });
+
+    APPS.filter(function (a) { return a.real && !a.token; }).forEach(function (app) {
       var apis = app.apis || [app.api];
       Promise.all(apis.map(function (api) {
         return fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
@@ -820,6 +999,7 @@
         var any = results.some(function (x) { return x; });
         connState[app.id] = all;
         connPartial[app.id] = any && !all;
+        connChecked[app.id] = true;
         renderGrid();
       });
     });
