@@ -675,11 +675,11 @@
           '<h2 style="color:#fff;font-size:20px;font-weight:600;margin:0;">Connections</h2>' +
           '<button id="aiui-close-modal" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;">&times;</button>' +
         '</div>' +
-        '<p style="color:#888;font-size:13px;margin:6px 0 0 0;">Connect the apps your assistant can act in. Google signs you in once for Gmail, Calendar and Drive. The rest take a personal API credential from that app, which is checked with them before it is saved and is stored encrypted. Every connection is personal to your account. Looking for Slack, Discord or Telegram? Those are channels you talk to IO from, on the Channels page.</p>' +
+        '<p style="color:#8a8a8a;font-size:13px;line-height:1.55;margin:6px 0 0 0;max-width:70ch;">Apps your assistant can act in, as you. Google signs in once; the rest take a personal API credential, checked with the app before it is saved and stored encrypted. <span style="color:#6b6b6b;">Slack, Discord and Telegram are channels you talk to IO from, on the Channels page.</span></p>' +
         '<input id="aiui-conn-search" type="search" name="aiui-app-filter" autocomplete="off" data-1p-ignore="true" data-lpignore="true" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
         '<div id="aiui-conn-tabs" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"></div>' +
       '</div>' +
-      '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;padding:16px 24px 24px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;"></div>';
+      '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;overscroll-behavior:contain;padding:18px 24px 24px 24px;display:grid;align-content:start;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:12px;scrollbar-gutter:stable;"></div>';
 
     // Chat is gone with the cards that filled it. Slack, Discord and Telegram
     // are CHANNELS, places you talk to IO FROM, and they live on the Channels
@@ -752,19 +752,55 @@
       return box;
     }
 
+    // Every card lays out into the SAME four slots, whether or not it has
+    // something to put in each one: icon, name, meta, status. The cards used to
+    // centre a variable-length stack instead, so Google (which carries a
+    // "Gmail, Calendar, Drive" line) pushed its own icon and name upward and
+    // nothing lined up across a row. Reserving the slot costs one empty div and
+    // makes every icon, every name and every status share a baseline.
+    var SLOT_ICON = 40;      // iconEl is a fixed 40x40 box
+    var SLOT_NAME = 20;      // 13px type; 18 clipped every descender
+    var SLOT_META = 16;      // 11px type
+    var SLOT_STATUS = 18;
+
     function makeCard(app) {
       var connected = !!connState[app.id];
       var partial = !!connPartial[app.id];
+
       var card = document.createElement('div');
       card.style.cssText = 'position:relative;background:#1b1b1b;border:'
         + (connected ? '1px solid #2f7d43' : '1px solid #262626')
-        + ';border-radius:14px;padding:16px 12px;display:flex;flex-direction:column;align-items:center;'
-        + 'justify-content:center;gap:9px;min-height:122px;transition:all .15s;cursor:'
-        + (app.real ? 'pointer' : 'default') + ';';
+        + ';border-radius:14px;padding:16px 10px 14px;display:flex;'
+        + 'flex-direction:column;align-items:center;justify-content:flex-start;'
+        + 'min-height:142px;box-sizing:border-box;transition:background .15s,border-color .15s;'
+        + 'cursor:' + (app.real ? 'pointer' : 'default') + ';';
+
+      card.appendChild(iconEl(app));
+
       var nameEl = document.createElement('div');
-      nameEl.style.cssText = 'color:#eee;font-size:13px;font-weight:600;text-align:center;';
+      nameEl.style.cssText = 'color:#eee;font-size:13px;font-weight:600;text-align:center;'
+        + 'margin-top:10px;height:' + SLOT_NAME + 'px;line-height:' + SLOT_NAME + 'px;'
+        + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       nameEl.textContent = app.name;
+      card.appendChild(nameEl);
+
+      // One slot, whatever fills it: the sub-title on Google, the connected
+      // account name on the rest, nothing at all on the others. Always present
+      // so its absence does not move the status line.
+      var acct = connected && connMeta[app.id] && connMeta[app.id].account_label;
+      var metaEl = document.createElement('div');
+      metaEl.style.cssText = 'color:#7f7f7f;font-size:11px;text-align:center;'
+        + 'height:' + SLOT_META + 'px;line-height:' + SLOT_META + 'px;margin-top:2px;'
+        + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      metaEl.textContent = app.sub || (acct && acct !== app.name ? acct : '');
+      card.appendChild(metaEl);
+
       var statusEl = document.createElement('div');
+      // margin-top:auto pins it to the bottom, so the status line sits on one
+      // baseline across the whole grid no matter what is above it.
+      statusEl.style.cssText = 'margin-top:auto;padding-top:8px;text-align:center;'
+        + 'height:' + (SLOT_STATUS + 8) + 'px;line-height:' + SLOT_STATUS + 'px;'
+        + 'box-sizing:content-box;';
       if (!app.real) {
         statusEl.innerHTML = '<span style="color:#666;font-size:11px;">Coming soon</span>';
       } else if (!connChecked[app.id]) {
@@ -776,28 +812,19 @@
       } else {
         statusEl.innerHTML = '<span style="color:#6aa0ff;font-size:12px;font-weight:600;">Connect</span>';
       }
-      card.appendChild(iconEl(app));
-      card.appendChild(nameEl);
-      if (app.sub) {
-        var subEl = document.createElement('div');
-        subEl.style.cssText = 'color:#888;font-size:11px;text-align:center;margin-top:-4px;';
-        subEl.textContent = app.sub;
-        card.appendChild(subEl);
-      }
       card.appendChild(statusEl);
-      var acct = connected && connMeta[app.id] && connMeta[app.id].account_label;
-      if (acct && acct !== app.name) {
-        var acctEl = document.createElement('div');
-        acctEl.style.cssText = 'color:#7d7d7d;font-size:10px;text-align:center;margin-top:-5px;'
-          + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-        acctEl.textContent = acct;
-        card.appendChild(acctEl);
-      }
+
       if (!app.real) {
-        card.style.opacity = '0.5';
+        card.style.opacity = '0.45';
       } else {
-        card.addEventListener('mouseenter', function () { card.style.background = '#242424'; });
-        card.addEventListener('mouseleave', function () { card.style.background = '#1b1b1b'; });
+        card.addEventListener('mouseenter', function () {
+          card.style.background = '#242424';
+          if (!connected) card.style.borderColor = '#3a3a3a';
+        });
+        card.addEventListener('mouseleave', function () {
+          card.style.background = '#1b1b1b';
+          card.style.borderColor = connected ? '#2f7d43' : '#262626';
+        });
         card.addEventListener('click', function () {
           if (app.token) {
             openTokenPanel(app);
