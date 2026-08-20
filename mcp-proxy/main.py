@@ -250,19 +250,35 @@ async def lifespan(app: FastAPI):
         max_retries = int(os.getenv("CACHE_REFRESH_RETRIES", "3"))
         retry_delay = int(os.getenv("CACHE_REFRESH_DELAY", "5"))
 
+        # "Did anything load" is the wrong question. When mcp-proxy and the
+        # tasks service restart together, mcp-proxy wins the race and every
+        # server it reaches over the internal network refuses the connection,
+        # while the rest answer fine. The cache comes back full of tools and
+        # missing a whole category of them, and the old condition called that
+        # success. Ask instead which enabled servers contributed nothing.
+        from startup_health import servers_missing_tools
+
         for attempt in range(1, max_retries + 1):
             print(f"Refreshing tools cache (attempt {attempt}/{max_retries})...")
             await refresh_tools_cache()
 
-            if TOOLS_CACHE:
-                print(f"Tools cache loaded successfully: {len(TOOLS_CACHE)} tools")
+            enabled_ids = {k for k, v in ALL_SERVERS.items() if v.enabled}
+            missing = servers_missing_tools(enabled_ids, TOOLS_CACHE)
+            if not missing:
+                print(f"Tools cache loaded successfully: {len(TOOLS_CACHE)} tools "
+                      f"from all {len(enabled_ids)} enabled servers")
                 break
+            if attempt < max_retries:
+                print(f"{len(TOOLS_CACHE)} tools cached, but {len(missing)} server(s) "
+                      f"returned nothing: {sorted(missing)}. Waiting {retry_delay}s "
+                      f"before retry...")
+                await asyncio.sleep(retry_delay)
             else:
-                if attempt < max_retries:
-                    print(f"No tools cached yet, waiting {retry_delay}s before retry...")
-                    await asyncio.sleep(retry_delay)
-                else:
-                    print("Warning: Could not load tools after all retries. Use POST /refresh to reload.")
+                # Not fatal: a server can be legitimately absent. It is said out
+                # loud, because the failure this replaces was completely silent.
+                print(f"Warning: after {max_retries} attempts these servers still "
+                      f"returned no tools: {sorted(missing)}. Use POST /refresh "
+                      f"once they are up.")
 
     yield
     # Shutdown: cleanup if needed
