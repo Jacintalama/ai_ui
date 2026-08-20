@@ -96,7 +96,14 @@
     }
     .topbar .back:hover { background: var(--surface-2); color: var(--text); }
 
-    .container { max-width: 1080px; margin: 0 auto; padding: 32px 24px 72px; }
+    .container {
+      width: 100%;
+      max-width: 1640px;
+      margin: 0 auto;
+      /* clamp keeps a comfortable gutter on a laptop and stops the content
+         touching the edges on a wide monitor, without a hard pixel cap. */
+      padding: 30px clamp(20px, 3vw, 48px) 72px;
+    }
 
     /* Page header */
     .page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 28px; }
@@ -121,8 +128,8 @@
     /* Two-column responsive layout */
     .layout {
       display: grid;
-      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-      gap: 28px;
+      grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+      gap: clamp(20px, 2vw, 34px);
       align-items: start;
     }
     .col-form { position: sticky; top: 88px; }
@@ -266,7 +273,12 @@
       border-radius: 999px; padding: 2px 9px; min-width: 24px; text-align: center;
     }
 
-    .sched-list { display: flex; flex-direction: column; gap: 14px; }
+    .sched-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+      gap: 14px;
+      align-items: start;
+    }
     .sched-card {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -370,6 +382,19 @@
     .sched-actions {
       display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px;
       padding-top: 14px; border-top: 1px solid var(--border);
+    }
+    /* Pushed to the far end, and given no border until you go near it, so the
+       destructive action is never sitting shoulder to shoulder with Run now. */
+    .btn.quiet-danger {
+      margin-left: auto;
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+    }
+    .btn.quiet-danger:hover:not(:disabled) {
+      color: var(--danger);
+      background: var(--danger-soft);
+      border-color: rgba(248,113,113,0.35);
     }
 
     .loading { display: flex; align-items: center; gap: 10px; color: var(--text-2); padding: 28px 0; }
@@ -1029,9 +1054,9 @@
          </div>
          ${prompt}
          <div class="sched-actions">
+           <button class="btn sm primary" type="button" data-act="run">Run now</button>
            <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>
-           <button class="btn sm" type="button" data-act="run">Run now</button>
-           <button class="btn sm danger" type="button" data-act="delete">Delete</button>
+           <button class="btn sm quiet-danger" type="button" data-act="delete" title="Delete this schedule">Delete</button>
          </div>`;
 
       // Schedule line rendered via textContent so the raw-cron fallback can
