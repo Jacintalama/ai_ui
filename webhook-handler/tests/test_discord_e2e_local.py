@@ -31,6 +31,7 @@ import asyncio
 import json
 import os
 import sys
+import importlib
 import types
 
 import pytest
@@ -57,9 +58,26 @@ _stub_voice_bot.current_text_channel_id = lambda: None
 _stub_voice_bot.current_guild_id = lambda: None
 sys.modules.setdefault("voice_bot", _stub_voice_bot)
 
-# Stub audioop and discord so transitive imports don't fail.
+# Stub audioop and discord so transitive imports don't fail — but ONLY when the
+# real package is genuinely absent.
+#
+# This used to stub unconditionally, which was right when discord was not
+# installed. It is now installed (2.7.1), and an empty ModuleType shadowing it
+# broke COLLECTION of the whole suite the moment main.py started touching
+# `discord.Client` at import time: every later test file that imports main died
+# with "module 'discord' has no attribute 'Client'". Each file still passed
+# alone, so the damage only showed in a full run — and a suite that cannot be
+# collected is a safety net nobody can use.
+#
+# `setdefault` is not enough on its own: it only checks whether the name is in
+# sys.modules yet, not whether the real library exists on disk.
 for _mod in ("audioop", "discord", "discord.ext", "discord.ext.voice_recv"):
-    sys.modules.setdefault(_mod, types.ModuleType(_mod))
+    if _mod in sys.modules:
+        continue
+    try:
+        importlib.import_module(_mod)
+    except Exception:  # noqa: BLE001 - genuinely absent, a stub is correct
+        sys.modules[_mod] = types.ModuleType(_mod)
 
 # Stub apscheduler hierarchy (not installed in dev env).
 for _mod in (
