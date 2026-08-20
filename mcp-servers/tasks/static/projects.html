@@ -1463,7 +1463,7 @@
           ? `<button type="button" class="card-menu-btn" data-slug="${escapeHtml(t.built_app_slug)}" title="More actions" aria-label="Project menu">⋯</button>`
           : "";
         card.innerHTML = `
-          ${slug ? `<div class="thumb"><img loading="lazy" alt="" src="/api/projects/${encodeURIComponent(slug)}/thumb.png"></div>` : ""}
+          ${slug ? `<div class="thumb"><img loading="lazy" alt="" src="/api/projects/${encodeURIComponent(slug)}/thumb.jpg"></div>` : ""}
           <div class="slug-row">
             <span class="slug" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
             <span class="badge ${info.cls}">${info.label}</span>
