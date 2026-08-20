@@ -21,7 +21,8 @@ import shutil
 import time
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, or_, select, text
 
@@ -286,6 +287,36 @@ async def app_display_names(user: CurrentUser = Depends(current_user)) -> dict:
             markup = ""
         out[slug] = app_names.display_name(slug, markup)
     return {"names": out}
+
+
+@router.get("/{slug}/thumb.png")
+async def app_thumbnail(slug: str, background: BackgroundTasks,
+                        user: CurrentUser = Depends(current_user)):
+    """A picture of the app, for its card in the Built apps list.
+
+    Served from a cached file and never captured while the caller waits: a
+    screenshot needs Chromium, this box has about 1.2GB free, and a list of
+    twenty cards asks for twenty pictures at once. A missing picture is a 404
+    and a queued capture, so the card shows nothing this time and shows the
+    real thing on the next load.
+    """
+    import app_thumb
+
+    try:
+        path = app_thumb.thumb_path(slug)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Unknown app.")
+
+    fresh = os.path.isfile(path) and not app_thumb.is_stale(slug)
+    if not fresh:
+        background.add_task(app_thumb.ensure_thumb, slug)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="No preview yet.")
+    return FileResponse(
+        path, media_type="image/png",
+        # Short: an enhance changes the page, and the card should catch up on
+        # the next visit rather than hold a stale picture for a day.
+        headers={"Cache-Control": "public, max-age=120"})
 
 
 @router.get("/{slug}/status", response_model=ProjectStatus)
