@@ -279,3 +279,62 @@ def test_a_huge_vendor_response_is_trimmed(app_and_creds):
     body = _post(app, "/github/list_my_repos", "ralph@example.com").json()
     assert len(body["items"]) <= mytools.MAX_ITEMS
     assert "noise" not in json.dumps(body)
+
+
+# --- the three added on 2026-08-20 ----------------------------------------
+
+def test_the_new_providers_have_tools(app_and_creds):
+    for pid in ("airtable", "hubspot", "zapier"):
+        assert mytools.PROVIDER_TOOLS.get(pid), pid
+
+
+def test_airtable_calls_airtable_as_the_caller(app_and_creds):
+    app, creds, calls, _, _ = app_and_creds
+    creds[("ralph@example.com", "airtable")] = {"token": "RALPH_PAT"}
+    _post(app, "/airtable/list_my_bases", "ralph@example.com")
+    assert "api.airtable.com" in calls[0]["url"]
+    assert calls[0]["headers"]["Authorization"] == "Bearer RALPH_PAT"
+
+
+def test_hubspot_nests_a_write_under_properties(app_and_creds):
+    """HubSpot rejects a flat body on object writes. Nothing else here nests,
+    so it is a per-tool flag rather than a rule."""
+    app, creds, calls, _, _ = app_and_creds
+    creds[("ralph@example.com", "hubspot")] = {"token": "T"}
+    _post(app, "/hubspot/create_contact", "ralph@example.com",
+          {"email": "new@example.com", "firstname": "New"})
+    assert calls[0]["json"] == {"properties": {"email": "new@example.com",
+                                               "firstname": "New"}}
+
+
+def test_a_flat_write_is_still_flat(app_and_creds):
+    """The nesting must not leak into the providers that do not want it."""
+    app, creds, calls, _, _ = app_and_creds
+    creds[("ralph@example.com", "github")] = {"token": "T"}
+    _post(app, "/github/create_issue", "ralph@example.com",
+          {"owner": "o", "repo": "r", "title": "t"})
+    assert calls[0]["json"] == {"title": "t"}
+
+
+def test_zapier_posts_to_the_users_own_hook(app_and_creds):
+    app, creds, calls, _, _ = app_and_creds
+    hook = "https://hooks.zapier.com/hooks/catch/123456/abcdef/"
+    creds[("ralph@example.com", "zapier")] = {"webhook_url": hook}
+    _post(app, "/zapier/send_to_zap", "ralph@example.com",
+          {"message": "hello from IO"})
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"].startswith("https://hooks.zapier.com/hooks/catch/")
+    assert calls[0]["json"]["message"] == "hello from IO"
+
+
+def test_a_stored_zapier_url_that_is_no_longer_a_zapier_url_is_refused(app_and_creds):
+    """Rows outlive the code that wrote them. A stored value is re-validated on
+    every use, so a URL that predates the host check, or was edited in the
+    database, still cannot be posted to."""
+    app, creds, calls, _, _ = app_and_creds
+    creds[("ralph@example.com", "zapier")] = {
+        "webhook_url": "http://169.254.169.254/latest/meta-data/"}
+    r = _post(app, "/zapier/send_to_zap", "ralph@example.com",
+              {"message": "x"})
+    assert r.json()["ok"] is False
+    assert calls == []

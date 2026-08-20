@@ -66,6 +66,9 @@ class Tool:
     query: Dict[str, str] = _dc_field(default_factory=dict)
     #: Body fields sent as the JSON payload (for writes).
     body: tuple = ()
+    #: Some vendors nest a write under a key. HubSpot wants
+    #: {"properties": {...}}; everything else takes the fields flat.
+    wrap_body: str = ""
 
 
 async def _secrets_for(email: str, provider: str) -> Dict[str, str]:
@@ -135,6 +138,8 @@ async def _call(provider_id: str, tool: Tool, email: str,
     if tool.body:
         payload = {k: args[k] for k in tool.body
                    if (args or {}).get(k) not in (None, "")}
+        if tool.wrap_body:
+            payload = {tool.wrap_body: payload}
 
     url = auth.base_url + path
     try:
@@ -343,12 +348,96 @@ N8N_TOOLS = [
          keep=("id", "workflowId", "status", "startedAt", "stoppedAt")),
 ]
 
+AIRTABLE_TOOLS = [
+    Tool(name="list_my_bases",
+         summary="List the Airtable bases your access token can reach.",
+         method="GET", path="/meta/bases",
+         unwrap=lambda d: (d or {}).get("bases", []),
+         keep=("id", "name", "permissionLevel")),
+    Tool(name="list_tables",
+         summary="List the tables inside one Airtable base, given its base id.",
+         method="GET", path="/meta/bases/{base_id}/tables",
+         args={"base_id": ("string", "Base id from list_my_bases", True)},
+         unwrap=lambda d: (d or {}).get("tables", []),
+         keep=("id", "name", "primaryFieldId")),
+    Tool(name="list_records",
+         summary="List rows from one Airtable table, given the base id and table name.",
+         method="GET", path="/{base_id}/{table}",
+         query={"maxRecords": "limit", "view": "view"},
+         args={"base_id": ("string", "Base id from list_my_bases", True),
+               "table": ("string", "Table id or name from list_tables", True),
+               "limit": ("integer", "How many rows to return", False),
+               "view": ("string", "Optional view name", False)},
+         unwrap=lambda d: (d or {}).get("records", []),
+         keep=("id", "createdTime", "fields")),
+    Tool(name="whoami",
+         summary="Show which Airtable account is currently connected to your assistant.",
+         method="GET", path="/meta/whoami",
+         keep=("id", "email", "scopes")),
+]
+
+HUBSPOT_TOOLS = [
+    Tool(name="list_contacts",
+         summary="List contacts from your HubSpot CRM, most recently created first.",
+         method="GET", path="/crm/v3/objects/contacts",
+         query={"limit": "limit"},
+         args={"limit": ("integer", "How many to return", False)},
+         unwrap=lambda d: (d or {}).get("results", []),
+         keep=("id", "properties", "createdAt", "updatedAt")),
+    Tool(name="list_deals",
+         summary="List deals from your HubSpot CRM pipeline.",
+         method="GET", path="/crm/v3/objects/deals",
+         query={"limit": "limit"},
+         args={"limit": ("integer", "How many to return", False)},
+         unwrap=lambda d: (d or {}).get("results", []),
+         keep=("id", "properties", "createdAt", "updatedAt")),
+    Tool(name="list_companies",
+         summary="List companies from your HubSpot CRM.",
+         method="GET", path="/crm/v3/objects/companies",
+         query={"limit": "limit"},
+         args={"limit": ("integer", "How many to return", False)},
+         unwrap=lambda d: (d or {}).get("results", []),
+         keep=("id", "properties", "createdAt")),
+    Tool(name="create_contact",
+         summary="Add a new contact to your HubSpot CRM.",
+         method="POST", path="/crm/v3/objects/contacts",
+         args={"email": ("string", "Contact email address", True),
+               "firstname": ("string", "First name", False),
+               "lastname": ("string", "Last name", False)},
+         body=("email", "firstname", "lastname"),
+         wrap_body="properties",
+         keep=("id", "properties")),
+    Tool(name="whoami",
+         summary="Show which HubSpot portal is currently connected to your assistant.",
+         method="GET", path="/account-info/v3/details",
+         keep=("portalId", "accountType", "timeZone", "uiDomain")),
+]
+
+ZAPIER_TOOLS = [
+    # One tool, because a Catch Hook is one door. What happens on the other
+    # side is whatever Zap the user built, so the assistant's job is to hand
+    # it a payload and say it went.
+    Tool(name="send_to_zap",
+         summary="Send data to your connected Zapier Zap, triggering whatever "
+                 "automation you built on it (Slack post, Sheet row, email, "
+                 "anything Zapier can do).",
+         method="POST", path="/",
+         args={"message": ("string", "The main text to send", True),
+               "subject": ("string", "Optional subject or title", False),
+               "data": ("string", "Optional extra detail", False)},
+         body=("message", "subject", "data"),
+         keep=("status", "id", "request_id")),
+]
+
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
     "clickup": CLICKUP_TOOLS,
     "trello": TRELLO_TOOLS,
     "notion": NOTION_TOOLS,
     "n8n": N8N_TOOLS,
+    "airtable": AIRTABLE_TOOLS,
+    "hubspot": HUBSPOT_TOOLS,
+    "zapier": ZAPIER_TOOLS,
 }
 
 _TYPES = {"string": (str, ""), "integer": (int, 0), "boolean": (bool, False)}

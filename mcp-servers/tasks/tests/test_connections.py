@@ -205,3 +205,75 @@ def test_signing_without_a_credential_is_refused():
     for pid in ALL:
         with pytest.raises(ValueError):
             C.vendor_auth(pid, {})
+
+
+# --- the three added on 2026-08-20 ----------------------------------------
+
+NEW = ["airtable", "hubspot", "zapier"]
+
+
+@pytest.mark.parametrize("pid", NEW)
+def test_the_new_providers_are_registered(pid):
+    assert C.provider(pid) is not None
+
+
+def test_asana_is_not_offered():
+    """Pulled at Ralph's request. A card that cannot be connected is worse
+    than no card."""
+    assert C.provider("asana") is None
+
+
+def test_airtable_uses_a_personal_access_token():
+    req = C.verify_request("airtable", {"token": "patABC"})
+    assert req.url.startswith("https://api.airtable.com/")
+    assert req.headers["Authorization"] == "Bearer patABC"
+
+
+def test_hubspot_uses_a_private_app_token():
+    req = C.verify_request("hubspot", {"token": "pat-na1-xyz"})
+    assert req.url.startswith("https://api.hubapi.com/")
+    assert req.headers["Authorization"] == "Bearer pat-na1-xyz"
+
+
+def test_zapier_is_checked_with_a_post_not_a_get():
+    """A catch hook has nothing to read. The only way to know a webhook is
+    live is to send it something, which is exactly what Zapier's own "test
+    trigger" step does."""
+    p = C.provider("zapier")
+    assert p.probe_method == "POST"
+    assert p.probe_body
+
+
+@pytest.mark.parametrize("pid", ["airtable", "hubspot"])
+def test_the_read_only_providers_are_checked_with_a_get(pid):
+    assert C.provider(pid).probe_method == "GET"
+
+
+def test_zapier_posts_to_the_users_own_hook(self_url="https://hooks.zapier.com/hooks/catch/123/abc/"):
+    req = C.verify_request("zapier", {"webhook_url": self_url})
+    assert req.url.startswith(self_url.rstrip("/"))
+
+
+@pytest.mark.parametrize("bad", [
+    "https://example.com/hooks/catch/1/a/",     # not Zapier
+    "http://hooks.zapier.com/hooks/catch/1/a/",  # not https
+    "https://hooks.zapier.com/",                 # not a catch hook
+    "not a url",
+])
+def test_a_url_that_is_not_a_zapier_hook_is_refused(bad):
+    """The URL is posted to, so it is a request this platform makes to an
+    address the user supplied. It has to be a Zapier hook and nothing else."""
+    with pytest.raises(ValueError):
+        C.verify_request("zapier", {"webhook_url": bad})
+
+
+def test_the_new_providers_label_the_account_they_reached():
+    assert C.account_label("airtable", {"email": "ralph@example.com"}) == "ralph@example.com"
+    assert C.account_label("airtable", {"id": "usr123"}) == "usr123"
+    assert "12345" in C.account_label("hubspot", {"portalId": 12345})
+    assert C.account_label("zapier", {"status": "success"}).strip()
+
+
+@pytest.mark.parametrize("pid", NEW)
+def test_the_new_providers_say_where_to_find_the_credential(pid):
+    assert len(C.provider(pid).where) > 20

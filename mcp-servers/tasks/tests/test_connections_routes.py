@@ -98,9 +98,11 @@ def client(monkeypatch):
         async def __aexit__(self, *a):
             return False
 
-        async def get(self, url, headers=None, params=None):
-            sent.append({"url": url, "headers": headers or {},
-                         "params": params or {}})
+        async def request(self, method, url, headers=None, params=None,
+                          json=None):
+            sent.append({"method": method, "url": url,
+                         "headers": headers or {}, "params": params or {},
+                         "json": json})
             resp = reply["response"]
             if isinstance(resp, Exception):
                 raise resp
@@ -283,3 +285,57 @@ async def test_the_stored_credential_can_be_read_back_for_use(client,
 
 async def test_reading_back_a_credential_nobody_stored_is_empty(client):
     assert await R.secrets_for(EMAIL, "github") == {}
+
+
+# --- Zapier is the odd one out: its check writes ---------------------------
+
+def test_connecting_zapier_sends_a_test_payload_to_the_users_hook(client):
+    """Not a GET, and not to a vendor identity endpoint. The Catch Hook IS the
+    credential, and sending it one payload is how Zapier's own setup step
+    proves a hook is live."""
+    c, store, sent, reply = client
+    reply["response"] = _FakeResponse(200, {"status": "success"})
+    hook = "https://hooks.zapier.com/hooks/catch/123456/abcdef/"
+    r = c.post("/connections/zapier", json={"values": {"webhook_url": hook}})
+    assert r.status_code == 200
+    assert sent[0]["method"] == "POST"
+    assert sent[0]["url"].startswith("https://hooks.zapier.com/hooks/catch/")
+    assert sent[0]["json"], "no test payload was sent"
+
+
+def test_a_url_that_is_not_a_zapier_hook_never_leaves_the_box(client):
+    """This posts to an address the user typed. Accepting any URL would make
+    the connect form a request-forgery primitive pointed at our own network."""
+    c, _, sent, _ = client
+    for bad in ("http://169.254.169.254/latest/meta-data/",
+                "https://example.com/hooks/catch/1/a/",
+                "http://localhost:8210/api/projects"):
+        r = c.post("/connections/zapier", json={"values": {"webhook_url": bad}})
+        assert r.status_code == 400, bad
+    assert sent == []
+
+
+def test_airtable_is_checked_against_airtable(client):
+    c, _, sent, reply = client
+    reply["response"] = _FakeResponse(200, {"id": "usr123", "email": "r@example.com"})
+    r = c.post("/connections/airtable", json={"values": {"token": "patX"}})
+    assert r.status_code == 200
+    assert r.json()["account_label"] == "r@example.com"
+    assert sent[0]["method"] == "GET"
+    assert "api.airtable.com" in sent[0]["url"]
+
+
+def test_hubspot_is_checked_against_hubspot(client):
+    c, _, sent, reply = client
+    reply["response"] = _FakeResponse(200, {"portalId": 987654})
+    r = c.post("/connections/hubspot", json={"values": {"token": "pat-na1-x"}})
+    assert r.status_code == 200
+    assert "987654" in r.json()["account_label"]
+    assert "api.hubapi.com" in sent[0]["url"]
+
+
+def test_asana_is_gone(client):
+    c, _, _, _ = client
+    ids = {x["provider"] for x in c.get("/connections").json()["connections"]}
+    assert "asana" not in ids
+    assert {"airtable", "hubspot", "zapier"} <= ids

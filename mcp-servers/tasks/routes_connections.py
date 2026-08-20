@@ -113,8 +113,9 @@ async def connect(provider_id: str, body: ConnectBody,
 
     try:
         async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
-            r = await client.get(req.url, headers=req.headers,
-                                 params=req.params or None)
+            r = await client.request(req.method, req.url, headers=req.headers,
+                                     params=req.params or None,
+                                     json=req.body)
     except Exception as e:
         # The exception can carry the URL, which for n8n is user-supplied, and
         # for Trello carries the credential in the query string. Log the type

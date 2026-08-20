@@ -26,6 +26,7 @@ cannot leak one by accident.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field as _dc_field
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
@@ -62,6 +63,8 @@ class VerifyRequest:
     url: str
     headers: Dict[str, str] = _dc_field(default_factory=dict)
     params: Dict[str, str] = _dc_field(default_factory=dict)
+    method: str = "GET"
+    body: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,11 @@ class Provider:
     probe_path: str
     #: (json payload) -> the account name to show on the card.
     read_label: Callable[[dict], str]
+    #: How the probe is made. A catch hook has nothing to read, so the only way
+    #: to know it is live is to send it something, which is exactly what
+    #: Zapier's own "test trigger" step does.
+    probe_method: str = "GET"
+    probe_body: Optional[dict] = None
     #: Where the user finds the credential. Shown under the form, because
     #: "paste your API token" is useless if you do not know where it lives.
     where: str = ""
@@ -141,6 +149,48 @@ def _n8n_auth(v):
                       headers={"X-N8N-API-KEY": _require(v, "api_key")})
 
 
+_ZAP_HOOK = re.compile(
+    r"^https://hooks\.zapier\.com/hooks/catch/[A-Za-z0-9]+/[A-Za-z0-9]+/?$")
+
+
+def _airtable_auth(v):
+    return VendorAuth(base_url="https://api.airtable.com/v0",
+                      headers={"Authorization": "Bearer " + _require(v, "token")})
+
+
+def _hubspot_auth(v):
+    return VendorAuth(base_url="https://api.hubapi.com",
+                      headers={"Authorization": "Bearer " + _require(v, "token")})
+
+
+def _zapier_auth(v):
+    """Zapier has no account API a user can hand us a key for. What they DO
+    have is a Catch Hook: a per-Zap URL that is itself the credential, because
+    anyone holding it can trigger that Zap.
+
+    The URL is validated against Zapier's own host and path shape before
+    anything is sent to it. This platform is about to make a request to an
+    address a user typed, and "any URL" would be a request forgery primitive.
+    """
+    url = _require(v, "webhook_url").rstrip("/")
+    if not _ZAP_HOOK.match(url + "/"):
+        raise ValueError(
+            "That does not look like a Zapier Catch Hook URL. It should look "
+            "like https://hooks.zapier.com/hooks/catch/123456/abcdef/")
+    return VendorAuth(base_url=url)
+
+
+def _airtable_label(d):
+    d = d or {}
+    return d.get("email") or d.get("id") or ""
+
+
+def _hubspot_label(d):
+    d = d or {}
+    portal = d.get("portalId")
+    return ("HubSpot portal " + str(portal)) if portal else ""
+
+
 def _notion_label(d):
     d = d or {}
     bot = d.get("bot") or {}
@@ -190,6 +240,43 @@ PROVIDERS: Dict[str, Provider] = {
         probe_path="/users/me",
         read_label=_notion_label,
     ),
+    "airtable": Provider(
+        id="airtable",
+        label="Airtable",
+        fields=[Field("token", "Personal access token", placeholder="pat...")],
+        where="Airtable: airtable.com/create/tokens, create a token with the "
+              "schema.bases:read and data.records:read scopes and the bases "
+              "you want it to reach.",
+        build_auth=_airtable_auth,
+        probe_path="/meta/whoami",
+        read_label=_airtable_label,
+    ),
+    "hubspot": Provider(
+        id="hubspot",
+        label="HubSpot",
+        fields=[Field("token", "Private app access token",
+                      placeholder="pat-na1-...")],
+        where="HubSpot: Settings, Integrations, Private Apps. Create an app, "
+              "give it CRM read scopes, then copy its access token.",
+        build_auth=_hubspot_auth,
+        probe_path="/account-info/v3/details",
+        read_label=_hubspot_label,
+    ),
+    "zapier": Provider(
+        id="zapier",
+        label="Zapier",
+        fields=[Field("webhook_url", "Catch Hook URL", secret=True,
+                      placeholder="https://hooks.zapier.com/hooks/catch/.../.../")],
+        where="Zapier: make a Zap with a Webhooks by Zapier -> Catch Hook "
+              "trigger and copy the URL it gives you. Connecting sends one "
+              "test payload so that Zap can finish its setup.",
+        build_auth=_zapier_auth,
+        probe_path="/",
+        probe_method="POST",
+        probe_body={"aiui_connection_test": True,
+                    "message": "Connected to IO. This is a test payload."},
+        read_label=lambda d: "Catch Hook",
+    ),
     "n8n": Provider(
         id="n8n",
         label="n8n",
@@ -236,7 +323,8 @@ def verify_request(provider_id: str, values: Dict[str, str]) -> VerifyRequest:
         raise ValueError("Unknown provider: " + str(provider_id))
     auth = p.build_auth(values or {})
     return VerifyRequest(url=auth.base_url + p.probe_path,
-                         headers=auth.headers, params=auth.params)
+                         headers=auth.headers, params=auth.params,
+                         method=p.probe_method, body=p.probe_body)
 
 
 def account_label(provider_id: str, payload: dict) -> str:

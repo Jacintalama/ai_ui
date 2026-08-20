@@ -778,6 +778,42 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "them to have connected n8n under Connections.",
         enabled=True,
     ),
+    "my-airtable": MCPServerConfig(
+        server_id="my-airtable",
+        access_class=AccessClass.PUBLIC,
+        display_name="Airtable (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/airtable",
+        auth_type="none",
+        api_key_env=None,
+        description="Airtable acting as the signed-in user's own account. Requires "
+                    "them to have connected Airtable under Connections.",
+        enabled=True,
+    ),
+    "my-hubspot": MCPServerConfig(
+        server_id="my-hubspot",
+        access_class=AccessClass.PUBLIC,
+        display_name="HubSpot (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/hubspot",
+        auth_type="none",
+        api_key_env=None,
+        description="HubSpot acting as the signed-in user's own account. Requires "
+                    "them to have connected HubSpot under Connections.",
+        enabled=True,
+    ),
+    "my-zapier": MCPServerConfig(
+        server_id="my-zapier",
+        access_class=AccessClass.PUBLIC,
+        display_name="Zapier (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/zapier",
+        auth_type="none",
+        api_key_env=None,
+        description="Zapier acting as the signed-in user's own account. Requires "
+                    "them to have connected Zapier under Connections.",
+        enabled=True,
+    ),
     "meeting-kb": MCPServerConfig(
         server_id="meeting-kb",
         access_class=AccessClass.PUBLIC,
