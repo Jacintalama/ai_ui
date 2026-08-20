@@ -273,6 +273,33 @@
       border-radius: 999px; padding: 2px 9px; min-width: 24px; text-align: center;
     }
 
+    .list-tools { display: flex; align-items: center; gap: 10px; }
+    .search-wrap {
+      position: relative; display: flex; align-items: center;
+    }
+    .search-wrap svg {
+      position: absolute; left: 10px; width: 15px; height: 15px;
+      color: var(--muted); pointer-events: none;
+    }
+    .search-wrap input {
+      width: 230px; padding: 7px 12px 7px 32px;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); font-size: 13px;
+      outline: none; transition: border-color 0.15s, width 0.15s;
+    }
+    .search-wrap input::placeholder { color: var(--muted); }
+    .search-wrap input:focus { border-color: var(--accent); width: 270px; }
+    @media (max-width: 640px) {
+      .search-wrap input, .search-wrap input:focus { width: 100%; }
+      .list-tools { width: 100%; }
+    }
+
+    .pager {
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border);
+    }
+    .pager .status { font-size: 12.5px; color: var(--text-2); min-width: 96px; text-align: center; }
+
     .sched-list {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
@@ -610,12 +637,21 @@
             <h2>Your schedules</h2>
             <span class="count" id="sched-count" hidden>0</span>
           </div>
-          <button class="btn sm" type="button" id="refresh-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v4h-4"></path>
-            </svg>
-            Refresh
-          </button>
+          <div class="list-tools">
+            <label class="search-wrap" for="sched-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.2-4.2"></path>
+              </svg>
+              <input id="sched-search" type="search" autocomplete="off"
+                     placeholder="Search schedules" aria-label="Search schedules">
+            </label>
+            <button class="btn sm" type="button" id="refresh-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v4h-4"></path>
+              </svg>
+              Refresh
+            </button>
+          </div>
         </div>
         <div class="error box" id="list-error" hidden></div>
         <div id="list-region">
@@ -1093,6 +1129,87 @@
       else { schedCount.hidden = true; }
     }
 
+    // Everything the server sent, unfiltered. The search and the pager work on
+    // this, so typing does not re-hit the API and paging is instant.
+    let allSchedules = [];
+    let searchText = "";
+    let currentPage = 1;
+    const PAGE_SIZE = 6;
+
+    function matchesSearch(s, needle) {
+      if (!needle) return true;
+      // Name and prompt both: people remember a schedule by what it DOES at
+      // least as often as by what they called it.
+      return `${s.name || ""}
+${s.prompt || ""}`.toLowerCase().includes(needle);
+    }
+
+    function filteredSchedules() {
+      const needle = searchText.trim().toLowerCase();
+      return allSchedules.filter((s) => matchesSearch(s, needle));
+    }
+
+    function renderNoMatches() {
+      const wrap = document.createElement("div");
+      wrap.className = "empty-state";
+      // Deliberately NOT the "create your first schedule" copy: the person
+      // reading this already has schedules, they just cannot see them.
+      wrap.innerHTML =
+        `<div class="empty-icon">${ICON_CAL}</div>
+         <div class="empty-title">No schedules match that</div>
+         <div class="empty-hint">Nothing here matches &ldquo;${escapeHtml(searchText.trim())}&rdquo;. Try a shorter word, or clear the search to see all ${allSchedules.length}.</div>`;
+      return wrap;
+    }
+
+    function renderPager(totalPages) {
+      const pager = document.createElement("div");
+      pager.className = "pager";
+      pager.id = "pager";
+      pager.innerHTML =
+        `<button class="btn sm" type="button" id="pager-prev" ${currentPage <= 1 ? "disabled" : ""}>&larr; Previous</button>
+         <span class="status" id="pager-status">Page ${currentPage} of ${totalPages}</span>
+         <button class="btn sm" type="button" id="pager-next" ${currentPage >= totalPages ? "disabled" : ""}>Next &rarr;</button>`;
+      pager.querySelector("#pager-prev").addEventListener("click", () => {
+        if (currentPage > 1) { currentPage--; renderList(); }
+      });
+      pager.querySelector("#pager-next").addEventListener("click", () => {
+        if (currentPage < totalPages) { currentPage++; renderList(); }
+      });
+      return pager;
+    }
+
+    function renderList() {
+      const rows = filteredSchedules();
+      const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+      // Clamp rather than reset: deleting the only item on the last page
+      // should land you on the new last page, not back at the beginning.
+      if (currentPage > totalPages) currentPage = totalPages;
+
+      listRegion.innerHTML = "";
+      updateCount(rows.length);
+
+      if (allSchedules.length === 0) {
+        listRegion.appendChild(renderEmptyState());
+        return;
+      }
+      if (rows.length === 0) {
+        listRegion.appendChild(renderNoMatches());
+        return;
+      }
+
+      const start = (currentPage - 1) * PAGE_SIZE;
+      const wrap = document.createElement("div");
+      wrap.className = "sched-list";
+      for (const s of rows.slice(start, start + PAGE_SIZE)) {
+        wrap.appendChild(renderCard(s));
+      }
+      listRegion.appendChild(wrap);
+
+      // No pager when everything already fits: a control that can only be
+      // disabled is noise.
+      if (totalPages > 1) listRegion.appendChild(renderPager(totalPages));
+    }
+
     async function loadSchedules() {
       clearListError();
       let rows;
@@ -1109,17 +1226,11 @@
         showListError(err.message);
         return;
       }
-      if (!Array.isArray(rows)) rows = [];
-      listRegion.innerHTML = "";
-      updateCount(rows.length);
-      if (rows.length === 0) {
-        listRegion.appendChild(renderEmptyState());
-        return;
-      }
-      const wrap = document.createElement("div");
-      wrap.className = "sched-list";
-      for (const s of rows) wrap.appendChild(renderCard(s));
-      listRegion.appendChild(wrap);
+      allSchedules = Array.isArray(rows) ? rows : [];
+      // currentPage is deliberately NOT reset here. This runs again after every
+      // enable, disable, run and delete, and being thrown back to page 1 each
+      // time you touch something on page 2 is maddening.
+      renderList();
     }
 
     async function toggleSchedule(s, card) {
@@ -1221,6 +1332,15 @@
     dowSelect.addEventListener("change", syncFriendly);
     domInput.addEventListener("input", syncFriendly);
     everyNInput.addEventListener("input", syncFriendly);
+    const searchInput = document.getElementById("sched-search");
+    searchInput.addEventListener("input", () => {
+      searchText = searchInput.value;
+      // Back to the first page: filtering while sitting on page 3 of 3 would
+      // otherwise leave you looking at an empty list of two results.
+      currentPage = 1;
+      renderList();
+    });
+
     refreshBtn.addEventListener("click", () => loadSchedules());
 
     syncFriendly();
