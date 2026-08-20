@@ -90,6 +90,76 @@ async def list_connections(user: CurrentUser = Depends(current_user)):
                             for p in C.PROVIDERS.values()]}
 
 
+async def _ask_vendor(provider: C.Provider, values: Dict[str, str]) -> tuple:
+    """(ok, account_label, error). Never raises, never echoes a credential.
+
+    Shared by connect and test on purpose: "is this credential real" must be
+    the same question both times, or a connection can pass one and fail the
+    other for no reason a user could understand.
+    """
+    try:
+        req = C.verify_request(provider.id, values)
+    except ValueError as e:
+        return False, None, str(e)
+
+    try:
+        async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
+            r = await client.request(req.method, req.url, headers=req.headers,
+                                     params=req.params or None, json=req.body)
+    except Exception as e:
+        # The exception can carry the URL, which for n8n and Zapier is user
+        # supplied and for Trello carries the credential in its query string.
+        # Log the type only.
+        logger.warning("connections: %s unreachable (%s)", provider.id,
+                       type(e).__name__)
+        return False, None, ("Could not reach " + provider.label
+                             + " just now. Try again in a moment.")
+
+    if r.status_code in (401, 403):
+        return False, None, (provider.label + " rejected that credential. It "
+                             "may have expired or been revoked. Reconnect it "
+                             "to fix this.")
+    if r.status_code >= 400:
+        # Never r.text: vendors echo the request, credential included.
+        logger.warning("connections: %s verify returned %s", provider.id,
+                       r.status_code)
+        return False, None, (provider.label + " returned an error ("
+                             + str(r.status_code) + "). The credential may not "
+                             "have the right permissions.")
+    try:
+        payload = r.json()
+    except Exception:
+        payload = {}
+    return True, C.account_label(provider.id, payload), None
+
+
+@router.post("/{provider_id}/test")
+async def test_connection(provider_id: str,
+                          user: CurrentUser = Depends(current_user)):
+    """Ask the vendor, right now, whether the stored credential still works.
+
+    Connecting proved it once and nothing proved it again, so a revoked token
+    left the card reading "Connected" until some tool call failed in a chat,
+    which is the worst place to discover it.
+
+    A failure never deletes the stored credential. A vendor having a bad minute
+    must not throw away something the user pasted; they decide whether to
+    replace it.
+    """
+    provider = C.provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Unknown app.")
+
+    values = await secrets_for(user.email, provider_id)
+    if not values:
+        return {"provider": provider_id, "ok": False,
+                "error": "Not connected yet. Add a credential first."}
+
+    ok, label, error = await _ask_vendor(provider, values)
+    return {"provider": provider_id, "ok": ok,
+            "account_label": label, "error": error}
+
+
 @router.post("/{provider_id}")
 async def connect(provider_id: str, body: ConnectBody,
                   user: CurrentUser = Depends(current_user)):
@@ -106,46 +176,14 @@ async def connect(provider_id: str, body: ConnectBody,
         raise HTTPException(status_code=400,
                             detail="Still needed: " + ", ".join(labels))
 
-    try:
-        req = C.verify_request(provider_id, values)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    try:
-        async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
-            r = await client.request(req.method, req.url, headers=req.headers,
-                                     params=req.params or None,
-                                     json=req.body)
-    except Exception as e:
-        # The exception can carry the URL, which for n8n is user-supplied, and
-        # for Trello carries the credential in the query string. Log the type
-        # only.
-        logger.warning("connections: %s unreachable (%s)",
-                       provider_id, type(e).__name__)
-        raise HTTPException(
-            status_code=502,
-            detail="Could not reach " + provider.label + " to check that.")
-
-    if r.status_code in (401, 403):
-        raise HTTPException(
-            status_code=400,
-            detail=provider.label + " rejected that credential. Check you "
-                   "copied all of it, and that it has not expired.")
-    if r.status_code >= 400:
-        logger.warning("connections: %s verify returned %s for %s",
-                       provider_id, r.status_code,
-                       C.redact(provider_id, values))
-        raise HTTPException(
-            status_code=400,
-            detail=provider.label + " returned an error (" +
-                   str(r.status_code) + "). The credential may not have the "
-                   "right permissions.")
-
-    try:
-        payload = r.json()
-    except Exception:
-        payload = {}
-    label = C.account_label(provider_id, payload)
+    ok, label, error = await _ask_vendor(provider, values)
+    if not ok:
+        # 502 when the vendor could not be reached, 400 when it answered and
+        # said no. Telling someone their token is wrong because ClickUp was
+        # down sends them off to regenerate a perfectly good credential.
+        unreachable = error and error.startswith("Could not reach")
+        raise HTTPException(status_code=502 if unreachable else 400,
+                            detail=error)
 
     blob = crypto_utils.encrypt(json.dumps(values))
     try:

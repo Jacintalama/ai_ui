@@ -954,10 +954,46 @@
       row.style.cssText = 'display:flex;gap:9px;justify-content:flex-end;align-items:center;';
 
       if (connected) {
+        var test = document.createElement('button');
+        test.textContent = 'Test connection';
+        test.style.cssText = 'background:transparent;color:#9aa6c8;border:1px solid #303030;'
+          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;';
+        test.addEventListener('click', function () {
+          test.disabled = true;
+          test.textContent = 'Checking…';
+          msg.style.color = '#8d8d8d';
+          msg.textContent = 'Asking ' + app.name + ' whether it still works…';
+          fetch('/api/tasks/connections/' + app.id + '/test',
+                { method: 'POST', headers: authHeaders() })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              test.disabled = false;
+              test.textContent = 'Test connection';
+              if (d && d.ok) {
+                msg.style.color = '#4CAF50';
+                msg.textContent = 'Working. Connected as '
+                  + (d.account_label || app.name) + '.';
+                connMeta[app.id] = Object.assign({}, meta, {
+                  account_label: d.account_label });
+                renderGrid();
+              } else {
+                msg.style.color = '#e07070';
+                msg.textContent = (d && d.error) || 'That did not work.';
+              }
+            })
+            .catch(function () {
+              test.disabled = false;
+              test.textContent = 'Test connection';
+              msg.style.color = '#e07070';
+              msg.textContent = 'Could not reach the server.';
+            });
+        });
+        row.appendChild(test);
+
         var dis = document.createElement('button');
         dis.textContent = 'Disconnect';
         dis.style.cssText = 'background:transparent;color:#c96;border:1px solid #4a3a2a;'
-          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;margin-right:auto;';
+          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;margin-right:auto;order:-1;';
         dis.addEventListener('click', function () {
           dis.disabled = true; dis.textContent = 'Disconnecting\u2026';
           fetch('/api/tasks/connections/' + app.id, { method: 'DELETE', headers: authHeaders() })

@@ -28,9 +28,10 @@ SECRET = "pk_SUPERSECRET_TOKEN_VALUE_12345"
 
 
 class _FakeResponse:
-    def __init__(self, status_code=200, payload=None):
+    def __init__(self, status_code=200, payload=None, text=""):
         self.status_code = status_code
         self._payload = payload if payload is not None else {}
+        self.text = text or json.dumps(self._payload)
 
     def json(self):
         return self._payload
@@ -339,3 +340,75 @@ def test_asana_is_gone(client):
     ids = {x["provider"] for x in c.get("/connections").json()["connections"]}
     assert "asana" not in ids
     assert {"airtable", "hubspot", "zapier"} <= ids
+
+
+# --- checking a connection that already exists -----------------------------
+# "Connected" was proved once, at connect time, and then never again. A revoked
+# or expired credential left the card saying Connected until a tool call failed
+# in a chat, which is the worst place to find out. Same probe, on demand.
+
+def test_testing_a_connection_asks_the_vendor_again(client):
+    c, store, sent, reply = client
+    c.post("/connections/clickup", json={"values": {"token": SECRET}})
+    sent.clear()
+    r = c.post("/connections/clickup/test")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert sent and "api.clickup.com" in sent[0]["url"]
+
+
+def test_a_working_connection_reports_the_account_it_reached(client):
+    c, _, _, _ = client
+    c.post("/connections/clickup", json={"values": {"token": SECRET}})
+    assert c.post("/connections/clickup/test").json()["account_label"] == "ralph"
+
+
+def test_a_credential_that_has_since_been_revoked_is_reported(client):
+    """The case the whole thing exists for: it worked when connected and does
+    not work now."""
+    c, store, _, reply = client
+    c.post("/connections/clickup", json={"values": {"token": SECRET}})
+    assert "clickup" in store
+    reply["response"] = _FakeResponse(401, {})
+    body = c.post("/connections/clickup/test").json()
+    assert body["ok"] is False
+    assert "reconnect" in body["error"].lower() or "expired" in body["error"].lower()
+
+
+def test_a_failed_test_does_not_delete_the_connection(client):
+    """A vendor blip must not throw away a credential the user pasted. They
+    decide whether to replace it."""
+    c, store, _, reply = client
+    c.post("/connections/clickup", json={"values": {"token": SECRET}})
+    reply["response"] = _FakeResponse(401, {})
+    c.post("/connections/clickup/test")
+    assert "clickup" in store
+
+
+def test_an_unreachable_vendor_is_not_reported_as_a_bad_credential(client):
+    c, _, _, reply = client
+    c.post("/connections/clickup", json={"values": {"token": SECRET}})
+    reply["response"] = RuntimeError("connect timeout")
+    body = c.post("/connections/clickup/test").json()
+    assert body["ok"] is False
+    assert "could not reach" in body["error"].lower()
+
+
+def test_testing_something_never_connected_says_so(client):
+    c, _, sent, _ = client
+    body = c.post("/connections/github/test").json()
+    assert body["ok"] is False
+    assert "not connected" in body["error"].lower()
+    assert sent == [], "nothing should be sent for a credential we do not have"
+
+
+def test_testing_an_unknown_provider_is_a_404(client):
+    c, _, _, _ = client
+    assert c.post("/connections/myspace/test").status_code == 404
+
+
+def test_a_test_never_echoes_the_credential(client):
+    c, _, _, reply = client
+    c.post("/connections/clickup", json={"values": {"token": SECRET}})
+    reply["response"] = _FakeResponse(418, {}, text="rejected " + SECRET)
+    assert SECRET not in c.post("/connections/clickup/test").text
