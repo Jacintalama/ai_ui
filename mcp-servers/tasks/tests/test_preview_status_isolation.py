@@ -23,7 +23,16 @@ import routes_preview
 
 
 class _FakeUser:
-    pass
+    """A realistic principal.
+
+    Was a bare `pass` while the route ignored `user` entirely. The route now
+    scopes to the caller's project role, so the fake has to look like one.
+    Admin because this test is about slug isolation, not authorization — an
+    admin short-circuits the role check and keeps the test free of the DB, as
+    its docstring intends.
+    """
+    email = "admin@example.com"
+    is_admin = True
 
 
 class _FakeItem:
