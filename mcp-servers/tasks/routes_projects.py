@@ -289,7 +289,7 @@ async def app_display_names(user: CurrentUser = Depends(current_user)) -> dict:
     return {"names": out}
 
 
-@router.get("/{slug}/thumb.png")
+@router.get("/{slug}/thumb.jpg")
 async def app_thumbnail(slug: str, background: BackgroundTasks,
                         user: CurrentUser = Depends(current_user)):
     """A picture of the app, for its card in the Built apps list.
@@ -313,7 +313,7 @@ async def app_thumbnail(slug: str, background: BackgroundTasks,
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="No preview yet.")
     return FileResponse(
-        path, media_type="image/png",
+        path, media_type="image/jpeg",
         # Short: an enhance changes the page, and the card should catch up on
         # the next visit rather than hold a stale picture for a day.
         headers={"Cache-Control": "public, max-age=120"})

@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 #: Wide enough to show a hero and its layout, small enough that twenty of them
 #: on one page are not a megabyte each.
 VIEWPORT = {"width": 1280, "height": 800}
-THUMB_WIDTH = 640
+#: Captured at half scale as JPEG. The same page is 956KB as a full-scale PNG
+#: and 24KB this way, and it is displayed 132px tall in a card: forty times the
+#: bytes for detail nobody can see.
+DEVICE_SCALE = 0.5
+JPEG_QUALITY = 72
 CAPTURE_TIMEOUT_MS = 15000
 #: Fonts and any entrance animation need a beat before the paint is worth
 #: keeping, the same wait the template preview generator uses.
@@ -70,7 +74,7 @@ def app_dir(slug: str) -> str:
 
 
 def thumb_path(slug: str) -> str:
-    return os.path.join(app_dir(slug), ".thumb", "preview.png")
+    return os.path.join(app_dir(slug), ".thumb", "preview.jpg")
 
 
 def _newest_source_mtime(root: str) -> float:
@@ -131,14 +135,15 @@ async def _capture(slug: str) -> bool:
         )
         try:
             context = await browser.new_context(viewport=VIEWPORT,
-                                                device_scale_factor=1)
+                                                device_scale_factor=DEVICE_SCALE)
             page = await context.new_page()
             await page.goto(url, wait_until="load",
                             timeout=CAPTURE_TIMEOUT_MS)
             await page.wait_for_timeout(SETTLE_MS)
             # Above the fold only. A full-page shot of a long landing page
             # renders as an unreadable sliver in a card.
-            await page.screenshot(path=str(out), full_page=False)
+            await page.screenshot(path=str(out), full_page=False,
+                                  type="jpeg", quality=JPEG_QUALITY)
         finally:
             await browser.close()
     return out.is_file()

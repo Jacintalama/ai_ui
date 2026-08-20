@@ -36,7 +36,7 @@ def apps(tmp_path, monkeypatch):
         if thumb_age is not None:
             t = d / ".thumb"
             t.mkdir(exist_ok=True)
-            png = t / "preview.png"
+            png = t / "preview.jpg"
             png.write_bytes(b"\x89PNG")
             stamp = time.time() + thumb_age
             os.utime(png, (stamp, stamp))
@@ -113,7 +113,7 @@ def test_a_hostile_slug_is_refused(bad, apps):
 @pytest.mark.parametrize("ok", ["klakk", "aircon-page-5564", "a_b-1", "x"])
 def test_a_real_slug_is_accepted(ok, apps):
     p = app_thumb.thumb_path(ok)
-    assert p.endswith(os.path.join(ok, ".thumb", "preview.png"))
+    assert p.endswith(os.path.join(ok, ".thumb", "preview.jpg"))
 
 
 def test_a_hostile_slug_is_refused_by_the_staleness_check_too(apps):
