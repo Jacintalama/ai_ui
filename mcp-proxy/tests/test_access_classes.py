@@ -86,10 +86,14 @@ def test_a_restricted_server_is_not_handed_out_by_default():
         [], is_admin=False, servers=REGISTRY)
 
 
-def test_a_grant_is_what_unlocks_them():
+def test_a_grant_unlocks_a_restricted_server_but_not_a_shared_one():
+    """This used to assert that a grant unlocked BOTH. The rule changed
+    deliberately: RESTRICTED is about reach and is a real decision an admin can
+    make, SHARED is about whose credential pays and is admin-only."""
     got = resolve_user_servers(["clickup", "scheduler"], is_admin=False,
                                servers=REGISTRY)
-    assert {"clickup", "scheduler"} <= got
+    assert "scheduler" in got
+    assert "clickup" not in got
 
 
 # --- the intersection that was missing on exactly one path ----------------
@@ -359,3 +363,66 @@ async def test_only_an_admin_reaches_beyond_the_public_set(fake_db):
     plain = set(await tenants_mod.get_user_tenants_async("user@example.com"))
     assert plain == LIVE_PUBLIC
     assert admin >= plain
+
+
+# --- the wall between a user and the platform's own accounts ---------------
+# Two tiers, and one rule: a shared vendor credential belongs to the platform,
+# so only an admin may spend it. Everyone else gets what costs nobody anything,
+# plus whatever they connected themselves.
+#
+# The hole this closes: access classes decided the DEFAULT, and a group grant
+# could still widen a non-admin onto a SHARED server. kimcalicoy24 held exactly
+# that through MCP-GitHub membership and had been making GitHub calls as the
+# platform's account. Nothing about it was visible.
+
+def test_a_grant_cannot_give_a_non_admin_a_shared_credential_server():
+    """The wall. clickup is one real person's token; a group membership must
+    not be a way to spend it."""
+    got = resolve_user_servers(["clickup"], is_admin=False, servers=REGISTRY)
+    assert "clickup" not in got
+
+
+def test_that_grant_still_works_for_an_admin():
+    got = resolve_user_servers(["clickup"], is_admin=True, servers=REGISTRY)
+    assert "clickup" in got
+
+
+def test_a_grant_can_still_widen_a_user_onto_a_restricted_server():
+    """RESTRICTED is not about someone else's credential, it is about reach.
+    Granting it deliberately is still a thing an admin can do."""
+    got = resolve_user_servers(["scheduler"], is_admin=False, servers=REGISTRY)
+    assert "scheduler" in got
+
+
+def test_a_user_granted_everything_still_gets_no_shared_server():
+    got = resolve_user_servers(list(REGISTRY), is_admin=False, servers=REGISTRY)
+    assert not [s for s in got
+                if REGISTRY[s].access_class is AccessClass.SHARED]
+
+
+def test_the_per_user_servers_are_unaffected_by_the_wall():
+    """my-clickup spends the CALLER's credential, so it is not behind it."""
+    got = resolve_user_servers([], is_admin=False)
+    assert {"my-clickup", "my-github", "my-notion"} <= got
+
+
+async def test_execution_enforces_the_wall_too(fake_db):
+    """Search and execute ask the same resolver, so this should hold, but it is
+    the pairing that broke once before and it is worth pinning."""
+    fake_db(group_tenants=["clickup", "github", "trello"])
+    for shared in ("clickup", "github", "trello"):
+        if shared in tenants_mod.ALL_SERVERS:
+            assert not await tenants_mod.user_has_tenant_access_async(
+                "user@example.com", shared), shared
+
+
+async def test_only_two_tiers_exist(fake_db):
+    """No third state. Either you are an admin and get the enabled set, or you
+    are not and get public plus your own grants."""
+    fake_db(owui_admin=True)
+    admin = set(await tenants_mod.get_user_tenants_async("a@example.com"))
+    fake_db(owui_admin=False)
+    user = set(await tenants_mod.get_user_tenants_async("b@example.com"))
+    enabled = {k for k, v in tenants_mod.ALL_SERVERS.items() if v.enabled}
+    assert admin == enabled
+    assert user < admin

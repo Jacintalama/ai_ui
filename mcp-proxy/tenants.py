@@ -859,9 +859,22 @@ def resolve_user_servers(granted, is_admin: bool, servers=None) -> set:
     enabled = {sid for sid, cfg in servers.items() if cfg.enabled}
     if is_admin:
         return enabled
+
     public = {sid for sid in enabled
               if servers[sid].access_class is AccessClass.PUBLIC}
-    return enabled & (public | set(granted or ()))
+    # The wall. A SHARED server spends one vendor credential that belongs to
+    # the platform, so a grant must not be a way onto it: group membership is
+    # not a decision anyone made about spending somebody else's account.
+    # kimcalicoy24 held exactly such a grant through MCP-GitHub and had been
+    # making GitHub calls as the platform, invisibly.
+    #
+    # RESTRICTED is deliberately still grantable. That class is about reach
+    # into other users' data, not about whose credential pays, and handing it
+    # to someone is a real decision an admin can make.
+    grantable = {sid for sid in set(granted or ())
+                 if sid in enabled
+                 and servers[sid].access_class is not AccessClass.SHARED}
+    return public | grantable
 
 
 def get_server(server_id: str) -> Optional[MCPServerConfig]:
