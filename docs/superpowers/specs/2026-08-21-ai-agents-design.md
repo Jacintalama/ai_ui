@@ -115,9 +115,10 @@ Telling the two apart needs no flag, and this is worth stating because it is not
 obvious. Once the visibility filter is on, another user's private agent is not
 returned at all. So any agent the API returns that the user does not own is, by
 construction, one that carries a wildcard grant: a platform agent. Owner id is
-the only test the page needs. Copying rather
-than editing is the point: a platform agent improves centrally for everybody,
-and a template that gets forked stops improving.
+the only test the page needs.
+
+Copying rather than editing is the point: a platform agent improves centrally
+for everybody, and a template that gets forked stops improving.
 
 ## Failure and limits
 
