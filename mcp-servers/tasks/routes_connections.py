@@ -17,6 +17,7 @@ from typing import Dict
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 import connections as C
@@ -40,6 +41,17 @@ async def _connect():
     return await asyncpg.connect(DATABASE_URL)
 
 
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL",
+                                 "https://ai-ui.coolestdomain.win")
+
+
+def _redirect_uri(provider_id: str) -> str:
+    """Where the vendor sends the browser back. Must match what was registered
+    with them exactly, character for character."""
+    return (PUBLIC_BASE_URL.rstrip("/")
+            + "/api/tasks/connections/" + provider_id + "/oauth/callback")
+
+
 class ConnectBody(BaseModel):
     #: field name -> value, matching connections.required_fields(provider).
     values: Dict[str, str] = {}
@@ -54,6 +66,16 @@ async def _stored(conn, email: str) -> Dict[str, dict]:
             for r in rows}
 
 
+def _oauth_ready(provider_id: str) -> bool:
+    """True only when the vendor supports it AND this deployment registered an
+    app. Import is local so a missing module can never break the listing."""
+    try:
+        import oauth_providers as O
+        return O.configured(provider_id)
+    except Exception:
+        return False
+
+
 def _describe(provider: C.Provider, stored: dict) -> dict:
     """Everything the card needs, and nothing that could be a secret."""
     hit = stored.get(provider.id)
@@ -64,6 +86,9 @@ def _describe(provider: C.Provider, stored: dict) -> dict:
         "account_label": (hit or {}).get("account_label"),
         "connected_at": (hit or {}).get("updated_at"),
         "where": provider.where,
+        # Whether this deployment can offer click-and-approve. False keeps the
+        # paste-a-token form, which is what every provider has today.
+        "oauth": _oauth_ready(provider.id),
         "fields": [{"name": f.name, "label": f.label, "secret": f.secret,
                     "placeholder": f.placeholder} for f in provider.fields],
     }
@@ -133,6 +158,164 @@ async def _ask_vendor(provider: C.Provider, values: Dict[str, str]) -> tuple:
     return True, C.account_label(provider.id, payload), None
 
 
+@router.get("/{provider_id}/oauth/start")
+async def oauth_start(provider_id: str,
+                      user: CurrentUser = Depends(current_user)):
+    """Where to send the browser to approve this connection.
+
+    Returns a URL rather than redirecting, so the caller can open it in a popup
+    and leave the dialog underneath.
+    """
+    import oauth_providers as O
+
+    if not C.provider(provider_id):
+        raise HTTPException(status_code=404, detail="Unknown app.")
+    if not O.configured(provider_id):
+        raise HTTPException(
+            status_code=503,
+            detail="One-click connect is not set up for this app yet.")
+
+    client_id, _ = O.client_credentials(provider_id)
+    state = O.STATES.mint(user.email)
+    return {"url": O.authorize_url(provider_id, client_id=client_id,
+                                   redirect_uri=_redirect_uri(provider_id),
+                                   state=state)}
+
+
+@router.get("/{provider_id}/oauth/callback")
+async def oauth_callback(provider_id: str, code: str = "", state: str = "",
+                         error: str = ""):
+    """Where the vendor sends the browser back.
+
+    Deliberately NOT authenticated by the session. The user this grant belongs
+    to is the one named by `state`, minted for them when they started and
+    spendable once. Trusting the session instead would let anyone who can make
+    a signed-in browser follow this URL attach their own vendor account to
+    somebody else's user, silently.
+    """
+    import oauth_providers as O
+
+    provider = C.provider(provider_id)
+    if not provider or not O.supports_oauth(provider_id):
+        return _oauth_done(False, "Unknown app.")
+    if error:
+        return _oauth_done(False, "Cancelled, or " + provider.label
+                           + " refused the request.")
+
+    email = O.STATES.consume(state)
+    if not email:
+        # Expired, replayed or forged. All three get the same answer.
+        return _oauth_done(False, "That approval link has expired. Start the "
+                                  "connection again.")
+    if not code:
+        return _oauth_done(False, provider.label + " did not return a code.")
+
+    client_id, client_secret = O.client_credentials(provider_id)
+    prov = O.PROVIDERS[provider_id]
+    try:
+        auth = (client_id, client_secret) if prov.token_auth == "basic" else None
+        body = {"grant_type": "authorization_code", "code": code,
+                "redirect_uri": _redirect_uri(provider_id)}
+        if auth is None:
+            body.update({"client_id": client_id,
+                         "client_secret": client_secret})
+        async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
+            r = await client.post(prov.token_endpoint, json=body, auth=auth)
+    except Exception as e:
+        logger.warning("oauth: %s token exchange unreachable (%s)",
+                       provider_id, type(e).__name__)
+        return _oauth_done(False, "Could not reach " + provider.label + ".")
+
+    if r.status_code >= 400:
+        # Never r.text: a failed exchange echoes the request, and the request
+        # carries the client secret.
+        logger.warning("oauth: %s token exchange returned %s",
+                       provider_id, r.status_code)
+        return _oauth_done(False, provider.label + " rejected the approval.")
+
+    try:
+        values, label = O.read_token_response(provider_id, r.json())
+    except Exception as e:
+        logger.warning("oauth: %s token response unusable (%s)",
+                       provider_id, type(e).__name__)
+        return _oauth_done(False, provider.label
+                           + " did not return a usable token.")
+
+    try:
+        await _store_connection(email, provider_id, values, label)
+    except Exception as e:
+        logger.warning("oauth: %s could not store (%s)", provider_id,
+                       type(e).__name__)
+        return _oauth_done(False, "Could not save that connection.")
+
+    logger.info("oauth: %s connected %s as %s", email, provider_id, label)
+    return _oauth_done(True, "Connected to " + label
+                       + ". You can close this window.")
+
+
+def _oauth_done(ok: bool, message: str) -> HTMLResponse:
+    """A tiny page for the popup: tell the opener, then say what happened.
+
+    The message goes in through textContent, never interpolated markup: it can
+    carry a vendor-supplied workspace name.
+    """
+    import json as _json
+
+    def _js(value):
+        """JSON safe to sit inside a <script> block.
+
+        json.dumps escapes quotes and backslashes and NOT "<", so a vendor
+        workspace called "</script><script>..." would close the block it is
+        embedded in and run, on our own origin.
+        """
+        return (_json.dumps(value)
+                .replace("<", chr(92) + "u003c")
+                .replace(">", chr(92) + "u003e")
+                .replace("&", chr(92) + "u0026"))
+
+    payload = _js({"aiuiOauth": True, "ok": bool(ok)})
+    safe = _js(str(message))
+    style = ("font-family:-apple-system,Segoe UI,sans-serif;background:#111113;"
+             "color:#ededee;display:flex;align-items:center;"
+             "justify-content:center;height:100vh;margin:0;text-align:center")
+    # Assembled first, then unescaped once. Attaching .replace to the last
+    # literal of a concatenation chain only rewrites that literal, which left
+    # eight placeholders sitting in the markup.
+    page = (
+        "<!doctype html><meta charset=@utf-8@><title>Connection</title>"
+        "<body style=@" + style + "@>"
+        "<div><p id=@m@ style=@font-size:15px@></p></div>"
+        "<script>"
+        "document.getElementById('m').textContent = " + safe + ";"
+        "try { window.opener && window.opener.postMessage(" + payload +
+        ", '*'); } catch (e) {}"
+        "setTimeout(function () { try { window.close(); } catch (e) {} }, 2500);"
+        "</script></body>"
+    )
+    return HTMLResponse(page.replace("@", chr(34)))
+
+
+async def _store_connection(email: str, provider_id: str,
+                            values, label: str) -> None:
+    """Upsert an encrypted credential. Shared by the paste flow and by OAuth."""
+    blob = crypto_utils.encrypt(json.dumps(values))
+    conn = await _connect()
+    try:
+        await conn.execute(
+            """
+            INSERT INTO tasks.user_connections
+                (email, provider, secrets_encrypted, account_label, updated_at)
+            VALUES ($1, $2, $3, $4, now())
+            ON CONFLICT (email, provider) DO UPDATE
+                SET secrets_encrypted = EXCLUDED.secrets_encrypted,
+                    account_label = EXCLUDED.account_label,
+                    updated_at = now()
+            """,
+            email, provider_id, blob, label)
+    finally:
+        await conn.close()
+
+
 @router.post("/{provider_id}/test")
 async def test_connection(provider_id: str,
                           user: CurrentUser = Depends(current_user)):
@@ -185,29 +368,11 @@ async def connect(provider_id: str, body: ConnectBody,
         raise HTTPException(status_code=502 if unreachable else 400,
                             detail=error)
 
-    blob = crypto_utils.encrypt(json.dumps(values))
     try:
-        conn = await _connect()
-    except Exception as e:
-        logger.warning("connections: connect failed: %s", e)
-        raise HTTPException(status_code=503, detail="Connections unavailable.")
-    try:
-        await conn.execute(
-            """
-            INSERT INTO tasks.user_connections
-                (email, provider, secrets_encrypted, account_label, updated_at)
-            VALUES ($1, $2, $3, $4, now())
-            ON CONFLICT (email, provider) DO UPDATE
-                SET secrets_encrypted = EXCLUDED.secrets_encrypted,
-                    account_label = EXCLUDED.account_label,
-                    updated_at = now()
-            """,
-            user.email, provider_id, blob, label)
+        await _store_connection(user.email, provider_id, values, label)
     except Exception as e:
         logger.warning("connections: write failed: %s", e)
         raise HTTPException(status_code=503, detail="Connections unavailable.")
-    finally:
-        await conn.close()
 
     logger.info("connections: %s connected %s as %s",
                 user.email, provider_id, label)

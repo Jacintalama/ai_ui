@@ -878,6 +878,70 @@
         : (meta.where || '');
       box.appendChild(sub);
 
+      if (meta.oauth && !connected) {
+        var go1 = document.createElement('button');
+        go1.textContent = 'Connect with ' + app.name;
+        go1.style.cssText = 'width:100%;background:#fff;color:#111;border:none;'
+          + 'border-radius:10px;padding:11px 18px;font-size:13.5px;font-weight:650;'
+          + 'cursor:pointer;margin-bottom:14px;';
+        go1.addEventListener('click', function () {
+          go1.disabled = true;
+          go1.textContent = 'Opening ' + app.name + '…';
+          fetch('/api/tasks/connections/' + app.id + '/oauth/start',
+                { headers: authHeaders() })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (!d || !d.url) throw new Error('no url');
+              var win = window.open(d.url, 'aiui-oauth', 'width=760,height=820');
+              // The popup posts back when it lands on our callback page. Also
+              // poll for it closing, because a user can dismiss the window and
+              // no message ever arrives.
+              function finish() {
+                window.removeEventListener('message', onMsg);
+                clearInterval(poll);
+                fetch('/api/tasks/connections', { headers: authHeaders() })
+                  .then(function (r) { return r.json(); })
+                  .then(function (list) {
+                    (list.connections || []).forEach(function (c) {
+                      connMeta[c.provider] = c;
+                      connState[c.provider] = !!c.connected;
+                      connChecked[c.provider] = true;
+                    });
+                    renderGrid();
+                    if (connState[app.id]) { wrap.remove(); }
+                    else {
+                      go1.disabled = false;
+                      go1.textContent = 'Connect with ' + app.name;
+                      msg.style.color = '#e07070';
+                      msg.textContent = 'That did not complete. Try again, or '
+                        + 'paste a token below.';
+                    }
+                  });
+              }
+              function onMsg(e) {
+                if (e && e.data && e.data.aiuiOauth) finish();
+              }
+              window.addEventListener('message', onMsg);
+              var poll = setInterval(function () {
+                if (!win || win.closed) finish();
+              }, 700);
+            })
+            .catch(function () {
+              go1.disabled = false;
+              go1.textContent = 'Connect with ' + app.name;
+              msg.style.color = '#e07070';
+              msg.textContent = 'Could not start that. Paste a token instead.';
+            });
+        });
+        box.appendChild(go1);
+
+        var orLine = document.createElement('div');
+        orLine.style.cssText = 'color:#6b6b6b;font-size:11px;text-align:center;'
+          + 'margin:-4px 0 12px;';
+        orLine.textContent = 'or paste a token';
+        box.appendChild(orLine);
+      }
+
       var inputs = {};
       fields.forEach(function (f) {
         var lab = document.createElement('div');
