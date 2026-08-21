@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Agents</title>
+<style>
+  :root {
+    --bg:           #0a0a0b;
+    --surface:      #111113;
+    --surface-2:    #17171a;
+    --border:       #24242a;
+    --border-2:     #2e2e36;
+    --text:         #ededee;
+    --text-2:       #b8b8c0;
+    --muted:        #74747e;
+    --accent:       #7c8cff;
+    --accent-2:     #5d6cff;
+    --radius:       8px;
+    --radius-lg:    12px;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
+
+  .topbar {
+    height: 64px; display: flex; align-items: center; gap: 12px;
+    padding: 0 24px; border-bottom: 1px solid var(--border);
+  }
+  .topbar .mark {
+    width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0;
+    background: linear-gradient(150deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center; color: #0a0a0b;
+  }
+  .topbar .mark svg { width: 18px; height: 18px; }
+  .topbar .title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .topbar .sub { font-size: 11px; color: var(--muted); }
+  .topbar .spacer { flex: 1; }
+  .topbar .back {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: var(--radius);
+    color: var(--text-2); font-size: 13px; text-decoration: none;
+    transition: background 0.15s, color 0.15s;
+  }
+  .topbar .back:hover { background: var(--surface-2); color: var(--text); }
+
+  .container {
+    width: 100%; max-width: 1000px; margin: 0 auto;
+    padding: 40px clamp(20px, 3vw, 48px) 72px;
+  }
+
+  .head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 30px; }
+  .head .icon {
+    flex-shrink: 0; width: 46px; height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(150deg, var(--accent), var(--accent-2));
+    color: #0a0a0b; box-shadow: 0 6px 18px rgba(124,140,255,0.30);
+  }
+  .head .icon svg { width: 24px; height: 24px; }
+  h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.025em; margin: 0; }
+  .lead { color: var(--text-2); font-size: 13.5px; line-height: 1.6; margin-top: 6px; max-width: 68ch; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--accent); background: rgba(124,140,255,0.10);
+    border: 1px solid rgba(124,140,255,0.30);
+    padding: 3px 10px; border-radius: 999px; margin-top: 12px;
+  }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px; margin-top: 30px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); padding: 18px;
+  }
+  .card h2 { font-size: 14px; font-weight: 650; margin: 0 0 6px 0; }
+  .card p { color: var(--text-2); font-size: 12.5px; line-height: 1.6; margin: 0; }
+  .card .step {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; border-radius: 6px; margin-bottom: 10px;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    color: var(--muted); font-size: 11px; font-weight: 700;
+  }
+
+  .note {
+    margin-top: 30px; padding: 14px 16px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 2px solid var(--accent); border-radius: var(--radius);
+    color: var(--text-2); font-size: 12.5px; line-height: 1.6;
+  }
+  .note strong { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="8" width="16" height="12" rx="3"></rect>
+        <path d="M12 8V4"></path><circle cx="12" cy="3" r="1"></circle>
+        <circle cx="9" cy="14" r="1.2"></circle><circle cx="15" cy="14" r="1.2"></circle>
+      </svg>
+    </div>
+    <div>
+      <div class="title">AI Agents</div>
+      <div class="sub">Assistants you build yourself</div>
+    </div>
+    <span class="spacer"></span>
+    <a class="back" href="/">&larr; Back to app</a>
+    <script>
+      /* See cron.html: inside the Open WebUI pane this would load the whole app
+         into the pane and it collides with the pane's close button. Hidden only
+         when embedded, so the standalone URL is untouched. */
+      if (window.parent !== window) {
+        var _aiuiBack = document.currentScript.previousElementSibling;
+        if (_aiuiBack && _aiuiBack.matches("a.back")) _aiuiBack.style.display = "none";
+      }
+    </script>
+  </div>
+
+  <div class="container">
+    <div class="head">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="8" width="16" height="12" rx="3"></rect>
+          <path d="M12 8V4"></path><circle cx="12" cy="3" r="1"></circle>
+          <circle cx="9" cy="14" r="1.2"></circle><circle cx="15" cy="14" r="1.2"></circle>
+          <path d="M2 13v3"></path><path d="M22 13v3"></path>
+        </svg>
+      </div>
+      <div>
+        <h1>AI Agents</h1>
+        <p class="lead">
+          Build an assistant that works the way you want: give it a name, tell it
+          what to do and how to behave, and choose whether it can reach the apps
+          you have connected. Your agents are yours, and they show up wherever
+          you already chat.
+        </p>
+        <span class="pill"><span class="dot"></span>Being built</span>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="step">1</div>
+        <h2>Write the instructions</h2>
+        <p>
+          Name the agent and describe what it should do and how it should answer.
+          Plain sentences, not settings. You see exactly what you typed, and you
+          can change it whenever you like.
+        </p>
+      </div>
+      <div class="card">
+        <div class="step">2</div>
+        <h2>Give it your tools</h2>
+        <p>
+          One switch lets an agent use the apps you connected under Connections,
+          acting as your account and nobody else's. Gmail, Calendar, Drive,
+          Documents and the rest can be turned on one at a time.
+        </p>
+      </div>
+      <div class="card">
+        <div class="step">3</div>
+        <h2>Use it anywhere</h2>
+        <p>
+          An agent you build appears in your model picker, so it works in chat,
+          in Discord and Telegram, and on a schedule. Nothing extra to set up.
+        </p>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>Private by default.</strong> An agent you create is visible only to
+      you. There will also be a few ready-made agents shared with everyone, which
+      you can use as they are or copy and make your own.
+    </div>
+  </div>
+</body>
+</html>

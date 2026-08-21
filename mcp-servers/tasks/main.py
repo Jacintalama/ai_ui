@@ -200,6 +200,13 @@ def knowledge_graph_page():
     return FileResponse("static/graph.html", media_type="text/html")
 
 
+@app.get("/tasks/agents", include_in_schema=False)
+def agents_page():
+    """AI Agents. A placeholder describing what the page will do, so the
+    sidebar entry leads somewhere honest while the feature is being built."""
+    return FileResponse("static/agents.html", media_type="text/html")
+
+
 @app.get("/tasks/app-builder", include_in_schema=False)
 async def app_builder_page() -> FileResponse:
     """Pretty URL for the app-builder SPA. Serves static/projects.html."""

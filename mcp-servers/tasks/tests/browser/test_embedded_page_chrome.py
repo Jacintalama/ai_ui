@@ -23,7 +23,7 @@ playwright_api = pytest.importorskip(
     "playwright.sync_api", reason="playwright not installed")
 
 STATIC = pathlib.Path(__file__).resolve().parents[2] / "static"
-PAGES = ["video.html", "cron.html", "projects.html"]
+PAGES = ["video.html", "cron.html", "projects.html", "agents.html"]
 
 HOST = """<!doctype html><meta charset="utf-8"><title>pane</title>
 <body style="margin:0"><iframe id="f" src="./{page}"

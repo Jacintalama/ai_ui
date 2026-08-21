@@ -1278,6 +1278,29 @@
           svg.innerHTML = '<circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>';
         },
       },
+      {
+        attr: "data-aiui-agents",
+        // Every signed-in user: an agent is owner-scoped, like the Graph.
+        allUsers: true,
+        label: "AI Agents",
+        title: "AI Agents: build an assistant with your own instructions",
+        href: "/tasks/agents",
+        embed: true,
+        // robot glyph: a head with two eyes and an antenna
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<rect x="4" y="8" width="16" height="12" rx="3"></rect>'
+            + '<path d="M12 8V4"></path><circle cx="12" cy="3" r="1"></circle>'
+            + '<circle cx="9" cy="14" r="1.2"></circle>'
+            + '<circle cx="15" cy="14" r="1.2"></circle>'
+            + '<path d="M2 13v3"></path><path d="M22 13v3"></path>';
+        },
+      },
     ];
 
     // Build a sidebar nav entry by deep-cloning the Workspace row wrapper.

@@ -45,6 +45,7 @@ ENTRIES = [
     ("data-aiui-cron-jobs", "Cron Jobs", None),
     ("data-aiui-channels", "Channels", None),
     ("data-aiui-graph", "Graph", None),
+    ("data-aiui-agents", "AI Agents", None),
 ]
 
 
