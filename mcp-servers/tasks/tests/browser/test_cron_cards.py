@@ -57,6 +57,15 @@ ROWS = [
      "run_once": False, "delivery_platform": "discord",
      "delivery_channel_id": "D1", "last_run_at": "2026-08-17T11:00:00Z",
      "last_run_status": "pending"},
+    # a run that produced something, with nowhere to deliver it: exactly the
+    # case whose output used to be discarded
+    {"id": "5", "name": "nightly headlines",
+     "prompt": "summarise the news", "cron_expr": "0 22 * * *",
+     "tz": "Asia/Manila", "enabled": True, "run_once": False,
+     "delivery_platform": "", "delivery_channel_id": "",
+     "last_run_at": "2026-08-20T14:00:00Z", "last_run_status": "completed",
+     "last_result": "Here are today's three headlines.\n\n1. One\n2. Two\n3. Three",
+     "last_result_at": "2026-08-20T14:00:05Z"},
 ]
 
 
@@ -142,3 +151,30 @@ def test_a_card_is_not_as_tall_as_the_form_that_creates_one(page):
     for i in range(2):
         h = card(page, i).bounding_box()["height"]
         assert h <= 220, f"card {i} is {h}px tall"
+
+
+# --- what the run produced ------------------------------------------------
+# A schedule with no destination used to compute an answer, mark itself
+# "Completed" and show the user nothing at all. The answer is kept now, so the
+# card is where it shows up.
+
+def test_a_card_shows_the_last_result_when_there_is_one(page):
+    c = card(page, 4)
+    assert c.locator(".sched-result-body").count() == 1
+    c.locator("details.sched-result > summary").click()
+    assert "three headlines" in c.locator(".sched-result-body").inner_text()
+
+
+def test_the_result_is_collapsed_so_a_card_stays_a_summary(page):
+    """A run can produce several paragraphs. A list of cards must not become a
+    list of transcripts."""
+    page.reload()
+    page.wait_for_selector(".sched-card", timeout=8000)
+    details = card(page, 4).locator("details.sched-result")
+    assert details.count() == 1
+    assert details.get_attribute("open") is None
+
+
+def test_a_schedule_that_has_not_produced_anything_shows_no_result_block(page):
+    """An empty box saying nothing is worse than no box."""
+    assert card(page, 2).locator(".sched-result").count() == 0

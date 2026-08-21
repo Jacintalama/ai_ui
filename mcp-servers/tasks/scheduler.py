@@ -430,6 +430,31 @@ async def _deliver_result(
         logger.warning("schedule delivery failed (%s): %s", channel_id, scrub(str(exc)))
 
 
+#: Longest run output kept on the row. Agent output is unbounded; a card and a
+#: database row are not.
+RESULT_LIMIT = 8000
+
+
+def result_for_storage(result) -> str | None:
+    """What of a run's output is worth keeping on the schedule.
+
+    None for a run that said nothing, so a card can tell "not run yet" from "ran
+    and produced an empty answer".
+
+    Scrubbed, because a run's own prompt can hand the agent a credential and
+    models repeat what they are given, and this ends up in a row and then on a
+    page. Bounded, and it says so when it cuts, because silently showing the
+    first 8000 characters of something longer is a lie about what happened.
+    """
+    text = (result or "").strip()
+    if not text:
+        return None
+    text = scrub(text)
+    if len(text) > RESULT_LIMIT:
+        return text[:RESULT_LIMIT] + "\n\n[truncated: the full result was longer]"
+    return text
+
+
 async def _finalize_run(sched: Schedule) -> None:
     """Background coroutine: run, record last_run_status, deliver to Discord.
 
@@ -446,6 +471,8 @@ async def _finalize_run(sched: Schedule) -> None:
             await s.execute(
                 update(Schedule).where(Schedule.id == sched.id).values(
                     last_run_status=status,
+                    last_result=result_for_storage(result),
+                    last_result_at=datetime.now(timezone.utc),
                 )
             )
             await s.commit()

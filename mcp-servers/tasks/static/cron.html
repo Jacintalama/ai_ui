@@ -406,6 +406,28 @@
       border: 1px solid var(--border); border-left: 2px solid var(--border-2);
       border-radius: var(--radius);
     }
+    .sched-result { margin-top: 12px; }
+    .sched-result > summary {
+      cursor: pointer; list-style: none;
+      font-size: 12px; color: var(--accent);
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 0;
+    }
+    .sched-result > summary::-webkit-details-marker { display: none; }
+    .sched-result > summary::before { content: "B8"; font-size: 10px; }
+    .sched-result[open] > summary::before { content: "BE"; }
+    .sched-result > summary:hover { color: var(--text); }
+    .sched-result-body {
+      margin-top: 8px; padding: 10px 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--accent);
+      border-radius: var(--radius);
+      color: var(--text-2); font-size: 12px; line-height: 1.55;
+      white-space: pre-wrap; word-break: break-word;
+      max-height: 260px; overflow-y: auto;
+    }
+
     .sched-actions {
       display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px;
       padding-top: 14px; border-top: 1px solid var(--border);
@@ -620,7 +642,7 @@
             <div class="error box" id="form-error" hidden></div>
 
             <div class="field">
-              <p class="form-note">Heads up: schedules you create here on the web are not linked to a Discord or Slack destination yet. Delivery is set when a schedule is created from Discord or Slack.</p>
+              <p class="form-note">Each run’s result appears on its card here, under &ldquo;View last result&rdquo;. To have results pushed to you as well, create the schedule from Discord or Slack and it will post there too.</p>
             </div>
 
             <div class="field" style="margin-top: 4px;">
@@ -1052,6 +1074,18 @@
         ? `<div class="sched-prompt">${escapeHtml(String(s.prompt))}</div>`
         : "";
 
+      // What the last run actually produced. This used to be delivered to
+      // Discord or thrown away, so a schedule with no destination computed an
+      // answer, reported "Completed" and showed the user nothing. Collapsed by
+      // default because a card is a summary, not a transcript.
+      const resultText = String(s.last_result || "").trim();
+      const result = resultText
+        ? `<details class="sched-result">
+             <summary>View last result</summary>
+             <div class="sched-result-body">${escapeHtml(resultText)}</div>
+           </details>`
+        : "";
+
       // Friendly schedule line (the card's primary info). Use the plain-English
       // description when the expression parses confidently; otherwise fall back
       // to the raw cron text so the card is never left without schedule info.
@@ -1089,6 +1123,7 @@
            ${lastRun}
          </div>
          ${prompt}
+         ${result}
          <div class="sched-actions">
            <button class="btn sm primary" type="button" data-act="run">Run now</button>
            <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>

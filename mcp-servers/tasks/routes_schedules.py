@@ -426,6 +426,9 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "enabled": sch.enabled,
         "last_run_at": sch.last_run_at.isoformat() if sch.last_run_at else None,
         "last_run_status": sch.last_run_status,
+        "last_result": getattr(sch, "last_result", None),
+        "last_result_at": (sch.last_result_at.isoformat()
+                           if getattr(sch, "last_result_at", None) else None),
         "delivery_channel_id": sch.delivery_channel_id,
         "delivery_platform": sch.delivery_platform,
         "kind": sch.kind,

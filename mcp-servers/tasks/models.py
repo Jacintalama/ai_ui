@@ -140,6 +140,11 @@ class Schedule(Base):
     run_once = Column(Boolean, nullable=False, server_default="false", default=False)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_run_status = Column(Text, nullable=True)
+    # What the run actually produced. Kept regardless of whether there is
+    # anywhere to deliver it: a schedule with no destination used to compute an
+    # answer and throw it away while reporting "Completed".
+    last_result = Column(Text, nullable=True)
+    last_result_at = Column(DateTime(timezone=True), nullable=True)
     # Discord channel/thread id to post each run's result into (set when the
     # schedule is created from Discord). NULL = no delivery (CLI/operator runs).
     delivery_channel_id = Column(Text, nullable=True)
