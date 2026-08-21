@@ -755,7 +755,22 @@ services:
       - ENABLE_WORKSPACE=true
       # User headers (forwarded by gateway)
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
-      - BYPASS_MODEL_ACCESS_CONTROL=true
+      # Off deliberately. An agent is a model row, and an agent is private
+      # because it has no access grant, so with this true the filter never runs
+      # and every user's private agent would be visible to everybody.
+      #
+      # Do not flip this back without understanding the other half:
+      # get_filtered_models treats a model with NO database row as admin-only,
+      # and 124 of the 131 models here are discovered live from the OpenAI and
+      # OpenRouter connections and from pipes. Each was given a row and a
+      # wildcard read grant first (scripts/backfill_model_grants.py). Turning
+      # this off before that step drops every non-admin from 130 models to 7.
+      #
+      # Arena models need a SECOND grant, in their own meta.access_grants JSON,
+      # because a separate branch of the filter reads that instead of the
+      # table. Missing it cost 5 non-admins their arena model on the first
+      # attempt. The backfill script emits both now.
+      - BYPASS_MODEL_ACCESS_CONTROL=false
       # LangFuse Observability (in-process filter reads these)
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}

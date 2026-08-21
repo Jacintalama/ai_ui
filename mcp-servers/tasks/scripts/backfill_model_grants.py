@@ -69,6 +69,19 @@ def main():
             " extract(epoch from now())::bigint WHERE NOT EXISTS (SELECT 1 FROM"
             " model m WHERE m.id = " + q(r["id"]) + ");")
     out.append(
+        "-- Arena models are filtered by a different branch of"
+        " get_filtered_models, which reads grants from the model's OWN"
+        " meta.access_grants JSON and then returns, so it never consults the"
+        " access_grant table. Granting only in the table left every non-admin"
+        " without the arena model. This is the public-read shape documented in"
+        " utils/access_control has_access.")
+    out.append(
+        "UPDATE model SET meta = jsonb_set(coalesce(meta::jsonb, '{}'::jsonb),"
+        " '{access_grants}', '[{\"principal_type\": \"user\","
+        " \"principal_id\": \"*\", \"permission\": \"read\"}]'::jsonb,"
+        " true)::json WHERE id = 'arena-model' AND (meta::jsonb -> 'access_grants')"
+        " IS NULL;")
+    out.append(
         "INSERT INTO access_grant (id, resource_type, resource_id,"
         " principal_type, principal_id, permission, created_at)"
         " SELECT gen_random_uuid()::text, 'model', m.id, 'user', '*', 'read',"
