@@ -5,7 +5,7 @@ guarded against is silent and total: a non-admin opens the picker and it is
 empty, with nothing logged anywhere.
 
 Usage, inside the mcp-proxy container (it has PyJWT; tasks does not):
-    docker exec -e PROBE_SECRET=... mcp-proxy python /tmp/model_visibility_probe.py
+    docker exec -e PROBE_TOKENS=... mcp-proxy python /tmp/model_visibility_probe.py
 """
 import json
 import os
@@ -24,7 +24,10 @@ def models_for(token):
         "Authorization": "Bearer " + token, "User-Agent": UA})
     with urllib.request.urlopen(req, timeout=30) as r:
         body = json.load(r)
-    data = body.get("data", body if isinstance(body, list) else [])
+    if isinstance(body, list):
+        data = body
+    else:
+        data = body.get("data", [])
     return sorted(m.get("id") for m in data)
 
 
@@ -38,6 +41,9 @@ def main():
             print("%-30s %3d models" % (label, len(ids)))
         except urllib.error.HTTPError as e:
             print("%-30s HTTP %s" % (label, e.code))
+            out[label] = None
+        except urllib.error.URLError as e:
+            print("%-30s URLError: %s" % (label, e.reason))
             out[label] = None
     path = os.environ.get("PROBE_OUT", "/tmp/model_visibility.json")
     with open(path, "w") as fh:

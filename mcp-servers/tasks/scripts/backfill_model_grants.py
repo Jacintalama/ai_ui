@@ -13,6 +13,7 @@ Idempotent. Safe to re-run. Run inside the mcp-proxy container (PyJWT).
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 
 BASE = os.environ.get("PROBE_BASE", "https://ai-ui.coolestdomain.win")
@@ -25,21 +26,31 @@ def admin_models(token):
         "Authorization": "Bearer " + token, "User-Agent": UA})
     with urllib.request.urlopen(req, timeout=40) as r:
         body = json.load(r)
-    return body.get("data", body if isinstance(body, list) else [])
+    if isinstance(body, list):
+        return body
+    else:
+        return body.get("data", [])
 
 
 def main():
     token = os.environ["ADMIN_TOKEN"]
     rows = []
-    for m in admin_models(token):
-        mid = m.get("id")
-        if not mid:
-            continue
-        rows.append({
-            "id": mid,
-            "name": m.get("name") or mid,
-            "capabilities": (m.get("info") or {}).get("meta", {}).get("capabilities"),
-        })
+    try:
+        for m in admin_models(token):
+            mid = m.get("id")
+            if not mid:
+                continue
+            rows.append({
+                "id": mid,
+                "name": m.get("name") or mid,
+                "capabilities": (m.get("info") or {}).get("meta", {}).get("capabilities"),
+            })
+    except urllib.error.HTTPError as e:
+        print("HTTP error from admin models: %s" % e.code, file=sys.stderr)
+        return 1
+    except urllib.error.URLError as e:
+        print("Connection error from admin models: %s" % e.reason, file=sys.stderr)
+        return 1
     # Emit SQL rather than JSON. The earlier draft wrote JSON and left a psql
     # variable for a later step to interpolate, which no step ever set.
     def q(v):
