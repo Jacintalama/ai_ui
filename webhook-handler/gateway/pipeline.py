@@ -37,6 +37,11 @@ TRANSCRIBE_FAILED = (
 CLIP_TOO_LONG = (
     "That voice message is too long for me. I can handle up to 2 minutes."
 )
+PINNED = ("Right, I'll use %s for this conversation. Say \"stop using that\" "
+          "to go back.")
+UNPINNED = "Back to normal. I'll pick whichever agent fits each message."
+PIN_GONE = ("%s is gone, so I answered normally. Ask me again if you want a "
+            "different one.")
 
 # Whisper on this box is CPU only, so a long clip would hold a worker for
 # minutes while the sender stares at nothing. Keep this in step with the
@@ -92,22 +97,69 @@ async def handle_event(event: MessageEvent, adapter: BasePlatformAdapter) -> str
         await _stop_typing_quietly(adapter, src.chat_id)
 
 
-async def _choose_agent(owui: OWUIUserClient, text: str) -> dict | None:
-    """The agent that should answer, or None for the default model.
+async def _read_pin(key: str) -> dict | None:
+    """The pinned agent for this conversation, or None. Never raises."""
+    try:
+        pin = await _tasks.get_state(key)
+    except Exception:                                  # noqa: BLE001
+        log.warning("gateway: could not read the agent pin", exc_info=True)
+        return None
+    return pin if isinstance(pin, dict) and pin.get("id") else None
 
-    Never raises. Listing models or routing can both fail, and neither is a
-    reason to leave somebody staring at silence, so both fall back to the
-    normal model.
+
+async def _choose_agent(owui: OWUIUserClient, text: str,
+                        src) -> tuple[dict | None, str | None, str | None]:
+    """Returns (agent, reply, notice).
+
+    reply  means the message was a setting: answer with this and call no model.
+    notice means say this alongside the model's answer.
+
+    Never raises. Listing models, routing, and the state store can all fail,
+    and none of them is a reason to leave somebody staring at silence.
     """
+    key = agent_router.pin_key(src.platform, src.chat_id)
+
     try:
         models = await owui.list_models()
+        cands = agent_router.candidates(models)
     except Exception:                                  # noqa: BLE001
         log.warning("gateway: could not list the caller's models, using the "
                     "default model", exc_info=True)
-        return None
-    cands = agent_router.candidates(models)
-    return await agent_router.pick(
+        return None, None, None
+
+    if agent_router.is_unpin_request(text):
+        await _forget_pin(key)
+        return None, UNPINNED, None
+
+    asked = agent_router.match_pin_request(text, cands)
+    if asked:
+        try:
+            await _tasks.set_state(key, {"id": asked["id"],
+                                         "name": asked["name"]})
+        except Exception:                              # noqa: BLE001
+            log.warning("gateway: could not save the agent pin", exc_info=True)
+        return asked, PINNED % asked["name"], None
+
+    pin = await _read_pin(key)
+    if pin:
+        # It may have been deleted on the web since it was pinned here.
+        if any(c["id"] == pin["id"] for c in cands):
+            return pin, None, None
+        await _forget_pin(key)
+        return None, None, PIN_GONE % pin.get("name", "That agent")
+
+    chosen = await agent_router.pick(
         owui, text, cands, settings.gateway_router_model)
+    return chosen, None, None
+
+
+async def _forget_pin(key: str) -> None:
+    """Clear a pin, never raising. A pin we cannot clear is not worth a
+    failed reply."""
+    try:
+        await _tasks.delete_state(key)
+    except Exception:                                  # noqa: BLE001
+        log.warning("gateway: could not clear the agent pin", exc_info=True)
 
 
 async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
@@ -176,7 +228,13 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
 
     await adapter.send_typing(src.chat_id)
 
-    agent = await _choose_agent(owui, text)
+    agent, reply, notice = await _choose_agent(owui, text, src)
+
+    # A pin request is a setting, not a question. Answering it with a model
+    # would spend a call and a turn of history saying "ok".
+    if reply:
+        return await _say(adapter, src.chat_id, reply)
+
     model = agent["id"] if agent else settings.gateway_model
 
     chat_id, chat = await get_or_create_chat(
@@ -199,6 +257,10 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     # Tagged on delivery, not in the transcript. The stored turn already
     # records the model that produced it, and the web UI shows that, so
     # writing the tag into the text too would duplicate it there.
+    # A notice rides along with the answer rather than replacing it: the person
+    # asked a real question and still deserves it answered.
+    if notice:
+        answer = "%s\n\n%s" % (notice, answer)
     if agent:
         answer = "%s\n\nvia %s" % (answer, agent["name"])
 
