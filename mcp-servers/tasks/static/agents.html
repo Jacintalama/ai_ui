@@ -21,6 +21,10 @@
     --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
+  /* .section-head and the Task 5 modal both set display, and an author
+     display beats the user agent's [hidden] { display: none } rule, so the
+     attribute alone hides nothing. */
+  [hidden] { display: none !important; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
 
   .topbar {
@@ -191,6 +195,10 @@
       return h;
     }
 
+    // Escapes the five characters that matter inside an element and inside a
+    // double-quoted attribute. It does NOT escape a backtick or "=", which is
+    // safe only while every attribute card() writes stays double-quoted.
+    // Tasks 5 and 6 extend card(), so keep the quotes.
     function esc(s) {
       return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
         return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;",
@@ -239,19 +247,53 @@
       document.getElementById("platform-head").hidden = others.length === 0;
     }
 
+    // FastAPI answers errors with JSON too, so .json() alone succeeds on a 401
+    // and the page tells a signed-out user that they have no agents. Read the
+    // status first.
+    async function getJson(url) {
+      var r = await fetch(url, { headers: authHeaders() });
+      if (r.status === 401) throw new Error("signed out");
+      if (!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    }
+
     async function load() {
       try {
-        var who = await fetch("/api/v1/auths/", { headers: authHeaders() })
-          .then(function (r) { return r.json(); });
+        var who = await getJson("/api/v1/auths/");
         state.me = who && who.id;
-        var body = await fetch("/api/models", { headers: authHeaders() })
-          .then(function (r) { return r.json(); });
-        var all = body.data || (Array.isArray(body) ? body : []);
-        state.models = all;
-        state.agents = all.filter(isAgent);
+        // Without an identity every agent you own looks like somebody else's,
+        // so a wrong page is worse than an error.
+        if (!state.me) throw new Error("no identity");
+
+        // Agents come from /list because it is the only endpoint that still
+        // carries user_id and params.system on the row. /api/models nests the
+        // row under `info` and drops params server side, so a page reading it
+        // sees neither the owner nor the instructions.
+        var listed = await getJson(API + "/list");
+        var items = (listed && Array.isArray(listed.items)) ? listed.items : [];
+        var total = (listed && typeof listed.total === "number")
+          ? listed.total : items.length;
+
+        // Task 5's base model dropdown needs every base model, and /list only
+        // returns models that have a base_model_id, so this second call stays.
+        var body = await getJson("/api/models");
+        state.models = body.data || (Array.isArray(body) ? body : []);
+        state.agents = items.filter(isAgent);
         render();
+
+        // /list is paged. The name of its paging parameter is not verified
+        // yet and Task 7 settles it, so say so out loud rather than quietly
+        // showing a short list.
+        if (items.length < total) {
+          showError("Some of your agents could not be shown. Reload the page " +
+                    "to try again.");
+        }
       } catch (e) {
-        showError("Could not load your agents. Reload the page to try again.");
+        if (e && e.message === "signed out") {
+          showError("Your session expired. Sign in again.");
+        } else {
+          showError("Could not load your agents. Reload the page to try again.");
+        }
       }
     }
 

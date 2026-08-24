@@ -26,17 +26,69 @@ STATIC = pathlib.Path(__file__).resolve().parents[2] / "static"
 ME = "user-me"
 OTHER = "user-someone-else"
 
+# A name that runs script if the page ever stops escaping. Owned by someone
+# else on purpose, so the "your agents" list stays exactly one card.
+HOSTILE_NAME = '<img src=x onerror="window.__pwned=1">'
+
+# Flat rows, which is the shape GET /api/v1/models/list returns. gpt-4o-mini is
+# a plain base model: it has no base_model_id, so /list never returns it, while
+# /api/models does. Both envelopes below are derived from this one list so the
+# stub cannot drift away from what the server actually sends.
 MODELS = [
-    {"id": "gpt-4o-mini", "name": "gpt-4o-mini"},
+    {"id": "gpt-4o-mini", "name": "gpt-4o-mini", "user_id": None,
+     "base_model_id": None, "params": {}, "meta": {},
+     "access_grants": [], "is_active": True, "write_access": False,
+     "created_at": 1, "updated_at": 1, "user": None},
     {"id": "agent-mine-a1b2", "name": "My Research Agent",
      "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You research things carefully."},
-     "meta": {"description": "mine", "toolIds": ["server:mcp-proxy"]}},
+     "meta": {"description": "mine", "toolIds": ["server:mcp-proxy"]},
+     "access_grants": [], "is_active": True, "write_access": True,
+     "created_at": 2, "updated_at": 2,
+     "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
     {"id": "agent-shared-c3d4", "name": "Meeting Summariser",
      "user_id": OTHER, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You summarise meetings."},
-     "meta": {"description": "platform", "toolIds": []}},
+     "meta": {"description": "platform", "toolIds": []},
+     "access_grants": [], "is_active": True, "write_access": False,
+     "created_at": 3, "updated_at": 3,
+     "user": {"id": OTHER, "name": "Someone", "email": "other@example.com"}},
+    {"id": "agent-hostile-e5f6", "name": HOSTILE_NAME,
+     "user_id": OTHER, "base_model_id": "gpt-4o-mini",
+     "params": {"system": HOSTILE_NAME},
+     "meta": {"description": "hostile", "toolIds": []},
+     "access_grants": [], "is_active": True, "write_access": False,
+     "created_at": 4, "updated_at": 4,
+     "user": {"id": OTHER, "name": "Someone", "email": "other@example.com"}},
 ]
+
+
+def _models_list_envelope(rows):
+    """What GET /api/v1/models/list sends: paged items plus the full count.
+
+    /list only returns models that have a base_model_id, so the base models
+    are not in it. That is why the page still needs /api/models as well.
+    """
+    items = [r for r in rows if r.get("base_model_id")]
+    return {"items": items, "total": len(items)}
+
+
+def _api_models_envelope(rows):
+    """What GET /api/models sends: the row nested under `info`, with `params`
+    deleted server side.
+
+    Neither user_id nor params.system exists at the top level here, which is
+    exactly the shape the page used to read and why every agent landed in the
+    wrong bucket with a blank preview while all five tests passed.
+    """
+    out = []
+    for row in rows:
+        info = {k: v for k, v in row.items() if k != "params"}
+        out.append({"id": row["id"], "name": row["name"], "object": "model",
+                    "created": row.get("created_at", 0), "owned_by": "openai",
+                    "preset": True, "connection_type": None,
+                    "actions": [], "filters": [], "tags": [], "info": info})
+    return {"data": out}
 
 
 @pytest.fixture(scope="module")
@@ -83,8 +135,10 @@ def page(browser, tmp_path):
         url = r.request.url
         if "/api/v1/auths/" in url:
             body = {"id": ME, "email": "me@example.com"}
+        elif "/api/v1/models/list" in url:
+            body = _models_list_envelope(MODELS)
         elif "/api/models" in url or url.rstrip("/").endswith("/api/v1/models"):
-            body = {"data": MODELS}
+            body = _api_models_envelope(MODELS)
         else:
             sent.append({"url": url, "method": r.request.method,
                          "body": r.request.post_data})
@@ -123,3 +177,25 @@ def test_a_platform_agent_appears_in_its_own_group(page):
 def test_a_platform_agent_offers_no_delete(page):
     card = page.locator('#platform-agents [data-agent-id="agent-shared-c3d4"]')
     assert card.locator('[data-act="delete"]').count() == 0
+
+
+def test_a_card_shows_the_agent_it_stands_for(page):
+    """The partition being right says nothing about the card being right: a
+    card whose title and instructions never render passes every other test
+    in this file."""
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    assert card.locator(".card-title").inner_text() == "My Research Agent"
+    assert "You research things carefully." in card.locator(".card-sys").inner_text()
+    assert [e.get_attribute("data-agent-id")
+            for e in page.locator("#my-agents [data-agent-id]").all()] == ["agent-mine-a1b2"]
+
+
+def test_a_hostile_agent_name_is_shown_as_text_not_run(page):
+    """The card is built with innerHTML, so the only thing between a name
+    somebody else chose and script running in your session is esc()."""
+    card = page.locator('[data-agent-id="agent-hostile-e5f6"]')
+    title = card.locator(".card-title")
+    assert not page.evaluate("window.__pwned"), "the name executed"
+    assert title.inner_text() == HOSTILE_NAME
+    assert title.locator("img").count() == 0
+    assert card.locator(".card-sys").locator("img").count() == 0
