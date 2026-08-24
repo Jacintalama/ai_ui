@@ -95,6 +95,32 @@ class OWUIUserClient:
             raise OWUIError(502, "the model returned an empty answer")
         return content
 
+    async def list_models(self) -> list[dict]:
+        """Every derived model this user can see, which is where agents live.
+
+        /api/v1/models/list rather than /api/models: the latter nests the row
+        under `info` and deletes params server side, so the owner and the
+        instructions both vanish. This one also returns ONLY models with a
+        base_model_id, so the 130 base models are excluded and the list stays
+        small.
+
+        It pages at 30 on a one-indexed `page`. The guard stops a wrong `total`
+        from spinning forever.
+        """
+        items: list[dict] = []
+        page = 1
+        for _ in range(25):
+            resp = await self._request(
+                "GET", f"/api/v1/models/list?page={page}")
+            data = self._json(resp)
+            batch = data.get("items") or []
+            items.extend(batch)
+            total = data.get("total")
+            if not batch or not isinstance(total, int) or len(items) >= total:
+                break
+            page += 1
+        return items
+
     async def create_chat(self, title: str, model: str) -> str:
         """Create a real Open WebUI chat and return its id.
 
