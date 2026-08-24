@@ -120,6 +120,18 @@ the only test the page needs.
 Copying rather than editing is the point: a platform agent improves centrally
 for everybody, and a template that gets forked stops improving.
 
+**Verified on production, 2026-08-24.** Two real accounts: the owner created an
+agent with the exact body the form sends, which carries no `access_control`
+key. The owner then saw 131 models and the other user saw 130, without the
+agent. So an agent is private with nothing extra sent.
+
+Two details worth knowing before writing the form. The row stores
+`access_control` as `null`, and on older Open WebUI versions null meant
+*public*; on this version grants live in the `access_grant` table and no row
+means private. And `user.permissions.sharing.models` is false, so the platform
+itself refuses to let a non-admin share a model. Privacy does not depend on our
+page choosing not to offer it.
+
 ## Failure and limits
 
 - **Permission not yet granted.** Say "agents are not switched on for your
