@@ -47,12 +47,10 @@ which is what made the Agents page show an empty list for a whole deploy. It
 also pages at 30, so a user with more than 30 agents silently loses the rest
 unless this pages through.
 """
-import json
-
 import httpx
 import pytest
 
-from gateway.owui import OWUIUserClient
+from gateway.owui import OWUIError, OWUIUserClient
 
 
 def _client(handler) -> OWUIUserClient:
@@ -65,7 +63,6 @@ def _client(handler) -> OWUIUserClient:
             resp = await http.request(method, f"https://example.test{path}",
                                       **kwargs)
         if resp.status_code >= 400:
-            from gateway.owui import OWUIError
             raise OWUIError(resp.status_code, resp.text[:400])
         return resp
 
