@@ -199,3 +199,149 @@ def test_a_hostile_agent_name_is_shown_as_text_not_run(page):
     assert title.inner_text() == HOSTILE_NAME
     assert title.locator("img").count() == 0
     assert card.locator(".card-sys").locator("img").count() == 0
+
+
+# --- creating one ---------------------------------------------------------
+
+# What the server really sends when an id is taken. Measured on production: it
+# is a 401 with this detail, not a 400 and not a 409, so a retry that keys on
+# the status code alone never fires.
+DUPLICATE_ID_BODY = json.dumps({"detail": "Uh-oh! This model id is already "
+                                "registered. Please choose another model id "
+                                "string."})
+
+
+def _open_form(page):
+    page.locator("#new-agent").click()
+    page.wait_for_selector("#agent-form", state="visible")
+
+
+def _fill(page, name="Research Agent", instructions="Research carefully."):
+    _open_form(page)
+    page.fill("#agent-name", name)
+    page.fill("#agent-instructions", instructions)
+
+
+def test_the_form_refuses_an_empty_name(page):
+    _fill(page, name="", instructions="Something.")
+    page.locator("#agent-save").click()
+    assert page.locator("#form-error").inner_text().strip() != ""
+    assert page.sent == [], "it sent a request despite an invalid form"
+
+
+def test_the_form_refuses_empty_instructions(page):
+    _fill(page, name="Research Agent", instructions="")
+    page.locator("#agent-save").click()
+    assert page.locator("#form-error").inner_text().strip() != ""
+    assert page.sent == []
+
+
+def test_instructions_over_the_limit_are_refused_in_the_form(page):
+    _fill(page, instructions="x" * 4001)
+    page.locator("#agent-save").click()
+    assert "4000" in page.locator("#form-error").inner_text()
+    assert page.sent == []
+
+
+def test_a_saved_agent_sends_the_instructions_as_params_system(page):
+    _fill(page, name="Research Agent", instructions="Research carefully.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    body = json.loads(page.sent[-1]["body"])
+    assert body["params"]["system"] == "Research carefully."
+    assert body["name"] == "Research Agent"
+    assert body["id"].startswith("agent-research-agent-")
+
+
+def test_the_connected_apps_switch_adds_the_proxy_tool(page):
+    _fill(page)
+    page.check("#use-my-apps")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == ["server:mcp-proxy"]
+
+
+def test_leaving_the_switch_off_sends_no_tools(page):
+    _fill(page)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == []
+
+
+@pytest.mark.parametrize("tool_id", [
+    "gmail", "calendar", "gdrive", "documents", "excel_creator",
+    "executive_dashboard", "remember"])
+def test_each_native_tool_adds_only_itself(page, tool_id):
+    _fill(page)
+    page.check("#tool-" + tool_id)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == [tool_id]
+
+
+def test_an_id_collision_is_retried_once_with_a_new_suffix(page):
+    """The id is a primary key across every model on the platform, and four hex
+    characters can collide. The server reports the collision as a 401 carrying
+    that detail, not as a 400 or a 409, so the stub sends the real thing."""
+    seen = []
+
+    def once(route):
+        seen.append(route.request.post_data)
+        if len(seen) == 1:
+            route.fulfill(status=401, content_type="application/json",
+                          body=DUPLICATE_ID_BODY)
+        else:
+            route.fulfill(status=200, content_type="application/json",
+                          body='{"ok": true}')
+
+    page.route("**/api/v1/models/create", once)
+    _fill(page)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(500)
+    assert len(seen) == 2, "it gave up instead of retrying"
+    assert json.loads(seen[0])["id"] != json.loads(seen[1])["id"]
+    assert page.locator("#form-error").inner_text().strip() == ""
+
+
+def test_a_real_401_is_not_mistaken_for_a_collision(page):
+    """A genuine permission failure must not be retried forever, and must say
+    something a user can act on rather than the duplicate-id message."""
+    seen = []
+
+    def denied(route):
+        seen.append(route.request.post_data)
+        route.fulfill(status=401, content_type="application/json",
+                      body=json.dumps({"detail": "401 Unauthorized"}))
+
+    page.route("**/api/v1/models/create", denied)
+    _fill(page)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(500)
+    assert len(seen) == 1, "a plain 401 was retried as if the id were taken"
+    assert page.locator("#form-error").inner_text().strip() != ""
+
+
+def test_a_failed_save_keeps_what_the_user_typed(page):
+    """Losing four paragraphs of instructions to a network blip is the worst
+    thing this page can do."""
+    _fill(page, instructions="Something I spent time on.")
+    page.route("**/api/v1/models/create", lambda r: r.abort())
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(400)
+    assert page.input_value("#agent-instructions") == "Something I spent time on."
+    assert page.locator("#form-error").inner_text().strip() != ""
+
+
+def test_saving_closes_the_form_and_a_failure_leaves_it_open(page):
+    """The form staying open on failure is what keeps the typed instructions
+    reachable, so it is worth asserting rather than assuming."""
+    _fill(page)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert page.locator("#agent-form").is_visible() is False
+
+    page.route("**/api/v1/models/create", lambda r: r.abort())
+    _fill(page, instructions="Kept text.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(400)
+    assert page.locator("#agent-form").is_visible() is True
