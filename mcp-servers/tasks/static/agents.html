@@ -276,7 +276,10 @@
       var el = document.createElement("div");
       el.className = "card";
       el.setAttribute("data-agent-id", m.id);
-      var sys = (m.params && m.params.system) || "";
+      // Same blanking as duplicate: a ready-made agent's params come back
+      // empty because it is read-only to you, so fall back to the meta copy or
+      // its card would be a blank rectangle.
+      var sys = instructionsOf(m);
       el.innerHTML =
         '<div class="card-title">' + esc(m.name) + "</div>" +
         '<div class="card-sys">' + esc(sys.slice(0, 180)) + "</div>" +
@@ -501,6 +504,67 @@
       }
     }
 
+    function agentById(id) {
+      for (var i = 0; i < state.agents.length; i++) {
+        if (state.agents[i].id === id) return state.agents[i];
+      }
+      return null;
+    }
+
+    async function removeAgent(agent) {
+      if (!window.confirm('Delete "' + agent.name + '"? This cannot be undone.')) {
+        return;
+      }
+      try {
+        // The id goes in the query string as well as the body. That is the
+        // shape proved against the live API; a body-only delete was never
+        // verified, and a silent no-op here looks exactly like a success.
+        var r = await fetch(API + "/model/delete?id=" + encodeURIComponent(agent.id), {
+          method: "POST", headers: authHeaders(),
+          body: JSON.stringify({ id: agent.id })
+        });
+        if (!r.ok) throw new Error();
+        await load();
+      } catch (e) {
+        showError("Could not delete that agent. Try again.");
+      }
+    }
+
+    // Reading a ready-made agent's instructions is not as simple as
+    // params.system. The list endpoint blanks params for anyone without write
+    // access on the row, and a platform agent is read-only to every user who
+    // is not its owner. So the instructions arrive empty for exactly the
+    // agents the duplicate button exists for. Task 8 also stores them in
+    // meta.agent_instructions, which is not blanked, so read params first and
+    // fall back to that.
+    function instructionsOf(agent) {
+      var p = (agent && agent.params && agent.params.system) || "";
+      if (p) return p;
+      return (agent && agent.meta && agent.meta.agent_instructions) || "";
+    }
+
+    // A copy, not an edit. A platform agent improves centrally for everybody,
+    // and a template that gets forked stops improving.
+    function duplicate(agent) {
+      openForm(null);
+      document.getElementById("agent-name").value = agent.name + " (my copy)";
+      var copied = instructionsOf(agent);
+      document.getElementById("agent-instructions").value = copied;
+      if (!copied) {
+        // Never hand back a silently empty box on a button that promises a
+        // copy. Say what happened and let them write their own.
+        formError("This agent's instructions could not be copied. " +
+                  "Write your own below and save.");
+      }
+      var tools = (agent.meta && agent.meta.toolIds) || [];
+      document.getElementById("use-my-apps").checked =
+        tools.indexOf("server:mcp-proxy") !== -1;
+      NATIVE_TOOLS.forEach(function (t) {
+        document.getElementById("tool-" + t[0]).checked = tools.indexOf(t[0]) !== -1;
+      });
+      updateChars();
+    }
+
     (function wireForm() {
       var wrap = document.getElementById("native-tools");
       NATIVE_TOOLS.forEach(function (t) {
@@ -516,6 +580,19 @@
       document.getElementById("agent-save").addEventListener("click", save);
       document.getElementById("agent-instructions")
         .addEventListener("input", updateChars);
+
+      // Delegated, because cards are re-rendered on every load.
+      document.body.addEventListener("click", function (ev) {
+        var btn = ev.target.closest("[data-act]");
+        if (!btn) return;
+        var host = btn.closest("[data-agent-id]");
+        if (!host) return;
+        var agent = agentById(host.getAttribute("data-agent-id"));
+        if (!agent) return;
+        if (btn.dataset.act === "edit") openForm(agent);
+        else if (btn.dataset.act === "delete") removeAgent(agent);
+        else if (btn.dataset.act === "duplicate") duplicate(agent);
+      });
     })();
 
     window.__aiuiAgents = { load: load, render: render, state: state,

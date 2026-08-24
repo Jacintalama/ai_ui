@@ -49,9 +49,23 @@ MODELS = [
     {"id": "agent-shared-c3d4", "name": "Meeting Summariser",
      "user_id": OTHER, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You summarise meetings."},
-     "meta": {"description": "platform", "toolIds": []},
+     # A ready-made agent also stores its instructions in meta, because the
+     # list endpoint blanks params for anyone without write access and that is
+     # every user except its owner. Task 8 writes both.
+     "meta": {"description": "platform", "toolIds": [],
+              "agent_instructions": "You summarise meetings."},
      "access_grants": [], "is_active": True, "write_access": False,
      "created_at": 3, "updated_at": 3,
+     "user": {"id": OTHER, "name": "Someone", "email": "other@example.com"}},
+    # A ready-made agent whose instructions cannot be read at all: params is
+    # blanked because it is read-only, and nobody wrote the meta copy. The
+    # duplicate button must say so rather than hand back an empty box.
+    {"id": "agent-bare-9999", "name": "Bare Agent",
+     "user_id": OTHER, "base_model_id": "gpt-4o-mini",
+     "params": {"system": "Unreadable to anyone but the owner."},
+     "meta": {"description": "bare", "toolIds": []},
+     "access_grants": [], "is_active": True, "write_access": False,
+     "created_at": 5, "updated_at": 5,
      "user": {"id": OTHER, "name": "Someone", "email": "other@example.com"}},
     {"id": "agent-hostile-e5f6", "name": HOSTILE_NAME,
      "user_id": OTHER, "base_model_id": "gpt-4o-mini",
@@ -68,8 +82,20 @@ def _models_list_envelope(rows):
 
     /list only returns models that have a base_model_id, so the base models
     are not in it. That is why the page still needs /api/models as well.
+
+    It also BLANKS params for any row the caller cannot write. Modelling that
+    here is the whole reason the duplicate fallback can be tested: without it
+    the stub would hand back instructions the real server never sends, and
+    "Duplicate to my own" would look like it worked while copying nothing.
     """
-    items = [r for r in rows if r.get("base_model_id")]
+    items = []
+    for r in rows:
+        if not r.get("base_model_id"):
+            continue
+        row = dict(r)
+        if not row.get("write_access"):
+            row["params"] = {}
+        items.append(row)
     return {"items": items, "total": len(items)}
 
 
@@ -345,3 +371,91 @@ def test_saving_closes_the_form_and_a_failure_leaves_it_open(page):
     page.locator("#agent-save").click()
     page.wait_for_timeout(400)
     assert page.locator("#agent-form").is_visible() is True
+
+
+# --- editing, deleting, duplicating ---------------------------------------
+
+
+def test_edit_loads_the_existing_instructions(page):
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.input_value("#agent-instructions") == "You research things carefully."
+    assert page.input_value("#agent-name") == "My Research Agent"
+
+
+def test_edit_keeps_the_same_id(page):
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.fill("#agent-instructions", "Changed.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    sent = page.sent[-1]
+    assert "agent-mine-a1b2" in sent["url"], "edit did not target the existing agent"
+    assert json.loads(sent["body"])["id"] == "agent-mine-a1b2"
+
+
+def test_delete_asks_first(page):
+    page.on("dialog", lambda d: d.dismiss())
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="delete"]').click()
+    page.wait_for_timeout(300)
+    assert page.sent == [], "it deleted without asking"
+
+
+def test_delete_sends_the_id(page):
+    """The id goes in the query string as well as the body. That is the shape
+    proved against the live API; a body-only delete was never verified, and a
+    stub would accept either."""
+    page.on("dialog", lambda d: d.accept())
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="delete"]').click()
+    page.wait_for_timeout(300)
+    sent = page.sent[-1]
+    assert "/model/delete" in sent["url"]
+    assert "agent-mine-a1b2" in sent["url"]
+    assert json.loads(sent["body"]) == {"id": "agent-mine-a1b2"}
+
+
+def test_deleting_one_agent_does_not_touch_another(page):
+    page.on("dialog", lambda d: d.accept())
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="delete"]').click()
+    page.wait_for_timeout(300)
+    assert "agent-shared-c3d4" not in page.sent[-1]["url"]
+
+
+def test_duplicate_opens_a_new_agent_with_the_copied_instructions(page):
+    """The copy comes from meta, because /list blanked params on this row: it
+    is read-only to everyone except its owner. Reading params alone would hand
+    the user an empty box on the one button that promises a copy."""
+    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.input_value("#agent-instructions") == "You summarise meetings."
+    assert "Meeting Summariser" in page.input_value("#agent-name")
+
+
+def test_duplicate_says_so_when_the_instructions_cannot_be_copied(page):
+    """Never hand back a silently empty box on a button that promises a copy."""
+    page.locator('[data-agent-id="agent-bare-9999"] [data-act="duplicate"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.input_value("#agent-instructions") == ""
+    assert page.locator("#form-error").inner_text().strip() != ""
+
+
+def test_duplicate_saves_as_a_new_agent_not_over_the_original(page):
+    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    sent = page.sent[-1]
+    assert sent["url"].endswith("/create"), "duplicate edited the shared agent"
+    assert json.loads(sent["body"])["id"] != "agent-shared-c3d4"
+
+
+def test_duplicate_carries_the_tools_across(page):
+    """A copy that silently loses the tools is not a copy."""
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="duplicate"]').count()
+    # agent-mine-a1b2 is yours, so it offers Edit rather than Duplicate. Drive
+    # the function directly for the tool-carrying case.
+    page.evaluate(
+        "() => window.__aiuiAgents.openForm("
+        "  window.__aiuiAgents.state.agents.find(a => a.id === 'agent-mine-a1b2'))")
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.is_checked("#use-my-apps"), "the proxy tool was dropped"
