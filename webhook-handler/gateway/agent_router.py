@@ -61,10 +61,13 @@ def candidates(models: list[dict]) -> list[dict]:
         name = m.get("name")
         if not isinstance(name, str):
             name = mid
+        description = meta.get("description")
+        if not isinstance(description, str):
+            description = ""
         out.append({
             "id": mid,
             "name": name[:60],
-            "description": (meta.get("description") or "")[:MAX_DESCRIPTION],
+            "description": description[:MAX_DESCRIPTION],
         })
         if len(out) >= MAX_CANDIDATES:
             break

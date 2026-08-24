@@ -70,6 +70,42 @@ def test_a_malformed_field_falls_back_instead_of_raising(bad_item):
     assert got == [{"id": "agent-x", "name": "agent-x", "description": ""}]
 
 
+@pytest.mark.parametrize("bad_desc", [
+    {"nested": "oops"},
+    42,
+    ["a"],
+])
+def test_a_mistyped_description_falls_back_to_empty_string(bad_desc):
+    """A description that is not a string does not raise: it falls back to
+    the empty string, same as other malformed fields."""
+    model = {"id": "agent-x", "name": "Test", "meta": {"description": bad_desc}}
+    got = agent_router.candidates([model])
+    assert got == [{"id": "agent-x", "name": "Test", "description": ""}]
+
+
+def test_a_well_formed_candidate_before_a_bad_description_is_still_returned():
+    """A mistyped description no longer raises, so a good candidate that
+    precedes a bad one is still returned. Before the fix, the exception would
+    have escaped and cost all preceding good candidates."""
+    good = _model("agent-good-0001", "Good Agent", "works perfectly")
+    bad = {"id": "agent-bad-0002", "name": "Bad", "meta": {"description": 99}}
+    mixed = [good, bad]
+    got = agent_router.candidates(mixed)
+    assert len(got) == 2
+    assert got[0]["id"] == "agent-good-0001"
+    assert got[0]["name"] == "Good Agent"
+    assert "perfectly" in got[0]["description"]
+    assert got[1]["id"] == "agent-bad-0002"
+    assert got[1]["description"] == ""
+
+
+def test_a_normal_string_description_is_unchanged():
+    """Normal string descriptions should work as before the fix."""
+    model = _model("agent-x", "Test Agent", "does something cool")
+    got = agent_router.candidates([model])
+    assert got[0]["description"] == "does something cool"
+
+
 def test_a_malformed_item_does_not_cost_the_good_ones_in_the_same_list():
     good = _model("agent-inbox-triage-0002", "Inbox Triage", "reads mail")
     mixed = [None, "oops", {"id": "agent-x", "meta": "not-a-dict"},
