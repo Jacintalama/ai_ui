@@ -7,26 +7,15 @@ also pages at 30, so a user with more than 30 agents silently loses the rest
 unless this pages through.
 """
 import httpx
-import pytest
+import respx
 
-from gateway.owui import OWUIError, OWUIUserClient
+from gateway.owui import OWUIUserClient
+
+BASE = "http://open-webui:8080"
 
 
-def _client(handler) -> OWUIUserClient:
-    """An OWUIUserClient whose HTTP is served by `handler`, no socket."""
-    client = OWUIUserClient("https://example.test", "tok")
-    transport = httpx.MockTransport(handler)
-
-    async def _request(method, path, **kwargs):
-        async with httpx.AsyncClient(transport=transport) as http:
-            resp = await http.request(method, f"https://example.test{path}",
-                                      **kwargs)
-        if resp.status_code >= 400:
-            raise OWUIError(resp.status_code, resp.text[:400])
-        return resp
-
-    client._request = _request
-    return client
+def _client(token: str = "user-token") -> OWUIUserClient:
+    return OWUIUserClient(BASE, token)
 
 
 def _row(mid: str) -> dict:
@@ -34,16 +23,21 @@ def _row(mid: str) -> dict:
             "base_model_id": "gpt-4o-mini"}
 
 
-async def test_it_returns_the_rows():
-    def handler(request):
-        return httpx.Response(200, json={"items": [_row("agent-a-0001")],
-                                         "total": 1})
+@respx.mock
+async def test_it_returns_the_rows_and_carries_the_caller_token():
+    route = respx.get(f"{BASE}/api/v1/models/list").mock(
+        return_value=httpx.Response(200, json={
+            "items": [_row("agent-a-0001")], "total": 1}))
 
-    got = await _client(handler).list_models()
+    got = await _client("caller-token").list_models()
 
     assert [m["id"] for m in got] == ["agent-a-0001"]
+    # This is what decides which agents the router can see. A shared or wrong
+    # token here would mean one user's agents get offered to another.
+    assert route.calls[0].request.headers["Authorization"] == "Bearer caller-token"
 
 
+@respx.mock
 async def test_it_pages_until_it_has_everything():
     seen = []
 
@@ -54,21 +48,49 @@ async def test_it_pages_until_it_has_everything():
         rows = rows[:30] if page == 1 else rows[:5]
         return httpx.Response(200, json={"items": rows, "total": 35})
 
-    got = await _client(handler).list_models()
+    respx.get(f"{BASE}/api/v1/models/list").mock(side_effect=handler)
+
+    got = await _client().list_models()
 
     assert seen == [1, 2], "it did not ask for the second page"
     assert len(got) == 35
 
 
-async def test_an_empty_page_stops_the_loop():
-    """A total that never matches must not spin forever."""
+@respx.mock
+async def test_an_empty_batch_ends_the_loop():
+    """An empty items list must stop the loop, whatever `total` says."""
     calls = []
 
     def handler(request):
         calls.append(1)
         return httpx.Response(200, json={"items": [], "total": 999})
 
-    got = await _client(handler).list_models()
+    respx.get(f"{BASE}/api/v1/models/list").mock(side_effect=handler)
+
+    got = await _client().list_models()
 
     assert got == []
     assert len(calls) == 1
+
+
+@respx.mock
+async def test_a_total_that_never_matches_stops_at_the_page_cap():
+    """A total that never matches must not spin forever.
+
+    Every page here comes back full (30 non-empty rows), so the `not batch`
+    exit never fires and only the page cap can end the loop. This must fail
+    (or hang) if that cap is ever removed.
+    """
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        rows = [_row("agent-%03d" % i) for i in range(30)]
+        return httpx.Response(200, json={"items": rows, "total": 999999})
+
+    respx.get(f"{BASE}/api/v1/models/list").mock(side_effect=handler)
+
+    got = await _client().list_models()
+
+    assert len(calls) == 25
+    assert len(got) == 750
