@@ -317,6 +317,11 @@
     }
 
     async function load() {
+      // Clear any banner from a previous attempt, or "Could not load your
+      // agents" stays on screen through every later success.
+      var banner = document.getElementById("page-error");
+      banner.textContent = "";
+      banner.hidden = true;
       try {
         var who = await getJson("/api/v1/auths/");
         state.me = who && who.id;
@@ -408,7 +413,16 @@
     function buildAgentBody(f) {
       return {
         id: f.id, name: f.name, base_model_id: f.baseModel,
-        meta: { description: f.instructions.slice(0, 120), toolIds: f.toolIds },
+        // agent_instructions is a second copy of the same text. The list
+        // endpoint blanks params for anyone without write access, so for a
+        // ready-made agent this is the only copy any other user can read, and
+        // it is what the card preview and the duplicate button run on. Writing
+        // it on EVERY save matters: the ready-made agents belong to an admin,
+        // who sees them under "Your agents" with an Edit button, and one edit
+        // that omitted this would strip the instructions for everyone else.
+        // On a private agent it costs nothing, because nobody else sees it.
+        meta: { description: f.instructions.slice(0, 120), toolIds: f.toolIds,
+                agent_instructions: f.instructions },
         params: { system: f.instructions },
         is_active: true
       };
@@ -477,9 +491,17 @@
         return formError("You have " + MAX_AGENTS + " agents, which is the limit. " +
                          "Delete one to make another.");
       }
+      // A select whose value is not among its options reports "", and the
+      // list endpoint drops any row with no base model. Posting that would
+      // leave the agent in the database but gone from this page for good,
+      // with no error and no way back. Reachable whenever a base model
+      // disappears from the account, which the free model roster does.
+      var baseModel = document.getElementById("agent-base").value;
+      if (!baseModel) return formError("Pick a model for this agent.");
+
       var body = buildAgentBody({
         id: editingId || newAgentId(name), name: name,
-        baseModel: document.getElementById("agent-base").value,
+        baseModel: baseModel,
         instructions: instructions, toolIds: chosenTools()
       });
       var url = API + (editingId ? "/model/update?id=" + encodeURIComponent(editingId)
@@ -575,6 +597,13 @@
       NATIVE_TOOLS.forEach(function (t) {
         document.getElementById("tool-" + t[0]).checked = tools.indexOf(t[0]) !== -1;
       });
+      // Carry the base model across too. openForm(null) leaves the dropdown on
+      // whichever model happens to be first, which on this platform can be a
+      // pipe that is not tool capable, so a duplicated Inbox Triage would
+      // quietly run on the wrong thing.
+      if (agent.base_model_id) {
+        document.getElementById("agent-base").value = agent.base_model_id;
+      }
       updateChars();
     }
 

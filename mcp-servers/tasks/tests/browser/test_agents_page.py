@@ -46,6 +46,16 @@ MODELS = [
      "access_grants": [], "is_active": True, "write_access": True,
      "created_at": 2, "updated_at": 2,
      "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
+    # A second agent owned by ME. Without it, "delete the agent that was
+    # clicked" and "delete the first agent in the list" are indistinguishable,
+    # and a mutant that always deletes state.agents[0] passes.
+    {"id": "agent-mine-second-c5d6", "name": "My Second Agent",
+     "user_id": ME, "base_model_id": "gpt-4o-mini",
+     "params": {"system": "You do the second thing."},
+     "meta": {"description": "mine too", "toolIds": []},
+     "access_grants": [], "is_active": True, "write_access": True,
+     "created_at": 6, "updated_at": 6,
+     "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
     {"id": "agent-shared-c3d4", "name": "Meeting Summariser",
      "user_id": OTHER, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You summarise meetings."},
@@ -213,7 +223,8 @@ def test_a_card_shows_the_agent_it_stands_for(page):
     assert card.locator(".card-title").inner_text() == "My Research Agent"
     assert "You research things carefully." in card.locator(".card-sys").inner_text()
     assert [e.get_attribute("data-agent-id")
-            for e in page.locator("#my-agents [data-agent-id]").all()] == ["agent-mine-a1b2"]
+            for e in page.locator("#my-agents [data-agent-id]").all()] == [
+        "agent-mine-a1b2", "agent-mine-second-c5d6"]
 
 
 def test_a_hostile_agent_name_is_shown_as_text_not_run(page):
@@ -488,4 +499,101 @@ def test_the_list_pages_until_it_has_everything(page):
 
     assert page.locator("#my-agents [data-agent-id]").count() == 35
     assert page.locator("#mine-count").inner_text() == "35"
+    assert page.locator("#page-error").is_hidden()
+
+
+def test_delete_targets_the_agent_whose_button_was_clicked(page):
+    """With one owned agent, "delete the clicked agent" and "delete the first
+    agent" look identical. This deletes the SECOND one."""
+    page.on("dialog", lambda d: d.accept())
+    page.locator('[data-agent-id="agent-mine-second-c5d6"] [data-act="delete"]').click()
+    page.wait_for_timeout(300)
+    sent = page.sent[-1]
+    assert json.loads(sent["body"]) == {"id": "agent-mine-second-c5d6"}
+    assert "agent-mine-a1b2" not in sent["url"]
+
+
+def test_the_confirm_names_the_agent_being_deleted(page):
+    """A confirm naming the wrong agent is worse than none: it invites a yes."""
+    seen = []
+    page.on("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+    page.locator('[data-agent-id="agent-mine-second-c5d6"] [data-act="delete"]').click()
+    page.wait_for_timeout(300)
+    assert seen and "My Second Agent" in seen[0]
+
+
+def test_editing_then_creating_does_not_overwrite_the_edited_agent(page):
+    """editingId is shared across both paths. If it survives a cancelled edit,
+    the next new agent silently updates the one that was open."""
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.locator("#agent-cancel").click()
+
+    _fill(page, name="Brand New", instructions="Fresh instructions.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    sent = page.sent[-1]
+    assert sent["url"].endswith("/create"), "it updated the agent that was open"
+    assert json.loads(sent["body"])["id"] != "agent-mine-a1b2"
+
+
+def test_a_save_always_sends_a_base_model(page):
+    """A row with no base model is dropped by the list endpoint, so the agent
+    would exist and never be shown again."""
+    _fill(page)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["base_model_id"] == "gpt-4o-mini"
+
+
+def test_the_form_refuses_to_save_with_no_model_to_pick(page):
+    """If every base model has vanished from the account, refuse rather than
+    post an empty base_model_id and lose the agent."""
+    _open_form(page)
+    # Clear it AFTER opening: openForm repopulates the dropdown every time.
+    page.evaluate("() => { document.getElementById('agent-base').innerHTML = ''; }")
+    page.fill("#agent-name", "No Model")
+    page.fill("#agent-instructions", "Something.")
+    before = len(page.sent)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert len(page.sent) == before, "it saved with no base model"
+    assert page.locator("#form-error").inner_text().strip() != ""
+
+
+def test_a_save_keeps_the_readable_copy_of_the_instructions(page):
+    """The ready-made agents are owned by an admin, who can edit them here. If
+    a save dropped meta.agent_instructions, every other user would lose both
+    the card preview and the duplicate button on them."""
+    _fill(page, name="Research Agent", instructions="Research carefully.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    meta = json.loads(page.sent[-1]["body"])["meta"]
+    assert meta["agent_instructions"] == "Research carefully."
+
+
+def test_duplicate_keeps_the_source_base_model(page):
+    """openForm(null) leaves the dropdown on whichever model is first, which on
+    this platform can be a pipe that cannot call tools at all."""
+    page.evaluate("""() => {
+      var sel = document.getElementById('agent-base');
+      var o = document.createElement('option');
+      o.value = 'zzz-other-model'; o.textContent = 'Other';
+      sel.insertBefore(o, sel.firstChild);
+    }""")
+    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["base_model_id"] == "gpt-4o-mini"
+
+
+def test_a_stale_error_banner_does_not_survive_a_good_reload(page):
+    page.evaluate("""() => {
+      var el = document.getElementById('page-error');
+      el.textContent = 'Could not load your agents.';
+      el.hidden = false;
+    }""")
+    page.evaluate("() => window.__aiuiAgents.load()")
+    page.wait_for_timeout(500)
     assert page.locator("#page-error").is_hidden()
