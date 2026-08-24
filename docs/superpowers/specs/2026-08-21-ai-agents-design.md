@@ -107,8 +107,12 @@ every other model, and two people will both make a "Research Assistant".
 
 ## The list
 
-Agents the user owns, each with edit, delete and a link that opens a chat with
-it. Platform agents appear in a separate, read-only group with **duplicate to my
+Agents the user owns, each with edit and delete.
+
+The spec originally promised a link that opens a chat with the agent. It was
+not built and the line is corrected rather than left as a false claim: an agent
+is a real model, so it is already in the model picker, which is the same one
+click by another route. Platform agents appear in a separate, read-only group with **duplicate to my
 own**, which copies the instructions into a new agent they own.
 
 Telling the two apart needs no flag, and this is worth stating because it is not

@@ -202,8 +202,11 @@ def knowledge_graph_page():
 
 @app.get("/tasks/agents", include_in_schema=False)
 def agents_page():
-    """AI Agents. A placeholder describing what the page will do, so the
-    sidebar entry leads somewhere honest while the feature is being built."""
+    """AI Agents. Build an assistant, give it instructions and tools, and use
+    it wherever you already chat.
+
+    Pure frontend: it calls Open WebUI's own model API with the user's own
+    session, so there is no endpoint of ours behind it."""
     return FileResponse("static/agents.html", media_type="text/html")
 
 
