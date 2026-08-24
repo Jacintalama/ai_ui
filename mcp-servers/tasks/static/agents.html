@@ -328,21 +328,34 @@
         // carries user_id and params.system on the row. /api/models nests the
         // row under `info` and drops params server side, so a page reading it
         // sees neither the owner nor the instructions.
-        var listed = await getJson(API + "/list");
-        var items = (listed && Array.isArray(listed.items)) ? listed.items : [];
-        var total = (listed && typeof listed.total === "number")
-          ? listed.total : items.length;
+        //
+        // /list is paged at 30 rows, one-indexed on `page`, so keep asking
+        // until the count matches. Page 31 onward would otherwise vanish with
+        // no error at all. The guard stops a wrong `total` spinning forever.
+        var items = [], total = 0, pageNo = 1, guard = 0;
+        while (guard++ < 25) {
+          var listed = await getJson(API + "/list?page=" + pageNo);
+          var batch = (listed && Array.isArray(listed.items)) ? listed.items : [];
+          total = (listed && typeof listed.total === "number")
+            ? listed.total : batch.length;
+          items = items.concat(batch);
+          if (!batch.length || items.length >= total) break;
+          pageNo++;
+        }
 
+        // Load-bearing for two separate reasons, so do not "tidy" it away.
         // Task 5's base model dropdown needs every base model, and /list only
-        // returns models that have a base_model_id, so this second call stays.
+        // returns models that have a base_model_id. It also rebuilds the
+        // server's model cache: measured on production, a freshly created
+        // agent answers "Model not found" in chat until something calls this,
+        // which is why save() reloads after a successful create.
         var body = await getJson("/api/models");
         state.models = body.data || (Array.isArray(body) ? body : []);
         state.agents = items.filter(isAgent);
         render();
 
-        // /list is paged. The name of its paging parameter is not verified
-        // yet and Task 7 settles it, so say so out loud rather than quietly
-        // showing a short list.
+        // Belt and braces: if the count still does not add up, say so rather
+        // than quietly showing a short list.
         if (items.length < total) {
           showError("Some of your agents could not be shown. Reload the page " +
                     "to try again.");

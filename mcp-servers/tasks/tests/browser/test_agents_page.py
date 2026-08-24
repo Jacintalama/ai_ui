@@ -459,3 +459,33 @@ def test_duplicate_carries_the_tools_across(page):
         "  window.__aiuiAgents.state.agents.find(a => a.id === 'agent-mine-a1b2'))")
     page.wait_for_selector("#agent-form", state="visible")
     assert page.is_checked("#use-my-apps"), "the proxy tool was dropped"
+
+
+def test_the_list_pages_until_it_has_everything(page):
+    """/list returns at most 30 rows per page. Without paging, the thirty first
+    agent onward simply vanish, with no error anywhere."""
+    import urllib.parse
+
+    many = [{"id": "agent-many-%02d" % i, "name": "Agent %02d" % i,
+             "user_id": ME, "base_model_id": "gpt-4o-mini",
+             "params": {"system": "Instructions %02d" % i},
+             "meta": {"description": "many", "toolIds": []},
+             "access_grants": [], "is_active": True, "write_access": True,
+             "created_at": i, "updated_at": i,
+             "user": {"id": ME, "name": "Me", "email": "me@example.com"}}
+            for i in range(35)]
+
+    def paged(route):
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(route.request.url).query)
+        n = int((q.get("page") or ["1"])[0])
+        chunk = many[(n - 1) * 30:n * 30]
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"items": chunk, "total": len(many)}))
+
+    page.route("**/api/v1/models/list*", paged)
+    page.evaluate("() => window.__aiuiAgents.load()")
+    page.wait_for_timeout(700)
+
+    assert page.locator("#my-agents [data-agent-id]").count() == 35
+    assert page.locator("#mine-count").inner_text() == "35"
+    assert page.locator("#page-error").is_hidden()
