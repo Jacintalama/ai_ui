@@ -48,6 +48,39 @@ def test_a_candidate_carries_its_name_and_one_line():
     assert "unread email" in c["description"]
 
 
+@pytest.mark.parametrize("bad_item", [
+    None,
+    "oops",
+    {"id": 123, "name": "X", "meta": {}},
+])
+def test_an_unusable_item_is_skipped_not_raised(bad_item):
+    """Not a dict, or an id that is not a string: there is nothing to fall
+    back to, so the row is dropped rather than raising."""
+    assert agent_router.candidates([bad_item]) == []
+
+
+@pytest.mark.parametrize("bad_item", [
+    {"id": "agent-x", "meta": "not-a-dict"},
+    {"id": "agent-x", "name": 55, "meta": {}},
+])
+def test_a_malformed_field_falls_back_instead_of_raising(bad_item):
+    """A bad meta or name is not fatal to the row: meta falls back to {} and
+    name falls back to the id, same as the finding specified."""
+    got = agent_router.candidates([bad_item])
+    assert got == [{"id": "agent-x", "name": "agent-x", "description": ""}]
+
+
+def test_a_malformed_item_does_not_cost_the_good_ones_in_the_same_list():
+    good = _model("agent-inbox-triage-0002", "Inbox Triage", "reads mail")
+    mixed = [None, "oops", {"id": "agent-x", "meta": "not-a-dict"},
+             {"id": 123, "name": "X", "meta": {}},
+             {"id": "agent-x", "name": 55, "meta": {}}, good]
+    got = agent_router.candidates(mixed)
+    ids = [c["id"] for c in got]
+    assert "agent-inbox-triage-0002" in ids
+    assert got[-1]["name"] == "Inbox Triage"
+
+
 def test_the_prompt_never_carries_full_instructions():
     """Instructions run to 4000 characters and this call happens on every
     message, so the prompt is names and one-liners on purpose."""
@@ -81,6 +114,26 @@ def test_a_quoted_or_padded_id_is_still_accepted():
     assert got["id"] == "agent-inbox-triage-0002"
 
 
+@pytest.mark.parametrize("answer", [
+    {"id": "agent-inbox-triage-0002"},
+    ["agent-inbox-triage-0002"],
+    123,
+])
+def test_a_non_string_answer_is_refused_not_raised(answer):
+    """validate() is the boundary between an untrusted answer and a candidate
+    dict. A caller other than pick() may hand it something that is not a
+    string, and that must be refused the same way a wrong id is."""
+    assert agent_router.validate(answer, CANDS) is None
+
+
+def test_only_the_first_non_blank_line_is_ever_checked():
+    """Deliberate and fail-safe, not an oversight: a valid id on a later line
+    is missed rather than found by scanning past text the router was told not
+    to write."""
+    answer = "Sure, I would pick this one:\nagent-inbox-triage-0002"
+    assert agent_router.validate(answer, CANDS) is None
+
+
 async def test_pick_returns_the_chosen_candidate():
     owui = AsyncMock()
     owui.chat_completion.return_value = "agent-inbox-triage-0002"
@@ -106,6 +159,22 @@ async def test_a_router_failure_is_not_an_error():
     getting a reply."""
     owui = AsyncMock()
     owui.chat_completion.side_effect = RuntimeError("router down")
+
+    got = await agent_router.pick(owui, "check my mail", CANDS, "gpt-4o-mini")
+
+    assert got is None
+
+
+@pytest.mark.parametrize("bad_answer", [
+    {"id": "agent-inbox-triage-0002"},
+    ["agent-inbox-triage-0002"],
+])
+async def test_a_non_string_completion_is_not_an_error(bad_answer):
+    """pick() promises never to raise. chat_completion is typed to return a
+    string, but that typing is not enforced at the boundary, so a caller that
+    hands back a dict or a list must fall back to no agent, not raise."""
+    owui = AsyncMock()
+    owui.chat_completion.return_value = bad_answer
 
     got = await agent_router.pick(owui, "check my mail", CANDS, "gpt-4o-mini")
 

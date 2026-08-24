@@ -11,6 +11,8 @@ agent belonging to somebody else is never in scope to begin with.
 """
 import logging
 
+from gateway.owui import OWUIUserClient
+
 log = logging.getLogger(__name__)
 
 AGENT_PREFIX = "agent-"
@@ -44,13 +46,24 @@ def candidates(models: list[dict]) -> list[dict]:
 
     out: list[dict] = []
     for m in models:
-        mid = m.get("id") or ""
-        if not mid.startswith(AGENT_PREFIX):
+        # Same reasoning as the list check above, one level down: a schema
+        # change or a partial error body embedded in a 200 can put a
+        # malformed row next to well-formed ones, and one bad row must not
+        # cost the caller every good one.
+        if not isinstance(m, dict):
             continue
-        meta = m.get("meta") or {}
+        mid = m.get("id") or ""
+        if not isinstance(mid, str) or not mid.startswith(AGENT_PREFIX):
+            continue
+        meta = m.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        name = m.get("name")
+        if not isinstance(name, str):
+            name = mid
         out.append({
             "id": mid,
-            "name": (m.get("name") or mid)[:60],
+            "name": name[:60],
             "description": (meta.get("description") or "")[:MAX_DESCRIPTION],
         })
         if len(out) >= MAX_CANDIDATES:
@@ -77,10 +90,20 @@ def validate(answer: str | None, cands: list[dict]) -> dict | None:
 
     Untrusted input. A model can return an id that does not exist, or one
     belonging to another user, and either would route a real request somewhere
-    it must not go.
+    it must not go. It can also be typed to return a string and hand back
+    something else entirely, so the type is checked before anything that
+    assumes it.
     """
+    if not isinstance(answer, str):
+        return None
     by_id = {c["id"]: c for c in cands}
-    for line in (answer or "").splitlines():
+    # Only the first non-blank line is ever inspected. This is deliberate, not
+    # an oversight: the prompt tells the router to reply with nothing but the
+    # id, so a real answer is one line. If it prefixes an explanation anyway,
+    # a valid id further down is missed and the call falls back to no agent
+    # rather than an agent chosen by scanning past disclaimer text it wasn't
+    # supposed to write. That failure mode is the safe one.
+    for line in answer.splitlines():
         cleaned = line.strip().strip('"\'`').strip()
         if not cleaned:
             continue
@@ -88,23 +111,26 @@ def validate(answer: str | None, cands: list[dict]) -> dict | None:
     return None
 
 
-async def pick(owui, text: str, cands: list[dict],
+async def pick(owui: OWUIUserClient, text: str, cands: list[dict],
                router_model: str) -> dict | None:
     """Ask which agent fits. Returns the candidate, or None to answer normally.
 
     Never raises. The person is waiting for an answer, and a router that cannot
-    make up its mind must not be able to stop them getting one.
+    make up its mind must not be able to stop them getting one. validate() is
+    called inside the same try as the model call: it is typed to return a
+    string, but a wrong or changed return shape must fail the same safe way as
+    a network error, not raise past this function's own guarantee.
     """
     if not cands:
         return None
     try:
         answer = await owui.chat_completion(
             build_messages(text, cands), router_model)
+        return validate(answer, cands)
     except Exception:                                  # noqa: BLE001
         log.warning("gateway: agent router did not answer, using the default "
                     "model", exc_info=True)
         return None
-    return validate(answer, cands)
 
 
 def _normalise(text: str) -> str:
