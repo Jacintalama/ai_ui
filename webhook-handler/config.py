@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     # auto_router.auto is the "Auto (Free)" pipe: active on prod, free, so a
     # runaway loop costs nothing.
     gateway_model: str = Field(default="auto_router.auto", alias="GATEWAY_MODEL")
+    # The model that decides WHICH agent answers. Called with the user's own
+    # token, so it has to be one every user can see: gpt-4o-mini has a row and
+    # a wildcard read grant, so it qualifies. Kept separate from gateway_model
+    # so the routing decision can run on something cheap.
+    gateway_router_model: str = Field(default="gpt-4o-mini",
+                                      alias="GATEWAY_ROUTER_MODEL")
     # Browser-visible base for the pairing link. Not tasks_public_url, so the
     # two can diverge without silently breaking pairing.
     gateway_public_url: str = "https://ai-ui.coolestdomain.win"

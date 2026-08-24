@@ -10,6 +10,7 @@ import os
 
 from clients.tasks import TasksAPIError, TasksClient
 from config import settings
+from gateway import agent_router
 from gateway import commands as gateway_commands
 from gateway.base import BasePlatformAdapter
 from gateway.events import MessageEvent, MessageType
@@ -91,6 +92,24 @@ async def handle_event(event: MessageEvent, adapter: BasePlatformAdapter) -> str
         await _stop_typing_quietly(adapter, src.chat_id)
 
 
+async def _choose_agent(owui: OWUIUserClient, text: str) -> dict | None:
+    """The agent that should answer, or None for the default model.
+
+    Never raises. Listing models or routing can both fail, and neither is a
+    reason to leave somebody staring at silence, so both fall back to the
+    normal model.
+    """
+    try:
+        models = await owui.list_models()
+    except Exception:                                  # noqa: BLE001
+        log.warning("gateway: could not list the caller's models, using the "
+                    "default model", exc_info=True)
+        return None
+    cands = agent_router.candidates(models)
+    return await agent_router.pick(
+        owui, text, cands, settings.gateway_router_model)
+
+
 async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     """The flow proper. Errors here are caught and turned into a sentence by
     the caller, `handle_event`, which owns the try/except/finally."""
@@ -156,23 +175,32 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
             return await _say(adapter, src.chat_id, reply)
 
     await adapter.send_typing(src.chat_id)
+
+    agent = await _choose_agent(owui, text)
+    model = agent["id"] if agent else settings.gateway_model
+
     chat_id, chat = await get_or_create_chat(
         _tasks, owui, src.platform, src.chat_id,
-        owui_user_id, text, settings.gateway_model)
+        owui_user_id, text, model)
 
     messages = history_messages(chat, settings.gateway_history_turns)
     messages.append({"role": "user", "content": text})
-    answer = await owui.chat_completion(
-        messages, settings.gateway_model, chat_id=chat_id)
+    answer = await owui.chat_completion(messages, model, chat_id=chat_id)
 
     # Persist before delivering, but never let a persist failure swallow a
     # good answer: the person is waiting and the answer already exists.
     try:
         await owui.update_chat(
-            chat_id, append_turn(chat, text, answer, settings.gateway_model))
+            chat_id, append_turn(chat, text, answer, model))
     except Exception:                              # noqa: BLE001
         log.exception("gateway: could not write the transcript to chat %s; "
                       "delivering the answer anyway", chat_id)
+
+    # Tagged on delivery, not in the transcript. The stored turn already
+    # records the model that produced it, and the web UI shows that, so
+    # writing the tag into the text too would duplicate it there.
+    if agent:
+        answer = "%s\n\nvia %s" % (answer, agent["name"])
 
     return await _say(adapter, src.chat_id, answer)
 
