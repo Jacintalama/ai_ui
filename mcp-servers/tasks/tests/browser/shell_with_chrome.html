@@ -8,19 +8,33 @@
     position: fixed; left: 0; top: 0; width: 260px; height: 100vh;
     box-sizing: border-box; padding: 8px;
   }
-  /* Chrome the user actually clicks. Kept clear of the sidebar AND above the
-     pane, so a click lands on it rather than on an overlay. */
-  #chrome { position: fixed; top: 4px; right: 4px; z-index: 2147483647; }
+  /* The sticky top row, copied from Open WebUI v0.11.0 Sidebar.svelte. The
+     shape matters and an earlier version of this file got it wrong: the
+     collapse control was a lone button parked in the opposite corner of the
+     page, so the test proved only that isolated buttons are safe. In the real
+     sidebar the button is 30px and sits immediately beside an `a[href="/"]`
+     carrying `flex flex-1`, which eats the rest of the row. A dismissal rule
+     that keys on links has to be tested against THAT, because the link is
+     inches from the button and going to "/" is the dashboard. */
+  #top-row { display: flex; align-items: center; gap: 4px; }
+  #sidebar-toggle {
+    width: 30px; height: 30px;
+    display: flex; justify-content: center; align-items: center;
+  }
+  #home-link { display: flex; flex: 1 1 0%; padding: 0 2px; }
 </style>
 </head>
 <body>
   <!-- A NON-ADMIN sidebar: no /workspace link, which is what regular users get. -->
-  <div id="chrome">
-    <button id="sidebar-toggle">collapse sidebar</button>
-    <a id="a-chat" href="#chat">a chat</a>
-  </div>
   <nav id="sidebar">
-    <div class="row"><a href="/" draggable="false"><span>New Chat</span></a></div>
+    <div id="top-row">
+      <!-- aria-label and the nested div are both real. The click usually lands
+           on the inner element, not the button, so closest() has to walk. -->
+      <button id="sidebar-toggle" aria-label="Close Sidebar">
+        <div class="self-center"><span id="toggle-glyph">|||</span></div>
+      </button>
+      <a id="home-link" href="/"><div id="sidebar-webui-name">Open WebUI</div></a>
+    </div>
     <div class="row"><a href="/notes" draggable="false"><span>Notes</span></a></div>
     <div class="row"><a href="/calendar" draggable="false"><span>Calendar</span></a></div>
   </nav>
