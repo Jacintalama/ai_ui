@@ -10,6 +10,7 @@ Candidates are always built from a list fetched with the CALLER's token, so an
 agent belonging to somebody else is never in scope to begin with.
 """
 import logging
+import re
 
 from gateway.owui import OWUIUserClient
 
@@ -73,12 +74,43 @@ def candidates(models: list[dict]) -> list[dict]:
         description = meta.get("description")
         if not isinstance(description, str):
             description = ""
+        tools = meta.get("toolIds")
         out.append({
             "id": mid,
             "name": name[:60],
             "description": description[:MAX_DESCRIPTION],
+            # Carried so the pipeline can hand them to the model, which is
+            # the only way an API caller gets any.
+            "tools": [t for t in tools if isinstance(t, str)]
+                     if isinstance(tools, list) else [],
         })
     return out
+
+
+def match_mention(text: str, cands: list[dict]) -> dict | None:
+    """The agent whose name is spoken in the message.
+
+    Not an @mention. People write "hi jack, are you there", so the name is
+    matched as a plain word anywhere in the sentence, case insensitively. This
+    is why an agent's name has to be a single word: a name with a space in it
+    is not something anybody says mid sentence, and it cannot be found in free
+    text reliably.
+
+    Word boundaries are hand rolled rather than \\b so that an agent called
+    "Ana" is not summoned by "analyse". When two names appear, the one said
+    first wins, because that is the one being addressed.
+    """
+    hay = text or ""
+    best = None
+    for c in cands:
+        name = (c.get("name") or "").strip()
+        if not name:
+            continue
+        m = re.search(r"(?<![A-Za-z0-9])" + re.escape(name) + r"(?![A-Za-z0-9])",
+                      hay, re.IGNORECASE)
+        if m and (best is None or m.start() < best[0]):
+            best = (m.start(), c)
+    return best[1] if best else None
 
 
 def build_messages(text: str, cands: list[dict]) -> list[dict]:

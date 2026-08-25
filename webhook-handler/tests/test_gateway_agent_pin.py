@@ -75,7 +75,7 @@ async def test_a_pinned_agent_answers_without_asking_the_router(
 
     assert owui.chat_completion.await_count == 1, "the router ran anyway"
     assert owui.chat_completion.await_args.args[1] == AGENT["id"]
-    assert out.rstrip().endswith("via Inbox Triage")
+    assert out.startswith("Inbox Triage:"), out
 
 
 async def test_unpinning_clears_it(adapter, wired, owui):
@@ -174,5 +174,5 @@ async def test_a_renamed_pinned_agent_shows_the_current_name(
 
     out = await pipeline.handle_event(_event("what is new"), adapter)
 
-    assert out.rstrip().endswith("via New Name")
+    assert out.startswith("New Name:"), out
     assert "Old Name" not in out

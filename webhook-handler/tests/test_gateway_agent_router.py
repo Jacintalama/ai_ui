@@ -67,7 +67,8 @@ def test_a_malformed_field_falls_back_instead_of_raising(bad_item):
     """A bad meta or name is not fatal to the row: meta falls back to {} and
     name falls back to the id, same as the finding specified."""
     got = agent_router.candidates([bad_item])
-    assert got == [{"id": "agent-x", "name": "agent-x", "description": ""}]
+    assert got == [{"id": "agent-x", "name": "agent-x", "description": "",
+                    "tools": []}]
 
 
 @pytest.mark.parametrize("bad_desc", [
@@ -80,7 +81,8 @@ def test_a_mistyped_description_falls_back_to_empty_string(bad_desc):
     the empty string, same as other malformed fields."""
     model = {"id": "agent-x", "name": "Test", "meta": {"description": bad_desc}}
     got = agent_router.candidates([model])
-    assert got == [{"id": "agent-x", "name": "Test", "description": ""}]
+    assert got == [{"id": "agent-x", "name": "Test", "description": "",
+                    "tools": []}]
 
 
 def test_a_well_formed_candidate_before_a_bad_description_is_still_returned():

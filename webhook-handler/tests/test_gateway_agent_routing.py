@@ -74,7 +74,7 @@ async def test_the_agent_id_is_what_answers(adapter, owui):
 async def test_the_reply_says_which_agent_answered(adapter):
     out = await pipeline.handle_event(_event(), adapter)
 
-    assert out.rstrip().endswith("via Inbox Triage")
+    assert out.startswith("Inbox Triage:"), out
     assert "the answer" in out
 
 

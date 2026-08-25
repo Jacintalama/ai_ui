@@ -29,7 +29,10 @@ BASE_MODEL = "gpt-4o-mini"
 AGENTS = [
     {
         "id": "agent-research-assistant-0001",
-        "name": "Research Assistant",
+        # One word, because the name is how you call it in a chat: you write
+        # "scout, find me X" and Scout picks it up. A name with a space in it
+        # cannot be spotted inside an ordinary sentence.
+        "name": "Scout",
         "system": (
             "You research questions carefully and answer with what you found, "
             "not with what you assume. Search the web when the answer depends "
@@ -41,7 +44,7 @@ AGENTS = [
     },
     {
         "id": "agent-inbox-triage-0002",
-        "name": "Inbox Triage",
+        "name": "Triage",
         "system": (
             "You read the user's unread email and tell them what actually "
             "needs them. Group messages into: needs a reply today, can wait, "

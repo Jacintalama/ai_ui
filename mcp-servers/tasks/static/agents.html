@@ -278,8 +278,10 @@
       <div class="modal" id="agent-form">
         <h2 id="form-title">New agent</h2>
         <label for="agent-name">Name</label>
-        <input id="agent-name" type="text" maxlength="60" autocomplete="off"
-               placeholder="Research Agent">
+        <input id="agent-name" type="text" maxlength="24" autocomplete="off"
+               placeholder="Jack">
+        <div class="hint">One word, so you can call it by name in a sentence.
+          Say "hi Jack, are you there" in a chat and Jack answers.</div>
 
         <label for="agent-instructions">Instructions</label>
         <textarea id="agent-instructions" rows="7"
@@ -531,6 +533,9 @@
       ["documents", "Documents"], ["excel_creator", "Excel"],
       ["executive_dashboard", "Dashboard"], ["remember", "Memory"]
     ];
+    // Matched against the words of a chat message, so it has to be a single
+    // plain word. Punctuation would not survive that matching intact.
+    var AGENT_NAME_RE = /^[A-Za-z][A-Za-z0-9]{1,23}$/;
     var MAX_INSTRUCTIONS = 4000;
     var MAX_AGENTS = 25;
     var editingId = null;
@@ -629,6 +634,18 @@
       var name = document.getElementById("agent-name").value.trim();
       var instructions = document.getElementById("agent-instructions").value.trim();
       if (!name) return formError("Give the agent a name.");
+      // One word, because the name is how you reach the agent in a chat: the
+      // bot looks for it as a word in whatever you typed. A name with a space
+      // in it is not something anybody says mid sentence, and it cannot be
+      // spotted reliably inside free text.
+      if (/\s/.test(name)) {
+        return formError("Use one word, so you can say the name in a sentence. "
+                         + "'Jack' works, 'Research Agent' does not.");
+      }
+      if (!AGENT_NAME_RE.test(name)) {
+        return formError("A name is 2 to 24 characters, starts with a letter, "
+                         + "and uses only letters and numbers.");
+      }
       if (!instructions) return formError("Tell the agent what to do.");
       if (instructions.length > MAX_INSTRUCTIONS) {
         return formError("Instructions are " + instructions.length +
@@ -737,7 +754,10 @@
     // and a template that gets forked stops improving.
     function duplicate(agent) {
       openForm(null);
-      document.getElementById("agent-name").value = agent.name + " (my copy)";
+      // "Scout (my copy)" would be rejected by the one word rule the moment
+      // they pressed save, on a name they never typed. Keep it one word.
+      document.getElementById("agent-name").value =
+        String(agent.name || "Agent").replace(/[^A-Za-z0-9]/g, "").slice(0, 20) + "Copy";
       var copied = instructionsOf(agent);
       document.getElementById("agent-instructions").value = copied;
       if (!copied) {

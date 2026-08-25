@@ -39,7 +39,7 @@ MODELS = [
      "base_model_id": None, "params": {}, "meta": {},
      "access_grants": [], "is_active": True, "write_access": False,
      "created_at": 1, "updated_at": 1, "user": None},
-    {"id": "agent-mine-a1b2", "name": "My Research Agent",
+    {"id": "agent-mine-a1b2", "name": "Researcher",
      "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You research things carefully."},
      "meta": {"description": "mine", "toolIds": ["server:mcp-proxy"]},
@@ -49,14 +49,14 @@ MODELS = [
     # A second agent owned by ME. Without it, "delete the agent that was
     # clicked" and "delete the first agent in the list" are indistinguishable,
     # and a mutant that always deletes state.agents[0] passes.
-    {"id": "agent-mine-second-c5d6", "name": "My Second Agent",
+    {"id": "agent-mine-second-c5d6", "name": "Secondagent",
      "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You do the second thing."},
      "meta": {"description": "mine too", "toolIds": []},
      "access_grants": [], "is_active": True, "write_access": True,
      "created_at": 6, "updated_at": 6,
      "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
-    {"id": "agent-shared-c3d4", "name": "Meeting Summariser",
+    {"id": "agent-shared-c3d4", "name": "Summariser",
      "user_id": OTHER, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You summarise meetings."},
      # A wildcard read grant is what actually makes an agent visible to
@@ -224,7 +224,7 @@ def test_a_card_shows_the_agent_it_stands_for(page):
     card whose title and instructions never render passes every other test
     in this file."""
     card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
-    assert card.locator(".card-title").inner_text() == "My Research Agent"
+    assert card.locator(".card-title").inner_text() == "Researcher"
     assert "You research things carefully." in card.locator(".card-sys").inner_text()
     assert [e.get_attribute("data-agent-id")
             for e in page.locator("#my-agents [data-agent-id]").all()] == [
@@ -257,7 +257,7 @@ def _open_form(page):
     page.wait_for_selector("#agent-form", state="visible")
 
 
-def _fill(page, name="Research Agent", instructions="Research carefully."):
+def _fill(page, name="Researcher", instructions="Research carefully."):
     _open_form(page)
     page.fill("#agent-name", name)
     page.fill("#agent-instructions", instructions)
@@ -271,7 +271,7 @@ def test_the_form_refuses_an_empty_name(page):
 
 
 def test_the_form_refuses_empty_instructions(page):
-    _fill(page, name="Research Agent", instructions="")
+    _fill(page, name="Researcher", instructions="")
     page.locator("#agent-save").click()
     assert page.locator("#form-error").inner_text().strip() != ""
     assert page.sent == []
@@ -285,13 +285,13 @@ def test_instructions_over_the_limit_are_refused_in_the_form(page):
 
 
 def test_a_saved_agent_sends_the_instructions_as_params_system(page):
-    _fill(page, name="Research Agent", instructions="Research carefully.")
+    _fill(page, name="Researcher", instructions="Research carefully.")
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     body = json.loads(page.sent[-1]["body"])
     assert body["params"]["system"] == "Research carefully."
-    assert body["name"] == "Research Agent"
-    assert body["id"].startswith("agent-research-agent-")
+    assert body["name"] == "Researcher"
+    assert body["id"].startswith("agent-researcher-")
 
 
 def test_the_connected_apps_switch_adds_the_proxy_tool(page):
@@ -395,7 +395,7 @@ def test_edit_loads_the_existing_instructions(page):
     page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
     page.wait_for_selector("#agent-form", state="visible")
     assert page.input_value("#agent-instructions") == "You research things carefully."
-    assert page.input_value("#agent-name") == "My Research Agent"
+    assert page.input_value("#agent-name") == "Researcher"
 
 
 def test_edit_keeps_the_same_id(page):
@@ -443,7 +443,7 @@ def test_duplicate_opens_a_new_agent_with_the_copied_instructions(page):
     page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
     page.wait_for_selector("#agent-form", state="visible")
     assert page.input_value("#agent-instructions") == "You summarise meetings."
-    assert "Meeting Summariser" in page.input_value("#agent-name")
+    assert "Summariser" in page.input_value("#agent-name")
 
 
 def test_duplicate_says_so_when_the_instructions_cannot_be_copied(page):
@@ -523,7 +523,7 @@ def test_the_confirm_names_the_agent_being_deleted(page):
     page.on("dialog", lambda d: (seen.append(d.message), d.dismiss()))
     page.locator('[data-agent-id="agent-mine-second-c5d6"] [data-act="delete"]').click()
     page.wait_for_timeout(300)
-    assert seen and "My Second Agent" in seen[0]
+    assert seen and "Secondagent" in seen[0]
 
 
 def test_editing_then_creating_does_not_overwrite_the_edited_agent(page):
@@ -533,7 +533,7 @@ def test_editing_then_creating_does_not_overwrite_the_edited_agent(page):
     page.wait_for_selector("#agent-form", state="visible")
     page.locator("#agent-cancel").click()
 
-    _fill(page, name="Brand New", instructions="Fresh instructions.")
+    _fill(page, name="Brandnew", instructions="Fresh instructions.")
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     sent = page.sent[-1]
@@ -556,7 +556,7 @@ def test_the_form_refuses_to_save_with_no_model_to_pick(page):
     _open_form(page)
     # Clear it AFTER opening: openForm repopulates the dropdown every time.
     page.evaluate("() => { document.getElementById('agent-base').innerHTML = ''; }")
-    page.fill("#agent-name", "No Model")
+    page.fill("#agent-name", "Nomodel")
     page.fill("#agent-instructions", "Something.")
     before = len(page.sent)
     page.locator("#agent-save").click()
@@ -569,7 +569,7 @@ def test_a_save_keeps_the_readable_copy_of_the_instructions(page):
     """The ready-made agents are owned by an admin, who can edit them here. If
     a save dropped meta.agent_instructions, every other user would lose both
     the card preview and the duplicate button on them."""
-    _fill(page, name="Research Agent", instructions="Research carefully.")
+    _fill(page, name="Researcher", instructions="Research carefully.")
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     meta = json.loads(page.sent[-1]["body"])["meta"]

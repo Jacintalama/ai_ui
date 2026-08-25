@@ -159,6 +159,13 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
             return asked, PINNED_UNSAVED % asked["name"], None
         return asked, PINNED % asked["name"], None
 
+    # Saying a name in a sentence beats the sticky pin for this one message.
+    # Pinned to Jack and you write "hi mary, any news"? You meant Mary, and the
+    # pin stays where it was for the message after.
+    spoken = agent_router.match_mention(text, cands)
+    if spoken:
+        return spoken, None, None
+
     if pin:
         # It may have been deleted on the web since it was pinned here. Return
         # the matching CANDIDATE, not the stored pin: the candidate always
@@ -276,7 +283,12 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
 
     messages = history_messages(chat, settings.gateway_history_turns)
     messages.append({"role": "user", "content": text})
-    answer = await owui.chat_completion(messages, model, chat_id=chat_id)
+    # An agent's tools have to be asked for explicitly on this path. See the
+    # note in OWUIUserClient.chat_completion: without them an agent arrives
+    # with its instructions and nothing it can actually do.
+    answer = await owui.chat_completion(
+        messages, model, chat_id=chat_id,
+        tool_ids=(agent or {}).get("tools") or None)
 
     # Persist before delivering, but never let a persist failure swallow a
     # good answer: the person is waiting and the answer already exists.
@@ -294,8 +306,10 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     # asked a real question and still deserves it answered.
     if notice:
         answer = "%s\n\n%s" % (notice, answer)
+    # The agent answers in its own name, first thing, which is also how you
+    # know which one picked the message up.
     if agent:
-        answer = "%s\n\nvia %s" % (answer, agent["name"])
+        answer = "%s:\n%s" % (agent.get("name") or agent["id"], answer)
 
     return await _say(adapter, src.chat_id, answer)
 

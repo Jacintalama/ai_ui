@@ -80,11 +80,21 @@ class OWUIUserClient:
 
     async def chat_completion(
         self, messages: list[dict], model: str, chat_id: str | None = None,
+        tool_ids: list[str] | None = None,
     ) -> str:
         payload: dict = {"model": model, "messages": messages, "stream": False}
         if chat_id:
             # Lets Open WebUI's own filters associate the turn with the chat.
             payload["chat_id"] = chat_id
+        if tool_ids:
+            # Measured against production: Open WebUI attaches a model's own
+            # tools only when the request comes from its UI, which it spots by
+            # the session id. Its middleware says so outright: "API callers
+            # don't expect hidden tools; they can explicitly request tools via
+            # tool_ids". We are an API caller, so without this an agent arrives
+            # with its instructions and none of its tools, and the model
+            # answers that it cannot reach your mail.
+            payload["tool_ids"] = tool_ids
         resp = await self._request("POST", "/api/chat/completions", json=payload)
         data = self._json(resp)
         choices = data.get("choices") or []
