@@ -1372,7 +1372,25 @@
       return i >= 0 ? raw.slice(i + "USER REQUEST:".length).trim() : raw;
     }
 
-    function renderCards(tasks) {
+    // The poll below re-runs this every 8 seconds. Rebuilding the grid when
+    // nothing has changed destroys and recreates every card, so all of the
+    // thumbnails are re-requested and the page visibly flickers. It also shut
+    // any open card menu and threw away where you were on the page.
+    //
+    // The signature covers every input the cards are built from, so a real
+    // change still repaints at once: a new or deleted project, a status moving
+    // from building to built, a rename, or a fresh deploy URL.
+    let lastRenderSig = null;
+
+    function renderSignature(tasks) {
+      return JSON.stringify([tasks, appNames, vercelState, vercelDeployments]);
+    }
+
+    function renderCards(tasks, opts) {
+      const sig = renderSignature(tasks);
+      if (!(opts && opts.force) && sig === lastRenderSig) return;
+      lastRenderSig = sig;
+
       // Dedupe tasks by slug, but keep every slugless task as its own card
       // (new projects that haven't been built yet don't have a slug yet).
       const bySlug = new Map();       // slug -> newest task (drives status + links)
@@ -3147,6 +3165,11 @@
       if (d && typeof d.aiuiFrameVisible === "boolean") onScreen = d.aiuiFrameVisible;
     });
     setInterval(() => { if (onScreen) load(); }, 8000);
+
+    // Test seam, same shape as window.__aiuiAgents on the agents page. The
+    // repaint guard is invisible from the outside, so without this the only
+    // way to check it is to sit through an 8 second poll and eyeball a flicker.
+    window.__aiuiProjects = { renderCards, load, signature: renderSignature };
   </script>
 </body>
 </html>

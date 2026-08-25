@@ -119,7 +119,8 @@
     .page-head .head-icon svg { width: 24px; height: 24px; }
     .page-head h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.025em; }
     .page-head .lead { color: var(--text-2); font-size: 13.5px; margin-top: 5px; max-width: 64ch; }
-    .page-head .delivery-note {
+    .page-head .delivery-note.standalone { margin: 4px 0 22px; }
+    .delivery-note {
       display: inline-flex; align-items: center; gap: 6px;
       font-size: 12px; color: var(--muted); margin-top: 9px;
     }
@@ -538,22 +539,15 @@
   </header>
 
   <main class="container">
-    <div class="page-head">
-      <div class="head-icon" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path>
-        </svg>
-      </div>
-      <div>
-        <h1>Cron Jobs / Schedules</h1>
-        <div class="lead">Run a prompt on a recurring schedule. Pick how often it should run, and your AI task fires automatically, on time, every time.</div>
-        <div class="delivery-note">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 5h16v12H7l-3 3z"></path>
-          </svg>
-          Results are delivered to your linked Discord / Slack.
-        </div>
-      </div>
+    <!-- The pane bar above already says "Cron Jobs / Scheduled AI tasks", so
+         the old icon and heading here just said it a second time. The delivery
+         note stays: it is the one thing in that block that told you something
+         the title does not. -->
+    <div class="delivery-note standalone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5h16v12H7l-3 3z"></path>
+      </svg>
+      Results are delivered to your linked Discord / Slack.
     </div>
 
     <div class="layout">

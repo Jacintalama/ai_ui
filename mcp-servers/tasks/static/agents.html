@@ -99,6 +99,9 @@
 
   .section-head { display: flex; align-items: center; justify-content: space-between;
                   gap: 16px; flex-wrap: wrap; margin: 30px 0 14px; }
+  /* The page no longer opens with a title block, so the first row should not
+     start a third of the way down an empty screen. */
+  .section-head:first-of-type { margin-top: 4px; }
   .section-head .tools { display: flex; align-items: center; gap: 10px; }
 
   .search-wrap { position: relative; display: flex; align-items: center; }
@@ -233,20 +236,8 @@
   </div>
 
   <div class="container">
-    <div class="head">
-      <div class="icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="4" y="8" width="16" height="12" rx="3"></rect>
-          <path d="M12 8V4"></path><circle cx="12" cy="3" r="1"></circle>
-          <circle cx="9" cy="14" r="1.2"></circle><circle cx="15" cy="14" r="1.2"></circle>
-        </svg>
-      </div>
-      <div>
-        <h1>AI Agents</h1>
-        <p class="lead">Give an agent a name and tell it what to do. Your agents
-          are private to you and show up wherever you already chat.</p>
-      </div>
-    </div>
+    <!-- The pane bar above already says "AI Agents / Assistants you build
+         yourself", so the icon and heading here just said it a second time. -->
 
     <div class="error box" id="page-error" hidden></div>
 
