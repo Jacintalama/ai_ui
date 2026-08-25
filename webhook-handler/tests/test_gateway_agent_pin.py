@@ -146,3 +146,33 @@ async def test_unpinning_works_even_when_listing_models_is_down(
     wired.tasks.delete_state.assert_awaited_once_with(KEY)
     assert "normal" in out.lower() or "back" in out.lower()
     owui.chat_completion.assert_not_called()
+
+
+async def test_an_unpin_phrase_with_no_pin_falls_through_and_answers(
+        adapter, wired, owui):
+    """"back to normal" is also a plausible thing to say for real. With
+    nothing pinned there is nothing to clear, so this must not be swallowed
+    as a setting: it has to be answered like any other message."""
+    wired.tasks.get_state.return_value = None
+
+    out = await pipeline.handle_event(_event("back to normal"), adapter)
+
+    wired.tasks.delete_state.assert_not_awaited()
+    assert out != pipeline.UNPINNED
+    assert "the answer" in out
+
+
+async def test_a_renamed_pinned_agent_shows_the_current_name(
+        adapter, wired, owui):
+    """The pin stores whatever name the agent had at the moment it was
+    pinned. If the agent is renamed on the web afterwards, the "via" tag has
+    to show the CURRENT name, taken from the live candidate list, not the
+    stale one captured at pin time."""
+    wired.tasks.get_state.return_value = {"id": AGENT["id"], "name": "Old Name"}
+    renamed = {**AGENT, "name": "New Name"}
+    owui.list_models.return_value = [renamed]
+
+    out = await pipeline.handle_event(_event("what is new"), adapter)
+
+    assert out.rstrip().endswith("via New Name")
+    assert "Old Name" not in out

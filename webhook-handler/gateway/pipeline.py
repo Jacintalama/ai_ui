@@ -123,11 +123,21 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
     """
     key = agent_router.pin_key(src.platform, src.chat_id)
 
+    # Read up front: a state failure here reads as "no pin" (never raises),
+    # which is the fail-open choice for everything below it, including the
+    # unpin check right after.
+    pin = await _read_pin(key)
+
     # Clearing a pin needs no candidate list, so this is checked before
     # list_models runs. Otherwise an Open WebUI outage would make "stop using
     # that" unreachable: the message would fall through to the default model
     # and the pin would stay in the store, unclearable until listing recovers.
-    if agent_router.is_unpin_request(text):
+    # Only short circuits when there is actually a pin to clear: "back to
+    # normal" and the like are plausible things to say for real, and with no
+    # pin set there is nothing to clear, so swallowing the message here would
+    # mean it never gets answered. Fall through and treat it as an ordinary
+    # message instead.
+    if pin and agent_router.is_unpin_request(text):
         cleared = await _forget_pin(key)
         return None, (UNPINNED if cleared else UNPINNED_UNSAVED), None
 
@@ -149,11 +159,17 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
             return asked, PINNED_UNSAVED % asked["name"], None
         return asked, PINNED % asked["name"], None
 
-    pin = await _read_pin(key)
     if pin:
-        # It may have been deleted on the web since it was pinned here.
-        if any(c["id"] == pin["id"] for c in cands):
-            return pin, None, None
+        # It may have been deleted on the web since it was pinned here. Return
+        # the matching CANDIDATE, not the stored pin: the candidate always
+        # carries the agent's current name, so a rename since the pin was
+        # made shows up in the "via" tag instead of the stale name captured
+        # at pin time. It also always has a name, where a pin row might not,
+        # so this can never raise on agent["name"] after the model has
+        # already answered.
+        match = next((c for c in cands if c["id"] == pin["id"]), None)
+        if match:
+            return match, None, None
         # A pin naming a deleted agent already produces its own notice below,
         # so whether the cleanup delete itself succeeds is not reported here.
         await _forget_pin(key)
