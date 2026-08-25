@@ -13,7 +13,7 @@ from config import settings
 from gateway import agent_router
 from gateway import commands as gateway_commands
 from gateway.base import BasePlatformAdapter
-from gateway.events import MessageEvent, MessageType
+from gateway.events import MessageEvent, MessageType, SessionSource
 from gateway.owui import OWUIError, OWUIUserClient
 from gateway.pairing import pairing_message
 from gateway.platforms.telegram import ClipTooLarge
@@ -42,6 +42,10 @@ PINNED = ("Right, I'll use %s for this conversation. Say \"stop using that\" "
 UNPINNED = "Back to normal. I'll pick whichever agent fits each message."
 PIN_GONE = ("%s is gone, so I answered normally. Ask me again if you want a "
             "different one.")
+PINNED_UNSAVED = ("I'll use %s for now, but I could not save that, so it may "
+                  "not last past this message.")
+UNPINNED_UNSAVED = ("I could not clear that just now, so the agent may come "
+                    "back. Try again in a moment.")
 
 # Whisper on this box is CPU only, so a long clip would hold a worker for
 # minutes while the sender stares at nothing. Keep this in step with the
@@ -108,7 +112,7 @@ async def _read_pin(key: str) -> dict | None:
 
 
 async def _choose_agent(owui: OWUIUserClient, text: str,
-                        src) -> tuple[dict | None, str | None, str | None]:
+                        src: SessionSource) -> tuple[dict | None, str | None, str | None]:
     """Returns (agent, reply, notice).
 
     reply  means the message was a setting: answer with this and call no model.
@@ -119,6 +123,14 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
     """
     key = agent_router.pin_key(src.platform, src.chat_id)
 
+    # Clearing a pin needs no candidate list, so this is checked before
+    # list_models runs. Otherwise an Open WebUI outage would make "stop using
+    # that" unreachable: the message would fall through to the default model
+    # and the pin would stay in the store, unclearable until listing recovers.
+    if agent_router.is_unpin_request(text):
+        cleared = await _forget_pin(key)
+        return None, (UNPINNED if cleared else UNPINNED_UNSAVED), None
+
     try:
         models = await owui.list_models()
         cands = agent_router.candidates(models)
@@ -127,10 +139,6 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
                     "default model", exc_info=True)
         return None, None, None
 
-    if agent_router.is_unpin_request(text):
-        await _forget_pin(key)
-        return None, UNPINNED, None
-
     asked = agent_router.match_pin_request(text, cands)
     if asked:
         try:
@@ -138,6 +146,7 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
                                          "name": asked["name"]})
         except Exception:                              # noqa: BLE001
             log.warning("gateway: could not save the agent pin", exc_info=True)
+            return asked, PINNED_UNSAVED % asked["name"], None
         return asked, PINNED % asked["name"], None
 
     pin = await _read_pin(key)
@@ -145,6 +154,8 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
         # It may have been deleted on the web since it was pinned here.
         if any(c["id"] == pin["id"] for c in cands):
             return pin, None, None
+        # A pin naming a deleted agent already produces its own notice below,
+        # so whether the cleanup delete itself succeeds is not reported here.
         await _forget_pin(key)
         return None, None, PIN_GONE % pin.get("name", "That agent")
 
@@ -153,13 +164,19 @@ async def _choose_agent(owui: OWUIUserClient, text: str,
     return chosen, None, None
 
 
-async def _forget_pin(key: str) -> None:
-    """Clear a pin, never raising. A pin we cannot clear is not worth a
-    failed reply."""
+async def _forget_pin(key: str) -> bool:
+    """Clear a pin, never raising. Returns whether the delete succeeded.
+
+    A pin we cannot clear is not worth a failed reply, but the caller still
+    needs to know so it can tell the truth about what happened instead of
+    promising something that did not happen.
+    """
     try:
         await _tasks.delete_state(key)
     except Exception:                                  # noqa: BLE001
         log.warning("gateway: could not clear the agent pin", exc_info=True)
+        return False
+    return True
 
 
 async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:

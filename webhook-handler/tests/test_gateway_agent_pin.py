@@ -107,3 +107,42 @@ async def test_a_state_failure_does_not_stop_the_answer(adapter, wired, owui):
     out = await pipeline.handle_event(_event("what is new"), adapter)
 
     assert "the answer" in out
+
+
+async def test_a_set_state_failure_still_answers_but_admits_it_was_not_saved(
+        adapter, wired, owui):
+    wired.tasks.set_state.side_effect = RuntimeError("state store down")
+
+    out = await pipeline.handle_event(_event("use Inbox Triage"), adapter)
+
+    wired.tasks.set_state.assert_awaited_once()
+    assert "could not save" in out.lower()
+    assert "for this conversation" not in out
+    owui.chat_completion.assert_not_called()
+
+
+async def test_a_delete_state_failure_on_unpin_still_answers_but_admits_it(
+        adapter, wired, owui):
+    wired.tasks.get_state.return_value = {"id": AGENT["id"],
+                                          "name": AGENT["name"]}
+    wired.tasks.delete_state.side_effect = RuntimeError("state store down")
+
+    out = await pipeline.handle_event(_event("stop using that"), adapter)
+
+    wired.tasks.delete_state.assert_awaited_once_with(KEY)
+    assert "could not clear" in out.lower()
+    assert "back to normal" not in out.lower()
+    owui.chat_completion.assert_not_called()
+
+
+async def test_unpinning_works_even_when_listing_models_is_down(
+        adapter, wired, owui):
+    owui.list_models.side_effect = RuntimeError("open webui down")
+    wired.tasks.get_state.return_value = {"id": AGENT["id"],
+                                          "name": AGENT["name"]}
+
+    out = await pipeline.handle_event(_event("stop using that"), adapter)
+
+    wired.tasks.delete_state.assert_awaited_once_with(KEY)
+    assert "normal" in out.lower() or "back" in out.lower()
+    owui.chat_completion.assert_not_called()
