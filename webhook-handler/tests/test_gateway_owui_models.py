@@ -6,6 +6,8 @@ which is what made the Agents page show an empty list for a whole deploy. It
 also pages at 30, so a user with more than 30 agents silently loses the rest
 unless this pages through.
 """
+import asyncio
+
 import httpx
 import respx
 
@@ -90,7 +92,11 @@ async def test_a_total_that_never_matches_stops_at_the_page_cap():
 
     respx.get(f"{BASE}/api/v1/models/list").mock(side_effect=handler)
 
-    got = await _client().list_models()
+    # If the page cap regresses (or is removed), every page comes back full
+    # and this call never returns, so a bare await would hang CI instead of
+    # failing it. There is no pytest-timeout in this project, so bound it by
+    # hand: a regression fails red here instead of hanging the whole suite.
+    got = await asyncio.wait_for(_client().list_models(), 5)
 
     assert len(calls) == 25
     assert len(got) == 750
