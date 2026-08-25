@@ -88,3 +88,37 @@ def test_the_back_link_still_works_standalone(browser, work, page_name):
             f"{page_name}: the standalone page lost its way back to the app")
     finally:
         pg.close()
+
+
+@pytest.mark.parametrize("page_name", PAGES)
+def test_the_whole_top_bar_is_hidden_inside_the_pane(browser, work, page_name):
+    """The pane already names the feature and carries the close button, so the
+    page repeating its own title there cost height and said nothing twice."""
+    pg = browser.new_page()
+    try:
+        pg.goto((work / f"host_{page_name}").as_uri())
+        frame = pg.frame_locator("#f")
+        frame.locator(".topbar").wait_for(state="attached", timeout=8000)
+        display = pg.frames[1].evaluate(
+            "() => getComputedStyle(document.querySelector('.topbar')).display")
+        assert display == "none", (
+            f"{page_name}: the page still draws its own title bar inside the pane")
+    finally:
+        pg.close()
+
+
+@pytest.mark.parametrize("page_name", PAGES)
+def test_the_top_bar_survives_standalone(browser, work, page_name):
+    """Standalone these are real pages, and the scheduler posts
+    /video-generator into Discord. Somebody arriving that way has no pane
+    around them, so this bar is their only way back."""
+    pg = browser.new_page()
+    try:
+        pg.goto((work / page_name).as_uri())
+        pg.wait_for_selector(".topbar", state="attached", timeout=8000)
+        display = pg.evaluate(
+            "() => getComputedStyle(document.querySelector('.topbar')).display")
+        assert display != "none", (
+            f"{page_name}: the standalone page lost its title bar and its way back")
+    finally:
+        pg.close()

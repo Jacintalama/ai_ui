@@ -534,6 +534,13 @@
       if (window.parent !== window) {
         var _aiuiBack = document.currentScript.previousElementSibling;
         if (_aiuiBack && _aiuiBack.matches("a.back")) _aiuiBack.style.display = "none";
+        // The whole bar goes too. The pane above already names the feature and
+        // carries the close button, so this repeated the title and spent its
+        // height saying nothing. Only when embedded: standalone these URLs are
+        // real pages the scheduler posts into Discord, and there this bar is
+        // the only way back, which a test pins.
+        var _aiuiBar = document.currentScript.closest(".topbar");
+        if (_aiuiBar) _aiuiBar.style.display = "none";
       }
     </script>
   </header>
