@@ -17,8 +17,11 @@ log = logging.getLogger(__name__)
 
 AGENT_PREFIX = "agent-"
 
-#: A prompt sent on every message has to stay small, so the list is capped and
-#: each line is a name and a one-liner rather than the agent's instructions.
+#: A prompt sent on every message has to stay small, so the LISTING in that
+#: prompt is capped (in build_messages) and each line is a name and a
+#: one-liner rather than the agent's instructions. candidates() itself is
+#: NOT capped: match_pin_request and the deleted-agent check need every
+#: agent the caller really has, not just the ones that fit in the prompt.
 MAX_CANDIDATES = 20
 MAX_DESCRIPTION = 120
 MAX_TEXT = 500
@@ -36,6 +39,12 @@ def candidates(models: list[dict]) -> list[dict]:
     Filters on the id prefix, the same test the Agents page uses. Open WebUI's
     own workspace can create derived models that are not agents, and those have
     no business being routed to.
+
+    Returns every agent the caller has, uncapped: this list is also what
+    match_pin_request and the deleted-agent check see, and a pin on an agent
+    that exists but got trimmed here must never be mistaken for a pin on an
+    agent that was deleted. The cap that keeps the router prompt small is
+    applied later, in build_messages, on the listing only.
     """
     # Not just a convenience. Callers hand this whatever the models endpoint
     # returned, and a stub or a proxy error page can make that something that
@@ -69,20 +78,34 @@ def candidates(models: list[dict]) -> list[dict]:
             "name": name[:60],
             "description": description[:MAX_DESCRIPTION],
         })
-        if len(out) >= MAX_CANDIDATES:
-            break
     return out
 
 
 def build_messages(text: str, cands: list[dict]) -> list[dict]:
+    # Capped here, not in candidates(): this is the prompt that has to stay
+    # small, not the list of what a pin or the deleted-agent check may see.
     listing = "\n".join(
-        "%s | %s | %s" % (c["id"], c["name"], c["description"]) for c in cands)
+        "%s | %s | %s" % (c["id"], c["name"], c["description"])
+        for c in cands[:MAX_CANDIDATES])
     system = (
         "You route a message to the assistant that fits it best.\n"
         "Each line is: id | name | what it does.\n\n"
         + listing
         + "\n\nReply with exactly one id from that list, or the single word "
-          "NONE if none of them clearly fits. Reply with nothing else."
+          "NONE if none of them clearly fits. Reply with nothing else. "
+        # This sentence is deliberately worded to contain the phrase
+        # "personal knowledge graph" in lower case, which is the marker the
+        # global Open WebUI inlet filter (knowledge_graph_memory_filter.py,
+        # _MEMORY_MARKER / _already_injected) checks for, case-insensitively,
+        # to decide whether it has already run on this call. Without it, the
+        # filter injects the caller's full retrieved context into a call that
+        # only needs to answer with one id, which costs money for nothing and
+        # can push a real id further from the top of what the model reads.
+        # That filter is not version locked to this file: if it changes its
+        # marker, this phrase has to change to match, or the skip stops
+        # working silently.
+        "This is a routing decision only, so ignore any personal knowledge "
+        "graph context."
     )
     return [{"role": "system", "content": system},
             {"role": "user", "content": (text or "")[:MAX_TEXT]}]

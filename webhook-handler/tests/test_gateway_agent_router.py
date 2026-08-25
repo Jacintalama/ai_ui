@@ -127,6 +127,53 @@ def test_the_prompt_never_carries_full_instructions():
     assert "agent-long-0003" in text
 
 
+def test_the_prompt_tells_the_memory_filter_to_skip_itself():
+    """The global knowledge-graph inlet filter injects retrieved personal
+    context into every model call unless a system message already contains
+    the marker "personal knowledge graph" (checked lower cased). The router
+    only needs one id back, so that context is pure waste on this call, and
+    the prompt has to carry the exact phrase for the filter to skip it."""
+    cands = agent_router.candidates([_model("agent-x-0001", "X", "d")])
+    system = agent_router.build_messages("hi", cands)[0]["content"]
+    assert "personal knowledge graph" in system.lower()
+
+
+def _bulk_agents(n: int) -> list[dict]:
+    return [_model("agent-bulk-%04d" % i, "Bulk Agent %d" % i, "does stuff")
+            for i in range(n)]
+
+
+def test_candidates_are_not_capped():
+    """27 is reachable in production: 25 user-made agents (MAX_AGENTS on the
+    Agents page) plus 2 ready-made agents everyone sees. The cap that keeps
+    the router PROMPT small must not also shrink this list, or a valid pin
+    past position 20 gets told it was deleted."""
+    got = agent_router.candidates(_bulk_agents(27))
+    assert len(got) == 27
+
+
+def test_build_messages_caps_the_listing_to_max_candidates():
+    cands = agent_router.candidates(_bulk_agents(27))
+    assert len(cands) == 27
+
+    text = "".join(m["content"] for m in agent_router.build_messages("hi", cands))
+    mentioned = [c["id"] for c in cands if c["id"] in text]
+    assert len(mentioned) <= agent_router.MAX_CANDIDATES
+
+
+def test_a_pin_past_the_prompt_cap_still_matches():
+    """The agent at index 21 sits past MAX_CANDIDATES (20), so it never makes
+    it into the router's prompt, but a direct pin has to work off the full,
+    uncapped candidate list rather than the trimmed prompt listing."""
+    cands = agent_router.candidates(_bulk_agents(27))
+    target = cands[21]
+
+    got = agent_router.match_pin_request("use %s" % target["name"], cands)
+
+    assert got is not None
+    assert got["id"] == target["id"]
+
+
 def test_a_valid_answer_is_accepted():
     got = agent_router.validate("agent-inbox-triage-0002", CANDS)
     assert got["id"] == "agent-inbox-triage-0002"
@@ -235,6 +282,11 @@ def test_a_pin_phrase_naming_a_real_agent_pins_it(text, expected):
     "can you use Inbox Triage",
     "Inbox Triage",
     "",
+    # A mutant that loosens the match to a substring or a prefix would let
+    # this one through: the message starts with a pin verb and contains a
+    # real agent name, but the rest of the message is not exactly that name.
+    # Narrowness is the whole point, so this has to fail to pin.
+    "use Inbox Triage to find the invoice",
 ])
 def test_an_ordinary_message_is_not_a_pin(text):
     """A message silently turning into a setting is worse than a router that
