@@ -164,6 +164,7 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
       - GATEWAY_MODEL=${GATEWAY_MODEL:-auto_router.auto}
+      - GATEWAY_ROUTER_MODEL=${GATEWAY_ROUTER_MODEL:-gpt-4o-mini}
       # Switched ON 2026-08-13. This makes /webhook/gateway/cli live, and
       # Caddy routes /webhook/* straight here, bypassing api-gateway's auth
       # and rate limiter. An unpaired device can therefore mint a pairing
