@@ -59,12 +59,16 @@ MODELS = [
     {"id": "agent-shared-c3d4", "name": "Meeting Summariser",
      "user_id": OTHER, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You summarise meetings."},
+     # A wildcard read grant is what actually makes an agent visible to
+     # everybody, and it is what the page reads to show the shared badge.
      # A ready-made agent also stores its instructions in meta, because the
      # list endpoint blanks params for anyone without write access and that is
      # every user except its owner. Task 8 writes both.
      "meta": {"description": "platform", "toolIds": [],
               "agent_instructions": "You summarise meetings."},
-     "access_grants": [], "is_active": True, "write_access": False,
+     "access_grants": [{"principal_type": "user", "principal_id": "*",
+                        "permission": "read"}],
+     "is_active": True, "write_access": False,
      "created_at": 3, "updated_at": 3,
      "user": {"id": OTHER, "name": "Someone", "email": "other@example.com"}},
     # A ready-made agent whose instructions cannot be read at all: params is
@@ -597,3 +601,86 @@ def test_a_stale_error_banner_does_not_survive_a_good_reload(page):
     page.evaluate("() => window.__aiuiAgents.load()")
     page.wait_for_timeout(500)
     assert page.locator("#page-error").is_hidden()
+
+
+# --- the page as somebody actually looks at it ----------------------------
+
+
+def test_a_long_instruction_is_not_cut_mid_word(page):
+    """The first version sliced at a fixed 180 characters and then line
+    clamped on top, so real cards ended "Say plainly when you could not f"."""
+    text = page.locator(
+        '#my-agents [data-agent-id="agent-mine-a1b2"] .card-sys').inner_text()
+    assert text, "the preview is empty"
+    tail = text.rstrip().rstrip("\u2026").rstrip()
+    assert not tail.endswith(" "), "trailing space before the ellipsis"
+    # Whatever survives must be whole words, so the last chunk has to appear in
+    # the source as a complete word.
+    source = "You research things carefully."
+    assert tail.split()[-1] in source.split() or tail in source
+
+
+def test_a_shared_agent_is_marked_and_a_private_one_is_not(page):
+    """Somebody looking at this page cannot otherwise tell which agents every
+    other user can also see."""
+    shared = page.locator('[data-agent-id="agent-shared-c3d4"] .tag')
+    mine = page.locator('[data-agent-id="agent-mine-a1b2"] .tag')
+    assert shared.count() == 1
+    assert "everyone" in shared.inner_text().lower()
+    assert mine.count() == 0, "a private agent was labelled as shared"
+
+
+def test_the_card_says_what_the_agent_can_reach(page):
+    """Tools are the whole point of an agent, and the card showed none."""
+    chips = page.locator(
+        '#my-agents [data-agent-id="agent-mine-a1b2"] .chip').all_inner_texts()
+    assert "Your connected apps" in chips, chips
+
+
+def test_an_agent_with_no_tools_says_so(page):
+    chips = page.locator(
+        '[data-agent-id="agent-shared-c3d4"] .chip').all_inner_texts()
+    assert chips == ["No tools"], chips
+
+
+def test_search_narrows_the_list(page):
+    page.fill("#agent-search", "research")
+    page.wait_for_timeout(200)
+    ids = [e.get_attribute("data-agent-id")
+           for e in page.locator("#my-agents [data-agent-id]").all()]
+    assert ids == ["agent-mine-a1b2"], ids
+
+
+def test_search_matches_the_instructions_too(page):
+    """People remember what an agent does long before they remember its name."""
+    page.fill("#agent-search", "research things carefully")
+    page.wait_for_timeout(200)
+    assert page.locator(
+        '#my-agents [data-agent-id="agent-mine-a1b2"]').count() == 1
+
+
+def test_a_search_with_no_hits_does_not_claim_you_have_no_agents(page):
+    """Telling somebody they have no agents when they have twenty is how you
+    get a duplicate created."""
+    page.fill("#agent-search", "zzzz-nothing-matches")
+    page.wait_for_timeout(200)
+    assert page.locator("#no-match").is_visible()
+    assert page.locator("#mine-empty").is_hidden()
+    assert page.locator("#mine-count").inner_text() == "2"
+
+
+def test_clearing_the_search_brings_everything_back(page):
+    page.fill("#agent-search", "zzzz")
+    page.wait_for_timeout(200)
+    page.fill("#agent-search", "")
+    page.wait_for_timeout(200)
+    assert page.locator("#my-agents [data-agent-id]").count() == 2
+    assert page.locator("#no-match").is_hidden()
+
+
+def test_the_hostile_name_cannot_escape_through_the_avatar(page):
+    """The avatar is built from the name, so it is a second interpolation of
+    attacker controlled text into innerHTML."""
+    card = page.locator('[data-agent-id="agent-hostile-e5f6"]')
+    assert not page.evaluate("window.__pwned")
+    assert card.locator(".avatar img").count() == 0

@@ -49,8 +49,10 @@
   .topbar .back:hover { background: var(--surface-2); color: var(--text); }
 
   .container {
-    width: 100%; max-width: 1000px; margin: 0 auto;
-    padding: 40px clamp(20px, 3vw, 48px) 72px;
+    /* 1000px left half a 1920 screen empty. The cron page settled on this
+       width and this is the same kind of page, so it uses the same one. */
+    width: 100%; max-width: 1640px; margin: 0 auto;
+    padding: 36px clamp(20px, 3vw, 48px) 72px;
   }
 
   .head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 30px; }
@@ -95,20 +97,77 @@
   }
   .note strong { color: var(--text); font-weight: 600; }
 
-  .section-head { display: flex; align-items: center; justify-content: space-between; margin: 30px 0 14px; }
+  .section-head { display: flex; align-items: center; justify-content: space-between;
+                  gap: 16px; flex-wrap: wrap; margin: 30px 0 14px; }
+  .section-head .tools { display: flex; align-items: center; gap: 10px; }
+
+  .search-wrap { position: relative; display: flex; align-items: center; }
+  .search-wrap svg {
+    position: absolute; left: 10px; width: 15px; height: 15px;
+    color: var(--muted); pointer-events: none;
+  }
+  .search-wrap input {
+    width: 230px; padding: 7px 12px 7px 32px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text); font-size: 13px;
+    outline: none; transition: border-color 0.15s, width 0.15s;
+  }
+  .search-wrap input::placeholder { color: var(--muted); }
+  .search-wrap input:focus { border-color: var(--accent); width: 270px; }
+  @media (max-width: 640px) {
+    .search-wrap input, .search-wrap input:focus { width: 100%; }
+  }
+
+  .card { display: flex; flex-direction: column; transition: border-color 0.15s, transform 0.15s; }
+  .card:hover { border-color: var(--border-2); }
+
+  .card-head { display: flex; align-items: flex-start; gap: 11px; }
+  .avatar {
+    flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(150deg, var(--accent), var(--accent-2));
+    color: #0a0a0b; font-size: 12.5px; font-weight: 700; letter-spacing: 0.02em;
+  }
+  .card-heading { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .tag {
+    align-self: flex-start;
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 2px 8px; border-radius: 999px;
+    color: var(--accent); background: rgba(124,140,255,0.10);
+    border: 1px solid rgba(124,140,255,0.28);
+  }
+  .tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+  .card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip {
+    font-size: 11px; padding: 3px 8px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    color: var(--text-2); white-space: nowrap;
+  }
+  .chip.none { color: var(--muted); font-style: italic; }
+
+  .no-match { color: var(--muted); font-size: 13px; padding: 22px 0; }
   .section-head h2 { font-size: 15px; font-weight: 650; margin: 0; }
   .count { display: inline-flex; align-items: center; justify-content: center;
            min-width: 20px; height: 20px; padding: 0 6px; margin-left: 6px;
            border-radius: 999px; background: var(--surface-2);
            border: 1px solid var(--border-2); color: var(--muted);
            font-size: 11px; font-weight: 700; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; align-items: start; }
+  /* No align-items: start. Cards in a row stretch to match, which is what
+     lets card-actions sit on the bottom edge instead of floating wherever the
+     instructions happened to end. */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
   .card-title { font-size: 14px; font-weight: 650; margin-bottom: 6px; }
-  .card-sys { color: var(--text-2); font-size: 12.5px; line-height: 1.55;
+  /* The clamp is a backstop only. preview() already cuts on a word boundary
+     at a length that fits three lines, so the browser ellipsis, which cuts
+     wherever the line happens to end, should never be what the reader sees. */
+  .card-sys { color: var(--text-2); font-size: 12.5px; line-height: 1.6;
               display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-              overflow: hidden; min-height: 58px; }
-  .card-actions { display: flex; gap: 8px; margin-top: 14px; padding-top: 12px;
+              overflow: hidden; }
+  .card-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 12px;
                   border-top: 1px solid var(--border); }
+  .card-sys { margin-top: 11px; }
   .btn { padding: 8px 12px; border: 1px solid var(--border-2); border-radius: var(--radius);
          background: var(--surface-2); color: var(--text); font-size: 13px;
          font-weight: 500; cursor: pointer; }
@@ -193,8 +252,19 @@
 
     <div class="section-head">
       <h2>Your agents <span class="count" id="mine-count">0</span></h2>
-      <button class="btn primary" type="button" id="new-agent">+ New agent</button>
+      <div class="tools">
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path>
+          </svg>
+          <input id="agent-search" type="search" autocomplete="off"
+                 placeholder="Search your agents" aria-label="Search agents">
+        </div>
+        <button class="btn primary" type="button" id="new-agent">+ New agent</button>
+      </div>
     </div>
+    <div class="no-match" id="no-match" hidden>Nothing matches that search.</div>
     <div class="grid" id="my-agents"></div>
     <div class="empty" id="mine-empty" hidden>
       You have not made an agent yet. Give one a name and a few sentences about
@@ -242,7 +312,7 @@
   <script>
   (function () {
     var API = "/api/v1/models";
-    var state = { me: null, agents: [], models: [] };
+    var state = { me: null, agents: [], models: [], query: "" };
 
     function authHeaders() {
       var h = { "Content-Type": "application/json" };
@@ -272,6 +342,57 @@
       el.hidden = false;
     }
 
+    // A wildcard read grant is what makes an agent visible to everybody, so
+    // this reads the row rather than hardcoding the ready-made ids. An agent
+    // somebody else owns is shared by construction, but the owner sees their
+    // own too, and they are the one person who can delete it for everyone.
+    function isShared(m) {
+      var grants = (m && m.access_grants) || [];
+      for (var i = 0; i < grants.length; i++) {
+        if (grants[i] && grants[i].principal_id === "*") return true;
+      }
+      return false;
+    }
+
+    function initials(name) {
+      var parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return "AI";
+      if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+
+    // Cut on a word boundary. The old version sliced at a fixed 180 and then
+    // line clamped on top, so cards ended mid word: "Say plainly when you
+    // could not f".
+    function preview(text, limit) {
+      var t = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+      if (t.length <= limit) return t;
+      var cut = t.slice(0, limit);
+      var space = cut.lastIndexOf(" ");
+      if (space > limit * 0.6) cut = cut.slice(0, space);
+      return cut.replace(/[,.;:]+$/, "") + "\u2026";
+    }
+
+    var TOOL_LABELS = {
+      "server:mcp-proxy": "Your connected apps",
+      gmail: "Gmail", calendar: "Calendar", gdrive: "Drive",
+      documents: "Documents", excel_creator: "Excel",
+      executive_dashboard: "Dashboard", remember: "Memory"
+    };
+
+    function toolChips(m) {
+      var ids = (m.meta && m.meta.toolIds) || [];
+      if (!ids.length) return '<span class="chip none">No tools</span>';
+      var out = "";
+      for (var i = 0; i < ids.length && i < 6; i++) {
+        out += '<span class="chip">' + esc(TOOL_LABELS[ids[i]] || ids[i]) + "</span>";
+      }
+      if (ids.length > 6) {
+        out += '<span class="chip">+' + (ids.length - 6) + " more</span>";
+      }
+      return out;
+    }
+
     function card(m, mine) {
       var el = document.createElement("div");
       el.className = "card";
@@ -280,9 +401,21 @@
       // empty because it is read-only to you, so fall back to the meta copy or
       // its card would be a blank rectangle.
       var sys = instructionsOf(m);
+      var shared = isShared(m);
       el.innerHTML =
-        '<div class="card-title">' + esc(m.name) + "</div>" +
-        '<div class="card-sys">' + esc(sys.slice(0, 180)) + "</div>" +
+        '<div class="card-head">' +
+          '<div class="avatar">' + esc(initials(m.name)) + "</div>" +
+          '<div class="card-heading">' +
+            // Only the name goes in here. A test asserts this text equals the
+            // agent's name exactly, and it is also the XSS surface.
+            '<div class="card-title">' + esc(m.name) + "</div>" +
+            (shared
+              ? '<span class="tag"><span class="dot"></span>Shared with everyone</span>'
+              : "") +
+          "</div>" +
+        "</div>" +
+        '<div class="card-sys">' + esc(preview(sys, 150)) + "</div>" +
+        '<div class="card-meta">' + toolChips(m) + "</div>" +
         '<div class="card-actions">' +
         (mine
           ? '<button class="btn sm" type="button" data-act="edit">Edit</button>' +
@@ -292,17 +425,34 @@
       return el;
     }
 
+    function matchesQuery(m) {
+      var q = (state.query || "").trim().toLowerCase();
+      if (!q) return true;
+      return (String(m.name || "").toLowerCase().indexOf(q) !== -1
+              || instructionsOf(m).toLowerCase().indexOf(q) !== -1);
+    }
+
     function render() {
       var mineWrap = document.getElementById("my-agents");
       var platWrap = document.getElementById("platform-agents");
       mineWrap.innerHTML = "";
       platWrap.innerHTML = "";
-      var mine = state.agents.filter(function (m) { return m.user_id === state.me; });
-      var others = state.agents.filter(function (m) { return m.user_id !== state.me; });
+      var visible = state.agents.filter(matchesQuery);
+      var mine = visible.filter(function (m) { return m.user_id === state.me; });
+      var others = visible.filter(function (m) { return m.user_id !== state.me; });
       mine.forEach(function (m) { mineWrap.appendChild(card(m, true)); });
       others.forEach(function (m) { platWrap.appendChild(card(m, false)); });
-      document.getElementById("mine-count").textContent = String(mine.length);
-      document.getElementById("mine-empty").hidden = mine.length > 0;
+      var ownedTotal = state.agents.filter(
+        function (m) { return m.user_id === state.me; }).length;
+      var searching = !!(state.query || "").trim();
+
+      document.getElementById("mine-count").textContent = String(ownedTotal);
+      // While searching, an empty result is "nothing matched", not "you have
+      // no agents". Telling somebody they have none when they have twenty is
+      // the kind of wrong that makes them create a duplicate.
+      document.getElementById("mine-empty").hidden = searching || ownedTotal > 0;
+      document.getElementById("no-match").hidden =
+        !searching || (mine.length + others.length) > 0;
       document.getElementById("platform-head").hidden = others.length === 0;
     }
 
@@ -547,7 +697,14 @@
     }
 
     async function removeAgent(agent) {
-      if (!window.confirm('Delete "' + agent.name + '"? This cannot be undone.')) {
+      // A shared agent is one everybody can see, so its owner is the one
+      // person who can remove it for all of them. The generic wording made
+      // that look like deleting something of your own.
+      var warning = isShared(agent)
+        ? 'Delete "' + agent.name + '"? It is shared, so it will disappear '
+          + 'for everyone on the platform, not just you. This cannot be undone.'
+        : 'Delete "' + agent.name + '"? This cannot be undone.';
+      if (!window.confirm(warning)) {
         return;
       }
       try {
@@ -622,6 +779,11 @@
       document.getElementById("agent-save").addEventListener("click", save);
       document.getElementById("agent-instructions")
         .addEventListener("input", updateChars);
+      document.getElementById("agent-search")
+        .addEventListener("input", function (ev) {
+          state.query = ev.target.value || "";
+          render();
+        });
 
       // Delegated, because cards are re-rendered on every load.
       document.body.addEventListener("click", function (ev) {
