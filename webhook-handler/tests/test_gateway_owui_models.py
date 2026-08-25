@@ -6,8 +6,6 @@ which is what made the Agents page show an empty list for a whole deploy. It
 also pages at 30, so a user with more than 30 agents silently loses the rest
 unless this pages through.
 """
-import asyncio
-
 import httpx
 import respx
 
@@ -80,23 +78,23 @@ async def test_a_total_that_never_matches_stops_at_the_page_cap():
     """A total that never matches must not spin forever.
 
     Every page here comes back full (30 non-empty rows), so the `not batch`
-    exit never fires and only the page cap can end the loop. This must fail
-    (or hang) if that cap is ever removed.
+    exit never fires and only the page cap can end the loop. If that cap is
+    ever removed, this test must fail rather than hang CI.
     """
     calls = []
 
     def handler(request):
         calls.append(1)
+        # Independent of asyncio timing: if the cap regresses, the loop still
+        # ends here instead of hanging CI, and the assertion below fails fast.
+        if len(calls) > 100:
+            return httpx.Response(200, json={"items": [], "total": 999999})
         rows = [_row("agent-%03d" % i) for i in range(30)]
         return httpx.Response(200, json={"items": rows, "total": 999999})
 
     respx.get(f"{BASE}/api/v1/models/list").mock(side_effect=handler)
 
-    # If the page cap regresses (or is removed), every page comes back full
-    # and this call never returns, so a bare await would hang CI instead of
-    # failing it. There is no pytest-timeout in this project, so bound it by
-    # hand: a regression fails red here instead of hanging the whole suite.
-    got = await asyncio.wait_for(_client().list_models(), 5)
+    got = await _client().list_models()
 
-    assert len(calls) == 25
+    assert len(calls) == 25, f"expected 25 calls (the page cap), got {len(calls)}"
     assert len(got) == 750
