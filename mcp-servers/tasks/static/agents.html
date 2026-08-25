@@ -577,6 +577,17 @@
         meta: { description: f.instructions.slice(0, 120), toolIds: f.toolIds,
                 agent_instructions: f.instructions },
         params: { system: f.instructions },
+        // Required on update, and it must be a LIST. The update endpoint
+        // revalidates the whole payload as a ModelForm, and leaving this out
+        // sends null, which fails validation and comes back as a bare 500.
+        // Editing an agent did not work at all until this was added.
+        //
+        // The existing grants are passed straight back rather than reset to
+        // [], because an empty list is what makes an agent private: sending it
+        // for a shared agent would quietly unshare it from everybody, and the
+        // one person who can edit a ready made agent is the one person who
+        // would do that damage.
+        access_grants: f.accessGrants || [],
         is_active: true
       };
     }
@@ -664,10 +675,17 @@
       var baseModel = document.getElementById("agent-base").value;
       if (!baseModel) return formError("Pick a model for this agent.");
 
+      // Carry the current grants through an edit. A new agent has none, which
+      // is exactly what makes it private to you.
+      var existing = editingId
+        ? state.agents.filter(function (m) { return m.id === editingId; })[0]
+        : null;
+
       var body = buildAgentBody({
         id: editingId || newAgentId(name), name: name,
         baseModel: baseModel,
-        instructions: instructions, toolIds: chosenTools()
+        instructions: instructions, toolIds: chosenTools(),
+        accessGrants: (existing && existing.access_grants) || []
       });
       var url = API + (editingId ? "/model/update?id=" + encodeURIComponent(editingId)
                                  : "/create");

@@ -684,3 +684,70 @@ def test_the_hostile_name_cannot_escape_through_the_avatar(page):
     card = page.locator('[data-agent-id="agent-hostile-e5f6"]')
     assert not page.evaluate("window.__pwned")
     assert card.locator(".avatar img").count() == 0
+
+
+def test_an_edit_sends_access_grants_so_the_save_does_not_500(page):
+    """The update endpoint revalidates the payload and requires this to be a
+    list. Leaving it out sends null, fails validation, and comes back as a bare
+    500, which is why editing an agent did not work at all."""
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.fill("#agent-instructions", "Changed.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    body = json.loads(page.sent[-1]["body"])
+    assert isinstance(body.get("access_grants"), list), body
+
+
+def test_editing_a_shared_agent_keeps_it_shared(page):
+    """An empty list is what makes an agent private. Resetting it on save
+    would quietly unshare a ready made agent from everybody, and its owner is
+    the only person who can do that damage."""
+    page.evaluate("""() => {
+      var a = window.__aiuiAgents.state.agents.find(x => x.id === 'agent-mine-a1b2');
+      a.access_grants = [{principal_type: 'user', principal_id: '*',
+                          permission: 'read'}];
+      window.__aiuiAgents.render();
+    }""")
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.fill("#agent-instructions", "Changed.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    grants = json.loads(page.sent[-1]["body"])["access_grants"]
+    assert any(g.get("principal_id") == "*" for g in grants), grants
+
+
+def test_a_new_agent_is_created_with_no_grants(page):
+    """No grant is what private means."""
+    _fill(page)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["access_grants"] == []
+
+
+@pytest.mark.parametrize("bad", ["Research Agent", "my agent", "a", "1jack",
+                                 "jack!", "way-too-long-a-name-for-an-agent"])
+def test_a_name_that_cannot_be_said_in_a_sentence_is_refused(page, bad):
+    """The name is how you reach the agent in a chat, so it has to be one
+    plain word."""
+    _open_form(page)
+    page.fill("#agent-name", bad)
+    page.fill("#agent-instructions", "Something.")
+    before = len(page.sent)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(250)
+    assert len(page.sent) == before, "it saved a name you cannot say"
+    assert page.locator("#form-error").inner_text().strip() != ""
+
+
+def test_duplicate_suggests_a_name_that_can_be_saved(page):
+    """"Scout (my copy)" would be rejected the moment they pressed save, on a
+    name they never typed."""
+    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    suggested = page.input_value("#agent-name")
+    assert " " not in suggested, suggested
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert page.locator("#form-error").inner_text().strip() == ""

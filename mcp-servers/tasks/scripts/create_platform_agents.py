@@ -74,6 +74,16 @@ def body_for(a):
             "agent_instructions": a["system"],
         },
         "params": {"system": a["system"]},
+        # Required on update, and it must be a LIST. The update endpoint
+        # revalidates the payload as a ModelForm, and omitting this sends None,
+        # which fails validation and returns a bare 500. That is what made the
+        # rename fail on the first run.
+        #
+        # Sent empty on purpose. The endpoint filters grants against the
+        # sharing.public_models permission, which is false here, so passing the
+        # wildcard through would not survive anyway. grant_platform_agents.sql
+        # runs straight after this and puts it back, and it is idempotent.
+        "access_grants": [],
         "is_active": True,
     }
 
