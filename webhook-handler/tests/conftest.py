@@ -15,6 +15,39 @@ os.environ.setdefault("OAUTH_STATE_SECRET", "test-secret-123")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+# discord.ext.voice_recv is an optional dependency and is not installed here.
+# Several test modules stub it with sys.modules.setdefault so their own
+# transitive imports survive, and an EMPTY stub is strictly worse than the
+# package being absent: voice_bot.py guards the import with try/except
+# ImportError, so absence sets HAS_VOICE_RECV to False and everything is fine,
+# while an empty module makes that import SUCCEED and voice_bot then subclasses
+# voice_recv.AudioSink at class definition time and dies with AttributeError.
+#
+# That made the whole suite uncollectable: the stubbing files sort before the
+# voice tests, setdefault means first writer wins, and each voice test still
+# passed alone. A suite that cannot be collected is a safety net nobody can use.
+#
+# Fixing it here rather than in each stubbing file, because conftest is imported
+# before any test module, so this stub wins and every later setdefault is a
+# no-op. If the real package is ever installed, this does nothing.
+try:  # pragma: no cover - depends on what is installed
+    import discord.ext.voice_recv  # noqa: F401
+except Exception:  # noqa: BLE001 - genuinely absent, so give it what is used
+    import types
+
+    _vr = types.ModuleType("discord.ext.voice_recv")
+
+    class _AudioSink:  # what voice_bot subclasses
+        pass
+
+    class _VoiceRecvClient:  # what voice_bot passes as connect(cls=...)
+        pass
+
+    _vr.AudioSink = _AudioSink
+    _vr.VoiceRecvClient = _VoiceRecvClient
+    sys.modules.setdefault("discord.ext.voice_recv", _vr)
+
 import pytest
 
 
