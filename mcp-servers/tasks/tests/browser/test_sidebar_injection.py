@@ -230,11 +230,33 @@ def test_closing_keeps_the_loaded_pages_for_next_time(page):
 
 
 def test_clicking_a_normal_sidebar_link_still_closes_the_pane(page):
-    """The pane must not become a trap: anything that is not one of ours
-    returns the user to the app."""
+    """The pane must not become a trap: following a link returns the user.
+
+    Narrowed on 2026-08-20. This clicked the #sidebar CONTAINER, and closing on
+    that turned out to mean closing on any chrome at all — a user collapsing
+    the sidebar mid-build lost a running preview and an unsent prompt, and
+    landed on a blank chat (reported with a screenshot).
+
+    The anti-trap intent is kept and is not weakened: the X and Escape are both
+    exits and both are tested. What changed is the discriminator — a LINK
+    navigates, so the pane should not cover where it went; a BUTTON is chrome,
+    and pressing one is not a request to abandon the work surface.
+    """
+    _load(page, "sidebar_nonadmin.html")
+    page.locator("[data-aiui-cron-jobs]").click()
+    page.wait_for_selector(OPEN_PANE, timeout=4000)
+    page.evaluate("document.querySelector('#sidebar a[href]').click()")
+    page.wait_for_timeout(300)
+    assert page.locator(OPEN_PANE).count() == 0
+
+
+def test_clicking_sidebar_chrome_does_not_close_the_pane(page):
+    """The other half of the same rule, so neither side can drift alone."""
     _load(page, "sidebar_nonadmin.html")
     page.locator("[data-aiui-cron-jobs]").click()
     page.wait_for_selector(OPEN_PANE, timeout=4000)
     page.evaluate("document.querySelector('#sidebar').click()")
-    page.wait_for_timeout(200)
-    assert page.locator(OPEN_PANE).count() == 0
+    page.wait_for_timeout(300)
+    assert page.locator(OPEN_PANE).count() == 1, (
+        "clicking the sidebar container closed the pane; a stray chrome click "
+        "must not discard a running preview")

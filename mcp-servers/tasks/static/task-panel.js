@@ -1423,6 +1423,19 @@
         if (!t || wrap.contains(t)) return;
         // Our own nav entries SWAP the pane; they must not close it first.
         if (t.closest && t.closest(NAV_EMBED_SELECTOR)) return;
+        // Close only when the click actually NAVIGATES.
+        //
+        // This used to close on any outside click, which meant collapsing the
+        // sidebar while working in App Builder threw away a running preview
+        // and whatever was typed in the build box, and dropped the user on a
+        // blank chat. Reported with a screenshot on 2026-08-20 and reproduced
+        // in a browser.
+        //
+        // A link leaves the page, so the pane should not cover where it went.
+        // A button is chrome — sidebar collapse, theme toggle — and pressing
+        // one is not a request to abandon the work surface. The X and Escape
+        // remain the deliberate ways out.
+        if (!t.closest || !t.closest('a[href]')) return;
         closeAiuiEmbed();
       }, true);
 

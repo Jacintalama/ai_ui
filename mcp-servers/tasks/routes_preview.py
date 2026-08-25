@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app_runner import get_status, start_preview, stop_preview
-from auth import AdminUser, current_admin, current_admin_or_capability
+from auth import (AdminUser, CurrentUser, current_admin,
+                  current_admin_or_capability, current_user_or_capability)
 from db import session
 from models import TaskItem
 
@@ -54,9 +55,31 @@ async def _get_build_task(task_id: UUID) -> TaskItem:
     return item
 
 
-@router.get("/{task_id}/files")
-async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
+async def _owned_build_task(task_id: UUID, user, min_role: str) -> TaskItem:
+    """The task, if this caller may act on its app at `min_role` or better.
+
+    These routes had NO ownership check — `_get_build_task` only asserts the
+    task exists and carries a slug, and the admin header was the entire
+    protection. `read_file` returns file contents, so relaxing the gate without
+    this would hand every signed-in account every user's source.
+
+    Scoped by project role rather than assignee so invited members keep the
+    access they already have, matching the export routes.
+    """
     item = await _get_build_task(task_id)
+    # Admin short-circuit BEFORE opening a session: _require_role returns
+    # "owner" unconditionally for an admin, so the round-trip buys nothing.
+    if getattr(user, "is_admin", False):
+        return item
+    from routes_projects import _require_role
+    async with session() as s:
+        await _require_role(s, item.built_app_slug, user.email, min_role)
+    return item
+
+
+@router.get("/{task_id}/files")
+async def list_files(task_id: UUID, user: CurrentUser = Depends(current_user_or_capability)):
+    item = await _owned_build_task(task_id, user, 'viewer')
     app_dir = Path(WORKSPACE) / "apps" / item.built_app_slug
     if not app_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"App directory not found: apps/{item.built_app_slug}")
@@ -65,8 +88,8 @@ async def list_files(task_id: UUID, user: AdminUser = Depends(current_admin_or_c
 
 
 @router.get("/{task_id}/files/{file_path:path}")
-async def read_file(task_id: UUID, file_path: str, user: AdminUser = Depends(current_admin_or_capability)):
-    item = await _get_build_task(task_id)
+async def read_file(task_id: UUID, file_path: str, user: CurrentUser = Depends(current_user_or_capability)):
+    item = await _owned_build_task(task_id, user, 'viewer')
     app_dir = Path(WORKSPACE) / "apps" / item.built_app_slug
     app_dir_resolved = app_dir.resolve()
     target = (app_dir / file_path).resolve()
@@ -86,8 +109,8 @@ async def read_file(task_id: UUID, file_path: str, user: AdminUser = Depends(cur
 
 
 @router.post("/{task_id}/preview/start")
-async def preview_start(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
-    item = await _get_build_task(task_id)
+async def preview_start(task_id: UUID, user: CurrentUser = Depends(current_user_or_capability)):
+    item = await _owned_build_task(task_id, user, 'editor')
     try:
         port = await start_preview(item.built_app_slug)
     except FileNotFoundError as e:
@@ -96,13 +119,18 @@ async def preview_start(task_id: UUID, user: AdminUser = Depends(current_admin_o
 
 
 @router.post("/{task_id}/preview/stop")
-async def preview_stop(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
+async def preview_stop(task_id: UUID, user: CurrentUser = Depends(current_user_or_capability)):
+    # Checked even though the body never needed the task: stop_preview() takes
+    # no slug, so ANY caller stops whichever app is currently previewing —
+    # including someone else's. Without this, opening the gate would let any
+    # signed-in account kill every other user's preview by naming any task id.
+    await _owned_build_task(task_id, user, 'editor')
     await stop_preview()
     return {"status": "stopped"}
 
 
 @router.get("/{task_id}/preview/status")
-async def preview_status(task_id: UUID, user: AdminUser = Depends(current_admin_or_capability)):
-    item = await _get_build_task(task_id)
+async def preview_status(task_id: UUID, user: CurrentUser = Depends(current_user_or_capability)):
+    item = await _owned_build_task(task_id, user, 'viewer')
     status = get_status(item.built_app_slug)
     return status or {"running": False}
