@@ -400,23 +400,15 @@
       font-family: var(--font-ui); font-size: 9.5px; font-weight: 600;
       letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
     }
-    .sched-tz {
+    /* Timezone chip, and which agent a schedule runs as when it has one --
+       same shape, one more small fact on the same summary line. */
+    .sched-tz, .sched-agent {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 12px; color: var(--text-2);
       background: var(--surface-2); border: 1px solid var(--border-2);
       border-radius: var(--radius); padding: 4px 9px;
     }
-    .sched-tz svg { width: 13px; height: 13px; opacity: 0.8; }
-
-    /* Which agent a schedule runs as, when it has one. Same shape as the
-       timezone chip -- one more small fact on the same summary line. */
-    .sched-agent {
-      display: inline-flex; align-items: center; gap: 5px;
-      font-size: 12px; color: var(--text-2);
-      background: var(--surface-2); border: 1px solid var(--border-2);
-      border-radius: var(--radius); padding: 4px 9px;
-    }
-    .sched-agent svg { width: 13px; height: 13px; opacity: 0.8; }
+    .sched-tz svg, .sched-agent svg { width: 13px; height: 13px; opacity: 0.8; }
 
     /* Delivery destination chip: where each schedule's result is posted. */
     .sched-dest {
@@ -801,6 +793,19 @@
     // runs as (renderCard below). Cards can render before this fetch settles,
     // so once it does, ask the list to redraw with names now that they exist.
     const AGENTS_BY_ID = {};
+
+    // loadAgentsForRunAs() and loadSchedules() are two independent fetches to
+    // two different backends, started in the same pass with no ordering
+    // between them. If the agents fetch answers first, the recall below must
+    // not be allowed to render before the schedules have ever actually
+    // loaded -- otherwise it repaints the loading skeleton as the "No
+    // schedules yet" empty state for a user who has schedules, using the
+    // still-initial empty array as if it were the real answer. This flag
+    // records the real event (loadSchedules() has completed once), rather
+    // than inferring "loaded" from allSchedules.length, which cannot tell
+    // "not fetched yet" apart from "fetched and genuinely empty."
+    let schedulesLoadedOnce = false;
+
     async function loadAgentsForRunAs() {
       const sel = document.getElementById("run-as");
       if (!sel) return;
@@ -819,7 +824,10 @@
             sel.appendChild(o);
             AGENTS_BY_ID[m.id] = m.name || m.id;
           });
-        if (typeof renderList === "function") renderList();
+        // Only refresh a list that has already loaded for real. Otherwise this
+        // can win the race against loadSchedules() and flip the loading
+        // skeleton to the empty state while the real fetch is still in flight.
+        if (schedulesLoadedOnce && typeof renderList === "function") renderList();
       } catch (e) {
         console.warn("[cron] could not load agents for Run as", e);
       }
@@ -1411,6 +1419,9 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
         return;
       }
       allSchedules = Array.isArray(rows) ? rows : [];
+      // Marks the real event the agent loader waits on: schedules have been
+      // fetched at least once, whatever the result turned out to be.
+      schedulesLoadedOnce = true;
       // currentPage is deliberately NOT reset here. This runs again after every
       // enable, disable, run and delete, and being thrown back to page 1 each
       // time you touch something on page 2 is maddening.
