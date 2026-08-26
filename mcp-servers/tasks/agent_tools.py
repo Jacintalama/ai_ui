@@ -46,11 +46,21 @@ _WRITE_VERBS = frozenset({
 })
 
 #: Verbs that read, as these tool surfaces currently name things, checked
-#: against the first token or the second (proxy tools arrive
-#: server-qualified, e.g. clickup_list_tasks, so the read verb is the second
-#: segment). Only consulted once the write-verb veto above has cleared the
-#: name, so a read verb sitting elsewhere (the "search" in
-#: search_and_replace) no longer marks a write as safe.
+#: against the first THREE underscore-delimited tokens of the name. Two
+#: tokens was not enough: a proxy tool can arrive with a two-part server
+#: prefix, e.g. google-drive_gdrive_list_files or web-search_web_search,
+#: which pushes the read verb to the third token. Widening to three tokens
+#: only fixes those false writes because the write-verb veto above runs
+#: first and scans EVERY token in the name, not just the first three -- a
+#: mutating verb anywhere in the name has already returned True by the time
+#: this set is even consulted, so a read word that happens to land in the
+#: first three tokens can never smuggle a write past that veto.
+#:
+#: "whoami" is included even though it is not really a verb: it is a
+#: single-word identity check with no separate verb+noun form, so it has no
+#: other way to be recognized once it is wrapped in a per-user proxy prefix
+#: (my-clickup_whoami, my-github_whoami, and so on). Plain "whoami" is also
+#: pinned in READ_METHODS below; this entry exists for the prefixed form.
 #:
 #: Not a claim that these verbs can never mutate. "check" was removed from
 #: this set for exactly that reason: it means inspect in check_my_access but
@@ -59,7 +69,7 @@ _WRITE_VERBS = frozenset({
 #: here; pin the specific read method in READ_METHODS instead.
 _READ_VERBS = frozenset({
     "list", "get", "search", "read", "fetch", "find", "describe", "count",
-    "query", "view", "show",
+    "query", "view", "show", "whoami",
 })
 
 #: The native tools, pinned by name. The verb rule already agrees with every
@@ -89,8 +99,8 @@ def is_write_tool(method_name: str) -> bool:
        verb, this is a write. Checked first, wins over everything below.
     2. Otherwise, if the name is one of the explicitly pinned READ_METHODS,
        it is a read.
-    3. Otherwise, if the first token or the second token is a read verb,
-       it is a read.
+    3. Otherwise, if any of the first three tokens is a read verb, it is a
+       read.
     4. Otherwise it is a write, by default.
     """
     name = (method_name or "").strip().lower()
@@ -101,9 +111,7 @@ def is_write_tool(method_name: str) -> bool:
         return True
     if name in READ_METHODS:
         return False
-    if tokens[0] in _READ_VERBS:
-        return False
-    if len(tokens) > 1 and tokens[1] in _READ_VERBS:
+    if any(token in _READ_VERBS for token in tokens[:3]):
         return False
     return True
 
@@ -229,18 +237,31 @@ async def execute_tool_call(tool_call: dict, user_email: str) -> str:
     if not name:
         return "That tool call named no tool, so nothing was run."
 
-    # A tool name is only ever a plain public method or tool identifier.
-    # Refuse anything else here, before either the native source scan or
-    # the getattr lookup that follows it -- this is what keeps a private
-    # helper (_email, _post) or a dunder (__init__, __class__) from ever
-    # being resolved and run, even if its name happens to match a "def"
-    # substring somewhere in a tool module.
-    if not name.isidentifier() or name.startswith("_"):
-        logger.error("tool call requested a non-public method name %r", name)
-        return "The tool " + name + " is not available."
-
     try:
-        source = await _load_native_tool_source(name)
+        # The native path is the one with teeth: it execs the tool source
+        # and calls getattr(instance, name) on the result. A private helper
+        # (_email, _post) or a dunder (__init__, __class__) must never reach
+        # that getattr, even if its name happens to match a "def" substring
+        # somewhere in a tool module -- so refuse a leading underscore here,
+        # immediately before the native source lookup, before either it or
+        # the getattr that follows can run.
+        #
+        # A name that merely fails isidentifier() (a hyphen, most often) is
+        # a different case: it can never be a native method name -- Python
+        # method names cannot contain a hyphen -- so it is simply not
+        # eligible for the native path, and native lookup is skipped for
+        # it. It is NOT refused outright, because a hyphenated name such as
+        # my-clickup_list_tasks is a perfectly ordinary proxy tool name.
+        # The proxy path performs no attribute lookup, so there is nothing
+        # here for it to defend; mcp-proxy does its own validation and
+        # per-user access control on /meta/call_tool.
+        if name.startswith("_"):
+            logger.error("tool call requested a non-public method name %r", name)
+            return "The tool " + name + " is not available."
+
+        source = None
+        if name.isidentifier():
+            source = await _load_native_tool_source(name)
         if source:
             return await _run_native(source, name, params, user_email)
 

@@ -102,3 +102,46 @@ def test_the_one_genuine_check_read_is_pinned_by_name():
     """check_my_access really does only inspect, and it exists in this repo,
     so it is pinned rather than resurrecting the verb for everything."""
     assert is_write_tool("check_my_access") is False
+
+
+# The names below come from the live proxy's real 312-tool surface, not from
+# imagination. Several server prefixes there are two-part (google-drive_,
+# web-search_) or hyphenated per-user prefixes (my-clickup_, my-github_),
+# which pushes the read verb to the third underscore-delimited token --
+# e.g. google-drive_gdrive_list_files. That is exactly why the read-verb
+# window in is_write_tool checks the first THREE tokens rather than two.
+
+#: These two-part-prefix names carry a write verb somewhere in the name and
+#: must still classify as writes. This is the regression that matters most:
+#: widening the read window is only safe because the write-verb veto runs
+#: first and scans every token, not just the first three, so a write verb
+#: anywhere in the name -- including past the third token -- still wins.
+TWO_PART_PREFIX_WRITES = [
+    "google-drive_gdrive_upload_to_webui",
+    "google-drive_gdrive_create_file",
+    "google-drive_auth_google_disconnect",
+    "my-clickup_create_task",
+    "my-github_create_issue",
+]
+
+
+@pytest.mark.parametrize("name", TWO_PART_PREFIX_WRITES)
+def test_two_part_server_prefix_writes_stay_writes(name):
+    assert is_write_tool(name) is True
+
+
+#: These two-part-prefix names are genuine reads that a two-token window
+#: refused, because the read verb sits in the third token.
+TWO_PART_PREFIX_READS = [
+    "my-clickup_list_tasks",
+    "my-clickup_whoami",
+    "my-github_list_my_repos",
+    "google-drive_gdrive_list_files",
+    "google-drive_gdrive_read_file",
+    "web-search_web_search",
+]
+
+
+@pytest.mark.parametrize("name", TWO_PART_PREFIX_READS)
+def test_two_part_server_prefix_reads_are_not_writes(name):
+    assert is_write_tool(name) is False

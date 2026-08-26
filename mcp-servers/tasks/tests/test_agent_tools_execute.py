@@ -65,6 +65,37 @@ async def test_a_proxy_tool_is_called_with_the_users_email_header():
     assert "ok" in out
 
 
+async def test_a_hyphenated_server_prefix_reaches_the_proxy_path():
+    """F1: the live proxy serves 312 tools, 44 of which have a server prefix
+    containing a hyphen (the whole my-* per-user family, plus google-drive_*
+    and web-search_*). None of those is a valid Python identifier, so the
+    identifier guard must not refuse them outright -- it protects only the
+    native path's getattr, and a hyphenated name can never be a native
+    method name in the first place. It must fall through to the proxy
+    exactly like any other proxy tool, and _load_native_tool_source must
+    never be consulted for it, since no valid Python source could define a
+    method whose name contains a hyphen."""
+    captured = {}
+
+    async def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        captured["headers"] = headers
+        return _FakeResponse(200, {"result": "ok"})
+
+    source_lookup = AsyncMock(return_value=None)
+    with patch("agent_tools._load_native_tool_source", new=source_lookup), \
+         patch("agent_tools._post_json", new=fake_post):
+        out = await execute_tool_call(
+            _call("my-clickup_list_tasks"), "owner@example.com")
+
+    source_lookup.assert_not_called()
+    assert captured["headers"]["X-User-Email"] == "owner@example.com"
+    assert captured["json"]["tool_name"] == "my-clickup_list_tasks"
+    assert "/meta/call_tool" in captured["url"]
+    assert "ok" in out
+
+
 async def test_a_failing_tool_returns_an_error_string_and_does_not_raise():
     """The loop must be able to hand the failure to the model and let it
     explain itself, rather than dying and losing the whole run."""
