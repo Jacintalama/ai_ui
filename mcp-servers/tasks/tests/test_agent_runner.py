@@ -23,7 +23,8 @@ _real_chat = agent_runner._chat
 def _sched(**over):
     base = dict(id="sched-1", user_email="owner@example.com",
                 agent_id="agent-triage-0002", name="Morning triage",
-                prompt="Sort my unread mail.", last_result=None)
+                prompt="Sort my unread mail.", last_result=None,
+                last_run_status="completed")
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -31,19 +32,29 @@ def _sched(**over):
 AGENT_ROW = {"id": "agent-triage-0002", "name": "Triage",
              "meta": {"toolIds": ["gmail"]}}
 
+# A second, different agent, so the fixture's listing always has more than
+# one row. A lookup that grabs a row by position (e.g. `agents[0] if agents
+# else None`) instead of matching sched.agent_id would pick this one -- and a
+# fixture list of exactly one row can never tell that apart from a correct
+# lookup, since index 0 and "the matching one" are the same row either way.
+OTHER_AGENT_ROW = {"id": "agent-decoy-0099", "name": "Decoy",
+                   "meta": {"toolIds": ["calendar"]}}
+
 
 @pytest.fixture(autouse=True)
 def wired(monkeypatch):
     """Replace every network seam. Nothing here touches a socket."""
-    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
-                        AsyncMock(return_value="owui-owner-1"))
+    owui_user_id_for = AsyncMock(return_value="owui-owner-1")
+    monkeypatch.setattr(agent_runner, "_owui_user_id_for", owui_user_id_for)
     monkeypatch.setattr(agent_runner, "mint_owui_token",
                         lambda user_id, ttl_seconds=60: "minted-token")
+    # Decoy listed FIRST: a lookup that used position instead of matching
+    # sched.agent_id would return the decoy, not the named agent.
     monkeypatch.setattr(agent_runner, "_list_agents",
-                        AsyncMock(return_value=[AGENT_ROW]))
+                        AsyncMock(return_value=([OTHER_AGENT_ROW, AGENT_ROW], False)))
     chat = AsyncMock(return_value="Two need a reply today.")
     monkeypatch.setattr(agent_runner, "_chat", chat)
-    return SimpleNamespace(chat=chat)
+    return SimpleNamespace(chat=chat, owui_user_id_for=owui_user_id_for)
 
 
 async def test_it_runs_the_named_agent(wired):
@@ -66,12 +77,26 @@ async def test_an_agent_with_no_tools_sends_none(wired, monkeypatch):
     """None is not the same as an empty list, which reads as an explicit
     request for no tools."""
     monkeypatch.setattr(agent_runner, "_list_agents", AsyncMock(
-        return_value=[{"id": "agent-triage-0002", "name": "Triage",
-                       "meta": {"toolIds": []}}]))
+        return_value=([{"id": "agent-triage-0002", "name": "Triage",
+                        "meta": {"toolIds": []}}], False)))
 
     await agent_runner.run_agent(_sched())
 
     assert wired.chat.await_args.kwargs["tool_ids"] is None
+
+
+async def test_identity_is_resolved_from_the_schedules_own_email(wired):
+    """The `wired` fixture stubs _owui_user_id_for's answer but, on its own,
+    never checks what it was asked. Resolving a hardcoded email, or
+    sched.name instead of sched.user_email, would still return the same
+    stubbed owner id and pass every other test in this file."""
+    sched = _sched(user_email="owner-of-this-one@example.com",
+                    name="Not an email address")
+
+    await agent_runner.run_agent(sched)
+
+    wired.owui_user_id_for.assert_awaited_once_with(
+        "owner-of-this-one@example.com")
 
 
 async def test_it_runs_as_the_owner_not_anyone_else(wired, monkeypatch):
@@ -104,9 +129,11 @@ async def test_the_token_outlives_a_slow_tool_call(wired, monkeypatch):
 
     await agent_runner.run_agent(_sched())
 
-    # Two mints: first for listing (short), second for chat (long).
+    # Two mints, both long-lived: the listing loop's own worst case (up to
+    # 5 sequential 30s-timeout requests) can outlast a short TTL too, so it
+    # now carries the same lifetime as the chat token.
     assert len(ttls) == 2
-    assert ttls[0] == 60, "listing token has standard short TTL"
+    assert ttls[0] >= agent_runner.HTTP_TIMEOUT_SECONDS, "listing token covers its own worst case"
     assert ttls[1] >= agent_runner.HTTP_TIMEOUT_SECONDS, "chat token covers the timeout"
 
 
@@ -133,15 +160,53 @@ async def test_the_first_run_carries_nothing(wired):
     assert len(msgs) == 1, msgs
 
 
+async def test_a_failed_previous_run_is_not_carried_forward(wired):
+    """_finalize_run stores last_result for every status, including this
+    runner's own synthetic failure sentences. Handing that back as "what you
+    produced last time" would have the agent echo its own failure message,
+    and it does that on every run after the first."""
+    await agent_runner.run_agent(_sched(
+        last_result="The agent could not finish this run. It will try "
+                    "again at the next scheduled time.",
+        last_run_status="failed"))
+
+    msgs = wired.chat.await_args.kwargs["messages"]
+    assert len(msgs) == 1, msgs
+    sent = "".join(m["content"] for m in msgs)
+    assert "could not finish" not in sent
+
+
 async def test_a_deleted_agent_still_delivers_something(wired, monkeypatch):
     """The agent was removed from the web after the schedule was made. The run
-    must still produce a message that says so."""
-    monkeypatch.setattr(agent_runner, "_list_agents", AsyncMock(return_value=[]))
+    must still produce a message that says so. The listing was complete
+    (truncated=False), so this is a real "does not exist", and the message
+    must say something a person can actually act on: there is no edit UI, so
+    it must not send them looking for one."""
+    monkeypatch.setattr(agent_runner, "_list_agents",
+                        AsyncMock(return_value=([], False)))
 
     status, result, _ = await agent_runner.run_agent(_sched())
 
     assert status == "failed"
     assert "no longer" in result.lower() or "gone" in result.lower()
+    assert "delete" in result.lower(), "must point at something the owner can do"
+    wired.chat.assert_not_called()
+
+
+async def test_a_truncated_listing_does_not_claim_the_agent_is_gone(
+    wired, monkeypatch,
+):
+    """A listing that was cut short before it could see every agent is not
+    proof the agent does not exist -- it may simply be on a page this call
+    never reached. Saying "no longer exists" here would be a false claim."""
+    monkeypatch.setattr(agent_runner, "_list_agents",
+                        AsyncMock(return_value=([], True)))
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed"
+    assert "no longer exists" not in result.lower()
+    assert result.strip() != ""
     wired.chat.assert_not_called()
 
 

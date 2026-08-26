@@ -810,11 +810,23 @@
       const sel = document.getElementById("run-as");
       if (!sel) return;
       try {
-        const r = await fetch("/api/v1/models/list?page=1",
-                              { headers: authHeaders(), credentials: "include" });
-        if (!r.ok) return;
-        const body = await r.json();
-        const items = Array.isArray(body.items) ? body.items : [];
+        // /list is paged at 30 rows, one-indexed on `page` -- the same fact
+        // the Agents page works around (static/agents.html). Fetching only
+        // page 1 silently hid every agent past the 30th, with no error at
+        // all, from this dropdown. Keep asking until the count matches; the
+        // guard stops a wrong `total` looping forever.
+        let items = [], total = 0, pageNo = 1, guard = 0;
+        while (guard++ < 25) {
+          const r = await fetch("/api/v1/models/list?page=" + pageNo,
+                                { headers: authHeaders(), credentials: "include" });
+          if (!r.ok) break;
+          const body = await r.json();
+          const batch = Array.isArray(body.items) ? body.items : [];
+          total = (typeof body.total === "number") ? body.total : batch.length;
+          items = items.concat(batch);
+          if (!batch.length || items.length >= total) break;
+          pageNo++;
+        }
         items
           .filter((m) => String(m.id || "").startsWith("agent-"))
           .forEach((m) => {

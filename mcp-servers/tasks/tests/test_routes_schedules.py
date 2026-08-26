@@ -182,6 +182,7 @@ def test_create_then_list(monkeypatch):
             "cron_expr": "*/5 * * * *",
             "persona": "test",
             "prompt": "say hi",
+            "agent_id": "agent-triage-0002",
         },
     )
     assert r.status_code == 201, r.text
@@ -191,7 +192,12 @@ def test_create_then_list(monkeypatch):
 
     r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
     assert r.status_code == 200, r.text
-    assert any(s["id"] == sched_id for s in r.json())
+    data = r.json()
+    assert any(s["id"] == sched_id for s in data)
+    # _serialize dropped agent_id once already (caught by review, not by a
+    # test); a schedule created with an agent must come back carrying it.
+    listed = next(s for s in data if s["id"] == sched_id)
+    assert listed["agent_id"] == "agent-triage-0002"
 
 
 def _make_capture_session(rows):

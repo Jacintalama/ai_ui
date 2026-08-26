@@ -58,13 +58,18 @@ async def _owui_user_id_for(email: str) -> str | None:
     return await resolve(email)
 
 
-async def _list_agents(token: str) -> list[dict]:
-    """The derived models this token's user can see.
+async def _list_agents(token: str) -> tuple[list[dict], bool]:
+    """The derived models this token's user can see, and whether the listing
+    might be missing some.
 
     /api/v1/models/list rather than /api/models: the latter nests the row under
     `info` and deletes params server side. It pages at 30 on a one indexed
-    `page`, and a user is capped at 25 agents, so one page is enough here; the
-    guard stops a wrong total looping.
+    `page`. The second element is True when the loop stopped before it could
+    tell whether every row had been fetched -- the page guard tripped, a page
+    came back with no usable `total`, or an empty batch arrived before `total`
+    was reached. The caller must not read "not in what we got" as "does not
+    exist" when this is True: the agent may simply be on a page this call
+    never reached.
     """
     out: list[dict] = []
     page = 1
@@ -78,10 +83,13 @@ async def _list_agents(token: str) -> list[dict]:
             batch = data.get("items") or []
             out.extend(batch)
             total = data.get("total")
-            if not batch or not isinstance(total, int) or len(out) >= total:
-                break
+            if not isinstance(total, int):
+                return out, bool(batch)
+            if not batch or len(out) >= total:
+                return out, len(out) < total
             page += 1
-    return out
+    # The guard tripped: 5 pages fetched and still short of `total`.
+    return out, True
 
 
 async def _chat(token: str, model: str, messages: list[dict],
@@ -118,8 +126,18 @@ async def _chat(token: str, model: str, messages: list[dict],
 def _messages_for(sched) -> list[dict]:
     """The task, preceded by a trimmed reminder of the last run when there is
     one. The CLI path this replaces kept a memory between runs, and dropping
-    that would make every daily digest say the same thing every day."""
+    that would make every daily digest say the same thing every day.
+
+    Only carried forward when the previous run actually completed.
+    _finalize_run stores last_result for every status, including the
+    runner's own synthetic failure sentences ("The agent could not finish
+    this run...", "This agent tried to use one of its tools..."), and models
+    routinely echo what they are handed. Without this check, one failed run
+    poisons every run after it: the agent is handed its own failure message
+    as "what you produced last time" and repeats it back."""
     last = (getattr(sched, "last_result", None) or "").strip()
+    if getattr(sched, "last_run_status", None) != "completed":
+        last = ""
     msgs: list[dict] = []
     if last:
         msgs.append({
@@ -146,15 +164,28 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                     "This schedule could not run: its owner has no account on "
                     "this platform any more.", {})
 
-        # Mint a short-lived token for the listing phase only.
-        list_token = mint_owui_token(owner, ttl_seconds=60)
-        agents = await _list_agents(list_token)
+        # Mint a token for the listing phase. Same lifetime as the chat mint
+        # below, not the 60s this used to carry: the listing loop itself can
+        # make up to 5 sequential 30s-timeout requests, a worst case longer
+        # than 60s, and a token expiring mid-loop would surface as a wrong
+        # "agent no longer exists" rather than the auth failure it actually is.
+        list_token = mint_owui_token(owner, ttl_seconds=HTTP_TIMEOUT_SECONDS + 60)
+        agents, truncated = await _list_agents(list_token)
         agent = next((a for a in agents
                       if isinstance(a, dict) and a.get("id") == sched.agent_id), None)
         if agent is None:
+            if truncated:
+                # Not in what we fetched is not the same as not existing: the
+                # listing was cut short before it could see every agent, so
+                # this may simply be further down a page we never reached.
+                return ("failed",
+                        "This schedule's agent could not be checked this "
+                        "time. It will try again at the next scheduled "
+                        "time.", {})
             return ("failed",
                     "This schedule is set to run as an agent that no longer "
-                    "exists. Open the Cron page and pick another one.", {})
+                    "exists. Delete this schedule and create it again with "
+                    "a different agent.", {})
 
         meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
         tools = meta.get("toolIds")
