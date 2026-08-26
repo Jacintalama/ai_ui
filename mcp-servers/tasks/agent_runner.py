@@ -21,6 +21,7 @@ import os
 
 import httpx
 
+from agent_tools import execute_tool_call, is_write_tool
 from owui_token import mint_owui_token
 
 logger = logging.getLogger(__name__)
@@ -31,17 +32,10 @@ MEMORY_EXCERPT_CHARS = 1200
 
 HTTP_TIMEOUT_SECONDS = 240
 
-
-class _ToolCallRequested(Exception):
-    """The model asked to use a tool instead of answering.
-
-    Measured on production: given tool_ids, Open WebUI's chat completions API
-    can come back with an empty content, finish_reason "tool_calls", and a
-    tool_calls array, and it does not run the tool and continue. There is no
-    tool loop on this path to satisfy that request, so _chat raises this
-    instead of returning the blank content, and run_agent turns it into a
-    message that says what actually happened.
-    """
+#: How many times the model may ask for tools before we stop. Each iteration
+#: is a full completion, so this bounds the run's wall clock as well as its
+#: appetite.
+MAX_TOOL_ITERATIONS = 5
 
 
 def _base_url() -> str:
@@ -92,17 +86,9 @@ async def _list_agents(token: str) -> tuple[list[dict], bool]:
     return out, True
 
 
-async def _chat(token: str, model: str, messages: list[dict],
-                tool_ids: list[str] | None) -> str:
-    """One non streaming completion, as the token's user.
-
-    Raises _ToolCallRequested when the model asked to use a tool instead of
-    answering, so the caller can tell that apart from an ordinary empty
-    answer.
-    """
-    payload: dict = {"model": model, "messages": messages, "stream": False}
-    if tool_ids:
-        payload["tool_ids"] = tool_ids
+async def _post_chat(payload: dict, token: str) -> dict:
+    """One completion. Split out so the loop above it can be tested without
+    a model, and so there is one place that knows the wire format."""
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
         r = await client.post(
             f"{_base_url()}/api/chat/completions",
@@ -110,17 +96,62 @@ async def _chat(token: str, model: str, messages: list[dict],
                      "Content-Type": "application/json"},
             json=payload)
         r.raise_for_status()
-        data = r.json()
-    choices = data.get("choices") or []
-    if not choices:
-        raise RuntimeError("the model returned no answer")
-    choice = choices[0]
-    message = choice.get("message") or {}
-    content = (message.get("content") or "").strip()
-    if not content and (message.get("tool_calls")
-                        or choice.get("finish_reason") == "tool_calls"):
-        raise _ToolCallRequested()
-    return content
+        return r.json()
+
+
+async def _chat(token: str, model: str, messages: list[dict],
+                tool_ids: list[str] | None, user_email: str,
+                tool_mode: str | None) -> tuple[str, list[str]]:
+    """Talk to the agent, running any tools it asks for, until it answers.
+
+    Open WebUI injects the tool specs and returns the model's tool_calls, but
+    it never runs them for an API caller: its execution loop lives on the
+    socket path used by its own UI. So the execution and the feeding back
+    happen here. Verified on production that handing a tool result back
+    returns finish_reason "stop" and a real answer.
+
+    Returns the answer and any notes about what was refused, which the caller
+    shows the owner. A refusal is not an error: the run completes and says
+    what it would not do.
+    """
+    convo = list(messages)
+    notes: list[str] = []
+    write_allowed = (tool_mode or "read_only") == "full"
+
+    for _ in range(MAX_TOOL_ITERATIONS):
+        payload: dict = {"model": model, "messages": convo, "stream": False}
+        if tool_ids:
+            payload["tool_ids"] = tool_ids
+        data = await _post_chat(payload, token)
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("the model returned no answer")
+        message = choices[0].get("message") or {}
+        calls = message.get("tool_calls") or []
+        content = (message.get("content") or "").strip()
+
+        if not calls:
+            return content, notes
+
+        convo.append({"role": "assistant", "content": content,
+                      "tool_calls": calls})
+        for call in calls:
+            name = ((call.get("function") or {}).get("name") or "").strip()
+            if is_write_tool(name) and not write_allowed:
+                notes.append(
+                    "Declined to run " + name + ", because this schedule is "
+                    "set to read only.")
+                result = ("Refused: this scheduled run is read only, so "
+                          + name + " was not run.")
+            else:
+                result = await execute_tool_call(call, user_email)
+            convo.append({"role": "tool", "tool_call_id": call.get("id"),
+                          "name": name, "content": result})
+
+    notes.append("Stopped after " + str(MAX_TOOL_ITERATIONS)
+                 + " rounds of tool use, so this answer may be incomplete.")
+    return content, notes
 
 
 def _messages_for(sched) -> list[dict]:
@@ -200,17 +231,19 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
         try:
-            answer = await _chat(token=chat_token, model=sched.agent_id,
-                                 messages=_messages_for(sched),
-                                 tool_ids=tools or None)
-        except _ToolCallRequested:
-            return ("failed",
-                    "This agent tried to use one of its tools, and scheduled "
-                    "runs cannot do that yet. Change the prompt so it does "
-                    "not need a tool, or choose a different agent for this "
-                    "schedule.", {})
+            answer, notes = await _chat(
+                token=chat_token, model=sched.agent_id,
+                messages=_messages_for(sched), tool_ids=tools or None,
+                user_email=sched.user_email,
+                tool_mode=getattr(sched, "tool_mode", None))
+        except Exception:
+            raise
         if not answer:
             return ("failed", "The agent returned an empty answer.", {})
+        if notes:
+            # Say what was refused. A run that quietly skipped half its job
+            # and reported success would be worse than one that failed.
+            answer = answer + "\n\n" + "\n".join(notes)
         return ("completed", answer, {})
     except Exception:                                   # noqa: BLE001
         # Never include the exception's own text blindly: an httpx error can

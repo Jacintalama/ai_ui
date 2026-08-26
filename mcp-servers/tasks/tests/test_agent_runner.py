@@ -52,7 +52,7 @@ def wired(monkeypatch):
     # sched.agent_id would return the decoy, not the named agent.
     monkeypatch.setattr(agent_runner, "_list_agents",
                         AsyncMock(return_value=([OTHER_AGENT_ROW, AGENT_ROW], False)))
-    chat = AsyncMock(return_value="Two need a reply today.")
+    chat = AsyncMock(return_value=("Two need a reply today.", []))
     monkeypatch.setattr(agent_runner, "_chat", chat)
     return SimpleNamespace(chat=chat, owui_user_id_for=owui_user_id_for)
 
@@ -232,55 +232,79 @@ async def test_a_model_failure_is_reported_not_raised(wired):
     assert result.strip() != ""
 
 
-async def test_a_tool_call_is_reported_not_treated_as_an_empty_answer(wired):
-    """Measured on production: given tool_ids, Open WebUI can come back with
-    empty content and a tool_calls array instead of running the tool. There is
-    no tool loop on this path, so the person needs to hear that plainly rather
-    than the generic empty-answer message, which invites a retry that can
-    never succeed."""
-    wired.chat.side_effect = agent_runner._ToolCallRequested()
+async def test_a_refusal_note_is_appended_to_the_delivered_answer(wired):
+    """_chat reports what it declined as a note rather than raising. A run
+    that quietly dropped part of its job and reported plain success would be
+    worse than one that said so, so run_agent must fold any notes into the
+    delivered result rather than discard them."""
+    wired.chat.return_value = (
+        "Sorted your inbox.",
+        ["Declined to run send_email, because this schedule is set to "
+         "read only."])
 
     status, result, _ = await agent_runner.run_agent(_sched())
 
-    assert status == "failed"
-    assert "tool" in result.lower()
-    assert result != "The agent returned an empty answer."
+    assert status == "completed"
+    assert "Sorted your inbox." in result
+    assert "Declined to run send_email" in result
 
 
 @respx.mock
-async def test_chat_detects_a_tool_call_from_the_raw_response():
-    """The shape measured on production: empty content, finish_reason
-    "tool_calls", and a tool_calls array. Open WebUI does not run the tool and
-    continue, so _chat must raise rather than hand back the blank content."""
-    respx.post(f"{agent_runner._base_url()}/api/chat/completions").mock(
-        return_value=httpx.Response(200, json={
-            "choices": [{
-                "finish_reason": "tool_calls",
-                "message": {"role": "assistant", "content": "",
-                           "tool_calls": [{"id": "1", "type": "function",
-                                          "function": {"name": "gmail_search"}}]},
-            }]}))
+async def test_chat_runs_a_requested_tool_and_returns_the_final_answer(
+    monkeypatch,
+):
+    """The shape measured on production: the first completion comes back with
+    empty content, finish_reason "tool_calls", and a tool_calls array. Open
+    WebUI never runs the tool itself for an API caller, so _chat has to run
+    it and post the result back to get a real answer."""
+    calls = {"n": 0}
 
-    with pytest.raises(agent_runner._ToolCallRequested):
-        await _real_chat(token="t", model="m",
-                         messages=[{"role": "user", "content": "hi"}],
-                         tool_ids=["gmail"])
+    def respond(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(200, json={
+                "choices": [{
+                    "finish_reason": "tool_calls",
+                    "message": {"role": "assistant", "content": "",
+                               "tool_calls": [{"id": "1", "type": "function",
+                                              "function": {
+                                                  "name": "gmail_search",
+                                                  "arguments": "{}"}}]},
+                }]})
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop",
+                        "message": {"role": "assistant",
+                                   "content": "Found 2 matching emails."}}]})
+
+    respx.post(f"{agent_runner._base_url()}/api/chat/completions").mock(
+        side_effect=respond)
+    ex = AsyncMock(return_value="2 matches")
+    monkeypatch.setattr(agent_runner, "execute_tool_call", ex)
+
+    answer, notes = await _real_chat(
+        token="t", model="m", messages=[{"role": "user", "content": "hi"}],
+        tool_ids=["gmail"], user_email="owner@example.com",
+        tool_mode="read_only")
+
+    assert answer == "Found 2 matching emails."
+    assert notes == []
+    ex.assert_awaited_once()
 
 
 @respx.mock
 async def test_chat_with_plain_empty_content_still_returns_empty_string():
-    """A tool call is not the only way to get empty content back. Without a
-    tool_calls array or finish_reason, this must stay the ordinary empty
-    answer, not the tool-call message."""
+    """Without a tool_calls array, empty content is just an empty answer and
+    no notes, not something refused."""
     respx.post(f"{agent_runner._base_url()}/api/chat/completions").mock(
         return_value=httpx.Response(200, json={
             "choices": [{"message": {"role": "assistant", "content": ""}}]}))
 
     out = await _real_chat(token="t", model="m",
                            messages=[{"role": "user", "content": "hi"}],
-                           tool_ids=None)
+                           tool_ids=None, user_email="owner@example.com",
+                           tool_mode="read_only")
 
-    assert out == ""
+    assert out == ("", [])
 
 
 async def test_the_minted_token_is_never_returned_in_the_result(wired):
