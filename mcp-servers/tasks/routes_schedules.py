@@ -75,6 +75,7 @@ class CreateScheduleIn(BaseModel):
     # visible to the OWNER at run time, and that is a different question from
     # whether it exists right now.
     agent_id: str | None = None
+    tool_mode: str | None = None
     video_config: dict | None = None
 
 
@@ -262,6 +263,8 @@ async def create_schedule(
             video_config=body.video_config,
             # None means the CLI executor schedules have always used.
             agent_id=body.agent_id,
+            # None means read_only, the safe default for an unattended run.
+            tool_mode=body.tool_mode,
         ))
         await s.commit()
     return {"id": str(sid)}
@@ -440,4 +443,5 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "delivery_platform": sch.delivery_platform,
         "kind": sch.kind,
         "agent_id": sch.agent_id,
+        "tool_mode": sch.tool_mode,
     }

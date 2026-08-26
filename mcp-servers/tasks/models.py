@@ -144,6 +144,9 @@ class Schedule(Base):
     # scheduler checks at run time and falls back rather than letting a delete
     # cascade into somebody's schedule.
     agent_id = Column(Text, nullable=True)
+    # NULL means read_only. See migration 042: absent is not the same as
+    # chosen, and every row that predates the tool loop is absent.
+    tool_mode = Column(Text, nullable=True)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_run_status = Column(Text, nullable=True)
     # What the run actually produced. Kept regardless of whether there is
