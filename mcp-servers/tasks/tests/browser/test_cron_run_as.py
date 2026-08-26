@@ -102,11 +102,17 @@ def test_it_lists_the_agents_you_can_see(page):
 
 
 def test_leaving_it_alone_sends_no_agent(page):
+    """An untouched 'Run as' field must send no agent_id key at all.
+
+    An empty string is a failure, not an acceptable alternative: the API
+    interprets null (key absent) as "the assistant schedules have always
+    used", while a present empty string would be a data corruption risk.
+    """
     _fill(page)
     page.locator("#create-btn").click()
     page.wait_for_timeout(400)
     assert page.sent, "nothing was posted"
-    assert page.sent[-1].get("agent_id") in (None, ""), page.sent[-1]
+    assert "agent_id" not in page.sent[-1], page.sent[-1]
 
 
 def test_picking_an_agent_sends_its_id(page):
