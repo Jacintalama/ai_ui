@@ -388,6 +388,11 @@ services:
       # an empty value must fail loudly in mint_owui_token, not sign
       # tokens nobody can verify.
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # tasks now CALLS Open WebUI as well as signing tokens for it: a schedule
+      # that names an agent runs that agent through the chat API. Declared
+      # rather than left to the code default, because compose injects only what
+      # a service declares and an override in .env alone would reach nothing.
+      - OPENWEBUI_URL=${OPENWEBUI_URL:-http://open-webui:8080}
       - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
       - AIUI_SUPABASE_CLIENT_SECRET=${AIUI_SUPABASE_CLIENT_SECRET:-}
       # Vercel one-click Connect (AIUI Deploy integration). Empty = the UI

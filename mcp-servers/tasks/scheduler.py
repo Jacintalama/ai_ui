@@ -353,6 +353,16 @@ async def _run_scheduled_task(sched: Schedule) -> tuple[str, str, dict]:
     """
     if getattr(sched, "kind", "agent") == "video":
         return await _run_video_schedule(sched)
+    # A schedule that names an AI Agent runs through the chat path as its
+    # owner, with that agent's own tools. Null means the CLI executor below,
+    # which is what every schedule did before this existed.
+    #
+    # Checked AFTER kind: a video schedule renders a walkthrough and has no
+    # agent, so the order here decides which wins if a row somehow has both.
+    if getattr(sched, "agent_id", None):
+        from agent_runner import run_agent
+        async with _RUN_SEMAPHORE:
+            return await run_agent(sched)
     async with _RUN_SEMAPHORE:
         item = await _create_task_from_schedule(sched)
         # Create a TaskExecution row so _run_execution has something to update.
