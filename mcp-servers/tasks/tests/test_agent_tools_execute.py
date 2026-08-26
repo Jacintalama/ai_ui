@@ -88,6 +88,106 @@ async def test_an_unknown_tool_returns_a_message_rather_than_raising():
     assert isinstance(out, str) and out
 
 
+_ECHO_SOURCE = (
+    "class Tools:\n"
+    "    async def list_unread_emails(self, max_results=15, __user__=None):\n"
+    "        return 'seen-by:' + (__user__ or {}).get('email', 'nobody')\n"
+)
+
+
+@pytest.mark.parametrize("bad_arguments", [42, 3.14, True, [1, 2, 3]])
+async def test_non_string_non_dict_arguments_do_not_raise(bad_arguments):
+    """F1: arguments can arrive as something dict(...) itself chokes on --
+    dict(42), dict(3.14), dict(True) and dict([1, 2, 3]) all raise TypeError,
+    not the ValueError the old except clause caught. Both must degrade to
+    "no arguments" rather than blowing up execute_tool_call, since the tool
+    call came from a model, not validated input."""
+    call = {"id": "call_1",
+             "function": {"name": "list_unread_emails", "arguments": bad_arguments}}
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=_ECHO_SOURCE)):
+        out = await execute_tool_call(call, "owner@example.com")
+    assert isinstance(out, str) and out
+
+
+async def test_a_sync_native_tool_method_is_awaited_only_if_awaitable():
+    """F2: create_excel and create_dashboard are plain `def`, not async def.
+    Unconditionally awaiting their return value raises and discards the
+    finished work; only await when the call actually gives back something
+    awaitable. Cover both a sync and an async method here."""
+    sync_source = (
+        "class Tools:\n"
+        "    def create_excel(self, specification='', __user__=None):\n"
+        "        return 'xlsx-for:' + (__user__ or {}).get('email', 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=sync_source)):
+        sync_out = await execute_tool_call(_call("create_excel"), "owner@example.com")
+    assert sync_out == "xlsx-for:owner@example.com"
+
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=_ECHO_SOURCE)):
+        async_out = await execute_tool_call(_call("list_unread_emails"),
+                                            "owner@example.com")
+    assert async_out == "seen-by:owner@example.com"
+
+
+async def test_private_and_dunder_method_names_are_refused():
+    """F3: a method name has to be a plain public identifier before it is
+    even looked up. The guard has to sit before _load_native_tool_source is
+    called at all -- not just before what it returns is used -- because
+    execute_tool_call's own except Exception would otherwise swallow a
+    raise-if-called side effect and make this test pass either way. So
+    assert on the mock's call count, not on anything raised inside it.
+    """
+    for bad_name in ("__init__", "_email", "_post", "__class__", "__globals__"):
+        source_lookup = AsyncMock(return_value=_ECHO_SOURCE)
+        with patch("agent_tools._load_native_tool_source", new=source_lookup):
+            out = await execute_tool_call(_call(bad_name), "owner@example.com")
+        assert isinstance(out, str) and out
+        source_lookup.assert_not_called()
+
+    # A normal public name is unaffected by the guard.
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=_ECHO_SOURCE)):
+        out = await execute_tool_call(_call("list_unread_emails"), "owner@example.com")
+    assert out == "seen-by:owner@example.com"
+
+
+async def test_unexpected_argument_is_dropped_and_the_call_still_succeeds():
+    """F5: a model that hallucinates a parameter must not kill the call.
+    Without filtering, the extra 'unexpected' kwarg raises a bare TypeError
+    from inside the method call, which the outer except turns into the
+    generic failure string instead of the real answer."""
+    source = (
+        "class Tools:\n"
+        "    async def search_emails(self, query='', __user__=None):\n"
+        "        return 'q=' + query\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("search_emails", {"query": "invoices", "unexpected": "x"}),
+            "owner@example.com")
+    assert out == "q=invoices"
+
+
+async def test_a_kwargs_catch_all_method_still_receives_everything():
+    """F5: a method that declares **kwargs opts in to accepting anything,
+    so nothing supplied by the model should be dropped for it."""
+    source = (
+        "class Tools:\n"
+        "    async def search_emails(self, query='', __user__=None, **kwargs):\n"
+        "        return 'q=' + query + ' extra=' + ','.join(sorted(kwargs))\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("search_emails", {"query": "invoices", "unexpected": "x"}),
+            "owner@example.com")
+    assert out == "q=invoices extra=unexpected"
+
+
 class _FakeResponse:
     def __init__(self, status_code, payload):
         self.status_code = status_code

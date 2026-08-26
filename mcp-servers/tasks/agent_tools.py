@@ -3,6 +3,7 @@
 Split out of agent_runner because it is the part with teeth: agent_runner
 decides what to say, this decides what actually happens to someone's mail.
 """
+import inspect
 import json
 import logging
 import os
@@ -117,6 +118,8 @@ def _proxy_url() -> str:
 
 
 async def _post_json(url, json=None, headers=None, timeout=None):
+    # The json= parameter name deliberately mirrors httpx's own keyword, so
+    # inside this function it shadows the module-level `json` import.
     async with httpx.AsyncClient(timeout=timeout or TOOL_TIMEOUT_SECONDS) as c:
         return await c.post(url, json=json, headers=headers)
 
@@ -130,14 +133,48 @@ async def _load_native_tool_source(method_name: str) -> str | None:
     thin client for mcp-gmail, and duplicating that mapping here would drift
     the first time somebody edits the tool in the web UI.
     """
+    # ORDER BY id: without it, "first row containing the needle" depends on
+    # physical scan order, which Postgres does not promise to hold still.
+    # Ordering makes the winner among colliding rows deterministic and
+    # reproducible, not correct -- two tools defining the same public
+    # method name is a situation the platform should avoid in the first
+    # place, and this only pins down which one wins when it happens anyway.
     async with session() as s:
         rows = (await s.execute(
-            sql_text("SELECT content FROM public.tool"))).fetchall()
+            sql_text("SELECT content FROM public.tool ORDER BY id"))).fetchall()
     needle = "def " + method_name + "("
     for (content,) in rows:
         if content and needle in content:
             return content
     return None
+
+
+def _filter_supported_kwargs(method, params: dict) -> dict:
+    """Drop any argument the model supplied that `method` does not accept.
+
+    Models invent parameters routinely -- a hallucinated keyword otherwise
+    turns into a bare TypeError that kills the whole tool call. Open WebUI's
+    own tool runner filters to the declared properties before calling for
+    the same reason; mirror that here rather than trusting the model's
+    argument list verbatim. A method that declares **kwargs accepts
+    anything, so nothing is dropped for it.
+    """
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return dict(params)
+
+    parameters = signature.parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return dict(params)
+
+    accepted = set(parameters) - {"self"}
+    dropped = [key for key in params if key not in accepted]
+    if dropped:
+        # Debug only, and only the names -- never the values the model sent.
+        logger.debug("dropping unexpected arguments for %s: %s",
+                     getattr(method, "__name__", method), dropped)
+    return {key: value for key, value in params.items() if key in accepted}
 
 
 async def _run_native(source: str, method_name: str, params: dict,
@@ -151,7 +188,18 @@ async def _run_native(source: str, method_name: str, params: dict,
     method = getattr(instance, method_name, None)
     if method is None:
         raise RuntimeError("tool module has no method " + method_name)
-    result = await method(__user__={"email": user_email}, **params)
+
+    call_kwargs = _filter_supported_kwargs(method, params)
+    # Identity always comes from the caller, never from the model's
+    # arguments -- set last so nothing supplied above can override it.
+    call_kwargs["__user__"] = {"email": user_email}
+
+    # Most native tools are async, but some (excel_creator, executive_
+    # dashboard) are plain `def`. Awaiting a plain return value raises, so
+    # only await when the call actually gave back something awaitable.
+    result = method(**call_kwargs)
+    if inspect.isawaitable(result):
+        result = await result
     return result if isinstance(result, str) else json.dumps(result)
 
 
@@ -166,14 +214,30 @@ async def execute_tool_call(tool_call: dict, user_email: str) -> str:
     name = (fn.get("name") or "").strip()
     raw_args = fn.get("arguments") or "{}"
     try:
+        # raw_args is usually a JSON string, but a model (or a hand-built
+        # tool_call in a test) can hand back arguments already decoded as
+        # some other type. dict(...) raises TypeError, not ValueError, for
+        # anything that is not a mapping or an iterable of pairs -- an int,
+        # a float, a bool, a plain list of numbers -- so both must be caught
+        # here or a malformed call crashes the run instead of degrading.
         params = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
-    except ValueError:
+    except (ValueError, TypeError):
         params = {}
     if not isinstance(params, dict):
         params = {}
 
     if not name:
         return "That tool call named no tool, so nothing was run."
+
+    # A tool name is only ever a plain public method or tool identifier.
+    # Refuse anything else here, before either the native source scan or
+    # the getattr lookup that follows it -- this is what keeps a private
+    # helper (_email, _post) or a dunder (__init__, __class__) from ever
+    # being resolved and run, even if its name happens to match a "def"
+    # substring somewhere in a tool module.
+    if not name.isidentifier() or name.startswith("_"):
+        logger.error("tool call requested a non-public method name %r", name)
+        return "The tool " + name + " is not available."
 
     try:
         source = await _load_native_tool_source(name)
