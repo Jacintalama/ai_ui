@@ -81,3 +81,24 @@ def test_classification_ignores_case_and_server_prefix():
     is not guaranteed."""
     assert is_write_tool("SEARCH_emails") is False
     assert is_write_tool("clickup_create_task") is True
+
+
+# "check" was once treated as a read verb, on the strength of check_my_access.
+# It is overloaded: on a ClickUp or Trello checklist, checking an item ticks
+# it off, which mutates. These names contain no other write verb, so nothing
+# else in the classifier would have caught them.
+CHECK_WRITES = [
+    "check_item", "check_task", "check_checklist_item", "check_off_task",
+    "trello_check_item", "clickup_check_checklist_item",
+]
+
+
+@pytest.mark.parametrize("name", CHECK_WRITES)
+def test_checking_something_off_is_a_write(name):
+    assert is_write_tool(name) is True
+
+
+def test_the_one_genuine_check_read_is_pinned_by_name():
+    """check_my_access really does only inspect, and it exists in this repo,
+    so it is pinned rather than resurrecting the verb for everything."""
+    assert is_write_tool("check_my_access") is False

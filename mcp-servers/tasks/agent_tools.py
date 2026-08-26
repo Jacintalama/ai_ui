@@ -37,15 +37,21 @@ _WRITE_VERBS = frozenset({
     "unstar", "label", "tag", "comment",
 })
 
-#: Verbs that only ever read, checked against the first token or the second
-#: token (proxy tools arrive server-qualified, e.g. clickup_list_tasks, so
-#: the read verb is the second segment, not the first). Only consulted once
-#: the write-verb veto above has cleared the name, so a read verb sitting
-#: elsewhere in the name (the "search" in search_and_replace) no longer gets
-#: to mark a write as safe.
+#: Verbs that read, as these tool surfaces currently name things, checked
+#: against the first token or the second (proxy tools arrive
+#: server-qualified, e.g. clickup_list_tasks, so the read verb is the second
+#: segment). Only consulted once the write-verb veto above has cleared the
+#: name, so a read verb sitting elsewhere (the "search" in
+#: search_and_replace) no longer marks a write as safe.
+#:
+#: Not a claim that these verbs can never mutate. "check" was removed from
+#: this set for exactly that reason: it means inspect in check_my_access but
+#: means tick off in a ClickUp or Trello checklist, and check_item mutates.
+#: A verb that reads on one service and writes on another does not belong
+#: here; pin the specific read method in READ_METHODS instead.
 _READ_VERBS = frozenset({
     "list", "get", "search", "read", "fetch", "find", "describe", "count",
-    "query", "view", "show", "check",
+    "query", "view", "show",
 })
 
 #: The native tools, pinned by name. The verb rule already agrees with every
@@ -56,6 +62,9 @@ READ_METHODS: frozenset[str] = frozenset({
     "search_emails", "read_email",
     "list_calendar_events",
     "list_drive_files", "search_drive", "read_drive_file",
+    # Pinned by name because "check" is no longer a read verb: this one
+    # really does only inspect, and it exists in this repo (mcp-proxy).
+    "check_my_access",
     "whoami",
 })
 
