@@ -400,15 +400,23 @@
       font-family: var(--font-ui); font-size: 9.5px; font-weight: 600;
       letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
     }
-    /* Timezone chip, and which agent a schedule runs as when it has one --
-       same shape, one more small fact on the same summary line. */
-    .sched-tz, .sched-agent {
+    /* Timezone chip, which agent a schedule runs as, and how much that agent
+       may do -- same shape, one more small fact on the same summary line. */
+    .sched-tz, .sched-agent, .sched-mode {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 12px; color: var(--text-2);
       background: var(--surface-2); border: 1px solid var(--border-2);
       border-radius: var(--radius); padding: 4px 9px;
     }
     .sched-tz svg, .sched-agent svg { width: 13px; height: 13px; opacity: 0.8; }
+    /* Full access is the elevated case (it can send/reply/create/delete on
+       the user's behalf while nobody is watching), so it gets the same
+       warning tint the rest of the page uses for states worth a second
+       look. Read only stays the neutral chip -- it's the safe default. */
+    .sched-mode.full {
+      background: var(--warning-soft); color: var(--warning);
+      border-color: rgba(245,158,11,0.35);
+    }
 
     /* Delivery destination chip: where each schedule's result is posted. */
     .sched-dest {
@@ -677,6 +685,18 @@
               <span class="form-hint">Pick one of your agents to run this, with
                 its own instructions and tools. Leave it as it is and schedules
                 behave exactly as they always have.</span>
+            </div>
+
+            <div class="field">
+              <label class="form-label" for="tool-mode">Tool access</label>
+              <select class="form-input" id="tool-mode" name="tool-mode">
+                <option value="read_only">Read only</option>
+                <option value="full">Full access</option>
+              </select>
+              <span class="form-hint">A scheduled run happens with nobody
+                watching. Read only lets the agent look things up but not send,
+                reply, create or delete. Full access lets it do everything you
+                could, including sending email on your behalf.</span>
             </div>
 
             <div class="error box" id="form-error" hidden></div>
@@ -1272,6 +1292,16 @@
         ? `<span class="sched-agent" title="runs as">${ICON_AGENT}<span class="agent-text"></span></span>`
         : "";
 
+      // How much that agent may do while nobody is watching. Only shown
+      // alongside an agent chip -- without an agent there are no tools, so
+      // the mode would be noise. Both labels are fixed strings (not server
+      // text), so unlike agentChip/destChip this needs no textContent pass.
+      const modeChip = agentName
+        ? (s.tool_mode === "full"
+            ? '<span class="sched-mode full" title="tool access">Full tool access</span>'
+            : '<span class="sched-mode" title="tool access">Read only</span>')
+        : "";
+
       card.innerHTML =
         `<div class="sched-head">
            <div class="sched-id">
@@ -1286,6 +1316,7 @@
          <div class="sched-chips">
            ${tz}
            ${agentChip}
+           ${modeChip}
            ${destChip}
            ${lastRun}
          </div>
@@ -1516,6 +1547,10 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       // used", and that is what an untouched field means.
       const runAs = (document.getElementById("run-as") || {}).value || "";
       if (runAs) body.agent_id = runAs;
+      // Only meaningful with an agent, and the server treats a missing value
+      // as read only anyway.
+      const toolMode = (document.getElementById("tool-mode") || {}).value || "";
+      if (runAs && toolMode) body.tool_mode = toolMode;
 
       try {
         const r = await fetch(SCHED_API, {
