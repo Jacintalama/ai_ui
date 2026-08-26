@@ -71,35 +71,36 @@ async def test_it_runs_as_the_owner_not_anyone_else(wired, monkeypatch):
     """A schedule belongs to one person, reads their mail, and runs whether or
     not they are online. Running as the wrong identity would read somebody
     else's mailbox and look completely correct."""
-    seen = {}
+    user_ids = []
 
     def spy_mint(user_id, ttl_seconds=60):
-        seen["user_id"] = user_id
-        seen["ttl"] = ttl_seconds
-        return "minted-token"
+        user_ids.append(user_id)
+        return f"token-{len(user_ids)}"
 
     monkeypatch.setattr(agent_runner, "mint_owui_token", spy_mint)
 
     await agent_runner.run_agent(_sched())
 
-    assert seen["user_id"] == "owui-owner-1"
+    assert user_ids == ["owui-owner-1", "owui-owner-1"], "both mints use the owner"
 
 
 async def test_the_token_outlives_a_slow_tool_call(wired, monkeypatch):
-    """The default is 60 seconds, which is right for pairing and wrong here: a
-    tool using run can take longer, and an expired token mid run fails in a way
-    that looks like the agent refusing."""
-    seen = {}
+    """The chat phase requires a long-lived token. It is minted immediately
+    before the call to guarantee it covers the full timeout window."""
+    ttls = []
 
     def spy_mint(user_id, ttl_seconds=60):
-        seen["ttl"] = ttl_seconds
-        return "minted-token"
+        ttls.append(ttl_seconds)
+        return f"token-{ttl_seconds}"
 
     monkeypatch.setattr(agent_runner, "mint_owui_token", spy_mint)
 
     await agent_runner.run_agent(_sched())
 
-    assert seen["ttl"] >= agent_runner.HTTP_TIMEOUT_SECONDS
+    # Two mints: first for listing (short), second for chat (long).
+    assert len(ttls) == 2
+    assert ttls[0] == 60, "listing token has standard short TTL"
+    assert ttls[1] >= agent_runner.HTTP_TIMEOUT_SECONDS, "chat token covers the timeout"
 
 
 async def test_the_previous_result_is_carried_forward(wired):

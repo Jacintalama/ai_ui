@@ -25,17 +25,11 @@ from owui_token import mint_owui_token
 
 logger = logging.getLogger(__name__)
 
-#: An agent that uses tools can take a while. The token has to outlive the
-#: slowest single call or it expires mid run, which surfaces as the agent
-#: refusing rather than as an auth error.
-HTTP_TIMEOUT_SECONDS = 240
-TOKEN_TTL_SECONDS = HTTP_TIMEOUT_SECONDS + 60
-
 #: Enough of the last run to avoid repeating it, not so much that it crowds
 #: out the actual task. last_result is capped at 8000 characters upstream.
 MEMORY_EXCERPT_CHARS = 1200
 
-AGENT_PREFIX = "agent-"
+HTTP_TIMEOUT_SECONDS = 240
 
 
 def _base_url() -> str:
@@ -129,9 +123,9 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                     "This schedule could not run: its owner has no account on "
                     "this platform any more.", {})
 
-        token = mint_owui_token(owner, ttl_seconds=TOKEN_TTL_SECONDS)
-
-        agents = await _list_agents(token)
+        # Mint a short-lived token for the listing phase only.
+        list_token = mint_owui_token(owner, ttl_seconds=60)
+        agents = await _list_agents(list_token)
         agent = next((a for a in agents
                       if isinstance(a, dict) and a.get("id") == sched.agent_id), None)
         if agent is None:
@@ -143,15 +137,21 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         tools = meta.get("toolIds")
         tools = [t for t in tools if isinstance(t, str)] if isinstance(tools, list) else []
 
+        # Mint a long-lived token immediately before the chat call. The token
+        # must outlive the slowest single call (up to HTTP_TIMEOUT_SECONDS) or
+        # it expires mid run, surfacing as the agent refusing rather than as an
+        # auth error.
+        chat_token = mint_owui_token(owner, ttl_seconds=HTTP_TIMEOUT_SECONDS + 60)
+
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
-        answer = await _chat(token=token, model=sched.agent_id,
+        answer = await _chat(token=chat_token, model=sched.agent_id,
                              messages=_messages_for(sched),
                              tool_ids=tools or None)
         if not answer:
             return ("failed", "The agent returned an empty answer.", {})
         return ("completed", answer, {})
-    except Exception as exc:                            # noqa: BLE001
+    except Exception:                                   # noqa: BLE001
         # Never include the exception's own text blindly: an httpx error can
         # carry the request URL, and this project has already leaked a token
         # that way.
