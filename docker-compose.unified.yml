@@ -389,10 +389,14 @@ services:
       # tokens nobody can verify.
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
       # tasks now CALLS Open WebUI as well as signing tokens for it: a schedule
-      # that names an agent runs that agent through the chat API. Declared
-      # rather than left to the code default, because compose injects only what
-      # a service declares and an override in .env alone would reach nothing.
-      - OPENWEBUI_URL=${OPENWEBUI_URL:-http://open-webui:8080}
+      # that names an agent runs that agent through the chat API, and that call
+      # carries a token minted to impersonate the schedule's owner. tasks is
+      # the only service where this URL is worth anything to point elsewhere,
+      # which makes it the one place a stray override is dangerous rather than
+      # merely broken: an ${OPENWEBUI_URL:-...} override sends impersonation
+      # tokens off box. Hardcoded, matching api-gateway, webhook-handler,
+      # mcp-web-search and n8n, which all hardcode this same target.
+      - OPENWEBUI_URL=http://open-webui:8080
       - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
       - AIUI_SUPABASE_CLIENT_SECRET=${AIUI_SUPABASE_CLIENT_SECRET:-}
       # Vercel one-click Connect (AIUI Deploy integration). Empty = the UI
