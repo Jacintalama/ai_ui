@@ -24,7 +24,7 @@ def _sched(**over):
     base = dict(id="sched-1", user_email="owner@example.com",
                 agent_id="agent-triage-0002", name="Morning triage",
                 prompt="Sort my unread mail.", last_result=None,
-                last_run_status="completed")
+                last_run_status="completed", tool_mode=None)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -313,3 +313,87 @@ async def test_the_minted_token_is_never_returned_in_the_result(wired):
 
     assert "minted-token" not in result
     assert "minted-token" not in repr(extras)
+
+
+async def test_chat_is_called_with_the_schedules_own_user_email(wired):
+    """F1: _chat's user_email is what execute_tool_call runs every tool as.
+    A hardcoded string, or the owui user id (`owner`, an in-scope local at
+    the call site and an easy typo for sched.user_email), would still make
+    every other test in this file pass -- none of them checks this kwarg's
+    actual value. This is the schedule's own email, not the owui user id
+    ('owui-owner-1' from the `wired` fixture) and not anything else."""
+    sched = _sched(user_email="specific-owner@example.com")
+
+    await agent_runner.run_agent(sched)
+
+    assert (wired.chat.await_args.kwargs["user_email"]
+            == "specific-owner@example.com")
+
+
+@pytest.mark.parametrize("mode", ["full", "read_only"])
+async def test_the_schedules_tool_mode_reaches_chat(wired, mode):
+    """F2: a hardcoded tool_mode at the run_agent seam would silently turn
+    every read_only schedule into full access. Two values are checked, not
+    just 'full', so a hardcode to either one is caught by the other case."""
+    await agent_runner.run_agent(_sched(tool_mode=mode))
+
+    assert wired.chat.await_args.kwargs["tool_mode"] == mode
+
+
+async def test_a_schedule_with_no_tool_mode_attribute_passes_none(wired):
+    """Schedules from before this column existed have no tool_mode
+    attribute at all, not merely one set to None. getattr(sched,
+    'tool_mode', None) has to be what's used, not a plain sched.tool_mode
+    that would raise, and not a hardcoded value that would ignore the
+    schedule entirely."""
+    sched = _sched()
+    del sched.tool_mode
+    assert not hasattr(sched, "tool_mode")
+
+    await agent_runner.run_agent(sched)
+
+    assert wired.chat.await_args.kwargs["tool_mode"] is None
+
+
+async def test_the_cap_note_reaches_the_owner_even_with_an_empty_answer(wired):
+    """F4: _chat's own test (test_the_loop_stops_at_the_cap_and_says_so)
+    only proves the note exists inside _chat's return value. Without this,
+    run_agent's empty-answer check fires first and throws the note away
+    before the owner ever sees it -- so five rounds of real tool use in a
+    full-mode schedule could complete and the stored result would say only
+    "The agent returned an empty answer.", with no record of what ran."""
+    wired.chat.return_value = (
+        "",
+        ["Stopped after 5 rounds of tool use, so this answer may be "
+         "incomplete."])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "completed"
+    assert "stopped after 5 rounds" in result.lower()
+
+
+async def test_a_refusal_note_reaches_the_owner_even_with_an_empty_answer(wired):
+    """F4: the same discard bug, but for an ordinary refusal rather than the
+    iteration cap -- an empty final answer must not swallow what was
+    declined."""
+    wired.chat.return_value = (
+        "",
+        ["Declined to run send_email, because this schedule is set to "
+         "read only."])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "completed"
+    assert "Declined to run send_email" in result
+
+
+async def test_a_genuinely_empty_answer_with_no_notes_still_fails(wired):
+    """The fix for F4 must not turn every empty answer into a success --
+    only one that carries notes explaining what happened."""
+    wired.chat.return_value = ("", [])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed"
+    assert result.strip() != ""

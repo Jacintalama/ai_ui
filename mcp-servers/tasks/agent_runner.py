@@ -30,12 +30,27 @@ logger = logging.getLogger(__name__)
 #: out the actual task. last_result is capped at 8000 characters upstream.
 MEMORY_EXCERPT_CHARS = 1200
 
+#: A single tool result gets cut to this many characters before it is folded
+#: back into the conversation. Each further iteration re-posts the whole
+#: conversation, so an uncapped result is re-sent up to MAX_TOOL_ITERATIONS - 1
+#: more times and can be large enough to get the request itself rejected.
+#: Sized generously above an ordinary mail or calendar listing.
+TOOL_RESULT_EXCERPT_CHARS = 6000
+
 HTTP_TIMEOUT_SECONDS = 240
 
 #: How many times the model may ask for tools before we stop. Each iteration
 #: is a full completion, so this bounds the run's wall clock as well as its
 #: appetite.
 MAX_TOOL_ITERATIONS = 5
+
+#: The chat token has to outlive the WHOLE loop, not one completion: the loop
+#: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
+#: HTTP_TIMEOUT_SECONDS each, plus tool time in between. A token sized for a
+#: single call expires partway through a run that needs two or more slow
+#: iterations, which surfaces as the agent refusing rather than as the auth
+#: failure it actually is.
+CHAT_TOKEN_TTL_SECONDS = MAX_TOOL_ITERATIONS * HTTP_TIMEOUT_SECONDS + 60
 
 
 def _base_url() -> str:
@@ -117,6 +132,9 @@ async def _chat(token: str, model: str, messages: list[dict],
     convo = list(messages)
     notes: list[str] = []
     write_allowed = (tool_mode or "read_only") == "full"
+    # Set before the loop so a tuned-down MAX_TOOL_ITERATIONS of 0 still has
+    # something defined to return, instead of an UnboundLocalError.
+    content = ""
 
     for _ in range(MAX_TOOL_ITERATIONS):
         payload: dict = {"model": model, "messages": convo, "stream": False}
@@ -137,15 +155,36 @@ async def _chat(token: str, model: str, messages: list[dict],
         convo.append({"role": "assistant", "content": content,
                       "tool_calls": calls})
         for call in calls:
-            name = ((call.get("function") or {}).get("name") or "").strip()
+            # A tool call comes straight from a model, so its shape cannot be
+            # trusted: `call` itself, its "function" object, or "name" inside
+            # that can each be something other than what they should be. The
+            # same nine shapes are already guarded one layer down in
+            # execute_tool_call; guard them here too, before .strip() or
+            # .get() can raise and take the whole run down with it. A call
+            # that cannot be named degrades to a refused/unnamed call rather
+            # than a fatal error.
+            call = call if isinstance(call, dict) else {}
+            fn = call.get("function")
+            fn = fn if isinstance(fn, dict) else {}
+            raw_name = fn.get("name")
+            name = raw_name.strip() if isinstance(raw_name, str) else ""
+            label = name or "an unnamed tool call"
             if is_write_tool(name) and not write_allowed:
                 notes.append(
-                    "Declined to run " + name + ", because this schedule is "
+                    "Declined to run " + label + ", because this schedule is "
                     "set to read only.")
                 result = ("Refused: this scheduled run is read only, so "
-                          + name + " was not run.")
+                          + label + " was not run.")
             else:
-                result = await execute_tool_call(call, user_email)
+                # tool_ids scopes which native tools this agent is even
+                # allowed to run, not only which ones the model was told
+                # about -- see execute_tool_call.
+                result = await execute_tool_call(call, user_email, tool_ids)
+            if isinstance(result, str) and len(result) > TOOL_RESULT_EXCERPT_CHARS:
+                result = (
+                    result[:TOOL_RESULT_EXCERPT_CHARS]
+                    + "\n\n[This tool result was shortened. It was longer "
+                    "than " + str(TOOL_RESULT_EXCERPT_CHARS) + " characters.]")
             convo.append({"role": "tool", "tool_call_id": call.get("id"),
                           "name": name, "content": result})
 
@@ -200,7 +239,7 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         # make up to 5 sequential 30s-timeout requests, a worst case longer
         # than 60s, and a token expiring mid-loop would surface as a wrong
         # "agent no longer exists" rather than the auth failure it actually is.
-        list_token = mint_owui_token(owner, ttl_seconds=HTTP_TIMEOUT_SECONDS + 60)
+        list_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
         agents, truncated = await _list_agents(list_token)
         agent = next((a for a in agents
                       if isinstance(a, dict) and a.get("id") == sched.agent_id), None)
@@ -223,10 +262,12 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         tools = [t for t in tools if isinstance(t, str)] if isinstance(tools, list) else []
 
         # Mint a long-lived token immediately before the chat call. The token
-        # must outlive the slowest single call (up to HTTP_TIMEOUT_SECONDS) or
-        # it expires mid run, surfacing as the agent refusing rather than as an
-        # auth error.
-        chat_token = mint_owui_token(owner, ttl_seconds=HTTP_TIMEOUT_SECONDS + 60)
+        # must outlive the WHOLE tool loop, not one call: up to
+        # MAX_TOOL_ITERATIONS sequential completions of up to
+        # HTTP_TIMEOUT_SECONDS each, plus tool time in between, or it expires
+        # mid run, surfacing as the agent refusing rather than as an auth
+        # error.
+        chat_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
 
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
@@ -235,12 +276,15 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             messages=_messages_for(sched), tool_ids=tools or None,
             user_email=sched.user_email,
             tool_mode=getattr(sched, "tool_mode", None))
-        if not answer:
+        if not answer and not notes:
             return ("failed", "The agent returned an empty answer.", {})
         if notes:
-            # Say what was refused. A run that quietly skipped half its job
-            # and reported success would be worse than one that failed.
-            answer = answer + "\n\n" + "\n".join(notes)
+            # Say what was refused or stopped early, even when the model's
+            # own final content is empty. A run that quietly skipped part of
+            # its job, or stopped at the iteration cap, and reported nothing
+            # at all would be worse than one that said so.
+            note_text = "\n".join(notes)
+            answer = (answer + "\n\n" + note_text) if answer else note_text
         return ("completed", answer, {})
     except Exception:                                   # noqa: BLE001
         # Never include the exception's own text blindly: an httpx error can

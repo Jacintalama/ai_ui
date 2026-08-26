@@ -90,6 +90,25 @@ def _validate_kind(kind: str, video_config: dict | None) -> None:
                                 detail="video_config.url must be an http(s) URL")
 
 
+#: The only stored values agent_runner treats as full access is exactly
+#: "full"; everything else, including None, is read_only. That fail-closed
+#: mapping is only meaningful if the column cannot hold anything OTHER than
+#: these two values in the first place -- otherwise a typo like "ask" would
+#: store happily and just happen to read as read_only today, with nothing
+#: stopping the read side from drifting later and turning it into full
+#: access by accident.
+_VALID_TOOL_MODES = frozenset({"read_only", "full"})
+
+
+def _validate_tool_mode(tool_mode: str | None) -> None:
+    """400 on anything other than 'read_only', 'full', or absent."""
+    if tool_mode is not None and tool_mode not in _VALID_TOOL_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail="tool_mode must be 'read_only' or 'full'",
+        )
+
+
 # A fixed base makes the calculation deterministic — otherwise the same cron
 # expression could pass or fail depending on when the request arrives.
 #
@@ -238,6 +257,7 @@ async def create_schedule(
         raise HTTPException(status_code=400, detail="invalid cron_expr")
 
     _validate_kind(body.kind, body.video_config)
+    _validate_tool_mode(body.tool_mode)
 
     is_admin = _is_admin(x_user_admin)
     _enforce_interval_floor(body.cron_expr, is_operator=is_operator,

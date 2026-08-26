@@ -4,8 +4,11 @@ Every assertion here exists because the neighbouring column, agent_id, was
 lost twice on this feature: once in the insert and once in the serializer,
 each time with a full green suite.
 """
+from fastapi import HTTPException
+
 import pytest
 
+import routes_schedules
 from routes_schedules import CreateScheduleIn, _serialize
 
 
@@ -21,6 +24,25 @@ def test_tool_mode_defaults_to_none_so_existing_callers_are_unchanged():
         user_email="owner@example.com", name="n", cron_expr="0 9 * * *",
         tz="Asia/Manila", prompt="p")
     assert body.tool_mode is None
+
+
+async def test_an_unrecognised_tool_mode_is_rejected_with_400():
+    """F8: the request model accepts any string -- "ask" and "Full" store
+    happily today, and act as read_only only because agent_runner's own
+    check happens to be fail-closed. That is not the same as the endpoint
+    rejecting them. Validating here closes the gap where a typo, or a value
+    written before this check existed, silently becomes something other
+    than what the owner actually chose."""
+    body = CreateScheduleIn(
+        user_email="owner@example.com", name="n", cron_expr="0 9 * * *",
+        tz="Asia/Manila", prompt="p", tool_mode="ask")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await routes_schedules.create_schedule(
+            body=body, x_cron_secret="", x_user_email="owner@example.com",
+            x_user_admin="")
+
+    assert exc_info.value.status_code == 400
 
 
 def test_serialize_returns_the_tool_mode():

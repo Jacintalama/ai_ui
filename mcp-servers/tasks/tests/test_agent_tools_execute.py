@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import agent_tools
 from agent_tools import execute_tool_call
 
 
@@ -28,6 +29,26 @@ async def test_a_native_tool_runs_as_the_named_user():
                new=AsyncMock(return_value=source)):
         out = await execute_tool_call(_call("list_unread_emails"),
                                       "owner@example.com")
+    assert out == "seen-by:owner@example.com"
+
+
+async def test_a_user_supplied_dunder_user_argument_is_ignored():
+    """F3: __user__ is a declared parameter of every native tool method, so
+    it survives _filter_supported_kwargs -- only the assignment ORDER in
+    _run_native (identity set last, after the filtered arguments) stops a
+    model-supplied __user__ from overriding the real caller. A prompt
+    injection that gets the model to pass __user__ in its arguments must
+    still run as the real owner, not as whatever email it supplied."""
+    source = (
+        "class Tools:\n"
+        "    async def read_email(self, __user__=None):\n"
+        "        return 'seen-by:' + (__user__ or {}).get('email', 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("read_email", {"__user__": {"email": "victim@example.com"}}),
+            "owner@example.com")
     assert out == "seen-by:owner@example.com"
 
 
@@ -227,6 +248,87 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
+
+
+class _FakeToolResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeToolSession:
+    """Stands in for the real DB session, filtering public.tool rows by id
+    the same way a real `WHERE id IN :ids` clause would. Filtering here --
+    rather than just recording what _load_native_tool_source was called
+    with -- proves the scoping happens in the query itself."""
+
+    def __init__(self, rows_by_id):
+        self._rows_by_id = rows_by_id
+
+    async def execute(self, stmt, params=None):
+        params = params or {}
+        ids = params.get("ids")
+        wanted = ids if ids else list(self._rows_by_id)
+        return _FakeToolResult(
+            [(self._rows_by_id[i],) for i in wanted if i in self._rows_by_id])
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+_GMAIL_SOURCE = (
+    "class Tools:\n"
+    "    async def send_email(self, to='', __user__=None):\n"
+    "        return 'sent-by:' + (__user__ or {}).get('email', 'nobody')\n"
+)
+_CALENDAR_SOURCE = (
+    "class Tools:\n"
+    "    async def list_calendar_events(self, __user__=None):\n"
+    "        return 'events-for:' + (__user__ or {}).get('email', 'nobody')\n"
+)
+
+
+async def test_an_agent_scoped_to_calendar_cannot_run_gmails_send_email():
+    """F6: an agent whose own tools are only ['calendar'] must not be able
+    to run send_email just because a prompt-injected calendar event
+    description asked for it. The Gmail row must never be considered, so
+    the name falls through to the proxy path instead of being executed
+    natively as the real owner."""
+    captured = {}
+
+    async def fake_post(url, json=None, headers=None, timeout=None):
+        captured["json"] = json
+        return _FakeResponse(200, {"result": "not found"})
+
+    with patch.object(agent_tools, "session",
+                      lambda: _FakeToolSession(
+                          {"gmail": _GMAIL_SOURCE, "calendar": _CALENDAR_SOURCE})), \
+         patch("agent_tools._post_json", new=fake_post):
+        out = await execute_tool_call(
+            _call("send_email", {"to": "x@example.com"}),
+            "owner@example.com", allowed_native_tools=["calendar"])
+
+    assert "sent-by" not in out, "Gmail's own code must not have run"
+    assert captured.get("json", {}).get("tool_name") == "send_email", (
+        "must fall through to the proxy path, not be refused outright")
+
+
+async def test_an_agent_scoped_to_gmail_can_still_run_send_email():
+    """Sanity check for the fix above: a name that IS among the agent's own
+    tools must still be found and run natively as before."""
+    with patch.object(agent_tools, "session",
+                      lambda: _FakeToolSession(
+                          {"gmail": _GMAIL_SOURCE, "calendar": _CALENDAR_SOURCE})):
+        out = await execute_tool_call(
+            _call("send_email", {"to": "x@example.com"}),
+            "owner@example.com", allowed_native_tools=["gmail", "calendar"])
+
+    assert out == "sent-by:owner@example.com"
 
 
 # The wrong TYPE, not merely a missing key. Earlier adversarial sweeps

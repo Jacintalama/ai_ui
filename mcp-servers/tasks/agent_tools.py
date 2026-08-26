@@ -9,6 +9,7 @@ import logging
 import os
 
 import httpx
+from sqlalchemy import bindparam
 from sqlalchemy import text as sql_text
 
 from db import session
@@ -132,7 +133,9 @@ async def _post_json(url, json=None, headers=None, timeout=None):
         return await c.post(url, json=json, headers=headers)
 
 
-async def _load_native_tool_source(method_name: str) -> str | None:
+async def _load_native_tool_source(
+    method_name: str, allowed_tool_ids: list[str] | None = None,
+) -> str | None:
     """The source of the native Open WebUI tool defining this method.
 
     Open WebUI keeps each tool as a Python module in public.tool.content and
@@ -140,6 +143,20 @@ async def _load_native_tool_source(method_name: str) -> str | None:
     for how a tool reaches its service: the Gmail tool, for instance, is a
     thin client for mcp-gmail, and duplicating that mapping here would drift
     the first time somebody edits the tool in the web UI.
+
+    `allowed_tool_ids` scopes the query to the agent's own declared tools
+    (its meta.toolIds), so a method that only exists in a tool the agent was
+    never given is never even read here. Without that scope, any agent could
+    be steered -- by a prompt-injected document, calendar event, or email --
+    into naming a method that belongs to a tool it was never granted, and
+    that method's source would still be found by a plain substring match and
+    executed as the real user. A name not covered by the allowed tools still
+    falls through to the caller's proxy path rather than being refused
+    outright, because proxy tools are not rows in this table and mcp-proxy
+    does its own per-user access control on them.
+
+    An empty or missing list keeps the old, unscoped lookup -- the behaviour
+    for a schedule with no agent, or an agent that declares no tools.
     """
     # ORDER BY id: without it, "first row containing the needle" depends on
     # physical scan order, which Postgres does not promise to hold still.
@@ -147,9 +164,16 @@ async def _load_native_tool_source(method_name: str) -> str | None:
     # reproducible, not correct -- two tools defining the same public
     # method name is a situation the platform should avoid in the first
     # place, and this only pins down which one wins when it happens anyway.
+    if allowed_tool_ids:
+        stmt = sql_text(
+            "SELECT content FROM public.tool WHERE id IN :ids ORDER BY id"
+        ).bindparams(bindparam("ids", expanding=True))
+        params: dict = {"ids": list(allowed_tool_ids)}
+    else:
+        stmt = sql_text("SELECT content FROM public.tool ORDER BY id")
+        params = {}
     async with session() as s:
-        rows = (await s.execute(
-            sql_text("SELECT content FROM public.tool ORDER BY id"))).fetchall()
+        rows = (await s.execute(stmt, params)).fetchall()
     needle = "def " + method_name + "("
     for (content,) in rows:
         if content and needle in content:
@@ -211,8 +235,17 @@ async def _run_native(source: str, method_name: str, params: dict,
     return result if isinstance(result, str) else json.dumps(result)
 
 
-async def execute_tool_call(tool_call: dict, user_email: str) -> str:
+async def execute_tool_call(
+    tool_call: dict, user_email: str,
+    allowed_native_tools: list[str] | None = None,
+) -> str:
     """Run one tool call as `user_email` and return a string for the model.
+
+    `allowed_native_tools` is the calling agent's own declared tool ids
+    (meta.toolIds). It scopes the native lookup below so an agent cannot run
+    a native method that belongs to a tool it was never given -- see
+    _load_native_tool_source. Leave it None (the default) to keep the old,
+    unscoped lookup.
 
     Never raises. A tool that fails returns its failure as the tool result so
     the agent can say what went wrong, which is far more useful to the owner
@@ -278,7 +311,7 @@ async def execute_tool_call(tool_call: dict, user_email: str) -> str:
 
         source = None
         if name.isidentifier():
-            source = await _load_native_tool_source(name)
+            source = await _load_native_tool_source(name, allowed_native_tools)
         if source:
             return await _run_native(source, name, params, user_email)
 
