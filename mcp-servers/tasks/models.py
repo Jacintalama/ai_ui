@@ -138,6 +138,12 @@ class Schedule(Base):
     # One-time schedules fire once on the matching minute, then the scheduler
     # flips enabled=False. Repeating rows leave this False.
     run_once = Column(Boolean, nullable=False, server_default="false", default=False)
+    # The AI Agent this schedule runs as, or NULL for the CLI executor that
+    # schedules have always used. Not a foreign key: Open WebUI owns the model
+    # table and an agent can be deleted from the web at any time, so the
+    # scheduler checks at run time and falls back rather than letting a delete
+    # cascade into somebody's schedule.
+    agent_id = Column(Text, nullable=True)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_run_status = Column(Text, nullable=True)
     # What the run actually produced. Kept regardless of whether there is

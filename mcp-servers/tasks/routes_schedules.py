@@ -70,6 +70,11 @@ class CreateScheduleIn(BaseModel):
     delivery_channel_id: str | None = None
     delivery_platform: str = "discord"
     kind: str = "agent"
+    # Which AI Agent runs this, or None for the executor schedules have always
+    # used. Not validated against the model table here: the agent has to be
+    # visible to the OWNER at run time, and that is a different question from
+    # whether it exists right now.
+    agent_id: str | None = None
     video_config: dict | None = None
 
 
