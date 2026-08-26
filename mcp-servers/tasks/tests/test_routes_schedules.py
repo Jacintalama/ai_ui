@@ -341,6 +341,65 @@ def test_list_filters_by_platform(monkeypatch):
     assert all(s["delivery_platform"] == "slack" for s in data)
 
 
+def test_create_with_agent_id_persists_it(monkeypatch):
+    """POST /schedules with an agent_id actually saves it on the row.
+
+    CreateScheduleIn already accepts and validates agent_id, but the create
+    handler's Schedule(...) construction dropped it silently: the caller got
+    a 201 for something that never happened, and every row landed with
+    agent_id NULL no matter what was sent.
+    """
+    from main import app
+
+    rows = []
+    monkeypatch.setattr("routes_schedules.session", _make_capture_session(rows))
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-Cron-Secret": CRON_SECRET},
+        json={
+            "user_email": "x@y.com",
+            "name": "agent-sched",
+            "cron_expr": "*/5 * * * *",
+            "persona": "test",
+            "prompt": "say hi",
+            "agent_id": "agent-triage-0002",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert len(rows) == 1
+    assert rows[0].agent_id == "agent-triage-0002"
+
+
+def test_create_without_agent_id_leaves_it_none(monkeypatch):
+    """Omitting agent_id keeps the row's default of None.
+
+    Null is the normal case (the CLI executor schedules have always used)
+    and must stay the default, so every existing caller is unaffected.
+    """
+    from main import app
+
+    rows = []
+    monkeypatch.setattr("routes_schedules.session", _make_capture_session(rows))
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.post(
+        "/schedules",
+        headers={"X-Cron-Secret": CRON_SECRET},
+        json={
+            "user_email": "x@y.com",
+            "name": "no-agent-sched",
+            "cron_expr": "*/5 * * * *",
+            "persona": "test",
+            "prompt": "say hi",
+        },
+    )
+    assert r.status_code == 201, r.text
+    assert len(rows) == 1
+    assert rows[0].agent_id is None
+
+
 def test_list_no_platform_returns_all(monkeypatch):
     """Omitting the platform param returns all rows (backward compatible)."""
     from main import app

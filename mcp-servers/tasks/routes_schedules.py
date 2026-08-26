@@ -260,6 +260,8 @@ async def create_schedule(
             delivery_platform=body.delivery_platform,
             kind=body.kind,
             video_config=body.video_config,
+            # None means the CLI executor schedules have always used.
+            agent_id=body.agent_id,
         ))
         await s.commit()
     return {"id": str(sid)}
