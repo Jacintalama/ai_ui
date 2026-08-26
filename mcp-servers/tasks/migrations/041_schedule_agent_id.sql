@@ -12,7 +12,14 @@
 -- No foreign key to the model table. Open WebUI owns public.model, an agent
 -- can be deleted from the web at any time, and a cascade or a restrict would
 -- either destroy the user's schedule or block their delete. The scheduler
--- checks at run time and falls back instead.
+-- checks at run time.
+--
+-- What it does when the agent is gone: the run FAILS with a message telling
+-- the owner to delete the schedule and create it again with another agent.
+-- The design doc originally said fall back to the normal executor and
+-- mention it; that was overruled deliberately on 2026-08-26, because a
+-- schedule that quietly stops being the agent you chose is the kind of
+-- silent substitution this project has been bitten by before.
 --
 -- Idempotent: db.py re-runs every migration on every startup.
 
