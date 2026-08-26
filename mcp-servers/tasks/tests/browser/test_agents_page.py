@@ -751,3 +751,40 @@ def test_duplicate_suggests_a_name_that_can_be_saved(page):
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     assert page.locator("#form-error").inner_text().strip() == ""
+
+
+# --- the wait ---------------------------------------------------------------
+
+
+def test_the_skeleton_is_gone_once_the_agents_are_in(page):
+    """It stands in for the cards while two round trips and a paged list are
+    in flight. Leaving it up afterwards would be worse than never showing it."""
+    assert page.locator("#agents-skeleton").is_hidden()
+    assert page.locator("#my-agents [data-agent-id]").count() > 0
+
+
+def test_the_skeleton_is_hidden_even_when_the_load_fails(page):
+    """A failed load must not leave the page shimmering forever underneath an
+    error message. This is why it is hidden in a finally, not after render."""
+    page.route("**/api/v1/models/list*", lambda r: r.abort())
+    page.evaluate("() => { document.getElementById('agents-skeleton').hidden = false; }")
+    page.evaluate("() => window.__aiuiAgents.load()")
+    page.wait_for_timeout(500)
+
+    assert page.locator("#agents-skeleton").is_hidden()
+    assert page.locator("#page-error").is_visible()
+
+
+def test_the_skeleton_is_in_the_markup_not_drawn_by_script(page):
+    """It has to be on screen before any script runs, which is the whole point:
+    the wait it covers starts before the first fetch."""
+    import re as _re
+    html = pathlib.Path(STATIC / "agents.html").read_text(encoding="utf-8")
+    assert 'id="agents-skeleton"' in html
+    assert html.count("skeleton sk-avatar") >= 3, "expected several placeholder cards"
+
+
+def test_the_shimmer_stops_for_reduced_motion(page):
+    """An animation that never stops is exactly what that setting is for."""
+    html = pathlib.Path(STATIC / "agents.html").read_text(encoding="utf-8")
+    assert "prefers-reduced-motion" in html

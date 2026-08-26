@@ -99,6 +99,27 @@
     text-decoration: none; }
   .panel .openlink:hover { filter: brightness(1.08); }
   .panel .openlink[hidden] { display: none; }
+
+    /* The stats chip said the word "loading", which is smaller than the
+       shimmer it is replaced by, so the header shifted when the count landed.
+       The graph overlay is left alone on purpose: it explains what is being
+       built, which beats a shimmer for something that takes a while. */
+    .skeleton {
+      background: linear-gradient(90deg,
+        var(--surface-2, #17171a) 25%, var(--border-2, #2e2e36) 50%, var(--surface-2, #17171a) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.2s infinite linear;
+      border-radius: 6px;
+      display: inline-block;
+    }
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .skeleton { animation: none; }
+    }
+    .sk-stats { width: 104px; height: 11px; vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -123,7 +144,7 @@
   </div>
 
   <div class="graphhead">
-    <span class="stats" id="stats">loading…</span>
+    <span class="stats" id="stats"><span class="skeleton sk-stats" aria-hidden="true"></span></span>
     <div class="legend">
       <span><i class="dot" style="background:var(--root)"></i> Root</span>
       <span><i class="dot" style="background:var(--topic)"></i> Topic</span>
@@ -173,6 +194,12 @@
   function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : (k === "chat" || k === "memory" || k === "app" || k === "cron" || k === "video") ? 5 : 4.5; }
 
   function setStats(t) { document.getElementById("stats").textContent = t; }
+  // Reloading put the word "loading" back where the shimmer had been, so the
+  // header jumped on every refresh instead of only the first paint.
+  function setStatsLoading() {
+    document.getElementById("stats").innerHTML =
+      '<span class="skeleton sk-stats" aria-hidden="true"></span>';
+  }
   function overlay(msg, actionsHtml) {
     var o = document.getElementById("overlay");
     document.getElementById("overlay-msg").innerHTML = msg || "";
@@ -203,7 +230,7 @@
   }
 
   function load() {
-    setStats("loading…");
+    setStatsLoading();
     fetch(API, { headers: { "Accept": "application/json" } })
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(ingest)

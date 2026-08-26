@@ -142,6 +142,26 @@
     .form-hint { font-size: 11px; color: var(--muted); }
 
     /* Voice picker: a grid of selectable voices each with an audio preview. */
+    /* Stands in for the voice tiles while the list loads. A line of text
+       collapses when it is replaced and the form jumps; these hold the space. */
+    .skeleton {
+      background: linear-gradient(90deg,
+        var(--surface-2) 25%, var(--border-2, var(--border)) 50%, var(--surface-2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.2s infinite linear;
+      border-radius: var(--radius-sm, 6px);
+      display: block;
+    }
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    /* A shimmer that never stops is exactly what this setting exists for. */
+    @media (prefers-reduced-motion: reduce) {
+      .skeleton { animation: none; }
+    }
+    .sk-voice { height: 44px; border-radius: var(--radius, 8px); }
+
     .voice-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
     @media (max-width: 560px) { .voice-list { grid-template-columns: 1fr; } }
     .voice-loading { color: var(--muted); font-size: 13px; padding: 6px 2px; }
@@ -795,7 +815,12 @@
             <div class="field">
               <label class="form-label">Voice</label>
               <div class="voice-list" id="voice-list" role="radiogroup" aria-label="Narration voice">
-                <div class="voice-loading">Loading voices...</div>
+                <span class="skeleton sk-voice" aria-hidden="true"></span>
+                <span class="skeleton sk-voice" aria-hidden="true"></span>
+                <span class="skeleton sk-voice" aria-hidden="true"></span>
+                <span class="skeleton sk-voice" aria-hidden="true"></span>
+                <span class="skeleton sk-voice" aria-hidden="true"></span>
+                <span class="skeleton sk-voice" aria-hidden="true"></span>
               </div>
             </div>
           </details>

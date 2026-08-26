@@ -151,6 +151,32 @@
   .chip.none { color: var(--muted); font-style: italic; }
 
   .no-match { color: var(--muted); font-size: 13px; padding: 22px 0; }
+
+  /* Shown while the first load is in flight. This page waits on two round
+     trips and a paged list, and it used to show nothing at all in the
+     meantime, which reads as broken rather than busy. The shapes match the
+     real card so the layout does not jump when the data lands. */
+  .skeleton {
+    background: linear-gradient(90deg,
+      var(--surface-2) 25%, var(--border-2) 50%, var(--surface-2) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.2s infinite linear;
+    border-radius: 6px;
+    display: block;
+  }
+  @keyframes shimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  /* A shimmer that never stops is exactly what this setting exists for. */
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton { animation: none; }
+  }
+  .sk-head { display: flex; align-items: center; gap: 11px; }
+  .sk-avatar { width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; }
+  .sk-line { height: 11px; margin-top: 9px; }
+  .sk-chips { display: flex; gap: 6px; margin-top: 14px; }
+  .sk-chip { height: 20px; width: 76px; border-radius: 999px; }
   .section-head h2 { font-size: 15px; font-weight: 650; margin: 0; }
   .count { display: inline-flex; align-items: center; justify-content: center;
            min-width: 20px; height: 20px; padding: 0 6px; margin-left: 6px;
@@ -249,7 +275,7 @@
     <div class="error box" id="page-error" hidden></div>
 
     <div class="section-head">
-      <h2>Your agents <span class="count" id="mine-count">0</span></h2>
+      <h2>Your agents <span class="count" id="mine-count" hidden>0</span></h2>
       <div class="tools">
         <div class="search-wrap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -263,6 +289,50 @@
       </div>
     </div>
     <div class="no-match" id="no-match" hidden>Nothing matches that search.</div>
+    <!-- Static, so it is on screen before any script runs. Hidden the moment
+         the first load finishes, whether it succeeded or not. -->
+    <div class="grid" id="agents-skeleton" role="status" aria-label="Loading your agents">
+        <div class="card" aria-hidden="true">
+          <div class="sk-head">
+            <span class="skeleton sk-avatar"></span>
+            <span class="skeleton sk-line" style="width:120px;margin:0"></span>
+          </div>
+          <span class="skeleton sk-line" style="width:96%"></span>
+          <span class="skeleton sk-line" style="width:88%"></span>
+          <span class="skeleton sk-line" style="width:64%"></span>
+          <div class="sk-chips">
+            <span class="skeleton sk-chip"></span>
+            <span class="skeleton sk-chip" style="width:58px"></span>
+          </div>
+        </div>
+        <div class="card" aria-hidden="true">
+          <div class="sk-head">
+            <span class="skeleton sk-avatar"></span>
+            <span class="skeleton sk-line" style="width:120px;margin:0"></span>
+          </div>
+          <span class="skeleton sk-line" style="width:96%"></span>
+          <span class="skeleton sk-line" style="width:88%"></span>
+          <span class="skeleton sk-line" style="width:64%"></span>
+          <div class="sk-chips">
+            <span class="skeleton sk-chip"></span>
+            <span class="skeleton sk-chip" style="width:58px"></span>
+          </div>
+        </div>
+        <div class="card" aria-hidden="true">
+          <div class="sk-head">
+            <span class="skeleton sk-avatar"></span>
+            <span class="skeleton sk-line" style="width:120px;margin:0"></span>
+          </div>
+          <span class="skeleton sk-line" style="width:96%"></span>
+          <span class="skeleton sk-line" style="width:88%"></span>
+          <span class="skeleton sk-line" style="width:64%"></span>
+          <div class="sk-chips">
+            <span class="skeleton sk-chip"></span>
+            <span class="skeleton sk-chip" style="width:58px"></span>
+          </div>
+        </div>
+    </div>
+
     <div class="grid" id="my-agents"></div>
     <div class="empty" id="mine-empty" hidden>
       You have not made an agent yet. Give one a name and a few sentences about
@@ -446,7 +516,11 @@
         function (m) { return m.user_id === state.me; }).length;
       var searching = !!(state.query || "").trim();
 
-      document.getElementById("mine-count").textContent = String(ownedTotal);
+      // Hidden until the first render: showing "0" while the list is still
+      // loading states something false, and it is the one number on this page.
+      var countEl = document.getElementById("mine-count");
+      countEl.textContent = String(ownedTotal);
+      countEl.hidden = false;
       // While searching, an empty result is "nothing matched", not "you have
       // no agents". Telling somebody they have none when they have twenty is
       // the kind of wrong that makes them create a duplicate.
@@ -464,6 +538,11 @@
       if (r.status === 401) throw new Error("signed out");
       if (!r.ok) throw new Error("http " + r.status);
       return r.json();
+    }
+
+    function hideSkeleton() {
+      var sk = document.getElementById("agents-skeleton");
+      if (sk) sk.hidden = true;
     }
 
     async function load() {
@@ -521,6 +600,10 @@
         } else {
           showError("Could not load your agents. Reload the page to try again.");
         }
+      } finally {
+        // In a finally, not after render: a failed load must not leave the
+        // page shimmering forever underneath an error message.
+        hideSkeleton();
       }
     }
 

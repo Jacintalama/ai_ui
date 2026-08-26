@@ -110,6 +110,26 @@
       border-color: rgba(124,140,255,0.4);
     }
 
+    /* Stands in for the template cards while the gallery loads. One line of
+       text collapses when it is replaced and the grid jumps into place. */
+    .skeleton {
+      background: linear-gradient(90deg,
+        var(--surface-2) 25%, var(--border-2, var(--border)) 50%, var(--surface-2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.2s infinite linear;
+      display: block;
+    }
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    /* A shimmer that never stops is exactly what this setting exists for. */
+    @media (prefers-reduced-motion: reduce) {
+      .skeleton { animation: none; }
+    }
+    .sk-visual { height: 140px; }
+    .sk-line { height: 11px; margin: 9px 16px 0; border-radius: 6px; }
+
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -254,7 +274,44 @@
     </div>
 
     <div id="grid" class="grid">
-      <div class="empty">Loading templates…</div>
+      <!-- Replaced wholesale when the gallery renders. -->
+        <div class="tcard" aria-hidden="true">
+          <span class="skeleton sk-visual"></span>
+          <span class="skeleton sk-line" style="width:56%"></span>
+          <span class="skeleton sk-line" style="width:82%"></span>
+          <span class="skeleton sk-line" style="width:40%;margin-bottom:16px"></span>
+        </div>
+        <div class="tcard" aria-hidden="true">
+          <span class="skeleton sk-visual"></span>
+          <span class="skeleton sk-line" style="width:56%"></span>
+          <span class="skeleton sk-line" style="width:82%"></span>
+          <span class="skeleton sk-line" style="width:40%;margin-bottom:16px"></span>
+        </div>
+        <div class="tcard" aria-hidden="true">
+          <span class="skeleton sk-visual"></span>
+          <span class="skeleton sk-line" style="width:56%"></span>
+          <span class="skeleton sk-line" style="width:82%"></span>
+          <span class="skeleton sk-line" style="width:40%;margin-bottom:16px"></span>
+        </div>
+        <div class="tcard" aria-hidden="true">
+          <span class="skeleton sk-visual"></span>
+          <span class="skeleton sk-line" style="width:56%"></span>
+          <span class="skeleton sk-line" style="width:82%"></span>
+          <span class="skeleton sk-line" style="width:40%;margin-bottom:16px"></span>
+        </div>
+        <div class="tcard" aria-hidden="true">
+          <span class="skeleton sk-visual"></span>
+          <span class="skeleton sk-line" style="width:56%"></span>
+          <span class="skeleton sk-line" style="width:82%"></span>
+          <span class="skeleton sk-line" style="width:40%;margin-bottom:16px"></span>
+        </div>
+        <div class="tcard" aria-hidden="true">
+          <span class="skeleton sk-visual"></span>
+          <span class="skeleton sk-line" style="width:56%"></span>
+          <span class="skeleton sk-line" style="width:82%"></span>
+          <span class="skeleton sk-line" style="width:40%;margin-bottom:16px"></span>
+        </div>
+      
     </div>
   </div>
 

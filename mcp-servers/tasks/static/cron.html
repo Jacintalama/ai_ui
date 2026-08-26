@@ -275,6 +275,33 @@
     }
 
     .list-tools { display: flex; align-items: center; gap: 10px; }
+
+    /* Stands in for the real cards while the first load is in flight. A single
+       centred spinner tells you nothing about what is coming and collapses when
+       it is replaced, so the page jumps; these hold the shape instead. */
+    .skeleton {
+      background: linear-gradient(90deg,
+        var(--surface-2) 25%, var(--border-2, var(--border)) 50%, var(--surface-2) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.2s infinite linear;
+      border-radius: var(--radius-sm, 6px);
+      display: block;
+    }
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    /* A shimmer that never stops is exactly what this setting exists for. */
+    @media (prefers-reduced-motion: reduce) {
+      .skeleton { animation: none; }
+    }
+    .sk-line { height: 11px; margin-top: 9px; }
+    .sk-thumb { height: 150px; border-radius: var(--radius, 8px); }
+    .sk-row { display: flex; gap: 8px; margin-top: 14px; }
+    .sk-btn { height: 28px; width: 68px; border-radius: var(--radius, 8px); }
+    .sk-avatar { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; }
+    .sk-head { display: flex; align-items: center; gap: 10px; }
+
     .search-wrap {
       position: relative; display: flex; align-items: center;
     }
@@ -678,7 +705,54 @@
         </div>
         <div class="error box" id="list-error" hidden></div>
         <div id="list-region">
-          <div class="loading"><span class="spinner"></span> Loading your schedules&hellip;</div>
+          <!-- Static, so it is on screen before any script runs. The list
+               render replaces this region wholesale. -->
+          <div class="grid" role="status" aria-label="Loading your schedules">
+            <div class="card" aria-hidden="true">
+              <div class="sk-head">
+                <span class="skeleton sk-avatar"></span>
+                <span class="skeleton sk-line" style="width:220px;margin:0"></span>
+              </div>
+              <span class="skeleton sk-line" style="width:44%"></span>
+              <div class="sk-row">
+                <span class="skeleton sk-btn" style="width:96px"></span>
+                <span class="skeleton sk-btn" style="width:120px"></span>
+              </div>
+            </div>
+            <div class="card" aria-hidden="true">
+              <div class="sk-head">
+                <span class="skeleton sk-avatar"></span>
+                <span class="skeleton sk-line" style="width:220px;margin:0"></span>
+              </div>
+              <span class="skeleton sk-line" style="width:44%"></span>
+              <div class="sk-row">
+                <span class="skeleton sk-btn" style="width:96px"></span>
+                <span class="skeleton sk-btn" style="width:120px"></span>
+              </div>
+            </div>
+            <div class="card" aria-hidden="true">
+              <div class="sk-head">
+                <span class="skeleton sk-avatar"></span>
+                <span class="skeleton sk-line" style="width:220px;margin:0"></span>
+              </div>
+              <span class="skeleton sk-line" style="width:44%"></span>
+              <div class="sk-row">
+                <span class="skeleton sk-btn" style="width:96px"></span>
+                <span class="skeleton sk-btn" style="width:120px"></span>
+              </div>
+            </div>
+            <div class="card" aria-hidden="true">
+              <div class="sk-head">
+                <span class="skeleton sk-avatar"></span>
+                <span class="skeleton sk-line" style="width:220px;margin:0"></span>
+              </div>
+              <span class="skeleton sk-line" style="width:44%"></span>
+              <div class="sk-row">
+                <span class="skeleton sk-btn" style="width:96px"></span>
+                <span class="skeleton sk-btn" style="width:120px"></span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
