@@ -14,6 +14,7 @@ READS = [
     "search_emails", "read_email",            # gmail
     "list_calendar_events",                   # calendar
     "list_drive_files", "search_drive", "read_drive_file",   # gdrive
+    "whoami", "query_database",               # mytools
 ]
 
 WRITES = [
@@ -27,6 +28,26 @@ WRITES = [
     "remember",                                              # remember
 ]
 
+#: Names that used to classify as reads under the old prefix/substring rule,
+#: because a read verb led the name or sat in a mid-string segment (e.g.
+#: "_list_"), even though each of these mutates real data. That was the
+#: Critical finding: the gate is only safe if the failure direction is
+#: refusal, and these all failed the wrong way, silently letting an
+#: unattended agent overwrite, delete, or rewrite state.
+FORMERLY_MISCLASSIFIED_WRITES = [
+    "search_and_replace",          # startswith "search_" -> overwrites content
+    "find_and_delete_duplicates",  # startswith "find_" -> deletes
+    "get_and_delete_temp_files",   # startswith "get_" -> deletes
+    "mark_read_and_archive",       # "_read_" mid-string -> changes message state
+    "clear_search_history",        # "_search_" mid-string -> destroys history
+    "list_and_delete_stale_tasks", # "_list_" mid-string -> deletes
+    "clickup_create_list_item",    # "_list_" mid-string -> creates
+    "clickup_delete_list_item",    # "_list_" mid-string -> deletes
+    "trello_update_list_name",     # "_list_" mid-string -> mutates
+    "notion_update_list_view",     # "_list_" mid-string -> mutates
+    "delete_search_filter",        # "_search_" mid-string -> deletes
+]
+
 
 @pytest.mark.parametrize("name", READS)
 def test_reads_are_not_writes(name):
@@ -35,6 +56,13 @@ def test_reads_are_not_writes(name):
 
 @pytest.mark.parametrize("name", WRITES)
 def test_writes_are_writes(name):
+    assert is_write_tool(name) is True
+
+
+@pytest.mark.parametrize("name", FORMERLY_MISCLASSIFIED_WRITES)
+def test_write_verb_veto_beats_a_leading_or_mid_string_read_verb(name):
+    """Regression for the Critical finding: a mutating verb anywhere in the
+    name must win, even when a read verb leads or appears mid-string."""
     assert is_write_tool(name) is True
 
 
