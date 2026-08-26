@@ -169,7 +169,7 @@ def is_write_tool(method_name: str) -> bool:
 - [ ] **Step 4: Run the tests**
 
 Run: `cd mcp-servers/tasks && py -m pytest tests/test_agent_tools_classify.py -q`
-Expected: PASS, 18 passed
+Expected: PASS, 25 passed (parametrize expands READS and WRITES)
 
 - [ ] **Step 5: Prove the test bites**
 
