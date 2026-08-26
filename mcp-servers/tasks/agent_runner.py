@@ -230,14 +230,11 @@ async def run_agent(sched) -> tuple[str, str, dict]:
 
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
-        try:
-            answer, notes = await _chat(
-                token=chat_token, model=sched.agent_id,
-                messages=_messages_for(sched), tool_ids=tools or None,
-                user_email=sched.user_email,
-                tool_mode=getattr(sched, "tool_mode", None))
-        except Exception:
-            raise
+        answer, notes = await _chat(
+            token=chat_token, model=sched.agent_id,
+            messages=_messages_for(sched), tool_ids=tools or None,
+            user_email=sched.user_email,
+            tool_mode=getattr(sched, "tool_mode", None))
         if not answer:
             return ("failed", "The agent returned an empty answer.", {})
         if notes:
