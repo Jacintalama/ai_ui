@@ -50,3 +50,70 @@ def test_serialize_returns_the_tool_mode():
 
     out = _serialize(_Sched())
     assert out["tool_mode"] == "full"
+
+
+async def test_the_insert_actually_carries_tool_mode_and_agent_id(monkeypatch):
+    """The value the caller sent has to reach the row that gets written.
+
+    This is not a hypothetical. The neighbouring column agent_id was accepted
+    by this same endpoint and silently dropped by this same insert, so
+    schedules were created with no agent and nothing failed anywhere. Every
+    other test here passes with `tool_mode=body.tool_mode` deleted from the
+    insert, so without this one that bug is free to happen again.
+
+    Captures the Schedule handed to session.add rather than reaching a
+    database, so it runs in the ordinary tier.
+    """
+    import routes_schedules
+
+    added = []
+
+    class _FakeResult:
+        # The handler counts existing schedules before inserting; this stands
+        # in for that query without needing a database.
+        def scalar(self):
+            return 0
+
+        def scalar_one(self):
+            return 0
+
+        def scalar_one_or_none(self):
+            return 0
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _FakeSession:
+        def add(self, obj):
+            added.append(obj)
+
+        async def execute(self, *a, **kw):
+            return _FakeResult()
+
+        async def commit(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(routes_schedules, "session", lambda: _FakeSession())
+
+    body = CreateScheduleIn(
+        user_email="owner@example.com", name="n", cron_expr="0 9 * * *",
+        tz="Asia/Manila", prompt="p", agent_id="agent-x-0001",
+        tool_mode="full")
+
+    await routes_schedules.create_schedule(
+        body=body, x_cron_secret="", x_user_email="owner@example.com",
+        x_user_admin="")
+
+    assert len(added) == 1, "the handler did not write a row"
+    written = added[0]
+    assert written.tool_mode == "full", "tool_mode never reached the insert"
+    assert written.agent_id == "agent-x-0001", "agent_id never reached the insert"
