@@ -218,8 +218,25 @@ async def execute_tool_call(tool_call: dict, user_email: str) -> str:
     the agent can say what went wrong, which is far more useful to the owner
     than a run that dies with nothing.
     """
-    fn = (tool_call or {}).get("function") or {}
-    name = (fn.get("name") or "").strip()
+    # Shape checks before anything is read off these, and note that they sit
+    # OUTSIDE the try below. `(tool_call or {})` only substitutes for a FALSY
+    # value, so a truthy non-mapping (a bare string, an int, a list) used to
+    # sail through into .get() and raise AttributeError straight out of a
+    # function whose whole contract is that it never raises. The values here
+    # come from a model's tool-call plumbing, so the wrong type is exactly
+    # the malformation to expect.
+    if not isinstance(tool_call, dict):
+        logger.error("tool call was not an object")
+        return "That tool call was malformed, so nothing was run."
+    fn = tool_call.get("function")
+    if not isinstance(fn, dict):
+        logger.error("tool call carried no function object")
+        return "That tool call named no tool, so nothing was run."
+    name = fn.get("name")
+    if not isinstance(name, str):
+        logger.error("tool call named no tool, or named one that was not text")
+        return "That tool call named no tool, so nothing was run."
+    name = name.strip()
     raw_args = fn.get("arguments") or "{}"
     try:
         # raw_args is usually a JSON string, but a model (or a hand-built

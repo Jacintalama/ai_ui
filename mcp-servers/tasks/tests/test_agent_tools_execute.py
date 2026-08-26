@@ -227,3 +227,26 @@ class _FakeResponse:
 
     def json(self):
         return self._payload
+
+
+# The wrong TYPE, not merely a missing key. Earlier adversarial sweeps
+# enumerated malformed `arguments` exhaustively and malformed `tool_call`
+# only as None or {}, so every one of these raised AttributeError out of a
+# function whose contract is that it never raises.
+MALFORMED_CALLS = [
+    "not a dict",
+    42,
+    3.14,
+    True,
+    ["a", "list"],
+    {"id": "x", "function": [1, 2, 3]},
+    {"id": "x", "function": "nope"},
+    {"id": "x", "function": {"name": {"nested": 1}, "arguments": "{}"}},
+    {"id": "x", "function": {"name": 7, "arguments": "{}"}},
+]
+
+
+@pytest.mark.parametrize("call", MALFORMED_CALLS)
+async def test_a_malformed_tool_call_returns_a_string_instead_of_raising(call):
+    out = await execute_tool_call(call, "owner@example.com")
+    assert isinstance(out, str) and out
