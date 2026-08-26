@@ -3,7 +3,14 @@
 Split out of agent_runner because it is the part with teeth: agent_runner
 decides what to say, this decides what actually happens to someone's mail.
 """
+import json
 import logging
+import os
+
+import httpx
+from sqlalchemy import text as sql_text
+
+from db import session
 
 logger = logging.getLogger(__name__)
 
@@ -98,3 +105,96 @@ def is_write_tool(method_name: str) -> bool:
     if len(tokens) > 1 and tokens[1] in _READ_VERBS:
         return False
     return True
+
+
+#: A single tool call gets less than the whole run's budget: several may be
+#: needed before the agent can answer.
+TOOL_TIMEOUT_SECONDS = 60
+
+
+def _proxy_url() -> str:
+    return os.environ.get("MCP_PROXY_URL", "http://mcp-proxy:8000").rstrip("/")
+
+
+async def _post_json(url, json=None, headers=None, timeout=None):
+    async with httpx.AsyncClient(timeout=timeout or TOOL_TIMEOUT_SECONDS) as c:
+        return await c.post(url, json=json, headers=headers)
+
+
+async def _load_native_tool_source(method_name: str) -> str | None:
+    """The source of the native Open WebUI tool defining this method.
+
+    Open WebUI keeps each tool as a Python module in public.tool.content and
+    exec's it to call the method. Doing the same keeps one source of truth
+    for how a tool reaches its service: the Gmail tool, for instance, is a
+    thin client for mcp-gmail, and duplicating that mapping here would drift
+    the first time somebody edits the tool in the web UI.
+    """
+    async with session() as s:
+        rows = (await s.execute(
+            sql_text("SELECT content FROM public.tool"))).fetchall()
+    needle = "def " + method_name + "("
+    for (content,) in rows:
+        if content and needle in content:
+            return content
+    return None
+
+
+async def _run_native(source: str, method_name: str, params: dict,
+                       user_email: str) -> str:
+    namespace: dict = {}
+    exec(compile(source, "<owui_tool>", "exec"), namespace)   # noqa: S102
+    tools_cls = namespace.get("Tools")
+    if tools_cls is None:
+        raise RuntimeError("tool module defines no Tools class")
+    instance = tools_cls()
+    method = getattr(instance, method_name, None)
+    if method is None:
+        raise RuntimeError("tool module has no method " + method_name)
+    result = await method(__user__={"email": user_email}, **params)
+    return result if isinstance(result, str) else json.dumps(result)
+
+
+async def execute_tool_call(tool_call: dict, user_email: str) -> str:
+    """Run one tool call as `user_email` and return a string for the model.
+
+    Never raises. A tool that fails returns its failure as the tool result so
+    the agent can say what went wrong, which is far more useful to the owner
+    than a run that dies with nothing.
+    """
+    fn = (tool_call or {}).get("function") or {}
+    name = (fn.get("name") or "").strip()
+    raw_args = fn.get("arguments") or "{}"
+    try:
+        params = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+    except ValueError:
+        params = {}
+    if not isinstance(params, dict):
+        params = {}
+
+    if not name:
+        return "That tool call named no tool, so nothing was run."
+
+    try:
+        source = await _load_native_tool_source(name)
+        if source:
+            return await _run_native(source, name, params, user_email)
+
+        response = await _post_json(
+            _proxy_url() + "/meta/call_tool",
+            json={"tool_name": name, "arguments": params},
+            headers={"X-User-Email": user_email},
+            timeout=TOOL_TIMEOUT_SECONDS)
+        if response.status_code == 403:
+            return ("You do not have access to the service behind the tool "
+                    + name + ".")
+        if response.status_code == 404:
+            return "The tool " + name + " is not available."
+        if response.status_code >= 400:
+            return "The tool " + name + " could not be run this time."
+        payload = response.json()
+        return payload if isinstance(payload, str) else json.dumps(payload)
+    except Exception:                                       # noqa: BLE001
+        # Never surface the exception text: an httpx error carries the URL.
+        logger.error("tool call %s failed", name, exc_info=True)
+        return "The tool " + name + " could not be run this time."
