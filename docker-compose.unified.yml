@@ -394,8 +394,11 @@ services:
       # the only service where this URL is worth anything to point elsewhere,
       # which makes it the one place a stray override is dangerous rather than
       # merely broken: an ${OPENWEBUI_URL:-...} override sends impersonation
-      # tokens off box. Hardcoded, matching api-gateway, webhook-handler,
-      # mcp-web-search and n8n, which all hardcode this same target.
+      # tokens off box. Hardcoded, like webhook-handler, mcp-web-search and
+      # n8n. That the override is a live pattern and not a hypothetical is
+      # settled by mcp-meetings, which sets this same variable to the PUBLIC
+      # host; tasks is the one service where copying that would put a token
+      # good for any user's account onto the open internet.
       - OPENWEBUI_URL=http://open-webui:8080
       - AIUI_SUPABASE_CLIENT_ID=${AIUI_SUPABASE_CLIENT_ID:-}
       - AIUI_SUPABASE_CLIENT_SECRET=${AIUI_SUPABASE_CLIENT_SECRET:-}
