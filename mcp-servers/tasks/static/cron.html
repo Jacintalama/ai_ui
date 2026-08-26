@@ -408,6 +408,16 @@
     }
     .sched-tz svg { width: 13px; height: 13px; opacity: 0.8; }
 
+    /* Which agent a schedule runs as, when it has one. Same shape as the
+       timezone chip -- one more small fact on the same summary line. */
+    .sched-agent {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--text-2);
+      background: var(--surface-2); border: 1px solid var(--border-2);
+      border-radius: var(--radius); padding: 4px 9px;
+    }
+    .sched-agent svg { width: 13px; height: 13px; opacity: 0.8; }
+
     /* Delivery destination chip: where each schedule's result is posted. */
     .sched-dest {
       display: inline-flex; align-items: center; gap: 6px;
@@ -667,6 +677,16 @@
               <span class="form-hint">What the scheduled run should do. Up to 4000 characters.</span>
             </div>
 
+            <div class="field">
+              <label class="form-label" for="run-as">Run as</label>
+              <select class="form-input" id="run-as" name="run-as">
+                <option value="">Default assistant</option>
+              </select>
+              <span class="form-hint">Pick one of your agents to run this, with
+                its own instructions and tools. Leave it as it is and schedules
+                behave exactly as they always have.</span>
+            </div>
+
             <div class="error box" id="form-error" hidden></div>
 
             <div class="field">
@@ -771,6 +791,41 @@
       return h;
     }
 
+    // The agents this person can see, for the Run as field. An agent is a
+    // model row whose id we minted, which is the same test the Agents page
+    // uses. Deliberately quiet on failure: this list is a convenience and the
+    // form works perfectly well without an agent, so losing it must not take
+    // the form down with it.
+    //
+    // Also keyed by id -> name here so a schedule card can show which agent it
+    // runs as (renderCard below). Cards can render before this fetch settles,
+    // so once it does, ask the list to redraw with names now that they exist.
+    const AGENTS_BY_ID = {};
+    async function loadAgentsForRunAs() {
+      const sel = document.getElementById("run-as");
+      if (!sel) return;
+      try {
+        const r = await fetch("/api/v1/models/list?page=1",
+                              { headers: authHeaders(), credentials: "include" });
+        if (!r.ok) return;
+        const body = await r.json();
+        const items = Array.isArray(body.items) ? body.items : [];
+        items
+          .filter((m) => String(m.id || "").startsWith("agent-"))
+          .forEach((m) => {
+            const o = document.createElement("option");
+            o.value = m.id;
+            o.textContent = m.name || m.id;
+            sel.appendChild(o);
+            AGENTS_BY_ID[m.id] = m.name || m.id;
+          });
+        if (typeof renderList === "function") renderList();
+      } catch (e) {
+        console.warn("[cron] could not load agents for Run as", e);
+      }
+    }
+    loadAgentsForRunAs();
+
     const SCHED_API = "/api/tasks/schedules";
 
     const listRegion = document.getElementById("list-region");
@@ -810,6 +865,9 @@
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
     const ICON_GLOBE =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.6 2.9 2.6 15.1 0 18M12 3c-2.6 2.9-2.6 15.1 0 18"></path></svg>';
+    // Which agent a schedule runs as (Run as chip on the card).
+    const ICON_AGENT =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"></rect><path d="M8 7V4a4 4 0 0 1 8 0v3"></path><circle cx="9" cy="13.5" r="1"></circle><circle cx="15" cy="13.5" r="1"></circle></svg>';
     // Platform glyphs for the delivery-destination chip (CV3). Brand marks are
     // filled (not stroked); static markup, never mixed with server text.
     const ICON_DISCORD =
@@ -1181,6 +1239,19 @@
       }
       const destChip = `<span class="sched-dest ${destClass}" title="delivery destination">${destGlyph}<span class="dest-text"></span></span>`;
 
+      // Which agent this schedule runs as (addendum to the Run as field):
+      // nothing at all when agent_id is null, which is every schedule that
+      // exists today. The card only has the id, so map it to the name from
+      // the same agent list the Run as field uses, and fall back to the raw
+      // id when the agent isn't in that list -- e.g. it was deleted since.
+      // Falling back to the id is deliberate: a card that silently shows
+      // nothing for a deleted agent would look identical to a schedule that
+      // never had one.
+      const agentName = s.agent_id ? (AGENTS_BY_ID[s.agent_id] || String(s.agent_id)) : "";
+      const agentChip = agentName
+        ? `<span class="sched-agent" title="runs as">${ICON_AGENT}<span class="agent-text"></span></span>`
+        : "";
+
       card.innerHTML =
         `<div class="sched-head">
            <div class="sched-id">
@@ -1194,6 +1265,7 @@
          </div>
          <div class="sched-chips">
            ${tz}
+           ${agentChip}
            ${destChip}
            ${lastRun}
          </div>
@@ -1210,6 +1282,8 @@
       card.querySelector(".human-text").textContent = scheduleText;
       // Destination label rendered via textContent (platform value is escaped).
       card.querySelector(".dest-text").textContent = destText;
+      // Agent name/id rendered via textContent -- both come from server data.
+      if (agentChip) card.querySelector(".agent-text").textContent = agentName;
 
       const toggleBtn = card.querySelector('[data-act="toggle"]');
       const runBtn = card.querySelector('[data-act="run"]');
@@ -1414,6 +1488,11 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
 
       const body = { name, cron_expr, prompt };
       if (BROWSER_TZ) body.tz = BROWSER_TZ;
+      // Only sent when one was chosen. An empty string is not the same as
+      // absent: the API treats null as "the assistant schedules have always
+      // used", and that is what an untouched field means.
+      const runAs = (document.getElementById("run-as") || {}).value || "";
+      if (runAs) body.agent_id = runAs;
 
       try {
         const r = await fetch(SCHED_API, {

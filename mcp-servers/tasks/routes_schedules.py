@@ -439,4 +439,5 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "delivery_channel_id": sch.delivery_channel_id,
         "delivery_platform": sch.delivery_platform,
         "kind": sch.kind,
+        "agent_id": sch.agent_id,
     }
