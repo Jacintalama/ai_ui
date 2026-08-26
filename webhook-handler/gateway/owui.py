@@ -29,6 +29,17 @@ class OWUIError(Exception):
         super().__init__(f"open-webui error {status}: {message}")
 
 
+class OWUIToolCallError(OWUIError):
+    """The model asked to use a tool instead of answering.
+
+    Measured against production: given tool_ids, Open WebUI's chat completions
+    API can come back with finish_reason "tool_calls", an empty content, and a
+    tool_calls array, and it does not run the tool and continue. A subclass of
+    OWUIError, not a separate type, so every existing `except OWUIError` still
+    catches it; a caller that wants the specific reason can catch this instead.
+    """
+
+
 class OWUIUserClient:
     # COUPLED to GATEWAY_TOKEN_TTL_SECONDS in mcp-servers/tasks/routes_gateway.py.
     # One token covers every call in a turn, so the slowest single call must fit
@@ -100,8 +111,18 @@ class OWUIUserClient:
         choices = data.get("choices") or []
         if not choices:
             raise OWUIError(502, f"no choices in response: {json.dumps(data)[:300]}")
-        content = (choices[0].get("message") or {}).get("content") or ""
+        choice = choices[0]
+        message = choice.get("message") or {}
+        content = message.get("content") or ""
         if not content.strip():
+            # Measured against production: given tool_ids, this is what Open
+            # WebUI sends back when the model decided to call a tool instead
+            # of answering, and there is no tool loop here to run it and
+            # continue. Distinguish it from an ordinary empty answer so the
+            # caller can say what actually happened instead of "try again".
+            if message.get("tool_calls") or choice.get("finish_reason") == "tool_calls":
+                raise OWUIToolCallError(
+                    502, "the model asked to use a tool instead of answering")
             raise OWUIError(502, "the model returned an empty answer")
         return content
 

@@ -32,6 +32,18 @@ MEMORY_EXCERPT_CHARS = 1200
 HTTP_TIMEOUT_SECONDS = 240
 
 
+class _ToolCallRequested(Exception):
+    """The model asked to use a tool instead of answering.
+
+    Measured on production: given tool_ids, Open WebUI's chat completions API
+    can come back with an empty content, finish_reason "tool_calls", and a
+    tool_calls array, and it does not run the tool and continue. There is no
+    tool loop on this path to satisfy that request, so _chat raises this
+    instead of returning the blank content, and run_agent turns it into a
+    message that says what actually happened.
+    """
+
+
 def _base_url() -> str:
     return os.environ.get("OPENWEBUI_URL", "http://open-webui:8080").rstrip("/")
 
@@ -74,7 +86,12 @@ async def _list_agents(token: str) -> list[dict]:
 
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None) -> str:
-    """One non streaming completion, as the token's user."""
+    """One non streaming completion, as the token's user.
+
+    Raises _ToolCallRequested when the model asked to use a tool instead of
+    answering, so the caller can tell that apart from an ordinary empty
+    answer.
+    """
     payload: dict = {"model": model, "messages": messages, "stream": False}
     if tool_ids:
         payload["tool_ids"] = tool_ids
@@ -89,7 +106,13 @@ async def _chat(token: str, model: str, messages: list[dict],
     choices = data.get("choices") or []
     if not choices:
         raise RuntimeError("the model returned no answer")
-    return ((choices[0].get("message") or {}).get("content") or "").strip()
+    choice = choices[0]
+    message = choice.get("message") or {}
+    content = (message.get("content") or "").strip()
+    if not content and (message.get("tool_calls")
+                        or choice.get("finish_reason") == "tool_calls"):
+        raise _ToolCallRequested()
+    return content
 
 
 def _messages_for(sched) -> list[dict]:
@@ -145,9 +168,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
 
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
-        answer = await _chat(token=chat_token, model=sched.agent_id,
-                             messages=_messages_for(sched),
-                             tool_ids=tools or None)
+        try:
+            answer = await _chat(token=chat_token, model=sched.agent_id,
+                                 messages=_messages_for(sched),
+                                 tool_ids=tools or None)
+        except _ToolCallRequested:
+            return ("failed",
+                    "This agent tried to use one of its tools, and scheduled "
+                    "runs cannot do that yet. Change the prompt so it does "
+                    "not need a tool, or choose a different agent for this "
+                    "schedule.", {})
         if not answer:
             return ("failed", "The agent returned an empty answer.", {})
         return ("completed", answer, {})

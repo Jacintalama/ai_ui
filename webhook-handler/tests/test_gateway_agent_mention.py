@@ -13,11 +13,14 @@ it cannot reach your mail.
 """
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 
 from config import settings
 from gateway import agent_router, pipeline
 from gateway.events import MessageEvent, MessageType, SessionSource
+from gateway.owui import OWUIError, OWUIToolCallError, OWUIUserClient
 
 
 def _row(aid, name, tools):
@@ -150,6 +153,53 @@ async def test_an_ordinary_message_is_not_answered_by_an_agent(adapter, owui):
 
     assert owui.chat_completion.await_args_list[-1].args[1] == settings.gateway_model
     assert ":" not in out.split("\n")[0] or out.startswith("the answer")
+
+
+@respx.mock
+async def test_chat_completion_detects_a_tool_call_from_the_raw_response():
+    """The shape measured on production: empty content, finish_reason
+    "tool_calls", and a tool_calls array. Open WebUI does not run the tool and
+    continue, so this must raise the specific error, not the generic one."""
+    respx.post("http://open-webui:8080/api/chat/completions").mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {"role": "assistant", "content": "",
+                           "tool_calls": [{"id": "1", "type": "function",
+                                          "function": {"name": "gmail_search"}}]},
+            }]}))
+
+    client = OWUIUserClient("http://open-webui:8080", "tok")
+    with pytest.raises(OWUIToolCallError):
+        await client.chat_completion([{"role": "user", "content": "hi"}], "m")
+
+
+@respx.mock
+async def test_chat_completion_with_plain_empty_content_still_raises_the_generic_error():
+    """Without a tool_calls array or finish_reason, an empty content is the
+    ordinary empty answer, not the tool-call one."""
+    respx.post("http://open-webui:8080/api/chat/completions").mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{"message": {"role": "assistant", "content": ""}}]}))
+
+    client = OWUIUserClient("http://open-webui:8080", "tok")
+    with pytest.raises(OWUIError) as exc:
+        await client.chat_completion([{"role": "user", "content": "hi"}], "m")
+    assert not isinstance(exc.value, OWUIToolCallError)
+
+
+async def test_a_tool_call_gets_its_own_message_not_the_generic_one(adapter, owui):
+    """Measured on production: given tool_ids, Open WebUI can come back with
+    an empty content and a tool_calls array instead of running the tool. The
+    person needs to hear that specifically, not the generic "model didn't
+    answer" message that invites a retry that can never work."""
+    owui.chat_completion.side_effect = OWUIToolCallError(
+        502, "the model asked to use a tool instead of answering")
+
+    out = await pipeline.handle_event(_event("jack, check my mail"), adapter)
+
+    assert out == pipeline.AGENT_TOOL_CALL
+    assert out != pipeline.MODEL_DOWN
 
 
 async def test_a_spoken_name_beats_the_pin_for_that_message(adapter, owui, wired):

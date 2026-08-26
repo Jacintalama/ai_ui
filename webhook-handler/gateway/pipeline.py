@@ -14,7 +14,7 @@ from gateway import agent_router
 from gateway import commands as gateway_commands
 from gateway.base import BasePlatformAdapter
 from gateway.events import MessageEvent, MessageType, SessionSource
-from gateway.owui import OWUIError, OWUIUserClient
+from gateway.owui import OWUIError, OWUIToolCallError, OWUIUserClient
 from gateway.pairing import pairing_message
 from gateway.platforms.telegram import ClipTooLarge
 from gateway.sessions import append_turn, get_or_create_chat, history_messages
@@ -27,6 +27,11 @@ GROUP_REFUSAL = (
 )
 TASKS_DOWN = "I can't reach my memory right now. Try again in a moment."
 MODEL_DOWN = "The model didn't answer just now. Try again in a moment."
+# Distinguished from MODEL_DOWN: the model did answer, in the sense that it
+# tried to call a tool, but there is no tool loop on this path to run it. A
+# retry would only produce the same result, so this says what happened
+# instead of inviting one.
+AGENT_TOOL_CALL = "This agent tried to use one of its tools. It can't do that here yet."
 UNEXPECTED = "Something went wrong on my side. Try again in a moment."
 UNSUPPORTED_TYPE = (
     "I can read text and voice messages. I can't do anything with that one yet."
@@ -90,6 +95,12 @@ async def handle_event(event: MessageEvent, adapter: BasePlatformAdapter) -> str
     except TasksAPIError as e:
         log.warning("gateway: tasks failed (%s): %s", e.status, e.message)
         return await _say(adapter, src.chat_id, TASKS_DOWN)
+    except OWUIToolCallError as e:
+        # Checked before the plainer OWUIError below: this is a subclass of
+        # it, and except clauses match in order.
+        log.warning("gateway: agent tried to call a tool (%s): %s",
+                    e.status, e.message)
+        return await _say(adapter, src.chat_id, AGENT_TOOL_CALL)
     except OWUIError as e:
         log.warning("gateway: open-webui failed (%s): %s", e.status, e.message)
         return await _say(adapter, src.chat_id, MODEL_DOWN)

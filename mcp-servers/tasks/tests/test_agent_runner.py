@@ -8,9 +8,16 @@ that silently produces nothing is worse than one that says it broke.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+import respx
 
 import agent_runner
+
+# Captured before the autouse `wired` fixture below replaces agent_runner._chat
+# with a mock, so the two tests that exercise the real HTTP parsing logic can
+# still reach it.
+_real_chat = agent_runner._chat
 
 
 def _sched(**over):
@@ -158,6 +165,57 @@ async def test_a_model_failure_is_reported_not_raised(wired):
 
     assert status == "failed"
     assert result.strip() != ""
+
+
+async def test_a_tool_call_is_reported_not_treated_as_an_empty_answer(wired):
+    """Measured on production: given tool_ids, Open WebUI can come back with
+    empty content and a tool_calls array instead of running the tool. There is
+    no tool loop on this path, so the person needs to hear that plainly rather
+    than the generic empty-answer message, which invites a retry that can
+    never succeed."""
+    wired.chat.side_effect = agent_runner._ToolCallRequested()
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed"
+    assert "tool" in result.lower()
+    assert result != "The agent returned an empty answer."
+
+
+@respx.mock
+async def test_chat_detects_a_tool_call_from_the_raw_response():
+    """The shape measured on production: empty content, finish_reason
+    "tool_calls", and a tool_calls array. Open WebUI does not run the tool and
+    continue, so _chat must raise rather than hand back the blank content."""
+    respx.post(f"{agent_runner._base_url()}/api/chat/completions").mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {"role": "assistant", "content": "",
+                           "tool_calls": [{"id": "1", "type": "function",
+                                          "function": {"name": "gmail_search"}}]},
+            }]}))
+
+    with pytest.raises(agent_runner._ToolCallRequested):
+        await _real_chat(token="t", model="m",
+                         messages=[{"role": "user", "content": "hi"}],
+                         tool_ids=["gmail"])
+
+
+@respx.mock
+async def test_chat_with_plain_empty_content_still_returns_empty_string():
+    """A tool call is not the only way to get empty content back. Without a
+    tool_calls array or finish_reason, this must stay the ordinary empty
+    answer, not the tool-call message."""
+    respx.post(f"{agent_runner._base_url()}/api/chat/completions").mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{"message": {"role": "assistant", "content": ""}}]}))
+
+    out = await _real_chat(token="t", model="m",
+                           messages=[{"role": "user", "content": "hi"}],
+                           tool_ids=None)
+
+    assert out == ""
 
 
 async def test_the_minted_token_is_never_returned_in_the_result(wired):
