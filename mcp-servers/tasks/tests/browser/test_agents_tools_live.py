@@ -70,6 +70,10 @@ TOOLS_BODY = {"tools": [
      "connect_url": None},
     {"id": "remember", "label": "Memory", "connected": True,
      "connect_url": None},
+    # The connected apps umbrella, unconnected, which is the state every user
+    # on this platform is actually in: tasks.user_connections is empty.
+    {"id": "server:mcp-proxy", "label": "Your connected apps",
+     "connected": False, "connect_url": "/tasks/static/connections.html"},
 ]}
 
 
@@ -164,3 +168,23 @@ def test_a_connected_tool_is_selectable(page_with_tools):
 def test_the_page_seeds_once_on_load(page_with_tools):
     seeds = [c for c in page_with_tools.sent if "/agents/seed" in c["url"]]
     assert len(seeds) == 1
+
+
+def test_the_connected_apps_switch_is_disabled_with_nothing_behind_it(
+        page_with_tools):
+    """It is the same tick-and-do-nothing checkbox the tiles were fixed for.
+    Nobody on this platform has connected a proxy app, so for every user the
+    switch was offering a capability that does not exist."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#use-my-apps").is_disabled()
+
+
+def test_the_disabled_switch_says_where_to_connect_one(page_with_tools):
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    link = page.locator(".umbrella-connect")
+    assert link.count() == 1
+    assert link.get_attribute("href")

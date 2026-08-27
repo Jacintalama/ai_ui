@@ -343,6 +343,10 @@
     color: var(--muted); font-size: 11px; text-decoration: underline;
   }
   .tools label .tool-connect:hover { color: var(--text); }
+  .switch.not-connected { color: var(--muted); cursor: not-allowed; }
+  .switch.not-connected input[type=checkbox] { cursor: not-allowed; opacity: 0.55; }
+  .umbrella-connect { display: inline-block; margin-top: 5px; font-size: 12px;
+                      color: var(--accent); text-decoration: underline; }
   .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
@@ -834,6 +838,31 @@
     // immediately. Never blocks the page: an unreachable or malformed answer
     // falls back to the native tools, all enabled, same as before this
     // endpoint existed.
+    // Grey the connected apps switch when the person has connected nothing,
+    // and point them at where to fix it. Same treatment the tiles get, so the
+    // form tells one story about what will actually work.
+    function applyUmbrellaState(t) {
+      var box = document.getElementById("use-my-apps");
+      var row = box && box.closest(".switch");
+      if (!box || !row) return;
+      var existing = row.parentNode.querySelector(".umbrella-connect");
+      if (existing) existing.remove();
+      var connected = !t || t.connected !== false;
+      box.disabled = !connected;
+      row.classList.toggle("not-connected", !connected);
+      if (!connected) {
+        // Unticking here is deliberate: a saved agent may still carry the
+        // tool, and offering it as ticked when nothing is behind it would
+        // claim it works.
+        box.checked = false;
+        var a = document.createElement("a");
+        a.className = "umbrella-connect";
+        a.href = (t && t.connect_url) || "/tasks/static/connections.html";
+        a.textContent = "Connect an app";
+        row.parentNode.insertBefore(a, row.nextSibling);
+      }
+    }
+
     async function loadTools() {
       var tools = null;
       try {
@@ -848,8 +877,16 @@
       }
       if (tools) {
         // server:mcp-proxy is offered through the "Let this agent use my
-        // connected apps" switch above, not as a tile of its own.
-        tools = tools.filter(function (t) { return t.id !== "server:mcp-proxy"; });
+        // connected apps" switch above, not as a tile of its own. That switch
+        // still has to say whether anything is behind it: leaving it always
+        // tickable would keep the exact checkbox that ticks and does nothing
+        // which this endpoint exists to get rid of.
+        var umbrella = null;
+        tools = tools.filter(function (t) {
+          if (t.id === "server:mcp-proxy") { umbrella = t; return false; }
+          return true;
+        });
+        applyUmbrellaState(umbrella);
         renderToolTiles(tools);
         NATIVE_TOOLS = tools.map(function (t) { return [t.id, t.label]; });
       } else {
