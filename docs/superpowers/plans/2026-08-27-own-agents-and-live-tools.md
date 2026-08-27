@@ -616,7 +616,7 @@ The script must, in one pass and idempotently:
 
 - [ ] **Step 1: Write it, with the count of base model grants printed BEFORE and AFTER as proof they were untouched**
 - [ ] **Step 2: Dry run it on production with a `--dry-run` flag first and read the output**
-- [ ] **Step 3: Run it for real, then confirm: 0 wildcard grants on derived models, base model grants unchanged at 133, and an `agent_seed` row for `ralphbenitez32@gmail.com`**
+- [ ] **Step 3: Run it for real, then confirm: 0 wildcard grants on derived models, base model grants unchanged at 131, and the 2 channel grants untouched, and an `agent_seed` row for `ralphbenitez32@gmail.com`**
 - [ ] **Step 4: Commit**
 
 ---
