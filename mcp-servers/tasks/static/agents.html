@@ -1123,7 +1123,9 @@
         box.checked = false;
         var a = document.createElement("a");
         a.className = "umbrella-connect";
-        a.href = (t && t.connect_url) || "/tasks/static/connections.html";
+        // The panel on this page. The old fallback pointed at a static
+        // file that has never existed.
+        a.href = "#connections";
         a.textContent = "Connect an app";
         row.parentNode.insertBefore(a, row.nextSibling);
       }
@@ -1479,6 +1481,16 @@
       });
 
       document.body.addEventListener("click", function (ev) {
+        // Any Connect link, from a greyed tool tile or the switch, opens the
+        // panel rather than navigating to a fragment that does nothing.
+        var connLink = ev.target.closest('a[href="#connections"]');
+        if (connLink) {
+          ev.preventDefault();
+          closeForm();
+          connOverlay.hidden = false;
+          loadConnections();
+          return;
+        }
         var connBtn = ev.target.closest("[data-conn]");
         if (connBtn) {
           openConnForm(connBtn.closest("[data-provider]"));
