@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS tasks.agent_seed (
 - [ ] **Step 5: Run the tests**
 
 Run: `cd mcp-servers/tasks && py -m pytest tests/test_agent_templates.py -q`
-Expected: PASS, 10 passed
+Expected: PASS, 9 passed (3 plain plus 3 parametrized over 2 templates)
 
 - [ ] **Step 6: Commit**
 
