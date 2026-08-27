@@ -105,3 +105,18 @@ async def test_google_tokens_alone_do_not_light_up_the_umbrella():
 
     umbrella = [t for t in out["tools"] if t["id"] == "server:mcp-proxy"][0]
     assert umbrella["connected"] is False
+
+
+async def test_the_templates_are_offered_for_a_user_with_none():
+    """Deleting both agents must not be a dead end."""
+    out = await routes_agents.templates()
+    slugs = sorted(t["slug"] for t in out["templates"])
+    assert slugs == ["scout", "triage"]
+    for t in out["templates"]:
+        assert t["name"] and t["instructions"]
+        assert isinstance(t["tool_ids"], list)
+
+
+async def test_the_connect_link_is_not_a_dead_page():
+    """It pointed at /tasks/static/connections.html, which does not exist."""
+    assert "connections.html" not in routes_agents.CONNECT_URL

@@ -26,8 +26,9 @@ STATIC = pathlib.Path(__file__).resolve().parents[2] / "static"
 ME = "user-me"
 OTHER = "user-someone-else"
 
-# A name that runs script if the page ever stops escaping. Owned by someone
-# else on purpose, so the "your agents" list stays exactly one card.
+# A name that runs script if the page ever stops escaping. Owned by ME: the
+# page no longer lists anything belonging to anyone else, and an agent that is
+# never rendered cannot prove the name was escaped.
 HOSTILE_NAME = '<img src=x onerror="window.__pwned=1">'
 
 # Flat rows, which is the shape GET /api/v1/models/list returns. gpt-4o-mini is
@@ -82,12 +83,12 @@ MODELS = [
      "created_at": 5, "updated_at": 5,
      "user": {"id": OTHER, "name": "Someone", "email": "other@example.com"}},
     {"id": "agent-hostile-e5f6", "name": HOSTILE_NAME,
-     "user_id": OTHER, "base_model_id": "gpt-4o-mini",
+     "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": HOSTILE_NAME},
      "meta": {"description": "hostile", "toolIds": []},
      "access_grants": [], "is_active": True, "write_access": False,
      "created_at": 4, "updated_at": 4,
-     "user": {"id": OTHER, "name": "Someone", "email": "other@example.com"}},
+     "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
 ]
 
 
@@ -216,21 +217,6 @@ def test_the_base_model_is_not_listed_as_an_agent(page):
     assert page.locator('[data-agent-id="gpt-4o-mini"]').count() == 0
 
 
-def test_someone_elses_agent_is_not_in_your_list(page):
-    mine = page.locator("#my-agents [data-agent-id]").all()
-    assert all("shared" not in (el.get_attribute("data-agent-id") or "")
-               for el in mine)
-
-
-def test_a_platform_agent_appears_in_its_own_group(page):
-    assert page.locator('#platform-agents [data-agent-id="agent-shared-c3d4"]').count() == 1
-
-
-def test_a_platform_agent_offers_no_delete(page):
-    card = page.locator('#platform-agents [data-agent-id="agent-shared-c3d4"]')
-    assert card.locator('[data-act="delete"]').count() == 0
-
-
 def test_a_card_shows_the_agent_it_stands_for(page):
     """The partition being right says nothing about the card being right: a
     card whose title and instructions never render passes every other test
@@ -240,7 +226,7 @@ def test_a_card_shows_the_agent_it_stands_for(page):
     assert "You research things carefully." in card.locator(".card-sys").inner_text()
     assert [e.get_attribute("data-agent-id")
             for e in page.locator("#my-agents [data-agent-id]").all()] == [
-        "agent-mine-a1b2", "agent-mine-second-c5d6"]
+        "agent-mine-a1b2", "agent-mine-second-c5d6", "agent-hostile-e5f6"]
 
 
 def test_a_hostile_agent_name_is_shown_as_text_not_run(page):
@@ -451,34 +437,6 @@ def test_deleting_one_agent_does_not_touch_another(page):
     assert "agent-shared-c3d4" not in page.sent[-1]["url"]
 
 
-def test_duplicate_opens_a_new_agent_with_the_copied_instructions(page):
-    """The copy comes from meta, because /list blanked params on this row: it
-    is read-only to everyone except its owner. Reading params alone would hand
-    the user an empty box on the one button that promises a copy."""
-    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
-    page.wait_for_selector("#agent-form", state="visible")
-    assert page.input_value("#agent-instructions") == "You summarise meetings."
-    assert "Summariser" in page.input_value("#agent-name")
-
-
-def test_duplicate_says_so_when_the_instructions_cannot_be_copied(page):
-    """Never hand back a silently empty box on a button that promises a copy."""
-    page.locator('[data-agent-id="agent-bare-9999"] [data-act="duplicate"]').click()
-    page.wait_for_selector("#agent-form", state="visible")
-    assert page.input_value("#agent-instructions") == ""
-    assert page.locator("#form-error").inner_text().strip() != ""
-
-
-def test_duplicate_saves_as_a_new_agent_not_over_the_original(page):
-    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
-    page.wait_for_selector("#agent-form", state="visible")
-    page.locator("#agent-save").click()
-    page.wait_for_timeout(300)
-    sent = page.sent[-1]
-    assert sent["url"].endswith("/create"), "duplicate edited the shared agent"
-    assert json.loads(sent["body"])["id"] != "agent-shared-c3d4"
-
-
 def test_duplicate_carries_the_tools_across(page):
     """A copy that silently loses the tools is not a copy."""
     page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="duplicate"]').count()
@@ -593,22 +551,6 @@ def test_a_save_keeps_the_readable_copy_of_the_instructions(page):
     assert meta["agent_instructions"] == "Research carefully."
 
 
-def test_duplicate_keeps_the_source_base_model(page):
-    """openForm(null) leaves the dropdown on whichever model is first, which on
-    this platform can be a pipe that cannot call tools at all."""
-    page.evaluate("""() => {
-      var sel = document.getElementById('agent-base');
-      var o = document.createElement('option');
-      o.value = 'zzz-other-model'; o.textContent = 'Other';
-      sel.insertBefore(o, sel.firstChild);
-    }""")
-    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
-    page.wait_for_selector("#agent-form", state="visible")
-    page.locator("#agent-save").click()
-    page.wait_for_timeout(300)
-    assert json.loads(page.sent[-1]["body"])["base_model_id"] == "gpt-4o-mini"
-
-
 def test_a_stale_error_banner_does_not_survive_a_good_reload(page):
     page.evaluate("""() => {
       var el = document.getElementById('page-error');
@@ -637,16 +579,6 @@ def test_a_long_instruction_is_not_cut_mid_word(page):
     assert tail.split()[-1] in source.split() or tail in source
 
 
-def test_a_shared_agent_is_marked_and_a_private_one_is_not(page):
-    """Somebody looking at this page cannot otherwise tell which agents every
-    other user can also see."""
-    shared = page.locator('[data-agent-id="agent-shared-c3d4"] .tag')
-    mine = page.locator('[data-agent-id="agent-mine-a1b2"] .tag')
-    assert shared.count() == 1
-    assert "everyone" in shared.inner_text().lower()
-    assert mine.count() == 0, "a private agent was labelled as shared"
-
-
 def test_the_card_says_what_the_agent_can_reach(page):
     """Tools are the whole point of an agent, and the card showed none."""
     chips = page.locator(
@@ -655,8 +587,10 @@ def test_the_card_says_what_the_agent_can_reach(page):
 
 
 def test_an_agent_with_no_tools_says_so(page):
+    # agent-mine-second-c5d6 carries toolIds: []. It used to check a shared
+    # agent, and nothing shared is listed any more.
     chips = page.locator(
-        '[data-agent-id="agent-shared-c3d4"] .chip').all_inner_texts()
+        '[data-agent-id="agent-mine-second-c5d6"] .chip').all_inner_texts()
     assert chips == ["No tools"], chips
 
 
@@ -683,7 +617,7 @@ def test_a_search_with_no_hits_does_not_claim_you_have_no_agents(page):
     page.wait_for_timeout(200)
     assert page.locator("#no-match").is_visible()
     assert page.locator("#mine-empty").is_hidden()
-    assert page.locator("#mine-count").inner_text() == "2"
+    assert page.locator("#mine-count").inner_text() == "3"
 
 
 def test_clearing_the_search_brings_everything_back(page):
@@ -691,7 +625,7 @@ def test_clearing_the_search_brings_everything_back(page):
     page.wait_for_timeout(200)
     page.fill("#agent-search", "")
     page.wait_for_timeout(200)
-    assert page.locator("#my-agents [data-agent-id]").count() == 2
+    assert page.locator("#my-agents [data-agent-id]").count() == 3
     assert page.locator("#no-match").is_hidden()
 
 
@@ -758,21 +692,6 @@ def test_a_name_that_cannot_be_said_in_a_sentence_is_refused(page, bad):
     assert page.locator("#form-error").inner_text().strip() != ""
 
 
-def test_duplicate_suggests_a_name_that_can_be_saved(page):
-    """"Scout (my copy)" would be rejected the moment they pressed save, on a
-    name they never typed."""
-    page.locator('[data-agent-id="agent-shared-c3d4"] [data-act="duplicate"]').click()
-    page.wait_for_selector("#agent-form", state="visible")
-    suggested = page.input_value("#agent-name")
-    assert " " not in suggested, suggested
-    page.locator("#agent-save").click()
-    page.wait_for_timeout(300)
-    assert page.locator("#form-error").inner_text().strip() == ""
-
-
-# --- the wait ---------------------------------------------------------------
-
-
 def test_the_skeleton_is_gone_once_the_agents_are_in(page):
     """It stands in for the cards while two round trips and a paged list are
     in flight. Leaving it up afterwards would be worse than never showing it."""
@@ -805,3 +724,22 @@ def test_the_shimmer_stops_for_reduced_motion(page):
     """An animation that never stops is exactly what that setting is for."""
     html = pathlib.Path(STATIC / "agents.html").read_text(encoding="utf-8")
     assert "prefers-reduced-motion" in html
+
+
+# Removed with the Ready-made section: nothing is shared any more, so there is
+# no group for other people's agents and nothing to duplicate into your own.
+# The page lists only what you own, because Open WebUI hands an admin every
+# user's models whatever their grants.
+# Gone: test_a_platform_agent_appears_in_its_own_group, test_a_platform_agent_offers_no_delete, test_someone_elses_agent_is_not_in_your_list, test_a_shared_agent_is_marked_and_a_private_one_is_not, test_duplicate_opens_a_new_agent_with_the_copied_instructions, test_duplicate_says_so_when_the_instructions_cannot_be_copied, test_duplicate_saves_as_a_new_agent_not_over_the_original, test_duplicate_keeps_the_source_base_model, test_duplicate_suggests_a_name_that_can_be_saved
+
+
+def test_someone_elses_agent_is_never_rendered(page):
+    """Open WebUI hands an admin every model whatever its grants, so the
+    listing this page receives can contain other people's private agents. It
+    used to show them under Ready-made with a Duplicate button. Nothing that
+    is not yours may appear anywhere on the page."""
+    ids = [e.get_attribute("data-agent-id")
+           for e in page.locator("[data-agent-id]").all()]
+    assert "agent-shared-c3d4" not in ids, ids
+    assert "agent-private-other" not in ids, ids
+    assert all(i and i.startswith(("agent-mine", "agent-hostile")) for i in ids), ids

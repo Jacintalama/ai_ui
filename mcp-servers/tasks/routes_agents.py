@@ -236,7 +236,10 @@ _TOKEN_TABLES = {
 
 #: Where every connection in this module is made -- gmail/calendar/gdrive and
 #: the Connect Your Own App providers behind server:mcp-proxy alike.
-CONNECT_URL = "/tasks/static/connections.html"
+# Opens the Connections panel on the Agents page itself. The previous
+# value pointed at /tasks/static/connections.html, which has never
+# existed, so every Connect link went nowhere.
+CONNECT_URL = "#connections"
 
 #: id -> public.tool.name, refreshed by the most recent real call to
 #: _installed_tool_ids. A test that mocks _installed_tool_ids leaves this
@@ -363,6 +366,26 @@ async def tools_for_email(email: str) -> dict:
     })
 
     return {"tools": tools}
+
+
+@router.get("/templates")
+async def templates() -> dict:
+    """The starter agents, for a user who has none.
+
+    Deleting both agents used to be a dead end: they are seeded once and the
+    record of that seeding makes sure they never come back on their own,
+    which is what makes a delete stick. This is the way back, and it is a
+    deliberate act rather than something that happens to you.
+
+    No caller identity needed: these are the same two definitions for
+    everybody, and creating one goes through the ordinary create form so the
+    person sees what they are making.
+    """
+    return {"templates": [
+        {"slug": t["slug"], "name": t["name"],
+         "instructions": t["instructions"], "tool_ids": list(t["tool_ids"])}
+        for t in TEMPLATES
+    ]}
 
 
 @router.get("/tools")

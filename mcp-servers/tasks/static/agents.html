@@ -273,7 +273,10 @@
   .modal h2 { font-size: 17px; font-weight: 650; margin: 0 0 16px; }
   .modal label { display: block; font-size: 12px; color: var(--text-2);
                  margin: 14px 0 6px; }
-  .modal input[type=text], .modal textarea, .modal select {
+  /* password too: the Connections panel asks for API tokens, and a
+     browser default white box in a dark modal looks broken. */
+  .modal input[type=text], .modal input[type=password],
+  .modal textarea, .modal select {
     width: 100%; box-sizing: border-box; background: var(--surface-2);
     border: 1px solid var(--border-2); border-radius: var(--radius);
     padding: 10px 12px; color: var(--text); font-size: 13px; outline: none;
@@ -347,6 +350,18 @@
   .switch.not-connected input[type=checkbox] { cursor: not-allowed; opacity: 0.55; }
   .umbrella-connect { display: inline-block; margin-top: 5px; font-size: 12px;
                       color: var(--accent); text-decoration: underline; }
+  .conn-row { display: flex; align-items: center; gap: 11px; padding: 11px 0;
+              border-bottom: 1px solid var(--border); }
+  .conn-row:last-of-type { border-bottom: 0; }
+  .conn-name { flex: 1; font-size: 13px; }
+  .conn-name small { display: block; color: var(--muted); font-size: 11.5px;
+                     margin-top: 2px; }
+  .conn-state { font-size: 11.5px; color: var(--muted); }
+  .conn-state.on { color: #4ade80; }
+  .conn-form { padding: 4px 0 14px; }
+  .conn-form input { width: 100%; margin-bottom: 8px; }
+  .conn-where { color: var(--muted); font-size: 11.5px; margin-bottom: 9px; }
+  .conn-err { color: #f87171; font-size: 12px; min-height: 0; margin-bottom: 8px; }
   .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
@@ -402,6 +417,7 @@
           <input id="agent-search" type="search" autocomplete="off"
                  placeholder="Search your agents" aria-label="Search agents">
         </div>
+        <button class="btn" type="button" id="open-connections">Connections</button>
         <button class="btn primary" type="button" id="new-agent">+ New agent</button>
       </div>
     </div>
@@ -462,13 +478,33 @@
     <div class="grid" id="my-agents"></div>
     <div class="empty" id="mine-empty" hidden>
       You have not made an agent yet. Give one a name and a few sentences about
-      what it should do.
+      what it should do, or start from one of these.
     </div>
 
-    <div class="section-head" id="platform-head" hidden>
-      <h2>Ready-made agents</h2>
+    <!-- Shown only when the person has none. The Ready-made section that used
+         to live here listed agents belonging to OTHER people: Open WebUI hands
+         admins every model whatever its grants, so five admins were looking at
+         nine users' private agents. Nothing is shared any more, so the only
+         honest thing to offer here is a starting point. -->
+    <div class="section-head" id="template-head" hidden>
+      <h2>Start from a template</h2>
     </div>
-    <div class="grid" id="platform-agents"></div>
+    <div class="grid" id="template-gallery"></div>
+
+    <!-- Connecting an app used to mean leaving for a chat window and finding
+         it in the plus menu. The tools an agent can use are decided here, so
+         this is where connecting them belongs. -->
+    <div class="modal-overlay" id="connections-overlay" hidden>
+      <div class="modal" id="connections-panel">
+        <h2>Connections</h2>
+        <div class="hint" style="margin-bottom:14px">Connect an app once and
+          every agent you own can use it, acting as your account.</div>
+        <div id="connections-list"></div>
+        <div class="form-actions" style="margin-top:18px">
+          <button class="btn" type="button" id="connections-close">Done</button>
+        </div>
+      </div>
+    </div>
 
     <div class="modal-overlay" id="agent-overlay" hidden>
       <div class="modal" id="agent-form">
@@ -508,7 +544,7 @@
   <script>
   (function () {
     var API = "/api/v1/models";
-    var state = { me: null, agents: [], models: [], query: "" };
+    var state = { me: null, email: null, agents: [], models: [], query: "" };
 
     function authHeaders() {
       var h = { "Content-Type": "application/json" };
@@ -691,16 +727,239 @@
               || instructionsOf(m).toLowerCase().indexOf(q) !== -1);
     }
 
+    // The starter agents, fetched once and only when they are needed.
+    var templateCache = null;
+
+    async function renderTemplates() {
+      var wrap = document.getElementById("template-gallery");
+      if (!wrap) return;
+      if (!templateCache) {
+        try {
+          var body = await getJson("/api/tasks/agents/templates");
+          templateCache = (body && body.templates) || [];
+        } catch (e) {
+          console.warn("[agents] could not load the templates", e);
+          templateCache = [];
+        }
+        // A second render must not stack a second copy of every card.
+        if (document.getElementById("template-head").hidden) return;
+      }
+      wrap.innerHTML = "";
+      templateCache.forEach(function (t) {
+        var hue = avatarHue(t.name);
+        var el = document.createElement("div");
+        el.className = "card";
+        el.setAttribute("data-template", t.slug);
+        el.innerHTML =
+          '<div class="card-head">' +
+            '<div class="avatar" style="background:linear-gradient(150deg,'
+              + "hsl(" + hue + " 58% 46%),hsl(" + ((hue + 26) % 360) + " 58% 34%))"
+              + '">' + esc(initials(t.name)) + "</div>" +
+            '<div class="card-heading">' +
+              '<div class="card-title">' + esc(t.name) + "</div>" +
+              '<div class="card-model">template</div>' +
+            "</div>" +
+          "</div>" +
+          '<div class="card-sys">' + esc(preview(t.instructions, 132)) + "</div>" +
+          '<div class="card-tools">'
+            + toolChips({ meta: { toolIds: t.tool_ids || [] } }) + "</div>" +
+          '<div class="card-foot">' +
+            '<button class="btn sm" type="button" data-use-template="'
+              + esc(t.slug) + '">Use this template</button>' +
+          "</div>";
+        wrap.appendChild(el);
+      });
+    }
+
+    // Opens the ordinary create form, filled in. Deliberately not a one click
+    // create: the person sees what they are about to make and can change it
+    // before anything is saved.
+    function useTemplate(slug) {
+      var t = (templateCache || []).filter(function (x) { return x.slug === slug; })[0];
+      if (!t) return;
+      openForm(null);
+      document.getElementById("agent-name").value = t.name;
+      var ta = document.getElementById("agent-instructions");
+      ta.value = t.instructions;
+      ta.dispatchEvent(new Event("input"));
+      var ids = t.tool_ids || [];
+      var proxy = document.getElementById("use-my-apps");
+      if (proxy && !proxy.disabled) {
+        proxy.checked = ids.indexOf("server:mcp-proxy") !== -1;
+      }
+      ids.forEach(function (id) {
+        var cb = document.getElementById("tool-" + id);
+        if (cb && !cb.disabled) cb.checked = true;
+      });
+    }
+
+    // Google is not one of the Connect Your Own App providers: Gmail,
+    // Calendar and Drive all come from a single OAuth grant on the mail
+    // service, so it gets its own row rather than one row per tool.
+    var GOOGLE_START = "/auth/google/start";
+
+    async function loadConnections() {
+      var list = document.getElementById("connections-list");
+      list.innerHTML = '<div class="hint">Loading your apps...</div>';
+
+      var google = { gmail: false, calendar: false, gdrive: false };
+      try {
+        var tb = await getJson("/api/tasks/agents/tools");
+        (tb.tools || []).forEach(function (t) {
+          if (t.id in google) google[t.id] = !!t.connected;
+        });
+      } catch (e) {
+        // Left as not connected. Wrongly saying "connect this" is a nudge;
+        // wrongly saying "connected" is a tool that fails when it runs.
+      }
+
+      var providers = [];
+      try {
+        var cb = await getJson("/api/tasks/connections");
+        providers = cb.connections || [];
+      } catch (e) {
+        console.warn("[agents] could not list connectable apps", e);
+      }
+
+      list.innerHTML = "";
+      var anyGoogle = google.gmail || google.calendar || google.gdrive;
+      list.appendChild(connRow({
+        provider: "__google__",
+        label: "Google",
+        sub: "Gmail, Calendar and Drive",
+        connected: anyGoogle
+      }));
+      providers.forEach(function (pr) {
+        list.appendChild(connRow({
+          provider: pr.provider,
+          label: pr.label || pr.provider,
+          sub: pr.account_label || "",
+          connected: !!pr.connected,
+          where: pr.where,
+          oauth: !!pr.oauth,
+          fields: pr.fields || []
+        }));
+      });
+    }
+
+    function connRow(pr) {
+      var row = document.createElement("div");
+      row.setAttribute("data-provider", pr.provider);
+      var head = document.createElement("div");
+      head.className = "conn-row";
+      head.innerHTML =
+        '<div class="conn-name">' + esc(pr.label)
+          + (pr.sub ? "<small>" + esc(pr.sub) + "</small>" : "") + "</div>" +
+        '<span class="conn-state' + (pr.connected ? " on" : "") + '">'
+          + (pr.connected ? "Connected" : "Not connected") + "</span>" +
+        '<button class="btn sm" type="button" data-conn="'
+          + esc(pr.provider) + '">'
+          + (pr.connected ? "Reconnect" : "Connect") + "</button>";
+      row.appendChild(head);
+      var body = document.createElement("div");
+      body.className = "conn-form";
+      body.hidden = true;
+      row.appendChild(body);
+      row._meta = pr;
+      return row;
+    }
+
+    function openConnForm(row) {
+      var pr = row._meta;
+      var body = row.querySelector(".conn-form");
+      if (!body.hidden) { body.hidden = true; return; }
+      body.hidden = false;
+
+      if (pr.provider === "__google__") {
+        // A redirect, not a form: Google's own consent screen does the asking.
+        var url = GOOGLE_START + "?user_email="
+                + encodeURIComponent(state.email || "");
+        window.open(url, "_blank", "noopener");
+        body.innerHTML = '<div class="conn-where">A Google window opened. '
+          + "Finish there, then press Done and your tools will be ready.</div>";
+        return;
+      }
+      if (pr.oauth) {
+        body.innerHTML = '<div class="conn-where">Opening ' + esc(pr.label)
+          + " to sign in...</div>";
+        getJson("/api/tasks/connections/" + encodeURIComponent(pr.provider)
+                + "/oauth/start")
+          .then(function (d) {
+            if (d && d.url) window.open(d.url, "_blank", "noopener");
+          })
+          .catch(function () {
+            body.innerHTML = '<div class="conn-err">Could not start sign in for '
+              + esc(pr.label) + ". Try again in a moment.</div>";
+          });
+        return;
+      }
+
+      var html = "";
+      if (pr.where) html += '<div class="conn-where">' + esc(pr.where) + "</div>";
+      html += '<div class="conn-err" hidden></div>';
+      pr.fields.forEach(function (f) {
+        html += '<input type="' + (f.secret ? "password" : "text")
+             + '" data-field="' + esc(f.name) + '" placeholder="'
+             + esc(f.placeholder || f.label || f.name) + '" autocomplete="off">';
+      });
+      html += '<button class="btn primary sm" type="button" data-conn-save="'
+           + esc(pr.provider) + '">Connect ' + esc(pr.label) + "</button>";
+      body.innerHTML = html;
+    }
+
+    async function saveConnection(row) {
+      var pr = row._meta;
+      var body = row.querySelector(".conn-form");
+      var err = body.querySelector(".conn-err");
+      var values = {};
+      body.querySelectorAll("[data-field]").forEach(function (i) {
+        values[i.getAttribute("data-field")] = i.value.trim();
+      });
+      var missing = Object.keys(values).filter(function (k) { return !values[k]; });
+      if (missing.length) {
+        err.hidden = false;
+        err.textContent = "Fill in every field first.";
+        return;
+      }
+      err.hidden = true;
+      var btn = body.querySelector("[data-conn-save]");
+      if (btn) { btn.disabled = true; btn.textContent = "Checking..."; }
+      try {
+        var r = await fetch("/api/tasks/connections/"
+                            + encodeURIComponent(pr.provider), {
+          method: "POST", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify(values)
+        });
+        var d = await r.json().catch(function () { return {}; });
+        if (!r.ok || d.ok === false) {
+          err.hidden = false;
+          // The server checks the credential with the vendor before storing
+          // it, so its answer is worth showing: it is the difference between
+          // a typo and a key that is real but lacks the right scope.
+          err.textContent = d.error
+            || "That did not work. Check the value and try again.";
+          if (btn) { btn.disabled = false; btn.textContent = "Connect " + pr.label; }
+          return;
+        }
+        await loadConnections();
+        // What they just connected changes what the agent form may offer.
+        await loadTools();
+      } catch (e) {
+        err.hidden = false;
+        err.textContent = "Could not reach the server. Try again in a moment.";
+        if (btn) { btn.disabled = false; btn.textContent = "Connect " + pr.label; }
+      }
+    }
+
     function render() {
       var mineWrap = document.getElementById("my-agents");
-      var platWrap = document.getElementById("platform-agents");
       mineWrap.innerHTML = "";
-      platWrap.innerHTML = "";
       var visible = state.agents.filter(matchesQuery);
+      // Yours and nothing else. An admin's listing includes every user's
+      // agents whatever their grants, and those are private to their owner.
       var mine = visible.filter(function (m) { return m.user_id === state.me; });
-      var others = visible.filter(function (m) { return m.user_id !== state.me; });
+      var others = [];
       mine.forEach(function (m) { mineWrap.appendChild(card(m, true)); });
-      others.forEach(function (m) { platWrap.appendChild(card(m, false)); });
       var ownedTotal = state.agents.filter(
         function (m) { return m.user_id === state.me; }).length;
       var searching = !!(state.query || "").trim();
@@ -716,7 +975,12 @@
       document.getElementById("mine-empty").hidden = searching || ownedTotal > 0;
       document.getElementById("no-match").hidden =
         !searching || (mine.length + others.length) > 0;
-      document.getElementById("platform-head").hidden = others.length === 0;
+      // The way back after deleting everything. Offered only when there is
+      // nothing to show, so it never competes with the agents you have.
+      var showTemplates = !searching && ownedTotal === 0;
+      document.getElementById("template-head").hidden = !showTemplates;
+      document.getElementById("template-gallery").hidden = !showTemplates;
+      if (showTemplates) renderTemplates();
     }
 
     // FastAPI answers errors with JSON too, so .json() alone succeeds on a 401
@@ -743,6 +1007,8 @@
       try {
         var who = await getJson("/api/v1/auths/");
         state.me = who && who.id;
+        // The Google connect flow is keyed by email, not by id.
+        state.email = who && who.email;
         // Without an identity every agent you own looks like somebody else's,
         // so a wrong page is worse than an error.
         if (!state.me) throw new Error("no identity");
@@ -1193,7 +1459,41 @@
         }
       }
 
+      var connOverlay = document.getElementById("connections-overlay");
+      document.getElementById("open-connections").addEventListener(
+        "click", function () {
+          connOverlay.hidden = false;
+          loadConnections();
+        });
+      document.getElementById("connections-close").addEventListener(
+        "click", function () {
+          connOverlay.hidden = true;
+          // Whatever they just connected should be selectable straight away.
+          loadTools();
+        });
+      connOverlay.addEventListener("click", function (ev) {
+        if (ev.target === connOverlay) {
+          connOverlay.hidden = true;
+          loadTools();
+        }
+      });
+
       document.body.addEventListener("click", function (ev) {
+        var connBtn = ev.target.closest("[data-conn]");
+        if (connBtn) {
+          openConnForm(connBtn.closest("[data-provider]"));
+          return;
+        }
+        var saveBtn = ev.target.closest("[data-conn-save]");
+        if (saveBtn) {
+          saveConnection(saveBtn.closest("[data-provider]"));
+          return;
+        }
+        var tpl = ev.target.closest("[data-use-template]");
+        if (tpl) {
+          useTemplate(tpl.getAttribute("data-use-template"));
+          return;
+        }
         var btn = ev.target.closest("[data-act]");
         // A click anywhere else closes an open overflow, which is the whole
         // reason this runs before the early return.
