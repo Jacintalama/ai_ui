@@ -60,7 +60,10 @@ async def test_a_newly_installed_tool_appears_without_a_code_change():
                       new=AsyncMock(return_value=set())):
         out = await routes_agents.tools_for_email("x@example.com")
 
-    assert [t["id"] for t in out["tools"]] == ["brand_new_tool"]
+    # Present, not necessarily alone: the connected apps umbrella is always
+    # appended and is not a row in public.tool.
+    ids = [t["id"] for t in out["tools"]]
+    assert "brand_new_tool" in ids, ids
     assert out["tools"][0]["label"], "it had no label to show"
 
 
@@ -73,3 +76,32 @@ async def test_the_connected_apps_umbrella_follows_user_connections():
 
     umbrella = [t for t in out["tools"] if t["id"] == "server:mcp-proxy"]
     assert umbrella and umbrella[0]["connected"] is True
+
+
+async def test_the_umbrella_is_offered_even_with_nothing_connected():
+    """It used to appear only once a proxy app was connected, so on a platform
+    where nobody has connected one it vanished from the form. The starter
+    agent Scout uses this exact tool, and a form that never renders its
+    checkbox saves the agent without it."""
+    with patch.object(routes_agents, "_installed_tool_ids",
+                      new=AsyncMock(return_value=[])), \
+         patch.object(routes_agents, "_connected_providers",
+                      new=AsyncMock(return_value=set())):
+        out = await routes_agents.tools_for_email("nobody@example.com")
+
+    umbrella = [t for t in out["tools"] if t["id"] == "server:mcp-proxy"]
+    assert umbrella, "the connected apps tool was not offered at all"
+    assert umbrella[0]["connected"] is False
+    assert umbrella[0]["connect_url"], "it offered no way to connect one"
+
+
+async def test_google_tokens_alone_do_not_light_up_the_umbrella():
+    """Gmail is not a Connect Your Own App provider."""
+    with patch.object(routes_agents, "_installed_tool_ids",
+                      new=AsyncMock(return_value=[])), \
+         patch.object(routes_agents, "_connected_providers",
+                      new=AsyncMock(return_value={"gmail", "calendar", "gdrive"})):
+        out = await routes_agents.tools_for_email("ralph@example.com")
+
+    umbrella = [t for t in out["tools"] if t["id"] == "server:mcp-proxy"][0]
+    assert umbrella["connected"] is False
