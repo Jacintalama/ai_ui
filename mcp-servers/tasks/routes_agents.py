@@ -20,10 +20,11 @@ import os
 import uuid
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
+from auth import CurrentUser, current_user
 from owui_token import mint_owui_token
 
 logger = logging.getLogger(__name__)
@@ -199,3 +200,167 @@ async def seed(x_cron_secret: str = Header(default=""),
     if not x_user_email:
         raise HTTPException(status_code=400, detail="Missing X-User-Email")
     return await seed_for_email(x_user_email)
+
+
+# ---------------------------------------------------------------------------
+# What this person can actually use.
+#
+# The form used to offer a hardcoded list of 7 tools to every account. Nine
+# users could tick the Gmail box; one of them had a Gmail token. For the
+# other eight, checking it did nothing -- the box lied. Everything below
+# answers, per person, what would really work.
+# ---------------------------------------------------------------------------
+
+#: Fallback labels for the tools the platform ships with today, matching the
+#: names already shown on the agent form (static/agents.html). A tool with
+#: no entry here falls back to its own `name` column -- see _label_for.
+_LABELS = {
+    "server:mcp-proxy": "Your connected apps",
+    "gmail": "Gmail",
+    "calendar": "Calendar",
+    "gdrive": "Drive",
+    "documents": "Documents",
+    "excel_creator": "Excel",
+    "executive_dashboard": "Dashboard",
+    "remember": "Memory",
+}
+
+#: Native tool id -> the public table that proves THIS user connected it.
+#: Every other native tool (documents, excel_creator, executive_dashboard,
+#: remember) needs nothing and is always available.
+_TOKEN_TABLES = {
+    "gmail": "gmail_tokens",
+    "calendar": "calendar_tokens",
+    "gdrive": "gdrive_tokens",
+}
+
+#: Where every connection in this module is made -- gmail/calendar/gdrive and
+#: the Connect Your Own App providers behind server:mcp-proxy alike.
+CONNECT_URL = "/tasks/static/connections.html"
+
+#: id -> public.tool.name, refreshed by the most recent real call to
+#: _installed_tool_ids. A test that mocks _installed_tool_ids leaves this
+#: empty, which is exactly why _label_for still has to cope with an id that
+#: is in neither this nor _LABELS.
+_tool_names: dict = {}
+
+
+async def _installed_tool_ids() -> list:
+    """Every tool id installed on this platform, from public.tool.
+
+    Not a hardcoded array: a tool an admin installs later must show up here
+    on its own, with no code change to this module. Ordered by id so the
+    list is stable across requests.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(_database_url())
+    try:
+        rows = await conn.fetch("SELECT id, name FROM public.tool ORDER BY id")
+    finally:
+        await conn.close()
+    _tool_names.update({r["id"]: r["name"] for r in rows if r["name"]})
+    return [r["id"] for r in rows]
+
+
+async def _connected_providers(email: str) -> set:
+    """Everything `email` has connected right now, by provider id.
+
+    One connection, one query, covering the three token tables plus
+    tasks.user_connections in a single UNION ALL, every branch scoped to
+    `email` in the same WHERE clause -- there is no branch here a caller
+    could leave unscoped, only whether the whole query is asked for the
+    right person.
+
+    Fails toward "nothing connected" on any read error, never toward
+    "connected": a tool wrongly reported as unconnected is a nag the user
+    can click through; a tool wrongly reported as connected is one an agent
+    will pick and then fail to actually run.
+    """
+    import asyncpg
+
+    query = """
+        SELECT 'gmail' AS provider
+          FROM public.gmail_tokens WHERE user_email = $1
+        UNION ALL
+        SELECT 'calendar'
+          FROM public.calendar_tokens WHERE user_email = $1
+        UNION ALL
+        SELECT 'gdrive'
+          FROM public.gdrive_tokens WHERE user_email = $1
+        UNION ALL
+        SELECT provider
+          FROM tasks.user_connections WHERE email = $1
+    """
+    try:
+        conn = await asyncpg.connect(_database_url())
+    except Exception:
+        logger.warning("could not reach the database to read connection state")
+        return set()
+    try:
+        rows = await conn.fetch(query, email)
+    except Exception:
+        logger.warning("could not read connection state", exc_info=True)
+        return set()
+    finally:
+        await conn.close()
+    return {r["provider"] for r in rows}
+
+
+def _label_for(tool_id: str) -> str:
+    """A human label for `tool_id`: the map above, then its own DB name,
+    then the bare id -- always something, never empty."""
+    return _LABELS.get(tool_id) or _tool_names.get(tool_id) or tool_id
+
+
+async def tools_for_email(email: str) -> dict:
+    """Every tool the agent form may offer `email`, and whether ticking it
+    would actually do anything right now.
+
+    Never raises: a broken read here must not stop the Agents page from
+    loading. Both halves fail toward the emptiest honest answer -- no tools,
+    nothing connected -- rather than guessing a tool is ready when it might
+    not be.
+    """
+    try:
+        installed = await _installed_tool_ids()
+    except Exception:
+        logger.warning("could not list installed tools", exc_info=True)
+        installed = []
+
+    try:
+        connected = await _connected_providers(email)
+    except Exception:
+        logger.warning("could not read connection state", exc_info=True)
+        connected = set()
+
+    tools = []
+    for tool_id in installed:
+        needs_connection = tool_id in _TOKEN_TABLES
+        tools.append({
+            "id": tool_id,
+            "label": _label_for(tool_id),
+            "connected": (tool_id in connected) if needs_connection else True,
+            "connect_url": CONNECT_URL if needs_connection else None,
+        })
+
+    # server:mcp-proxy is not a row in public.tool: it fronts whatever the
+    # user connected under Connect Your Own App (ClickUp, Trello, GitHub,
+    # Notion, n8n). Offered only once something is actually behind it --
+    # otherwise it is a checkbox that ticks and does nothing, the exact
+    # failure this endpoint exists to stop.
+    if connected - set(_TOKEN_TABLES):
+        tools.append({
+            "id": "server:mcp-proxy",
+            "label": _LABELS["server:mcp-proxy"],
+            "connected": True,
+            "connect_url": CONNECT_URL,
+        })
+
+    return {"tools": tools}
+
+
+@router.get("/tools")
+async def list_tools(user: CurrentUser = Depends(current_user)) -> dict:
+    """What the agent form may offer the signed-in caller right now."""
+    return await tools_for_email(user.email)
