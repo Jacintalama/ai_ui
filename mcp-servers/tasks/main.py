@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from db import init_db
+from routes_agents import router as agents_router
 from routes_aiuibuilder import router as aiuibuilder_router
 from routes_chat_history import router as chat_history_router
 from routes_cron import router as cron_router
@@ -122,6 +123,8 @@ app.include_router(schedules_router)  # /schedules — operator path (X-Cron-Sec
 # Also mount at /api/tasks/schedules so end-users can reach it via the gateway
 # (gateway routes /api/tasks/* and injects X-User-Email from validated JWT).
 app.include_router(schedules_router, prefix="/api/tasks")
+app.include_router(agents_router)  # /agents, operator path
+app.include_router(agents_router, prefix="/api/tasks")  # /api/tasks/agents, web path
 app.include_router(discord_links_router)  # /discord-links — system path (X-Internal-Secret)
 app.include_router(gateway_router)  # /gateway, internal only (X-Internal-Secret).
                                     # Deliberately NOT mounted under /tasks: these
