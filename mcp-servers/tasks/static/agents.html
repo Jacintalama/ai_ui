@@ -142,6 +142,56 @@
   }
   .tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
+  .card { padding: 18px 18px 14px; border-radius: var(--radius-lg); }
+  .card-head { align-items: center; gap: 12px; }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 10px; flex: 0 0 38px;
+    font-size: 12.5px; font-weight: 700; letter-spacing: 0.3px;
+  }
+  .card-heading { gap: 2px; flex: 1; }
+  .card-title { font-size: 15px; font-weight: 650; letter-spacing: -0.1px; }
+  /* The model an agent thinks with is the second thing you want to know and
+     the card never showed it. Quiet, because it is reference, not identity. */
+  .card-model { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .card-sys {
+    color: var(--text-2); font-size: 13px; line-height: 1.62;
+    margin-top: 13px; min-height: 63px;
+  }
+  /* Tools as icons. Seven text pills wrapped onto three lines and read as
+     disabled buttons; a row of glyphs reads as capability at a glance. */
+  .card-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+                margin-top: 14px; min-height: 26px; }
+  .card-tools .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 7px;
+  }
+  .card-tools .chip svg { width: 13px; height: 13px; color: var(--muted); flex: 0 0 13px; }
+  .card-tools .chip.more, .card-tools .chip.none { color: var(--muted); }
+  .card-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: auto; padding-top: 13px; border-top: 1px solid var(--border);
+  }
+  .card-tools { margin-bottom: 15px; }
+  /* Delete used to sit flush beside Edit at the same weight. A destructive
+     action does not belong next to the one people click every day. */
+  .more-wrap { position: relative; }
+  .more-btn {
+    width: 28px; height: 28px; border-radius: 7px; border: 1px solid transparent;
+    background: none; color: var(--muted); cursor: pointer; font-size: 15px;
+    line-height: 1; display: grid; place-items: center;
+  }
+  .more-btn:hover { background: var(--surface-2); border-color: var(--border-2); color: var(--text-2); }
+  .more-menu {
+    position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 20;
+    background: var(--surface-2); border: 1px solid var(--border-2);
+    border-radius: 9px; padding: 5px; min-width: 132px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.5);
+  }
+  .more-menu button {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    color: #f87171; font: inherit; font-size: 12.5px; padding: 7px 9px;
+    border-radius: 6px; cursor: pointer;
+  }
+  .more-menu button:hover { background: rgba(248,113,113,0.10); }
   .card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
   .chip {
     font-size: 11px; padding: 3px 8px; border-radius: 999px;
@@ -173,7 +223,7 @@
     .skeleton { animation: none; }
   }
   .sk-head { display: flex; align-items: center; gap: 11px; }
-  .sk-avatar { width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0; }
+  .sk-avatar { width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0; }
   .sk-line { height: 11px; margin-top: 9px; }
   .sk-chips { display: flex; gap: 6px; margin-top: 14px; }
   .sk-chip { height: 20px; width: 76px; border-radius: 999px; }
@@ -186,7 +236,12 @@
   /* No align-items: start. Cards in a row stretch to match, which is what
      lets card-actions sit on the bottom edge instead of floating wherever the
      instructions happened to end. */
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  /* Two per row on a normal screen, three only when there is genuinely room.
+     The old rule was minmax(320px) inside a 1640px wrap, which built five
+     columns, so a person with two agents saw two cards and three holes. */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+          gap: 16px; max-width: 792px; }
+  @media (min-width: 1800px) { .grid { max-width: 1188px; } }
   .card-title { font-size: 14px; font-weight: 650; margin-bottom: 6px; }
   /* The clamp is a backstop only. preview() already cuts on a word boundary
      at a length that fits three lines, so the browser ellipsis, which cuts
@@ -225,13 +280,55 @@
     font-family: inherit; }
   .modal textarea { resize: vertical; line-height: 1.55; }
   .hint { color: var(--muted); font-size: 11px; margin-top: 5px; }
-  .switch { display: flex; align-items: center; gap: 9px; margin-top: 16px; }
-  .switch input { width: auto; }
-  .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr));
+  .switch { display: flex; align-items: center; gap: 9px; margin-top: 16px;
+            cursor: pointer; }
+  .switch input[type=checkbox] {
+    appearance: none; -webkit-appearance: none;
+    width: 15px; height: 15px; flex: 0 0 15px; margin: 0; cursor: pointer;
+    border: 1px solid var(--border-2); border-radius: 4px;
+    background: var(--surface-2); position: relative;
+  }
+  .switch input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  .switch input[type=checkbox]:checked::after {
+    content: ""; position: absolute; left: 4.5px; top: 1.5px;
+    width: 4px; height: 8px; border: solid #0a0a0b;
+    border-width: 0 2px 2px 0; transform: rotate(42deg);
+  }
+  .switch span { font-size: 13px; }
+  /* Seven bare checkboxes in three columns were the least confident thing on
+     the page, and the tools are the most interesting thing an agent has.
+     Tiles, with the same glyphs the card shows, so the two views agree.
+     The real input stays visible and clickable: Playwright drives it by id. */
+  .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px,1fr));
            gap: 8px; margin-top: 14px; }
-  .tools label { display: flex; align-items: center; gap: 7px; margin: 0;
-                 font-size: 12.5px; color: var(--text); }
-  .form-error { color: #f87171; font-size: 12.5px; min-height: 18px; margin-top: 14px; }
+  .tools label {
+    display: flex; align-items: center; gap: 9px; margin: 0; cursor: pointer;
+    font-size: 12.5px; color: var(--text-2); padding: 9px 11px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 9px; transition: border-color 0.12s, color 0.12s, background 0.12s;
+  }
+  .tools label:hover { border-color: var(--border-2); color: var(--text); }
+  .tools label:has(input:checked) {
+    border-color: var(--accent); color: var(--text);
+    background: rgba(124,140,255,0.08);
+  }
+  .tools label svg { width: 15px; height: 15px; flex: 0 0 15px; color: var(--muted); }
+  .tools label:has(input:checked) svg { color: var(--accent); }
+  .tools label .tool-name { flex: 1; }
+  .tools input[type=checkbox] {
+    appearance: none; -webkit-appearance: none;
+    width: 15px; height: 15px; flex: 0 0 15px; margin: 0; cursor: pointer;
+    border: 1px solid var(--border-2); border-radius: 4px;
+    background: var(--surface); position: relative;
+  }
+  .tools input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
+  .tools input[type=checkbox]:checked::after {
+    content: ""; position: absolute; left: 4.5px; top: 1.5px;
+    width: 4px; height: 8px; border: solid #0a0a0b;
+    border-width: 0 2px 2px 0; transform: rotate(42deg);
+  }
+  .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
+  .form-error:empty { margin-top: 0; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
 </style>
 </head>
@@ -295,40 +392,49 @@
         <div class="card" aria-hidden="true">
           <div class="sk-head">
             <span class="skeleton sk-avatar"></span>
-            <span class="skeleton sk-line" style="width:120px;margin:0"></span>
+            <div style="flex:1">
+              <span class="skeleton sk-line" style="width:118px;margin:0 0 6px"></span>
+              <span class="skeleton sk-line" style="width:74px;height:9px;margin:0"></span>
+            </div>
           </div>
           <span class="skeleton sk-line" style="width:96%"></span>
-          <span class="skeleton sk-line" style="width:88%"></span>
-          <span class="skeleton sk-line" style="width:64%"></span>
+          <span class="skeleton sk-line" style="width:72%"></span>
           <div class="sk-chips">
-            <span class="skeleton sk-chip"></span>
-            <span class="skeleton sk-chip" style="width:58px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
           </div>
         </div>
         <div class="card" aria-hidden="true">
           <div class="sk-head">
             <span class="skeleton sk-avatar"></span>
-            <span class="skeleton sk-line" style="width:120px;margin:0"></span>
+            <div style="flex:1">
+              <span class="skeleton sk-line" style="width:118px;margin:0 0 6px"></span>
+              <span class="skeleton sk-line" style="width:74px;height:9px;margin:0"></span>
+            </div>
           </div>
           <span class="skeleton sk-line" style="width:96%"></span>
-          <span class="skeleton sk-line" style="width:88%"></span>
-          <span class="skeleton sk-line" style="width:64%"></span>
+          <span class="skeleton sk-line" style="width:72%"></span>
           <div class="sk-chips">
-            <span class="skeleton sk-chip"></span>
-            <span class="skeleton sk-chip" style="width:58px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
           </div>
         </div>
         <div class="card" aria-hidden="true">
           <div class="sk-head">
             <span class="skeleton sk-avatar"></span>
-            <span class="skeleton sk-line" style="width:120px;margin:0"></span>
+            <div style="flex:1">
+              <span class="skeleton sk-line" style="width:118px;margin:0 0 6px"></span>
+              <span class="skeleton sk-line" style="width:74px;height:9px;margin:0"></span>
+            </div>
           </div>
           <span class="skeleton sk-line" style="width:96%"></span>
-          <span class="skeleton sk-line" style="width:88%"></span>
-          <span class="skeleton sk-line" style="width:64%"></span>
+          <span class="skeleton sk-line" style="width:72%"></span>
           <div class="sk-chips">
-            <span class="skeleton sk-chip"></span>
-            <span class="skeleton sk-chip" style="width:58px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
+            <span class="skeleton sk-chip" style="width:26px;height:26px;border-radius:7px"></span>
           </div>
         </div>
     </div>
@@ -443,6 +549,38 @@
       return cut.replace(/[,.;:]+$/, "") + "\u2026";
     }
 
+    // One glyph per tool, drawn inline so the page stays self contained and
+    // the card and the form show the SAME mark for the same capability.
+    var TOOL_ICONS = {
+      "server:mcp-proxy": '<path d="M9 2v5M15 2v5M5 7h14v4a7 7 0 0 1-14 0z"/><path d="M12 18v4"/>',
+      gmail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 7 10-7"/>',
+      calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+      gdrive: '<path d="M3 7a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+      documents: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+      excel_creator: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/>',
+      executive_dashboard: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+      remember: '<path d="M12 3a4 4 0 0 0-4 4 3 3 0 0 0-1 5.8V15a4 4 0 0 0 8 0v-2.2A3 3 0 0 0 16 7a4 4 0 0 0-4-4z"/>'
+    };
+
+    function toolIcon(id) {
+      var d = TOOL_ICONS[id];
+      if (!d) return "";
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+           + 'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'
+           + d + "</svg>";
+    }
+
+    // Every avatar being the same indigo made SC and TR tell apart only by
+    // their two letters. A hue derived from the name gives each agent a mark
+    // you recognise before you have read anything.
+    function avatarHue(name) {
+      var h = 0, str = String(name || "");
+      for (var i = 0; i < str.length; i++) {
+        h = (h * 31 + str.charCodeAt(i)) % 360;
+      }
+      return h;
+    }
+
     var TOOL_LABELS = {
       "server:mcp-proxy": "Your connected apps",
       gmail: "Gmail", calendar: "Calendar", gdrive: "Drive",
@@ -453,12 +591,15 @@
     function toolChips(m) {
       var ids = (m.meta && m.meta.toolIds) || [];
       if (!ids.length) return '<span class="chip none">No tools</span>';
+      // Glyph AND name. An icon on its own looks tidier, but this card exists
+      // to say what the agent can reach, and a bare envelope does not say it.
       var out = "";
-      for (var i = 0; i < ids.length && i < 6; i++) {
-        out += '<span class="chip">' + esc(TOOL_LABELS[ids[i]] || ids[i]) + "</span>";
+      for (var i = 0; i < ids.length && i < 3; i++) {
+        out += '<span class="chip">' + toolIcon(ids[i])
+             + "<span>" + esc(TOOL_LABELS[ids[i]] || ids[i]) + "</span></span>";
       }
-      if (ids.length > 6) {
-        out += '<span class="chip">+' + (ids.length - 6) + " more</span>";
+      if (ids.length > 3) {
+        out += '<span class="chip more">+' + (ids.length - 3) + " more</span>";
       }
       return out;
     }
@@ -472,24 +613,38 @@
       // its card would be a blank rectangle.
       var sys = instructionsOf(m);
       var shared = isShared(m);
+      var hue = avatarHue(m.name);
+      var model = m.base_model_id || "";
       el.innerHTML =
         '<div class="card-head">' +
-          '<div class="avatar">' + esc(initials(m.name)) + "</div>" +
+          '<div class="avatar" style="background:linear-gradient(150deg,'
+            + "hsl(" + hue + " 58% 46%),hsl(" + ((hue + 26) % 360) + " 58% 34%))"
+            + '">' + esc(initials(m.name)) + "</div>" +
           '<div class="card-heading">' +
             // Only the name goes in here. A test asserts this text equals the
             // agent's name exactly, and it is also the XSS surface.
             '<div class="card-title">' + esc(m.name) + "</div>" +
-            (shared
-              ? '<span class="tag"><span class="dot"></span>Shared with everyone</span>'
-              : "") +
+            (model ? '<div class="card-model">' + esc(model) + "</div>" : "") +
           "</div>" +
+          (shared
+            ? '<span class="tag"><span class="dot"></span>Shared with everyone</span>'
+            : "") +
         "</div>" +
-        '<div class="card-sys">' + esc(preview(sys, 150)) + "</div>" +
-        '<div class="card-meta">' + toolChips(m) + "</div>" +
-        '<div class="card-actions">' +
+        '<div class="card-sys">' + esc(preview(sys, 132)) + "</div>" +
+        '<div class="card-tools">' + toolChips(m) + "</div>" +
+        '<div class="card-foot">' +
         (mine
           ? '<button class="btn sm" type="button" data-act="edit">Edit</button>' +
-            '<button class="btn sm quiet-danger" type="button" data-act="delete">Delete</button>'
+            // Delete lives behind the overflow rather than flush beside Edit.
+            // It stays in the DOM either way, which is what the platform-agent
+            // test counts.
+            '<div class="more-wrap">' +
+              '<button class="more-btn" type="button" data-act="more" '
+                + 'aria-label="More actions" aria-haspopup="true">···</button>' +
+              '<div class="more-menu" hidden>' +
+                '<button type="button" data-act="delete">Delete agent</button>' +
+              "</div>" +
+            "</div>"
           : '<button class="btn sm" type="button" data-act="duplicate">Duplicate to my own</button>') +
         "</div>";
       return el;
@@ -887,8 +1042,11 @@
       var wrap = document.getElementById("native-tools");
       NATIVE_TOOLS.forEach(function (t) {
         var l = document.createElement("label");
-        l.innerHTML = '<input type="checkbox" id="tool-' + t[0] + '"><span>'
-          + t[1] + "</span>";
+        // Same glyph the card uses for this tool, so picking one here and
+        // recognising it on the card are the same act of reading.
+        l.innerHTML = '<input type="checkbox" id="tool-' + t[0] + '">'
+          + toolIcon(t[0])
+          + '<span class="tool-name">' + t[1] + "</span>";
         wrap.appendChild(l);
       });
       document.getElementById("new-agent").addEventListener("click", function () {
@@ -905,16 +1063,38 @@
         });
 
       // Delegated, because cards are re-rendered on every load.
+      function closeMenus(except) {
+        var open = document.querySelectorAll(".more-menu");
+        for (var i = 0; i < open.length; i++) {
+          if (open[i] !== except) open[i].hidden = true;
+        }
+      }
+
       document.body.addEventListener("click", function (ev) {
         var btn = ev.target.closest("[data-act]");
+        // A click anywhere else closes an open overflow, which is the whole
+        // reason this runs before the early return.
+        if (!btn || btn.dataset.act !== "more") closeMenus(null);
         if (!btn) return;
         var host = btn.closest("[data-agent-id]");
         if (!host) return;
         var agent = agentById(host.getAttribute("data-agent-id"));
         if (!agent) return;
+        if (btn.dataset.act === "more") {
+          var menu = btn.parentNode.querySelector(".more-menu");
+          var wasOpen = !menu.hidden;
+          closeMenus(menu);
+          menu.hidden = wasOpen;
+          return;
+        }
         if (btn.dataset.act === "edit") openForm(agent);
-        else if (btn.dataset.act === "delete") removeAgent(agent);
+        else if (btn.dataset.act === "delete") { closeMenus(null); removeAgent(agent); }
         else if (btn.dataset.act === "duplicate") duplicate(agent);
+      });
+
+      // Escape closes the overflow, same as clicking away.
+      document.addEventListener("keydown", function (ev) {
+        if (ev.key === "Escape") closeMenus(null);
       });
     })();
 

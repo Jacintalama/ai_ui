@@ -411,6 +411,7 @@ def test_edit_keeps_the_same_id(page):
 
 def test_delete_asks_first(page):
     page.on("dialog", lambda d: d.dismiss())
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="more"]').click()
     page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="delete"]').click()
     page.wait_for_timeout(300)
     assert page.sent == [], "it deleted without asking"
@@ -421,6 +422,7 @@ def test_delete_sends_the_id(page):
     proved against the live API; a body-only delete was never verified, and a
     stub would accept either."""
     page.on("dialog", lambda d: d.accept())
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="more"]').click()
     page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="delete"]').click()
     page.wait_for_timeout(300)
     sent = page.sent[-1]
@@ -431,6 +433,7 @@ def test_delete_sends_the_id(page):
 
 def test_deleting_one_agent_does_not_touch_another(page):
     page.on("dialog", lambda d: d.accept())
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="more"]').click()
     page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="delete"]').click()
     page.wait_for_timeout(300)
     assert "agent-shared-c3d4" not in page.sent[-1]["url"]
@@ -510,6 +513,7 @@ def test_delete_targets_the_agent_whose_button_was_clicked(page):
     """With one owned agent, "delete the clicked agent" and "delete the first
     agent" look identical. This deletes the SECOND one."""
     page.on("dialog", lambda d: d.accept())
+    page.locator('[data-agent-id="agent-mine-second-c5d6"] [data-act="more"]').click()
     page.locator('[data-agent-id="agent-mine-second-c5d6"] [data-act="delete"]').click()
     page.wait_for_timeout(300)
     sent = page.sent[-1]
@@ -521,6 +525,7 @@ def test_the_confirm_names_the_agent_being_deleted(page):
     """A confirm naming the wrong agent is worse than none: it invites a yes."""
     seen = []
     page.on("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+    page.locator('[data-agent-id="agent-mine-second-c5d6"] [data-act="more"]').click()
     page.locator('[data-agent-id="agent-mine-second-c5d6"] [data-act="delete"]').click()
     page.wait_for_timeout(300)
     assert seen and "Secondagent" in seen[0]
