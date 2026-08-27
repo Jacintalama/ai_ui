@@ -327,6 +327,22 @@
     width: 4px; height: 8px; border: solid #0a0a0b;
     border-width: 0 2px 2px 0; transform: rotate(42deg);
   }
+  .tools input[type=checkbox]:disabled { cursor: not-allowed; opacity: 0.55; }
+  /* A tool the person has not connected yet: same tile, read as unavailable
+     with the muted token already used elsewhere on this page, plus a way to
+     fix it. Wins over :has(input:checked) below it in source order, so a
+     tool that was picked before it got disconnected still reads as muted. */
+  .tools label.not-connected,
+  .tools label.not-connected:hover,
+  .tools label.not-connected:has(input:checked) {
+    cursor: not-allowed; color: var(--muted);
+    border-color: var(--border); background: var(--surface-2);
+  }
+  .tools label.not-connected svg { color: var(--muted); }
+  .tools label .tool-connect {
+    color: var(--muted); font-size: 11px; text-decoration: underline;
+  }
+  .tools label .tool-connect:hover { color: var(--text); }
   .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
@@ -495,6 +511,20 @@
       var t = localStorage.getItem("token");
       if (t) h["Authorization"] = "Bearer " + t;
       return h;
+    }
+
+    // Gives a new user their own copies of the starter agent templates, once
+    // -- a no-op for anyone who already has theirs. Whatever it answers, or
+    // even if the request fails outright, this person must still see
+    // whatever agents they already have, so a failure here is swallowed
+    // rather than surfaced: it must never block or error the page.
+    async function seed() {
+      try {
+        await fetch("/api/tasks/agents/seed",
+          { method: "POST", headers: authHeaders(), credentials: "include" });
+      } catch (e) {
+        console.warn("[agents] could not seed starter agents", e);
+      }
     }
 
     // Escapes the five characters that matter inside an element and inside a
@@ -766,11 +796,68 @@
     // tests stub the API and a stub accepts any string it is handed: these
     // seven ids are exactly the rows in the tool table, and the proxy really is
     // reported as "server:mcp-proxy".
+    //
+    // This is now only the FALLBACK, used when GET /api/tasks/agents/tools
+    // fails outright or answers something unusable, so the form still works
+    // with everything enabled rather than showing nothing at all. On a
+    // normal load, loadTools() below replaces this with what the endpoint
+    // actually reports for this person -- id and label, same shape -- so
+    // chosenTools(), openForm() and duplicate() keep reading it unchanged.
     var NATIVE_TOOLS = [
       ["gmail", "Gmail"], ["calendar", "Calendar"], ["gdrive", "Drive"],
       ["documents", "Documents"], ["excel_creator", "Excel"],
       ["executive_dashboard", "Dashboard"], ["remember", "Memory"]
     ];
+
+    // One tile per tool, built fresh every time. A tile for a tool the person
+    // has not connected is disabled and offers a Connect link instead of
+    // pretending the checkbox would do anything.
+    function renderToolTiles(tools) {
+      var wrap = document.getElementById("native-tools");
+      wrap.innerHTML = "";
+      tools.forEach(function (t) {
+        var l = document.createElement("label");
+        if (!t.connected) l.classList.add("not-connected");
+        l.innerHTML = '<input type="checkbox" id="tool-' + esc(t.id) + '"'
+          + (t.connected ? "" : " disabled") + ">"
+          + toolIcon(t.id)
+          + '<span class="tool-name">' + esc(t.label) + "</span>"
+          + (t.connected ? "" :
+             ' <a class="tool-connect" href="' + esc(t.connect_url || "#") +
+             '" target="_blank" rel="noopener">Connect</a>');
+        wrap.appendChild(l);
+      });
+    }
+
+    // What the form may offer this person, read fresh on every load so a
+    // tool they connected (or lost) since their last visit is reflected
+    // immediately. Never blocks the page: an unreachable or malformed answer
+    // falls back to the native tools, all enabled, same as before this
+    // endpoint existed.
+    async function loadTools() {
+      var tools = null;
+      try {
+        var r = await fetch("/api/tasks/agents/tools",
+          { headers: authHeaders(), credentials: "include" });
+        if (r.ok) {
+          var body = await r.json();
+          if (body && Array.isArray(body.tools)) tools = body.tools;
+        }
+      } catch (e) {
+        console.warn("[agents] could not load which tools are connected", e);
+      }
+      if (tools) {
+        // server:mcp-proxy is offered through the "Let this agent use my
+        // connected apps" switch above, not as a tile of its own.
+        tools = tools.filter(function (t) { return t.id !== "server:mcp-proxy"; });
+        renderToolTiles(tools);
+        NATIVE_TOOLS = tools.map(function (t) { return [t.id, t.label]; });
+      } else {
+        renderToolTiles(NATIVE_TOOLS.map(function (t) {
+          return { id: t[0], label: t[1], connected: true, connect_url: null };
+        }));
+      }
+    }
     // Matched against the words of a chat message, so it has to be a single
     // plain word. Punctuation would not survive that matching intact.
     var AGENT_NAME_RE = /^[A-Za-z][A-Za-z0-9]{1,23}$/;
@@ -793,7 +880,11 @@
       var ids = [];
       if (document.getElementById("use-my-apps").checked) ids.push("server:mcp-proxy");
       NATIVE_TOOLS.forEach(function (t) {
-        if (document.getElementById("tool-" + t[0]).checked) ids.push(t[0]);
+        // Guarded: loadTools() renders tiles asynchronously, so a save
+        // clicked in the instant before it settles must not throw on a tile
+        // that is not on the page yet.
+        var cb = document.getElementById("tool-" + t[0]);
+        if (cb && cb.checked) ids.push(t[0]);
       });
       return ids;
     }
@@ -848,7 +939,8 @@
       document.getElementById("use-my-apps").checked =
         tools.indexOf("server:mcp-proxy") !== -1;
       NATIVE_TOOLS.forEach(function (t) {
-        document.getElementById("tool-" + t[0]).checked = tools.indexOf(t[0]) !== -1;
+        var cb = document.getElementById("tool-" + t[0]);
+        if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
       });
       var base = document.getElementById("agent-base");
       base.innerHTML = "";
@@ -1026,7 +1118,8 @@
       document.getElementById("use-my-apps").checked =
         tools.indexOf("server:mcp-proxy") !== -1;
       NATIVE_TOOLS.forEach(function (t) {
-        document.getElementById("tool-" + t[0]).checked = tools.indexOf(t[0]) !== -1;
+        var cb = document.getElementById("tool-" + t[0]);
+        if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
       });
       // Carry the base model across too. openForm(null) leaves the dropdown on
       // whichever model happens to be first, which on this platform can be a
@@ -1039,16 +1132,9 @@
     }
 
     (function wireForm() {
-      var wrap = document.getElementById("native-tools");
-      NATIVE_TOOLS.forEach(function (t) {
-        var l = document.createElement("label");
-        // Same glyph the card uses for this tool, so picking one here and
-        // recognising it on the card are the same act of reading.
-        l.innerHTML = '<input type="checkbox" id="tool-' + t[0] + '">'
-          + toolIcon(t[0])
-          + '<span class="tool-name">' + t[1] + "</span>";
-        wrap.appendChild(l);
-      });
+      // Tiles themselves come from loadTools() -- built from the connected
+      // state the server reports, not this static list. See the bootstrap
+      // call near the bottom of this file.
       document.getElementById("new-agent").addEventListener("click", function () {
         openForm(null);
       });
@@ -1101,7 +1187,16 @@
     window.__aiuiAgents = { load: load, render: render, state: state,
                             isAgent: isAgent, buildAgentBody: buildAgentBody,
                             openForm: openForm, ready: false };
-    load().then(function () { window.__aiuiAgents.ready = true; });
+    // Seeding must finish before the list loads, so a first-time visitor's
+    // brand new copies are in the very first render rather than needing a
+    // reload to appear. Tool tiles are independent of both and load
+    // alongside them. `load` on window.__aiuiAgents stays just the agent
+    // list refresh (existing tests call it directly after a save/delete), so
+    // seed() is only ever reached from this one bootstrap line -- it runs
+    // once per page load, not once per list refresh.
+    Promise.all([seed().then(load), loadTools()]).then(function () {
+      window.__aiuiAgents.ready = true;
+    });
   })();
   </script>
 </body>

@@ -175,6 +175,18 @@ def page(browser, tmp_path):
         url = r.request.url
         if "/api/v1/auths/" in url:
             body = {"id": ME, "email": "me@example.com"}
+        # Page infrastructure, not something the user did. These are answered
+        # but deliberately NOT recorded in `sent`, because several tests below
+        # assert `sent == []` to prove a form did not submit, and every page
+        # load calls both of these.
+        elif "/agents/seed" in url:
+            body = {"seeded": False, "created": 0}
+        elif "/agents/tools" in url:
+            body = {"tools": [
+                {"id": t, "label": t, "connected": True, "connect_url": ""}
+                for t in ("gmail", "calendar", "gdrive", "documents",
+                          "excel_creator", "executive_dashboard", "remember")
+            ]}
         elif "/api/v1/models/list" in url:
             body = _models_list_envelope(MODELS)
         elif "/api/models" in url or url.rstrip("/").endswith("/api/v1/models"):
