@@ -62,12 +62,22 @@ async def test_nothing_seeded_carries_a_grant():
 
 
 async def test_a_user_who_was_already_seeded_gets_nothing():
+    """The guard that makes a delete stick.
+
+    Every seam is mocked here on purpose. With only _already_seeded and
+    _create_model mocked, deleting the guard did NOT fail this test: the run
+    fell through to a real database call, that raised, and the fail-open
+    handler returned the very same {"seeded": False, "created": 0} the
+    assertion wanted. The test passed while the guard was gone. Mocking the
+    rest removes what was masking it, so this is now about the guard alone.
+    """
     create = AsyncMock()
-    with patch.object(routes_agents, "_already_seeded", new=AsyncMock(return_value=True)), \
-         patch.object(routes_agents, "_create_model", new=create):
+    mark = AsyncMock()
+    with patch.object(routes_agents, "_already_seeded", new=AsyncMock(return_value=True)),          patch.object(routes_agents, "_mark_seeded", new=mark),          patch.object(routes_agents, "_owui_user_id_for", new=AsyncMock(return_value="uid-1")),          patch.object(routes_agents, "mint_owui_token", lambda *a, **k: "tok"),          patch.object(routes_agents, "_create_model", new=create):
         out = await routes_agents.seed_for_email("old@example.com")
 
     create.assert_not_awaited(), "it seeded somebody twice"
+    mark.assert_not_awaited(), "it rewrote the seed record for an existing user"
     assert out == {"seeded": False, "created": 0}
 
 
