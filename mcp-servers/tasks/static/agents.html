@@ -798,6 +798,37 @@
     // service, so it gets its own row rather than one row per tool.
     var GOOGLE_START = "/auth/google/start";
 
+    // Reloading the tiles rebuilds them, so anything already ticked has to be
+    // carried across by hand or connecting an app would quietly clear the
+    // tools the user had chosen.
+    async function refreshToolsKeepingChoices() {
+      var chosen = {};
+      var boxes = document.querySelectorAll('#native-tools input[type=checkbox]');
+      for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].checked) chosen[boxes[i].id] = true;
+      }
+      var proxy = document.getElementById("use-my-apps");
+      var proxyOn = !!(proxy && proxy.checked);
+
+      await loadTools();
+
+      Object.keys(chosen).forEach(function (id) {
+        var cb = document.getElementById(id);
+        if (cb && !cb.disabled) cb.checked = true;
+      });
+      var p2 = document.getElementById("use-my-apps");
+      if (p2 && proxyOn && !p2.disabled) p2.checked = true;
+    }
+
+    // The shell posts this the moment an app is connected or disconnected in
+    // its dialog, so the tick boxes here catch up without a reload.
+    window.addEventListener("message", function (ev) {
+      var d = ev && ev.data;
+      if (d && d.type === "aiui:connections-changed") {
+        refreshToolsKeepingChoices();
+      }
+    });
+
     async function loadConnections() {
       var list = document.getElementById("connections-list");
       list.innerHTML = '<div class="hint">Loading your apps...</div>';
@@ -942,8 +973,9 @@
           return;
         }
         await loadConnections();
-        // What they just connected changes what the agent form may offer.
-        await loadTools();
+        // What they just connected changes what the form may offer, and must
+        // not clear what they had already ticked.
+        await refreshToolsKeepingChoices();
       } catch (e) {
         err.hidden = false;
         err.textContent = "Could not reach the server. Try again in a moment.";
@@ -1462,21 +1494,37 @@
       }
 
       var connOverlay = document.getElementById("connections-overlay");
+
+      // This page runs in an iframe inside the Open WebUI shell, and the shell
+      // already has the Connections dialog: the same one the chat composer
+      // opens. Ask for THAT one rather than showing a second dialog that only
+      // looks similar. The panel below is the fallback for opening this page
+      // on its own, where there is no shell to ask.
+      function embedded() {
+        try { return window.parent && window.parent !== window; }
+        catch (e) { return false; }
+      }
+
+      function openConnections() {
+        if (embedded()) {
+          window.parent.postMessage({ type: "aiui:open-connections" }, "*");
+          return;
+        }
+        connOverlay.hidden = false;
+        loadConnections();
+      }
+
       document.getElementById("open-connections").addEventListener(
-        "click", function () {
-          connOverlay.hidden = false;
-          loadConnections();
-        });
+        "click", openConnections);
       document.getElementById("connections-close").addEventListener(
         "click", function () {
           connOverlay.hidden = true;
-          // Whatever they just connected should be selectable straight away.
-          loadTools();
+          refreshToolsKeepingChoices();
         });
       connOverlay.addEventListener("click", function (ev) {
         if (ev.target === connOverlay) {
           connOverlay.hidden = true;
-          loadTools();
+          refreshToolsKeepingChoices();
         }
       });
 
@@ -1486,9 +1534,11 @@
         var connLink = ev.target.closest('a[href="#connections"]');
         if (connLink) {
           ev.preventDefault();
-          closeForm();
-          connOverlay.hidden = false;
-          loadConnections();
+          // Deliberately does NOT close the form. Someone clicking Connect
+          // has a name and instructions typed and is fixing the one thing
+          // stopping them from ticking a tool. Closing it would throw all of
+          // that away to solve a smaller problem.
+          openConnections();
           return;
         }
         var connBtn = ev.target.closest("[data-conn]");

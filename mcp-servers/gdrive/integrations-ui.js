@@ -637,6 +637,34 @@
 
   var activeIntModal = null;
 
+  // The feature pages (AI Agents, Cron, Video) run in iframes in this shell.
+  // The Agents page decides which tools an agent may use, so it has to know
+  // the moment one is connected here, and it must not have to reload to find
+  // out: reloading would throw away a half written agent.
+  function notifyConnectionsChanged() {
+    var frames = document.querySelectorAll('iframe');
+    for (var i = 0; i < frames.length; i++) {
+      try {
+        frames[i].contentWindow.postMessage(
+          { type: 'aiui:connections-changed' }, '*');
+      } catch (e) { /* cross origin frame, not one of ours */ }
+    }
+  }
+
+  // Opening the real dialog from inside a feature page, so there is one
+  // Connections modal on this platform rather than a second one that only
+  // looks similar.
+  window.aiuiOpenConnections = function () {
+    document.body.appendChild(createIntegrationsModal());
+  };
+
+  window.addEventListener('message', function (ev) {
+    var d = ev && ev.data;
+    if (d && d.type === 'aiui:open-connections') {
+      window.aiuiOpenConnections();
+    }
+  });
+
   function updateCardConnected(modal, integrationId) {
     var status = modal.querySelector('#aiui-status-' + integrationId);
     var connectBtn = modal.querySelector('#aiui-connect-' + integrationId);
@@ -646,6 +674,7 @@
     if (connectBtn) connectBtn.style.display = 'none';
     if (disconnectBtn) disconnectBtn.style.display = 'inline-block';
     if (card) card.style.borderColor = '#00ac47';
+    notifyConnectionsChanged();
   }
 
   function updateCardDisconnected(modal, integrationId) {
@@ -657,6 +686,7 @@
     if (connectBtn) connectBtn.style.display = 'inline-block';
     if (disconnectBtn) disconnectBtn.style.display = 'none';
     if (card) card.style.borderColor = '#333';
+    notifyConnectionsChanged();
   }
 
   function createIntegrationsModal() {

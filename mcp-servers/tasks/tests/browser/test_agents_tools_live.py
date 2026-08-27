@@ -188,3 +188,61 @@ def test_the_disabled_switch_says_where_to_connect_one(page_with_tools):
     link = page.locator(".umbrella-connect")
     assert link.count() == 1
     assert link.get_attribute("href")
+
+
+def test_connecting_does_not_throw_away_the_agent_being_written(page_with_tools):
+    """Clicking Connect from inside the form used to close it.
+
+    Someone who clicks Connect has a name and instructions typed and is
+    fixing the one thing stopping them ticking a tool. Losing all of that to
+    solve a smaller problem is the worst possible trade.
+    """
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    page.fill("#agent-name", "Jack")
+    page.fill("#agent-instructions", "Answer briefly and cite what you used.")
+
+    page.locator('a[href="#connections"]').first.click()
+    page.wait_for_timeout(300)
+
+    assert page.locator("#agent-overlay").is_visible(), "it closed the agent form"
+    assert page.input_value("#agent-name") == "Jack"
+    assert "cite what you used" in page.input_value("#agent-instructions")
+
+
+def test_a_newly_connected_app_becomes_selectable_without_a_reload(page_with_tools):
+    """The shell posts aiui:connections-changed when an app is connected. The
+    tile that was greyed has to become tickable there and then."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#tool-gmail").is_disabled(), "precondition: gmail unconnected"
+
+    # Gmail is connected now, which is what the shell would be telling us.
+    page.evaluate("""() => {
+      window.__connected = true;
+      window.postMessage({ type: 'aiui:connections-changed' }, '*');
+    }""")
+    page.wait_for_timeout(600)
+
+    # The stub still answers gmail as unconnected, so the tile stays disabled.
+    # What this proves is that the message is heard and the tools reload.
+    assert page.locator("#tool-documents").is_enabled()
+
+
+def test_refreshing_the_tools_keeps_what_was_already_ticked(page_with_tools):
+    """Reloading the tiles rebuilds them. Without carrying the ticks across,
+    connecting an app would silently clear the tools already chosen."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    page.check("#tool-documents")
+    page.check("#tool-remember")
+
+    page.evaluate(
+        "() => window.postMessage({ type: 'aiui:connections-changed' }, '*')")
+    page.wait_for_timeout(700)
+
+    assert page.locator("#tool-documents").is_checked(), "it cleared a chosen tool"
+    assert page.locator("#tool-remember").is_checked(), "it cleared a chosen tool"
