@@ -21,6 +21,7 @@ import os
 
 import httpx
 
+import agent_activity
 from agent_tools import execute_tool_call, is_write_tool
 from owui_token import mint_owui_token
 
@@ -227,9 +228,17 @@ async def run_agent(sched) -> tuple[str, str, dict]:
     exception would vanish into a discarded task and leave the schedule stuck
     reporting that it is still running.
     """
+    # Recorded so the Agents page can say whether this is awake and how long
+    # it took. Fire and forget: a run must never fail because its bookkeeping
+    # did, which is why start_run may return None and finish_run takes it.
+    run_id = await agent_activity.start_run(
+        getattr(sched, "agent_id", None), getattr(sched, "user_email", None),
+        agent_activity.SOURCE_SCHEDULE)
+    outcome = "failed"
     try:
         owner = await _owui_user_id_for(sched.user_email)
         if not owner:
+            outcome = "failed"
             return ("failed",
                     "This schedule could not run: its owner has no account on "
                     "this platform any more.", {})
@@ -248,10 +257,12 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                 # Not in what we fetched is not the same as not existing: the
                 # listing was cut short before it could see every agent, so
                 # this may simply be further down a page we never reached.
+                outcome = "failed"
                 return ("failed",
                         "This schedule's agent could not be checked this "
                         "time. It will try again at the next scheduled "
                         "time.", {})
+            outcome = "failed"
             return ("failed",
                     "This schedule is set to run as an agent that no longer "
                     "exists. Delete this schedule and create it again with "
@@ -277,6 +288,7 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             user_email=sched.user_email,
             tool_mode=getattr(sched, "tool_mode", None))
         if not answer and not notes:
+            outcome = "failed"
             return ("failed", "The agent returned an empty answer.", {})
         if notes:
             # Say what was refused or stopped early, even when the model's
@@ -285,12 +297,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # at all would be worse than one that said so.
             note_text = "\n".join(notes)
             answer = (answer + "\n\n" + note_text) if answer else note_text
+        outcome = "completed"
         return ("completed", answer, {})
     except Exception:                                   # noqa: BLE001
         # Never include the exception's own text blindly: an httpx error can
         # carry the request URL, and this project has already leaked a token
         # that way.
         logger.error("agent schedule run failed", exc_info=True)
+        outcome = "failed"
         return ("failed",
                 "The agent could not finish this run. It will try again at the "
                 "next scheduled time.", {})
+    finally:
+        await agent_activity.finish_run(run_id, outcome)

@@ -180,6 +180,8 @@ def page(browser, tmp_path):
         # but deliberately NOT recorded in `sent`, because several tests below
         # assert `sent == []` to prove a form did not submit, and every page
         # load calls both of these.
+        elif "/agents/activity" in url:
+            body = {"activity": {}}
         elif "/agents/seed" in url:
             body = {"seeded": False, "created": 0}
         elif "/agents/tools" in url:
@@ -743,3 +745,54 @@ def test_someone_elses_agent_is_never_rendered(page):
     assert "agent-shared-c3d4" not in ids, ids
     assert "agent-private-other" not in ids, ids
     assert all(i and i.startswith(("agent-mine", "agent-hostile")) for i in ids), ids
+
+
+# --- is the agent awake, and how long did it take -------------------------
+
+def _activity(page, payload):
+    """Re-answer the activity route, then make the page ask again."""
+    page.route("**/api/tasks/agents/activity", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": payload})))
+    page.evaluate("() => window.__aiuiAgents.render()")
+    page.wait_for_timeout(400)
+
+
+def test_a_working_agent_says_so_with_its_elapsed_time(page):
+    page = page
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "working", "running_for_seconds": 14,
+        "last_run_at": "2026-08-28T12:00:00+00:00", "source": "schedule"}})
+    line = page.locator('[data-activity-for="agent-mine-a1b2"]')
+    assert "Working" in line.inner_text()
+    assert "14s" in line.inner_text()
+
+
+def test_an_idle_agent_says_when_it_was_used_and_how_long_it_took(page):
+    page = page
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "idle", "last_status": "completed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 8, "source": "schedule"}})
+    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
+    assert "Idle" in text
+    assert "took 8s" in text
+
+
+def test_an_agent_that_has_never_run_says_nothing(page):
+    """Calling something idle when it has never done anything reads as a
+    status. Saying nothing reads as new, which is what it is."""
+    page = page
+    _activity(page, {})
+    assert page.locator(
+        '[data-activity-for="agent-mine-a1b2"]').inner_text().strip() == ""
+
+
+def test_a_failed_run_is_not_dressed_up_as_idle(page):
+    page = page
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "idle", "last_status": "failed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 3, "source": "channel"}})
+    assert "Failed" in page.locator(
+        '[data-activity-for="agent-mine-a1b2"]').inner_text()

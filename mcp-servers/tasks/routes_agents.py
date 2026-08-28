@@ -22,6 +22,7 @@ import uuid
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 
+import agent_activity
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import CurrentUser, current_user
@@ -366,6 +367,18 @@ async def tools_for_email(email: str) -> dict:
     })
 
     return {"tools": tools}
+
+
+@router.get("/activity")
+async def activity(user: CurrentUser = Depends(current_user)) -> dict:
+    """Which of the caller's agents are working right now, and how long the
+    last run of each took.
+
+    Scoped to the caller, the same way the tools route is. An admin's model
+    listing carries every user's agents, and one person's agent working is
+    not another person's agent working.
+    """
+    return {"activity": await agent_activity.activity_for(user.email)}
 
 
 @router.get("/templates")

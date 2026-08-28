@@ -123,6 +123,8 @@ def page_with_tools(browser, tmp_path):
             body = _models_list_envelope(MODELS)
         elif "/api/models" in url or url.rstrip("/").endswith("/api/v1/models"):
             body = _api_models_envelope(MODELS)
+        elif "/api/tasks/agents/activity" in url:
+            body = {"activity": {}}
         elif "/api/tasks/agents/seed" in url:
             sent.append({"url": url, "method": r.request.method,
                         "body": r.request.post_data})

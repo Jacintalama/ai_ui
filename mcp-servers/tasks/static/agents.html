@@ -153,6 +153,21 @@
   /* The model an agent thinks with is the second thing you want to know and
      the card never showed it. Quiet, because it is reference, not identity. */
   .card-model { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  /* Awake or asleep, and how long the last one took. An agent is not a
+     service that is up or down: it sleeps until something asks it to work,
+     so "working" means a run is actually in flight right now. */
+  .card-activity { display: flex; align-items: center; gap: 7px; margin-top: 9px;
+                   font-size: 11.5px; color: var(--muted); min-height: 15px; }
+  .card-activity .dot { width: 7px; height: 7px; border-radius: 50%;
+                        background: var(--border-2); flex: 0 0 7px; }
+  .card-activity.working { color: #4ade80; }
+  .card-activity.working .dot { background: #4ade80;
+                                animation: livePulse 1.6s ease-in-out infinite; }
+  .card-activity.failed .dot { background: #f87171; }
+  @keyframes livePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.45; transform: scale(0.82); }
+  }
   .card-sys {
     color: var(--text-2); font-size: 13px; line-height: 1.62;
     margin-top: 13px; min-height: 63px;
@@ -700,6 +715,8 @@
             ? '<span class="tag"><span class="dot"></span>Shared with everyone</span>'
             : "") +
         "</div>" +
+        '<div class="card-activity" data-activity-for="' + esc(m.id) + '">'
+          + "</div>" +
         '<div class="card-sys">' + esc(preview(sys, 132)) + "</div>" +
         '<div class="card-tools">' + toolChips(m) + "</div>" +
         '<div class="card-foot">' +
@@ -983,6 +1000,83 @@
       }
     }
 
+    function ago(iso) {
+      var then = Date.parse(iso);
+      if (!then) return "";
+      var secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+      if (secs < 60) return "just now";
+      var mins = Math.round(secs / 60);
+      if (mins < 60) return mins + (mins === 1 ? " minute ago" : " minutes ago");
+      var hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + (hrs === 1 ? " hour ago" : " hours ago");
+      var days = Math.round(hrs / 24);
+      return days + (days === 1 ? " day ago" : " days ago");
+    }
+
+    function secs(n) {
+      if (n === null || n === undefined) return "";
+      if (n < 60) return n + "s";
+      var m = Math.floor(n / 60);
+      return m + "m " + (n % 60) + "s";
+    }
+
+    // Only the line changes, never the card. Rebuilding cards on a timer
+    // would close an open overflow menu under the user's cursor every few
+    // seconds.
+    function paintActivity(activity) {
+      var slots = document.querySelectorAll("[data-activity-for]");
+      for (var i = 0; i < slots.length; i++) {
+        var el = slots[i];
+        var a = activity[el.getAttribute("data-activity-for")];
+        el.className = "card-activity";
+        if (!a) {
+          // Never run. Saying "idle" about something that has never done
+          // anything reads as a status; saying nothing reads as new.
+          el.innerHTML = "";
+          continue;
+        }
+        if (a.state === "working") {
+          el.classList.add("working");
+          el.innerHTML = '<span class="dot"></span><span>Working'
+            + (a.running_for_seconds !== undefined
+                 ? " \u00b7 " + esc(secs(a.running_for_seconds)) : "")
+            + "</span>";
+          continue;
+        }
+        if (a.last_status === "failed") el.classList.add("failed");
+        var bits = [];
+        if (a.last_run_at) bits.push("used " + ago(a.last_run_at));
+        if (a.last_duration_seconds !== null
+            && a.last_duration_seconds !== undefined) {
+          bits.push("took " + secs(a.last_duration_seconds));
+        }
+        var word = a.last_status === "failed" ? "Failed" : "Idle";
+        el.innerHTML = '<span class="dot"></span><span>' + word
+          + (bits.length ? " \u00b7 " + esc(bits.join(", ")) : "") + "</span>";
+      }
+    }
+
+    async function loadActivity() {
+      try {
+        var body = await getJson("/api/tasks/agents/activity");
+        paintActivity((body && body.activity) || {});
+      } catch (e) {
+        // Silent. This is decoration on a page that has already loaded; an
+        // error banner about it would be louder than the thing it reports.
+      }
+    }
+
+    var activityTimer = null;
+
+    function watchActivity() {
+      if (activityTimer) clearInterval(activityTimer);
+      // Only while the tab is actually being looked at. The box has 3.8GB and
+      // no reason to answer a poll nobody is reading.
+      activityTimer = setInterval(function () {
+        if (!document.hidden) loadActivity();
+      }, 5000);
+    }
+
     function render() {
       var mineWrap = document.getElementById("my-agents");
       mineWrap.innerHTML = "";
@@ -1013,6 +1107,7 @@
       document.getElementById("template-head").hidden = !showTemplates;
       document.getElementById("template-gallery").hidden = !showTemplates;
       if (showTemplates) renderTemplates();
+      loadActivity();
     }
 
     // FastAPI answers errors with JSON too, so .json() alone succeeds on a 401
@@ -1595,6 +1690,7 @@
     // once per page load, not once per list refresh.
     Promise.all([seed().then(load), loadTools()]).then(function () {
       window.__aiuiAgents.ready = true;
+      watchActivity();
     });
   })();
   </script>
