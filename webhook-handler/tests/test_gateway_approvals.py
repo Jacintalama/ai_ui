@@ -252,3 +252,21 @@ async def test_a_pending_reply_is_checked_before_commands(wired):
     await pl.handle_event(_event("/help"), adapter)
     tasks.delete_state.assert_awaited_once()
     tasks.agent_turn_resume.assert_not_awaited()
+
+
+async def test_an_approved_action_reaches_the_chat_transcript(wired):
+    """The approved agent run must be written to Open WebUI so it shows in
+    the sidebar and feeds the Brain. If owui.update_chat is not called, the
+    turn vanishes and nobody knows the email was sent."""
+    pl, tasks, adapter = wired
+    tasks.get_state = AsyncMock(return_value=PENDING)
+
+    # Mock get_chat to return the stored chat
+    owui = pl._owui_factory("tok")
+    owui.get_chat = AsyncMock(return_value={"messages": []})
+
+    await pl.handle_event(_event("yes"), adapter)
+
+    owui.update_chat.assert_awaited_once()
+    call_args = owui.update_chat.await_args
+    assert call_args.args[0] == "chat-1", "transcript must be written to the stored chat ID"

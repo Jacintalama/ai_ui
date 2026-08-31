@@ -171,7 +171,8 @@ async def _store_pending(src: SessionSource, pending: dict, agent: dict,
 
 
 async def _resume_pending(adapter: BasePlatformAdapter, src: SessionSource,
-                          held: dict, approved: bool, user_email: str) -> str:
+                          held: dict, approved: bool, user_email: str,
+                          owui: OWUIUserClient) -> str:
     """Pick a held turn back up. Deletes the record first, always."""
     # Deleted BEFORE anything runs. A second "yes" arriving while this one is
     # in flight would otherwise send the same email twice.
@@ -188,9 +189,16 @@ async def _resume_pending(adapter: BasePlatformAdapter, src: SessionSource,
         calls=held.get("calls") or [], approved=approved)
 
     agent = {"id": held["agent_id"], "name": held.get("agent_name")}
-    return await _deliver_turn(adapter, src, out, agent,
-                               held.get("chat_id"), held.get("user_text") or "",
-                               None, None)
+    chat_id = held.get("chat_id")
+    chat = None
+    if chat_id:
+        try:
+            chat = await owui.get_chat(chat_id)
+        except Exception:                              # noqa: BLE001
+            log.exception("gateway: could not fetch the transcript for chat "
+                          "%s; delivering the answer anyway", chat_id)
+    return await _deliver_turn(adapter, src, out, agent, chat_id,
+                               held.get("user_text") or "", owui, chat)
 
 
 async def _choose_agent(owui: OWUIUserClient, text: str,
@@ -347,7 +355,7 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
             drop_notice = approvals.DROPPED
         else:
             return await _resume_pending(
-                adapter, src, held, answer_given, email)
+                adapter, src, held, answer_given, email, owui)
 
     # Commands run before the model, so /resume and /help still work when the
     # model is down. Those are how someone recovers, so routing them through a
@@ -365,7 +373,7 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
             log.warning("gateway: %s failed against tasks", text.split()[0])
             raise
         if reply is not None:
-            return await _say(adapter, src.chat_id, reply)
+            return await _say(adapter, src.chat_id, _with_notice(drop_notice, reply))
 
     await adapter.send_typing(src.chat_id)
 
@@ -374,7 +382,7 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     # A pin request is a setting, not a question. Answering it with a model
     # would spend a call and a turn of history saying "ok".
     if reply:
-        return await _say(adapter, src.chat_id, reply)
+        return await _say(adapter, src.chat_id, _with_notice(drop_notice, reply))
 
     # Merged once, here: a dropped approval from earlier in this same message
     # rides along with whatever _choose_agent has to say, so it reaches the
@@ -494,6 +502,16 @@ async def _transcribe_voice(event: MessageEvent, owui: OWUIUserClient,
 async def _say(adapter: BasePlatformAdapter, chat_id: str, text: str) -> str:
     await adapter.send_chunked(chat_id, text)
     return text
+
+
+def _with_notice(notice: str | None, text: str) -> str:
+    """Keep a notice attached to whatever we end up saying.
+
+    A dropped approval has to be reported on EVERY path out of _run, not
+    just the one that reaches the model. Losing it means somebody's held
+    action disappeared without a word.
+    """
+    return "%s\n\n%s" % (notice, text) if notice else text
 
 
 async def _deliver_turn(adapter: BasePlatformAdapter, src: SessionSource,
