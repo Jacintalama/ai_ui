@@ -358,6 +358,61 @@ async def test_reads_in_the_same_batch_still_run_before_it_asks():
                for m in caught.value.conversation)
 
 
+async def test_a_held_call_does_not_get_a_tool_message_of_its_own():
+    """In the ask branch, `pending.append(call)` is followed by `continue`.
+    Losing that `continue` would fall through and also append a refusal tool
+    message for the very call the owner is being asked to approve,
+    corrupting the conversation that gets handed back to resume."""
+    import agent_access
+
+    async def fake_post(payload, token, timeout=None):
+        return _reply(calls=[_tool_call("list_unread_emails", "c1"),
+                             _tool_call("send_email", "c2")])
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post), \
+         patch("agent_runner.execute_tool_call",
+               new=AsyncMock(return_value="4 unread")):
+        with pytest.raises(agent_access.ApprovalRequired) as caught:
+            await agent_runner._chat(
+                token="t", model="agent-1",
+                messages=[{"role": "user", "content": "q"}],
+                tool_ids=["gmail"], user_email="owner@example.com",
+                tool_mode=agent_access.MODE_ASK)
+
+    tool_msg_ids = [m.get("tool_call_id") for m in caught.value.conversation
+                    if m.get("role") == "tool"]
+    assert tool_msg_ids == ["c1"], (
+        "the held write must not get a tool message of its own")
+
+
+async def test_a_read_after_a_held_write_still_runs():
+    """Every other multi-call test here puts the read first. A raise placed
+    one level too early in the loop -- ending the batch as soon as a write
+    is held, instead of finishing the whole batch first -- would still pass
+    those and fail this one."""
+    import agent_access
+
+    async def fake_post(payload, token, timeout=None):
+        return _reply(calls=[_tool_call("send_email", "c1"),
+                             _tool_call("list_unread_emails", "c2")])
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post), \
+         patch("agent_runner.execute_tool_call",
+               new=AsyncMock(return_value="4 unread")) as ex:
+        with pytest.raises(agent_access.ApprovalRequired) as caught:
+            await agent_runner._chat(
+                token="t", model="agent-1",
+                messages=[{"role": "user", "content": "q"}],
+                tool_ids=["gmail"], user_email="owner@example.com",
+                tool_mode=agent_access.MODE_ASK)
+
+    ex.assert_awaited_once(), "the read after the held write should still run"
+    assert [c["id"] for c in caught.value.calls] == ["c1"]
+    assert any(m.get("role") == "tool" and m.get("tool_call_id") == "c2"
+               and "4 unread" in m.get("content", "")
+               for m in caught.value.conversation)
+
+
 async def test_a_write_under_all_access_just_runs():
     import agent_access
     posts = []

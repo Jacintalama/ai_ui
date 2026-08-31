@@ -147,3 +147,71 @@ async def turn(body: TurnIn,
         return _pending_payload(body.user_email, body.agent_id, err)
     finally:
         await agent_activity.finish_run(run_id, outcome)
+
+
+#: Fed back as the tool result when the owner said no, so the agent can say
+#: what happened in its own words instead of going quiet.
+REFUSED_BY_OWNER = "Refused: the owner did not approve this action"
+
+#: Levels that may still act when a held turn is picked back up. `ask` is
+#: here because that is the level the question was asked under; `all` because
+#: an agent moved up in the meantime is more permitted, not less.
+_RESUMABLE = frozenset({agent_access.MODE_ASK, agent_access.MODE_FULL})
+
+
+@router.post("/turn/resume")
+async def resume(body: ResumeIn,
+                 x_internal_secret: str = Header(default="")) -> dict:
+    """Continue a turn that stopped to ask.
+
+    The access level is READ AGAIN here rather than trusted from when the
+    question was asked. Between the two there is a window in which the agent
+    can be edited or deleted, and somebody who has second thoughts and turns
+    an agent down to read only has turned it down.
+    """
+    _require_internal(x_internal_secret)
+    token, tools, level = await _resolve_agent(body.user_email, body.agent_id)
+    mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
+    if mode not in _RESUMABLE:
+        return {"answer": "This agent is set to read only now, so I did not "
+                          "run that.", "notes": []}
+
+    convo = list(body.conversation)
+    for call in body.calls:
+        call = call if isinstance(call, dict) else {}
+        fn = call.get("function")
+        fn = fn if isinstance(fn, dict) else {}
+        raw_name = fn.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        if body.approved:
+            # tools, not anything the caller sent: same rule as the turn
+            # endpoint, and the reason execute_tool_call takes this argument.
+            result = await execute_tool_call(call, body.user_email,
+                                             tools or None)
+        else:
+            result = (REFUSED_BY_OWNER + ", so " + (name or "that tool")
+                      + " was not run.")
+        # Every tool_call in the held assistant message needs a matching tool
+        # message before the next completion, approved or not.
+        convo.append({"role": "tool", "tool_call_id": call.get("id"),
+                      "name": name, "content": result})
+
+    run_id = await agent_activity.start_run(
+        body.agent_id, body.user_email, agent_activity.SOURCE_CHANNEL)
+    outcome = "failed"
+    try:
+        answer, notes = await _chat(
+            token=token, model=body.agent_id, messages=convo,
+            tool_ids=tools or None, user_email=body.user_email,
+            tool_mode=mode,
+            refusal_reason=agent_access.refusal_reason(
+                level, None, agent_access.SURFACE_CHANNEL),
+            max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
+            timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
+        outcome = "completed"
+        return {"answer": answer, "notes": notes}
+    except agent_access.ApprovalRequired as err:
+        outcome = STATUS_WAITING
+        return _pending_payload(body.user_email, body.agent_id, err)
+    finally:
+        await agent_activity.finish_run(run_id, outcome)

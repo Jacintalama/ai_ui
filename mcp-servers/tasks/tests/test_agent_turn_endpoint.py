@@ -63,6 +63,29 @@ async def test_the_endpoint_resolves_the_agents_own_tools(monkeypatch):
     assert seen["user_email"] == "owner@example.com"
 
 
+async def test_a_spoofed_tool_ids_on_the_request_body_is_ignored(monkeypatch):
+    """The guarantee above must not rest only on TurnIn happening to have no
+    tool_ids field. A future edit like `getattr(body, "tool_ids", None) or
+    tools` would pass the test above while handing the caller the keys. Set
+    the attribute directly on the request object and assert _chat still only
+    ever saw the agent's own meta.toolIds."""
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        seen.update(kwargs)
+        return "done", []
+
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([_agent("all", ["gmail"])], False)))
+    monkeypatch.setattr(rt, "_chat", fake_chat)
+
+    body = _body()
+    body.tool_ids = ["gmail", "scheduler", "server:mcp-proxy"]
+
+    await rt.turn(body, x_internal_secret="s")
+    assert seen["tool_ids"] == ["gmail"]
+
+
 @pytest.mark.parametrize("access,expected", [
     ("read", agent_access.MODE_READ_ONLY),
     ("ask", agent_access.MODE_ASK),
