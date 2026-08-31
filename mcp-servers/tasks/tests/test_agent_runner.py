@@ -340,19 +340,25 @@ async def test_the_schedules_tool_mode_reaches_chat(wired, mode):
     assert wired.chat.await_args.kwargs["tool_mode"] == mode
 
 
-async def test_a_schedule_with_no_tool_mode_attribute_passes_none(wired):
+async def test_a_schedule_with_no_tool_mode_attribute_runs_read_only(wired):
     """Schedules from before this column existed have no tool_mode
     attribute at all, not merely one set to None. getattr(sched,
     'tool_mode', None) has to be what's used, not a plain sched.tool_mode
     that would raise, and not a hardcoded value that would ignore the
-    schedule entirely."""
+    schedule entirely.
+
+    The effective mode is computed at the run_agent seam now, by
+    agent_access.effective_mode, rather than being derived inside _chat from
+    a bare None. With no agent level and no schedule tool_mode, that
+    computation lands on "read_only" -- the same value _chat used to derive
+    from None on its own, so observable behaviour is unchanged."""
     sched = _sched()
     del sched.tool_mode
     assert not hasattr(sched, "tool_mode")
 
     await agent_runner.run_agent(sched)
 
-    assert wired.chat.await_args.kwargs["tool_mode"] is None
+    assert wired.chat.await_args.kwargs["tool_mode"] == "read_only"
 
 
 async def test_the_cap_note_reaches_the_owner_even_with_an_empty_answer(wired):
@@ -401,36 +407,15 @@ async def test_a_genuinely_empty_answer_with_no_notes_still_fails(wired):
 
 # --- the agent's level is a ceiling over the schedule's tool_mode ----------
 
-def _sched(agent_id=None, tool_mode=None, email=None, **over):
-    """Helper for schedule tests. Backwards compatible with existing tests."""
-    # Use new-style defaults for explicit tool_mode, old-style otherwise
-    using_new_style = 'tool_mode' in over or tool_mode is not None
-
-    if agent_id is None:
-        agent_id = "agent-1" if using_new_style else "agent-triage-0002"
-    if email is None:
-        email = "owner@example.com"
-    # tool_mode stays as passed or None
-
-    base = dict(id="sched-1", user_email=email,
-                agent_id=agent_id, name="Morning triage",
-                prompt="Sort my unread mail.", last_result=None,
-                last_run_status="completed", tool_mode=tool_mode)
-    base.update(over)
-
-    class S:
-        pass
-    s = S()
-    for k, v in base.items():
-        setattr(s, k, v)
-    return s
-
-
 def _agent_row(access=None):
+    """Same id as the module's default _sched()/AGENT_ROW, but with a
+    specific meta.access. There is no existing helper by this name, so it
+    does not collide with AGENT_ROW; it exists so a test can carry a
+    meta.access value AGENT_ROW itself does not have."""
     meta = {"toolIds": ["gmail"]}
     if access is not None:
         meta["access"] = access
-    return {"id": "agent-1", "name": "Scout", "meta": meta}
+    return {"id": "agent-triage-0002", "name": "Scout", "meta": meta}
 
 
 @pytest.mark.parametrize("access,expected_mode", [
@@ -439,67 +424,41 @@ def _agent_row(access=None):
     ("all", "full"),         # both agree
     (None, "full"),          # no opinion: exactly today's behaviour
 ])
-async def test_the_agent_level_caps_a_full_schedule(access, expected_mode,
-                                                    monkeypatch):
-    seen = {}
-
-    async def fake_chat(**kwargs):
-        seen.update(kwargs)
-        return "done", []
-
-    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
-                        AsyncMock(return_value="u1"))
+async def test_the_agent_level_caps_a_full_schedule(wired, monkeypatch,
+                                                    access, expected_mode):
     monkeypatch.setattr(agent_runner, "_list_agents",
                         AsyncMock(return_value=([_agent_row(access)], False)))
-    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
-    monkeypatch.setattr(agent_runner, "_chat", fake_chat)
 
     status, _result, _extras = await agent_runner.run_agent(
         _sched(tool_mode="full"))
 
     assert status == "completed"
-    assert seen["tool_mode"] == expected_mode
+    assert wired.chat.await_args.kwargs["tool_mode"] == expected_mode
 
 
-async def test_a_read_only_schedule_still_caps_an_all_access_agent(monkeypatch):
+async def test_a_read_only_schedule_still_caps_an_all_access_agent(
+        wired, monkeypatch):
     """The ceiling runs one way. A schedule may narrow, never widen."""
-    seen = {}
-
-    async def fake_chat(**kwargs):
-        seen.update(kwargs)
-        return "done", []
-
-    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
-                        AsyncMock(return_value="u1"))
     monkeypatch.setattr(agent_runner, "_list_agents",
                         AsyncMock(return_value=([_agent_row("all")], False)))
-    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
-    monkeypatch.setattr(agent_runner, "_chat", fake_chat)
 
     await agent_runner.run_agent(_sched(tool_mode="read_only"))
-    assert seen["tool_mode"] == "read_only"
+
+    assert wired.chat.await_args.kwargs["tool_mode"] == "read_only"
 
 
-async def test_an_asking_agent_on_a_schedule_is_told_why(monkeypatch):
-    seen = {}
-
-    async def fake_chat(**kwargs):
-        seen.update(kwargs)
-        return "done", []
-
-    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
-                        AsyncMock(return_value="u1"))
+async def test_an_asking_agent_on_a_schedule_is_told_why(wired, monkeypatch):
     monkeypatch.setattr(agent_runner, "_list_agents",
                         AsyncMock(return_value=([_agent_row("ask")], False)))
-    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
-    monkeypatch.setattr(agent_runner, "_chat", fake_chat)
 
     await agent_runner.run_agent(_sched(tool_mode="full"))
-    assert seen["refusal_reason"] == "a scheduled run has nobody to ask"
+
+    assert (wired.chat.await_args.kwargs["refusal_reason"]
+            == "a scheduled run has nobody to ask")
 
 
 async def test_an_approval_escaping_into_a_schedule_is_reported_not_swallowed(
-        monkeypatch):
+        wired, monkeypatch):
     """effective_mode never hands a schedule "ask", so this cannot happen
     today. If it ever does, the owner must get a sentence that names the
     cause rather than the generic "could not finish this run"."""
@@ -508,13 +467,9 @@ async def test_an_approval_escaping_into_a_schedule_is_reported_not_swallowed(
     async def boom(**kwargs):
         raise agent_access.ApprovalRequired([], [])
 
-    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
-                        AsyncMock(return_value="u1"))
-    monkeypatch.setattr(agent_runner, "_list_agents",
-                        AsyncMock(return_value=([_agent_row("all")], False)))
-    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
     monkeypatch.setattr(agent_runner, "_chat", boom)
 
     status, result, _extras = await agent_runner.run_agent(_sched())
+
     assert status == "failed"
     assert "nobody to ask" in result
