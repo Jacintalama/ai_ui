@@ -314,13 +314,25 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         # error.
         chat_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
 
+        # The agent's own level is a ceiling over the schedule's tool_mode.
+        # A schedule may narrow what its agent may do and may never widen it;
+        # see agent_access. An agent with no level set falls through to
+        # exactly the behaviour this had before the setting existed.
+        level = agent_access.level_of(meta)
+        mode = agent_access.effective_mode(
+            level, getattr(sched, "tool_mode", None),
+            agent_access.SURFACE_SCHEDULE)
+
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
         answer, notes = await _chat(
             token=chat_token, model=sched.agent_id,
             messages=_messages_for(sched), tool_ids=tools or None,
             user_email=sched.user_email,
-            tool_mode=getattr(sched, "tool_mode", None))
+            tool_mode=mode,
+            refusal_reason=agent_access.refusal_reason(
+                level, getattr(sched, "tool_mode", None),
+                agent_access.SURFACE_SCHEDULE))
         if not answer and not notes:
             outcome = "failed"
             return ("failed", "The agent returned an empty answer.", {})
@@ -333,6 +345,18 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             answer = (answer + "\n\n" + note_text) if answer else note_text
         outcome = "completed"
         return ("completed", answer, {})
+    except agent_access.ApprovalRequired:
+        # Unreachable today: effective_mode never gives a schedule "ask".
+        # Kept so that if it ever becomes reachable the owner is told the
+        # cause instead of the generic "could not finish this run", which
+        # would send somebody hunting for an outage that is not there.
+        logger.warning("an agent asked for approval on a schedule, "
+                       "which has nobody to ask")
+        outcome = "failed"
+        return ("failed",
+                "This agent is set to ask before it changes anything, and a "
+                "scheduled run has nobody to ask. Set it to All access, or "
+                "run it from a chat.", {})
     except Exception:                                   # noqa: BLE001
         # Never include the exception's own text blindly: an httpx error can
         # carry the request URL, and this project has already leaked a token

@@ -397,3 +397,124 @@ async def test_a_genuinely_empty_answer_with_no_notes_still_fails(wired):
 
     assert status == "failed"
     assert result.strip() != ""
+
+
+# --- the agent's level is a ceiling over the schedule's tool_mode ----------
+
+def _sched(agent_id=None, tool_mode=None, email=None, **over):
+    """Helper for schedule tests. Backwards compatible with existing tests."""
+    # Use new-style defaults for explicit tool_mode, old-style otherwise
+    using_new_style = 'tool_mode' in over or tool_mode is not None
+
+    if agent_id is None:
+        agent_id = "agent-1" if using_new_style else "agent-triage-0002"
+    if email is None:
+        email = "owner@example.com"
+    # tool_mode stays as passed or None
+
+    base = dict(id="sched-1", user_email=email,
+                agent_id=agent_id, name="Morning triage",
+                prompt="Sort my unread mail.", last_result=None,
+                last_run_status="completed", tool_mode=tool_mode)
+    base.update(over)
+
+    class S:
+        pass
+    s = S()
+    for k, v in base.items():
+        setattr(s, k, v)
+    return s
+
+
+def _agent_row(access=None):
+    meta = {"toolIds": ["gmail"]}
+    if access is not None:
+        meta["access"] = access
+    return {"id": "agent-1", "name": "Scout", "meta": meta}
+
+
+@pytest.mark.parametrize("access,expected_mode", [
+    ("read", "read_only"),   # the agent narrows a full schedule
+    ("ask", "read_only"),    # nobody is there to ask at 3am
+    ("all", "full"),         # both agree
+    (None, "full"),          # no opinion: exactly today's behaviour
+])
+async def test_the_agent_level_caps_a_full_schedule(access, expected_mode,
+                                                    monkeypatch):
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        seen.update(kwargs)
+        return "done", []
+
+    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
+                        AsyncMock(return_value="u1"))
+    monkeypatch.setattr(agent_runner, "_list_agents",
+                        AsyncMock(return_value=([_agent_row(access)], False)))
+    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(agent_runner, "_chat", fake_chat)
+
+    status, _result, _extras = await agent_runner.run_agent(
+        _sched(tool_mode="full"))
+
+    assert status == "completed"
+    assert seen["tool_mode"] == expected_mode
+
+
+async def test_a_read_only_schedule_still_caps_an_all_access_agent(monkeypatch):
+    """The ceiling runs one way. A schedule may narrow, never widen."""
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        seen.update(kwargs)
+        return "done", []
+
+    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
+                        AsyncMock(return_value="u1"))
+    monkeypatch.setattr(agent_runner, "_list_agents",
+                        AsyncMock(return_value=([_agent_row("all")], False)))
+    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(agent_runner, "_chat", fake_chat)
+
+    await agent_runner.run_agent(_sched(tool_mode="read_only"))
+    assert seen["tool_mode"] == "read_only"
+
+
+async def test_an_asking_agent_on_a_schedule_is_told_why(monkeypatch):
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        seen.update(kwargs)
+        return "done", []
+
+    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
+                        AsyncMock(return_value="u1"))
+    monkeypatch.setattr(agent_runner, "_list_agents",
+                        AsyncMock(return_value=([_agent_row("ask")], False)))
+    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(agent_runner, "_chat", fake_chat)
+
+    await agent_runner.run_agent(_sched(tool_mode="full"))
+    assert seen["refusal_reason"] == "a scheduled run has nobody to ask"
+
+
+async def test_an_approval_escaping_into_a_schedule_is_reported_not_swallowed(
+        monkeypatch):
+    """effective_mode never hands a schedule "ask", so this cannot happen
+    today. If it ever does, the owner must get a sentence that names the
+    cause rather than the generic "could not finish this run"."""
+    import agent_access
+
+    async def boom(**kwargs):
+        raise agent_access.ApprovalRequired([], [])
+
+    monkeypatch.setattr(agent_runner, "_owui_user_id_for",
+                        AsyncMock(return_value="u1"))
+    monkeypatch.setattr(agent_runner, "_list_agents",
+                        AsyncMock(return_value=([_agent_row("all")], False)))
+    monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(agent_runner, "_chat", boom)
+
+    status, result, _extras = await agent_runner.run_agent(_sched())
+    assert status == "failed"
+    assert "nobody to ask" in result
