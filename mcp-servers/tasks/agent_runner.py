@@ -21,6 +21,7 @@ import os
 
 import httpx
 
+import agent_access
 import agent_activity
 from agent_tools import execute_tool_call, is_write_tool
 from owui_token import mint_owui_token
@@ -44,6 +45,13 @@ HTTP_TIMEOUT_SECONDS = 240
 #: is a full completion, so this bounds the run's wall clock as well as its
 #: appetite.
 MAX_TOOL_ITERATIONS = 5
+
+#: A channel is somebody waiting at a keyboard, not a cron entry. The
+#: schedule path's five rounds at 240 seconds each is a 20 minute worst
+#: case, which is fine at 3am and absurd in a Discord window. These bring it
+#: to about 3 minutes.
+CHANNEL_MAX_TOOL_ITERATIONS = 3
+CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
 #: The chat token has to outlive the WHOLE loop, not one completion: the loop
 #: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
@@ -102,10 +110,11 @@ async def _list_agents(token: str) -> tuple[list[dict], bool]:
     return out, True
 
 
-async def _post_chat(payload: dict, token: str) -> dict:
+async def _post_chat(payload: dict, token: str,
+                     timeout: float = HTTP_TIMEOUT_SECONDS) -> dict:
     """One completion. Split out so the loop above it can be tested without
     a model, and so there is one place that knows the wire format."""
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=timeout) as client:
         r = await client.post(
             f"{_base_url()}/api/chat/completions",
             headers={"Authorization": f"Bearer {token}",
@@ -117,7 +126,10 @@ async def _post_chat(payload: dict, token: str) -> dict:
 
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
-                tool_mode: str | None) -> tuple[str, list[str]]:
+                tool_mode: str | None,
+                refusal_reason: str = "this schedule is set to read only",
+                max_iterations: int = MAX_TOOL_ITERATIONS,
+                timeout: float = HTTP_TIMEOUT_SECONDS) -> tuple[str, list[str]]:
     """Talk to the agent, running any tools it asks for, until it answers.
 
     Open WebUI injects the tool specs and returns the model's tool_calls, but
@@ -129,19 +141,29 @@ async def _chat(token: str, model: str, messages: list[dict],
     Returns the answer and any notes about what was refused, which the caller
     shows the owner. A refusal is not an error: the run completes and says
     what it would not do.
+
+    Raises ApprovalRequired when tool_mode is "ask" and the model asked for a
+    write. Reads in the same batch have already run by then and their results
+    are in the carried conversation, so resuming does not redo them.
+
+    refusal_reason is the caller's words for why a write was blocked. It is
+    a parameter rather than a constant because this loop serves both a
+    schedule and a chat window, and "this schedule is set to read only" is
+    false in a Discord DM.
     """
     convo = list(messages)
     notes: list[str] = []
-    write_allowed = (tool_mode or "read_only") == "full"
-    # Set before the loop so a tuned-down MAX_TOOL_ITERATIONS of 0 still has
+    mode = tool_mode or agent_access.MODE_READ_ONLY
+    write_allowed = mode == agent_access.MODE_FULL
+    # Set before the loop so a tuned-down max_iterations of 0 still has
     # something defined to return, instead of an UnboundLocalError.
     content = ""
 
-    for _ in range(MAX_TOOL_ITERATIONS):
+    for _ in range(max_iterations):
         payload: dict = {"model": model, "messages": convo, "stream": False}
         if tool_ids:
             payload["tool_ids"] = tool_ids
-        data = await _post_chat(payload, token)
+        data = await _post_chat(payload, token, timeout)
 
         choices = data.get("choices") or []
         if not choices:
@@ -155,6 +177,7 @@ async def _chat(token: str, model: str, messages: list[dict],
 
         convo.append({"role": "assistant", "content": content,
                       "tool_calls": calls})
+        pending: list[dict] = []
         for call in calls:
             # A tool call comes straight from a model, so its shape cannot be
             # trusted: `call` itself, its "function" object, or "name" inside
@@ -171,10 +194,15 @@ async def _chat(token: str, model: str, messages: list[dict],
             name = raw_name.strip() if isinstance(raw_name, str) else ""
             label = name or "an unnamed tool call"
             if is_write_tool(name) and not write_allowed:
+                if mode == agent_access.MODE_ASK:
+                    # Held back, not refused. The turn ends below and picks
+                    # up again once the owner answers.
+                    pending.append(call)
+                    continue
                 notes.append(
-                    "Declined to run " + label + ", because this schedule is "
-                    "set to read only.")
-                result = ("Refused: this scheduled run is read only, so "
+                    "Declined to run " + label + ", because "
+                    + refusal_reason + ".")
+                result = ("Refused: " + refusal_reason + ", so "
                           + label + " was not run.")
             else:
                 # tool_ids scopes which native tools this agent is even
@@ -189,7 +217,13 @@ async def _chat(token: str, model: str, messages: list[dict],
             convo.append({"role": "tool", "tool_call_id": call.get("id"),
                           "name": name, "content": result})
 
-    notes.append("Stopped after " + str(MAX_TOOL_ITERATIONS)
+        if pending:
+            # Raised after the whole batch so the reads above are already
+            # done and carried. Every held call still needs a tool message
+            # before the next completion, which is what the resume writes.
+            raise agent_access.ApprovalRequired(convo, pending)
+
+    notes.append("Stopped after " + str(max_iterations)
                  + " rounds of tool use, so this answer may be incomplete.")
     return content, notes
 
