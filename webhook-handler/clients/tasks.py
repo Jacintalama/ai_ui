@@ -13,6 +13,13 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+#: An agent turn runs up to CHANNEL_MAX_TOOL_ITERATIONS completions with tool
+#: calls in between, so it cannot use the 15 second default that suits
+#: reading a row. Sized above the tasks service's own worst case for a
+#: channel turn (3 rounds at 60 seconds) with room for the tool calls
+#: themselves. A timeout here reads to the user as the bot ignoring them.
+AGENT_TURN_TIMEOUT_SECONDS = 240.0
+
 
 class TasksAPIError(Exception):
     """Raised when the tasks service returns a non-2xx or is unreachable.
@@ -79,11 +86,13 @@ class TasksClient:
             raise TasksAPIError(resp.status_code, str(detail))
         return resp
 
-    async def _internal_request(self, method: str, path: str, **kwargs) -> httpx.Response:
+    async def _internal_request(self, method: str, path: str,
+                                timeout: float | None = None,
+                                **kwargs) -> httpx.Response:
         """For system endpoints (/discord-links/*) authed with X-Internal-Secret."""
         url = f"{self.base_url}{path}"
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=timeout or self.timeout) as client:
                 resp = await client.request(
                     method, url, headers={"X-Internal-Secret": self._internal_secret}, **kwargs
                 )
@@ -254,6 +263,36 @@ class TasksClient:
     async def delete_state(self, key: str) -> bool:
         await self._internal_request("DELETE", f"/state/{key}")
         return True
+
+    # --- Agent turns (system calls, X-Internal-Secret) ---
+    async def agent_turn(self, user_email: str, agent_id: str,
+                         messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Run one turn as this user's agent, tools and all.
+
+        Deliberately does NOT send tool_ids. The tasks service resolves the
+        agent's own tools, because that field is the gate on which native
+        tools may execute and naming it from here would move the decision out
+        of the service that enforces it.
+        """
+        resp = await self._internal_request(
+            "POST", "/agents/turn",
+            json={"user_email": user_email, "agent_id": agent_id,
+                  "messages": messages},
+            timeout=AGENT_TURN_TIMEOUT_SECONDS)
+        return resp.json()
+
+    async def agent_turn_resume(self, user_email: str, agent_id: str,
+                                conversation: list[dict[str, Any]],
+                                calls: list[dict[str, Any]],
+                                approved: bool) -> dict[str, Any]:
+        """Continue a turn the agent stopped to ask about."""
+        resp = await self._internal_request(
+            "POST", "/agents/turn/resume",
+            json={"user_email": user_email, "agent_id": agent_id,
+                  "conversation": conversation, "calls": calls,
+                  "approved": approved},
+            timeout=AGENT_TURN_TIMEOUT_SECONDS)
+        return resp.json()
 
     async def list_projects(self, user_email: str) -> list[dict[str, Any]]:
         resp = await self._request("GET", "/api/projects", user_email)
