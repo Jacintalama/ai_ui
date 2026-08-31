@@ -11,6 +11,7 @@ import os
 from clients.tasks import TasksAPIError, TasksClient
 from config import settings
 from gateway import agent_router
+from gateway import approvals
 from gateway import commands as gateway_commands
 from gateway.base import BasePlatformAdapter
 from gateway.events import MessageEvent, MessageType, SessionSource
@@ -122,6 +123,74 @@ async def _read_pin(key: str) -> dict | None:
         log.warning("gateway: could not read the agent pin", exc_info=True)
         return None
     return pin if isinstance(pin, dict) and pin.get("id") else None
+
+
+async def _read_pending(src: SessionSource) -> dict | None:
+    """The held approval for this conversation, or None. Never raises.
+
+    Fails open exactly like _read_pin: a state store outage must not stop the
+    bot answering, and the cost of missing a held turn is that the person
+    repeats themselves.
+    """
+    try:
+        held = await _tasks.get_state(approvals.pending_key(
+            src.platform, src.chat_id))
+    except Exception:                                  # noqa: BLE001
+        log.warning("gateway: could not read a held approval", exc_info=True)
+        return None
+    return held if isinstance(held, dict) and held.get("calls") else None
+
+
+async def _clear_pending(src: SessionSource) -> None:
+    try:
+        await _tasks.delete_state(approvals.pending_key(
+            src.platform, src.chat_id))
+    except Exception:                                  # noqa: BLE001
+        log.warning("gateway: could not clear a held approval", exc_info=True)
+
+
+async def _store_pending(src: SessionSource, pending: dict, agent: dict,
+                         chat_id: str, text: str) -> bool:
+    """Keep the held turn. Returns whether it was actually kept."""
+    try:
+        await _tasks.set_state(
+            approvals.pending_key(src.platform, src.chat_id),
+            {"agent_id": pending.get("agent_id") or agent["id"],
+             "agent_name": agent.get("name") or agent["id"],
+             "user_email": pending.get("user_email"),
+             "calls": pending.get("calls") or [],
+             "conversation": pending.get("conversation") or [],
+             # Carried so the transcript still gets written when the turn
+             # finishes, or an approved turn vanishes from the sidebar.
+             "chat_id": chat_id, "user_text": text},
+            ttl_seconds=approvals.PENDING_TTL_SECONDS)
+        return True
+    except Exception:                                  # noqa: BLE001
+        log.warning("gateway: could not hold an approval", exc_info=True)
+        return False
+
+
+async def _resume_pending(adapter: BasePlatformAdapter, src: SessionSource,
+                          held: dict, approved: bool, user_email: str) -> str:
+    """Pick a held turn back up. Deletes the record first, always."""
+    # Deleted BEFORE anything runs. A second "yes" arriving while this one is
+    # in flight would otherwise send the same email twice.
+    await _clear_pending(src)
+    if held.get("user_email") != user_email:
+        # The key is per chat, so in a group, or after a re-link, the person
+        # answering is not necessarily the person who was asked.
+        return await _say(adapter, src.chat_id, approvals.NOT_YOURS)
+
+    await adapter.send_typing(src.chat_id)
+    out = await _tasks.agent_turn_resume(
+        user_email=user_email, agent_id=held["agent_id"],
+        conversation=held.get("conversation") or [],
+        calls=held.get("calls") or [], approved=approved)
+
+    agent = {"id": held["agent_id"], "name": held.get("agent_name")}
+    return await _deliver_turn(adapter, src, out, agent,
+                               held.get("chat_id"), held.get("user_text") or "",
+                               None, None)
 
 
 async def _choose_agent(owui: OWUIUserClient, text: str,
@@ -248,6 +317,11 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     if not owui_user_id:
         log.error("gateway: resolve said linked but sent no user id")
         return await _say(adapter, src.chat_id, UNEXPECTED)
+
+    email = identity.get("email")
+    if not email:
+        log.error("gateway: resolve said linked but sent no email")
+        return await _say(adapter, src.chat_id, UNEXPECTED)
     owui = _owui_factory(token)
 
     text = await _resolve_text(event, owui, adapter)
@@ -260,6 +334,20 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     if not text.strip():
         # A sticker, an empty edit, a stray keystroke. Answering would be noise.
         return ""
+
+    # Checked before commands so that "/help" during a pending approval is
+    # not swallowed: it is not a verdict, so it drops the held action and
+    # then runs as the command it is.
+    held = await _read_pending(src)
+    drop_notice = None
+    if held:
+        answer_given = approvals.verdict(text)
+        if answer_given is None:
+            await _clear_pending(src)
+            drop_notice = approvals.DROPPED
+        else:
+            return await _resume_pending(
+                adapter, src, held, answer_given, email)
 
     # Commands run before the model, so /resume and /help still work when the
     # model is down. Those are how someone recovers, so routing them through a
@@ -288,6 +376,11 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     if reply:
         return await _say(adapter, src.chat_id, reply)
 
+    # Merged once, here: a dropped approval from earlier in this same message
+    # rides along with whatever _choose_agent has to say, so it reaches the
+    # person exactly once instead of being said twice or lost.
+    notice = "\n\n".join(n for n in (drop_notice, notice) if n) or None
+
     model = agent["id"] if agent else settings.gateway_model
 
     chat_id, chat = await get_or_create_chat(
@@ -301,11 +394,15 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
         # Open WebUI does not run tools for an API caller, so calling it
         # directly here is what produced "It can't do that here yet".
         out = await _tasks.agent_turn(
-            user_email=identity["email"], agent_id=agent["id"],
+            user_email=email, agent_id=agent["id"],
             messages=messages)
-        answer = _answer_from(out)
-    else:
-        answer = await owui.chat_completion(messages, model, chat_id=chat_id)
+        result = await _deliver_turn(adapter, src, out, agent, chat_id, text,
+                                     owui, chat)
+        if notice:
+            result = notice + "\n\n" + result
+        return result
+
+    answer = await owui.chat_completion(messages, model, chat_id=chat_id)
 
     # Persist before delivering, but never let a persist failure swallow a
     # good answer: the person is waiting and the answer already exists.
@@ -323,10 +420,6 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
     # asked a real question and still deserves it answered.
     if notice:
         answer = "%s\n\n%s" % (notice, answer)
-    # The agent answers in its own name, first thing, which is also how you
-    # know which one picked the message up.
-    if agent:
-        answer = "%s:\n%s" % (agent.get("name") or agent["id"], answer)
 
     return await _say(adapter, src.chat_id, answer)
 
@@ -403,20 +496,47 @@ async def _say(adapter: BasePlatformAdapter, chat_id: str, text: str) -> str:
     return text
 
 
-def _answer_from(out: dict) -> str:
-    """The words to deliver from an agent turn.
+async def _deliver_turn(adapter: BasePlatformAdapter, src: SessionSource,
+                        out: dict, agent: dict, chat_id: str | None,
+                        text: str, owui, chat) -> str:
+    """Say what came back from an agent turn, held or finished.
 
     Notes ride along with the answer rather than replacing it: a refused
     write that nobody is told about is the worst outcome, because the person
     believes it happened.
     """
+    pending = out.get("pending")
+    if isinstance(pending, dict) and pending.get("calls"):
+        kept = await _store_pending(src, pending, agent, chat_id or "", text)
+        question = approvals.prompt(agent.get("name") or agent["id"],
+                                    pending["calls"])
+        if not kept:
+            # Never ask a question that cannot be answered.
+            question = (question + "\n\n" + "I could not hold this, so the "
+                        "answer may not reach me. Ask again if nothing "
+                        "happens.")
+        return await _say(adapter, src.chat_id, question)
+
     answer = (out.get("answer") or "").strip()
     notes = [n for n in (out.get("notes") or []) if isinstance(n, str)]
     if notes:
         note_text = "\n".join(notes)
         answer = (answer + "\n\n" + note_text) if answer else note_text
     # Nothing on this path may fail silently.
-    return answer or TURN_EMPTY
+    answer = answer or TURN_EMPTY
+
+    if owui is not None and chat is not None and chat_id:
+        # Persist before delivering, but never let a persist failure swallow
+        # a good answer: the person is waiting and the answer already exists.
+        try:
+            await owui.update_chat(
+                chat_id, append_turn(chat, text, answer, agent["id"]))
+        except Exception:                              # noqa: BLE001
+            log.exception("gateway: could not write the transcript to chat "
+                          "%s; delivering the answer anyway", chat_id)
+
+    name = agent.get("name") or agent["id"]
+    return await _say(adapter, src.chat_id, "%s:\n%s" % (name, answer))
 
 
 async def _stop_typing_quietly(adapter: BasePlatformAdapter, chat_id: str) -> None:
