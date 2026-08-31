@@ -1,4 +1,4 @@
-﻿"""What may this agent do, here, right now.
+"""What may this agent do, here, right now.
 
 The whole point of this module is that there is ONE answer to that, in one
 function. This codebase has twice had access logic living in two places where
@@ -92,6 +92,15 @@ def test_a_channel_never_talks_about_schedules():
     reason = aa.refusal_reason("read", None, aa.SURFACE_CHANNEL)
     assert "schedule" not in reason
     assert reason == "this agent is set to read only"
+
+
+def test_a_channel_with_no_level_set_does_not_claim_read_only():
+    """"this agent is set to read only" is false for every agent that
+    predates this feature: nobody ever set it to anything, read-only
+    included. level=None needs its own, true sentence."""
+    reason = aa.refusal_reason(None, None, aa.SURFACE_CHANNEL)
+    assert reason == "this agent has not been given access to change things"
+    assert "read only" not in reason
 
 
 def test_a_read_only_agent_on_a_schedule_blames_the_agent_not_the_schedule():

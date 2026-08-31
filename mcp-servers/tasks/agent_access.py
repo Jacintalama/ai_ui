@@ -106,6 +106,11 @@ def refusal_reason(level: str | None, tool_mode: str | None,
     a refusal that explains the wrong rule is worse than no explanation.
     """
     if surface == SURFACE_CHANNEL:
+        if level is None:
+            # Distinct from LEVEL_READ on purpose: "set to read only" is
+            # false for an agent that predates this feature and has never
+            # had a level chosen at all.
+            return "this agent has not been given access to change things"
         return "this agent is set to read only"
     if level == LEVEL_ASK:
         return "a scheduled run has nobody to ask"

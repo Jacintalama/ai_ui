@@ -222,15 +222,45 @@ async def test_somebody_else_cannot_approve_your_agents_write(wired):
 
 
 async def test_an_unrelated_reply_drops_it_and_is_answered_normally(wired):
+    """The notice has to reach the chat message that actually gets sent, not
+    just the value handle_event returns. A chat-platform user never sees the
+    return value; only the CLI adapter reads it."""
     pl, tasks, adapter = wired
     tasks.get_state = AsyncMock(return_value=PENDING)
 
-    sent = await pl.handle_event(_event("actually what is the weather"), adapter)
+    await pl.handle_event(_event("actually what is the weather"), adapter)
 
     tasks.delete_state.assert_awaited_once()
     tasks.agent_turn_resume.assert_not_awaited()
     tasks.agent_turn.assert_awaited_once(), "the new question went unanswered"
-    assert approvals.DROPPED in sent
+    said = adapter.send_chunked.await_args.args[1]
+    assert approvals.DROPPED in said
+
+
+async def test_a_bare_yes_with_nothing_pending_is_answered_plainly(wired):
+    """Most often the 600 second TTL beat the reply to it. Silently routing
+    a bare "yes" to the model gets an answer to a question nobody asked; it
+    has to say plainly that nothing is waiting instead."""
+    pl, tasks, adapter = wired
+    tasks.get_state = AsyncMock(return_value=None)
+
+    sent = await pl.handle_event(_event("yes"), adapter)
+
+    assert sent == approvals.EXPIRED
+    tasks.agent_turn.assert_not_awaited()
+    tasks.agent_turn_resume.assert_not_awaited()
+
+
+async def test_an_ordinary_message_with_nothing_pending_still_reaches_the_model(wired):
+    """The EXPIRED short-circuit must only catch a bare verdict. Anything
+    else with no pending record has to flow through exactly as before."""
+    pl, tasks, adapter = wired
+    tasks.get_state = AsyncMock(return_value=None)
+
+    sent = await pl.handle_event(_event("what is on my calendar today"), adapter)
+
+    tasks.agent_turn.assert_awaited_once()
+    assert sent != approvals.EXPIRED
 
 
 async def test_a_pending_check_survives_a_state_store_failure(wired):

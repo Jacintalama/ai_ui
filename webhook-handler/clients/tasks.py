@@ -16,9 +16,12 @@ logger = logging.getLogger(__name__)
 #: An agent turn runs up to CHANNEL_MAX_TOOL_ITERATIONS completions with tool
 #: calls in between, so it cannot use the 15 second default that suits
 #: reading a row. Sized above the tasks service's own worst case for a
-#: channel turn (3 rounds at 60 seconds) with room for the tool calls
-#: themselves. A timeout here reads to the user as the bot ignoring them.
-AGENT_TURN_TIMEOUT_SECONDS = 240.0
+#: channel turn: 3 rounds of up to 60 seconds each for the completion
+#: (CHANNEL_HTTP_TIMEOUT_SECONDS in agent_runner.py) plus up to 60 seconds
+#: per round for a tool call (TOOL_TIMEOUT_SECONDS in agent_tools.py), which
+#: is 360 seconds, with margin on top. A timeout here reads to the user as
+#: the bot ignoring them.
+AGENT_TURN_TIMEOUT_SECONDS = 420.0
 
 
 class TasksAPIError(Exception):

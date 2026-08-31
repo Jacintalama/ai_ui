@@ -356,6 +356,12 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
         else:
             return await _resume_pending(
                 adapter, src, held, answer_given, email, owui)
+    elif approvals.verdict(text) is not None:
+        # A bare "yes" or "no" with nothing held, most often the TTL beating
+        # the reply to it, has nothing left to confirm. Sending it to the
+        # model gets an answer to a question that was never asked; this says
+        # plainly that there is nothing waiting.
+        return await _say(adapter, src.chat_id, approvals.EXPIRED)
 
     # Commands run before the model, so /resume and /help still work when the
     # model is down. Those are how someone recovers, so routing them through a
@@ -404,11 +410,8 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
         out = await _tasks.agent_turn(
             user_email=email, agent_id=agent["id"],
             messages=messages)
-        result = await _deliver_turn(adapter, src, out, agent, chat_id, text,
-                                     owui, chat)
-        if notice:
-            result = notice + "\n\n" + result
-        return result
+        return await _deliver_turn(adapter, src, out, agent, chat_id, text,
+                                   owui, chat, notice=notice)
 
     answer = await owui.chat_completion(messages, model, chat_id=chat_id)
 
@@ -516,12 +519,19 @@ def _with_notice(notice: str | None, text: str) -> str:
 
 async def _deliver_turn(adapter: BasePlatformAdapter, src: SessionSource,
                         out: dict, agent: dict, chat_id: str | None,
-                        text: str, owui, chat) -> str:
+                        text: str, owui, chat,
+                        notice: str | None = None) -> str:
     """Say what came back from an agent turn, held or finished.
 
     Notes ride along with the answer rather than replacing it: a refused
     write that nobody is told about is the worst outcome, because the person
     believes it happened.
+
+    `notice` is prepended to whatever gets said, on every exit, because this
+    function is the one that actually calls `_say`. Prepending it to a
+    RETURN VALUE instead would only reach the caller, and none of this
+    function's chat-platform callers read the return value; they already
+    saw the message go out.
     """
     pending = out.get("pending")
     if isinstance(pending, dict) and pending.get("calls"):
@@ -533,7 +543,7 @@ async def _deliver_turn(adapter: BasePlatformAdapter, src: SessionSource,
             question = (question + "\n\n" + "I could not hold this, so the "
                         "answer may not reach me. Ask again if nothing "
                         "happens.")
-        return await _say(adapter, src.chat_id, question)
+        return await _say(adapter, src.chat_id, _with_notice(notice, question))
 
     answer = (out.get("answer") or "").strip()
     notes = [n for n in (out.get("notes") or []) if isinstance(n, str)]
@@ -554,7 +564,9 @@ async def _deliver_turn(adapter: BasePlatformAdapter, src: SessionSource,
                           "%s; delivering the answer anyway", chat_id)
 
     name = agent.get("name") or agent["id"]
-    return await _say(adapter, src.chat_id, "%s:\n%s" % (name, answer))
+    return await _say(
+        adapter, src.chat_id,
+        _with_notice(notice, "%s:\n%s" % (name, answer)))
 
 
 async def _stop_typing_quietly(adapter: BasePlatformAdapter, chat_id: str) -> None:
