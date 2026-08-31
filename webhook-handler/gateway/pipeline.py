@@ -42,6 +42,8 @@ TRANSCRIBE_FAILED = (
 CLIP_TOO_LONG = (
     "That voice message is too long for me. I can handle up to 2 minutes."
 )
+TURN_EMPTY = ("The agent finished without saying anything. Ask it again and "
+              "it may have more to say.")
 PINNED = ("Right, I'll use %s for this conversation. Say \"stop using that\" "
           "to go back.")
 UNPINNED = "Back to normal. I'll pick whichever agent fits each message."
@@ -294,12 +296,16 @@ async def _run(event: MessageEvent, adapter: BasePlatformAdapter) -> str:
 
     messages = history_messages(chat, settings.gateway_history_turns)
     messages.append({"role": "user", "content": text})
-    # An agent's tools have to be asked for explicitly on this path. See the
-    # note in OWUIUserClient.chat_completion: without them an agent arrives
-    # with its instructions and nothing it can actually do.
-    answer = await owui.chat_completion(
-        messages, model, chat_id=chat_id,
-        tool_ids=(agent or {}).get("tools") or None)
+    if agent:
+        # An agent goes through the tasks service, which owns the tool loop.
+        # Open WebUI does not run tools for an API caller, so calling it
+        # directly here is what produced "It can't do that here yet".
+        out = await _tasks.agent_turn(
+            user_email=identity["email"], agent_id=agent["id"],
+            messages=messages)
+        answer = _answer_from(out)
+    else:
+        answer = await owui.chat_completion(messages, model, chat_id=chat_id)
 
     # Persist before delivering, but never let a persist failure swallow a
     # good answer: the person is waiting and the answer already exists.
@@ -395,6 +401,22 @@ async def _transcribe_voice(event: MessageEvent, owui: OWUIUserClient,
 async def _say(adapter: BasePlatformAdapter, chat_id: str, text: str) -> str:
     await adapter.send_chunked(chat_id, text)
     return text
+
+
+def _answer_from(out: dict) -> str:
+    """The words to deliver from an agent turn.
+
+    Notes ride along with the answer rather than replacing it: a refused
+    write that nobody is told about is the worst outcome, because the person
+    believes it happened.
+    """
+    answer = (out.get("answer") or "").strip()
+    notes = [n for n in (out.get("notes") or []) if isinstance(n, str)]
+    if notes:
+        note_text = "\n".join(notes)
+        answer = (answer + "\n\n" + note_text) if answer else note_text
+    # Nothing on this path may fail silently.
+    return answer or TURN_EMPTY
 
 
 async def _stop_typing_quietly(adapter: BasePlatformAdapter, chat_id: str) -> None:

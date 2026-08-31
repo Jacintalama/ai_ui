@@ -44,6 +44,11 @@ def wired(monkeypatch, owui):
         "owui_user_id": "owui-1", "owui_token": "tok-for-user-1"}
     tasks.gateway_get_session.return_value = None
     tasks.get_state.return_value = None
+    # A bare AsyncMock's own return value is itself an AsyncMock, so an
+    # unconfigured tasks.agent_turn() breaks pipeline._answer_from on
+    # `.get`. Give every test a real dict; individual tests still override
+    # it for the scenario they care about.
+    tasks.agent_turn.return_value = {"answer": "the answer", "notes": []}
     monkeypatch.setattr(pipeline, "_tasks", tasks)
     monkeypatch.setattr(pipeline, "_owui_factory", lambda token: owui)
     return MagicMock(tasks=tasks, owui=owui)
@@ -73,8 +78,10 @@ async def test_a_pinned_agent_answers_without_asking_the_router(
 
     out = await pipeline.handle_event(_event("what is new"), adapter)
 
-    assert owui.chat_completion.await_count == 1, "the router ran anyway"
-    assert owui.chat_completion.await_args.args[1] == AGENT["id"]
+    owui.chat_completion.assert_not_awaited(), "the router ran anyway"
+    # An agent's answer runs through the tasks service (Task 7), not
+    # chat_completion.
+    assert wired.tasks.agent_turn.await_args.kwargs["agent_id"] == AGENT["id"]
     assert out.startswith("Inbox Triage:"), out
 
 

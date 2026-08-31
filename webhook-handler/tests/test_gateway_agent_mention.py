@@ -107,6 +107,11 @@ def wired(monkeypatch, owui):
         "owui_user_id": "owui-1", "owui_token": "tok"}
     tasks.gateway_get_session.return_value = None
     tasks.get_state.return_value = None
+    # A bare AsyncMock's own return value is itself an AsyncMock, so an
+    # unconfigured tasks.agent_turn() breaks pipeline._answer_from on
+    # `.get`. Give every test a real dict; individual tests still override
+    # it for the scenario they care about.
+    tasks.agent_turn.return_value = {"answer": "the answer", "notes": []}
     monkeypatch.setattr(pipeline, "_tasks", tasks)
     monkeypatch.setattr(pipeline, "_owui_factory", lambda token: owui)
     return MagicMock(tasks=tasks, owui=owui)
@@ -119,28 +124,35 @@ def _event(text):
                              chat_type="dm", user_id="111", user_name="Ralph"))
 
 
-async def test_saying_the_name_answers_as_that_agent(adapter, owui):
+async def test_saying_the_name_answers_as_that_agent(adapter, owui, wired):
     out = await pipeline.handle_event(_event("hi jack, are you there"), adapter)
 
-    assert owui.chat_completion.await_args.args[1] == "agent-jack-0001"
+    # The tool loop moved to the tasks service (Task 7): an agent message no
+    # longer calls chat_completion at all, it calls agent_turn.
+    assert wired.tasks.agent_turn.await_args.kwargs["agent_id"] == "agent-jack-0001"
+    owui.chat_completion.assert_not_awaited()
     assert out.startswith("Jack:"), out
 
 
-async def test_the_agent_is_handed_its_tools(adapter, owui):
-    """The whole point. Without tool_ids the model gets no tools at all on
-    this path, whatever the agent says it has."""
+async def test_the_agent_is_handed_its_tools(adapter, owui, wired):
+    """The whole point, moved: the tasks service resolves an agent's own
+    tools from its agent_id (TasksClient.agent_turn deliberately never sends
+    tool_ids, because that field gates which tools may execute), so this
+    checks the pipeline hands over the right agent_id instead of a tools
+    list."""
     await pipeline.handle_event(_event("jack, check my mail"), adapter)
 
-    assert owui.chat_completion.await_args.kwargs["tool_ids"] == [
-        "gmail", "calendar"]
+    assert wired.tasks.agent_turn.await_args.kwargs["agent_id"] == "agent-jack-0001"
+    assert "tool_ids" not in wired.tasks.agent_turn.await_args.kwargs
 
 
-async def test_an_agent_with_no_tools_sends_none(adapter, owui):
-    """Sending an empty list would read as "explicitly no tools" rather than
-    "nothing to ask for", so it has to be omitted."""
+async def test_an_agent_with_no_tools_sends_none(adapter, owui, wired):
+    """tool_ids is never sent on this path now, whether the agent has tools
+    or not: the tasks service resolves them from the agent_id alone."""
     await pipeline.handle_event(_event("ana, what do you think"), adapter)
 
-    assert owui.chat_completion.await_args.kwargs["tool_ids"] is None
+    assert wired.tasks.agent_turn.await_args.kwargs["agent_id"] == "agent-ana-0002"
+    assert "tool_ids" not in wired.tasks.agent_turn.await_args.kwargs
 
 
 async def test_an_ordinary_message_is_not_answered_by_an_agent(adapter, owui):
@@ -189,14 +201,19 @@ async def test_chat_completion_with_plain_empty_content_still_raises_the_generic
 
 
 async def test_a_tool_call_gets_its_own_message_not_the_generic_one(adapter, owui):
-    """Measured on production: given tool_ids, Open WebUI can come back with
-    an empty content and a tool_calls array instead of running the tool. The
-    person needs to hear that specifically, not the generic "model didn't
-    answer" message that invites a retry that can never work."""
+    """This can no longer happen on the agent path itself: Task 7 moved
+    agent messages to the tasks service's tool loop instead of asking Open
+    WebUI to run tools directly, so an agent message never calls
+    chat_completion any more. The exception handling in handle_event stays
+    as a backstop, so this now exercises it through a plain message (no
+    agent addressed) and proves it still answers with the specific
+    sentence, not the generic "model didn't answer" that invites a retry
+    that can never work."""
     owui.chat_completion.side_effect = OWUIToolCallError(
         502, "the model asked to use a tool instead of answering")
 
-    out = await pipeline.handle_event(_event("jack, check my mail"), adapter)
+    out = await pipeline.handle_event(_event("what is the capital of France"),
+                                      adapter)
 
     assert out == pipeline.AGENT_TOOL_CALL
     assert out != pipeline.MODEL_DOWN

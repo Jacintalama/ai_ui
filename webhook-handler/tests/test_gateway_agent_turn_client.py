@@ -4,6 +4,8 @@ The one thing that is easy to get wrong here is the timeout. TasksClient
 defaults to 15 seconds, which is right for reading a row and far too short
 for a turn that may run three rounds of tool use.
 """
+import json
+
 import httpx
 import pytest
 import respx
@@ -87,3 +89,50 @@ async def test_a_failure_arrives_as_a_typed_error_the_pipeline_can_catch():
     with pytest.raises(TasksAPIError):
         await _client().agent_turn(
             user_email="o@e.com", agent_id="a", messages=[])
+
+
+# --- the outgoing body, exactly -------------------------------------------
+#
+# respx only matched on URL and method above, so nothing caught a payload
+# regression. tool_ids is the field that matters most here: the tasks
+# service resolves an agent's own tools from its agent_id, and that field is
+# what gates which tools may actually run. Sending it from the gateway would
+# move that decision out of the service that enforces it, so its absence is
+# asserted explicitly, not just the shape of what IS sent.
+
+@respx.mock
+async def test_the_turn_body_sends_exactly_user_email_agent_id_and_messages():
+    route = respx.post(f"{BASE}/agents/turn").mock(
+        return_value=httpx.Response(200, json={"answer": "hi", "notes": []}))
+
+    await _client().agent_turn(
+        user_email="owner@example.com", agent_id="agent-1",
+        messages=[{"role": "user", "content": "q"}])
+
+    body = json.loads(route.calls[0].request.content)
+    assert set(body.keys()) == {"user_email", "agent_id", "messages"}
+    assert body["user_email"] == "owner@example.com"
+    assert body["agent_id"] == "agent-1"
+    assert body["messages"] == [{"role": "user", "content": "q"}]
+    assert "tool_ids" not in body
+
+
+@respx.mock
+async def test_the_resume_body_sends_exactly_its_five_fields():
+    route = respx.post(f"{BASE}/agents/turn/resume").mock(
+        return_value=httpx.Response(200, json={"answer": "sent", "notes": []}))
+
+    await _client().agent_turn_resume(
+        user_email="owner@example.com", agent_id="agent-1",
+        conversation=[{"role": "user", "content": "x"}],
+        calls=[{"id": "c1"}], approved=False)
+
+    body = json.loads(route.calls[0].request.content)
+    assert set(body.keys()) == {
+        "user_email", "agent_id", "conversation", "calls", "approved"}
+    assert body["user_email"] == "owner@example.com"
+    assert body["agent_id"] == "agent-1"
+    assert body["conversation"] == [{"role": "user", "content": "x"}]
+    assert body["calls"] == [{"id": "c1"}]
+    assert body["approved"] is False
+    assert "tool_ids" not in body
