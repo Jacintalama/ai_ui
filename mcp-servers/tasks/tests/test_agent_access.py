@@ -1,4 +1,4 @@
-"""What may this agent do, here, right now.
+﻿"""What may this agent do, here, right now.
 
 The whole point of this module is that there is ONE answer to that, in one
 function. This codebase has twice had access logic living in two places where
@@ -94,6 +94,16 @@ def test_a_channel_never_talks_about_schedules():
     assert reason == "this agent is set to read only"
 
 
+def test_a_read_only_agent_on_a_schedule_blames_the_agent_not_the_schedule():
+    """These are different causes with different fixes. Telling somebody the
+    schedule is read only when the agent is sends them to change the wrong
+    setting."""
+    assert (aa.refusal_reason("read", "full", aa.SURFACE_SCHEDULE)
+            == "this agent is set to read only")
+    assert (aa.refusal_reason(None, "read_only", aa.SURFACE_SCHEDULE)
+            == "this schedule is set to read only")
+
+
 @pytest.mark.parametrize("surface", [aa.SURFACE_CHANNEL, aa.SURFACE_SCHEDULE])
 @pytest.mark.parametrize("level", [None, "read", "ask", "all"])
 def test_every_reason_reads_as_a_clause(surface, level):
@@ -101,7 +111,7 @@ def test_every_reason_reads_as_a_clause(surface, level):
     a leading capital would produce garbage in one of them."""
     reason = aa.refusal_reason(level, "full", surface)
     assert reason and not reason.endswith(".") and reason[0].islower()
-    assert "—" not in reason and "–" not in reason
+    assert "\u2014" not in reason and "\u2013" not in reason
 
 
 # --- the approval signal --------------------------------------------------
