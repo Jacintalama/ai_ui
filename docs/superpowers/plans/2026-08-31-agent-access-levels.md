@@ -2604,7 +2604,7 @@ def test_a_new_agent_defaults_to_asking():
 
 def test_the_level_is_written_into_meta():
     page = _page()
-    assert re.search(r"access:\s*\w+", page), (
+    assert re.search(r"meta\.access\s*=", page), (
         "buildAgentBody must put the level on meta.access")
 
 
@@ -2614,9 +2614,17 @@ def test_an_agent_with_no_level_set_is_not_given_one_on_save():
     to read only."""
     page = _page()
     assert "chosenAccess" in page
-    assert re.search(r"if\s*\(\s*access\s*\)", page) or \
-           re.search(r"access\s*!==?\s*null", page), (
+    assert re.search(r"if\s*\(\s*f\.access\s*\)\s*meta\.access", page), (
         "the level must be omitted from the body when nothing is selected")
+
+
+def test_nothing_is_preselected_for_an_agent_that_has_no_level():
+    """setAccess("") must clear every radio, or an unrelated edit writes a
+    level onto an agent that never had one."""
+    page = _page()
+    assert "function setAccess" in page
+    assert re.search(r"all\[i\]\.checked\s*=\s*false", page), (
+        "setAccess must clear the group before selecting")
 
 
 def test_no_em_dashes_in_the_new_copy():
