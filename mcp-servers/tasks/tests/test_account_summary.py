@@ -78,8 +78,14 @@ def test_only_google_and_notion_can_show_a_login():
 
 
 def test_no_dashes_in_any_hint():
+    """Written with chr() rather than the characters or their escapes. The
+    two earlier versions of this test in this repo both ended up containing
+    the very characters they exist to forbid, because transcribing an escape
+    is the step that renders it."""
+    EM_DASH = chr(0x2014)
+    EN_DASH = chr(0x2013)
     for pid in acc.PROVIDERS:
         h = acc.connect_hint(pid)
         for value in h.values():
             if isinstance(value, str):
-                assert "—" not in value and "–" not in value
+                assert EM_DASH not in value and EN_DASH not in value
