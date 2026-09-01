@@ -4,7 +4,7 @@
 
 **Goal:** One model in the Open WebUI dropdown, "IO", that answers you itself and wakes one of your agents when you name it, so that saying "hi mia" in the web chat reaches Mia the way it already does in Discord.
 
-**Architecture:** A thin Open WebUI pipe holds no routing logic. It sends the conversation to a new internal endpoint in the `tasks` service, which reads the per-chat pin, matches an agent by name, and either runs that agent through the existing `/agents/turn` machinery or reports that no agent was named. When no agent is named the pipe answers on a base model itself. Keeping the logic in `tasks` means the web chat runs OUR tool loop, so the per-agent access levels apply there for the first time.
+**Architecture:** A thin Open WebUI pipe holds no routing logic. It sends the conversation to a new internal endpoint in the `tasks` service, which reads the per-chat pin, matches an agent by name, and either runs that agent through the existing `/agents/turn` machinery or answers as IO itself on a base model. The pipe makes exactly one outbound call and holds no Open WebUI credentials, no routing rules and no model choice. Keeping all of it in `tasks` means the web chat runs OUR tool loop, so the per-agent access levels apply there for the first time.
 
 **Tech Stack:** Python 3.11, FastAPI, SQLAlchemy async, httpx, pytest (`asyncio_mode = auto`), an Open WebUI Pipe function (pydantic `Valves`), Docker Compose on Hetzner.
 
@@ -261,7 +261,7 @@ git commit -m "feat(agents): work out which agent is being spoken to"
 
 **Interfaces:**
 - Consumes: `agent_routing.match_agent`, `agent_routing.wants_release`, `agent_routing.last_user_text` (Task 1); `_resolve_agent`, `_pending_payload`, `_run_turn` (below); `agent_runner._list_agents`, `_owui_user_id_for`, `CHAT_TOKEN_TTL_SECONDS`; `owui_token.mint_owui_token`; `models.BotState`; `db.session`.
-- Produces: `POST /agents/chat` returning `{"agent": {"id","name"} | None, "answer": str | None, "notes": list[str]}` or `{"agent": {...}, "pending": {...}}`. Module members `PIN_TTL_SECONDS`, `_pin_key(chat_id)`, `_read_pin`, `_write_pin`, `_clear_pin`, `_run_turn`, `ChatIn`.
+- Produces: `POST /agents/chat` returning `{"agent": {"id","name"} | None, "answer": str, "notes": list[str]}` (answer is always present: an agent's when one was woken, IO's own otherwise) or `{"agent": {...}, "pending": {...}}`. Module members `PIN_TTL_SECONDS`, `_pin_key(chat_id)`, `_read_pin`, `_write_pin`, `_clear_pin`, `_run_turn`, `_answer_as_io`, `_agents_for`, `IO_BASE_MODEL`, `IO_DOWN`, `ChatIn`.
 
 - [ ] **Step 1: Extract the turn runner so two endpoints can share it**
 
@@ -369,13 +369,26 @@ async def test_naming_an_agent_wakes_it(_wire):
     assert rt._run_turn.await_args.args[1] == "agent-m"
 
 
-async def test_naming_nobody_leaves_it_to_the_gateway(_wire):
-    """IO answers for itself. The pipe needs to know that, so agent is None
-    and no turn is run."""
+async def test_naming_nobody_is_answered_by_io_itself(_wire, monkeypatch):
+    """No agent named means IO answers, on the base model, from here. The pipe
+    holds no Open WebUI credentials, so this side owns that call."""
+    monkeypatch.setattr(rt, "_answer_as_io",
+                        AsyncMock(return_value="I can help with that."))
     out = await rt.chat(_body("what is the weather"), x_internal_secret="s")
     assert out["agent"] is None
-    assert out["answer"] is None
+    assert out["answer"] == "I can help with that."
     rt._run_turn.assert_not_awaited()
+    rt._answer_as_io.assert_awaited_once()
+
+
+async def test_ios_own_answer_survives_the_base_model_failing(_wire, monkeypatch):
+    """Somebody is watching this chat. A base model outage must still produce
+    a sentence, not an exception the pipe has to guess at."""
+    monkeypatch.setattr(rt, "_answer_as_io",
+                        AsyncMock(side_effect=RuntimeError("model down")))
+    out = await rt.chat(_body("what is the weather"), x_internal_secret="s")
+    assert out["agent"] is None
+    assert isinstance(out["answer"], str) and out["answer"].strip()
 
 
 async def test_a_woken_agent_stays_awake_for_the_next_message(_wire):
@@ -599,12 +612,52 @@ async def chat(body: ChatIn,
             await _clear_pin(key)
 
     if agent is None:
-        return {"agent": None, "answer": None, "notes": []}
+        # IO speaking for itself. Done here rather than in the pipe because
+        # the pipe holds no Open WebUI credentials, and this service already
+        # mints a per-user token for every agent turn.
+        try:
+            answer = await _answer_as_io(body.user_email, body.messages)
+        except Exception:                                   # noqa: BLE001
+            logger.warning("the base model did not answer", exc_info=True)
+            answer = IO_DOWN
+        return {"agent": None, "answer": answer, "notes": []}
 
     out = await _run_turn(body.user_email, agent["id"], body.messages)
     out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
     return out
 ```
+
+Add above `chat()`, beside the other helpers:
+
+```python
+#: What IO answers with when no agent was named. Read from the environment so
+#: it can be changed without editing this file, and defaulting to the model the
+#: channel gateway already uses so the assistant sounds the same in both places.
+IO_BASE_MODEL = os.environ.get("GATEWAY_MODEL", "gpt-4o-mini")
+
+IO_DOWN = ("I could not reach the model just now. Try again in a moment.")
+
+
+async def _answer_as_io(user_email: str, messages: list[dict]) -> str:
+    """IO speaking for itself, on the base model, as this user.
+
+    Uses the same per-user minted token every agent turn uses, so the answer
+    is attributed to the right person and their own model access applies.
+    """
+    owner = await _owui_user_id_for(user_email)
+    if not owner:
+        return IO_DOWN
+    token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+    data = await _post_chat(
+        {"model": IO_BASE_MODEL, "messages": messages, "stream": False},
+        token, CHANNEL_HTTP_TIMEOUT_SECONDS)
+    choices = data.get("choices") or []
+    if not choices:
+        return IO_DOWN
+    return ((choices[0].get("message") or {}).get("content") or "").strip() or IO_DOWN
+```
+
+and add `_post_chat` to the existing `from agent_runner import (...)` block, plus `import os` if it is not already imported.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -644,7 +697,7 @@ git commit -m "feat(agents): decide who answers a web chat message"
 
 **Interfaces:**
 - Consumes: `POST /agents/chat` (Task 2).
-- Produces: an Open WebUI Pipe class exposing one model, id `io`, name `IO`. Module members `Pipe`, `Pipe.Valves`, `Pipe.pipes()`, `Pipe.pipe(body, __user__, __event_emitter__)`.
+- Produces: an Open WebUI Pipe class exposing one model, id `io`, name `IO`. Module members `Pipe`, `Pipe.Valves`, `Pipe.pipes()`, `Pipe.pipe(body, __user__, __event_emitter__)`, `Pipe._ask_tasks`, `Pipe._render`, `Pipe._approval_question`. The pipe makes exactly one outbound call, to `/agents/chat`; it never talks to Open WebUI.
 
 The test file lives under `mcp-servers/tasks/tests/` because that is where this repo's pytest configuration lives; the pipe file itself is installed into Open WebUI, not imported by the tasks service.
 
@@ -731,17 +784,26 @@ async def test_a_pending_approval_is_shown_as_a_question(mod, monkeypatch):
     assert "yes" in out.lower()
 
 
-async def test_no_agent_named_falls_through_to_the_base_model(mod, monkeypatch):
+async def test_ios_own_answer_is_delivered_without_a_name_prefix(mod, monkeypatch):
+    """When nobody was named, IO answered, and prefixing that with a name
+    would invent a speaker."""
     p = mod.Pipe()
     monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value={
-        "agent": None, "answer": None, "notes": []}))
-    monkeypatch.setattr(p, "_answer_as_io", AsyncMock(return_value="I can help."))
+        "agent": None, "answer": "I can help.", "notes": []}))
 
     out = await p.pipe({"messages": [{"role": "user", "content": "what is the weather"}]},
                        __user__={"email": "o@e.com"})
 
     assert out == "I can help."
-    p._answer_as_io.assert_awaited_once()
+    assert ":" not in out.split("\n")[0], "an agent name was prefixed to IO's own answer"
+
+
+def test_the_pipe_never_calls_open_webui_itself(mod):
+    """It holds no Open WebUI credentials by design. Every model call goes
+    through the tasks service, which mints a per-user token."""
+    src = open(PIPE_PATH, encoding="utf-8").read()
+    assert "chat/completions" not in src
+    assert "OPENWEBUI_URL" not in src
 
 
 async def test_a_tasks_failure_still_says_something(mod, monkeypatch):
@@ -820,7 +882,6 @@ from pydantic import BaseModel, Field
 
 TASKS_URL = os.environ.get("TASKS_URL", "http://tasks:8210")
 INTERNAL_SECRET = os.environ.get("INTERNAL_CALLBACK_SECRET", "")
-OPENWEBUI_URL = os.environ.get("OPENWEBUI_URL", "http://open-webui:8080")
 
 #: Long enough for three rounds of tool use plus the tool calls themselves,
 #: matching the channel budget in agent_runner. A timeout here reads to the
@@ -846,9 +907,6 @@ class Pipe:
         INTERNAL_SECRET: str = Field(
             default=INTERNAL_SECRET,
             description="Shared secret for the tasks service. Read from env.")
-        BASE_MODEL: str = Field(
-            default="gpt-4o-mini",
-            description="The model IO answers with when no agent was named.")
         SHOW_AGENT_NAME: bool = Field(
             default=True,
             description="Prefix an agent's answer with its name.")
@@ -872,22 +930,6 @@ class Pipe:
                       "messages": messages})
             r.raise_for_status()
             return r.json()
-
-    async def _answer_as_io(self, body: dict, user_email: str) -> str:
-        """IO speaking for itself, on the base model."""
-        payload = {"model": self.valves.BASE_MODEL,
-                   "messages": body.get("messages") or [], "stream": False}
-        async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
-            r = await client.post(
-                OPENWEBUI_URL.rstrip("/") + "/api/chat/completions",
-                headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
-                json=payload)
-            r.raise_for_status()
-            data = r.json()
-        choices = data.get("choices") or []
-        if not choices:
-            return EMPTY
-        return (choices[0].get("message") or {}).get("content") or EMPTY
 
     # --- rendering ---------------------------------------------------------
 
@@ -923,6 +965,11 @@ class Pipe:
     def _render(self, out: dict) -> str:
         agent = out.get("agent") or {}
         name = agent.get("name") or agent.get("id") or "Agent"
+
+        if not out.get("agent"):
+            # IO answered for itself. Prefixing a name here would invent a
+            # speaker who was never involved.
+            return (out.get("answer") or "").strip() or EMPTY
 
         pending = out.get("pending")
         if isinstance(pending, dict) and pending.get("calls"):
@@ -964,12 +1011,6 @@ class Pipe:
             # Never include the exception text: an httpx error can carry the
             # request URL, and this project has already leaked a token that way.
             return TASKS_DOWN
-
-        if not out.get("agent"):
-            try:
-                return await self._answer_as_io(body, user_email)
-            except Exception:                               # noqa: BLE001
-                return TASKS_DOWN
 
         return self._render(out)
 ```

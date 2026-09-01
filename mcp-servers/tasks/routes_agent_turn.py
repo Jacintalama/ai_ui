@@ -15,17 +15,23 @@ here rather than accepting it is the difference between a permission and a
 suggestion.
 """
 import logging
+import os
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 import agent_access
 import agent_activity
+import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                           CHANNEL_MAX_TOOL_ITERATIONS,
                           CHAT_TOKEN_TTL_SECONDS, _chat, _list_agents,
-                          _owui_user_id_for)
+                          _owui_user_id_for, _post_chat)
 from agent_tools import execute_tool_call
+from db import session
+from models import BotState
 from owui_token import mint_owui_token
 from routes_gateway import _require_internal
 
@@ -120,21 +126,23 @@ def _pending_payload(user_email: str, agent_id: str,
     }}
 
 
-@router.post("/turn")
-async def turn(body: TurnIn,
-               x_internal_secret: str = Header(default="")) -> dict:
-    """Run one turn as this user's agent, tools and all."""
-    _require_internal(x_internal_secret)
-    token, tools, level = await _resolve_agent(body.user_email, body.agent_id)
+async def _run_turn(user_email: str, agent_id: str,
+                    messages: list[dict]) -> dict:
+    """Run one turn as this user's agent, tools and all.
+
+    Split out of the endpoint so /agents/chat can reuse it without going back
+    out over HTTP to ourselves. Returns the same two shapes the endpoint does.
+    """
+    token, tools, level = await _resolve_agent(user_email, agent_id)
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
 
     run_id = await agent_activity.start_run(
-        body.agent_id, body.user_email, agent_activity.SOURCE_CHANNEL)
+        agent_id, user_email, agent_activity.SOURCE_CHANNEL)
     outcome = "failed"
     try:
         answer, notes = await _chat(
-            token=token, model=body.agent_id, messages=body.messages,
-            tool_ids=tools or None, user_email=body.user_email,
+            token=token, model=agent_id, messages=messages,
+            tool_ids=tools or None, user_email=user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
                 level, None, agent_access.SURFACE_CHANNEL),
@@ -144,9 +152,17 @@ async def turn(body: TurnIn,
         return {"answer": answer, "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING
-        return _pending_payload(body.user_email, body.agent_id, err)
+        return _pending_payload(user_email, agent_id, err)
     finally:
         await agent_activity.finish_run(run_id, outcome)
+
+
+@router.post("/turn")
+async def turn(body: TurnIn,
+               x_internal_secret: str = Header(default="")) -> dict:
+    """Run one turn as this user's agent, tools and all."""
+    _require_internal(x_internal_secret)
+    return await _run_turn(body.user_email, body.agent_id, body.messages)
 
 
 #: Fed back as the tool result when the owner said no, so the agent can say
@@ -215,3 +231,210 @@ async def resume(body: ResumeIn,
         return _pending_payload(body.user_email, body.agent_id, err)
     finally:
         await agent_activity.finish_run(run_id, outcome)
+
+
+#: A woken agent stays awake for a week of chatting unless released. Long
+#: because a pin is a preference, not a lock: the cost of it lasting too long
+#: is one "stop", and the cost of it expiring mid-conversation is somebody
+#: wondering why their agent stopped answering.
+PIN_TTL_SECONDS = 60 * 60 * 24 * 7
+
+
+class ChatIn(BaseModel):
+    user_email: str = Field(min_length=1)
+    chat_id: str = Field(min_length=1)
+    messages: list[dict]
+
+
+def _pin_key(chat_id: str, user_email: str) -> str:
+    """state_key is the primary key, so the pin must be scoped per PERSON,
+    not just per chat_id. Two real values collapse chat_id across everybody
+    on the box: the pipe's own "web" default for a caller with no chat
+    metadata, and "local", which open-webui-functions/langfuse_filter.py
+    already special-cases for temporary chats. Without the email, one
+    person naming an agent in a temporary chat would answer a different
+    person's temporary chat with it, and one person's stale-pin cleanup
+    would delete another person's live pin.
+    """
+    return "agentpin:web:%s:%s" % (user_email, chat_id)
+
+
+async def _read_pin(key: str) -> str | None:
+    """The pinned agent id for this chat, or None. Never raises.
+
+    Fails open the way the channel pin does: a state outage must not stop
+    somebody chatting, and the cost of a missed pin is that they say the name
+    again.
+    """
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+        if row is None:
+            return None
+        if row.expires_at is not None and row.expires_at < datetime.now(timezone.utc):
+            return None
+        value = row.value
+        return value.get("agent_id") if isinstance(value, dict) else None
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the agent pin", exc_info=True)
+        return None
+
+
+async def _write_pin(key: str, agent_id: str) -> None:
+    """Remember which agent is awake. Never raises."""
+    expires = datetime.now(timezone.utc) + timedelta(seconds=PIN_TTL_SECONDS)
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            if row:
+                row.value = {"agent_id": agent_id}
+                row.updated_at = datetime.now(timezone.utc)
+                row.expires_at = expires
+            else:
+                s.add(BotState(state_key=key, value={"agent_id": agent_id},
+                               updated_at=datetime.now(timezone.utc),
+                               expires_at=expires))
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not write the agent pin", exc_info=True)
+
+
+async def _clear_pin(key: str) -> None:
+    """Send the agent back to sleep. Never raises."""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            if row:
+                await s.delete(row)
+                await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not clear the agent pin", exc_info=True)
+
+
+#: _list_agents returns every workspace model this person owns, agents and
+#: plain derived models alike. Every other consumer of that same listing
+#: filters on this prefix (webhook-handler/gateway/agent_router.py,
+#: static/cron.html), and this one must too, for two reasons: a non-agent
+#: model getting matched and woken as though it were an agent, and this
+#: branch's own pipe registering a model whose id is "io" - unfiltered, a
+#: message that merely mentions "socket.io" could match it and _chat(model=
+#: "io") would re-enter the pipe and recurse until timeout.
+AGENT_PREFIX = "agent-"
+
+
+async def _agents_for(user_email: str) -> list[dict]:
+    """This person's own agents, or an empty list.
+
+    Empty on ANY doubt, including a listing that was cut short: matching a
+    name against a partial list could wake a different agent whose name
+    happens to be similar, and waking the wrong agent is worse than waking
+    none.
+    """
+    try:
+        owner = await _owui_user_id_for(user_email)
+        if not owner:
+            return []
+        token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+        agents, truncated = await _list_agents(token)
+        if truncated:
+            return []
+        return [a for a in agents if isinstance(a, dict)
+                and isinstance(a.get("id"), str)
+                and a["id"].startswith(AGENT_PREFIX)]
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not list agents for routing", exc_info=True)
+        return []
+
+
+#: What IO answers with when no agent was named. Read from the environment so
+#: it can be changed without editing this file, and defaulting to the model the
+#: channel gateway already uses so the assistant sounds the same in both places.
+#: Must stay "auto_router.auto" to match webhook-handler/config.py's default
+#: and the compose fallback for this service's own GATEWAY_MODEL var:
+#: "gpt-4o-mini" is not a model id on this platform, so that fallback firing
+#: would fail every base-model turn.
+IO_BASE_MODEL = os.environ.get("GATEWAY_MODEL", "auto_router.auto")
+
+IO_DOWN = ("I could not reach the model just now. Try again in a moment.")
+
+#: Said when somebody releases the agent they were talking to. A fixed
+#: sentence rather than a model call: they asked for something specific and
+#: cheap, and spending a completion to say "ok" is waste.
+RELEASED = "Back to normal. I will answer from here."
+
+
+async def _answer_as_io(user_email: str, messages: list[dict]) -> str:
+    """IO speaking for itself, on the base model, as this user.
+
+    Uses the same per-user minted token every agent turn uses, so the answer
+    is attributed to the right person and their own model access applies.
+    """
+    owner = await _owui_user_id_for(user_email)
+    if not owner:
+        return IO_DOWN
+    token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+    data = await _post_chat(
+        {"model": IO_BASE_MODEL, "messages": messages, "stream": False},
+        token, CHANNEL_HTTP_TIMEOUT_SECONDS)
+    choices = data.get("choices") or []
+    if not choices:
+        return IO_DOWN
+    return ((choices[0].get("message") or {}).get("content") or "").strip() or IO_DOWN
+
+
+@router.post("/chat")
+async def chat(body: ChatIn,
+               x_internal_secret: str = Header(default="")) -> dict:
+    """Who should answer this message, and their answer if it is an agent.
+
+    Returns agent=None when nobody was named and nobody is pinned, which is
+    the caller's cue to answer as itself. The caller holds no routing logic so
+    that Discord, Telegram and the web chat all decide this the same way.
+    """
+    _require_internal(x_internal_secret)
+    key = _pin_key(body.chat_id, body.user_email)
+    text = agent_routing.last_user_text(body.messages)
+
+    if agent_routing.wants_release(text):
+        await _clear_pin(key)
+        return {"agent": None, "answer": RELEASED, "notes": []}
+
+    agents = await _agents_for(body.user_email)
+    named = agent_routing.match_agent(text, agents)
+
+    if named:
+        # Naming a different agent switches rather than stacking: one agent is
+        # awake at a time, so "actually ada, you take this" hands over cleanly.
+        await _write_pin(key, named["id"])
+        agent = named
+    else:
+        pinned_id = await _read_pin(key)
+        agent = next((a for a in agents if a.get("id") == pinned_id), None)
+        if pinned_id and agent is None:
+            # Deleted, or renamed out from under the pin. Fail closed to no
+            # agent rather than erroring on every message from here on. Falls
+            # through to IO below rather than returning here: a stale pin is
+            # an accident the person did not cause, so they get a real answer
+            # to what they actually typed, not silence.
+            await _clear_pin(key)
+
+    if agent is None:
+        # IO speaking for itself. Done here rather than in the pipe because
+        # the pipe holds no Open WebUI credentials, and this service already
+        # mints a per-user token for every agent turn.
+        try:
+            answer = await _answer_as_io(body.user_email, body.messages)
+        except Exception:                                   # noqa: BLE001
+            logger.warning("the base model did not answer", exc_info=True)
+            answer = IO_DOWN
+        return {"agent": None, "answer": answer, "notes": []}
+
+    out = await _run_turn(body.user_email, agent["id"], body.messages)
+    out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
+    return out
