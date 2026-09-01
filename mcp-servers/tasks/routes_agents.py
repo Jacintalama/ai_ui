@@ -356,8 +356,8 @@ async def tools_for_email(email: str) -> dict:
     # it. Offering it only once something was connected read as the safer
     # choice and was the more dangerous one: nobody on this platform has
     # connected a proxy app yet, so the umbrella vanished from the form
-    # entirely, and the starter agent Scout uses precisely this tool. Editing
-    # Scout would have saved it with the checkbox that was never rendered
+    # entirely, and the starter agent Ada uses precisely this tool. Editing
+    # Ada would have saved it with the checkbox that was never rendered
     # unticked, silently stripping the only tool it has.
     tools.append({
         "id": "server:mcp-proxy",

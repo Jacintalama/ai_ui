@@ -158,12 +158,18 @@
      so "working" means a run is actually in flight right now. */
   .card-activity { display: flex; align-items: center; gap: 7px; margin-top: 9px;
                    font-size: 11.5px; color: var(--muted); min-height: 15px; }
+  /* The dot carries the state on its own, so a row of cards can be read
+     without reading any of the words: green while a run is actually in
+     flight, amber resting between runs, red when the run stopped on
+     something only a person can clear. Grey is the fourth case, an agent
+     that has never run, and that line draws no dot at all. */
   .card-activity .dot { width: 7px; height: 7px; border-radius: 50%;
                         background: var(--border-2); flex: 0 0 7px; }
   .card-activity.working { color: #4ade80; }
   .card-activity.working .dot { background: #4ade80;
                                 animation: livePulse 1.6s ease-in-out infinite; }
-  .card-activity.failed .dot { background: #f87171; }
+  .card-activity.idle .dot { background: #fbbf24; }
+  .card-activity.blocked .dot { background: #f87171; }
   @keyframes livePulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50%      { opacity: 0.45; transform: scale(0.82); }
@@ -313,6 +319,11 @@
     border-width: 0 2px 2px 0; transform: rotate(42deg);
   }
   .switch span { font-size: 13px; }
+  .access { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 2px; }
+  .access .radio { display: flex; align-items: center; gap: 9px;
+                   font-size: 13.5px; cursor: pointer; }
+  .access .radio em { color: var(--muted); font-style: normal;
+                      font-size: 12.5px; }
   /* Seven bare checkboxes in three columns were the least confident thing on
      the page, and the tools are the most interesting thing an agent has.
      Tiles, with the same glyphs the card shows, so the two views agree.
@@ -537,6 +548,24 @@
 
         <label for="agent-base">Model</label>
         <select id="agent-base"></select>
+
+        <label>Access</label>
+        <div class="access" id="agent-access">
+          <label class="radio">
+            <input type="radio" name="agent-access" value="read">
+            <span>Read only</span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="agent-access" value="ask" checked>
+            <span>With access <em>asks before it changes anything</em></span>
+          </label>
+          <label class="radio">
+            <input type="radio" name="agent-access" value="all">
+            <span>All access</span>
+          </label>
+        </div>
+        <div class="hint" id="access-hint">Applies in your chat channels and
+          scheduled runs. Web chat here always has full access.</div>
 
         <label class="switch">
           <input type="checkbox" id="use-my-apps">
@@ -1043,14 +1072,19 @@
             + "</span>";
           continue;
         }
-        if (a.last_status === "failed") el.classList.add("failed");
+        // A run that ended asking for approval is not idle: it stopped and
+        // it is waiting on a person, which is the same kind of stuck as a
+        // failure, so it reads red rather than amber.
+        var blocked = a.last_status === "failed" || a.last_status === "waiting";
+        el.classList.add(blocked ? "blocked" : "idle");
         var bits = [];
         if (a.last_run_at) bits.push("used " + ago(a.last_run_at));
         if (a.last_duration_seconds !== null
             && a.last_duration_seconds !== undefined) {
           bits.push("took " + secs(a.last_duration_seconds));
         }
-        var word = a.last_status === "failed" ? "Failed" : "Idle";
+        var word = a.last_status === "failed" ? "Failed"
+          : a.last_status === "waiting" ? "Needs approval" : "Idle";
         el.innerHTML = '<span class="dot"></span><span>' + word
           + (bits.length ? " \u00b7 " + esc(bits.join(", ")) : "") + "</span>";
       }
@@ -1321,10 +1355,36 @@
       return ids;
     }
 
+    // Null when nothing is selected, which is how an agent that predates
+    // this setting keeps its "no opinion" state. Returning a default here
+    // would write a level onto every agent the first time somebody edited
+    // its name, and silently drop a full schedule to read only.
+    function chosenAccess() {
+      var picked = document.querySelector(
+        'input[name="agent-access"]:checked');
+      return picked ? picked.value : null;
+    }
+
+    function setAccess(value) {
+      var all = document.querySelectorAll('input[name="agent-access"]');
+      for (var i = 0; i < all.length; i++) all[i].checked = false;
+      if (!value) return;
+      var one = document.querySelector(
+        'input[name="agent-access"][value="' + value + '"]');
+      if (one) one.checked = true;
+    }
+
     // The exact ModelForm the API expects. Instructions live in params.system
     // and tools in meta.toolIds, which is where Open WebUI's own builder puts
     // them.
     function buildAgentBody(f) {
+      var meta = { description: f.instructions.slice(0, 120),
+                   toolIds: f.toolIds,
+                   agent_instructions: f.instructions };
+      // Only when a level is actually selected. See chosenAccess: an agent
+      // with no level behaves exactly as it did before this setting existed,
+      // and an unrelated edit must not quietly give it one.
+      if (f.access) meta.access = f.access;
       return {
         id: f.id, name: f.name, base_model_id: f.baseModel,
         // agent_instructions is a second copy of the same text. The list
@@ -1335,8 +1395,7 @@
         // who sees them under "Your agents" with an Edit button, and one edit
         // that omitted this would strip the instructions for everyone else.
         // On a private agent it costs nothing, because nobody else sees it.
-        meta: { description: f.instructions.slice(0, 120), toolIds: f.toolIds,
-                agent_instructions: f.instructions },
+        meta: meta,
         params: { system: f.instructions },
         // Required on update, and it must be a LIST. The update endpoint
         // revalidates the whole payload as a ModelForm, and leaving this out
@@ -1382,6 +1441,17 @@
         base.appendChild(o);
       });
       if (agent && agent.base_model_id) base.value = agent.base_model_id;
+      // A new agent starts on "ask": capable, and it checks with you first.
+      // An existing agent with no level shows nothing selected, because it
+      // genuinely has no level and pretending otherwise would write one.
+      setAccess(agent ? ((agent.meta && agent.meta.access) || "")
+                      : "ask");
+      document.getElementById("access-hint").textContent =
+        (agent && !(agent.meta && agent.meta.access))
+          ? ("Not set yet, so this agent works as it always has. Pick one to "
+             + "control what it may do. Web chat here always has full access.")
+          : ("Applies in your chat channels and scheduled runs. Web chat here "
+             + "always has full access.");
       formError("");
       updateChars();
       document.getElementById("agent-overlay").hidden = false;
@@ -1447,6 +1517,7 @@
         id: editingId || newAgentId(name), name: name,
         baseModel: baseModel,
         instructions: instructions, toolIds: chosenTools(),
+        access: chosenAccess(),
         accessGrants: (existing && existing.access_grants) || []
       });
       var url = API + (editingId ? "/model/update?id=" + encodeURIComponent(editingId)
@@ -1534,7 +1605,7 @@
     // and a template that gets forked stops improving.
     function duplicate(agent) {
       openForm(null);
-      // "Scout (my copy)" would be rejected by the one word rule the moment
+      // "Ada (my copy)" would be rejected by the one word rule the moment
       // they pressed save, on a name they never typed. Keep it one word.
       document.getElementById("agent-name").value =
         String(agent.name || "Agent").replace(/[^A-Za-z0-9]/g, "").slice(0, 20) + "Copy";
@@ -1553,6 +1624,7 @@
         var cb = document.getElementById("tool-" + t[0]);
         if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
       });
+      setAccess((agent.meta && agent.meta.access) || "ask");
       // Carry the base model across too. openForm(null) leaves the dropdown on
       // whichever model happens to be first, which on this platform can be a
       // pipe that is not tool capable, so a duplicated Inbox Triage would
