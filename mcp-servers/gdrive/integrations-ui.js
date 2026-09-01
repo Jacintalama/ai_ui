@@ -29,6 +29,26 @@
     (document.head || document.documentElement).appendChild(st);
   })();
 
+  // When you @mention an agent, Open WebUI shows a chip above the input with
+  // the agent's name and a dismiss X. It lays those out with
+  // `justify-between w-full`, so on a wide input the X ends up at the far
+  // right edge, a screen away from the name it belongs to, reading like a
+  // control for the whole box rather than for the mention.
+  //
+  // Pull them together. Scoped by :has() to the one row that actually holds a
+  // model profile image, so no other justify-between row on the page moves.
+  (function injectMentionChipFix() {
+    if (document.getElementById('aiui-mention-chip-fix')) return;
+    var st = document.createElement('style');
+    st.id = 'aiui-mention-chip-fix';
+    st.textContent =
+      'div.flex.items-center.justify-between.w-full:has(> div > img[alt="model profile"]) {' +
+      '  justify-content: flex-start !important;' +
+      '  gap: 0.5rem;' +
+      '}';
+    (document.head || document.documentElement).appendChild(st);
+  })();
+
   // ========== Helpers ==========
 
   // Cache the resolved email to avoid repeated API calls
