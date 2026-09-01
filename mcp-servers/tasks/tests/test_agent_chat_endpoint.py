@@ -95,6 +95,17 @@ async def test_a_release_phrase_sends_the_agent_back_to_sleep(_wire):
     assert after["agent"] is None, "the agent woke back up on its own"
 
 
+async def test_the_release_wording_costs_no_completion(_wire, monkeypatch):
+    """Releasing gets a fixed acknowledgement, not a model call: the person
+    asked for something specific and cheap, and spending a completion to say
+    "ok" is waste."""
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="unused"))
+    out = await rt.chat(_body("stop"), x_internal_secret="s")
+    assert out["agent"] is None
+    assert isinstance(out["answer"], str) and out["answer"].strip()
+    rt._answer_as_io.assert_not_awaited()
+
+
 async def test_the_pin_is_per_chat(_wire):
     """Two conversations must not share an agent."""
     await rt.chat(_body("hi mia", chat_id="chat-1"), x_internal_secret="s")
@@ -104,13 +115,18 @@ async def test_the_pin_is_per_chat(_wire):
 
 async def test_a_pinned_agent_that_was_deleted_does_not_wedge_the_chat(_wire,
                                                                       monkeypatch):
-    """The agent can be deleted between messages. Failing closed to "no agent"
-    keeps the person chatting instead of erroring on every message."""
+    """The agent can be deleted between messages. The person did not cause
+    that and should not have to notice it: the pin is dropped and IO answers
+    what they actually typed."""
+    monkeypatch.setattr(rt, "_answer_as_io",
+                        AsyncMock(return_value="I can help with that."))
     await rt.chat(_body("hi mia"), x_internal_secret="s")
     monkeypatch.setattr(rt, "_list_agents", AsyncMock(return_value=([ADA], False)))
+
     out = await rt.chat(_body("carry on"), x_internal_secret="s")
+
     assert out["agent"] is None
-    assert out["answer"] is None
+    assert out["answer"] == "I can help with that.", "the chat was wedged"
 
 
 async def test_a_truncated_listing_does_not_wake_the_wrong_agent(_wire,
@@ -138,3 +154,27 @@ async def test_the_internal_secret_is_required(monkeypatch):
     with pytest.raises(HTTPException) as caught:
         await rt.chat(_body("hi mia"), x_internal_secret="wrong")
     assert caught.value.status_code == 403
+
+
+async def test_answer_or_agent_is_always_present(_wire, monkeypatch):
+    """Every path through chat() must either name an agent or say something.
+
+    Silence with no agent named is the wedged-chat bug this whole file exists
+    to prevent, and it slipped through twice (the release phrase and the
+    stale pin) because every other test here only checks one path at a time.
+    """
+    monkeypatch.setattr(rt, "_answer_as_io",
+                        AsyncMock(return_value="I can help with that."))
+
+    named = await rt.chat(_body("hi mia", chat_id="c-named"),
+                          x_internal_secret="s")
+    pinned = await rt.chat(_body("and what about tomorrow", chat_id="c-named"),
+                           x_internal_secret="s")
+    released = await rt.chat(_body("stop", chat_id="c-released"),
+                             x_internal_secret="s")
+    nobody = await rt.chat(_body("what is the weather", chat_id="c-nobody"),
+                           x_internal_secret="s")
+
+    for label, out in (("named", named), ("pinned", pinned),
+                       ("released", released), ("nobody", nobody)):
+        assert out.get("agent") or (out.get("answer") or "").strip(), label

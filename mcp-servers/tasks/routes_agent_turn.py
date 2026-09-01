@@ -337,6 +337,11 @@ IO_BASE_MODEL = os.environ.get("GATEWAY_MODEL", "gpt-4o-mini")
 
 IO_DOWN = ("I could not reach the model just now. Try again in a moment.")
 
+#: Said when somebody releases the agent they were talking to. A fixed
+#: sentence rather than a model call: they asked for something specific and
+#: cheap, and spending a completion to say "ok" is waste.
+RELEASED = "Back to normal. I will answer from here."
+
 
 async def _answer_as_io(user_email: str, messages: list[dict]) -> str:
     """IO speaking for itself, on the base model, as this user.
@@ -372,7 +377,7 @@ async def chat(body: ChatIn,
 
     if agent_routing.wants_release(text):
         await _clear_pin(key)
-        return {"agent": None, "answer": None, "notes": []}
+        return {"agent": None, "answer": RELEASED, "notes": []}
 
     agents = await _agents_for(body.user_email)
     named = agent_routing.match_agent(text, agents)
@@ -387,12 +392,11 @@ async def chat(body: ChatIn,
         agent = next((a for a in agents if a.get("id") == pinned_id), None)
         if pinned_id and agent is None:
             # Deleted, or renamed out from under the pin. Fail closed to no
-            # agent rather than erroring on every message from here on, and
-            # stop here rather than falling through to IO: a stale pin is a
-            # reset, the same as an explicit release, not a fresh "nobody was
-            # named" turn.
+            # agent rather than erroring on every message from here on. Falls
+            # through to IO below rather than returning here: a stale pin is
+            # an accident the person did not cause, so they get a real answer
+            # to what they actually typed, not silence.
             await _clear_pin(key)
-            return {"agent": None, "answer": None, "notes": []}
 
     if agent is None:
         # IO speaking for itself. Done here rather than in the pipe because
