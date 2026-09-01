@@ -165,3 +165,33 @@ def test_empty_is_never_rendered_for_a_real_response_shape(mod):
     for shape in (agent_with_answer, agent_with_pending, no_agent_with_answer):
         out = p._render(shape)
         assert mod.EMPTY not in out, "EMPTY leaked through a real response shape: %r" % (shape,)
+
+
+@pytest.mark.parametrize("bad_shape", [
+    None,
+    [],
+    "a string",
+    {"agent": "Mia"},
+    {},
+])
+def test_render_survives_malformed_shapes_without_raising(mod, bad_shape):
+    """_render's input comes over HTTP from another service, which is no
+    more trustworthy than the model output _approval_question already
+    guards. A response that parses as JSON but is not the expected shape
+    must still produce a readable sentence, not an AttributeError that
+    takes the whole turn down."""
+    p = mod.Pipe()
+    out = p._render(bad_shape)
+    assert isinstance(out, str) and out.strip()
+
+
+async def test_a_none_response_from_ask_tasks_still_says_something(mod, monkeypatch):
+    """A response that fails to parse as the expected shape must not turn
+    into a framework error in somebody's chat window."""
+    p = mod.Pipe()
+    monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value=None))
+
+    out = await p.pipe({"messages": [{"role": "user", "content": "hi mia"}]},
+                       __user__={"email": "o@e.com"})
+    assert isinstance(out, str) and out.strip()
+

@@ -104,14 +104,19 @@ class Pipe:
         lines.append("Reply yes to let it, or no to skip.")
         return "\n".join(lines)
 
-    def _render(self, out: dict) -> str:
-        agent = out.get("agent") or {}
-        name = agent.get("name") or agent.get("id") or "Agent"
+    def _render(self, out) -> str:
+        # Comes over HTTP from another service, so the shape is not ours to
+        # trust. _approval_question below is defensive for the same reason.
+        out = out if isinstance(out, dict) else {}
+        agent = out.get("agent")
+        agent = agent if isinstance(agent, dict) else None
 
-        if not out.get("agent"):
+        if agent is None:
             # IO answered for itself. Prefixing a name here would invent a
             # speaker who was never involved.
             return (out.get("answer") or "").strip() or EMPTY
+
+        name = agent.get("name") or agent.get("id") or "Agent"
 
         pending = out.get("pending")
         if isinstance(pending, dict) and pending.get("calls"):
@@ -154,4 +159,9 @@ class Pipe:
             # request URL, and this project has already leaked a token that way.
             return TASKS_DOWN
 
-        return self._render(out)
+        try:
+            return self._render(out)
+        except Exception:                               # noqa: BLE001
+            # Never let a shape we did not expect turn into a framework error
+            # in somebody's chat window.
+            return TASKS_DOWN
