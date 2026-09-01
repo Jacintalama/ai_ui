@@ -440,6 +440,14 @@ services:
       - GATEWAY_DISCORD_ENABLED=${GATEWAY_DISCORD_ENABLED:-1}
       - GATEWAY_MATTERMOST_ENABLED=${GATEWAY_MATTERMOST_ENABLED:-1}
       - GATEWAY_TELEGRAM_BOT=${GATEWAY_TELEGRAM_BOT:-@aiuiteam_bot}
+      # The base model IO answers with when nobody named an agent (see
+      # routes_agent_turn.py::IO_BASE_MODEL). Declared for webhook-handler
+      # only until now, so this service was reading its own hardcoded
+      # fallback instead. Compose only injects what a service declares; same
+      # failure class that dropped WEBUI_SECRET_KEY and the Telegram
+      # credentials before. Default matches webhook-handler/config.py and the
+      # other GATEWAY_MODEL line above so both sides of the gateway agree.
+      - GATEWAY_MODEL=${GATEWAY_MODEL:-auto_router.auto}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads
       # the same name. Set on only one of them, the channel is live while the

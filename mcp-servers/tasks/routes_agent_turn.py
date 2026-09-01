@@ -246,8 +246,17 @@ class ChatIn(BaseModel):
     messages: list[dict]
 
 
-def _pin_key(chat_id: str) -> str:
-    return "agentpin:web:%s" % chat_id
+def _pin_key(chat_id: str, user_email: str) -> str:
+    """state_key is the primary key, so the pin must be scoped per PERSON,
+    not just per chat_id. Two real values collapse chat_id across everybody
+    on the box: the pipe's own "web" default for a caller with no chat
+    metadata, and "local", which open-webui-functions/langfuse_filter.py
+    already special-cases for temporary chats. Without the email, one
+    person naming an agent in a temporary chat would answer a different
+    person's temporary chat with it, and one person's stale-pin cleanup
+    would delete another person's live pin.
+    """
+    return "agentpin:web:%s:%s" % (user_email, chat_id)
 
 
 async def _read_pin(key: str) -> str | None:
@@ -308,6 +317,17 @@ async def _clear_pin(key: str) -> None:
         logger.warning("could not clear the agent pin", exc_info=True)
 
 
+#: _list_agents returns every workspace model this person owns, agents and
+#: plain derived models alike. Every other consumer of that same listing
+#: filters on this prefix (webhook-handler/gateway/agent_router.py,
+#: static/cron.html), and this one must too, for two reasons: a non-agent
+#: model getting matched and woken as though it were an agent, and this
+#: branch's own pipe registering a model whose id is "io" - unfiltered, a
+#: message that merely mentions "socket.io" could match it and _chat(model=
+#: "io") would re-enter the pipe and recurse until timeout.
+AGENT_PREFIX = "agent-"
+
+
 async def _agents_for(user_email: str) -> list[dict]:
     """This person's own agents, or an empty list.
 
@@ -324,7 +344,9 @@ async def _agents_for(user_email: str) -> list[dict]:
         agents, truncated = await _list_agents(token)
         if truncated:
             return []
-        return [a for a in agents if isinstance(a, dict) and a.get("id")]
+        return [a for a in agents if isinstance(a, dict)
+                and isinstance(a.get("id"), str)
+                and a["id"].startswith(AGENT_PREFIX)]
     except Exception:                                       # noqa: BLE001
         logger.warning("could not list agents for routing", exc_info=True)
         return []
@@ -333,7 +355,11 @@ async def _agents_for(user_email: str) -> list[dict]:
 #: What IO answers with when no agent was named. Read from the environment so
 #: it can be changed without editing this file, and defaulting to the model the
 #: channel gateway already uses so the assistant sounds the same in both places.
-IO_BASE_MODEL = os.environ.get("GATEWAY_MODEL", "gpt-4o-mini")
+#: Must stay "auto_router.auto" to match webhook-handler/config.py's default
+#: and the compose fallback for this service's own GATEWAY_MODEL var:
+#: "gpt-4o-mini" is not a model id on this platform, so that fallback firing
+#: would fail every base-model turn.
+IO_BASE_MODEL = os.environ.get("GATEWAY_MODEL", "auto_router.auto")
 
 IO_DOWN = ("I could not reach the model just now. Try again in a moment.")
 
@@ -372,7 +398,7 @@ async def chat(body: ChatIn,
     that Discord, Telegram and the web chat all decide this the same way.
     """
     _require_internal(x_internal_secret)
-    key = _pin_key(body.chat_id)
+    key = _pin_key(body.chat_id, body.user_email)
     text = agent_routing.last_user_text(body.messages)
 
     if agent_routing.wants_release(text):

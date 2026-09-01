@@ -5,6 +5,7 @@ ask the tasks service, deliver whatever comes back, and never leave somebody
 staring at silence when that call fails.
 """
 import importlib.util
+import json
 import os
 from unittest.mock import AsyncMock
 
@@ -194,4 +195,33 @@ async def test_a_none_response_from_ask_tasks_still_says_something(mod, monkeypa
     out = await p.pipe({"messages": [{"role": "user", "content": "hi mia"}]},
                        __user__={"email": "o@e.com"})
     assert isinstance(out, str) and out.strip()
+
+
+def test_approval_question_truncates_long_values_but_not_keys_or_call_count(mod):
+    """_approval_question caps two things today: one argument value at
+    MAX_ARG_CHARS, and the arguments shown per call at MAX_ARGS_SHOWN. A long
+    value must not bury the question being asked, or the "Reply yes" line.
+    This does not extend that behaviour: the argument KEY is never truncated,
+    and the number of CALLS in one block is never capped, only the arguments
+    shown for each one."""
+    p = mod.Pipe()
+    long_value = "body " * (mod.MAX_ARG_CHARS * 2)
+    long_key = "a_very_long_argument_key_" + ("z" * mod.MAX_ARG_CHARS)
+    assert len(long_key) > mod.MAX_ARG_CHARS, "the key must actually be long"
+
+    calls = [{"id": "c0", "function": {"name": "send_message",
+             "arguments": json.dumps({long_key: long_value})}}]
+    extra = mod.MAX_ARGS_SHOWN + 3
+    for i in range(extra):
+        calls.append({"id": "c%d" % (i + 1), "function": {
+            "name": "tool_%d" % i, "arguments": "{}"}})
+
+    out = p._approval_question("Mia", calls)
+
+    assert long_value not in out, "the long argument value was not truncated"
+    assert long_value[:mod.MAX_ARG_CHARS] in out
+    assert long_key in out, "the argument key must not be truncated"
+    for i in range(extra):
+        assert "tool_%d" % i in out, "every call in the block must appear"
+    assert "Reply yes" in out
 

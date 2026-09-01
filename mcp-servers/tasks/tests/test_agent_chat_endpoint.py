@@ -138,6 +138,74 @@ async def test_a_truncated_listing_does_not_wake_the_wrong_agent(_wire,
     assert out["agent"] is None
 
 
+async def test_agents_for_filters_out_non_agent_rows(_wire, monkeypatch):
+    """_list_agents returns every workspace model this person owns, agents
+    and plain derived models alike. Only rows prefixed agent- are this
+    person's actual agents, the same test every other consumer of this
+    listing applies (webhook-handler/gateway/agent_router.py, cron.html)."""
+    fusion = {"id": "fusion", "name": "Fusion", "meta": {}}
+    io_model = {"id": "io", "name": "io", "meta": {}}
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([ADA, MIA, fusion, io_model], False)))
+
+    out = await rt._agents_for("owner@example.com")
+
+    ids = {a["id"] for a in out}
+    assert ids == {"agent-a", "agent-m"}
+    assert "io" not in ids, "the pipe's own model id must never be an agent"
+    assert "fusion" not in ids
+
+
+async def test_a_workspace_model_that_is_not_an_agent_is_never_woken(_wire,
+                                                                     monkeypatch):
+    """A workspace model called Fusion getting matched and run through
+    _run_turn as though it were an agent, on a message like "let's do a
+    fusion of these", is exactly the false positive this filter exists to
+    prevent."""
+    fusion = {"id": "fusion", "name": "Fusion", "meta": {}}
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([ADA, MIA, fusion], False)))
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="unused"))
+
+    out = await rt.chat(_body("let's do a fusion of these"), x_internal_secret="s")
+
+    assert out["agent"] is None
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_a_model_called_io_can_never_wake_itself(_wire, monkeypatch):
+    """This branch's own pipe registers a model whose id is "io". Unfiltered,
+    "check socket.io" matches it because the dot is a word boundary, and
+    running it through _run_turn would call _chat(model="io"), which is the
+    pipe re-entering itself and recursing until timeout on a 3.8GB box."""
+    io_model = {"id": "io", "name": "io", "meta": {}}
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([ADA, MIA, io_model], False)))
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="unused"))
+
+    out = await rt.chat(_body("check socket.io"), x_internal_secret="s")
+
+    assert out["agent"] is None
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_the_pin_is_per_user_not_just_per_chat(_wire, monkeypatch):
+    """chat_id alone collapses across real people: the pipe's own "web"
+    default for a caller with no chat metadata, and "local", which
+    open-webui-functions/langfuse_filter.py already special-cases for
+    temporary chats. Without the user's email in the key, alice naming an
+    agent in her temporary chat would answer bob's next message in his own
+    temporary chat with alice's agent."""
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="unused"))
+
+    await rt.chat(_body("hi mia", chat_id="local", email="alice@example.com"),
+                 x_internal_secret="s")
+    out = await rt.chat(_body("carry on", chat_id="local", email="bob@example.com"),
+                        x_internal_secret="s")
+
+    assert out["agent"] is None, "bob's message was answered by alice's agent"
+
+
 async def test_a_pending_approval_is_passed_through(_wire, monkeypatch):
     monkeypatch.setattr(rt, "_run_turn", AsyncMock(
         return_value={"pending": {"calls": [{"id": "c1"}]}}))
