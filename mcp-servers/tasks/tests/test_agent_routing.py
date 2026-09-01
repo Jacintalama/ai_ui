@@ -63,6 +63,18 @@ def test_a_malformed_agent_list_never_raises(agents):
     assert ar.match_agent("hi mia", agents) is None
 
 
+@pytest.mark.parametrize("text,agents", [
+    (123, AGENTS),
+    (None, AGENTS),
+    ("hi mia", 123),
+    ("hi mia", "not a list"),
+])
+def test_match_agent_with_wrong_types_never_raises(text, agents):
+    """Type guard for text and agents parameters. A non-string or non-list
+    must not crash the routing logic."""
+    assert ar.match_agent(text, agents) is None
+
+
 # --- sending the agent back to sleep --------------------------------------
 
 @pytest.mark.parametrize("text", [
@@ -106,6 +118,15 @@ def test_reading_the_message_never_raises(msgs):
     assert ar.last_user_text(msgs) == ""
 
 
+@pytest.mark.parametrize("msgs", [
+    123,
+    "not a list",
+])
+def test_last_user_text_with_wrong_type_never_raises(msgs):
+    """Type guard for messages parameter. A non-list must not crash."""
+    assert ar.last_user_text(msgs) == ""
+
+
 def test_no_dashes_in_the_release_vocabulary():
     for p in ar.RELEASE_PHRASES:
-        assert "—" not in p and "–" not in p
+        assert "\u2014" not in p and "\u2013" not in p

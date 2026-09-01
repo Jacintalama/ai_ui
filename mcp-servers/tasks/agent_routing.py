@@ -40,9 +40,11 @@ def match_agent(text: str, agents) -> dict | None:
     wrong shape is expected rather than exceptional, and an exception here
     would take down every message in the chat.
     """
-    hay = text or ""
+    hay = text if isinstance(text, str) else ""
+    if not isinstance(agents, (list, tuple)):
+        return None
     best = None
-    for a in agents or []:
+    for a in agents:
         if not isinstance(a, dict):
             continue
         name = a.get("name")
@@ -62,7 +64,9 @@ def last_user_text(messages) -> str:
     Reads backwards rather than taking messages[-1], because a tool result or
     an assistant turn can be last.
     """
-    for m in reversed(messages or []):
+    if not isinstance(messages, (list, tuple)):
+        return ""
+    for m in reversed(messages):
         if not isinstance(m, dict) or m.get("role") != "user":
             continue
         content = m.get("content")
