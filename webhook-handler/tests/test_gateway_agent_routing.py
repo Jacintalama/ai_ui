@@ -46,6 +46,11 @@ def wired(monkeypatch, owui):
         "owui_user_id": "owui-1", "owui_token": "tok-for-user-1"}
     tasks.gateway_get_session.return_value = None
     tasks.get_state.return_value = None
+    # A bare AsyncMock's own return value is itself an AsyncMock, so an
+    # unconfigured tasks.agent_turn() breaks pipeline._answer_from on
+    # `.get`. Give every test a real dict; individual tests still override
+    # it for the scenario they care about.
+    tasks.agent_turn.return_value = {"answer": "the answer", "notes": []}
 
     monkeypatch.setattr(pipeline, "_tasks", tasks)
     monkeypatch.setattr(pipeline, "_owui_factory", lambda token: owui)
@@ -65,10 +70,14 @@ def _answer_call(owui):
     return owui.chat_completion.await_args_list[-1]
 
 
-async def test_the_agent_id_is_what_answers(adapter, owui):
+async def test_the_agent_id_is_what_answers(adapter, owui, wired):
+    """The router still picks by calling chat_completion once (that part is
+    unchanged), but the actual answer now runs through the tasks service
+    (Task 7), not a second chat_completion call."""
     await pipeline.handle_event(_event(), adapter)
 
-    assert _answer_call(owui).args[1] == "agent-inbox-triage-0002"
+    assert wired.tasks.agent_turn.await_args.kwargs["agent_id"] == \
+        "agent-inbox-triage-0002"
 
 
 async def test_the_reply_says_which_agent_answered(adapter):
