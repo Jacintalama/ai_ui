@@ -33,11 +33,11 @@ class Tools:
     async def my_account(self, __user__: dict = {}) -> str:
         """
         Check which apps the user has connected to this platform, and which
-        they have not. Call this whenever the user asks about connecting
-        something, asks what they have connected, asks why an agent cannot
-        reach their mail or files, or asks for help setting anything up.
-        Call it before offering to connect anything, so the answer is about
-        what they actually have.
+        they have not. Call this whenever the user asks about connecting an
+        app, asks what they have connected, or asks why an agent cannot
+        reach their mail, files, or a connected service. Call it before
+        offering to connect anything, so the answer is about what they
+        actually have.
         """
         email = (__user__ or {}).get("email") or ""
         if not email:
@@ -51,33 +51,45 @@ class Tools:
                     headers={"X-Internal-Secret": self.valves.internal_secret})
                 r.raise_for_status()
                 data = r.json()
+
+            # Comes over HTTP from another service, so the shape is not ours
+            # to trust: normalise before reading anything off it, the same
+            # way _render in io_gateway_pipe.py does. This must stay inside
+            # the try, not just the request itself, or a malformed but
+            # successful response still raises past the guard below.
+            data = data if isinstance(data, dict) else {}
+            connected = data.get("connected")
+            connected = connected if isinstance(connected, list) else []
+            missing = data.get("not_connected")
+            missing = missing if isinstance(missing, list) else []
+
+            lines = []
+            if connected:
+                lines.append(
+                    "Connected: "
+                    + ", ".join(item.get("label", item.get("id", ""))
+                               for item in connected if isinstance(item, dict)))
+            else:
+                lines.append("Nothing is connected yet.")
+
+            if missing:
+                lines.append("")
+                lines.append("Not connected yet. To offer one, print its markdown "
+                             "link exactly as given and say one short sentence "
+                             "about what it would let them do:")
+                for m in missing:
+                    if not isinstance(m, dict):
+                        continue
+                    label = m.get("label") or m.get("id")
+                    link = "[Connect %s](%s)" % (label, m.get("connect_url", ""))
+                    if m.get("how") == "key":
+                        lines.append("  %s  (needs an API key from %s)"
+                                     % (link, m.get("where") or "that app's settings"))
+                    else:
+                        lines.append("  %s  (opens a login)" % link)
+            return "\n".join(lines)
         except Exception:                                   # noqa: BLE001
             # Never include the exception text: an httpx error carries the
             # request URL, and this project has already leaked a token that way.
             return ("I could not check your connected apps just now. Try "
                     "again in a moment.")
-
-        connected = data.get("connected") or []
-        missing = data.get("not_connected") or []
-
-        lines = []
-        if connected:
-            lines.append("Connected: "
-                         + ", ".join(c.get("label", c.get("id", "")) for c in connected))
-        else:
-            lines.append("Nothing is connected yet.")
-
-        if missing:
-            lines.append("")
-            lines.append("Not connected yet. To offer one, print its markdown "
-                         "link exactly as given and say one short sentence "
-                         "about what it would let them do:")
-            for m in missing:
-                label = m.get("label") or m.get("id")
-                link = "[Connect %s](%s)" % (label, m.get("connect_url", ""))
-                if m.get("how") == "key":
-                    lines.append("  %s  (needs an API key from %s)"
-                                 % (link, m.get("where") or "that app's settings"))
-                else:
-                    lines.append("  %s  (opens a login)" % link)
-        return "\n".join(lines)
