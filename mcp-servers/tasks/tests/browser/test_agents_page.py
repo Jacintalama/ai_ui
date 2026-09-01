@@ -796,3 +796,59 @@ def test_a_failed_run_is_not_dressed_up_as_idle(page):
         "last_duration_seconds": 3, "source": "channel"}})
     assert "Failed" in page.locator(
         '[data-activity-for="agent-mine-a1b2"]').inner_text()
+
+
+def _dot_state(page):
+    """The class the activity line is wearing, which is what colours the dot."""
+    return page.locator(
+        '[data-activity-for="agent-mine-a1b2"]').get_attribute("class")
+
+
+def test_the_dot_is_green_while_a_run_is_in_flight(page):
+    page = page
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "working", "running_for_seconds": 5,
+        "last_run_at": "2026-08-28T12:00:00+00:00", "source": "schedule"}})
+    assert "working" in _dot_state(page)
+
+
+def test_the_dot_is_amber_when_the_agent_is_resting(page):
+    """Grey read as "switched off" for an agent that is simply between runs
+    and perfectly healthy."""
+    page = page
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "idle", "last_status": "completed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 8, "source": "schedule"}})
+    assert "idle" in _dot_state(page)
+    assert "blocked" not in _dot_state(page)
+
+
+def test_the_dot_is_red_after_a_failure(page):
+    page = page
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "idle", "last_status": "failed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 3, "source": "channel"}})
+    assert "blocked" in _dot_state(page)
+
+
+def test_an_agent_stopped_for_approval_reads_as_blocked_not_idle(page):
+    """It ended asking permission, so it is stuck on a person. Calling that
+    idle hides the one state the owner has to act on."""
+    page = page
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "idle", "last_status": "waiting",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 2, "source": "channel"}})
+    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
+    assert "Needs approval" in text
+    assert "Idle" not in text
+    assert "blocked" in _dot_state(page)
+
+
+def test_an_agent_that_never_ran_wears_no_state_colour(page):
+    page = page
+    _activity(page, {})
+    klass = _dot_state(page)
+    assert "idle" not in klass and "blocked" not in klass         and "working" not in klass
