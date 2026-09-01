@@ -2557,11 +2557,26 @@
   var AIUI_CONNECT_MARKER = '#aiui-connect:';
 
   function aiuiConnectUrlFor(provider) {
+    // Only the Google apps have a URL that is ready to open immediately.
+    // Notion is OAuth too (see OAUTH_PROVIDERS in account_summary.py) but
+    // its start URL has to be fetched from our own API first, so it is
+    // handled separately in the click handler below, not here. Anything
+    // else is a key-paste app with no login to open at all.
     var email = getEffectiveEmail();
     if (provider === 'gmail') return GMAIL_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
     if (provider === 'gdrive') return GDRIVE_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
     if (provider === 'calendar') return CALENDAR_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
-    return null;  // key-paste apps have no login to open
+    return null;
+  }
+
+  function aiuiAuthHeaders() {
+    // Mirrors authHeaders() inside createIntegrationsModal above, which is
+    // out of reach from here: that copy is scoped inside a different
+    // top-level function, not on window.
+    var t = localStorage.getItem('token');
+    var h = { 'Content-Type': 'application/json' };
+    if (t) h['Authorization'] = 'Bearer ' + t;
+    return h;
   }
 
   function aiuiPopupBlocked(win) {
@@ -2599,18 +2614,47 @@
     if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
 
     btn.addEventListener('click', function () {
+      // Three cases. A Google app has a direct URL and opens immediately.
+      // Notion needs its start URL fetched from our API, so the window is
+      // opened synchronously right here and navigated once the URL
+      // arrives, because a window opened after an await has lost the
+      // click that justified it and gets blocked. Anything else has no
+      // login to open at all, so it goes straight to the panel.
       var url = aiuiConnectUrlFor(provider);
-      if (!url) {
-        // A key-paste app. There is no vendor login to open, so the panel
-        // is the whole flow rather than a fallback.
-        window.aiuiOpenConnections();
+      if (url) {
+        var win = window.open(url, '_blank');
+        if (aiuiPopupBlocked(win)) {
+          aiuiSayBlocked(container);
+          window.aiuiOpenConnections();
+        }
         return;
       }
-      var win = window.open(url, '_blank');
-      if (aiuiPopupBlocked(win)) {
-        aiuiSayBlocked(container);
-        window.aiuiOpenConnections();
+
+      if (provider === 'notion') {
+        // Notion's connect URL has to be fetched, but a window opened
+        // after an await has lost the click that justified it and gets
+        // blocked. So open synchronously first and navigate it once the
+        // URL arrives.
+        var notionWin = window.open('', '_blank');
+        if (aiuiPopupBlocked(notionWin)) {
+          aiuiSayBlocked(container);
+          window.aiuiOpenConnections();
+          return;
+        }
+        fetch('/api/tasks/connections/' + encodeURIComponent(provider) + '/oauth/start',
+              { headers: aiuiAuthHeaders() })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.url) { notionWin.location = d.url; }
+            else { notionWin.close(); window.aiuiOpenConnections(); }
+          })
+          .catch(function () { notionWin.close(); window.aiuiOpenConnections(); });
+        return;
       }
+
+      // A key-paste app. There is no vendor login to open, so the panel
+      // is the whole flow rather than a fallback.
+      window.aiuiOpenConnections();
     });
   }
 
