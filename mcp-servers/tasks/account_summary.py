@@ -12,6 +12,7 @@ exists would send them looking for a button that is not there.
 """
 import logging
 
+from connections import PROVIDERS as CANONICAL_PROVIDERS
 from routes_agents import tools_for_email
 
 logger = logging.getLogger(__name__)
@@ -21,26 +22,9 @@ logger = logging.getLogger(__name__)
 #: vendor first and a code change second.
 OAUTH_PROVIDERS = frozenset({"gmail", "gdrive", "calendar", "notion"})
 
-#: Where a person finds the API key for the apps that take one. Without
-#: this, "paste your key" is not help, it is a scavenger hunt.
-PROVIDERS = {
-    "gmail": {"label": "Gmail"},
-    "gdrive": {"label": "Google Drive"},
-    "calendar": {"label": "Google Calendar"},
-    "notion": {"label": "Notion"},
-    "clickup": {"label": "ClickUp",
-                "where": "ClickUp, under Settings then Apps"},
-    "trello": {"label": "Trello",
-               "where": "trello.com/power-ups/admin, under API key"},
-    "airtable": {"label": "Airtable",
-                 "where": "airtable.com/create/tokens"},
-    "hubspot": {"label": "HubSpot",
-                "where": "HubSpot, under Settings then Integrations then Private Apps"},
-    "github": {"label": "GitHub",
-               "where": "github.com/settings/tokens"},
-    "n8n": {"label": "n8n", "where": "your n8n instance, under Settings then API"},
-    "zapier": {"label": "Zapier", "where": "zapier.com, under your account settings"},
-}
+#: Metadata for all providers. Labels come from the canonical source;
+#: we keep this only for the OAuth membership.
+PROVIDERS = {pid: p for pid, p in CANONICAL_PROVIDERS.items()}
 
 
 def connect_hint(provider_id: str) -> dict:
@@ -49,15 +33,28 @@ def connect_hint(provider_id: str) -> dict:
     The link is a marker, not a real URL. integrations-ui.js finds it and
     turns it into a button, which is what lets one shape serve both a vendor
     login and a key paste.
+
+    Returns a dict with an empty label and where if provider_id is not a
+    string or is not found, so the caller can detect invalid input.
     """
-    meta = PROVIDERS.get(provider_id, {})
+    if not isinstance(provider_id, str):
+        return {
+            "id": provider_id,
+            "label": "",
+            "how": "key",
+            "connect_url": "",
+            "where": "",
+        }
+    provider = PROVIDERS.get(provider_id)
     oauth = provider_id in OAUTH_PROVIDERS
+    label = provider.label if provider else provider_id
+    where = "" if oauth else (provider.where if provider else "that app's settings")
     return {
         "id": provider_id,
-        "label": meta.get("label") or provider_id,
+        "label": label,
         "how": "login" if oauth else "key",
         "connect_url": "#aiui-connect:" + provider_id,
-        "where": "" if oauth else (meta.get("where") or "that app's settings"),
+        "where": where,
     }
 
 
@@ -72,14 +69,17 @@ async def summarise(email: str) -> dict:
         return {"connected": [], "not_connected": []}
     try:
         data = await tools_for_email(email)
-        tools = data.get("tools") or []
+        tools = data.get("tools")
+        if not isinstance(tools, (list, tuple)):
+            logger.warning("tools is not a list or tuple", extra={"type": type(tools)})
+            return {"connected": [], "not_connected": []}
     except Exception:                                       # noqa: BLE001
         logger.warning("could not read what is connected", exc_info=True)
         return {"connected": [], "not_connected": []}
 
     connected, missing = [], []
     for t in tools:
-        if not isinstance(t, dict) or not t.get("id"):
+        if not isinstance(t, dict) or not isinstance(t.get("id"), str):
             continue
         entry = {"id": t["id"], "label": t.get("label") or t["id"]}
         if t.get("connected"):
