@@ -697,6 +697,23 @@ services:
       - ./openwebui-overrides/index.html:/app/build/index.html:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # Admins are subject to model access control like everybody else.
+      #
+      # Left at its default (true), get_filtered_models short-circuits for an
+      # admin and returns EVERY model on the platform, so an admin's @mention
+      # picker and model dropdown carry every other user's private agents.
+      # Since every user is seeded with agents named Scout and Triage, that
+      # shows up as duplicate identical names, and picking the wrong one runs
+      # somebody else's agent with their instructions.
+      #
+      # With this false the check falls through to `user.id == model.user_id`,
+      # so each person sees their own. Base models are unaffected: they have
+      # no DB row, and utils/models.py keeps unconfigured models visible to
+      # admins on a separate branch.
+      #
+      # Cost, deliberately accepted: Admin Settings > Models now lists only
+      # the admin's own models, not everyone's.
+      - BYPASS_ADMIN_ACCESS_CONTROL=false
       # The Fusion tool runs inside this process and calls the tasks
       # service's internal API, which authenticates on this secret.
       - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
