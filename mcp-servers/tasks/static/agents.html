@@ -1605,7 +1605,7 @@
     // and a template that gets forked stops improving.
     function duplicate(agent) {
       openForm(null);
-      // "Scout (my copy)" would be rejected by the one word rule the moment
+      // "Ada (my copy)" would be rejected by the one word rule the moment
       // they pressed save, on a name they never typed. Keep it one word.
       document.getElementById("agent-name").value =
         String(agent.name || "Agent").replace(/[^A-Za-z0-9]/g, "").slice(0, 20) + "Copy";

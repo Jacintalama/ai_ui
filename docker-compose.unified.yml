@@ -702,7 +702,7 @@ services:
       # Left at its default (true), get_filtered_models short-circuits for an
       # admin and returns EVERY model on the platform, so an admin's @mention
       # picker and model dropdown carry every other user's private agents.
-      # Since every user is seeded with agents named Scout and Triage, that
+      # Since every user is seeded with agents named Ada and Mia, that
       # shows up as duplicate identical names, and picking the wrong one runs
       # somebody else's agent with their instructions.
       #

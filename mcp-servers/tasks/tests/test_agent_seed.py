@@ -27,7 +27,7 @@ async def test_a_new_user_gets_a_copy_of_every_template():
 
     assert out["created"] == 2
     names = sorted(b["name"] for b in created)
-    assert names == ["Scout", "Triage"]
+    assert names == ["Ada", "Mia"]
 
 
 async def test_the_copies_are_created_for_that_user_and_nobody_else():
@@ -86,7 +86,7 @@ async def test_the_seed_is_recorded_even_when_a_template_fails():
     mark = AsyncMock()
 
     async def half_fails(token, body):
-        return (200, {}) if body["name"] == "Scout" else (500, "boom")
+        return (200, {}) if body["name"] == "Ada" else (500, "boom")
 
     with patch.object(routes_agents, "_already_seeded", new=AsyncMock(return_value=False)), \
          patch.object(routes_agents, "_mark_seeded", new=mark), \
