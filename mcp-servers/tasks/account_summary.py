@@ -5,26 +5,74 @@ ClickUp" rather than guessing, and it is what every offer it makes depends
 on. Nothing here changes anything, which is why it needs no confirmation
 step and can be handed to every model.
 
-The split that matters is `how`. Only Google and Notion have a registered
-OAuth app, so only they can show a real vendor login. The other seven take
-a pasted API key. Telling somebody to "log in to ClickUp" when no such flow
-exists would send them looking for a button that is not there.
+The universe of connectable apps is eleven: the three Google services
+(Gmail, Calendar, Drive) plus the eight Connect Your Own App providers in
+connections.PROVIDERS. This used to read routes_agents.tools_for_email,
+which lists INSTALLED OPEN WEBUI TOOLS, not connectable apps: on a real
+account that list is calendar, documents, excel_creator,
+executive_dashboard, gdrive, gmail, remember and server:mcp-proxy, so the
+only thing it could ever offer to connect was the raw internal id
+"server:mcp-proxy". Connection state now comes from
+routes_agents._connected_providers, which already covers both the three
+Google token tables and tasks.user_connections in one query, and fails
+toward "nothing connected" on a read error.
+
+The split that matters is `how`. Only a provider with a real, currently
+configured OAuth app can show a vendor login; everything else takes a
+pasted API key. See _can_log_in: it is derived, not a fixed list, because a
+fixed list goes stale in the dangerous direction, promising a login that
+503s the moment a vendor is added to oauth_providers.py before its client
+id and secret are actually configured on this box.
 """
 import logging
 
 from connections import PROVIDERS as CANONICAL_PROVIDERS
-from routes_agents import tools_for_email
+from routes_agents import _connected_providers
 
 logger = logging.getLogger(__name__)
 
-#: Providers that can show a real vendor login, because somebody registered
-#: an OAuth app with that vendor. Growing this set is paperwork with the
-#: vendor first and a code change second.
-OAUTH_PROVIDERS = frozenset({"gmail", "gdrive", "calendar", "notion"})
+#: The three Google services, each with its own login already wired
+#: (auth/google/start) and no dependency on oauth_providers.py. Labels live
+#: here because connections.PROVIDERS only carries the eight Connect Your
+#: Own App providers; the Google ones are not in it.
+GOOGLE_LABELS = {
+    "gmail": "Gmail",
+    "calendar": "Google Calendar",
+    "gdrive": "Google Drive",
+}
+GOOGLE_SERVICES = frozenset(GOOGLE_LABELS)
 
-#: Metadata for all providers. Labels come from the canonical source;
-#: we keep this only for the OAuth membership.
-PROVIDERS = {pid: p for pid, p in CANONICAL_PROVIDERS.items()}
+#: Every connectable app: the three Google services, then the eight in
+#: connections.PROVIDERS, in that module's own order. Eleven total.
+ALL_PROVIDER_IDS = tuple(GOOGLE_LABELS) + tuple(CANONICAL_PROVIDERS)
+
+
+def _can_log_in(provider_id: str) -> bool:
+    """Whether this app can really show a vendor login right now.
+
+    Derived rather than hardcoded, because a hardcoded list goes stale in
+    the dangerous direction: it promises a login that 503s. Notion supports
+    OAuth but has no client id configured on this box, so today it is a key
+    paste, and it becomes a login the moment somebody configures it, with no
+    code change.
+    """
+    if provider_id in GOOGLE_SERVICES:
+        return True
+    try:
+        import oauth_providers as O
+        return bool(O.supports_oauth(provider_id) and O.configured(provider_id))
+    except Exception:                                       # noqa: BLE001
+        return False
+
+
+def _label_for(provider_id: str) -> str:
+    """A human label for `provider_id`: Google's own name, then the
+    canonical connections.py label, then the bare id as a last resort that
+    should never actually happen for anything in ALL_PROVIDER_IDS."""
+    if provider_id in GOOGLE_LABELS:
+        return GOOGLE_LABELS[provider_id]
+    provider = CANONICAL_PROVIDERS.get(provider_id)
+    return provider.label if provider else provider_id
 
 
 def connect_hint(provider_id: str) -> dict:
@@ -35,7 +83,7 @@ def connect_hint(provider_id: str) -> dict:
     login and a key paste.
 
     Returns a dict with an empty label and where if provider_id is not a
-    string or is not found, so the caller can detect invalid input.
+    string, so the caller can detect invalid input.
     """
     if not isinstance(provider_id, str):
         return {
@@ -45,14 +93,14 @@ def connect_hint(provider_id: str) -> dict:
             "connect_url": "",
             "where": "",
         }
-    provider = PROVIDERS.get(provider_id)
-    oauth = provider_id in OAUTH_PROVIDERS
-    label = provider.label if provider else provider_id
-    where = "" if oauth else (provider.where if provider else "that app's settings")
+    can_log_in = _can_log_in(provider_id)
+    label = _label_for(provider_id)
+    canonical = CANONICAL_PROVIDERS.get(provider_id)
+    where = "" if can_log_in else (canonical.where if canonical else "that app's settings")
     return {
         "id": provider_id,
         "label": label,
-        "how": "login" if oauth else "key",
+        "how": "login" if can_log_in else "key",
         "connect_url": "#aiui-connect:" + provider_id,
         "where": where,
     }
@@ -68,22 +116,15 @@ async def summarise(email: str) -> dict:
     if not email:
         return {"connected": [], "not_connected": []}
     try:
-        data = await tools_for_email(email)
-        tools = data.get("tools")
-        if not isinstance(tools, (list, tuple)):
-            logger.warning("tools is not a list or tuple", extra={"type": type(tools)})
-            return {"connected": [], "not_connected": []}
+        connected_ids = await _connected_providers(email)
     except Exception:                                       # noqa: BLE001
         logger.warning("could not read what is connected", exc_info=True)
         return {"connected": [], "not_connected": []}
 
     connected, missing = [], []
-    for t in tools:
-        if not isinstance(t, dict) or not isinstance(t.get("id"), str):
-            continue
-        entry = {"id": t["id"], "label": t.get("label") or t["id"]}
-        if t.get("connected"):
-            connected.append(entry)
+    for pid in ALL_PROVIDER_IDS:
+        if pid in connected_ids:
+            connected.append({"id": pid, "label": _label_for(pid)})
         else:
-            missing.append(connect_hint(t["id"]))
+            missing.append(connect_hint(pid))
     return {"connected": connected, "not_connected": missing}

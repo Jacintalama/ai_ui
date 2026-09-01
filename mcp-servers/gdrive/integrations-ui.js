@@ -2558,7 +2558,7 @@
 
   function aiuiConnectUrlFor(provider) {
     // Only the Google apps have a URL that is ready to open immediately.
-    // Notion is OAuth too (see OAUTH_PROVIDERS in account_summary.py) but
+    // Notion is OAuth too (see _can_log_in in account_summary.py) but
     // its start URL has to be fetched from our own API first, so it is
     // handled separately in the click handler below, not here. Anything
     // else is a key-paste app with no login to open at all.
@@ -2589,9 +2589,10 @@
     var note = document.createElement('div');
     note.className = 'aiui-connect-note';
     note.style.cssText = 'margin-top:6px;font-size:12.5px;color:#c8c8c8;';
-    note.textContent = 'Chrome blocked that window. Click the blocked icon in '
-      + 'your address bar and choose Always allow, and I can open these for '
-      + 'you from now on. Or use the panel button above.';
+    note.textContent = 'Your browser blocked that window, so I opened the '
+      + 'Connections panel instead. Click the blocked icon in your address '
+      + 'bar and choose to always allow popups here, and these will open '
+      + 'directly next time.';
     if (!container.querySelector('.aiui-connect-note')) container.appendChild(note);
   }
 
