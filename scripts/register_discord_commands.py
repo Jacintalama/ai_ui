@@ -1,7 +1,7 @@
 """Idempotently register the full /aiui subcommand tree with Discord.
 
 Discord's PUT /applications/{app_id}/commands REPLACES all commands —
-partial updates are not supported. This script re-PUTs all 20 subcommands
+partial updates are not supported. This script re-PUTs every subcommand
 every run.
 
 Usage:
@@ -31,6 +31,9 @@ SUBCOMMANDS = [
     ("report",      "End-of-day activity report",                []),
     ("status",      "Service health check",                      []),
     ("help",        "Show available commands",                   []),
+    ("channels",    "Which chat channels you have linked to IO",  []),
+    ("graph",       "Your knowledge graph, or what it knows about a topic",
+                                                                  [("topic",     "A topic to look up (opt)", False)]),
     ("diagnose",    "AI diagnosis of recent errors",             [("container", "Container name (opt)",  False)]),
     ("analyze",     "AI analysis of a GitHub repo",              [("repo",      "owner/repo",             False)]),
     ("rebuild",     "Research + rebuild plan for repo",          [("repo",      "owner/repo",             False)]),

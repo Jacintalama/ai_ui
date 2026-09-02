@@ -361,6 +361,7 @@ class CommandRouter:
             "email", "sheets", "rebuild", "web-search",
             "health", "security", "deps", "license",
             "cronjob", "aiuibuilder", "briefing",
+            "channels", "graph",
         }
         if subcommand in known_commands:
             return (subcommand, arguments)
@@ -405,6 +406,10 @@ class CommandRouter:
                 await self._handle_sheets(ctx)
             elif ctx.subcommand == "web-search":
                 await self._handle_web_search(ctx)
+            elif ctx.subcommand == "channels":
+                await self._handle_channels(ctx)
+            elif ctx.subcommand == "graph":
+                await self._handle_graph(ctx)
             elif ctx.subcommand == "help":
                 await self._handle_help(ctx)
             elif ctx.subcommand == "briefing":
@@ -435,6 +440,8 @@ class CommandRouter:
             "- `/aiui workflows` — List available n8n workflows",
             "- `/aiui report` — End-of-day activity summary",
             "- `/aiui status` — Service health check",
+            "- `/aiui channels` — Which chat channels the user has linked to IO",
+            "- `/aiui graph [topic]` — The user's knowledge graph, or what it knows about a topic",
         ]
 
         if self._mcp_client:
@@ -1210,6 +1217,84 @@ class CommandRouter:
         lines = ["*Service Status*\n"] + list(results)
         await ctx.respond("\n".join(lines))
 
+    # ------------------------------------------------------------------
+    # Channels and Graph: two web pages, read-only from chat.
+    # ------------------------------------------------------------------
+    #
+    # Both are owner-scoped on the tasks side by the email the bot sends, so
+    # the first step is the identity resolution the build flow already uses.
+    # Plain text on purpose: one rendering serves Discord and Slack, and the
+    # web URL at the end covers what a message cannot do (pair a channel,
+    # draw a graph). Read-only on purpose too: linking involves a pairing
+    # step and rebuilding is a button, both of which belong on the page.
+
+    async def _handle_channels(self, ctx: CommandContext) -> None:
+        """Which channels this account has linked to IO, and where to link more."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        try:
+            data = await self._tasks_client.get_channel_connections(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Could not load your channels right now ({e}).")
+            return
+        lines = ["*Your channels*"]
+        for row in data.get("connections") or []:
+            label = row.get("label") or row.get("name") or row.get("platform") or "?"
+            if row.get("linked_at"):
+                who = row.get("name") or ""
+                lines.append(f"  {label}: linked" + (f" as {who}" if who else ""))
+            else:
+                lines.append(f"  {label}: not linked")
+        if len(lines) == 1:
+            lines.append("  (no channels available)")
+        base = settings.gateway_public_url.rstrip("/")
+        lines += ["", f"Link or unlink channels: {base}/channel"]
+        await ctx.respond("\n".join(lines))
+
+    async def _handle_graph(self, ctx: CommandContext) -> None:
+        """A summary of the caller's knowledge graph, or what it knows about a topic."""
+        email = await self._resolve_email_for_ctx(ctx)
+        if not email:
+            await self._respond_not_linked(ctx)
+            return
+        url = f"{settings.gateway_public_url.rstrip('/')}/tasks/graph"
+        topic = (ctx.arguments or "").strip()
+        try:
+            if topic:
+                data = await self._tasks_client.get_graph_context(email, topic)
+            else:
+                data = await self._tasks_client.get_knowledge_graph(email)
+        except TasksAPIError as e:
+            await ctx.respond(f"Could not load your graph right now ({e}).")
+            return
+        if topic:
+            context = (data.get("context") or "").strip()
+            if data.get("used") and context:
+                await ctx.respond(
+                    f"*What your graph knows about {topic}*\n{context}\n\nExplore it: {url}")
+            else:
+                await ctx.respond(
+                    f"Nothing in your graph about {topic} yet. It builds itself from "
+                    f"your chats.\n\nExplore it: {url}")
+            return
+        count = int(data.get("count") or 0)
+        if count == 0:
+            await ctx.respond(
+                f"Your graph is empty so far. It builds itself from your chats.\n\nOpen it: {url}")
+            return
+        counts = data.get("counts") or {}
+        by_type = ", ".join(
+            f"{k}: {v}" for k, v in sorted(counts.items(), key=lambda kv: (-int(kv[1] or 0), kv[0])))
+        lines = ["*Your knowledge graph*", f"  {count} nodes"]
+        if by_type:
+            lines.append(f"  by type: {by_type}")
+        if data.get("truncated"):
+            lines.append("  (showing the largest part; the page has all of it)")
+        lines += ["", f"Open it: {url}"]
+        await ctx.respond("\n".join(lines))
+
     @staticmethod
     def _help_text() -> str:
         return (
@@ -1219,6 +1304,8 @@ class CommandRouter:
             "*summarize my emails every morning*).\n"
             "• \U0001f4ac **Ask a question** — just type `/aiui ask <your question>`.\n"
             "\nTip: tap a button in the **AIUI App Builder** panel — no commands needed.\n"
+            "• **Your channels and graph** — `/aiui channels` shows what you have linked "
+            "to IO; `/aiui graph` sums up what IO knows about you, or `/aiui graph <topic>`.\n"
             "\n_Advanced (for technical users):_ `/aiui aiuibuilder`, `/aiui mcp`, `/aiui pr-review`, "
             "`/aiui analyze`, `/aiui security`, `/aiui web-search`."
         )
