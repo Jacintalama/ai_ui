@@ -28,13 +28,13 @@ def wants_release(text: str) -> bool:
     return (text or "").strip().lower().rstrip(".!") in RELEASE_PHRASES
 
 
-def match_agent(text: str, agents) -> dict | None:
-    """The agent whose name is spoken, or None.
+def match_agents(text: str, agents) -> list[dict]:
+    """Every agent whose name is spoken, in the order they were said.
 
     Word boundaries are hand rolled rather than \\b so that an agent called
     "Ada" is not summoned by "adapt" and one called "Mia" is not summoned by
-    "Miami". When two names appear, the one said first wins, because that is
-    the one being addressed.
+    "Miami". Each agent appears at most once, at the position of its first
+    mention, even if its name is said more than once.
 
     Never raises. The agent list arrives from a model listing over HTTP, so a
     wrong shape is expected rather than exceptional, and an exception here
@@ -42,8 +42,8 @@ def match_agent(text: str, agents) -> dict | None:
     """
     hay = text if isinstance(text, str) else ""
     if not isinstance(agents, (list, tuple)):
-        return None
-    best = None
+        return []
+    found = []
     for a in agents:
         if not isinstance(a, dict):
             continue
@@ -53,9 +53,20 @@ def match_agent(text: str, agents) -> dict | None:
             continue
         m = re.search(r"(?<![A-Za-z0-9])" + re.escape(name) + r"(?![A-Za-z0-9])",
                       hay, re.IGNORECASE)
-        if m and (best is None or m.start() < best[0]):
-            best = (m.start(), a)
-    return best[1] if best else None
+        if m:
+            found.append((m.start(), a))
+    found.sort(key=lambda pair: pair[0])
+    return [a for _, a in found]
+
+
+def match_agent(text: str, agents) -> dict | None:
+    """The FIRST agent whose name is spoken, or None.
+
+    Thin wrapper over match_agents, kept for callers that only ever act on
+    one agent at a time.
+    """
+    matches = match_agents(text, agents)
+    return matches[0] if matches else None
 
 
 def last_user_text(messages) -> str:

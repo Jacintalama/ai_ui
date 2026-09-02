@@ -44,8 +44,10 @@ def _wire(monkeypatch):
 
 async def test_naming_an_agent_wakes_it(_wire):
     out = await rt.chat(_body("hi mia how are you"), x_internal_secret="s")
-    assert out["agent"]["name"] == "Mia"
-    assert out["answer"] == "hi"
+    assert len(out["turns"]) == 1
+    turn = out["turns"][0]
+    assert turn["agent"]["name"] == "Mia"
+    assert turn["answer"] == "hi"
     rt._run_turn.assert_awaited_once()
     assert rt._run_turn.await_args.args[1] == "agent-m"
 
@@ -56,8 +58,10 @@ async def test_naming_nobody_is_answered_by_io_itself(_wire, monkeypatch):
     monkeypatch.setattr(rt, "_answer_as_io",
                         AsyncMock(return_value="I can help with that."))
     out = await rt.chat(_body("what is the weather"), x_internal_secret="s")
-    assert out["agent"] is None
-    assert out["answer"] == "I can help with that."
+    assert len(out["turns"]) == 1
+    turn = out["turns"][0]
+    assert turn["agent"] is None
+    assert turn["answer"] == "I can help with that."
     rt._run_turn.assert_not_awaited()
     rt._answer_as_io.assert_awaited_once()
 
@@ -68,31 +72,33 @@ async def test_ios_own_answer_survives_the_base_model_failing(_wire, monkeypatch
     monkeypatch.setattr(rt, "_answer_as_io",
                         AsyncMock(side_effect=RuntimeError("model down")))
     out = await rt.chat(_body("what is the weather"), x_internal_secret="s")
-    assert out["agent"] is None
-    assert isinstance(out["answer"], str) and out["answer"].strip()
+    turn = out["turns"][0]
+    assert turn["agent"] is None
+    assert isinstance(turn["answer"], str) and turn["answer"].strip()
 
 
 async def test_a_woken_agent_stays_awake_for_the_next_message(_wire):
     await rt.chat(_body("hi mia"), x_internal_secret="s")
     out = await rt.chat(_body("and what about tomorrow"), x_internal_secret="s")
-    assert out["agent"]["name"] == "Mia", "the pin did not hold"
+    assert out["turns"][0]["agent"]["name"] == "Mia", "the pin did not hold"
     assert rt._run_turn.await_count == 2
 
 
 async def test_naming_a_different_agent_switches_rather_than_stacking(_wire):
     await rt.chat(_body("hi mia"), x_internal_secret="s")
     out = await rt.chat(_body("actually ada, you take this"), x_internal_secret="s")
-    assert out["agent"]["name"] == "Ada"
+    assert out["turns"][0]["agent"]["name"] == "Ada"
     again = await rt.chat(_body("carry on"), x_internal_secret="s")
-    assert again["agent"]["name"] == "Ada", "the switch did not stick"
+    assert again["turns"][0]["agent"]["name"] == "Ada", "the switch did not stick"
 
 
 async def test_a_release_phrase_sends_the_agent_back_to_sleep(_wire):
     await rt.chat(_body("hi mia"), x_internal_secret="s")
     out = await rt.chat(_body("stop"), x_internal_secret="s")
-    assert out["agent"] is None
+    assert len(out["turns"]) == 1
+    assert out["turns"][0]["agent"] is None
     after = await rt.chat(_body("what is the weather"), x_internal_secret="s")
-    assert after["agent"] is None, "the agent woke back up on its own"
+    assert after["turns"][0]["agent"] is None, "the agent woke back up on its own"
 
 
 async def test_the_release_wording_costs_no_completion(_wire, monkeypatch):
@@ -101,8 +107,9 @@ async def test_the_release_wording_costs_no_completion(_wire, monkeypatch):
     "ok" is waste."""
     monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="unused"))
     out = await rt.chat(_body("stop"), x_internal_secret="s")
-    assert out["agent"] is None
-    assert isinstance(out["answer"], str) and out["answer"].strip()
+    turn = out["turns"][0]
+    assert turn["agent"] is None
+    assert isinstance(turn["answer"], str) and turn["answer"].strip()
     rt._answer_as_io.assert_not_awaited()
 
 
@@ -110,7 +117,7 @@ async def test_the_pin_is_per_chat(_wire):
     """Two conversations must not share an agent."""
     await rt.chat(_body("hi mia", chat_id="chat-1"), x_internal_secret="s")
     out = await rt.chat(_body("carry on", chat_id="chat-2"), x_internal_secret="s")
-    assert out["agent"] is None
+    assert out["turns"][0]["agent"] is None
 
 
 async def test_a_pinned_agent_that_was_deleted_does_not_wedge_the_chat(_wire,
@@ -125,8 +132,9 @@ async def test_a_pinned_agent_that_was_deleted_does_not_wedge_the_chat(_wire,
 
     out = await rt.chat(_body("carry on"), x_internal_secret="s")
 
-    assert out["agent"] is None
-    assert out["answer"] == "I can help with that.", "the chat was wedged"
+    turn = out["turns"][0]
+    assert turn["agent"] is None
+    assert turn["answer"] == "I can help with that.", "the chat was wedged"
 
 
 async def test_a_truncated_listing_does_not_wake_the_wrong_agent(_wire,
@@ -135,7 +143,7 @@ async def test_a_truncated_listing_does_not_wake_the_wrong_agent(_wire,
     partial list could pick a different agent with a similar name."""
     monkeypatch.setattr(rt, "_list_agents", AsyncMock(return_value=([], True)))
     out = await rt.chat(_body("hi mia"), x_internal_secret="s")
-    assert out["agent"] is None
+    assert out["turns"][0]["agent"] is None
 
 
 async def test_agents_for_filters_out_non_agent_rows(_wire, monkeypatch):
@@ -169,7 +177,7 @@ async def test_a_workspace_model_that_is_not_an_agent_is_never_woken(_wire,
 
     out = await rt.chat(_body("let's do a fusion of these"), x_internal_secret="s")
 
-    assert out["agent"] is None
+    assert out["turns"][0]["agent"] is None
     rt._run_turn.assert_not_awaited()
 
 
@@ -185,7 +193,7 @@ async def test_a_model_called_io_can_never_wake_itself(_wire, monkeypatch):
 
     out = await rt.chat(_body("check socket.io"), x_internal_secret="s")
 
-    assert out["agent"] is None
+    assert out["turns"][0]["agent"] is None
     rt._run_turn.assert_not_awaited()
 
 
@@ -203,15 +211,16 @@ async def test_the_pin_is_per_user_not_just_per_chat(_wire, monkeypatch):
     out = await rt.chat(_body("carry on", chat_id="local", email="bob@example.com"),
                         x_internal_secret="s")
 
-    assert out["agent"] is None, "bob's message was answered by alice's agent"
+    assert out["turns"][0]["agent"] is None, "bob's message was answered by alice's agent"
 
 
 async def test_a_pending_approval_is_passed_through(_wire, monkeypatch):
     monkeypatch.setattr(rt, "_run_turn", AsyncMock(
         return_value={"pending": {"calls": [{"id": "c1"}]}}))
     out = await rt.chat(_body("mia send that email"), x_internal_secret="s")
-    assert out["agent"]["name"] == "Mia"
-    assert out["pending"]["calls"][0]["id"] == "c1"
+    turn = out["turns"][0]
+    assert turn["agent"]["name"] == "Mia"
+    assert turn["pending"]["calls"][0]["id"] == "c1"
 
 
 async def test_the_internal_secret_is_required(monkeypatch):
@@ -225,7 +234,7 @@ async def test_the_internal_secret_is_required(monkeypatch):
 
 
 async def test_answer_or_agent_is_always_present(_wire, monkeypatch):
-    """Every path through chat() must either name an agent or say something.
+    """Every turn through chat() must either name an agent or say something.
 
     Silence with no agent named is the wedged-chat bug this whole file exists
     to prevent, and it slipped through twice (the release phrase and the
@@ -245,4 +254,83 @@ async def test_answer_or_agent_is_always_present(_wire, monkeypatch):
 
     for label, out in (("named", named), ("pinned", pinned),
                        ("released", released), ("nobody", nobody)):
-        assert out.get("agent") or (out.get("answer") or "").strip(), label
+        turn = out["turns"][0]
+        assert turn.get("agent") or (turn.get("answer") or "").strip(), label
+
+
+# --- naming more than one agent --------------------------------------------
+
+async def test_two_names_produce_two_turns_in_spoken_order(_wire):
+    """"hi mia and ada" speaks Mia first, so her turn must come first even
+    though AGENTS/the fixture lists Ada first."""
+    rt._run_turn.side_effect = None
+    rt._run_turn.reset_mock()
+    async def _answer(user_email, agent_id, messages):
+        return {"answer": "answer from %s" % agent_id, "notes": []}
+    rt._run_turn.side_effect = _answer
+
+    out = await rt.chat(_body("hi mia and ada, are you there?"), x_internal_secret="s")
+
+    turns = out["turns"]
+    assert len(turns) == 2
+    assert turns[0]["agent"]["name"] == "Mia"
+    assert turns[1]["agent"]["name"] == "Ada"
+    assert rt._run_turn.await_count == 2
+    first_call, second_call = rt._run_turn.await_args_list
+    assert first_call.args[1] == "agent-m"
+    assert second_call.args[1] == "agent-a"
+
+
+async def test_naming_two_agents_pins_the_last_one_named(_wire):
+    """A follow up with no name must go to Ada, the one named last, not
+    Mia, who was named first."""
+    async def _answer(user_email, agent_id, messages):
+        return {"answer": "answer from %s" % agent_id, "notes": []}
+    rt._run_turn.side_effect = _answer
+
+    out = await rt.chat(_body("hi mia and ada"), x_internal_secret="s")
+    assert [t["agent"]["name"] for t in out["turns"]] == ["Mia", "Ada"]
+
+    follow_up = await rt.chat(_body("carry on then"), x_internal_secret="s")
+    assert len(follow_up["turns"]) == 1
+    assert follow_up["turns"][0]["agent"]["name"] == "Ada", \
+        "the pin did not land on the last named agent"
+
+
+async def test_one_agent_raising_still_returns_both_turns(_wire):
+    """Nobody should lose Ada's answer because Mia's tool timed out."""
+    async def _flaky(user_email, agent_id, messages):
+        if agent_id == "agent-m":
+            raise RuntimeError("tool timed out")
+        return {"answer": "Ada is here.", "notes": []}
+    rt._run_turn.side_effect = _flaky
+
+    out = await rt.chat(_body("hi mia and ada"), x_internal_secret="s")
+
+    turns = out["turns"]
+    assert len(turns) == 2
+    mia_turn, ada_turn = turns
+    assert mia_turn["agent"]["name"] == "Mia"
+    assert isinstance(mia_turn["answer"], str) and mia_turn["answer"].strip()
+    assert "RuntimeError" not in mia_turn["answer"] and "Traceback" not in mia_turn["answer"], \
+        "the failure sentence should be readable, not a stack trace"
+    assert ada_turn["agent"]["name"] == "Ada"
+    assert ada_turn["answer"] == "Ada is here."
+
+
+async def test_the_failing_agents_name_appears_in_the_failure_message(_wire):
+    """When two agents answer and one fails, the person must know which one
+    broke: if the failure does not name its agent, they cannot tell which of
+    the two is down."""
+    async def _flaky(user_email, agent_id, messages):
+        if agent_id == "agent-m":
+            raise RuntimeError("tool timed out")
+        return {"answer": "Ada is here.", "notes": []}
+    rt._run_turn.side_effect = _flaky
+
+    out = await rt.chat(_body("hi mia and ada"), x_internal_secret="s")
+
+    turns = out["turns"]
+    mia_turn = turns[0]
+    assert mia_turn["agent"]["name"] == "Mia"
+    assert "Mia" in mia_turn["answer"], "the failure message must name which agent failed"

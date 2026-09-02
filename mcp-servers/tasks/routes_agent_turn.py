@@ -388,14 +388,40 @@ async def _answer_as_io(user_email: str, messages: list[dict]) -> str:
     return ((choices[0].get("message") or {}).get("content") or "").strip() or IO_DOWN
 
 
+#: Said in place of an answer when a named agent's own turn blew up. One
+#: agent failing must not cost the others theirs: Ada's answer must not be
+#: lost because Mia's tool timed out.
+def _turn_failed_sentence(name: str) -> str:
+    return "%s could not answer just now. Try again in a moment." % (name or "That agent")
+
+
+async def _turn_for(user_email: str, agent: dict, messages: list[dict]) -> dict:
+    """One rendered turn for a single named agent. Never raises.
+
+    Wraps _run_turn so a blown-up tool call in one agent's turn cannot take
+    the rest of the message down with it.
+    """
+    try:
+        out = await _run_turn(user_email, agent["id"], messages)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("agent turn failed for %s", agent.get("id"),
+                       exc_info=True)
+        out = {"answer": _turn_failed_sentence(agent.get("name")), "notes": []}
+    out = dict(out)  # Defensive copy: caller must never get a shared dict modified
+    out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
+    return out
+
+
 @router.post("/chat")
 async def chat(body: ChatIn,
                x_internal_secret: str = Header(default="")) -> dict:
-    """Who should answer this message, and their answer if it is an agent.
+    """Who should answer this message, one turn each.
 
-    Returns agent=None when nobody was named and nobody is pinned, which is
-    the caller's cue to answer as itself. The caller holds no routing logic so
-    that Discord, Telegram and the web chat all decide this the same way.
+    Returns {"turns": [...]}. A turn with agent=None is the caller's cue that
+    IO answered for itself. Naming more than one agent runs them in spoken
+    order, one at a time never in parallel, because each turn can run tools
+    and this box has 3.8GB of RAM. The caller holds no routing logic so that
+    Discord, Telegram and the web chat all decide this the same way.
     """
     _require_internal(x_internal_secret)
     key = _pin_key(body.chat_id, body.user_email)
@@ -403,26 +429,30 @@ async def chat(body: ChatIn,
 
     if agent_routing.wants_release(text):
         await _clear_pin(key)
-        return {"agent": None, "answer": RELEASED, "notes": []}
+        return {"turns": [{"agent": None, "answer": RELEASED, "notes": []}]}
 
     agents = await _agents_for(body.user_email)
-    named = agent_routing.match_agent(text, agents)
+    named = agent_routing.match_agents(text, agents)
 
     if named:
-        # Naming a different agent switches rather than stacking: one agent is
-        # awake at a time, so "actually ada, you take this" hands over cleanly.
-        await _write_pin(key, named["id"])
-        agent = named
-    else:
-        pinned_id = await _read_pin(key)
-        agent = next((a for a in agents if a.get("id") == pinned_id), None)
-        if pinned_id and agent is None:
-            # Deleted, or renamed out from under the pin. Fail closed to no
-            # agent rather than erroring on every message from here on. Falls
-            # through to IO below rather than returning here: a stale pin is
-            # an accident the person did not cause, so they get a real answer
-            # to what they actually typed, not silence.
-            await _clear_pin(key)
+        # Naming agents switches rather than stacking: the LAST one named is
+        # who a follow up with no name goes to, so "actually ada, you take
+        # this" hands over cleanly even when Mia was also named.
+        turns = []
+        for agent in named:
+            turns.append(await _turn_for(body.user_email, agent, body.messages))
+        await _write_pin(key, named[-1]["id"])
+        return {"turns": turns}
+
+    pinned_id = await _read_pin(key)
+    agent = next((a for a in agents if a.get("id") == pinned_id), None)
+    if pinned_id and agent is None:
+        # Deleted, or renamed out from under the pin. Fail closed to no
+        # agent rather than erroring on every message from here on. Falls
+        # through to IO below rather than returning here: a stale pin is
+        # an accident the person did not cause, so they get a real answer
+        # to what they actually typed, not silence.
+        await _clear_pin(key)
 
     if agent is None:
         # IO speaking for itself. Done here rather than in the pipe because
@@ -433,8 +463,6 @@ async def chat(body: ChatIn,
         except Exception:                                   # noqa: BLE001
             logger.warning("the base model did not answer", exc_info=True)
             answer = IO_DOWN
-        return {"agent": None, "answer": answer, "notes": []}
+        return {"turns": [{"agent": None, "answer": answer, "notes": []}]}
 
-    out = await _run_turn(body.user_email, agent["id"], body.messages)
-    out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
-    return out
+    return {"turns": [await _turn_for(body.user_email, agent, body.messages)]}

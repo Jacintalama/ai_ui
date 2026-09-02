@@ -54,6 +54,69 @@ def test_an_unknown_name_matches_nothing():
     assert ar.match_agent("hi scout", AGENTS) is None
 
 
+# --- naming more than one agent --------------------------------------------
+
+def test_two_names_return_both_in_spoken_order_not_list_order():
+    """The list order must not leak through, so each case here is given the
+    OPPOSITE of the order the names are spoken in: "hi mia and ada" speaks
+    Mia first but is given a list with Ada first, and vice versa. A
+    match_agents that merely echoed the input list order would get both of
+    these backwards."""
+    ada_first = [ADA, MIA]
+    names = [a["name"] for a in ar.match_agents("hi mia and ada", ada_first)]
+    assert names == ["Mia", "Ada"]
+
+    mia_first = [MIA, ADA]
+    names = [a["name"] for a in ar.match_agents("hi ada and mia", mia_first)]
+    assert names == ["Ada", "Mia"]
+
+
+def test_the_same_name_twice_returns_one_entry():
+    names = [a["name"] for a in ar.match_agents("mia, are you there mia?", AGENTS)]
+    assert names == ["Mia"]
+
+
+def test_one_name_returns_one_entry():
+    names = [a["name"] for a in ar.match_agents("hi mia how can you help me", AGENTS)]
+    assert names == ["Mia"]
+
+
+def test_no_name_returns_empty():
+    assert ar.match_agents("what is the weather", AGENTS) == []
+
+
+@pytest.mark.parametrize("text", [
+    "can you adapt this for me",
+    "the adapter is broken",
+    "miami is far away",
+    "nomiadic patterns",
+    "readapt the layout",
+    "",
+    "   ",
+])
+def test_match_agents_rejects_the_same_false_positives_as_match_agent(text):
+    """The false-positive guard must hold for match_agents too, not just the
+    single-agent wrapper."""
+    assert ar.match_agents(text, AGENTS) == []
+
+
+@pytest.mark.parametrize("agents", [
+    [], None, ["not a dict"], [{"id": "x"}], [{"name": ""}], [{"name": "   "}],
+])
+def test_match_agents_with_a_malformed_agent_list_never_raises(agents):
+    assert ar.match_agents("hi mia", agents) == []
+
+
+@pytest.mark.parametrize("text,agents", [
+    (123, AGENTS),
+    (None, AGENTS),
+    ("hi mia", 123),
+    ("hi mia", "not a list"),
+])
+def test_match_agents_with_wrong_types_never_raises(text, agents):
+    assert ar.match_agents(text, agents) == []
+
+
 @pytest.mark.parametrize("agents", [
     [], None, ["not a dict"], [{"id": "x"}], [{"name": ""}], [{"name": "   "}],
 ])
