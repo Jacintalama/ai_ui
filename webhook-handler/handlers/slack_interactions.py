@@ -14,6 +14,7 @@ from clients.slack import SlackClient
 from clients.tasks import TasksAPIError
 from handlers.commands import CommandRouter, CommandContext
 from handlers import intent_cards
+from handlers import slack_channels_panel, slack_graph_panel
 from handlers.url_guard import is_safe_public_url
 from handlers.slack_app_builder_panel import (
     PANEL_NEW_ID,
@@ -163,6 +164,24 @@ class SlackInteractionsHandler:
         trigger_id = payload.get("trigger_id", "")
         channel_id = (payload.get("channel") or {}).get("id", "")
 
+        # #channels / #graph panels: read-only lookups, answered ephemerally in
+        # the channel the click came from by the handlers behind /aiui channels
+        # and /aiui graph. The url buttons post an action too; those no-op.
+        if action_id in (slack_channels_panel.MY_ACTION_ID, slack_graph_panel.MY_ACTION_ID):
+            user = payload.get("user", {})
+            is_channels = action_id == slack_channels_panel.MY_ACTION_ID
+            ctx = self._ephemeral_ctx(
+                user_id=user.get("id", ""),
+                user_name=user.get("username") or user.get("name", "unknown"),
+                channel_id=channel_id, subcommand="channels" if is_channels else "graph")
+            run = self.router._handle_channels if is_channels else self.router._handle_graph
+            self._keep(asyncio.create_task(run(ctx)))
+            return {}
+        if action_id == slack_graph_panel.ASK_ACTION_ID:
+            await self.slack.open_modal(trigger_id, slack_graph_panel.build_ask_modal(channel_id))
+            return {}
+        if action_id in (slack_channels_panel.LINK_ACTION_ID, slack_graph_panel.OPEN_ACTION_ID):
+            return {}
         if action_id.startswith(intent_cards.INTENT_CONFIRM_PREFIX):
             token = action_id[len(intent_cards.INTENT_CONFIRM_PREFIX):]
             pending = await self.router.peek_intent(token)
@@ -730,6 +749,29 @@ class SlackInteractionsHandler:
                 method_name, user_id, sched_id, exc,
             )
 
+    def _ephemeral_ctx(self, *, user_id: str, user_name: str, channel_id: str,
+                       subcommand: str, arguments: str = "") -> CommandContext:
+        """A context whose reply is an ephemeral message in `channel_id`, or a
+        DM when the click came from nowhere in particular."""
+        async def respond(msg: str) -> None:
+            if channel_id:
+                await self.slack.post_ephemeral(channel_id, user_id, msg)
+                return
+            dm = await self.slack.open_dm(user_id)
+            if dm:
+                await self.slack.post_message(channel=dm, text=msg)
+
+        return CommandContext(
+            user_id=user_id, user_name=user_name, channel_id=channel_id,
+            raw_text=f"{subcommand} {arguments}".strip(), subcommand=subcommand,
+            arguments=arguments, platform="slack", respond=respond, metadata={},
+        )
+
+    def _keep(self, task: "asyncio.Task") -> None:
+        """Hold a strong reference so the background reply cannot be collected."""
+        self.router._background_tasks.add(task)
+        task.add_done_callback(self.router._background_tasks.discard)
+
     def _slack_ctx(self, user_id: str, user_name: str = "user") -> CommandContext:
         """Minimal context just for email resolution / not-linked messaging."""
         async def _noop(_: str) -> None:
@@ -969,6 +1011,13 @@ class SlackInteractionsHandler:
         user_id = user.get("id", "")
         user_name = user.get("username") or user.get("name", "unknown")
 
+        if callback_id == slack_graph_panel.ASK_MODAL_ID:
+            ctx = self._ephemeral_ctx(
+                user_id=user_id, user_name=user_name,
+                channel_id=view.get("private_metadata", "") or "",
+                subcommand="graph", arguments=slack_graph_panel.topic_from_view(view))
+            self._keep(asyncio.create_task(self.router._handle_graph(ctx)))
+            return {}
         if is_panel_modal(callback_id):
             template_key = template_key_from_modal(callback_id)
             origin_channel = view.get("private_metadata", "") or ""
