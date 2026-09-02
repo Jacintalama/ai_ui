@@ -301,6 +301,27 @@ class TasksClient:
         resp = await self._request("GET", "/api/projects", user_email)
         return resp.json()
 
+    # --- Channels + Graph (user-scoped, X-User-Email) ---
+    #
+    # The public mounts, the same routes the browser reaches through the
+    # api-gateway, so what a bot shows is exactly what the web page shows.
+
+    async def get_channel_connections(self, user_email: str) -> dict[str, Any]:
+        """Every channel, with this account's link status for each."""
+        resp = await self._request("GET", "/tasks/gateway/connections", user_email)
+        return resp.json()
+
+    async def get_knowledge_graph(self, user_email: str) -> dict[str, Any]:
+        """The caller's own knowledge graph: nodes, links, count, counts."""
+        resp = await self._request("GET", "/api/tasks/graph/mine", user_email)
+        return resp.json()
+
+    async def get_graph_context(self, user_email: str, query: str) -> dict[str, Any]:
+        """What the graph knows about `query`, as one compact text block."""
+        resp = await self._request("GET", "/api/tasks/graph/mine/context", user_email,
+                                   params={"q": query})
+        return resp.json()
+
     async def get_project_status(
         self, user_email: str, slug: str,
     ) -> dict[str, Any]:

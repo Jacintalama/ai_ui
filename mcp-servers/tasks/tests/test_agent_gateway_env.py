@@ -117,3 +117,60 @@ def test_the_model_id_trap_is_documented():
     assert "claude-sonnet-4-5" in block or "OpenRouter slug" in block, (
         "nothing documents that the model id must be CLI-acceptable, not an "
         "OpenRouter slug")
+
+
+# ---------------------------------------------------------------------------
+# claude-analyzer is the third Claude Code caller, and the last one left on
+# the literal Anthropic host.
+# ---------------------------------------------------------------------------
+#
+# It spawns the same CLI as the build agent, but its server.js builds the
+# child's environment by hand and forwarded only ANTHROPIC_API_KEY, so the
+# gateway toggle that moved builds to OpenRouter on 2026-08-24 never reached
+# it. Nobody noticed because nobody used it: the container had zero log lines
+# in the 30 days to 2026-09-02. It is fixed for the same reason the tasks
+# service was: one toggle, every caller.
+
+def _block(name: str) -> str:
+    start = TEXT.index(f"\n  {name}:")
+    rest = TEXT[start + 1:]
+    m = re.search(r"\n  [a-z0-9_-]+:\n", rest)
+    return rest[: m.start()] if m else rest
+
+
+def _env_line_in(name: str, var: str) -> str:
+    for line in _block(name).splitlines():
+        s = line.strip()
+        if s.startswith(f"- {var}=") and not s.startswith("#"):
+            return s
+    return ""
+
+
+def test_the_analyzer_service_still_exists():
+    assert "\n  claude-analyzer:" in TEXT
+
+
+@pytest.mark.parametrize("var", [
+    "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"])
+def test_the_gateway_vars_reach_the_analyzer(var):
+    line = _env_line_in("claude-analyzer", var)
+    assert line, f"{var} is not passed to claude-analyzer, so it cannot follow the gateway"
+    assert ":-}" in line, f"{line} has no empty default; unset would change the stock path"
+
+
+def test_the_analyzer_uses_the_same_toggle_as_the_build_agent():
+    """One .env change must move every Claude Code caller, so the analyzer must
+    read the SAME AGENT_* variables tasks reads, not a second set."""
+    for var in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"):
+        tasks_rhs = _env_line(var).split("=", 1)[1]
+        analyzer_rhs = _env_line_in("claude-analyzer", var).split("=", 1)[1]
+        assert analyzer_rhs == tasks_rhs, (
+            f"{var}: analyzer reads {analyzer_rhs!r} but tasks reads {tasks_rhs!r}; "
+            f"two toggles means one of them is always forgotten")
+
+
+def test_the_analyzer_forwards_the_vars_to_the_cli():
+    """Compose can inject them, but server.js hand-builds the child env."""
+    server_js = (COMPOSE.parent / "claude-analyzer" / "server.js").read_text(encoding="utf-8")
+    for var in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"):
+        assert var in server_js, f"server.js never forwards {var} to the spawned CLI"

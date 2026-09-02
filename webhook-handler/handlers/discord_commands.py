@@ -91,6 +91,7 @@ from handlers.app_builder_panel import (
     build_apps_select_components,
 )
 from handlers import cronjob_panel as cron
+from handlers import channels_panel, graph_panel
 from handlers import onboarding
 from handlers import recruiting_panel
 from handlers import recruiting_review as rr
@@ -267,6 +268,20 @@ class DiscordCommandHandler:
         other component is a harmless no-op (never a 500)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        # #channels / #graph panels: read-only lookups, answered ephemerally by
+        # the same handlers behind /aiui channels and /aiui graph.
+        if channels_panel.is_chan(custom_id):
+            if channels_panel.is_my(custom_id):
+                return await self._handle_panel_route(
+                    payload, lambda ctx: self.router._handle_channels(ctx), raw_text="channels")
+            return {"type": DEFERRED_UPDATE_MESSAGE}
+        if graph_panel.is_graph(custom_id):
+            if graph_panel.is_my(custom_id):
+                return await self._handle_panel_route(
+                    payload, lambda ctx: self.router._handle_graph(ctx), raw_text="graph")
+            if graph_panel.is_ask(custom_id):
+                return {"type": MODAL, "data": graph_panel.build_ask_modal()}
+            return {"type": DEFERRED_UPDATE_MESSAGE}
         if cron.is_cron(custom_id):
             return await self._handle_cron_component(payload, custom_id)
         # All aiuibuild:* component ids are routed by their distinct second
@@ -1489,6 +1504,8 @@ class DiscordCommandHandler:
         deferred pattern (the watcher posts the link via the bot token later)."""
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
+        if graph_panel.is_ask_modal(custom_id):
+            return await self._handle_graph_ask_submit(payload)
         if cron.is_create_modal(custom_id) or cron.is_custom_cron_modal(custom_id):
             return await self._handle_cron_modal_submit(payload, custom_id)
         if is_enhance_modal(custom_id):
@@ -1644,6 +1661,27 @@ class DiscordCommandHandler:
             logger.info(f"Ignoring unknown modal custom_id: {custom_id}")
             return {"type": DEFERRED_UPDATE_MESSAGE}
         return await self._handle_build_modal_submit(payload, custom_id)
+
+    async def _handle_graph_ask_submit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """"Ask the graph" submitted: run the graph handler with the topic,
+        ephemerally. Mirrors _handle_cron_modal_submit."""
+        data = payload.get("data", {})
+        topic = self._extract_modal_value(data, graph_panel.TOPIC_INPUT)
+        interaction_token = payload.get("token", "")
+        member = payload.get("member", {})
+        user = member.get("user", payload.get("user", {}))
+
+        async def respond(msg: str) -> None:
+            await self.discord.edit_original(interaction_token=interaction_token, content=msg)
+
+        ctx = CommandContext(
+            user_id=user.get("id", ""), user_name=user.get("username", "unknown"),
+            channel_id=payload.get("channel_id", ""), raw_text=f"graph {topic}".strip(),
+            subcommand="graph", arguments=topic, platform="discord",
+            respond=respond,
+        )
+        self._spawn(self.router._handle_graph(ctx))
+        return {"type": DEFERRED_CHANNEL_MESSAGE, "data": {"flags": EPHEMERAL}}
 
     async def _handle_cron_modal_submit(self, payload: dict[str, Any], custom_id: str) -> dict[str, Any]:
         data = payload.get("data", {})
