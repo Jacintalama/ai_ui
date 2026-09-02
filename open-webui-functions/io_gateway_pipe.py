@@ -104,26 +104,27 @@ class Pipe:
         lines.append("Reply yes to let it, or no to skip.")
         return "\n".join(lines)
 
-    def _render(self, out) -> str:
-        # Comes over HTTP from another service, so the shape is not ours to
-        # trust. _approval_question below is defensive for the same reason.
-        out = out if isinstance(out, dict) else {}
-        agent = out.get("agent")
+    def _render_turn(self, turn: dict) -> str:
+        """One turn, on its own. Same rules the single-turn shape always
+        used: a pending turn asks its approval question, a turn with no
+        agent gets no name prefix, and notes ride along after the answer.
+        """
+        agent = turn.get("agent")
         agent = agent if isinstance(agent, dict) else None
 
         if agent is None:
             # IO answered for itself. Prefixing a name here would invent a
             # speaker who was never involved.
-            return (out.get("answer") or "").strip() or EMPTY
+            return (turn.get("answer") or "").strip() or EMPTY
 
         name = agent.get("name") or agent.get("id") or "Agent"
 
-        pending = out.get("pending")
+        pending = turn.get("pending")
         if isinstance(pending, dict) and pending.get("calls"):
             return self._approval_question(name, pending["calls"])
 
-        answer = (out.get("answer") or "").strip()
-        notes = [n for n in (out.get("notes") or []) if isinstance(n, str)]
+        answer = (turn.get("answer") or "").strip()
+        notes = [n for n in (turn.get("notes") or []) if isinstance(n, str)]
         if notes:
             note_text = "\n".join(notes)
             answer = (answer + "\n\n" + note_text) if answer else note_text
@@ -131,6 +132,18 @@ class Pipe:
         if self.valves.SHOW_AGENT_NAME:
             return "%s:\n%s" % (name, answer)
         return answer
+
+    def _render(self, out) -> str:
+        # Comes over HTTP from another service, so the shape is not ours to
+        # trust. _approval_question and _render_turn above are defensive for
+        # the same reason.
+        out = out if isinstance(out, dict) else {}
+        turns = out.get("turns")
+        turns = turns if isinstance(turns, list) else []
+        turns = [t for t in turns if isinstance(t, dict)]
+        if not turns:
+            return EMPTY
+        return "\n\n".join(self._render_turn(t) for t in turns)
 
     # --- the entry point ---------------------------------------------------
 
