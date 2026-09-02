@@ -527,6 +527,14 @@ services:
     restart: unless-stopped
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # The same gateway toggle the tasks service reads (see its
+      # ANTHROPIC_BASE_URL note): one .env change moves every Claude Code
+      # caller, this one included. It was the last on the literal Anthropic
+      # host because server.js hand-builds the CLI's env and forwarded only
+      # the key; it now forwards these three when they are non-empty.
+      - ANTHROPIC_BASE_URL=${AGENT_BASE_URL:-}
+      - ANTHROPIC_AUTH_TOKEN=${AGENT_AUTH_TOKEN:-}
+      - ANTHROPIC_MODEL=${AGENT_MODEL:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
     volumes:
       - analyzer-workspace:/workspace

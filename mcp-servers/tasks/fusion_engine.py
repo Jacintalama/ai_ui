@@ -12,10 +12,11 @@ from typing import AsyncIterator
 
 import httpx
 
+import anthropic_gateway
+
 logger = logging.getLogger("tasks.fusion")
 
 OPENAI_BASE = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/")
-ANTHROPIC_BASE = "https://api.anthropic.com/v1"
 
 
 @dataclass(frozen=True)
@@ -116,9 +117,8 @@ async def call_model(model_id: str, messages: list[dict], *, max_tokens: int,
     body = {"model": spec.api_model, "max_tokens": max_tokens, "messages": conv}
     if system:
         body["system"] = system
-    r = await client.post(f"{ANTHROPIC_BASE}/messages", json=body,
-                          headers={"x-api-key": _anthropic_key(),
-                                   "anthropic-version": "2023-06-01"},
+    r = await client.post(anthropic_gateway.messages_url(), json=body,
+                          headers=anthropic_gateway.headers(),
                           timeout=timeout_s)
     r.raise_for_status()
     parts = r.json().get("content", [])
@@ -220,9 +220,8 @@ async def _stream_judge(judge_id: str, judge_messages: list[dict], *,
             "messages": conv, "stream": True}
     if system:
         body["system"] = system
-    async with client.stream("POST", f"{ANTHROPIC_BASE}/messages", json=body,
-                             headers={"x-api-key": _anthropic_key(),
-                                      "anthropic-version": "2023-06-01"},
+    async with client.stream("POST", anthropic_gateway.messages_url(), json=body,
+                             headers=anthropic_gateway.headers(),
                              timeout=FUSION_TIMEOUT_S) as resp:
         resp.raise_for_status()
         async for line in resp.aiter_lines():

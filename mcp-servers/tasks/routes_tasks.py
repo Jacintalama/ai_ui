@@ -6,12 +6,14 @@ from datetime import datetime
 from pathlib import PurePath as _PurePath
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import or_, select, text
 
 import uuid
 
+import anthropic_gateway
 from assignee_map import TEAM_EMAIL as TEAM_EMAIL_CONST, AssigneeMap
 from auth import (
     AdminUser,
@@ -1142,6 +1144,46 @@ def _format_selection_block(sel: SelectionPayload) -> str:
     )
 
 
+#: Haiku on purpose: this is a 700-token chat about an app, not a build.
+#: The dated id resolves on OpenRouter as well as on Anthropic (checked
+#: 2026-09-02), so the gateway toggle needs no rename here.
+CHAT_MODEL = "claude-haiku-4-5-20251001"
+CHAT_MAX_TOKENS = 700
+
+
+async def _ask_anthropic(system_prompt: str, messages: list,
+                         *, client: httpx.AsyncClient | None = None) -> str:
+    """One Messages call, to whichever host the environment names.
+
+    Used to be inline in `chat` with the Anthropic host as a literal and
+    `x-api-key` only, which is why moving the rest of this container to
+    OpenRouter left the chat box sending a dead key to a dead host. The
+    `client` seam exists so a test can capture the request without a
+    network; production passes nothing and gets a fresh client.
+    """
+    body = {"model": CHAT_MODEL, "max_tokens": CHAT_MAX_TOKENS,
+            "system": system_prompt, "messages": messages}
+    own = client is None
+    client = client or httpx.AsyncClient(timeout=30.0)
+    try:
+        try:
+            r = await client.post(anthropic_gateway.messages_url(),
+                                  headers=anthropic_gateway.headers(), json=body)
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"Chat upstream error: {e}")
+    finally:
+        if own:
+            await client.aclose()
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Claude API returned {r.status_code}: {r.text[:200]}")
+
+    data = r.json()
+    parts = [c.get("text", "") for c in data.get("content", []) if c.get("type") == "text"]
+    reply_text = "\n".join(p for p in parts if p).strip()
+    return reply_text or "(no reply generated)"
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     source_task_id: str = Form(...),
@@ -1255,9 +1297,11 @@ async def chat(
     if not source.built_app_slug:
         raise HTTPException(status_code=400, detail="Source task has no built app to chat about")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="Chat unavailable — ANTHROPIC_API_KEY not configured")
+    if not anthropic_gateway.configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Chat unavailable — no Anthropic credentials "
+                   "(ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN) configured")
 
     slug = source.built_app_slug
     app_dir = os.path.join(os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui"), "apps", slug)
@@ -1401,31 +1445,5 @@ async def chat(
         {"role": "user", "content": latest_user_content}
     ]
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-haiku-4-5-20251001",
-                    "max_tokens": 700,
-                    "system": system_prompt,
-                    "messages": messages,
-                },
-            )
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Chat upstream error: {e}")
-
-    if r.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Claude API returned {r.status_code}: {r.text[:200]}")
-
-    data = r.json()
-    parts = [c.get("text", "") for c in data.get("content", []) if c.get("type") == "text"]
-    reply_text = "\n".join(p for p in parts if p).strip()
-    if not reply_text:
-        reply_text = "(no reply generated)"
+    reply_text = await _ask_anthropic(system_prompt, messages)
     return ChatResponse(reply=reply_text)

@@ -77,7 +77,9 @@ async def test_call_model_anthropic_contract():
     assert "/v1/messages" in captured["url"]
     assert captured["body"]["model"] == "claude-opus-4-8"
     assert captured["body"]["max_tokens"] == 100
-    assert captured["hdr"][0] == fe._anthropic_key()
+    # Present iff a key is configured. The old form compared against ""
+    # when unset, i.e. asserted that an empty x-api-key header is sent.
+    assert captured["hdr"][0] == (fe._anthropic_key() or None)
     assert captured["hdr"][1] == "2023-06-01"
 
 

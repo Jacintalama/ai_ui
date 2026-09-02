@@ -1,5 +1,18 @@
 const express = require("express");
 const { spawn } = require("child_process");
+
+// The three variables that move the CLI to an Anthropic-compatible gateway
+// (OpenRouter today). Copied only when non-empty: compose passes
+// `${AGENT_BASE_URL:-}`, so "unset" arrives here as "", and an empty
+// ANTHROPIC_BASE_URL is not "unset" to the CLI.
+function gatewayEnv() {
+  const out = {};
+  for (const k of ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL"]) {
+    const v = (process.env[k] || "").trim();
+    if (v) out[k] = v;
+  }
+  return out;
+}
 const fs = require("fs");
 const path = require("path");
 
@@ -92,6 +105,7 @@ function runClaude(prompt, cwd, outputFormat = "text", timeoutMs = CLAUDE_TIMEOU
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
         HOME: "/root",
         PATH: process.env.PATH,
+        ...gatewayEnv(),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
