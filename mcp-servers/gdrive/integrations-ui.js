@@ -112,7 +112,7 @@
         if (data && data.connected === true) {
           localStorage.setItem(key, 'true');
         } else {
-          // Server says not connected — clear stale localStorage so Gmail UI
+          // Server says not connected: clear stale localStorage so Gmail UI
           // (Add-from-Gmail menu item, Gmail card in Integrations) stays hidden.
           if (localStorage.getItem(key) === 'true') {
             console.log('[AIUI] Clearing stale Gmail localStorage for', email);
@@ -121,7 +121,7 @@
           }
         }
       })
-      .catch(function() { /* network err — leave state alone */ });
+      .catch(function() { /* network err: leave state alone */ });
   }
 
   // Resolve email on load
@@ -161,7 +161,7 @@
   // After resolveUserEmail, so the localStorage key is per real account.
   setTimeout(reportTimezone, 2500);
 
-  // Per-user localStorage keys — each user has separate connection state
+  // Per-user localStorage keys: each user has separate connection state
   function _userKey(base) {
     var email = getEffectiveEmail();
     return base + ':' + email;
@@ -249,7 +249,7 @@
   var attachedDriveFiles = [];
 
   function addDriveAttachment(file) {
-    // Always allow — create unique copy with unique ID for tracking
+    // Always allow: create unique copy with unique ID for tracking
     var fileCopy = { id: file.id, name: file.name, type: file.type, uid: file.id + '_' + Date.now() };
     attachedDriveFiles.push(fileCopy);
     renderAttachmentCards();
@@ -1281,7 +1281,7 @@
     overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
     picker.querySelector('#aiui-emailpicker-close').addEventListener('click', function() { overlay.remove(); });
 
-    // Compose button removed — AI handles sending
+    // Compose button removed: AI handles sending
 
     var searchTimeout = null;
     var searchInput = picker.querySelector('#aiui-email-search');
@@ -1372,7 +1372,7 @@
 
       emailList.innerHTML = '<div style="padding:40px;text-align:center;color:#888;">Saving draft...</div>';
 
-      // Use send endpoint with a draft flag — but Gmail API draft create for new emails
+      // Use send endpoint with a draft flag, but Gmail API draft create for new emails
       // needs a different approach. Use gmail_send_email but we'll create a new draft endpoint.
       // For now, use the send endpoint concept but as draft
       fetch(GMAIL_API + '/gmail_send_email', {
@@ -1522,7 +1522,7 @@
       if (overlay) overlay.remove();
     });
 
-    // Create Draft Reply — show intent input first
+    // Create Draft Reply: show intent input first
     emailList.querySelector('#aiui-action-draft').addEventListener('click', function() {
       showDraftIntentInput(email, emailList, picker);
     });
@@ -1538,10 +1538,10 @@
     container.innerHTML = '<div style="padding:16px;">' +
       '<div style="margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid #333;">' +
         '<div style="color:#fff;font-size:15px;font-weight:600;margin-bottom:2px;">Draft Reply</div>' +
-        '<div style="color:#888;font-size:12px;">To: ' + fromShort + ' — Re: ' + (email.subject || '') + '</div>' +
+        '<div style="color:#888;font-size:12px;">To: ' + fromShort + ', Re: ' + (email.subject || '') + '</div>' +
       '</div>' +
       '<div style="margin-bottom:12px;">' +
-        '<label style="color:#ccc;font-size:13px;display:block;margin-bottom:6px;">What should the reply say? (optional — AI will generate if blank)</label>' +
+        '<label style="color:#ccc;font-size:13px;display:block;margin-bottom:6px;">What should the reply say? (optional, AI will generate if blank)</label>' +
         '<textarea id="aiui-draft-intent" placeholder="e.g. Thank them and say I\'ll review tomorrow..." style="width:100%;background:#2a2a2a;border:1px solid #444;border-radius:8px;padding:10px;color:#fff;font-size:14px;resize:vertical;min-height:80px;outline:none;box-sizing:border-box;font-family:inherit;"></textarea>' +
       '</div>' +
       '<div style="display:flex;gap:8px;">' +
@@ -1817,7 +1817,7 @@
 
     {
 
-            // 1. "Add from Google Drive" — only show if connected
+            // 1. "Add from Google Drive": only show if connected
             if (isConnected()) {
               var gdriveBtn = document.createElement('button');
               gdriveBtn.id = 'aiui-gdrive-menu-btn';
@@ -1840,7 +1840,7 @@
               container.appendChild(gdriveBtn);
             }
 
-            // 2. "Add from Gmail" — only show if connected
+            // 2. "Add from Gmail": only show if connected
             if (isGmailConnected()) {
               var gmailBtn = document.createElement('button');
               gmailBtn.id = 'aiui-gmail-menu-btn';
@@ -1863,7 +1863,7 @@
               container.appendChild(gmailBtn);
             }
 
-            // 3. "Integrations" — always show
+            // 3. "Integrations": always show
             var intBtn = document.createElement('button');
             intBtn.id = 'aiui-integrations-btn';
             intBtn.className = refItem.className;
@@ -2068,7 +2068,7 @@
       .then(function(r) { return r.json(); })
       .then(function(result) {
         if (result.success) {
-          showNotification('Draft saved to Gmail! Re: ' + (result.subject || '') + ' — Check Gmail Drafts', false, true);
+          showNotification('Draft saved to Gmail! Re: ' + (result.subject || '') + '. Check Gmail Drafts', false, true);
           // Clear the stored email ID so we don't double-process
           window._aiuiLastAttachedEmailId = null;
         } else {
@@ -2419,6 +2419,13 @@
   }
 
   function setupChatConnectWatcher() {
+    // Disabled: this keyword watcher fired maybePromptConnect whenever a
+    // message merely contained a word like email or inbox, popping a card
+    // even when the person had no intent to connect anything. The My
+    // Account tool replaced it: the model decides deliberately and prints
+    // an #aiui-connect: link, which wireAiuiConnectLinks turns into a
+    // button.
+    return;
     // Robust detection: read the ACTUAL user message from the outgoing chat
     // request, not from a textarea (which can hold a draft/edit box's text).
     var _origFetch = window.fetch;
@@ -2534,6 +2541,140 @@
       .catch(function () {});
   }
 
+  // ===== The assistant's connect links =====
+  // The My Account tool prints [Connect Gmail](#aiui-connect:gmail). This
+  // finds those and turns them into buttons.
+  //
+  // Popup first, because that is the flow somebody actually wants: one
+  // click and the vendor's login opens. Chrome blocks a window.open that no
+  // click triggered, and a blocked call returns null, so we can tell and
+  // say so. Once the person allows popups for this site the block is gone
+  // for good and later connects open with no fuss.
+  //
+  // Panel second, so that somebody who never allows popups is never stuck.
+  //
+  // The login itself is always theirs. We open the door.
+  var AIUI_CONNECT_MARKER = '#aiui-connect:';
+
+  function aiuiConnectUrlFor(provider) {
+    // Only the Google apps have a URL that is ready to open immediately.
+    // Notion is OAuth too (see _can_log_in in account_summary.py) but
+    // its start URL has to be fetched from our own API first, so it is
+    // handled separately in the click handler below, not here. Anything
+    // else is a key-paste app with no login to open at all.
+    var email = getEffectiveEmail();
+    if (provider === 'gmail') return GMAIL_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
+    if (provider === 'gdrive') return GDRIVE_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
+    if (provider === 'calendar') return CALENDAR_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
+    return null;
+  }
+
+  function aiuiAuthHeaders() {
+    // Mirrors authHeaders() inside createIntegrationsModal above, which is
+    // out of reach from here: that copy is scoped inside a different
+    // top-level function, not on window.
+    var t = localStorage.getItem('token');
+    var h = { 'Content-Type': 'application/json' };
+    if (t) h['Authorization'] = 'Bearer ' + t;
+    return h;
+  }
+
+  function aiuiPopupBlocked(win) {
+    // A blocked window.open returns null in Chrome; some browsers return a
+    // window that is immediately closed.
+    return !win || win.closed || typeof win.closed === 'undefined';
+  }
+
+  function aiuiSayBlocked(container) {
+    var note = document.createElement('div');
+    note.className = 'aiui-connect-note';
+    note.style.cssText = 'margin-top:6px;font-size:12.5px;color:#c8c8c8;';
+    note.textContent = 'Your browser blocked that window, so I opened the '
+      + 'Connections panel instead. Click the blocked icon in your address '
+      + 'bar and choose to always allow popups here, and these will open '
+      + 'directly next time.';
+    if (!container.querySelector('.aiui-connect-note')) container.appendChild(note);
+  }
+
+  function wireAiuiConnectLink(anchor) {
+    if (!anchor || anchor.getAttribute('data-aiui-wired')) return;
+    var href = anchor.getAttribute('href') || '';
+    var i = href.indexOf(AIUI_CONNECT_MARKER);
+    if (i === -1) return;
+    var provider = href.slice(i + AIUI_CONNECT_MARKER.length).trim();
+    if (!provider) return;
+    anchor.setAttribute('data-aiui-wired', '1');
+
+    var container = document.createElement('span');
+    container.className = 'aiui-connect-inline';
+    var btn = document.createElement('button');
+    btn.textContent = anchor.textContent || ('Connect ' + provider);
+    btn.style.cssText = 'padding:8px 16px;background:#4CAF50;color:#fff;border:none;'
+      + 'border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;';
+    container.appendChild(btn);
+    if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
+
+    btn.addEventListener('click', function () {
+      // Three cases. A Google app has a direct URL and opens immediately.
+      // Notion needs its start URL fetched from our API, so the window is
+      // opened synchronously right here and navigated once the URL
+      // arrives, because a window opened after an await has lost the
+      // click that justified it and gets blocked. Anything else has no
+      // login to open at all, so it goes straight to the panel.
+      var url = aiuiConnectUrlFor(provider);
+      if (url) {
+        var win = window.open(url, '_blank');
+        if (aiuiPopupBlocked(win)) {
+          aiuiSayBlocked(container);
+          window.aiuiOpenConnections();
+        }
+        return;
+      }
+
+      if (provider === 'notion') {
+        // Notion's connect URL has to be fetched, but a window opened
+        // after an await has lost the click that justified it and gets
+        // blocked. So open synchronously first and navigate it once the
+        // URL arrives.
+        var notionWin = window.open('', '_blank');
+        if (aiuiPopupBlocked(notionWin)) {
+          aiuiSayBlocked(container);
+          window.aiuiOpenConnections();
+          return;
+        }
+        fetch('/api/tasks/connections/' + encodeURIComponent(provider) + '/oauth/start',
+              { headers: aiuiAuthHeaders() })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.url) { notionWin.location = d.url; }
+            else { notionWin.close(); window.aiuiOpenConnections(); }
+          })
+          .catch(function () { notionWin.close(); window.aiuiOpenConnections(); });
+        return;
+      }
+
+      // A key-paste app. There is no vendor login to open, so the panel
+      // is the whole flow rather than a fallback.
+      window.aiuiOpenConnections();
+    });
+  }
+
+  function wireAiuiConnectLinks() {
+    var pending = false;
+    function scan() {
+      pending = false;
+      var anchors = document.querySelectorAll('a[href*="' + AIUI_CONNECT_MARKER + '"]');
+      for (var i = 0; i < anchors.length; i++) wireAiuiConnectLink(anchors[i]);
+    }
+    var obs = new MutationObserver(function () {
+      if (pending) return;
+      pending = true;
+      setTimeout(scan, 200);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    scan();
+  }
+
   function linkifyConnectButtons() {
     var pending = false;
     function scan() {
@@ -2550,6 +2691,7 @@
     scan();
   }
   linkifyConnectButtons();
+  wireAiuiConnectLinks();
 
   console.log('[AIUI] Integrations UI v16-connect-your-own loaded');
 })();
