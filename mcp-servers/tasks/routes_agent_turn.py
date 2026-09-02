@@ -407,6 +407,7 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict]) -> dict:
         logger.warning("agent turn failed for %s", agent.get("id"),
                        exc_info=True)
         out = {"answer": _turn_failed_sentence(agent.get("name")), "notes": []}
+    out = dict(out)  # Defensive copy: caller must never get a shared dict modified
     out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
     return out
 

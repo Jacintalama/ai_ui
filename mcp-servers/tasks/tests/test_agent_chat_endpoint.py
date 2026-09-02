@@ -316,3 +316,21 @@ async def test_one_agent_raising_still_returns_both_turns(_wire):
         "the failure sentence should be readable, not a stack trace"
     assert ada_turn["agent"]["name"] == "Ada"
     assert ada_turn["answer"] == "Ada is here."
+
+
+async def test_the_failing_agents_name_appears_in_the_failure_message(_wire):
+    """When two agents answer and one fails, the person must know which one
+    broke: if the failure does not name its agent, they cannot tell which of
+    the two is down."""
+    async def _flaky(user_email, agent_id, messages):
+        if agent_id == "agent-m":
+            raise RuntimeError("tool timed out")
+        return {"answer": "Ada is here.", "notes": []}
+    rt._run_turn.side_effect = _flaky
+
+    out = await rt.chat(_body("hi mia and ada"), x_internal_secret="s")
+
+    turns = out["turns"]
+    mia_turn = turns[0]
+    assert mia_turn["agent"]["name"] == "Mia"
+    assert "Mia" in mia_turn["answer"], "the failure message must name which agent failed"
