@@ -2690,8 +2690,136 @@
     obs.observe(document.body, { childList: true, subtree: true });
     scan();
   }
+
+  // ===== Agent name in the reply header =====
+  // Open WebUI headers every assistant reply with the MODEL name
+  // (#response-message-model-name), and our own code puts the agent's
+  // name as plain text at the top of the body instead ("Mia:" then the
+  // reply). The name someone actually asked for ends up buried in the
+  // body while the header shows a model id nobody asked about.
+  //
+  // This rewrites the header span to the agent's name when the body
+  // opens with that exact shape, and removes the now redundant name
+  // line from the body so it is not shown twice.
+  //
+  // Structural, not class based: Tailwind classes move between Open
+  // WebUI versions, an id does not. The span sits inside a Name
+  // wrapper; the body is a sibling div whose class starts with
+  // "chat-". Walking up from the span and checking immediate siblings
+  // at each level finds that div without assuming how deep the Name
+  // wrapper is, or what it is called.
+  //
+  // A bare name and a colon, nothing else on the line: letters,
+  // digits, spaces or hyphens, at most 40 characters, anchored at the
+  // start so "Note:", "Warning:" or "TODO: fix this" cannot match.
+  // Ordinary prose puts a space and more text after a colon like
+  // that, on the same line. Only our own header line puts the colon
+  // at the very end of the line with nothing after it but a break.
+  //
+  // #response-message-model-name is only ever rendered for an
+  // assistant reply, so this never touches a message the user typed.
+  var AIUI_AGENT_NAME_LINE_RE = /^([A-Za-z0-9 -]{1,40}):\r?\n/;
+  var AIUI_AGENT_NAME_BARE_RE = /^([A-Za-z0-9 -]{1,40}):$/;
+
+  function aiuiIsBareName(name) {
+    return !!name && name === name.replace(/^\s+|\s+$/g, '');
+  }
+
+  function aiuiFindReplyBody(nameSpan) {
+    var node = nameSpan;
+    for (var depth = 0; depth < 8 && node; depth++) {
+      var candidates = [node.previousElementSibling, node.nextElementSibling];
+      for (var i = 0; i < candidates.length; i++) {
+        var sib = candidates[i];
+        if (sib && sib.tagName === 'DIV' && typeof sib.className === 'string') {
+          var classes = sib.className.split(/\s+/);
+          for (var c = 0; c < classes.length; c++) {
+            if (classes[c].indexOf('chat-') === 0) return sib;
+          }
+        }
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  // Only the very first content of the body, following the first-child
+  // chain through wrapper elements. This can never land on a later
+  // paragraph, only on whatever text opens the message.
+  function aiuiFirstTextNode(container) {
+    var node = container.firstChild;
+    var depth = 0;
+    while (node && depth < 8) {
+      if (node.nodeType === 3) return node;
+      if (node.nodeType === 1) { node = node.firstChild; depth++; continue; }
+      return null;
+    }
+    return null;
+  }
+
+  function aiuiRewriteAgentHeader(span) {
+    if (!span || span.getAttribute('data-aiui-agent-header') === '1') return;
+    var body = aiuiFindReplyBody(span);
+    if (!body) return;
+
+    var t1 = aiuiFirstTextNode(body);
+    if (!t1) return;
+
+    var full = t1.textContent || '';
+
+    // Case 1: the renderer kept the name line and the reply in one
+    // text node, with the raw line break still in it.
+    var m = AIUI_AGENT_NAME_LINE_RE.exec(full);
+    if (m && aiuiIsBareName(m[1])) {
+      span.textContent = m[1];
+      t1.textContent = full.slice(m[0].length);
+      span.setAttribute('data-aiui-agent-header', '1');
+      return;
+    }
+
+    // Case 2: the text node holds nothing but "Name:", and the line
+    // break survived as its own node next to it, or as the whole of a
+    // wrapping block (a blank line before the reply became its own
+    // paragraph). Either way that first line goes.
+    var bare = AIUI_AGENT_NAME_BARE_RE.exec(full);
+    if (bare && aiuiIsBareName(bare[1])) {
+      var nextNode = t1.nextSibling;
+      if (nextNode && nextNode.nodeType === 1 && nextNode.tagName === 'BR') {
+        span.textContent = bare[1];
+        nextNode.parentNode.removeChild(nextNode);
+        t1.parentNode.removeChild(t1);
+        span.setAttribute('data-aiui-agent-header', '1');
+        return;
+      }
+      if (!nextNode && t1.parentNode && t1.parentNode !== body && t1.parentNode.parentNode) {
+        var block = t1.parentNode;
+        span.textContent = bare[1];
+        block.parentNode.removeChild(block);
+        span.setAttribute('data-aiui-agent-header', '1');
+        return;
+      }
+    }
+  }
+
+  function wireAiuiAgentNameHeaders() {
+    var pending = false;
+    function scan() {
+      pending = false;
+      var spans = document.querySelectorAll('#response-message-model-name');
+      for (var i = 0; i < spans.length; i++) aiuiRewriteAgentHeader(spans[i]);
+    }
+    var obs = new MutationObserver(function () {
+      if (pending) return;
+      pending = true;
+      setTimeout(scan, 200);
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    scan();
+  }
+
   linkifyConnectButtons();
   wireAiuiConnectLinks();
+  wireAiuiAgentNameHeaders();
 
   console.log('[AIUI] Integrations UI v16-connect-your-own loaded');
 })();
