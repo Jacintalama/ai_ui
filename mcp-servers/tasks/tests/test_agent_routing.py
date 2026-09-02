@@ -138,6 +138,49 @@ def test_match_agent_with_wrong_types_never_raises(text, agents):
     assert ar.match_agent(text, agents) is None
 
 
+# --- waking every agent at once ---------------------------------------------
+
+@pytest.mark.parametrize("word", ["team", "everyone", "all of you", "guys"])
+def test_each_collective_word_wakes_every_agent_in_list_order(word):
+    """"in the order the agents were given", not spoken order: there is no
+    single position for "everyone" to be sorted by."""
+    names = [a["name"] for a in ar.match_agents("hi %s, quick update" % word, AGENTS)]
+    assert names == ["Ada", "Mia"]
+
+    reversed_list = [MIA, ADA]
+    names = [a["name"] for a in ar.match_agents("hi %s" % word, reversed_list)]
+    assert names == ["Mia", "Ada"]
+
+
+def test_a_collective_word_combined_with_a_name_still_returns_everyone_once():
+    names = [a["name"] for a in ar.match_agents("hi team, ada first", AGENTS)]
+    assert names == ["Ada", "Mia"]
+    assert len(names) == len(set(names)), "no agent may appear twice"
+
+
+def test_match_agent_with_a_collective_word_returns_the_first_agent_given():
+    assert ar.match_agent("hi team", AGENTS)["name"] == "Ada"
+
+
+@pytest.mark.parametrize("agents", [[], None])
+def test_a_collective_word_with_no_agents_returns_empty_not_an_error(agents):
+    assert ar.match_agents("hi team", agents) == []
+    assert ar.match_agent("hi everyone", agents) is None
+
+
+@pytest.mark.parametrize("text", [
+    "that was some real teamwork today",
+    "let off some steam",
+    "guyshire is a town nobody has heard of",
+    "the esteamed guest arrived",
+])
+def test_a_collective_word_inside_another_word_is_not_a_match(text):
+    """The same false-positive guard names already get, proven for the
+    collective words too: "team" must not fire inside "teamwork" or "steam",
+    and "guys" must not fire inside "guyshire"."""
+    assert ar.match_agents(text, AGENTS) == []
+
+
 # --- sending the agent back to sleep --------------------------------------
 
 @pytest.mark.parametrize("text", [
