@@ -2711,10 +2711,14 @@
   //
   // A bare name and a colon, nothing else on the line: letters,
   // digits, spaces or hyphens, at most 40 characters, anchored at the
-  // start so "Note:", "Warning:" or "TODO: fix this" cannot match.
-  // Ordinary prose puts a space and more text after a colon like
-  // that, on the same line. Only our own header line puts the colon
-  // at the very end of the line with nothing after it but a break.
+  // start. That shape alone cannot tell "Mia:" from a reply that
+  // genuinely opens with "Note:", "Warning:" or "TODO:" on its own
+  // line, so the shape match is only ever a candidate: it gates the
+  // rewrite only when the name is also one of this signed in person's
+  // real agents (see aiuiAgentNames below). An empty or unfetched set
+  // of names means no rewrite ever happens, on purpose: leaving a
+  // message untouched costs nothing, and a wrong rewrite would
+  // silently change what somebody reads.
   //
   // #response-message-model-name is only ever rendered for an
   // assistant reply, so this never touches a message the user typed.
@@ -2723,6 +2727,79 @@
 
   function aiuiIsBareName(name) {
     return !!name && name === name.replace(/^\s+|\s+$/g, '');
+  }
+
+  // ----- Known agent names -----
+  // agents.html lists a person's agents the same way: fetch
+  // /api/v1/models/list (paged, because a person can own more than
+  // one page of them), keep only rows whose id this platform minted
+  // ("agent-..."), and read the display name off .name. Auth reuses
+  // aiuiAuthHeaders(), already defined above for the connect flow.
+  //
+  // Fetched once up front, then re-fetched at most every couple of
+  // minutes and only when something the header code saw did not
+  // match any known name, so a whole conversation full of "Note:"
+  // lines costs one request rather than one per message. A failure
+  // here never throws and never clears a list that was already
+  // fetched successfully; it just leaves things as they are.
+  var AIUI_AGENT_NAMES_TTL_MS = 120000;
+  var aiuiAgentNames = new Set();
+  var aiuiAgentNamesFetchedAt = 0;
+  var aiuiAgentNamesFetching = false;
+
+  function aiuiIsMintedAgent(item) {
+    return !!(item && /^agent-/.test(item.id || ''));
+  }
+
+  function aiuiFetchAgentNamesPage(pageNo, items, total, guard) {
+    if (guard > 25) return Promise.resolve(items);
+    return fetch('/api/v1/models/list?page=' + pageNo, { headers: aiuiAuthHeaders() })
+      .then(function (r) {
+        if (!r.ok) throw new Error('http ' + r.status);
+        return r.json();
+      })
+      .then(function (listed) {
+        var batch = (listed && Array.isArray(listed.items)) ? listed.items : [];
+        var newTotal = (listed && typeof listed.total === 'number') ? listed.total : batch.length;
+        var all = items.concat(batch);
+        if (!batch.length || all.length >= newTotal) return all;
+        return aiuiFetchAgentNamesPage(pageNo + 1, all, newTotal, guard + 1);
+      });
+  }
+
+  function aiuiRefreshAgentNames() {
+    var now = Date.now();
+    if (aiuiAgentNamesFetching) return;
+    if (aiuiAgentNamesFetchedAt && (now - aiuiAgentNamesFetchedAt) < AIUI_AGENT_NAMES_TTL_MS) return;
+    aiuiAgentNamesFetching = true;
+    aiuiAgentNamesFetchedAt = now;
+    aiuiFetchAgentNamesPage(1, [], 0, 0)
+      .then(function (items) {
+        var names = new Set();
+        for (var i = 0; i < items.length; i++) {
+          if (aiuiIsMintedAgent(items[i]) && items[i].name) {
+            names.add(String(items[i].name).trim().toLowerCase());
+          }
+        }
+        aiuiAgentNames = names;
+        aiuiAgentNamesFetching = false;
+        // The refresh itself can be what makes a message match for
+        // the first time, an agent created mid conversation. Give the
+        // observer one more pass now rather than waiting on an
+        // unrelated mutation to trigger the next one.
+        aiuiScanAgentNameHeaders();
+      })
+      .catch(function () {
+        aiuiAgentNamesFetching = false;
+        // Leave whatever names are already known, possibly none if
+        // this was the very first attempt. A failed refresh must
+        // never wipe out a previously good list, and must never
+        // throw.
+      });
+  }
+
+  function aiuiNameIsKnownAgent(name) {
+    return aiuiAgentNames.has(String(name).toLowerCase());
   }
 
   function aiuiFindReplyBody(nameSpan) {
@@ -2771,6 +2848,7 @@
     // text node, with the raw line break still in it.
     var m = AIUI_AGENT_NAME_LINE_RE.exec(full);
     if (m && aiuiIsBareName(m[1])) {
+      if (!aiuiNameIsKnownAgent(m[1])) { aiuiRefreshAgentNames(); return; }
       span.textContent = m[1];
       t1.textContent = full.slice(m[0].length);
       span.setAttribute('data-aiui-agent-header', '1');
@@ -2778,11 +2856,13 @@
     }
 
     // Case 2: the text node holds nothing but "Name:", and the line
-    // break survived as its own node next to it, or as the whole of a
-    // wrapping block (a blank line before the reply became its own
-    // paragraph). Either way that first line goes.
+    // break survived as its own node next to it, or as the whole of
+    // a wrapping block (a blank line before the reply became its
+    // own paragraph). Either way that first line goes, once the
+    // name is confirmed against a real agent.
     var bare = AIUI_AGENT_NAME_BARE_RE.exec(full);
     if (bare && aiuiIsBareName(bare[1])) {
+      if (!aiuiNameIsKnownAgent(bare[1])) { aiuiRefreshAgentNames(); return; }
       var nextNode = t1.nextSibling;
       if (nextNode && nextNode.nodeType === 1 && nextNode.tagName === 'BR') {
         span.textContent = bare[1];
@@ -2801,12 +2881,16 @@
     }
   }
 
+  function aiuiScanAgentNameHeaders() {
+    var spans = document.querySelectorAll('#response-message-model-name');
+    for (var i = 0; i < spans.length; i++) aiuiRewriteAgentHeader(spans[i]);
+  }
+
   function wireAiuiAgentNameHeaders() {
     var pending = false;
     function scan() {
       pending = false;
-      var spans = document.querySelectorAll('#response-message-model-name');
-      for (var i = 0; i < spans.length; i++) aiuiRewriteAgentHeader(spans[i]);
+      aiuiScanAgentNameHeaders();
     }
     var obs = new MutationObserver(function () {
       if (pending) return;
@@ -2814,6 +2898,7 @@
       setTimeout(scan, 200);
     });
     obs.observe(document.body, { childList: true, subtree: true });
+    aiuiRefreshAgentNames();
     scan();
   }
 
