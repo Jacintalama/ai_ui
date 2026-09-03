@@ -168,6 +168,24 @@ async def propose(body: ProposeIn,
     }
 
 
+async def _restore_quietly(user_email: str, token: str, slug: str) -> None:
+    """Give an approval back without ever letting that failure become
+    the answer. Keeps the existing rule: no exc_info and no bound
+    parameters, because the statement carries the token and the email
+    and this repo has leaked a token through a logged URL before."""
+    try:
+        await restore_proposal(user_email, token)
+    except Exception as restore_error:                  # noqa: BLE001
+        # Deliberately no exc_info: restore_proposal runs a parameterised
+        # statement carrying the approval token and the person's email,
+        # and a database error renders its parameters into the traceback.
+        # This repo has leaked a real token that way before, through an
+        # HTTP client logging a request URL. The type is enough to tell
+        # a connection failure from a programming error.
+        logger.warning("could not give the approval back for %s: %s",
+                       slug, type(restore_error).__name__)
+
+
 @router.post("/apply")
 async def apply(body: ApplyIn,
                 x_internal_secret: str = Header(default="")) -> dict:
@@ -181,6 +199,18 @@ async def apply(body: ApplyIn,
     try:
         proposal = await consume_proposal(body.user_email, body.token)
     except ProposalError as exc:
+        raise HTTPException(status_code=400, detail=exc.reason) from exc
+
+    # The app existed when this was proposed, up to thirty minutes ago.
+    # Check again rather than sending an agent at a path that is gone. The
+    # normal delete path removes the task rows first and would 404 here,
+    # but a directory removed by hand on the box leaves them behind, and
+    # that happens on this server.
+    try:
+        app_code_access.app_dir(proposal["slug"],
+                                apps_root=_apps_root_override)
+    except CodeAccessError as exc:
+        await _restore_quietly(body.user_email, body.token, proposal["slug"])
         raise HTTPException(status_code=400, detail=exc.reason) from exc
 
     # The slug is the proposal's, never the caller's. _create_and_spawn_enhance
@@ -200,17 +230,7 @@ async def apply(body: ApplyIn,
             # says "one is already running, try shortly" and a 500 says
             # nothing. Same rule as every post-processing step in the build
             # pipeline, which fails open rather than failing the build.
-            try:
-                await restore_proposal(body.user_email, body.token)
-            except Exception as restore_error:                  # noqa: BLE001
-                # Deliberately no exc_info: restore_proposal runs a parameterised
-                # statement carrying the approval token and the person's email,
-                # and a database error renders its parameters into the traceback.
-                # This repo has leaked a real token that way before, through an
-                # HTTP client logging a request URL. The type is enough to tell
-                # a connection failure from a programming error.
-                logger.warning("could not give the approval back for %s: %s",
-                               proposal["slug"], type(restore_error).__name__)
+            await _restore_quietly(body.user_email, body.token, proposal["slug"])
         raise
     return {"task_id": task_id, "slug": slug,
             "description": proposal["description"]}

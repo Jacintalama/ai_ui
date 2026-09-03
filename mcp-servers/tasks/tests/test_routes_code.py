@@ -4,7 +4,7 @@ Membership is the one that matters: the caller supplies a slug, so the
 service has to decide whether that slug is theirs on every single call
 rather than trusting an earlier answer.
 
-The last three tests need a real database, so locally they error at setup
+Several tests below need a real database, so locally they error at setup
 with no Postgres, exactly like the db tier described in CLAUDE.md. They use
 db_session_nondestructive, which truncates nothing, and delete only the
 rows they create, matched on emails unique to this file.
@@ -32,6 +32,7 @@ GHOST_SLUG = "code-routes-never-an-app"
 MEMBER = "code-routes-member@example.com"
 STRANGER = "code-routes-stranger@example.com"
 MEMBER_SLUG = "code-routes-member-app"
+REAL_PROPOSAL_OWNER = "code-routes-real-proposal@example.com"
 
 
 @pytest.fixture
@@ -131,9 +132,10 @@ async def test_a_refused_path_is_a_clean_400_not_a_stack_trace(client, monkeypat
     assert "not inside this app" in r.json()["detail"]
 
 
-async def test_apply_never_takes_the_slug_from_the_caller(client, monkeypatch):
+async def test_apply_never_takes_the_slug_from_the_caller(client, monkeypatch, tmp_path):
     """The slug comes out of the stored proposal. A caller that sends one
     must not be able to steer the build with it."""
+    _app_on_disk(tmp_path, "from-the-proposal")
     seen = {}
 
     async def _consume(email, token):
@@ -248,13 +250,107 @@ async def test_what_the_person_approves_is_what_will_run(client, monkeypatch, tm
         "the build ran with something other than what the person approved")
 
 
+@pytest_asyncio.fixture
+async def clean_real_proposal(db_session_nondestructive):
+    """Deletes only rows this test created, matched on REAL_PROPOSAL_OWNER,
+    before and after. Same cleanup pattern as test_code_proposals.py's
+    clean_proposals fixture: nothing else in tasks.agent_proposals is
+    touched, which is what makes this safe against the real database."""
+    async def _purge():
+        await db_session_nondestructive.execute(
+            text("DELETE FROM tasks.agent_proposals WHERE user_email = :email"),
+            {"email": REAL_PROPOSAL_OWNER})
+        await db_session_nondestructive.commit()
+    await _purge()
+    yield db_session_nondestructive
+    await _purge()
+
+
+async def test_what_the_person_approves_is_what_will_run_for_real(
+        client, monkeypatch, tmp_path, clean_real_proposal):
+    """test_what_the_person_approves_is_what_will_run above proves the
+    route agrees with a copy of create_proposal's strip() living in this
+    test file, not with create_proposal itself. If the real function ever
+    normalised differently, a person would approve one string while
+    another ran, and that test would stay green. This one runs the real
+    create_proposal and consume_proposal, with only _can_see and
+    _spawn_enhance stubbed, so a real drift between the route and storage
+    would actually fail here."""
+    _app_on_disk(tmp_path)
+
+    async def _yes(*_args, **_kwargs):
+        return True
+    monkeypatch.setattr(routes_code, "_can_see", _yes)
+
+    seen = {}
+
+    async def _spawn(email, slug, prompt):
+        seen["prompt"] = prompt
+        return ("task-1", slug)
+
+    monkeypatch.setattr(routes_code, "_spawn_enhance", _spawn)
+
+    proposed = await client.post(
+        "/code/propose",
+        json={"user_email": REAL_PROPOSAL_OWNER, "slug": "shop",
+              "description": "  make the button blue  "},
+        headers={"X-Internal-Secret": SECRET})
+    assert proposed.status_code == 200
+    shown = proposed.json()["description"]
+
+    applied = await client.post(
+        "/code/apply",
+        json={"user_email": REAL_PROPOSAL_OWNER,
+              "token": proposed.json()["token"]},
+        headers={"X-Internal-Secret": SECRET})
+    assert applied.status_code == 200
+
+    assert seen["prompt"] == shown, (
+        "the build ran with something other than what the person approved")
+
+
+async def test_apply_refuses_a_proposal_whose_app_directory_is_gone(
+        client, tmp_path, clean_real_proposal):
+    """propose refuses a slug with no directory via _require_member. Up to
+    thirty minutes can pass before apply runs. The normal delete path
+    removes the task rows first, so the builder would 404 there anyway; the
+    residual case this guards is a directory removed by hand on the box
+    while its rows survive, which CLAUDE.md says happens on this server.
+    apply must re-check rather than send an agent at a path that is gone,
+    and it must give the approval back exactly like the other refusals
+    raised before the builder is reached."""
+    import shutil
+
+    from code_proposals import consume_proposal, create_proposal
+
+    _app_on_disk(tmp_path, "shop")
+    token = await create_proposal(REAL_PROPOSAL_OWNER, "shop", "make it blue")
+
+    # The directory vanishes by hand, the way CLAUDE.md describes, while
+    # the proposal row survives.
+    shutil.rmtree(tmp_path / "shop")
+
+    r = await client.post(
+        "/code/apply",
+        json={"user_email": REAL_PROPOSAL_OWNER, "token": token},
+        headers={"X-Internal-Secret": SECRET})
+    assert r.status_code == 400
+    assert "no app by that name" in r.json()["detail"]
+
+    # The approval was given back: consuming it again for real succeeds,
+    # which only a genuinely restored row allows.
+    again = await consume_proposal(REAL_PROPOSAL_OWNER, token)
+    assert again["slug"] == "shop"
+
+
 @pytest.mark.parametrize("status", [403, 404, 409])
-async def test_a_refused_build_gives_the_approval_back(client, monkeypatch, status):
+async def test_a_refused_build_gives_the_approval_back(client, monkeypatch, tmp_path, status):
     """All three are raised before the builder writes anything, so all
     three must give the approval back. The 409 is the one that bites: it
     means an enhance is already running, which includes one waiting on a
     human, and burning the approval there would make the assistant ask the
     same person for the same yes over and over."""
+    _app_on_disk(tmp_path)
     restored = []
 
     async def _consume(email, token):
@@ -277,10 +373,12 @@ async def test_a_refused_build_gives_the_approval_back(client, monkeypatch, stat
     assert restored == ["t"]
 
 
-async def test_a_failure_to_restore_still_shows_the_real_status(client, monkeypatch):
+async def test_a_failure_to_restore_still_shows_the_real_status(client, monkeypatch, tmp_path):
     """Giving the approval back is best effort. If it fails, the person
     must still be told an enhance is already running, not handed a 500
     that tells them nothing."""
+    _app_on_disk(tmp_path)
+
     async def _consume(email, token):
         return {"slug": "shop", "description": "make it blue"}
 
@@ -302,10 +400,11 @@ async def test_a_failure_to_restore_still_shows_the_real_status(client, monkeypa
     assert "already in progress" in r.json()["detail"]
 
 
-async def test_an_unexpected_failure_keeps_the_approval_spent(client, monkeypatch):
+async def test_an_unexpected_failure_keeps_the_approval_spent(client, monkeypatch, tmp_path):
     """Fail closed. If the builder broke in a way we do not recognise,
     work may already have started, and giving the code back could run
     the same change twice."""
+    _app_on_disk(tmp_path)
     restored = []
 
     async def _consume(email, token):
@@ -328,12 +427,13 @@ async def test_an_unexpected_failure_keeps_the_approval_spent(client, monkeypatc
     assert restored == []
 
 
-async def test_an_unrecognised_http_failure_keeps_the_approval_spent(client, monkeypatch):
+async def test_an_unrecognised_http_failure_keeps_the_approval_spent(client, monkeypatch, tmp_path):
     """The three statuses that give the approval back are the three the
     builder raises before it inserts anything. A 500 is not one of them:
     by then the build may exist, so the approval stays spent. Without this
     the status list itself is untested, because a plain exception never
     reaches that branch at all."""
+    _app_on_disk(tmp_path)
     restored = []
 
     async def _consume(email, token):
@@ -483,3 +583,16 @@ async def test_the_real_membership_check_decides_who_reads(
                 "path": "index.html"},
         headers={"X-Internal-Secret": SECRET})
     assert refused.status_code == 403
+
+
+def test_the_builder_seam_still_has_the_shape_we_call_it_with():
+    """routes_code spends the person's approval BEFORE this call, so a
+    drift here fails after the approval is gone and in a way apply
+    cannot classify, meaning it neither restores it nor explains
+    itself. Nothing else in the repo asserts this seam."""
+    import inspect
+    from routes_aiuibuilder import _create_and_spawn_enhance
+
+    params = list(inspect.signature(_create_and_spawn_enhance).parameters)
+    assert params[:3] == ["email", "slug", "prompt"], params
+    assert inspect.iscoroutinefunction(_create_and_spawn_enhance)

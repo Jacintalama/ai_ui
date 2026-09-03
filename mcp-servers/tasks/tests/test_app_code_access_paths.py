@@ -172,15 +172,15 @@ def test_a_denied_directory_is_refused_whatever_its_case(tmp_path, name):
 @pytest.mark.skipif(os.sep != "/",
                     reason="a backslash is a separator here, not a filename")
 def test_a_backslash_in_a_slug_is_refused(tmp_path):
-    """On the deployment target a directory really can be called
+    r"""On the deployment target a directory really can be called
     "shop\sub". Creating one is what makes this fail when the guard is
     removed, rather than pass on a path that never existed."""
     _app(tmp_path)
-    sneaky = tmp_path / "shop\sub"
+    sneaky = tmp_path / r"shop\sub"
     sneaky.mkdir()
     (sneaky / "a.txt").write_text("x", encoding="utf-8")
     with pytest.raises(CodeAccessError):
-        resolve_app_file("shop\sub", "a.txt", apps_root=tmp_path)
+        resolve_app_file(r"shop\sub", "a.txt", apps_root=tmp_path)
 
 def test_an_app_directory_that_is_a_symlink_out_of_the_root_is_refused(tmp_path):
     """With the separator guard in place, no slug containing "/" reaches
