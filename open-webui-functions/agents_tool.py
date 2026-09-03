@@ -31,11 +31,11 @@ EMPTY_TURN = "There was nothing to answer."
 RELAY_INSTRUCTION = ("Relay each agent's answer to the user exactly as "
                      "written below. Do not summarize or paraphrase it.")
 
-#: Appended to the user's email to make a chat id, because this tool is
-#: never given the conversation's real chat id, only the message text. A
-#: fixed suffix keeps that id STABLE across turns of the same conversation
-#: on this path, so an agent named once stays pinned for a follow up with no
-#: name in it, the same way the web chat pin behaves.
+#: Fallback chat id suffix, used only when Open WebUI does not hand this
+#: tool the conversation's own id. It keeps the id stable across turns so an
+#: agent named once stays pinned for a follow up with no name in it, but it
+#: is the same id for every conversation this person has, so a pin set in
+#: one chat would follow them into the next. Prefer __chat_id__.
 CHAT_ID_SUFFIX = "::any-model-tool"
 
 
@@ -68,13 +68,26 @@ class Tools:
         answer = answer or EMPTY_TURN
         return "%s:\n%s" % (name, answer)
 
-    async def ask_agents(self, message: str, __user__: dict = {}) -> str:
+    async def ask_agents(self, message: str, __user__: dict = {},
+                         __chat_id__: str = "") -> str:
         """
         Call this when the user's message addresses one of their AI agents
         by name (for example "hi mia, are you there" or "ada, check my
         inbox"), or addresses all of them at once with a word like "team",
-        "everyone", "all of you" or "guys". Do not call this for a message
-        that is not directed at an agent.
+        "everyone", "all of you" or "guys".
+
+        Also call it for every message that FOLLOWS one, even when the
+        later message names nobody. Once an agent has answered in this
+        conversation the conversation belongs to that agent, and "how are
+        you", "what about tomorrow" or "thanks, and the other one?" are all
+        still addressed to it. Answering those yourself takes the
+        conversation away from the agent the user was talking to, which
+        reads as the agent being replaced mid sentence.
+
+        The handover back to you is the user's to make: they end it by
+        saying so ("stop", "never mind", "that is all"), or by asking you
+        something that is plainly not for an agent. Until then, keep
+        calling this.
 
         Pass the user's message to this tool as-is, unedited, so the agent
         sees exactly what the person typed rather than a rewritten version
@@ -84,13 +97,22 @@ class Tools:
         if not email:
             return ("I could not tell whose account this is, so I did not "
                     "reach any agent.")
+
+        # The pin that keeps an agent answering follow ups is stored per
+        # chat, so this has to be the conversation's own id or waking an
+        # agent in one chat pins it in every other chat too. Open WebUI
+        # passes it as __chat_id__; the fallback only matters if that ever
+        # stops arriving. Not trusted blindly: a non-string would be
+        # concatenated into the pin key and raise.
+        chat_id = __chat_id__ if isinstance(__chat_id__, str) else ""
+        chat_id = chat_id or (email + CHAT_ID_SUFFIX)
         try:
             async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as c:
                 r = await c.post(
                     self.valves.tasks_url.rstrip("/") + "/agents/chat",
                     headers={"X-Internal-Secret": self.valves.internal_secret},
                     json={"user_email": email,
-                         "chat_id": email + CHAT_ID_SUFFIX,
+                         "chat_id": chat_id,
                          "messages": [{"role": "user", "content": message}]})
                 r.raise_for_status()
                 data = r.json()

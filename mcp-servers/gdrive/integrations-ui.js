@@ -2698,9 +2698,9 @@
   // reply). The name someone actually asked for ends up buried in the
   // body while the header shows a model id nobody asked about.
   //
-  // This rewrites the header span to the agent's name when the body
-  // opens with that exact shape, and removes the now redundant name
-  // line from the body so it is not shown twice.
+  // This rewrites the header span to the name of whichever agent
+  // answered, or to both names when two of them did, and removes the
+  // now redundant name line from the body when only one spoke.
   //
   // Structural, not class based: Tailwind classes move between Open
   // WebUI versions, an id does not. The span sits inside a Name
@@ -2834,50 +2834,116 @@
     return null;
   }
 
-  function aiuiRewriteAgentHeader(span) {
-    if (!span || span.getAttribute('data-aiui-agent-header') === '1') return;
-    var body = aiuiFindReplyBody(span);
-    if (!body) return;
+  // Every agent label that opens a top-level block of the reply, in
+  // order. One request can wake more than one agent, and their answers
+  // come back in a single bubble with a label each, so the header has to
+  // be able to name all of them. Reading only what OPENS each top-level
+  // block keeps this away from two things that would otherwise match:
+  // the tool result panel Open WebUI now renders first, whose own text
+  // is never an agent name, and anything quoted deeper inside a reply.
+  function aiuiAgentLabelsIn(body) {
+    var result = { labels: [], sawUnknownName: false };
+    var seen = {};
+    var candidates = [body];
+    for (var c = 0; c < body.children.length; c++) candidates.push(body.children[c]);
 
-    var t1 = aiuiFirstTextNode(body);
-    if (!t1) return;
+    for (var i = 0; i < candidates.length; i++) {
+      var textNode = aiuiFirstTextNode(candidates[i]);
+      if (!textNode) continue;
+      var full = textNode.textContent || '';
+      var match = AIUI_AGENT_NAME_LINE_RE.exec(full) || AIUI_AGENT_NAME_BARE_RE.exec(full);
+      if (!match || !aiuiIsBareName(match[1])) continue;
+      if (!aiuiNameIsKnownAgent(match[1])) { result.sawUnknownName = true; continue; }
+      if (seen[match[1]]) continue;
+      seen[match[1]] = true;
+      result.labels.push({ name: match[1], node: textNode, block: candidates[i] });
+    }
+    return result;
+  }
 
-    var full = t1.textContent || '';
+  function aiuiJoinNames(names) {
+    if (names.length < 2) return names[0] || '';
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
 
-    // Case 1: the renderer kept the name line and the reply in one
-    // text node, with the raw line break still in it.
-    var m = AIUI_AGENT_NAME_LINE_RE.exec(full);
-    if (m && aiuiIsBareName(m[1])) {
-      if (!aiuiNameIsKnownAgent(m[1])) { aiuiRefreshAgentNames(); return; }
-      span.textContent = m[1];
-      t1.textContent = full.slice(m[0].length);
-      span.setAttribute('data-aiui-agent-header', '1');
+  // Removes a name line the header has taken over. Two shapes, because
+  // the renderer splits "Name:" and the reply differently depending on
+  // whether the blank line after the name survived as a break beside it
+  // or as a block of its own.
+  function aiuiStripLabel(body, label) {
+    var textNode = label.node;
+    var full = textNode.textContent || '';
+
+    var lineMatch = AIUI_AGENT_NAME_LINE_RE.exec(full);
+    if (lineMatch) {
+      textNode.textContent = full.slice(lineMatch[0].length);
       return;
     }
 
-    // Case 2: the text node holds nothing but "Name:", and the line
-    // break survived as its own node next to it, or as the whole of
-    // a wrapping block (a blank line before the reply became its
-    // own paragraph). Either way that first line goes, once the
-    // name is confirmed against a real agent.
-    var bare = AIUI_AGENT_NAME_BARE_RE.exec(full);
-    if (bare && aiuiIsBareName(bare[1])) {
-      if (!aiuiNameIsKnownAgent(bare[1])) { aiuiRefreshAgentNames(); return; }
-      var nextNode = t1.nextSibling;
-      if (nextNode && nextNode.nodeType === 1 && nextNode.tagName === 'BR') {
-        span.textContent = bare[1];
-        nextNode.parentNode.removeChild(nextNode);
-        t1.parentNode.removeChild(t1);
-        span.setAttribute('data-aiui-agent-header', '1');
-        return;
-      }
-      if (!nextNode && t1.parentNode && t1.parentNode !== body && t1.parentNode.parentNode) {
-        var block = t1.parentNode;
-        span.textContent = bare[1];
-        block.parentNode.removeChild(block);
-        span.setAttribute('data-aiui-agent-header', '1');
-        return;
-      }
+    var nextNode = textNode.nextSibling;
+    if (nextNode && nextNode.nodeType === 1 && nextNode.tagName === 'BR') {
+      nextNode.parentNode.removeChild(nextNode);
+      textNode.parentNode.removeChild(textNode);
+      return;
+    }
+    if (!nextNode && textNode.parentNode && textNode.parentNode !== body
+        && textNode.parentNode.parentNode) {
+      var block = textNode.parentNode;
+      block.parentNode.removeChild(block);
+    }
+  }
+
+  // A reply arrives a token at a time, so the set of labels can still
+  // grow between two scans: "Mia:" is on screen a beat before "Ada:"
+  // exists. Removing a label the moment it is the only one would delete
+  // it right before it stops being the only one. So the header is
+  // rewritten on every scan, which is safe because it only ever
+  // overwrites itself, while the one destructive step waits until two
+  // consecutive looks agree on what the reply holds.
+  var aiuiSettleScanTimer = 0;
+
+  function aiuiScheduleSettleScan() {
+    if (aiuiSettleScanTimer) return;
+    aiuiSettleScanTimer = setTimeout(function () {
+      aiuiSettleScanTimer = 0;
+      aiuiScanAgentNameHeaders();
+    }, 700);
+  }
+
+  function aiuiRewriteAgentHeader(span) {
+    if (!span) return;
+    var body = aiuiFindReplyBody(span);
+    if (!body) return;
+
+    var scan = aiuiAgentLabelsIn(body);
+    if (!scan.labels.length) {
+      // Nothing here names an agent. Refresh only when a name-shaped
+      // line went unrecognised, so an ordinary conversation full of
+      // "Note:" lines still costs no requests at all.
+      if (scan.sawUnknownName) aiuiRefreshAgentNames();
+      return;
+    }
+
+    var names = [];
+    for (var i = 0; i < scan.labels.length; i++) names.push(scan.labels[i].name);
+    var joined = aiuiJoinNames(names);
+    if (span.textContent !== joined) span.textContent = joined;
+    span.setAttribute('data-aiui-agent-header', '1');
+
+    var signature = names.length + ':' + (body.textContent || '').length;
+    var settled = span.getAttribute('data-aiui-agent-seen') === signature;
+    span.setAttribute('data-aiui-agent-seen', signature);
+    if (!settled) {
+      aiuiScheduleSettleScan();
+      return;
+    }
+
+    // One agent spoke, so the label below now repeats the header and
+    // goes. With two or more, those labels are the only thing saying
+    // which answer belongs to whom, so they stay.
+    if (names.length === 1 && span.getAttribute('data-aiui-agent-stripped') !== '1') {
+      span.setAttribute('data-aiui-agent-stripped', '1');
+      aiuiStripLabel(body, scan.labels[0]);
     }
   }
 

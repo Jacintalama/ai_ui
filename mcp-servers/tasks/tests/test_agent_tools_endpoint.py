@@ -111,7 +111,7 @@ async def test_the_templates_are_offered_for_a_user_with_none():
     """Deleting both agents must not be a dead end."""
     out = await routes_agents.templates()
     slugs = sorted(t["slug"] for t in out["templates"])
-    assert slugs == ["scout", "triage"]
+    assert slugs == ["ada", "mia"]
     for t in out["templates"]:
         assert t["name"] and t["instructions"]
         assert isinstance(t["tool_ids"], list)
