@@ -86,3 +86,21 @@ async def consume_proposal(user_email: str, token: str) -> dict:
     if row is None:
         raise ProposalError("that approval code is not usable")
     return {"slug": row[0], "description": row[1]}
+
+
+async def restore_proposal(user_email: str, token: str) -> None:
+    """Put a consumed proposal back, for a build that provably never
+    started.
+
+    Only ever called for failures the builder raises BEFORE it inserts
+    its task row: no such app, wrong role, one already in flight. Any
+    other failure leaves the token spent, because a token restored after
+    work began could start that work a second time.
+    """
+    async with session() as s:
+        await s.execute(
+            text("UPDATE tasks.agent_proposals"
+                 "   SET used_at = NULL"
+                 " WHERE token = :token AND user_email = :email"),
+            {"token": (token or "").strip(), "email": user_email})
+        await s.commit()

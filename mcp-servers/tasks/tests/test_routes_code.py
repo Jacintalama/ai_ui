@@ -4,29 +4,34 @@ Membership is the one that matters: the caller supplies a slug, so the
 service has to decide whether that slug is theirs on every single call
 rather than trusting an earlier answer.
 
-The last test needs a real database, so locally it errors at setup with no
-Postgres, exactly like the db tier described in CLAUDE.md. It uses
-db_session_nondestructive, which truncates nothing, and deletes only the
-rows it creates, matched on an email unique to this file.
+The last three tests need a real database, so locally they error at setup
+with no Postgres, exactly like the db tier described in CLAUDE.md. They use
+db_session_nondestructive, which truncates nothing, and delete only the
+rows they create, matched on emails unique to this file.
 """
 import uuid
 
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 import routes_code
-from models import TaskItem
+from models import ProjectMember, TaskItem
 
 SECRET = "test-internal-secret"
 OWNER = "code-routes-owner@example.com"
 
-# Only the db-backed test below uses these two. They are unique to this file
-# so its cleanup can match on the email and delete nothing else.
+# Only the db-backed tests below use these. They are unique to this file so
+# its cleanup can match on the email and delete nothing else.
 BUILD_OWNER = "code-routes-build-owner@example.com"
 BUILD_SLUG = "code-routes-build-only-app"
+# A row with no directory, the shape the cron scheduler's sched-... rows have.
+GHOST_SLUG = "code-routes-never-an-app"
+MEMBER = "code-routes-member@example.com"
+STRANGER = "code-routes-stranger@example.com"
+MEMBER_SLUG = "code-routes-member-app"
 
 
 @pytest.fixture
@@ -47,9 +52,39 @@ def _app_on_disk(tmp_path, slug="shop"):
     return d
 
 
-async def test_the_secret_is_required(client):
-    r = await client.get("/code/apps", params={"user_email": OWNER})
-    assert r.status_code == 403
+@pytest.mark.parametrize("method,path,payload", [
+    ("GET", "/code/apps", None),
+    ("GET", "/code/file", None),
+    ("GET", "/code/search", None),
+    ("POST", "/code/propose", {"user_email": OWNER, "slug": "shop",
+                               "description": "x"}),
+    ("POST", "/code/apply", {"user_email": OWNER, "token": "t"}),
+])
+async def test_every_endpoint_requires_the_secret(client, method, path, payload):
+    """Internal only is this surface's primary safety property, and it was
+    held by a single test on a single endpoint. A refactor that moved the
+    check and missed one would have served app source to anything that can
+    reach tasks:8210."""
+    if method == "GET":
+        r = await client.get(path, params={"user_email": OWNER,
+                                           "slug": "shop", "path": "index.html",
+                                           "query": "x"})
+    else:
+        r = await client.post(path, json=payload)
+    assert r.status_code == 403, path
+
+
+def test_the_router_is_mounted_once_and_only_internally():
+    """The mount itself, pinned. Read through app.openapi() and not
+    app.routes: several test files here note that the container's FastAPI
+    includes routers lazily, and prod runs a later version than local. A
+    second mount under /api/tasks would put an internal-only surface on a
+    publicly routed prefix."""
+    from main import app
+    paths = set(app.openapi()["paths"].keys())
+    assert {"/code/apps", "/code/file", "/code/search",
+            "/code/propose", "/code/apply"} <= paths
+    assert not [p for p in paths if p.startswith("/api/tasks/code")]
 
 
 async def test_a_non_member_cannot_read_a_file(client, monkeypatch, tmp_path):
@@ -212,12 +247,104 @@ async def test_what_the_person_approves_is_what_will_run(client, monkeypatch):
         "the build ran with something other than what the person approved")
 
 
+async def test_a_refused_build_gives_the_approval_back(client, monkeypatch):
+    """A 409 means an enhance is already running, which includes one
+    waiting on a human. Burning the approval there would make the
+    assistant ask the same person for the same yes over and over."""
+    restored = []
+
+    async def _consume(email, token):
+        return {"slug": "shop", "description": "make it blue"}
+
+    async def _restore(email, token):
+        restored.append(token)
+
+    async def _spawn(email, slug, prompt):
+        raise HTTPException(status_code=409,
+                            detail="An enhancement is already in progress")
+
+    monkeypatch.setattr(routes_code, "consume_proposal", _consume)
+    monkeypatch.setattr(routes_code, "restore_proposal", _restore)
+    monkeypatch.setattr(routes_code, "_spawn_enhance", _spawn)
+
+    r = await client.post("/code/apply",
+                          json={"user_email": OWNER, "token": "t"},
+                          headers={"X-Internal-Secret": SECRET})
+    assert r.status_code == 409
+    assert restored == ["t"]
+
+
+async def test_an_unexpected_failure_keeps_the_approval_spent(client, monkeypatch):
+    """Fail closed. If the builder broke in a way we do not recognise,
+    work may already have started, and giving the code back could run
+    the same change twice."""
+    restored = []
+
+    async def _consume(email, token):
+        return {"slug": "shop", "description": "make it blue"}
+
+    async def _restore(email, token):
+        restored.append(token)
+
+    async def _spawn(email, slug, prompt):
+        raise RuntimeError("something else entirely")
+
+    monkeypatch.setattr(routes_code, "consume_proposal", _consume)
+    monkeypatch.setattr(routes_code, "restore_proposal", _restore)
+    monkeypatch.setattr(routes_code, "_spawn_enhance", _spawn)
+
+    with pytest.raises(RuntimeError):
+        await client.post("/code/apply",
+                          json={"user_email": OWNER, "token": "t"},
+                          headers={"X-Internal-Secret": SECRET})
+    assert restored == []
+
+
+async def test_an_unrecognised_http_failure_keeps_the_approval_spent(client, monkeypatch):
+    """The three statuses that give the approval back are the three the
+    builder raises before it inserts anything. A 500 is not one of them:
+    by then the build may exist, so the approval stays spent. Without this
+    the status list itself is untested, because a plain exception never
+    reaches that branch at all."""
+    restored = []
+
+    async def _consume(email, token):
+        return {"slug": "shop", "description": "make it blue"}
+
+    async def _restore(email, token):
+        restored.append(token)
+
+    async def _spawn(email, slug, prompt):
+        raise HTTPException(status_code=500, detail="the build blew up midway")
+
+    monkeypatch.setattr(routes_code, "consume_proposal", _consume)
+    monkeypatch.setattr(routes_code, "restore_proposal", _restore)
+    monkeypatch.setattr(routes_code, "_spawn_enhance", _spawn)
+
+    r = await client.post("/code/apply",
+                          json={"user_email": OWNER, "token": "t"},
+                          headers={"X-Internal-Secret": SECRET})
+    assert r.status_code == 500
+    assert restored == []
+
+
+def _build_row(slug):
+    return TaskItem(
+        meeting_id=uuid.uuid4(), action_type="BUILD",
+        assignee_name="Build Owner", assignee_email=BUILD_OWNER,
+        description="build the shop", priority="NICE_TO_HAVE",
+        status="completed", built_app_slug=slug,
+    )
+
+
 @pytest_asyncio.fixture
-async def only_a_build_task(db_session_nondestructive):
-    """One build task owned by BUILD_OWNER and deliberately no membership
+async def build_rows_without_membership(db_session_nondestructive):
+    """Two build tasks owned by BUILD_OWNER and deliberately no membership
     row, which is the state a build lands in when the membership grant
-    fails open. Deletes only rows matched on BUILD_OWNER, before and after,
-    so this is safe against the real database."""
+    fails open. One of the two will have a directory on disk and the other
+    never will, the way the cron scheduler's sched-... rows never do.
+    Deletes only rows matched on BUILD_OWNER, before and after, so this is
+    safe against the real database."""
     async def _purge():
         await db_session_nondestructive.execute(
             text("DELETE FROM tasks.items WHERE assignee_email = :email"),
@@ -228,23 +355,89 @@ async def only_a_build_task(db_session_nondestructive):
         await db_session_nondestructive.commit()
 
     await _purge()
-    db_session_nondestructive.add(TaskItem(
-        meeting_id=uuid.uuid4(), action_type="BUILD",
-        assignee_name="Build Owner", assignee_email=BUILD_OWNER,
-        description="build the shop", priority="NICE_TO_HAVE",
-        status="completed", built_app_slug=BUILD_SLUG,
-    ))
+    db_session_nondestructive.add(_build_row(BUILD_SLUG))
+    db_session_nondestructive.add(_build_row(GHOST_SLUG))
     await db_session_nondestructive.commit()
     yield db_session_nondestructive
     await _purge()
 
 
-async def test_an_app_owned_through_a_build_task_is_listed(client, only_a_build_task):
+async def test_an_app_owned_through_a_build_task_is_listed(
+        client, tmp_path, build_rows_without_membership):
     """The read gate grants access through a build task as well as a
     membership row. Listing only members would hide an app the person
     can open, which is reachable because the membership grant after a
     build fails open."""
+    _app_on_disk(tmp_path, BUILD_SLUG)
+
     r = await client.get("/code/apps", params={"user_email": BUILD_OWNER},
                          headers={"X-Internal-Secret": SECRET})
     assert r.status_code == 200
     assert BUILD_SLUG in r.json()["apps"]
+
+
+async def test_a_slug_with_no_directory_is_not_listed(
+        client, tmp_path, build_rows_without_membership):
+    """tasks.items holds BUILD rows the cron scheduler wrote that were
+    never apps and have no directory, and rows for apps since deleted.
+    Listing one lets somebody approve a change to a thing that cannot be
+    changed, and the builder would then spawn a real agent against a path
+    that does not exist."""
+    _app_on_disk(tmp_path, BUILD_SLUG)
+
+    r = await client.get("/code/apps", params={"user_email": BUILD_OWNER},
+                         headers={"X-Internal-Secret": SECRET})
+    assert r.status_code == 200
+    apps = r.json()["apps"]
+    # Both halves matter: a filter that simply dropped everything would
+    # satisfy the second assertion on its own.
+    assert BUILD_SLUG in apps
+    assert GHOST_SLUG not in apps
+
+
+@pytest_asyncio.fixture
+async def a_real_membership(db_session_nondestructive):
+    """One membership row for MEMBER and nothing at all for STRANGER, so
+    the real gate has something true and something false to decide.
+    Deletes only rows matched on those two emails, before and after."""
+    async def _purge():
+        await db_session_nondestructive.execute(
+            text("DELETE FROM tasks.project_members"
+                 " WHERE user_email IN (:a, :b)"),
+            {"a": MEMBER, "b": STRANGER})
+        await db_session_nondestructive.execute(
+            text("DELETE FROM tasks.items WHERE assignee_email IN (:a, :b)"),
+            {"a": MEMBER, "b": STRANGER})
+        await db_session_nondestructive.commit()
+
+    await _purge()
+    db_session_nondestructive.add(ProjectMember(
+        slug=MEMBER_SLUG, user_email=MEMBER, role="owner", added_by=MEMBER))
+    await db_session_nondestructive.commit()
+    yield db_session_nondestructive
+    await _purge()
+
+
+async def test_the_real_membership_check_decides_who_reads(
+        client, tmp_path, a_real_membership):
+    """_can_see is monkeypatched in every other test in this file, so the
+    real query has never run here, and the one other database test calls
+    an endpoint that does not use it. Swapping its two arguments would
+    make every read allow or deny universally in production, which is
+    invisible to a test that stubs the function out."""
+    _app_on_disk(tmp_path, MEMBER_SLUG)
+
+    allowed = await client.get(
+        "/code/file",
+        params={"user_email": MEMBER, "slug": MEMBER_SLUG,
+                "path": "index.html"},
+        headers={"X-Internal-Secret": SECRET})
+    assert allowed.status_code == 200
+    assert "Shop" in allowed.json()["text"]
+
+    refused = await client.get(
+        "/code/file",
+        params={"user_email": STRANGER, "slug": MEMBER_SLUG,
+                "path": "index.html"},
+        headers={"X-Internal-Secret": SECRET})
+    assert refused.status_code == 403

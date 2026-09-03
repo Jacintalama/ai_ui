@@ -18,7 +18,8 @@ from sqlalchemy import text
 
 import app_code_access
 from app_code_access import CodeAccessError
-from code_proposals import ProposalError, consume_proposal, create_proposal
+from code_proposals import (ProposalError, consume_proposal, create_proposal,
+                            restore_proposal)
 from db import session
 from routes_gateway import _require_internal
 from routes_projects import TEAM_EMAIL, _user_can_see_project
@@ -62,9 +63,6 @@ class ProposeIn(BaseModel):
 class ApplyIn(BaseModel):
     user_email: str
     token: str
-    # Accepted and ignored on purpose: a caller may send it, and the slug
-    # that gets built is always the one stored with the proposal.
-    slug: str | None = None
 
 
 @router.get("/apps")
@@ -89,7 +87,22 @@ async def list_apps(user_email: str,
                  ") AS visible ORDER BY slug"),
             {"email": user_email, "team": TEAM_EMAIL},
         )).all()
-    return {"apps": [r[0] for r in rows]}
+
+    # Disk truth, not just a database row. tasks.items carries BUILD rows the
+    # cron scheduler wrote (sched-...) that were never apps and have no
+    # directory, and it keeps rows for apps that were later deleted. Offering
+    # either to a model invites somebody to approve a change to a thing that
+    # cannot be changed, and the builder would spawn a real agent against a
+    # path that does not exist. app_dir answers exactly this and rejects a
+    # malformed slug for free.
+    visible = []
+    for row in rows:
+        try:
+            app_code_access.app_dir(row[0], apps_root=_apps_root_override)
+        except CodeAccessError:
+            continue
+        visible.append(row[0])
+    return {"apps": visible}
 
 
 @router.get("/file")
@@ -147,7 +160,12 @@ async def propose(body: ProposeIn,
 @router.post("/apply")
 async def apply(body: ApplyIn,
                 x_internal_secret: str = Header(default="")) -> dict:
-    """Do the thing the person just approved, and nothing else."""
+    """Do the thing the person just approved, and nothing else.
+
+    There is no slug field to send. The app is whichever one the proposal
+    was written against, so a caller cannot point an approved change at a
+    different app. An extra slug in the body is ignored.
+    """
     _require_internal(x_internal_secret)
     try:
         proposal = await consume_proposal(body.user_email, body.token)
@@ -157,7 +175,16 @@ async def apply(body: ApplyIn,
     # The slug is the proposal's, never the caller's. _create_and_spawn_enhance
     # does the editor-or-owner check, the per-slug lock and the 409, so those
     # are deliberately not repeated here.
-    task_id, slug = await _spawn_enhance(
-        body.user_email, proposal["slug"], proposal["description"])
+    try:
+        task_id, slug = await _spawn_enhance(
+            body.user_email, proposal["slug"], proposal["description"])
+    except HTTPException as exc:
+        # These three are raised before the builder inserts anything, so no
+        # work began and the person's approval should still be good. Any
+        # other failure keeps the token spent: restoring one after work may
+        # have started could run the same change twice.
+        if exc.status_code in (403, 404, 409):
+            await restore_proposal(body.user_email, body.token)
+        raise
     return {"task_id": task_id, "slug": slug,
             "description": proposal["description"]}
