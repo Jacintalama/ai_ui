@@ -134,8 +134,14 @@ async def propose(body: ProposeIn,
                                       body.description)
     except ProposalError as exc:
         raise HTTPException(status_code=400, detail=exc.reason) from exc
-    return {"token": token, "slug": body.slug,
-            "description": body.description.strip()}
+    return {
+        "token": token, "slug": body.slug,
+        # Must equal what create_proposal stored. apply executes the stored
+        # text, so any divergence means the person approves one change and
+        # another one runs. Held by
+        # test_what_the_person_approves_is_what_will_run.
+        "description": body.description.strip(),
+    }
 
 
 @router.post("/apply")

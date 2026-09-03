@@ -162,6 +162,56 @@ async def test_propose_checks_membership_before_writing_a_token(client, monkeypa
     assert written == []
 
 
+async def test_what_the_person_approves_is_what_will_run(client, monkeypatch):
+    """The description shown at propose time and the one apply executes
+    must be the same string. They come from different places: the
+    response echoes the request, while apply reads the stored row. If
+    create_proposal ever normalises differently from this endpoint,
+    somebody approves one change and another one runs."""
+    stored = {}
+
+    async def _create(email, slug, description):
+        # Stands in for the real create_proposal, including its strip.
+        stored["description"] = description.strip()
+        return "token-abc"
+
+    async def _consume(email, token):
+        return {"slug": "shop", "description": stored["description"]}
+
+    seen = {}
+
+    async def _spawn(email, slug, prompt):
+        seen["prompt"] = prompt
+        return ("task-1", slug)
+
+    async def _yes(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr(routes_code, "_can_see", _yes)
+    monkeypatch.setattr(routes_code, "create_proposal", _create)
+    monkeypatch.setattr(routes_code, "consume_proposal", _consume)
+    monkeypatch.setattr(routes_code, "_spawn_enhance", _spawn)
+
+    proposed = await client.post(
+        "/code/propose",
+        json={"user_email": OWNER, "slug": "shop",
+              "description": "  make the button blue  "},
+        headers={"X-Internal-Secret": SECRET})
+    assert proposed.status_code == 200
+    shown = proposed.json()["description"]
+
+    applied = await client.post(
+        "/code/apply",
+        json={"user_email": OWNER, "token": "token-abc"},
+        headers={"X-Internal-Secret": SECRET})
+    assert applied.status_code == 200
+
+    assert shown == stored["description"], (
+        "the person was shown something other than what was stored")
+    assert seen["prompt"] == shown, (
+        "the build ran with something other than what the person approved")
+
+
 @pytest_asyncio.fixture
 async def only_a_build_task(db_session_nondestructive):
     """One build task owned by BUILD_OWNER and deliberately no membership
