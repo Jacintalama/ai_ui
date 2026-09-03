@@ -1113,7 +1113,7 @@ from routes_code import router as code_router
 and next to line 131's `app.include_router(account_router)`:
 
 ```python
-app.include_router(code_router)  # /code — internal only (X-Internal-Secret)
+app.include_router(code_router)  # /code, internal only (X-Internal-Secret)
 ```
 
 Mount it **once**. `routes_agent_turn` and `routes_account` are both mounted once and this must match: a second mount under `/api/tasks` would put an internal-only surface on a publicly routed prefix.
