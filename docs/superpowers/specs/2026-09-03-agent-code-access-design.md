@@ -1,7 +1,11 @@
-# Agents that can read your code, and change it with your say-so
+# Agents that can read your code, and change an app you own
 
 Date: 2026-09-03
-Status: approved, not yet implemented
+Status: built on branch feat/agent-code-access, not yet deployed.
+Two sections were corrected after review, on the token's guarantee and
+on the write path's bounds; the title changed with them, because
+"with your say-so" claimed the consent gate that section now says
+does not exist.
 
 ## The problem
 
@@ -130,8 +134,62 @@ than adding new ones, and it means "read only" is true in the strong sense:
 such an agent can tell you exactly what it would change and still cannot
 change it.
 
-Two-phase confirmation is enforced by the token regardless of access level,
-so it holds on every surface, including any that does not run our tool loop.
+### What the token does and does not guarantee
+
+Corrected 2026-09-03, after a review found this section claimed more than
+the code delivers. The earlier wording said two-phase confirmation was
+enforced by the token on every surface. It is not, and the difference
+matters enough to write down rather than leave for somebody to discover.
+
+The token proves four things, each of them enforced by the row and each
+proved by a test that fails when the guard is removed: the token exists,
+it belongs to this person, it has not been used, and it is under thirty
+minutes old. Single use is atomic, so two confirms racing cannot both win.
+
+It does not prove a person read the description and agreed. Nothing
+structural requires a human between propose and apply: the tool loop lets
+a model call `propose_app_change` in one iteration and `apply_app_change`
+in the next, with no message from the person in between. The instruction
+to ask first lives in the tool's docstring, which is a request to the
+model, not a gate on it. By this repo's own rule, a correctness property
+that lives in a prompt is unimplemented until something asserts it, so
+the human-consent property is unimplemented and is described here as
+such.
+
+What genuinely does hold across surfaces is the access level. An agent
+set to Read only cannot apply, because `apply_app_change` classifies as a
+write and the tool loop refuses it before it runs. That is enforced in
+code and mutation tested. So an unattended scheduled agent at Read only
+can tell you what it would change and cannot change it, which was the
+property this section was really about.
+
+Read honestly, then, the feature is: an agent can propose and, at With
+access or All access, carry out a change to an app you already own, and
+the change is smoke tested and rolled back automatically if it breaks the
+app. The approval code makes a change traceable to a specific proposal and
+unrepeatable. It is not a consent mechanism.
+
+A structural gate, where the model cannot both mint and spend an approval,
+remains worth building and is deliberately not in this version.
+
+### The write path is not bounded the way the read path is
+
+Also corrected 2026-09-03. The "What it deliberately cannot do" list above
+is enforced by code for reads and by a prompt for writes.
+
+Reading is bounded by `app_code_access`: containment by resolved real
+path, a deny list, size caps, one decision point that both the direct read
+and the directory walk go through. None of that applies once a change is
+approved. The description becomes the instruction to a Claude Code CLI
+subprocess whose working directory is the whole monorepo, and the rules
+keeping it inside `apps/<slug>/` are lines in a prompt template.
+
+Most of this is inherited rather than introduced: a person typing into the
+App Builder enhance box already reaches the same prompt, and the same
+regression guard and rollback protect the result. What is new is that a
+model composes the string, and it can compose it from content it just read
+out of a file. The rollback protects the app; it does not protect the
+repository around it.
 
 ## Testing
 
