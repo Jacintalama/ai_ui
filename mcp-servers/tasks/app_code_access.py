@@ -108,3 +108,70 @@ def looks_binary(data: bytes) -> bool:
     """A null byte in the first 8KB. Cheap, and wrong only for files that
     hide their first null past the window, which text files do not do."""
     return b"\x00" in data[:BINARY_SNIFF_BYTES]
+
+
+TRUNCATION_MARKER = "\n\n[This file was shortened to fit.]"
+
+
+def _walkable_files(base: Path):
+    """Every readable file under an app, denied folders and dotfiles
+    pruned as we descend so we never even stat what is inside them."""
+    for root, dirs, names in os.walk(base):
+        dirs[:] = [d for d in dirs
+                   if d.lower() not in DENIED_SEGMENTS and not d.startswith(".")]
+        for name in names:
+            if name.startswith("."):
+                continue
+            lowered = name.lower()
+            if lowered.endswith(_DENIED_SUFFIXES) or lowered.startswith(_DENIED_PREFIXES):
+                continue
+            yield Path(root) / name
+
+
+def _relative(base: Path, path: Path) -> str:
+    """Forward slashes whatever the platform, because this string goes
+    back to a model that will quote it at us in the next call."""
+    return path.relative_to(base).as_posix()
+
+
+def read_file(slug: str, relative_path: str, *,
+              apps_root: Path | None = None) -> str:
+    path = resolve_app_file(slug, relative_path, apps_root=apps_root)
+    raw = path.read_bytes()
+    if looks_binary(raw):
+        raise CodeAccessError("that file is not text, so there is nothing to show")
+
+    truncated = len(raw) > MAX_FILE_BYTES
+    text = raw[:MAX_FILE_BYTES].decode("utf-8", errors="replace")
+    return text + TRUNCATION_MARKER if truncated else text
+
+
+def search_files(slug: str, query: str, *,
+                 apps_root: Path | None = None) -> list[dict]:
+    base = app_dir(slug, apps_root=apps_root)
+    if not isinstance(query, str) or not query.strip():
+        raise CodeAccessError("there was nothing to search for")
+    needle = query.strip().lower()
+
+    hits: list[dict] = []
+    for path in _walkable_files(base):
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        if looks_binary(raw):
+            continue
+        text = raw[:MAX_FILE_BYTES].decode("utf-8", errors="replace")
+        for number, line in enumerate(text.splitlines(), start=1):
+            if needle in line.lower():
+                hits.append({"path": _relative(base, path),
+                             "line": number,
+                             "text": line.strip()[:300]})
+                if len(hits) >= MAX_SEARCH_MATCHES:
+                    return hits
+    return hits
+
+
+def list_files(slug: str, *, apps_root: Path | None = None) -> list[str]:
+    base = app_dir(slug, apps_root=apps_root)
+    return sorted(_relative(base, p) for p in _walkable_files(base))
