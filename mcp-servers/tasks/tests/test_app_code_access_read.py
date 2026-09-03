@@ -4,6 +4,9 @@ The limits are not tidiness. A tool result goes into a chat conversation
 and then into the next prompt, so an uncapped file read is a way to spend
 somebody's context on a minified bundle.
 """
+import os
+import pathlib
+
 import pytest
 
 from app_code_access import (
@@ -24,6 +27,19 @@ def _app(tmp_path, slug="shop"):
     (d / "src" / "Checkout.tsx").write_text(
         "export function Checkout() {\n  return null;\n}\n", encoding="utf-8")
     return d
+
+
+def _symlinks_work(tmp_path):
+    """Windows refuses symlinks without developer mode or admin rights."""
+    target = tmp_path / "_probe_target"
+    target.write_text("x", encoding="utf-8")
+    link = tmp_path / "_probe_link"
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError, AttributeError):
+        return False
+    link.unlink()
+    return True
 
 
 def test_reads_a_file(tmp_path):
@@ -124,3 +140,82 @@ def test_listing_skips_denied_folders_whatever_their_case(tmp_path, name):
     (app / name).mkdir()
     (app / name / "dep.js").write_text("x", encoding="utf-8")
     assert not [p for p in list_files("shop", apps_root=tmp_path) if name in p]
+
+
+def test_search_does_not_follow_a_symlink_out_of_the_app(tmp_path):
+    """os.walk will not descend a symlinked directory, but a symlinked
+    FILE is yielded like any other and the OS follows it on read. This
+    is the case that leaks, and the reported path is the innocent
+    in-app name, so nothing in the result would show it."""
+    if not _symlinks_work(tmp_path):
+        pytest.skip("this platform will not create symlinks")
+    app = _app(tmp_path)
+    outside = tmp_path / "secrets.env"
+    outside.write_text("DATABASE_URL=postgres://real\n", encoding="utf-8")
+    os.symlink(outside, app / "notes.txt")
+    assert search_files("shop", "DATABASE_URL", apps_root=tmp_path) == []
+
+
+def test_listing_does_not_include_a_symlink_out_of_the_app(tmp_path):
+    if not _symlinks_work(tmp_path):
+        pytest.skip("this platform will not create symlinks")
+    app = _app(tmp_path)
+    outside = tmp_path / "secrets.env"
+    outside.write_text("x", encoding="utf-8")
+    os.symlink(outside, app / "notes.txt")
+    assert "notes.txt" not in list_files("shop", apps_root=tmp_path)
+
+
+@pytest.mark.parametrize("name", ["dist", "node_modules"])
+def test_a_bare_file_named_like_a_denied_folder_is_not_searchable(tmp_path, name):
+    """read_file refuses this because it checks every segment including
+    the filename. The walker must agree, or content the direct read
+    denies is retrievable in bulk."""
+    app = _app(tmp_path)
+    (app / "src" / name).write_text("password=hunter2\n", encoding="utf-8")
+    assert search_files("shop", "hunter2", apps_root=tmp_path) == []
+    assert not [p for p in list_files("shop", apps_root=tmp_path) if p.endswith(name)]
+
+
+@pytest.mark.parametrize("name", ["server.pem", "server.key", "id_rsa"])
+def test_a_credential_file_is_not_searchable_or_listed(tmp_path, name):
+    """The same rule resolve_app_file enforces, now enforced once and
+    tested on the path that walks rather than only the one that reads."""
+    app = _app(tmp_path)
+    (app / name).write_text("BEGIN PRIVATE KEY\n", encoding="utf-8")
+    assert search_files("shop", "PRIVATE KEY", apps_root=tmp_path) == []
+    assert name not in list_files("shop", apps_root=tmp_path)
+
+
+def test_a_huge_file_is_never_slurped_into_memory(tmp_path, monkeypatch):
+    """The cap has to bound what is READ, not only what is returned.
+    read_bytes on a large vendored file would sit in a 3.8GB box in
+    full before anything truncated it."""
+    app = _app(tmp_path)
+    (app / "huge.txt").write_text("x" * (MAX_FILE_BYTES * 4), encoding="utf-8")
+
+    def _forbidden(self):
+        raise AssertionError("the whole file was read; use a bounded read")
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", _forbidden)
+    assert read_file("shop", "huge.txt", apps_root=tmp_path).endswith(
+        TRUNCATION_MARKER)
+    assert search_files("shop", "xxxx", apps_root=tmp_path)
+
+
+def test_a_file_that_vanishes_is_a_clean_refusal(tmp_path, monkeypatch):
+    """The App Builder agent can be editing an app while a chat reads
+    it, so the file really can go between the resolve and the read."""
+    app = _app(tmp_path)
+    target = app / "index.html"
+
+    real_open = pathlib.Path.open
+
+    def _vanish(self, *args, **kwargs):
+        if self.name == "index.html":
+            raise FileNotFoundError(2, "gone")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "open", _vanish)
+    with pytest.raises(CodeAccessError):
+        read_file("shop", "index.html", apps_root=tmp_path)

@@ -72,6 +72,26 @@ def app_dir(slug: str, *, apps_root: Path | None = None) -> Path:
     return candidate
 
 
+def _assert_readable(base: Path, candidate: Path) -> None:
+    """The one place that decides whether an already resolved path may
+    be read. Both the direct read and the directory walk go through
+    here, because a deny list written twice drifts apart, and the copy
+    without a test is the one that lets something through."""
+    if base not in candidate.parents:
+        raise CodeAccessError("that file is not inside this app")
+
+    for part in candidate.relative_to(base).parts:
+        if part.startswith("."):
+            raise CodeAccessError("that file is hidden, so it is not read here")
+        if part.lower() in DENIED_SEGMENTS:
+            raise CodeAccessError("that folder is not read here")
+
+    name = candidate.name.lower()
+    if name.endswith(_DENIED_SUFFIXES) or name.startswith(_DENIED_PREFIXES):
+        raise CodeAccessError(
+            "that file looks like a credential, so it is not read here")
+
+
 def resolve_app_file(slug: str, relative_path: str, *,
                      apps_root: Path | None = None) -> Path:
     """One readable file inside that app, or raise."""
@@ -86,18 +106,7 @@ def resolve_app_file(slug: str, relative_path: str, *,
     cleaned = relative_path.replace("\\", "/").strip().lstrip("/")
 
     candidate = (base / cleaned).resolve()
-    if base not in candidate.parents:
-        raise CodeAccessError("that file is not inside this app")
-
-    for part in candidate.relative_to(base).parts:
-        if part.startswith("."):
-            raise CodeAccessError("that file is hidden, so it is not read here")
-        if part.lower() in DENIED_SEGMENTS:
-            raise CodeAccessError("that folder is not read here")
-
-    name = candidate.name.lower()
-    if name.endswith(_DENIED_SUFFIXES) or name.startswith(_DENIED_PREFIXES):
-        raise CodeAccessError("that file looks like a credential, so it is not read here")
+    _assert_readable(base, candidate)
 
     if not candidate.is_file():
         raise CodeAccessError("there is no file at that path in this app")
@@ -114,18 +123,24 @@ TRUNCATION_MARKER = "\n\n[This file was shortened to fit.]"
 
 
 def _walkable_files(base: Path):
-    """Every readable file under an app, denied folders and dotfiles
-    pruned as we descend so we never even stat what is inside them."""
+    """Every readable file under an app, denied folders pruned as we
+    descend so we never even stat what is inside them.
+
+    Each candidate is resolved and checked through the same
+    _assert_readable that gates a direct read, because os.walk yields a
+    symlinked FILE like any other path and the OS follows it on read;
+    only a symlinked DIRECTORY is something os.walk itself refuses to
+    descend into."""
     for root, dirs, names in os.walk(base):
         dirs[:] = [d for d in dirs
                    if d.lower() not in DENIED_SEGMENTS and not d.startswith(".")]
         for name in names:
-            if name.startswith("."):
+            candidate = (Path(root) / name).resolve()
+            try:
+                _assert_readable(base, candidate)
+            except CodeAccessError:
                 continue
-            lowered = name.lower()
-            if lowered.endswith(_DENIED_SUFFIXES) or lowered.startswith(_DENIED_PREFIXES):
-                continue
-            yield Path(root) / name
+            yield candidate
 
 
 def _relative(base: Path, path: Path) -> str:
@@ -137,12 +152,17 @@ def _relative(base: Path, path: Path) -> str:
 def read_file(slug: str, relative_path: str, *,
               apps_root: Path | None = None) -> str:
     path = resolve_app_file(slug, relative_path, apps_root=apps_root)
-    raw = path.read_bytes()
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(MAX_FILE_BYTES + 1)
+    except OSError:
+        raise CodeAccessError("that file could not be read")
     if looks_binary(raw):
         raise CodeAccessError("that file is not text, so there is nothing to show")
 
     truncated = len(raw) > MAX_FILE_BYTES
-    text = raw[:MAX_FILE_BYTES].decode("utf-8", errors="replace")
+    raw = raw[:MAX_FILE_BYTES]
+    text = raw.decode("utf-8", errors="replace")
     return text + TRUNCATION_MARKER if truncated else text
 
 
@@ -156,7 +176,8 @@ def search_files(slug: str, query: str, *,
     hits: list[dict] = []
     for path in _walkable_files(base):
         try:
-            raw = path.read_bytes()
+            with path.open("rb") as fh:
+                raw = fh.read(MAX_FILE_BYTES + 1)
         except OSError:
             continue
         if looks_binary(raw):
