@@ -228,9 +228,15 @@ def test_a_label_is_found_past_the_tool_result_panel():
     gives up, which is exactly how this broke in production."""
     section = _agent_header_section(_js())
     collector = _js_function(section, "aiuiAgentLabelsIn")
-    assert "body.children" in collector, (
+    # The blocks scanned are the children of whichever element actually
+    # holds the rendered paragraphs. That used to be the body itself; since
+    # Open WebUI wrapped replies in extra divs it is found by walking up
+    # from the first real text. Either way, every block must be a candidate.
+    assert "holder.children" in collector or "body.children" in collector, (
         "only the body's own leading text is examined, so a reply whose "
         "first block is the tool result panel never matches")
+    assert "candidates.push(" in collector, (
+        "no block beyond the first is ever offered as a candidate")
     assert "aiuiFirstTextNode(candidates[" in collector, (
         "each block is not read from its own leading text, which would let "
         "a match come from deep inside quoted content")

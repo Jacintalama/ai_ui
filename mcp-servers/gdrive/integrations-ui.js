@@ -2802,6 +2802,15 @@
     return aiuiAgentNames.has(String(name).toLowerCase());
   }
 
+  // Two shapes, because Open WebUI changed the reply body between
+  // versions. Older builds gave it a class starting "chat-", which is what
+  // the first pass looks for. Newer builds (seen live 2026-09-04) render it
+  // as a div with NO class at all, the next sibling of the wrapper that
+  // holds the name. So the second pass is structural: walking up from the
+  // name, the first following sibling that is a div with real text in it,
+  // and that does not itself hold a reply header, is the body. Reading
+  // order is what makes "following" safe: the name always precedes its
+  // own body and never precedes a neighbouring message's.
   function aiuiFindReplyBody(nameSpan) {
     var node = nameSpan;
     for (var depth = 0; depth < 8 && node; depth++) {
@@ -2817,6 +2826,17 @@
       }
       node = node.parentElement;
     }
+
+    node = nameSpan;
+    for (var up = 0; up < 8 && node; up++) {
+      var next = node.nextElementSibling;
+      if (next && next.tagName === 'DIV'
+          && (next.textContent || '').trim().length > 0
+          && !next.querySelector('#response-message-model-name')) {
+        return next;
+      }
+      node = node.parentElement;
+    }
     return null;
   }
 
@@ -2824,11 +2844,18 @@
   // chain through wrapper elements. This can never land on a later
   // paragraph, only on whatever text opens the message.
   function aiuiFirstTextNode(container) {
+    // Svelte scatters comment markers and whitespace-only text through
+    // every rendered block, so the plain first-child chain hits a comment
+    // and stops before it ever reaches a word. Those are stepped over
+    // sideways. Descent is still first-child only, and an element whose
+    // children are all markers yields nothing rather than its next
+    // sibling, so this still cannot land on a later paragraph.
     var node = container.firstChild;
-    var depth = 0;
-    while (node && depth < 8) {
+    for (var steps = 0; node && steps < 48; steps++) {
+      var blank = node.nodeType === 3 && !(node.textContent || '').trim();
+      if (node.nodeType === 8 || blank) { node = node.nextSibling; continue; }
       if (node.nodeType === 3) return node;
-      if (node.nodeType === 1) { node = node.firstChild; depth++; continue; }
+      if (node.nodeType === 1) { node = node.firstChild; continue; }
       return null;
     }
     return null;
@@ -2844,8 +2871,21 @@
   function aiuiAgentLabelsIn(body) {
     var result = { labels: [], sawUnknownName: false };
     var seen = {};
+    // The body's own children are wrapper divs now, not paragraphs, so a
+    // second agent's label sits inside the first wrapper rather than as a
+    // sibling of it. Find the element that actually holds the rendered
+    // blocks: start from the first real text, walk up until an ancestor
+    // has more than one element child, and scan THAT element's children.
+    // Falls back to the body itself when the reply is a single block.
+    var opening = aiuiFirstTextNode(body);
+    var holder = opening ? opening.parentNode : body;
+    for (var up = 0; holder && holder !== body && up < 12; up++) {
+      if (holder.children && holder.children.length > 1) break;
+      holder = holder.parentNode;
+    }
+    if (!holder) holder = body;
     var candidates = [body];
-    for (var c = 0; c < body.children.length; c++) candidates.push(body.children[c]);
+    for (var c = 0; c < holder.children.length; c++) candidates.push(holder.children[c]);
 
     for (var i = 0; i < candidates.length; i++) {
       var textNode = aiuiFirstTextNode(candidates[i]);
