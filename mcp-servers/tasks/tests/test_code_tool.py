@@ -6,6 +6,8 @@ these five names is a security decision, not a naming detail.
 import os
 import re
 
+import httpx
+
 from agent_tools import READ_METHODS, is_write_tool
 
 TOOL = os.path.join(os.path.dirname(__file__), "..", "..", "..",
@@ -15,6 +17,28 @@ TOOL = os.path.join(os.path.dirname(__file__), "..", "..", "..",
 def _source():
     with open(TOOL, encoding="utf-8") as fh:
         return fh.read()
+
+
+def _tool(handler):
+    """The real Tools object with its HTTP calls captured. Loads the
+    file the same way the structural tests read it, so these exercise
+    the shipped source rather than a copy."""
+    ns = {"__name__": "code_tool_under_test"}
+    exec(open(TOOL, encoding="utf-8").read(), ns)
+    tools = ns["Tools"]()
+    tools.valves.tasks_url = "http://tasks:8210"
+    tools.valves.internal_secret = "test-secret"
+
+    real_client = httpx.AsyncClient
+
+    def _factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_client(*args, **kwargs)
+
+    return tools, _factory
+
+
+USER = {"email": "someone@example.com"}
 
 
 def test_reading_is_never_a_write():
@@ -67,8 +91,103 @@ def test_the_tool_never_deletes():
 
 def test_apply_takes_only_a_token():
     """A slug argument here would invite the model to pick the app at
-    confirm time, which is exactly what the stored proposal prevents."""
+    confirm time, which is exactly what the stored proposal prevents.
+    Checks the exact parameter list, not just the literal spelling
+    "slug", so renaming that argument (to "app", say) cannot satisfy
+    this by accident. test_apply_sends_only_the_email_and_the_token
+    backs this up on the actual wire."""
     source = _source()
-    match = re.search(r"async def apply_app_change\(([^)]*)\)", source)
+    match = re.search(r"async def apply_app_change\(self,\s*([^)]*)\)", source)
     assert match
-    assert "slug" not in match.group(1)
+    params = {p.split(":")[0].strip() for p in match.group(1).split(",")}
+    assert params == {"token", "__user__"}
+
+
+async def test_every_call_hits_the_endpoint_it_should(monkeypatch):
+    """The five calls and their exact wire shape. Renaming a parameter,
+    changing a path, or switching a method are all invisible to a test
+    that greps the source, and all five ship a tool that cannot work."""
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path,
+                     dict(request.url.params),
+                     request.headers.get("X-Internal-Secret")))
+        return httpx.Response(200, json={
+            "apps": ["shop"], "text": "hi", "matches": [],
+            "token": "abc", "slug": "shop", "description": "make it blue"})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
+    await tools.list_my_apps(__user__=USER)
+    await tools.read_app_file("shop", "index.html", __user__=USER)
+    await tools.search_my_app("shop", "button", __user__=USER)
+    await tools.propose_app_change("shop", "make it blue", __user__=USER)
+    await tools.apply_app_change("abc", __user__=USER)
+
+    methods_and_paths = [(m, p) for m, p, _, _ in seen]
+    assert methods_and_paths == [
+        ("GET", "/code/apps"),
+        ("GET", "/code/file"),
+        ("GET", "/code/search"),
+        ("POST", "/code/propose"),
+        ("POST", "/code/apply"),
+    ]
+    assert all(secret == "test-secret" for _, _, _, secret in seen)
+    assert seen[0][2] == {"user_email": "someone@example.com"}
+    assert seen[1][2] == {"user_email": "someone@example.com",
+                          "slug": "shop", "path": "index.html"}
+    assert seen[2][2] == {"user_email": "someone@example.com",
+                          "slug": "shop", "query": "button"}
+
+
+async def test_apply_sends_only_the_email_and_the_token(monkeypatch):
+    """Task 4 deleted ApplyIn.slug, and pydantic drops unknown fields
+    silently rather than erroring, so an extra field here would be lost
+    without a sound. Assert the body, not the signature."""
+    bodies = []
+
+    def handler(request):
+        import json as _json
+        bodies.append(_json.loads(request.content))
+        return httpx.Response(200, json={"task_id": "t", "slug": "shop",
+                                         "description": "make it blue"})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    await tools.apply_app_change("abc", __user__=USER)
+    assert set(bodies[0]) == {"user_email", "token"}
+
+
+async def test_propose_shows_the_servers_description_not_its_own(monkeypatch):
+    """The person approves what the server stored. If the tool printed
+    its own argument, a change normalised differently on the way in
+    would be approved as one thing and run as another."""
+    def handler(request):
+        return httpx.Response(200, json={"token": "abc", "slug": "shop",
+                                         "description": "WHAT WAS STORED"})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.propose_app_change("shop", "what the model typed",
+                                         __user__=USER)
+    assert "WHAT WAS STORED" in out
+    assert "what the model typed" not in out
+
+
+async def test_an_anonymous_caller_reaches_nothing(monkeypatch):
+    """No email means no request at all, not a request without one."""
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    for coro in (tools.list_my_apps(__user__={}),
+                 tools.read_app_file("shop", "x", __user__={}),
+                 tools.apply_app_change("abc", __user__={})):
+        assert "could not tell whose account" in await coro
+    assert calls == []

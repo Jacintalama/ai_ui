@@ -73,10 +73,11 @@ _READ_VERBS = frozenset({
     "query", "view", "show", "whoami",
 })
 
-#: The native tools, pinned by name. The verb rule agrees with all of these
-#: but propose_app_change, which is pinned deliberately against it; see the
-#: note beside that entry. Written out so that renaming a method has to
-#: break a test rather than silently change what an unattended agent may do.
+#: The native tools, pinned by name. Two of these are pinned AGAINST the
+#: verb rule rather than with it, check_my_access and propose_app_change;
+#: see the note beside each. Written out so that renaming a method has to
+#: break a test rather than silently change what an unattended agent may
+#: do.
 READ_METHODS: frozenset[str] = frozenset({
     "list_unread_emails", "list_important_emails", "list_recent_emails",
     "search_emails", "read_email",
@@ -86,11 +87,14 @@ READ_METHODS: frozenset[str] = frozenset({
     # really does only inspect, and it exists in this repo (mcp-proxy).
     "check_my_access",
     "whoami",
-    # Pinned against the verb rule rather than with it: "change" is a write
-    # verb, and this call contains one while changing nothing. It records
-    # what an agent WOULD do and hands back a code the person has to
-    # approve. Refusing it for a read only agent would mean such an agent
-    # could not even tell you what it would change.
+    # Pinned because the verb rule has no opinion here, not because it
+    # disagrees: neither "propose" nor "change" is a write verb, so this
+    # name falls through to the default, and the default is write. It
+    # records what an agent WOULD do and hands back a code the person has
+    # to approve, so refusing it would leave a read only agent unable to
+    # even say what it would change. Note the same default is the ONLY
+    # thing keeping apply_app_change a write, so weakening it, or adding
+    # "apply" to _READ_VERBS, would open a real write path.
     "propose_app_change",
 })
 
