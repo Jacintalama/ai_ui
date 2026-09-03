@@ -289,3 +289,52 @@ async def test_the_read_calls_return_what_the_service_sent(monkeypatch):
         "shop", "index.html", __user__=USER)
     found = await tools.search_my_app("shop", "Checkout", __user__=USER)
     assert "src/App.tsx" in found and "12" in found
+
+
+async def test_a_search_hit_shows_the_line_it_found(monkeypatch):
+    """Reading the wrong key here drops the snippet and leaves a hit
+    that says where but not what."""
+    def handler(request):
+        return httpx.Response(200, json={"matches": [
+            {"path": "src/App.tsx", "line": 12,
+             "text": "const Checkout = () => {"}]})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.search_my_app("shop", "Checkout", __user__=USER)
+    assert "const Checkout = () => {" in out
+
+
+async def test_the_approval_code_reaches_the_person(monkeypatch):
+    """The code is the one thing they must see before they confirm.
+    A wrong key here prints an empty code and reads as if it worked."""
+    def handler(request):
+        return httpx.Response(200, json={"token": "TOKEN-abc123",
+                                         "slug": "shop",
+                                         "description": "make it blue"})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.propose_app_change("shop", "make it blue",
+                                         __user__=USER)
+    assert "TOKEN-abc123" in out
+    assert "shop" in out
+    assert "make it blue" in out
+    # No empty field anywhere: a wrong key renders as a label with
+    # nothing after it, which reads as success.
+    for label in ("Approval code:", "App:", "Change:"):
+        assert label + " \n" not in out and not out.rstrip().endswith(label)
+
+
+async def test_a_started_build_says_what_it_started(monkeypatch):
+    """apply's success message is the last thing a person reads before
+    an agent edits their live app. Nothing asserted it at all."""
+    def handler(request):
+        return httpx.Response(200, json={"task_id": "t1", "slug": "shop",
+                                         "description": "make it blue"})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.apply_app_change("TOKEN-abc123", __user__=USER)
+    assert "shop" in out
+    assert "make it blue" in out
