@@ -101,6 +101,7 @@ async def restore_proposal(user_email: str, token: str) -> None:
         await s.execute(
             text("UPDATE tasks.agent_proposals"
                  "   SET used_at = NULL"
-                 " WHERE token = :token AND user_email = :email"),
+                 " WHERE token = :token AND user_email = :email"
+                 "   AND used_at IS NOT NULL"),
             {"token": (token or "").strip(), "email": user_email})
         await s.commit()

@@ -52,6 +52,17 @@ async def _spawn_enhance(user_email: str, slug: str, prompt: str):
 async def _require_member(user_email: str, slug: str) -> None:
     if not await _can_see(user_email, slug):
         raise HTTPException(status_code=403, detail="That is not your app.")
+    # Membership is a database fact, and the database keeps rows for
+    # things that are not apps: the cron scheduler writes items rows
+    # with action_type BUILD, and rows survive an app being deleted.
+    # Without this, a slug named directly by a model reaches the
+    # builder, which finds that same row as its source task and spawns
+    # a real agent against a directory that does not exist. Checked
+    # after membership so a non-member still learns nothing.
+    try:
+        app_code_access.app_dir(slug, apps_root=_apps_root_override)
+    except CodeAccessError as exc:
+        raise HTTPException(status_code=400, detail=exc.reason) from exc
 
 
 class ProposeIn(BaseModel):
@@ -184,7 +195,16 @@ async def apply(body: ApplyIn,
         # other failure keeps the token spent: restoring one after work may
         # have started could run the same change twice.
         if exc.status_code in (403, 404, 409):
-            await restore_proposal(body.user_email, body.token)
+            # Best effort. Giving the approval back is a kindness, and it must
+            # never replace the status the person actually needs to see: a 409
+            # says "one is already running, try shortly" and a 500 says
+            # nothing. Same rule as every post-processing step in the build
+            # pipeline, which fails open rather than failing the build.
+            try:
+                await restore_proposal(body.user_email, body.token)
+            except Exception:                                   # noqa: BLE001
+                logger.warning("could not give the approval back for %s",
+                               proposal["slug"], exc_info=True)
         raise
     return {"task_id": task_id, "slug": slug,
             "description": proposal["description"]}

@@ -197,12 +197,13 @@ async def test_propose_checks_membership_before_writing_a_token(client, monkeypa
     assert written == []
 
 
-async def test_what_the_person_approves_is_what_will_run(client, monkeypatch):
+async def test_what_the_person_approves_is_what_will_run(client, monkeypatch, tmp_path):
     """The description shown at propose time and the one apply executes
     must be the same string. They come from different places: the
     response echoes the request, while apply reads the stored row. If
     create_proposal ever normalises differently from this endpoint,
     somebody approves one change and another one runs."""
+    _app_on_disk(tmp_path)
     stored = {}
 
     async def _create(email, slug, description):
@@ -247,10 +248,13 @@ async def test_what_the_person_approves_is_what_will_run(client, monkeypatch):
         "the build ran with something other than what the person approved")
 
 
-async def test_a_refused_build_gives_the_approval_back(client, monkeypatch):
-    """A 409 means an enhance is already running, which includes one
-    waiting on a human. Burning the approval there would make the
-    assistant ask the same person for the same yes over and over."""
+@pytest.mark.parametrize("status", [403, 404, 409])
+async def test_a_refused_build_gives_the_approval_back(client, monkeypatch, status):
+    """All three are raised before the builder writes anything, so all
+    three must give the approval back. The 409 is the one that bites: it
+    means an enhance is already running, which includes one waiting on a
+    human, and burning the approval there would make the assistant ask the
+    same person for the same yes over and over."""
     restored = []
 
     async def _consume(email, token):
@@ -258,6 +262,30 @@ async def test_a_refused_build_gives_the_approval_back(client, monkeypatch):
 
     async def _restore(email, token):
         restored.append(token)
+
+    async def _spawn(email, slug, prompt):
+        raise HTTPException(status_code=status, detail="refused before any write")
+
+    monkeypatch.setattr(routes_code, "consume_proposal", _consume)
+    monkeypatch.setattr(routes_code, "restore_proposal", _restore)
+    monkeypatch.setattr(routes_code, "_spawn_enhance", _spawn)
+
+    r = await client.post("/code/apply",
+                          json={"user_email": OWNER, "token": "t"},
+                          headers={"X-Internal-Secret": SECRET})
+    assert r.status_code == status
+    assert restored == ["t"]
+
+
+async def test_a_failure_to_restore_still_shows_the_real_status(client, monkeypatch):
+    """Giving the approval back is best effort. If it fails, the person
+    must still be told an enhance is already running, not handed a 500
+    that tells them nothing."""
+    async def _consume(email, token):
+        return {"slug": "shop", "description": "make it blue"}
+
+    async def _restore(email, token):
+        raise RuntimeError("the database went away")
 
     async def _spawn(email, slug, prompt):
         raise HTTPException(status_code=409,
@@ -271,7 +299,7 @@ async def test_a_refused_build_gives_the_approval_back(client, monkeypatch):
                           json={"user_email": OWNER, "token": "t"},
                           headers={"X-Internal-Secret": SECRET})
     assert r.status_code == 409
-    assert restored == ["t"]
+    assert "already in progress" in r.json()["detail"]
 
 
 async def test_an_unexpected_failure_keeps_the_approval_spent(client, monkeypatch):
@@ -393,6 +421,20 @@ async def test_a_slug_with_no_directory_is_not_listed(
     # satisfy the second assertion on its own.
     assert BUILD_SLUG in apps
     assert GHOST_SLUG not in apps
+
+
+async def test_a_slug_with_no_directory_cannot_be_proposed_against(
+        client, build_rows_without_membership):
+    """The listing filter stops a ghost slug being offered. This stops
+    one being named directly, which is the path that reaches the builder
+    and spawns an agent against a directory that does not exist."""
+    r = await client.post(
+        "/code/propose",
+        json={"user_email": BUILD_OWNER, "slug": GHOST_SLUG,
+              "description": "make it blue"},
+        headers={"X-Internal-Secret": SECRET})
+    assert r.status_code == 400
+    assert "no app by that name" in r.json()["detail"]
 
 
 @pytest_asyncio.fixture

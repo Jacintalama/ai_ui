@@ -528,6 +528,10 @@ async def _create_and_spawn_enhance(
             built_app_slug=slug,
             plan_status="approved",
         )
+        # 403, 404 and 409 above this line are contractually raised BEFORE
+        # anything is written. routes_code.apply restores a spent approval on
+        # exactly those three, so a new one added below here would let the same
+        # change run twice.
         s.add(item)
         await s.flush()
         execution = TaskExecution(task_id=item.id, status="running", log="")

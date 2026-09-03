@@ -22,6 +22,7 @@ from code_proposals import (
     ProposalError,
     consume_proposal,
     create_proposal,
+    restore_proposal,
 )
 
 # clean_proposals below matches on exactly these two strings. A different
@@ -139,3 +140,23 @@ async def test_an_enormous_description_is_refused(clean_proposals):
     where it enters rather than where it is used."""
     with pytest.raises(ProposalError):
         await create_proposal(OWNER, "shop", "x" * (MAX_DESCRIPTION_CHARS + 1))
+
+
+async def test_a_restored_proposal_can_be_used_again(clean_proposals):
+    """The point of restoring: an approval given back is genuinely
+    usable, not just a row with a null in it."""
+    token = await create_proposal(OWNER, "shop", "make the button blue")
+    await consume_proposal(OWNER, token)
+    await restore_proposal(OWNER, token)
+    again = await consume_proposal(OWNER, token)
+    assert again["slug"] == "shop"
+
+
+async def test_a_stranger_cannot_restore_someone_elses_proposal(clean_proposals):
+    """Restoring is a write on somebody's approval, so it is bound to
+    the same person the consume was."""
+    token = await create_proposal(OWNER, "shop", "make the button blue")
+    await consume_proposal(OWNER, token)
+    await restore_proposal(STRANGER, token)
+    with pytest.raises(ProposalError):
+        await consume_proposal(OWNER, token)
