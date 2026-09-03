@@ -191,3 +191,101 @@ async def test_an_anonymous_caller_reaches_nothing(monkeypatch):
                  tools.apply_app_change("abc", __user__={})):
         assert "could not tell whose account" in await coro
     assert calls == []
+
+
+async def test_a_server_failure_does_not_claim_to_know_what_happened(monkeypatch):
+    """For apply, a 500 can mean the build already started: routes_code
+    keeps the token spent on an unrecognised failure precisely because
+    work may have begun. Saying "that was not allowed" there tells
+    somebody nothing happened when something may have."""
+    def handler(request):
+        return httpx.Response(500, text="Internal Server Error")
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.apply_app_change("abc", __user__=USER)
+    assert "cannot tell whether it went through" in out
+    assert "not allowed" not in out
+
+
+async def test_a_refusal_the_service_chose_still_reads_as_one(monkeypatch):
+    """The 4xx path was already right and must stay right."""
+    def handler(request):
+        return httpx.Response(403, json={"detail": "That is not your app."})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.read_app_file("shop", "index.html", __user__=USER)
+    assert out.startswith("That was not allowed: ")
+    assert "not your app" in out
+
+
+async def test_a_validation_error_does_not_print_pydantic_internals(monkeypatch):
+    """FastAPI sets detail to a LIST for a 422, so stringifying it puts
+    field paths and a docs link in front of a person."""
+    def handler(request):
+        return httpx.Response(422, json={"detail": [
+            {"type": "string_type", "loc": ["body", "token"],
+             "msg": "Input should be a valid string",
+             "url": "https://errors.pydantic.dev/2.13/v/string_type"}]})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.apply_app_change("abc", __user__=USER)
+    for leak in ("loc", "msg", "pydantic", "string_type"):
+        assert leak not in out
+
+
+async def test_a_transport_failure_never_prints_the_url(monkeypatch):
+    """The read calls put the person's email in the query string, and
+    an httpx error carries the URL. agent_tools.py carries this rule
+    explicitly because this repo has leaked a token this way before."""
+    def handler(request):
+        raise httpx.ConnectError(
+            "failed to connect to "
+            "http://tasks:8210/code/file?user_email=someone@example.com")
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    out = await tools.read_app_file("shop", "index.html", __user__=USER)
+    assert "someone@example.com" not in out
+    assert "tasks:8210" not in out
+    assert "cannot tell whether it went through" in out
+
+
+async def test_propose_sends_the_fields_the_route_declares(monkeypatch):
+    """ProposeIn declares user_email, slug and description. A renamed
+    field here 422s every propose, and no params assertion can see it
+    because a POST carries nothing in the query string."""
+    import json as _json
+    bodies = []
+
+    def handler(request):
+        bodies.append(_json.loads(request.content))
+        return httpx.Response(200, json={"token": "abc", "slug": "shop",
+                                         "description": "make it blue"})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    await tools.propose_app_change("shop", "make it blue", __user__=USER)
+    assert bodies[0] == {"user_email": "someone@example.com",
+                         "slug": "shop", "description": "make it blue"}
+
+
+async def test_the_read_calls_return_what_the_service_sent(monkeypatch):
+    """Reading the wrong response key ships a tool that silently
+    returns nothing at all."""
+    def handler(request):
+        return httpx.Response(200, json={
+            "apps": ["shop", "blog"],
+            "text": "<h1>Shop</h1>",
+            "matches": [{"path": "src/App.tsx", "line": 12,
+                         "text": "const Checkout = () => {"}]})
+
+    tools, factory = _tool(handler)
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    assert "blog" in await tools.list_my_apps(__user__=USER)
+    assert "<h1>Shop</h1>" in await tools.read_app_file(
+        "shop", "index.html", __user__=USER)
+    found = await tools.search_my_app("shop", "Checkout", __user__=USER)
+    assert "src/App.tsx" in found and "12" in found

@@ -73,11 +73,11 @@ _READ_VERBS = frozenset({
     "query", "view", "show", "whoami",
 })
 
-#: The native tools, pinned by name. Two of these are pinned AGAINST the
-#: verb rule rather than with it, check_my_access and propose_app_change;
-#: see the note beside each. Written out so that renaming a method has to
-#: break a test rather than silently change what an unattended agent may
-#: do.
+#: The native tools, pinned by name. Two of these are pinned against the
+#: classifier's step-4 default, not against the verb rule, which has no
+#: opinion on either; see the note beside each. Written out so that
+#: renaming a method has to break a test rather than silently change
+#: what an unattended agent may do.
 READ_METHODS: frozenset[str] = frozenset({
     "list_unread_emails", "list_important_emails", "list_recent_emails",
     "search_emails", "read_email",

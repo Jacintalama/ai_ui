@@ -21,7 +21,8 @@ REFUSED = "That was not allowed: "
 #: whether anything happened, because for apply it might have: the
 #: token is kept spent on an unrecognised failure exactly because work
 #: may already have started.
-BROKE = "I could not reach that just now, and I cannot tell whether it went through: "
+BROKE = ("Something went wrong on the service side and I cannot tell "
+        "whether it went through: ")
 
 
 class Tools:
@@ -41,10 +42,12 @@ class Tools:
         exc.broke = True
         return exc
 
-    async def _call(self, method: str, route: str, **kwargs) -> dict:
-        # Named route, not path: read_app_file's own query parameter is
-        # called "path", and a call passing path=path as a kwarg would
-        # collide with a same-named positional parameter here.
+    async def _call(self, method: str, route: str, /, **kwargs) -> dict:
+        # method and route are positional-only. read_app_file's own query
+        # parameter is called "path", which once collided with a
+        # same-named positional parameter here; a future request field
+        # named "method" or "route" would reproduce that exact bug if
+        # either could still be passed by keyword.
         url = self.valves.tasks_url.rstrip("/") + route
         headers = {"X-Internal-Secret": self.valves.internal_secret}
         try:
