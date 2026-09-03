@@ -202,9 +202,15 @@ async def apply(body: ApplyIn,
             # pipeline, which fails open rather than failing the build.
             try:
                 await restore_proposal(body.user_email, body.token)
-            except Exception:                                   # noqa: BLE001
-                logger.warning("could not give the approval back for %s",
-                               proposal["slug"], exc_info=True)
+            except Exception as restore_error:                  # noqa: BLE001
+                # Deliberately no exc_info: restore_proposal runs a parameterised
+                # statement carrying the approval token and the person's email,
+                # and a database error renders its parameters into the traceback.
+                # This repo has leaked a real token that way before, through an
+                # HTTP client logging a request URL. The type is enough to tell
+                # a connection failure from a programming error.
+                logger.warning("could not give the approval back for %s: %s",
+                               proposal["slug"], type(restore_error).__name__)
         raise
     return {"task_id": task_id, "slug": slug,
             "description": proposal["description"]}
