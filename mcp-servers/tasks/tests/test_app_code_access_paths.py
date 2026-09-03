@@ -19,14 +19,12 @@ from app_code_access import (
     resolve_app_file,
 )
 
-
 def _app(tmp_path, slug="shop"):
     d = tmp_path / slug
     (d / "src").mkdir(parents=True)
     (d / "index.html").write_text("<h1>hi</h1>", encoding="utf-8")
     (d / "src" / "Checkout.tsx").write_text("export const x = 1;\n", encoding="utf-8")
     return d
-
 
 def _symlinks_work(tmp_path):
     """Windows refuses symlinks without developer mode or admin rights."""
@@ -40,12 +38,10 @@ def _symlinks_work(tmp_path):
     link.unlink()
     return True
 
-
 def test_a_plain_file_resolves(tmp_path):
     _app(tmp_path)
     got = resolve_app_file("shop", "src/Checkout.tsx", apps_root=tmp_path)
     assert got == (tmp_path / "shop" / "src" / "Checkout.tsx").resolve()
-
 
 def test_a_backslash_path_resolves_too(tmp_path):
     """The model may echo a Windows style path back at us."""
@@ -53,19 +49,16 @@ def test_a_backslash_path_resolves_too(tmp_path):
     got = resolve_app_file("shop", "src\\\\Checkout.tsx", apps_root=tmp_path)
     assert got == (tmp_path / "shop" / "src" / "Checkout.tsx").resolve()
 
-
 def test_traversal_is_refused(tmp_path):
     _app(tmp_path)
     (tmp_path / "secret.txt").write_text("no", encoding="utf-8")
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", "../secret.txt", apps_root=tmp_path)
 
-
 def test_deep_traversal_is_refused(tmp_path):
     _app(tmp_path)
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", "src/../../../etc/passwd", apps_root=tmp_path)
-
 
 def test_an_absolute_path_is_refused(tmp_path):
     _app(tmp_path)
@@ -74,13 +67,11 @@ def test_an_absolute_path_is_refused(tmp_path):
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", str(outside), apps_root=tmp_path)
 
-
 def test_a_traversing_slug_is_refused(tmp_path):
     """The slug is an argument too, so it gets the same treatment."""
     _app(tmp_path)
     with pytest.raises(CodeAccessError):
         resolve_app_file("../..", "index.html", apps_root=tmp_path)
-
 
 def test_a_symlink_out_of_the_app_is_refused(tmp_path):
     """The case a string check passes and a real check catches. If this
@@ -95,13 +86,11 @@ def test_a_symlink_out_of_the_app_is_refused(tmp_path):
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", "escape.txt", apps_root=tmp_path)
 
-
 def test_a_dotfile_is_refused(tmp_path):
     app = _app(tmp_path)
     (app / ".env").write_text("SECRET=1", encoding="utf-8")
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", ".env", apps_root=tmp_path)
-
 
 def test_a_denied_directory_is_refused(tmp_path):
     app = _app(tmp_path)
@@ -110,7 +99,6 @@ def test_a_denied_directory_is_refused(tmp_path):
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", "node_modules/a.js", apps_root=tmp_path)
 
-
 @pytest.mark.parametrize("name", ["server.pem", "server.key", "id_rsa", "id_rsa.pub"])
 def test_a_credential_shaped_filename_is_refused(tmp_path, name):
     app = _app(tmp_path)
@@ -118,23 +106,19 @@ def test_a_credential_shaped_filename_is_refused(tmp_path, name):
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", name, apps_root=tmp_path)
 
-
 def test_a_missing_file_is_refused(tmp_path):
     _app(tmp_path)
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", "nope.txt", apps_root=tmp_path)
-
 
 def test_a_directory_is_not_a_file(tmp_path):
     _app(tmp_path)
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", "src", apps_root=tmp_path)
 
-
 def test_a_missing_app_is_refused(tmp_path):
     with pytest.raises(CodeAccessError):
         app_dir("nope", apps_root=tmp_path)
-
 
 def test_binary_detection(tmp_path):
     assert looks_binary(b"hello\nworld") is False
@@ -143,25 +127,27 @@ def test_binary_detection(tmp_path):
     # the whole of a large file to classify it defeats the point.
     assert looks_binary(b"a" * BINARY_SNIFF_BYTES + b"\x00") is False
 
-
 def test_the_caps_are_the_values_the_spec_names():
     assert MAX_FILE_BYTES == 65536
     assert MAX_SEARCH_MATCHES == 50
     assert BINARY_SNIFF_BYTES == 8192
 
-
-@pytest.mark.parametrize("slug", ["shop/node_modules", "shop/.git", "shop\\git"])
-def test_a_slug_cannot_smuggle_a_denied_segment(tmp_path, slug):
-    """The deny loop only sees segments from the path argument, so a
-    slug carrying its own segments would walk straight past it."""
+@pytest.mark.parametrize("slug,relative", [
+    ("shop/node_modules", "secret.js"),
+    ("shop/.git", "config"),
+])
+def test_a_slug_cannot_smuggle_a_denied_segment(tmp_path, slug, relative):
+    """Every file requested here EXISTS, so the only thing that can
+    refuse the call is the guard under test. Asking for a file that was
+    never created passes on "not found" even with the guard disabled,
+    which is passing for the wrong reason."""
     app = _app(tmp_path)
     (app / "node_modules").mkdir()
     (app / "node_modules" / "secret.js").write_text("x", encoding="utf-8")
     (app / ".git").mkdir()
     (app / ".git" / "config").write_text("x", encoding="utf-8")
     with pytest.raises(CodeAccessError):
-        resolve_app_file(slug, "secret.js", apps_root=tmp_path)
-
+        resolve_app_file(slug, relative, apps_root=tmp_path)
 
 def test_a_dot_leading_slug_is_refused(tmp_path):
     """The directory exists, so only the leading dot guard can refuse
@@ -173,7 +159,6 @@ def test_a_dot_leading_slug_is_refused(tmp_path):
     with pytest.raises(CodeAccessError):
         app_dir(".hidden", apps_root=tmp_path)
 
-
 @pytest.mark.parametrize("name", ["Node_Modules", "DIST", "NODE_MODULES"])
 def test_a_denied_directory_is_refused_whatever_its_case(tmp_path, name):
     """The credential check below this one folds case. This one must
@@ -183,9 +168,6 @@ def test_a_denied_directory_is_refused_whatever_its_case(tmp_path, name):
     (app / name / "a.js").write_text("x", encoding="utf-8")
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop", name + "/a.js", apps_root=tmp_path)
-
-
-
 
 @pytest.mark.skipif(os.sep != "/",
                     reason="a backslash is a separator here, not a filename")
@@ -199,7 +181,6 @@ def test_a_backslash_in_a_slug_is_refused(tmp_path):
     (sneaky / "a.txt").write_text("x", encoding="utf-8")
     with pytest.raises(CodeAccessError):
         resolve_app_file("shop\sub", "a.txt", apps_root=tmp_path)
-
 
 def test_an_app_directory_that_is_a_symlink_out_of_the_root_is_refused(tmp_path):
     """With the separator guard in place, no slug containing "/" reaches
