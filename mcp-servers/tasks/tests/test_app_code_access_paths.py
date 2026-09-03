@@ -148,3 +148,42 @@ def test_the_caps_are_the_values_the_spec_names():
     assert MAX_FILE_BYTES == 65536
     assert MAX_SEARCH_MATCHES == 50
     assert BINARY_SNIFF_BYTES == 8192
+
+
+@pytest.mark.parametrize("slug", ["shop/node_modules", "shop/.git", "shop\\git"])
+def test_a_slug_cannot_smuggle_a_denied_segment(tmp_path, slug):
+    """The deny loop only sees segments from the path argument, so a
+    slug carrying its own segments would walk straight past it."""
+    app = _app(tmp_path)
+    (app / "node_modules").mkdir()
+    (app / "node_modules" / "secret.js").write_text("x", encoding="utf-8")
+    (app / ".git").mkdir()
+    (app / ".git" / "config").write_text("x", encoding="utf-8")
+    with pytest.raises(CodeAccessError):
+        resolve_app_file(slug, "secret.js", apps_root=tmp_path)
+
+
+def test_a_dot_leading_slug_is_refused(tmp_path):
+    _app(tmp_path)
+    with pytest.raises(CodeAccessError):
+        app_dir(".hidden", apps_root=tmp_path)
+
+
+@pytest.mark.parametrize("name", ["Node_Modules", "DIST", "NODE_MODULES"])
+def test_a_denied_directory_is_refused_whatever_its_case(tmp_path, name):
+    """The credential check below this one folds case. This one must
+    too, or the rule depends on how somebody typed a folder name."""
+    app = _app(tmp_path)
+    (app / name).mkdir()
+    (app / name / "a.js").write_text("x", encoding="utf-8")
+    with pytest.raises(CodeAccessError):
+        resolve_app_file("shop", name + "/a.js", apps_root=tmp_path)
+
+
+def test_app_dir_containment_is_not_a_string_check(tmp_path):
+    """A slug that escapes without containing "..". Proves app_dir's
+    own check has to resolve rather than inspect the argument."""
+    _app(tmp_path)
+    (tmp_path.parent / "outside_app").mkdir(exist_ok=True)
+    with pytest.raises(CodeAccessError):
+        app_dir("shop/../../outside_app", apps_root=tmp_path)

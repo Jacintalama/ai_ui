@@ -51,6 +51,16 @@ def app_dir(slug: str, *, apps_root: Path | None = None) -> Path:
     if not isinstance(slug, str) or not slug.strip():
         raise CodeAccessError("no app was named")
 
+    # A slug is one path segment. Allowing a separator here would let the
+    # slug carry segments that the deny loop in resolve_app_file never
+    # sees, because they are already part of the base by the time it
+    # runs: "shop/node_modules" would read a dependency tree, and
+    # "shop/.git" would read the whole monorepo's history.
+    if "/" in slug or "\\" in slug:
+        raise CodeAccessError("that is not an app on this platform")
+    if slug.startswith("."):
+        raise CodeAccessError("that is not an app on this platform")
+
     root = _root(apps_root).resolve()
     candidate = (root / slug).resolve()
     if candidate != root and root not in candidate.parents:
@@ -82,7 +92,7 @@ def resolve_app_file(slug: str, relative_path: str, *,
     for part in candidate.relative_to(base).parts:
         if part.startswith("."):
             raise CodeAccessError("that file is hidden, so it is not read here")
-        if part in DENIED_SEGMENTS:
+        if part.lower() in DENIED_SEGMENTS:
             raise CodeAccessError("that folder is not read here")
 
     name = candidate.name.lower()
