@@ -164,7 +164,12 @@ def test_a_slug_cannot_smuggle_a_denied_segment(tmp_path, slug):
 
 
 def test_a_dot_leading_slug_is_refused(tmp_path):
+    """The directory exists, so only the leading dot guard can refuse
+    it."""
     _app(tmp_path)
+    hidden = tmp_path / ".hidden"
+    hidden.mkdir()
+    (hidden / "a.txt").write_text("x", encoding="utf-8")
     with pytest.raises(CodeAccessError):
         app_dir(".hidden", apps_root=tmp_path)
 
@@ -180,10 +185,33 @@ def test_a_denied_directory_is_refused_whatever_its_case(tmp_path, name):
         resolve_app_file("shop", name + "/a.js", apps_root=tmp_path)
 
 
-def test_app_dir_containment_is_not_a_string_check(tmp_path):
-    """A slug that escapes without containing "..". Proves app_dir's
-    own check has to resolve rather than inspect the argument."""
+
+
+@pytest.mark.skipif(os.sep != "/",
+                    reason="a backslash is a separator here, not a filename")
+def test_a_backslash_in_a_slug_is_refused(tmp_path):
+    """On the deployment target a directory really can be called
+    "shop\sub". Creating one is what makes this fail when the guard is
+    removed, rather than pass on a path that never existed."""
     _app(tmp_path)
-    (tmp_path.parent / "outside_app").mkdir(exist_ok=True)
+    sneaky = tmp_path / "shop\sub"
+    sneaky.mkdir()
+    (sneaky / "a.txt").write_text("x", encoding="utf-8")
     with pytest.raises(CodeAccessError):
-        app_dir("shop/../../outside_app", apps_root=tmp_path)
+        resolve_app_file("shop\sub", "a.txt", apps_root=tmp_path)
+
+
+def test_an_app_directory_that_is_a_symlink_out_of_the_root_is_refused(tmp_path):
+    """With the separator guard in place, no slug containing "/" reaches
+    app_dir's containment check. A symlinked app directory is the one
+    input that still does."""
+    if not _symlinks_work(tmp_path):
+        pytest.skip("this platform will not create symlinks")
+    root = tmp_path / "apps"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "a.txt").write_text("x", encoding="utf-8")
+    os.symlink(outside, root / "evil")
+    with pytest.raises(CodeAccessError):
+        app_dir("evil", apps_root=root)
