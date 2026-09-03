@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 #: replies, short enough that an abandoned one cannot be applied tomorrow.
 PROPOSAL_TTL_SECONDS = 1800
 
+#: A change description becomes a build agent's instruction, so it is
+#: bounded here rather than in whichever route happens to call this. Far
+#: more than any real request needs, far less than a stored prompt that
+#: could cost somebody an expensive run.
+MAX_DESCRIPTION_CHARS = 4000
+
 
 class ProposalError(Exception):
     """Refused. `reason` is written to be shown to the person asking."""
@@ -31,6 +37,15 @@ class ProposalError(Exception):
 
 
 async def create_proposal(user_email: str, slug: str, description: str) -> str:
+    slug = slug.strip() if isinstance(slug, str) else ""
+    description = description.strip() if isinstance(description, str) else ""
+    if not slug:
+        raise ProposalError("no app was named")
+    if not description:
+        raise ProposalError("there was no change to propose")
+    if len(description) > MAX_DESCRIPTION_CHARS:
+        raise ProposalError("that change description is too long")
+
     token = secrets.token_urlsafe(24)
     async with session() as s:
         await s.execute(
