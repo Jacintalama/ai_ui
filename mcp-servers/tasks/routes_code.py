@@ -70,16 +70,23 @@ class ApplyIn(BaseModel):
 @router.get("/apps")
 async def list_apps(user_email: str,
                     x_internal_secret: str = Header(default="")) -> dict:
-    """The apps this person can see.
-
-    The team bucket is included because the read gate includes it. A list
-    narrower than the gate would hide an app the person can open.
-    """
+    """The apps this person can see."""
     _require_internal(x_internal_secret)
     async with session() as s:
+        # Both halves of the read gate in routes_projects._user_can_see_project:
+        # a membership row, or a build task this person owns. Listing only the
+        # first would hide an app they can open, which happens for real because
+        # the membership grant after a build fails open like every other step
+        # in that pipeline.
         rows = (await s.execute(
-            text("SELECT DISTINCT slug FROM tasks.project_members"
-                 " WHERE user_email IN (:email, :team) ORDER BY slug"),
+            text("SELECT DISTINCT slug FROM ("
+                 "  SELECT slug FROM tasks.project_members"
+                 "   WHERE user_email IN (:email, :team)"
+                 "  UNION"
+                 "  SELECT built_app_slug AS slug FROM tasks.items"
+                 "   WHERE built_app_slug IS NOT NULL"
+                 "     AND assignee_email IN (:email, :team)"
+                 ") AS visible ORDER BY slug"),
             {"email": user_email, "team": TEAM_EMAIL},
         )).all()
     return {"apps": [r[0] for r in rows]}
