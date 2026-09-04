@@ -21,12 +21,14 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field
 
 import agent_activity
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import CurrentUser, current_user
 from owui_token import mint_owui_token
+from routes_agent_turn import _agents_for, _turn_for
 
 logger = logging.getLogger(__name__)
 
@@ -405,3 +407,36 @@ async def templates() -> dict:
 async def list_tools(user: CurrentUser = Depends(current_user)) -> dict:
     """What the agent form may offer the signed-in caller right now."""
     return await tools_for_email(user.email)
+
+
+class SpeakIn(BaseModel):
+    chat_id: str = Field(min_length=1)
+    agent_id: str = Field(min_length=1)
+    messages: list[dict]
+
+
+@router.post("/speak")
+async def speak(body: SpeakIn, user: CurrentUser = Depends(current_user)) -> dict:
+    """Make one of this person's agents answer, for the page that takes
+    turns.
+
+    The page cannot hold the internal secret, so this is the one door it
+    uses. It opens onto _turn_for, which already applies the agent's access
+    level, cleans the speaker labels out of history and records the run;
+    all this route adds is proof of who is asking and the rule that they
+    may run only their own agents. Not /agents/turn, which is internal and
+    must stay so.
+
+    The pin is deliberately not written here. The first_only reply already
+    pinned the last agent in the full list, and a turn for an earlier one
+    must not move it back.
+    """
+    agents = await _agents_for(user.email)
+    agent = next((a for a in agents if a.get("id") == body.agent_id), None)
+    if agent is None:
+        raise HTTPException(status_code=403, detail="That is not one of your agents.")
+    names = [a.get("name") for a in agents if a.get("name")]
+    out = await _turn_for(user.email, agent, body.messages, names)
+    return {"answer": out.get("answer") or "",
+            "notes": [n for n in (out.get("notes") or []) if isinstance(n, str)],
+            "agent": out.get("agent") or {"id": agent["id"], "name": agent.get("name")}}
