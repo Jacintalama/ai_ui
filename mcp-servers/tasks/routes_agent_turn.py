@@ -247,6 +247,13 @@ class ChatIn(BaseModel):
     user_email: str = Field(min_length=1)
     chat_id: str = Field(min_length=1)
     messages: list[dict]
+    #: A caller that has its own way of answering when no agent is involved
+    #: sets this, and gets an empty turn list back instead of IO's answer.
+    #: The Auto (Free) pipe needs it: IO answers for itself THROUGH that
+    #: pipe, so without this flag Auto asking here would recurse into
+    #: itself. With it, Auto asks "is anyone named or awake", renders them
+    #: if so, and otherwise carries on to its free model as before.
+    route_only: bool = False
 
 
 def _pin_key(chat_id: str, user_email: str) -> str:
@@ -371,6 +378,38 @@ IO_DOWN = ("I could not reach the model just now. Try again in a moment.")
 #: cheap, and spending a completion to say "ok" is waste.
 RELEASED = "Back to normal. I will answer from here."
 
+#: Shown when a turn's answer came back empty.
+EMPTY_TURN = "There was nothing to answer."
+
+
+def render_turns(turns) -> str:
+    """The reply as a person reads it: each agent's answer under its name,
+    a blank line between agents, a turn with no agent shown bare.
+
+    One renderer, here, because two pipes now show these turns and the
+    page splits a reply back into per-agent messages by exactly this
+    shape: a line that is the agent's name and a colon, then the answer.
+    A second copy of this in a pipe would drift from the page's parser.
+    """
+    parts = []
+    for turn in turns if isinstance(turns, list) else []:
+        if not isinstance(turn, dict):
+            continue
+        agent = turn.get("agent")
+        agent = agent if isinstance(agent, dict) else None
+        answer = (turn.get("answer") or "").strip()
+        notes = [n for n in (turn.get("notes") or []) if isinstance(n, str)]
+        if notes:
+            joined = "\n".join(notes)
+            answer = (answer + "\n\n" + joined) if answer else joined
+        answer = answer or EMPTY_TURN
+        if agent is None:
+            parts.append(answer)
+        else:
+            name = agent.get("name") or agent.get("id") or "Agent"
+            parts.append("%s:\n%s" % (name, answer))
+    return "\n\n".join(parts)
+
 
 async def _answer_as_io(user_email: str, messages: list[dict]) -> str:
     """IO speaking for itself, on the base model, as this user.
@@ -443,7 +482,8 @@ async def chat(body: ChatIn,
 
     if agent_routing.wants_release(text):
         await _clear_pin(key)
-        return {"turns": [{"agent": None, "answer": RELEASED, "notes": []}]}
+        turns = [{"agent": None, "answer": RELEASED, "notes": []}]
+        return {"turns": turns, "rendered": render_turns(turns)}
 
     agents = await _agents_for(body.user_email)
     named = agent_routing.match_agents(text, agents)
@@ -457,7 +497,7 @@ async def chat(body: ChatIn,
         for agent in named:
             turns.append(await _turn_for(body.user_email, agent, body.messages, names))
         await _write_pin(key, named[-1]["id"])
-        return {"turns": turns}
+        return {"turns": turns, "rendered": render_turns(turns)}
 
     pinned_id = await _read_pin(key)
     agent = next((a for a in agents if a.get("id") == pinned_id), None)
@@ -469,6 +509,12 @@ async def chat(body: ChatIn,
         # to what they actually typed, not silence.
         await _clear_pin(key)
 
+    if agent is None and getattr(body, "route_only", False):
+        # The caller will answer for itself. Saying so with an empty list
+        # rather than an IO answer is what keeps the Auto pipe from asking
+        # IO, which would ask Auto, which would ask here again.
+        return {"turns": [], "rendered": ""}
+
     if agent is None:
         # IO speaking for itself. Done here rather than in the pipe because
         # the pipe holds no Open WebUI credentials, and this service already
@@ -478,11 +524,12 @@ async def chat(body: ChatIn,
         except Exception:                                   # noqa: BLE001
             logger.warning("the base model did not answer", exc_info=True)
             answer = IO_DOWN
-        return {"turns": [{"agent": None, "answer": answer, "notes": []}]}
+        turns = [{"agent": None, "answer": answer, "notes": []}]
+        return {"turns": turns, "rendered": render_turns(turns)}
 
     # A follow up keeps the agent awake. Without this the pin would run out
     # five minutes after the agent was last NAMED, mid conversation.
     names = [a.get("name") for a in agents if a.get("name")]
     turn = await _turn_for(body.user_email, agent, body.messages, names)
     await _write_pin(key, agent["id"])
-    return {"turns": [turn]}
+    return {"turns": [turn], "rendered": render_turns([turn])}

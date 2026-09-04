@@ -130,9 +130,58 @@ class Pipe:
             description="Append a small note of which free model answered.",
         )
         TIMEOUT_SECONDS: int = Field(default=120, description="HTTP timeout.")
+        # Ralph's team is standardising on this model, so the agents have to
+        # answer here too. The tasks service decides who is named or awake;
+        # this pipe only asks, and only answers for itself when nobody is.
+        TASKS_URL: str = Field(
+            default_factory=lambda: os.environ.get("TASKS_URL", "http://tasks:8210"),
+            description="The tasks service, which owns the agents.",
+        )
+        INTERNAL_SECRET: str = Field(
+            default_factory=lambda: os.environ.get("INTERNAL_CALLBACK_SECRET", ""),
+            description="Read from the environment by default.",
+        )
 
     def __init__(self):
         self.valves = self.Valves()
+
+    async def _agents_first(self, body: dict, user_email: str) -> Optional[str]:
+        """The rendered reply of whichever agents were named or awake, or
+        None when nobody was and this pipe should answer as usual.
+
+        route_only is what makes this safe to call from here: IO answers
+        for itself THROUGH this pipe, so without it the service would ask
+        IO, which would ask this pipe, which would ask the service. With
+        it, an unnamed message gets an empty list back and falls through.
+
+        Never raises. The agents are a bonus on top of a working free
+        model, so a service outage costs the agents, never the answer.
+        """
+        if not user_email:
+            return None
+        chat_id = (body.get("chat_id")
+                   or (body.get("metadata") or {}).get("chat_id")
+                   or "web")
+        try:
+            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
+                r = await client.post(
+                    self.valves.TASKS_URL.rstrip("/") + "/agents/chat",
+                    headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
+                    json={"user_email": user_email, "chat_id": chat_id,
+                          "messages": body.get("messages") or [],
+                          "route_only": True})
+                if r.status_code != 200:
+                    return None
+                data = r.json()
+        except Exception:                                   # noqa: BLE001
+            # Never the exception text: an httpx error carries the URL.
+            return None
+        data = data if isinstance(data, dict) else {}
+        turns = data.get("turns")
+        if not isinstance(turns, list) or not turns:
+            return None
+        rendered = data.get("rendered")
+        return rendered if isinstance(rendered, str) and rendered.strip() else None
 
     def pipes(self) -> list[dict]:
         return [{"id": "auto", "name": "Auto (Free)"}]
@@ -180,6 +229,12 @@ class Pipe:
                     "Add it to the environment or this function's valves.")
         if not body.get("messages"):
             return "No message to answer."
+
+        # An agent named or awake in this chat answers instead of a free
+        # model, so "hi mia" reaches Mia here the same as it does on IO.
+        agents = await self._agents_first(body, (__user__ or {}).get("email") or "")
+        if agents is not None:
+            return agents
 
         candidates = self._candidates(category)
         headers = {

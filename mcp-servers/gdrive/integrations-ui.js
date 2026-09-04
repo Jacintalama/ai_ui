@@ -2869,7 +2869,7 @@
   // the tool result panel Open WebUI now renders first, whose own text
   // is never an agent name, and anything quoted deeper inside a reply.
   function aiuiAgentLabelsIn(body) {
-    var result = { labels: [], sawUnknownName: false };
+    var result = { labels: [], sawUnknownName: false, holder: null };
     var seen = {};
     // The body's own children are wrapper divs now, not paragraphs, so a
     // second agent's label sits inside the first wrapper rather than as a
@@ -2884,6 +2884,7 @@
       holder = holder.parentNode;
     }
     if (!holder) holder = body;
+    result.holder = holder;
     var candidates = [body];
     for (var c = 0; c < holder.children.length; c++) candidates.push(holder.children[c]);
 
@@ -2951,30 +2952,29 @@
   }
 
 
-  // ----- One message per agent, visually -----
-  // A pipe returns one reply, so when two agents answer at once Open WebUI
-  // shows one bubble. Ralph asked (2026-09-04) for each agent to read as
-  // its own message. The service cannot split a reply into two, so the
-  // page does the next best thing: each agent's section gets its own name
-  // row, with the same initial-in-a-circle the Agents page uses, and a
-  // divider above every section after the first. The "Name:" text line
-  // that marked the section is replaced by that row, since it would now
-  // say the same thing twice.
+
+  // ----- One message per agent -----
+  // A pipe returns one reply, so when two agents answer Open WebUI shows
+  // one bubble, and the service cannot split it: every event a pipe can
+  // send acts on the current message, there is none that makes a new one.
+  // So the page makes them. The whole message row is cloned once per extra
+  // agent, avatar column and all, each clone keeps only its own agent's
+  // paragraphs, and the header names that agent. What a person sees is
+  // Ada's message, then Mia's message, which is what Ralph asked for on
+  // 2026-09-04. The action bar stays a single element, moved under the
+  // last one, because a cloned button has no handler behind it.
   (function injectAgentSplitStyle() {
     if (document.getElementById('aiui-agent-split')) return;
     var st = document.createElement('style');
     st.id = 'aiui-agent-split';
     st.textContent =
-      '.aiui-agent-row{display:flex;align-items:center;gap:.5rem;margin:0 0 .35rem 0;font-weight:600;font-size:.9375rem;line-height:1.25}' +
-      '.aiui-agent-row + *{margin-top:0 !important}' +
       '.aiui-agent-avatar{display:inline-flex;align-items:center;justify-content:center;' +
-      'width:1.5rem;height:1.5rem;border-radius:9999px;font-size:.7rem;font-weight:700;color:#fff;flex:none}' +
-      '.aiui-agent-section{margin-top:1.1rem;padding-top:.9rem;border-top:1px solid rgba(128,128,128,.25)}';
+      'width:2rem;height:2rem;border-radius:9999px;font-size:.75rem;font-weight:700;color:#fff;flex:none}';
     (document.head || document.documentElement).appendChild(st);
   })();
 
-  // The same palette the Agents page gives an agent's initial, keyed off
-  // the name so an agent is the same colour everywhere it appears.
+  // The palette the Agents page uses for an agent's initial, keyed off the
+  // name so an agent is the same colour everywhere it appears.
   var AIUI_AGENT_COLOURS = ['#16a34a', '#db2777', '#2563eb', '#d97706', '#7c3aed', '#0891b2'];
 
   function aiuiAgentColour(name) {
@@ -2983,36 +2983,125 @@
     return AIUI_AGENT_COLOURS[h % AIUI_AGENT_COLOURS.length];
   }
 
-  function aiuiAgentRow(name) {
-    var row = document.createElement('div');
-    row.className = 'aiui-agent-row';
+  function aiuiAgentAvatar(name) {
     var av = document.createElement('span');
     av.className = 'aiui-agent-avatar';
     av.style.background = aiuiAgentColour(name);
     av.textContent = name.slice(0, 2).toUpperCase();
-    var nm = document.createElement('span');
-    nm.textContent = name;
-    row.appendChild(av);
-    row.appendChild(nm);
-    return row;
+    return av;
   }
 
-  // Turn one multi-agent reply into visually separate messages. Runs once
-  // per reply, after the settle check, so a label that is still streaming
-  // in is never split mid word. Each label's block gets a name row put in
-  // front of it and its "Name:" text removed; every block after the first
-  // also gets the divider. Idempotent through the data attribute.
-  function aiuiSplitIntoAgentMessages(body, labels) {
+  // Replace the model's picture in a message row with the agent's initial.
+  function aiuiSwapAvatar(row, name) {
+    var img = row.querySelector('img[alt="model profile"]') || row.querySelector('img');
+    if (img && img.parentNode) img.parentNode.replaceChild(aiuiAgentAvatar(name), img);
+  }
+
+  // The list of child indexes from `root` down to `node`, so the same
+  // element can be found again inside a deep clone of `root`.
+  function aiuiPathTo(root, node) {
+    var path = [];
+    var n = node;
+    while (n && n !== root) {
+      var p = n.parentNode;
+      if (!p) return null;
+      path.unshift(Array.prototype.indexOf.call(p.childNodes, n));
+      n = p;
+    }
+    return n === root ? path : null;
+  }
+
+  function aiuiFollowPath(root, path) {
+    var n = root;
+    for (var i = 0; i < path.length && n; i++) n = n.childNodes[path[i]];
+    return n || null;
+  }
+
+  // Remove a leading "Name:" line from the first text of a block, in
+  // whichever of the two shapes the renderer produced it.
+  function aiuiStripLabelFromBlock(block) {
+    var t = aiuiFirstTextNode(block);
+    if (!t) return;
+    var full = t.textContent || '';
+    var line = AIUI_AGENT_NAME_LINE_RE.exec(full);
+    if (line) { t.textContent = full.slice(line[0].length); return; }
+    if (AIUI_AGENT_NAME_BARE_RE.test(full)) {
+      var next = t.nextSibling;
+      if (next && next.nodeType === 1 && next.tagName === 'BR') next.parentNode.removeChild(next);
+      t.parentNode.removeChild(t);
+    }
+  }
+
+  // The message container is the element Open WebUI lays out one message
+  // per, found from the row that carries a message id.
+  function aiuiMessageContainer(span) {
+    var row = span.closest ? span.closest('[id^="message-"]') : null;
+    return row && row.parentElement ? row.parentElement : null;
+  }
+
+  function aiuiSplitIntoAgentMessages(body, labels, holder, span) {
     if (body.getAttribute('data-aiui-agent-split') === '1') return;
     body.setAttribute('data-aiui-agent-split', '1');
+
+    var container = aiuiMessageContainer(span);
+    if (!container || !holder || labels.length < 2) return;
+
+    // Where each agent's section starts, as an index into the holder.
+    var starts = [];
     for (var i = 0; i < labels.length; i++) {
-      var label = labels[i];
-      var block = label.block === body ? label.node.parentNode : label.block;
-      if (!block || !block.parentNode) continue;
-      var row = aiuiAgentRow(label.name);
-      block.parentNode.insertBefore(row, block);
-      if (i > 0) row.classList.add('aiui-agent-section');
-      aiuiStripLabel(body, label);
+      var block = labels[i].block === body ? holder.children[0] : labels[i].block;
+      var idx = Array.prototype.indexOf.call(holder.children, block);
+      if (idx < 0) return;   // a shape this code does not understand: leave it alone
+      starts.push(idx);
+    }
+
+    var holderPath = aiuiPathTo(container, holder);
+    var spanPath = aiuiPathTo(container, span);
+    if (!holderPath || !spanPath) return;
+
+    // The action bar is the element after the body inside the content
+    // column. Kept as the one real element, moved to the last message.
+    var actions = body.nextElementSibling;
+    var lastRow = container;
+
+    // Clones first, from the last agent backwards, so inserting each one
+    // directly after the original lands them in speaking order.
+    for (var k = labels.length - 1; k >= 1; k--) {
+      var clone = container.cloneNode(true);
+      var cHolder = aiuiFollowPath(clone, holderPath);
+      var cSpan = aiuiFollowPath(clone, spanPath);
+      if (!cHolder || !cSpan) continue;
+      var from = starts[k];
+      var to = k + 1 < starts.length ? starts[k + 1] : cHolder.children.length;
+      var kids = Array.prototype.slice.call(cHolder.children);
+      for (var j = 0; j < kids.length; j++) {
+        if (j < from || j >= to) cHolder.removeChild(kids[j]);
+      }
+      aiuiStripLabelFromBlock(cHolder.children[0]);
+      cSpan.textContent = labels[k].name;
+      cSpan.setAttribute('data-aiui-agent-header', '1');
+      cSpan.setAttribute('data-aiui-agent-stripped', '1');
+      // A cloned action bar has no handlers behind its buttons.
+      var cBody = aiuiFollowPath(clone, aiuiPathTo(container, body));
+      if (cBody && cBody.nextElementSibling) cBody.parentNode.removeChild(cBody.nextElementSibling);
+      aiuiSwapAvatar(clone, labels[k].name);
+      clone.setAttribute('data-aiui-agent-clone', '1');
+      container.parentNode.insertBefore(clone, container.nextSibling);
+      if (k === labels.length - 1) lastRow = clone;
+    }
+
+    // The original keeps the first agent's section only.
+    var origKids = Array.prototype.slice.call(holder.children);
+    for (var m = origKids.length - 1; m >= starts[1]; m--) holder.removeChild(origKids[m]);
+    aiuiStripLabelFromBlock(holder.children[0]);
+    span.textContent = labels[0].name;
+    aiuiSwapAvatar(container, labels[0].name);
+
+    // One real action bar, under the last message where it reads as
+    // belonging to the reply as a whole.
+    if (actions && lastRow !== container) {
+      var lastBody = aiuiFollowPath(lastRow, aiuiPathTo(container, body));
+      if (lastBody && lastBody.parentNode) lastBody.parentNode.insertBefore(actions, lastBody.nextSibling);
     }
   }
 
@@ -3052,7 +3141,7 @@
     if (names.length === 1) {
       aiuiStripLabel(body, scan.labels[0]);
     } else {
-      aiuiSplitIntoAgentMessages(body, scan.labels);
+      aiuiSplitIntoAgentMessages(body, scan.labels, scan.holder, span);
     }
   }
 

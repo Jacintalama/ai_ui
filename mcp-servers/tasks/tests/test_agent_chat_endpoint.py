@@ -19,6 +19,7 @@ MIA = {"id": "agent-m", "name": "Mia", "meta": {"toolIds": []}}
 def _body(text, chat_id="chat-1", email="owner@example.com"):
     class B:
         user_email = email
+        route_only = False
         messages = [{"role": "user", "content": text}]
     b = B()
     b.chat_id = chat_id
@@ -381,3 +382,31 @@ async def test_an_echoed_label_is_stripped_before_the_real_one_is_added(_wire, m
                         AsyncMock(return_value={"answer": "Mia:\nMia:\nall good", "notes": []}))
     out = await rt.chat(_body("hi mia"), x_internal_secret="s")
     assert out["turns"][0]["answer"] == "all good"
+
+
+async def test_route_only_returns_nothing_when_nobody_is_up(_wire, monkeypatch):
+    """The Auto (Free) pipe answers for itself when no agent is involved,
+    and IO answers for itself THROUGH that pipe. Without this flag Auto
+    asking here would get IO's answer, which asks Auto, which asks here."""
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="IO spoke"))
+    b = _body("what is the weather")
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["turns"] == []
+    assert out["rendered"] == ""
+    rt._answer_as_io.assert_not_awaited()
+
+
+async def test_route_only_still_wakes_a_named_agent(_wire):
+    b = _body("hi mia")
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["turns"][0]["agent"]["name"] == "Mia"
+    assert out["rendered"] == "Mia:\nhi"
+
+
+async def test_every_reply_carries_the_rendered_text(_wire):
+    """Two pipes show these turns. One renderer here, so they cannot
+    drift from each other or from the page that splits replies apart."""
+    out = await rt.chat(_body("hi team"), x_internal_secret="s")
+    assert out["rendered"] == "Ada:\nhi\n\nMia:\nhi"
