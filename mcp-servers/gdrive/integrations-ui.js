@@ -2744,6 +2744,7 @@
   // fetched successfully; it just leaves things as they are.
   var AIUI_AGENT_NAMES_TTL_MS = 120000;
   var aiuiAgentNames = new Set();
+  var aiuiAgentNameById = {};
   var aiuiAgentNamesFetchedAt = 0;
   var aiuiAgentNamesFetching = false;
 
@@ -2776,12 +2777,15 @@
     aiuiFetchAgentNamesPage(1, [], 0, 0)
       .then(function (items) {
         var names = new Set();
+        var byId = {};
         for (var i = 0; i < items.length; i++) {
           if (aiuiIsMintedAgent(items[i]) && items[i].name) {
             names.add(String(items[i].name).trim().toLowerCase());
+            byId[items[i].id] = String(items[i].name).trim();
           }
         }
         aiuiAgentNames = names;
+        aiuiAgentNameById = byId;
         aiuiAgentNamesFetching = false;
         // The refresh itself can be what makes a message match for
         // the first time, an agent created mid conversation. Give the
@@ -2902,11 +2906,6 @@
     return result;
   }
 
-  function aiuiJoinNames(names) {
-    if (names.length < 2) return names[0] || '';
-    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
-  }
-
   // Removes a name line the header has taken over. Two shapes, because
   // the renderer splits "Name:" and the reply differently depending on
   // whether the blank line after the name survived as a break beside it
@@ -2953,156 +2952,264 @@
 
 
 
-  // ----- One message per agent -----
-  // A pipe returns one reply, so when two agents answer Open WebUI shows
-  // one bubble, and the service cannot split it: every event a pipe can
-  // send acts on the current message, there is none that makes a new one.
-  // So the page makes them. The whole message row is cloned once per extra
-  // agent, avatar column and all, each clone keeps only its own agent's
-  // paragraphs, and the header names that agent. What a person sees is
-  // Ada's message, then Mia's message, which is what Ralph asked for on
-  // 2026-09-04. The action bar stays a single element, moved under the
-  // last one, because a cloned button has no handler behind it.
-  (function injectAgentSplitStyle() {
-    if (document.getElementById('aiui-agent-split')) return;
-    var st = document.createElement('style');
-    st.id = 'aiui-agent-split';
-    st.textContent =
-      '.aiui-agent-avatar{display:inline-flex;align-items:center;justify-content:center;' +
-      'width:2rem;height:2rem;border-radius:9999px;font-size:.75rem;font-weight:700;color:#fff;flex:none}';
-    (document.head || document.documentElement).appendChild(st);
-  })();
+  // ===== Agents take turns =====
+  // A pipe returns one reply and Open WebUI shows it as one message, and
+  // no event a pipe can send makes a second one. So when two agents
+  // answer, the pipe shows the first and hides a marker naming everybody
+  // who answers, in order. This code finds that marker on the last reply,
+  // waits until Open WebUI has saved it, asks the service to run the next
+  // agent, writes the answer into the chat's own history as a new message
+  // that is a child of the last one, and navigates away and back so the
+  // chat loads again and shows it. Then the new tail carries the marker
+  // for whoever is next, and the observer calls back in.
+  //
+  // Two facts this rests on, both checked on the live site 2026-09-04: the
+  // chat renders an assistant message whose parent is another assistant
+  // message as its own row; and a real link click is a SvelteKit soft
+  // navigation, where a synthetic popstate is not.
+  //
+  // A pending approval carries no marker at all: the service withholds it
+  // while the first agent waits to be told whether to send. So this finds
+  // nothing and does nothing, with no special case of its own.
+  var aiuiTurnsBusy = {};
 
-  // The palette the Agents page uses for an agent's initial, keyed off the
-  // name so an agent is the same colour everywhere it appears.
-  var AIUI_AGENT_COLOURS = ['#16a34a', '#db2777', '#2563eb', '#d97706', '#7c3aed', '#0891b2'];
-
-  function aiuiAgentColour(name) {
-    var h = 0;
-    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-    return AIUI_AGENT_COLOURS[h % AIUI_AGENT_COLOURS.length];
+  function aiuiChatIdFromUrl() {
+    var m = /\/c\/([0-9a-f-]{36})/.exec(location.pathname);
+    return m ? m[1] : null;
   }
 
-  function aiuiAgentAvatar(name) {
-    var av = document.createElement('span');
-    av.className = 'aiui-agent-avatar';
-    av.style.background = aiuiAgentColour(name);
-    av.textContent = name.slice(0, 2).toUpperCase();
-    return av;
+  // The LAST marker, not the first. The pipes already strip marker shaped
+  // text out of an agent's own words before appending the real one, but if
+  // one ever slipped through, the real marker is the one appended at the
+  // very end.
+  function aiuiParseTurns(content) {
+    var re = /<!--\s*aiui:turns\s+([^\s>]+)\s*-->/g;
+    var m, last = null;
+    while ((m = re.exec(content || '')) !== null) last = m;
+    if (!last) return null;
+    var ids = last[1].split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    return ids.length ? ids : null;
   }
 
-  // Replace the model's picture in a message row with the agent's initial.
-  function aiuiSwapAvatar(row, name) {
-    var img = row.querySelector('img[alt="model profile"]') || row.querySelector('img');
-    if (img && img.parentNode) img.parentNode.replaceChild(aiuiAgentAvatar(name), img);
+  function aiuiStripTurnsMarker(content) {
+    return String(content || '').replace(/<!--\s*aiui:turns\b[^>]*-->/g, '').replace(/\s+$/, '');
   }
 
-  // The list of child indexes from `root` down to `node`, so the same
-  // element can be found again inside a deep clone of `root`.
-  function aiuiPathTo(root, node) {
-    var path = [];
-    var n = node;
-    while (n && n !== root) {
-      var p = n.parentNode;
-      if (!p) return null;
-      path.unshift(Array.prototype.indexOf.call(p.childNodes, n));
-      n = p;
+  // The label the pipe put at the top, "Ada:" on its own line. Text, not
+  // DOM: this runs on the stored content.
+  function aiuiStripLeadingLabelText(content) {
+    var m = /^\s*[A-Za-z0-9 -]{1,40}:[ \t]*\r?\n/.exec(content || '');
+    return m ? content.slice(m[0].length) : content;
+  }
+
+  // The messages on the current branch, root first. The history is a tree
+  // and currentId names the tail, so walk parents and reverse.
+  function aiuiChainFromHistory(history) {
+    var msgs = history && history.messages ? history.messages : {};
+    var id = history ? history.currentId : null;
+    var chain = [];
+    for (var guard = 0; id && msgs[id] && guard < 500; guard++) {
+      chain.unshift(msgs[id]);
+      id = msgs[id].parentId;
     }
-    return n === root ? path : null;
+    return chain;
   }
 
-  function aiuiFollowPath(root, path) {
-    var n = root;
-    for (var i = 0; i < path.length && n; i++) n = n.childNodes[path[i]];
-    return n || null;
+  function aiuiUuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+    });
   }
 
-  // Remove a leading "Name:" line from the first text of a block, in
-  // whichever of the two shapes the renderer produced it.
-  function aiuiStripLabelFromBlock(block) {
-    var t = aiuiFirstTextNode(block);
-    if (!t) return;
-    var full = t.textContent || '';
-    var line = AIUI_AGENT_NAME_LINE_RE.exec(full);
-    if (line) { t.textContent = full.slice(line[0].length); return; }
-    if (AIUI_AGENT_NAME_BARE_RE.test(full)) {
-      var next = t.nextSibling;
-      if (next && next.nodeType === 1 && next.tagName === 'BR') next.parentNode.removeChild(next);
-      t.parentNode.removeChild(t);
+  function aiuiTypingLine(text) {
+    var el = document.getElementById('aiui-typing');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'aiui-typing';
+      el.style.cssText = 'padding:.25rem 0 .75rem 3.75rem;opacity:.65;font-size:.9rem;';
+      var rows = document.querySelectorAll('[id^="message-"]');
+      var last = rows.length ? rows[rows.length - 1] : null;
+      var slot = last && last.parentElement ? last.parentElement : null;
+      if (slot && slot.parentElement) slot.parentElement.insertBefore(el, slot.nextSibling);
+      else document.body.appendChild(el);
     }
+    el.textContent = text;
   }
 
-  // The message container is the element Open WebUI lays out one message
-  // per, found from the row that carries a message id.
-  function aiuiMessageContainer(span) {
-    var row = span.closest ? span.closest('[id^="message-"]') : null;
-    return row && row.parentElement ? row.parentElement : null;
+  function aiuiClearTypingLine() {
+    var el = document.getElementById('aiui-typing');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
-  function aiuiSplitIntoAgentMessages(body, labels, holder, span) {
-    if (body.getAttribute('data-aiui-agent-split') === '1') return;
-    body.setAttribute('data-aiui-agent-split', '1');
-
-    var container = aiuiMessageContainer(span);
-    if (!container || !holder || labels.length < 2) return;
-
-    // Where each agent's section starts, as an index into the holder.
-    var starts = [];
-    for (var i = 0; i < labels.length; i++) {
-      var block = labels[i].block === body ? holder.children[0] : labels[i].block;
-      var idx = Array.prototype.indexOf.call(holder.children, block);
-      if (idx < 0) return;   // a shape this code does not understand: leave it alone
-      starts.push(idx);
+  // SvelteKit intercepts a same-origin link click as a soft navigation.
+  // Away to a fresh chat and back makes the chat component see its id
+  // change and load again: about a second, no flash. If the rows have not
+  // grown in five seconds the message is still saved, so reload the hard
+  // way and accept the flash.
+  function aiuiSoftReload(chatId) {
+    function go(href) {
+      var a = document.createElement('a');
+      a.href = href;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
     }
+    var before = document.querySelectorAll('[id^="message-"]').length;
+    go('/');
+    setTimeout(function () { go('/c/' + chatId); }, 400);
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      if (document.querySelectorAll('[id^="message-"]').length > before) { clearInterval(timer); return; }
+      if (tries >= 20) { clearInterval(timer); location.reload(); }
+    }, 250);
+  }
 
-    var holderPath = aiuiPathTo(container, holder);
-    var spanPath = aiuiPathTo(container, span);
-    if (!holderPath || !spanPath) return;
+  function aiuiFetchChat(chatId) {
+    return fetch('/api/v1/chats/' + chatId, { headers: aiuiAuthHeaders() })
+      .then(function (r) {
+        if (!r.ok) throw new Error('chat fetch ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (!data || !data.chat || !data.chat.history) throw new Error('chat shape');
+        return data;
+      });
+  }
 
-    // The action bar is the element after the body inside the content
-    // column. Kept as the one real element, moved to the last message.
-    var actions = body.nextElementSibling;
-    var lastRow = container;
+  function aiuiSaveChat(chatId, chat) {
+    return fetch('/api/v1/chats/' + chatId, {
+      method: 'POST', headers: aiuiAuthHeaders(), body: JSON.stringify({ chat: chat })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('chat save ' + r.status);
+    });
+  }
 
-    // Clones first, from the last agent backwards, so inserting each one
-    // directly after the original lands them in speaking order.
-    for (var k = labels.length - 1; k >= 1; k--) {
-      var clone = container.cloneNode(true);
-      var cHolder = aiuiFollowPath(clone, holderPath);
-      var cSpan = aiuiFollowPath(clone, spanPath);
-      if (!cHolder || !cSpan) continue;
-      var from = starts[k];
-      var to = k + 1 < starts.length ? starts[k + 1] : cHolder.children.length;
-      var kids = Array.prototype.slice.call(cHolder.children);
-      for (var j = 0; j < kids.length; j++) {
-        if (j < from || j >= to) cHolder.removeChild(kids[j]);
+  // Open WebUI saves the whole chat after a reply completes. Anything
+  // written before that save is replaced by it. So wait until the stored
+  // tail is the reply that carries the marker.
+  //
+  // The marker is read from the STORED content, never from the rendered
+  // page: DOMPurify may strip an HTML comment out of what gets rendered.
+  function aiuiWaitForSavedMarker(chatId) {
+    var attempt = 0;
+    function look() {
+      return aiuiFetchChat(chatId).then(function (data) {
+        var chain = aiuiChainFromHistory(data.chat.history);
+        var tail = chain[chain.length - 1];
+        if (tail && tail.role === 'assistant' && aiuiParseTurns(tail.content)) return data;
+        if (++attempt >= 12) return null;
+        return new Promise(function (r) { setTimeout(r, 500); }).then(look);
+      });
+    }
+    return look();
+  }
+
+  function aiuiSpeak(chatId, agentId, chain) {
+    var messages = chain.map(function (m) {
+      return { role: m.role, content: aiuiStripTurnsMarker(m.content) };
+    });
+    return fetch('/api/tasks/agents/speak', {
+      method: 'POST', headers: aiuiAuthHeaders(),
+      body: JSON.stringify({ chat_id: chatId, agent_id: agentId, messages: messages })
+    }).then(function (r) {
+      if (r.status === 403) return { refused: true };
+      if (!r.ok) throw new Error('speak ' + r.status);
+      return r.json();
+    });
+  }
+
+  function aiuiTakeTurns(chatId) {
+    if (!chatId || aiuiTurnsBusy[chatId]) return;
+    aiuiTurnsBusy[chatId] = true;
+
+    var chat, history, chain, tail, turns, spoke, next, rest, nextName;
+    aiuiWaitForSavedMarker(chatId).then(function (data) {
+      if (!data) return null;
+      chat = data.chat;
+      history = chat.history;
+      chain = aiuiChainFromHistory(history);
+      tail = chain[chain.length - 1];
+      turns = aiuiParseTurns(tail.content);
+
+      if (!turns || turns.length < 2) {
+        // A marker with nobody left to speak. Clean it off and stop.
+        tail.content = aiuiStripTurnsMarker(tail.content);
+        return aiuiSaveChat(chatId, chat).then(function () { return null; });
       }
-      aiuiStripLabelFromBlock(cHolder.children[0]);
-      cSpan.textContent = labels[k].name;
-      cSpan.setAttribute('data-aiui-agent-header', '1');
-      cSpan.setAttribute('data-aiui-agent-stripped', '1');
-      // A cloned action bar has no handlers behind its buttons.
-      var cBody = aiuiFollowPath(clone, aiuiPathTo(container, body));
-      if (cBody && cBody.nextElementSibling) cBody.parentNode.removeChild(cBody.nextElementSibling);
-      aiuiSwapAvatar(clone, labels[k].name);
-      clone.setAttribute('data-aiui-agent-clone', '1');
-      container.parentNode.insertBefore(clone, container.nextSibling);
-      if (k === labels.length - 1) lastRow = clone;
-    }
+      spoke = turns[0];
+      next = turns[1];
+      rest = turns.slice(2);
+      nextName = aiuiAgentNameById[next] || next;
 
-    // The original keeps the first agent's section only.
-    var origKids = Array.prototype.slice.call(holder.children);
-    for (var m = origKids.length - 1; m >= starts[1]; m--) holder.removeChild(origKids[m]);
-    aiuiStripLabelFromBlock(holder.children[0]);
-    span.textContent = labels[0].name;
-    aiuiSwapAvatar(container, labels[0].name);
+      // Claim the tail for its author, if the pipe wrote it. A message the
+      // page wrote already carries its agent as its model.
+      tail.content = aiuiStripTurnsMarker(tail.content);
+      if (tail.model !== spoke) {
+        tail.model = spoke;
+        tail.modelName = aiuiAgentNameById[spoke] || spoke;
+        tail.content = aiuiStripLeadingLabelText(tail.content);
+      }
 
-    // One real action bar, under the last message where it reads as
-    // belonging to the reply as a whole.
-    if (actions && lastRow !== container) {
-      var lastBody = aiuiFollowPath(lastRow, aiuiPathTo(container, body));
-      if (lastBody && lastBody.parentNode) lastBody.parentNode.insertBefore(actions, lastBody.nextSibling);
-    }
+      aiuiTypingLine(nextName + ' is typing');
+      return aiuiSpeak(chatId, next, chain).then(function (out) {
+        return { out: out };
+      }, function () {
+        // Marker stays on the tail, so a reload can retry.
+        aiuiTypingLine(nextName + ' did not answer');
+        return null;
+      });
+    }).then(function (step) {
+      if (!step) return;
+      var out = step.out;
+
+      if (out.refused) {
+        // Not this person's agent any more. Drop it, keep the rest.
+        if (rest.length) tail.content += '\n\n<!-- aiui:turns ' + [spoke].concat(rest).join(',') + ' -->';
+        aiuiClearTypingLine();
+        return aiuiSaveChat(chatId, chat).then(function () {
+          if (rest.length) { aiuiTurnsBusy[chatId] = false; aiuiTakeTurns(chatId); }
+        });
+      }
+
+      var answer = String(out.answer || '').trim();
+      var notes = (out.notes || []).filter(function (n) { return typeof n === 'string'; });
+      if (notes.length) answer = answer ? answer + '\n\n' + notes.join('\n') : notes.join('\n');
+      if (!answer) answer = 'There was nothing to answer.';
+      if (rest.length) answer += '\n\n<!-- aiui:turns ' + [next].concat(rest).join(',') + ' -->';
+
+      var newId = aiuiUuid();
+      history.messages[newId] = {
+        id: newId, parentId: tail.id, childrenIds: [], role: 'assistant',
+        content: answer, model: next, modelName: nextName, modelIdx: 0,
+        done: true, timestamp: Math.floor(Date.now() / 1000)
+      };
+      tail.childrenIds = (tail.childrenIds || []).concat([newId]);
+      history.currentId = newId;
+
+      return aiuiSaveChat(chatId, chat).then(function () {
+        aiuiClearTypingLine();
+        aiuiSoftReload(chatId);
+      }, function () {
+        aiuiTypingLine('could not add ' + nextName + "'s reply");
+        console.warn('[AIUI turns] reply not saved for', next, ':', answer);
+      });
+    }).catch(function (e) {
+      console.warn('[AIUI turns]', e && e.message ? e.message : e);
+    }).then(function () {
+      aiuiTurnsBusy[chatId] = false;
+    });
+  }
+
+  // Is this header span the last reply on the page? Only the tail can carry
+  // a live marker, and a reloaded chat with twenty replies must not fetch
+  // the chat twenty times.
+  function aiuiIsLastReply(span) {
+    var spans = document.querySelectorAll('#response-message-model-name');
+    return spans.length > 0 && spans[spans.length - 1] === span;
   }
 
   function aiuiRewriteAgentHeader(span) {
@@ -3121,7 +3228,7 @@
 
     var names = [];
     for (var i = 0; i < scan.labels.length; i++) names.push(scan.labels[i].name);
-    var joined = aiuiJoinNames(names);
+    var joined = names[0];
     if (span.textContent !== joined) span.textContent = joined;
     span.setAttribute('data-aiui-agent-header', '1');
 
@@ -3133,16 +3240,13 @@
       return;
     }
 
-    // One agent spoke, so the label below now repeats the header and
-    // goes. With two or more, each agent becomes its own visual message
-    // with a name row of its own, and the raw "Name:" lines go with it.
+    // One agent per reply now, so the label below always repeats the
+    // header and goes. If this is the last reply, the page also checks
+    // the stored chat for a marker and takes the remaining turns.
     if (span.getAttribute('data-aiui-agent-stripped') === '1') return;
     span.setAttribute('data-aiui-agent-stripped', '1');
-    if (names.length === 1) {
-      aiuiStripLabel(body, scan.labels[0]);
-    } else {
-      aiuiSplitIntoAgentMessages(body, scan.labels, scan.holder, span);
-    }
+    aiuiStripLabel(body, scan.labels[0]);
+    if (aiuiIsLastReply(span)) aiuiTakeTurns(aiuiChatIdFromUrl());
   }
 
   function aiuiScanAgentNameHeaders() {

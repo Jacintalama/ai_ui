@@ -197,28 +197,20 @@ def test_every_rewrite_is_reached_through_the_known_agent_check():
             "the header is written from something other than the collected "
             "names")
 
-    for name in ("aiuiAgentLabelsIn", "aiuiStripLabel", "aiuiJoinNames"):
+    for name in ("aiuiAgentLabelsIn", "aiuiStripLabel"):
         assert "span.textContent =" not in _js_function(section, name), (
             name + " writes the header outside the gated path")
 
 
-def test_two_agents_in_one_reply_are_both_named():
-    """One request can wake more than one agent, and their answers come back
-    in a single bubble. The header has to name both, and the labels in the
-    body have to stay, because they are the only thing saying which answer
-    belongs to whom."""
+def test_exactly_one_label_is_ever_processed_per_reply():
+    """A pipe reply holds one agent now, so the header names one agent
+    and the single label below it is stripped. The old two-agent path,
+    where labels stayed to say who was who, is gone with the DOM split."""
     section = _agent_header_section(_js())
-
-    joiner = _js_function(section, "aiuiJoinNames")
-    assert "' and '" in joiner or '" and "' in joiner, (
-        "no way to render more than one name")
-
     rewrite = _js_function(section, "aiuiRewriteAgentHeader")
-    single = rewrite.find("names.length === 1")
-    strip = rewrite.find("aiuiStripLabel(")
-    assert single != -1, "the label is stripped without checking how many "
-    assert single < strip, (
-        "a label is removed even when two agents shared the reply")
+    assert "names[0]" in rewrite
+    assert "aiuiJoinNames" not in section
+    assert "aiuiStripLabel(body, scan.labels[0])" in rewrite
 
 
 def test_a_label_is_found_past_the_tool_result_panel():
@@ -316,3 +308,46 @@ def test_no_dashes_in_the_new_copy():
     # assertion cannot be defeated by accidentally typing the very
     # character it is checking for.
     assert chr(0x2014) not in _js() and chr(0x2013) not in _js()
+
+
+def test_the_page_takes_turns_from_the_marker():
+    """Every further agent's reply is fetched by the page and written into
+    the chat as a real message. That code must read the marker, wait for
+    the save, call the speak route, write through the chat API, and
+    soft navigate. Missing any one of those is a broken feature."""
+    section = _agent_header_section(_js())
+    assert "aiui:turns" in section
+    assert "function aiuiTakeTurns(" in section
+    assert "/api/tasks/agents/speak" in section
+    assert "'/api/v1/chats/' + chatId" in section
+    assert "aiuiWaitForSavedMarker" in section
+    assert "aiuiSoftReload" in section
+
+
+def test_the_page_never_writes_before_the_reply_is_saved():
+    """Open WebUI saves the whole chat after a reply. Writing before that
+    save would have the new message erased by it."""
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    wait = body.find("aiuiWaitForSavedMarker(")
+    save = body.find("aiuiSaveChat(")
+    assert wait != -1 and save != -1
+    assert wait < save, "the chat is written before the wait for the save"
+
+
+def test_a_new_message_is_a_child_of_the_tail_with_the_agent_as_its_model():
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "parentId: tail.id" in body
+    assert "model: next" in body
+    assert "history.currentId = newId" in body
+
+
+def test_the_dom_clone_split_is_gone():
+    """A pipe reply now holds one agent, so the code that cloned rows for
+    two can never run. Leaving it would be a second rendering path for a
+    case that no longer exists."""
+    section = _agent_header_section(_js())
+    assert "aiuiSplitIntoAgentMessages" not in section
+    assert "data-aiui-agent-clone" not in section
+    assert "aiuiSwapAvatar" not in section
