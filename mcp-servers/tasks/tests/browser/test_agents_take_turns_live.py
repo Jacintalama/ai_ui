@@ -108,17 +108,25 @@ async def test_hi_team_becomes_two_messages_one_after_another():
                 msgs = stored["history"]["messages"].values()
             assistants = [m for m in msgs if m["role"] == "assistant"]
 
-            # Agent ids are minted per user as agent-<slug>-<4 hex>, so they
-            # cannot be hardcoded; what must hold is that the two stored
-            # replies are attributed to the two agents whose names the
-            # headers showed, in that order. The old fixture asserted the ids
-            # of the Scout and Triage templates, which no longer exist, while
-            # asserting the headers of the Ada and Mia ones that replaced
-            # them, so it could never have passed.
+            # An agent's id is minted from the TEMPLATE it was made from and a
+            # counter, not from the name its owner sees: the live pair are
+            # agent-research-assistant-0001 named Ada and agent-inbox-triage-0002
+            # named Mia. So an id prefix says nothing, and hardcoding either the
+            # id or the agents a person happens to own would make this a fixture
+            # check. What must hold is that the two stored replies are
+            # attributed, in order, to the two agents whose names were shown.
             models = [m["model"] for m in assistants][:2]
             assert len(models) == 2, models
-            assert models[0].startswith("agent-ada-"), models
-            assert models[1].startswith("agent-mia-"), models
+            assert models[0] != models[1], models
+            async with httpx.AsyncClient(timeout=60) as c:
+                r = await c.get("http://open-webui:8080/api/models",
+                                headers={"Authorization": "Bearer " + token})
+                listed = r.json()
+            listed = listed.get("data", listed) if isinstance(listed, dict) else listed
+            name_of = {m.get("id"): (m.get("name") or "") for m in listed}
+            assert [name_of.get(m) for m in models] == ["Ada", "Mia"], (
+                "stored replies are not attributed to the agents whose names "
+                "were shown: %r" % ([(m, name_of.get(m)) for m in models],))
 
             # The page writes {history} and nothing else. Posting the whole
             # fetched chat back would replace the title Open WebUI generated
