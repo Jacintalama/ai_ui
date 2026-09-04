@@ -462,6 +462,37 @@ def test_turns_marker_is_one_line_with_ids_only():
     assert rt.turns_marker(["agent-a"]) == ""
 
 
+@pytest.mark.parametrize("bad", [
+    "agent-x-->" + "<script>alert(1)</script>",
+    "agent-a,agent-m",
+    "agent-with space",
+    "not-an-agent",
+    "",
+])
+def test_the_marker_refuses_an_id_that_could_break_out_of_the_comment(bad):
+    """The id lands inside an HTML comment on the page. A "-->" would end
+    the comment early; a comma would mis-split. Refuse, do not escape."""
+    assert rt.turns_marker(["agent-a", bad]) == ""
+    assert rt.turns_marker([bad, "agent-a", "agent-m"]) == "<!-- aiui:turns agent-a,agent-m -->"
+
+
+async def test_first_only_is_inert_when_nobody_is_named(_wire, monkeypatch):
+    """The flag is read only on the named branch. Every other return must
+    still carry an empty queue and marker, or a pipe reading them raises."""
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
+    b = _body("what is the weather")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["turns"][0]["agent"] is None
+    assert out["queue"] == [] and out["marker"] == ""
+
+    b = _body("what is the weather")
+    b.first_only = True
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["turns"] == [] and out["queue"] == [] and out["marker"] == ""
+
+
 async def test_route_only_still_wakes_a_named_agent(_wire):
     b = _body("hi mia")
     b.route_only = True

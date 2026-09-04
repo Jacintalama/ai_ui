@@ -16,6 +16,7 @@ suggestion.
 """
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException
@@ -49,6 +50,10 @@ PENDING_CONTENT_CHARS = 2000
 #: as its own status so the card does not claim the agent is awake for the
 #: next 45 minutes waiting for a reply that may never come.
 STATUS_WAITING = "waiting"
+
+#: The shape of an agent id this service mints, and the only shape the
+#: turn marker will carry. See turns_marker.
+_MARKER_ID_RE = re.compile(r"agent-[A-Za-z0-9_-]+")
 
 
 class TurnIn(BaseModel):
@@ -427,7 +432,14 @@ def turns_marker(ids) -> str:
     survives the round trip through the chat's own storage, which is what
     lets the page find it again after a reload.
     """
-    ids = [i for i in (ids if isinstance(ids, list) else []) if isinstance(i, str) and i]
+    # Only ids of the shape this service mints. A model id in Open WebUI is
+    # free text set by whoever created the model, and this string lands
+    # inside an HTML comment: "-->" in an id would end the comment early
+    # and put the rest into the page as markup, and a comma would mis-split
+    # on the page's parse. Refusing the id is safer than escaping it, since
+    # a refused agent still answered; it just does not get a turn here.
+    ids = [i for i in (ids if isinstance(ids, list) else [])
+           if isinstance(i, str) and _MARKER_ID_RE.fullmatch(i)]
     if len(ids) < 2:
         return ""
     return "<!-- aiui:turns %s -->" % ",".join(ids)
