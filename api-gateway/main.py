@@ -283,6 +283,30 @@ def healthz():
 # Proxy Helper
 # =============================================================================
 
+#: An agent turn runs tools and can legitimately take minutes: the pipe that
+#: calls the same code allows 420s (io_gateway_pipe.TIMEOUT_SECONDS) and the
+#: turn loop budgets three tool rounds of 60s each. A flat 30s read here
+#: returned 502 to the page while tasks kept running the turn to completion,
+#: so the agent's write tools fired and the page was told they had not: the
+#: person reloads, the marker is still there, and the mail goes out twice.
+#: Only the tasks upstream gets the long read. Every other backend keeps the
+#: short one, because a slow Open WebUI or MCP call is a fault, not a
+#: feature, and raising it for everything would turn one stuck backend into
+#: a pile of held-open gateway connections.
+TASKS_READ_TIMEOUT_SECONDS = 420.0
+DEFAULT_READ_TIMEOUT_SECONDS = 30.0
+
+
+def timeout_for(backend_url: str) -> httpx.Timeout:
+    """Per-upstream timeouts. Connect stays short everywhere: a backend that
+    will not accept a socket is down, however long its work would take.
+    """
+    tasks_url = os.getenv("TASKS_URL", "http://tasks:8210")
+    read = (TASKS_READ_TIMEOUT_SECONDS if backend_url == tasks_url
+            else DEFAULT_READ_TIMEOUT_SECONDS)
+    return httpx.Timeout(connect=10.0, read=read, write=30.0, pool=30.0)
+
+
 async def forward_request(request: Request, backend_url: str, backend_path: str, extra_headers: dict) -> Response:
     """Forward request to backend service."""
     url = f"{backend_url}{backend_path}"
@@ -314,7 +338,7 @@ async def forward_request(request: Request, backend_url: str, backend_path: str,
 
     logger.debug(f"Forwarding {request.method} -> {url}")
 
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=timeout_for(backend_url), follow_redirects=False) as client:
         response = await client.request(
             method=request.method,
             url=url,
