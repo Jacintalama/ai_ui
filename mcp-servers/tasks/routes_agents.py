@@ -21,7 +21,7 @@ import uuid
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import agent_activity
 from agent_runner import _owui_user_id_for
@@ -32,7 +32,20 @@ from routes_agent_turn import _agents_for, _turn_for
 
 logger = logging.getLogger(__name__)
 
+# Mounted twice by main.py: at /api/tasks/agents for the web, where
+# api-gateway strips any client-supplied identity header before
+# forwarding, and bare at /agents for operators on the backend network.
+# current_user trusts X-User-Email as given, so the bare mount is safe
+# only while Caddy and api-gateway keep routing /agents/* AWAY from this
+# service. Neither has a rule for it today. Anyone adding one must add a
+# signed-identity check here first.
 router = APIRouter(prefix="/agents")
+
+#: A chat can be long, but a turn re-posts the whole conversation on
+#: every tool iteration, so a bound here is a bound on that too. Both
+#: are far above any real chat and far below anything that would hurt.
+SPEAK_MAX_MESSAGES = 200
+SPEAK_MAX_CONTENT_CHARS = 32000
 
 #: Long enough to create two models well within one request, short enough
 #: that a leaked value would not matter for long. Never logged or stored.
@@ -412,7 +425,16 @@ async def list_tools(user: CurrentUser = Depends(current_user)) -> dict:
 class SpeakIn(BaseModel):
     chat_id: str = Field(min_length=1)
     agent_id: str = Field(min_length=1)
-    messages: list[dict]
+    messages: list[dict] = Field(max_length=SPEAK_MAX_MESSAGES)
+
+    @field_validator("messages")
+    @classmethod
+    def _content_is_bounded(cls, messages):
+        for m in messages:
+            content = m.get("content") if isinstance(m, dict) else None
+            if isinstance(content, str) and len(content) > SPEAK_MAX_CONTENT_CHARS:
+                raise ValueError("a message is too long")
+        return messages
 
 
 @router.post("/speak")

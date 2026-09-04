@@ -84,3 +84,20 @@ async def test_no_token_reaches_nothing(monkeypatch):
 async def test_a_malformed_request_is_a_422_not_a_500(client, bad):
     r = await client.post("/api/tasks/agents/speak", json=bad)
     assert r.status_code == 422
+
+
+async def test_an_oversized_history_is_refused_before_any_agent_runs(client):
+    """The first browser-reachable path into a turn. The loop re-posts
+    the whole conversation each iteration, so an unbounded history is
+    an unbounded bill and an unbounded memory footprint."""
+    too_many = {**BODY, "messages": [{"role": "user", "content": "x"}] * 201}
+    r = await client.post("/api/tasks/agents/speak", json=too_many)
+    assert r.status_code == 422
+    too_long = {**BODY, "messages": [{"role": "user", "content": "x" * 32001}]}
+    r = await client.post("/api/tasks/agents/speak", json=too_long)
+    assert r.status_code == 422
+    routes_agents._turn_for.assert_not_awaited()
+    # And exactly at the bound is fine.
+    at_bound = {**BODY, "messages": [{"role": "user", "content": "x" * 32000}] * 200}
+    r = await client.post("/api/tasks/agents/speak", json=at_bound)
+    assert r.status_code == 200
