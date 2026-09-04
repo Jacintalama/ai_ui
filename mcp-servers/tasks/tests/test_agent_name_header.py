@@ -369,6 +369,17 @@ def test_turn_taking_does_not_depend_on_a_label():
     scan = _js_function(section, "aiuiScanAgentNameHeaders")
     assert "aiuiTakeTurns(" not in rewrite
     assert "aiuiMaybeTakeTurns(" in scan
+    # The empty placeholder is not a reply, and the latch belongs to the
+    # RESULT of the turn, never to the attempt.
+    maybe = _js_function(section, "aiuiMaybeTakeTurns")
+    assert "if (sig === '0') return;" in maybe
+    then = maybe.find(".then(")
+    latch = maybe.find("data-aiui-turns-checked', sig")
+    call = maybe.find("aiuiTakeTurns(")
+    assert then != -1 and latch != -1, "the latch is not set from a callback"
+    assert call < then < latch, (
+        "the latch is set outside the promise callback, so a turn that never "
+        "ran would still latch shut")
 
 
 def test_the_write_is_guarded_against_a_moved_chat():
@@ -377,3 +388,20 @@ def test_the_write_is_guarded_against_a_moved_chat():
     assert "ftail.id !== tail.id" in body
     assert "m.model === next" in body
     assert "{ history: fh }" in body
+
+
+def test_the_turns_latch_waits_for_a_real_reply():
+    """The placeholder Open WebUI renders before a reply arrives is empty
+    and stable, so a settle check that accepted it would fire before
+    content, poll against nothing, and latch shut for good. The latch
+    is keyed to the body length and set only after a done tail was
+    examined, so a reply that finishes later is looked at again."""
+    section = _agent_header_section(_js())
+    maybe = _js_function(section, "aiuiMaybeTakeTurns")
+    assert "if (sig === '0') return;" in maybe
+    latch = maybe.find("data-aiui-turns-checked', sig")
+    call = maybe.find("aiuiTakeTurns(")
+    assert latch != -1 and call != -1 and call < latch, (
+        "the latch is set before the turn is taken")
+    wait = _js_function(section, "aiuiWaitForSavedMarker")
+    assert "tail.role !== 'assistant'" in wait

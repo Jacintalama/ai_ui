@@ -3111,20 +3111,30 @@
   // The backend upserts a finished reply's content and done:true together
   // before it tells the frontend the reply is done, so done is the signal
   // that the stored copy is final. Stopping on done rather than on a marker
-  // means an ordinary single-agent reply costs ONE GET instead of twelve,
-  // and a long streamed reply, which is not finished when the observer
-  // first sees it, is still waited out for up to sixty seconds.
+  // means an ordinary single-agent reply costs ONE GET, and a long streamed
+  // reply, which is not finished when the observer first sees it, is still
+  // waited out for up to ninety seconds at one look a second.
+  //
+  // Resolves { examined, data }. `examined` says a done assistant tail was
+  // actually read, which is what lets the caller stop asking; `data` is the
+  // chat only when that tail carries a marker. The two are separate because
+  // "finished, nothing to do" and "never got to see it" have to be told
+  // apart: latching on the second would lose the round for good.
   function aiuiWaitForSavedMarker(chatId) {
     var attempt = 0;
     function look() {
       return aiuiFetchChat(chatId).then(function (data) {
         var chain = aiuiChainFromHistory(data.chat.history);
         var tail = chain[chain.length - 1];
-        if (tail && tail.role === 'assistant' && tail.done === true) {
-          return aiuiParseTurns(tail.content) ? data : null;
+        // A tail that is not an assistant message has nothing to examine:
+        // the last thing in the chat is the person's own message. That is
+        // one GET, not ninety.
+        if (!tail || tail.role !== 'assistant') return { examined: false, data: null };
+        if (tail.done === true) {
+          return { examined: true, data: aiuiParseTurns(tail.content) ? data : null };
         }
-        if (++attempt >= 120) return null;
-        return new Promise(function (r) { setTimeout(r, 500); }).then(look);
+        if (++attempt >= 90) return { examined: false, data: null };
+        return new Promise(function (r) { setTimeout(r, 1000); }).then(look);
       });
     }
     return look();
@@ -3149,12 +3159,20 @@
     });
   }
 
+  // Resolves true when a done assistant tail was actually examined, marker
+  // or not, and including the abandoned and refused paths; false when the
+  // poll ran out, the chat had nothing to look at, or a turn was already
+  // running. The caller latches only on true, so a reply that finishes
+  // after the poll gave up is still looked at again later.
   function aiuiTakeTurns(chatId) {
-    if (!chatId || aiuiTurnsBusy[chatId]) return;
+    if (!chatId || aiuiTurnsBusy[chatId]) return Promise.resolve(false);
     aiuiTurnsBusy[chatId] = true;
 
+    var examined = false;
     var chat, history, chain, tail, turns, spoke, next, rest, nextName;
-    aiuiWaitForSavedMarker(chatId).then(function (data) {
+    return aiuiWaitForSavedMarker(chatId).then(function (outcome) {
+      examined = outcome.examined;
+      var data = outcome.data;
       if (!data) return null;
       chat = data.chat;
       history = chat.history;
@@ -3247,6 +3265,7 @@
       console.warn('[AIUI turns]', e && e.message ? e.message : e);
     }).then(function () {
       aiuiTurnsBusy[chatId] = false;
+      return examined;
     });
   }
 
@@ -3294,17 +3313,32 @@
   // Once per reply, once it has stopped changing. The settle check is the
   // same shape the header rewrite uses, kept separate so the two never
   // depend on each other.
+  //
+  // Open WebUI renders the assistant row with EMPTY content before the
+  // completion request has even returned. That empty body has a stable
+  // length, so a settle check that accepted it would fire about half a
+  // second after send: too early for the chat to have an id yet on a new
+  // chat, and long before the reply is stored. Requiring real text is what
+  // keeps this from checking nothing and latching shut on the result.
   function aiuiMaybeTakeTurns(span) {
-    if (span.getAttribute('data-aiui-turns-checked') === '1') return;
     var body = aiuiFindReplyBody(span);
-    var sig = String(body ? (body.textContent || '').length : -1);
+    var sig = String(body ? (body.textContent || '').trim().length : 0);
+    if (sig === '0') return;
+    if (span.getAttribute('data-aiui-turns-checked') === sig) return;
     if (span.getAttribute('data-aiui-turns-seen') !== sig) {
       span.setAttribute('data-aiui-turns-seen', sig);
       aiuiScheduleSettleScan();
       return;
     }
-    span.setAttribute('data-aiui-turns-checked', '1');
-    aiuiTakeTurns(aiuiChatIdFromUrl());
+    var chatId = aiuiChatIdFromUrl();
+    if (!chatId) { aiuiScheduleSettleScan(); return; }
+    aiuiTakeTurns(chatId).then(function (examined) {
+      // Latch only once a done tail was actually examined, keyed to the
+      // body length so a reply that finishes later, and is therefore
+      // longer, is looked at again. A poll that ran out, or a chat with
+      // no id yet, is not a check and leaves no latch.
+      if (examined) span.setAttribute('data-aiui-turns-checked', sig);
+    });
   }
 
   function aiuiScanAgentNameHeaders() {

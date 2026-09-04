@@ -61,18 +61,36 @@ async def test_hi_team_becomes_two_messages_one_after_another():
             # in the samples. Waiting a second and then finding two rows
             # would pass just as happily if both had arrived together, which
             # is the bug this test exists to catch.
+            # Keep the whole LIST of headers per sample, not just how many.
+            # After the soft reload Ada's header briefly reads "Auto (Free)"
+            # while Mia's already reads "Mia", so a one-name sample can be
+            # ["Mia"], which counting alone would happily accept as "Ada was
+            # alone first". The property is that ["Ada"] is seen before the
+            # first ["Ada", "Mia"].
             seen = []
-            heads = []
             for _ in range(240):
                 await page.wait_for_timeout(250)
-                heads = [r["header"] for r in await _rows(page)
+                try:
+                    rows = await _rows(page)
+                except Exception:
+                    # A location.reload() fallback can tear down the execution
+                    # context mid evaluate. That is a missed sample, not a
+                    # failure.
+                    continue
+                heads = [r["header"] for r in rows
                          if r["header"] and r["header"] not in ("Auto (Free)", "IO")]
-                seen.append(len(heads))
-                if len(heads) >= 2:
+                seen.append(heads)
+                if heads[:2] == ["Ada", "Mia"]:
                     break
-            assert 1 in seen, "the first agent was never shown on its own: %r" % seen
-            assert seen.index(1) < len(seen) - 1, "both agents appeared in the same sample"
-            assert heads[:2] == ["Ada", "Mia"], heads
+
+            both = next((i for i, s in enumerate(seen) if s[:2] == ["Ada", "Mia"]), None)
+            assert both is not None, "the two agents never both appeared: %r" % seen
+            alone = next((i for i, s in enumerate(seen) if s == ["Ada"]), None)
+            assert alone is not None, (
+                "Ada was never shown on her own: %r" % seen)
+            assert alone < both, (
+                "both agents appeared in the same sample, so the second did "
+                "not arrive after the first: %r" % seen)
 
             chat_id = await page.evaluate("location.pathname.split('/c/')[1]")
 
