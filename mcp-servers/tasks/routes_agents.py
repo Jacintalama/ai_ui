@@ -15,6 +15,7 @@ the models themselves.
 Nothing here may raise past seed_for_email: a broken seeding path must never
 stop the Agents page from listing whatever the person already has.
 """
+import json
 import logging
 import os
 import uuid
@@ -28,7 +29,7 @@ from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import CurrentUser, current_user
 from owui_token import mint_owui_token
-from routes_agent_turn import _agents_for, _turn_for
+from routes_agent_turn import _agents_for, _pin_key, _turn_for, _write_pin
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,11 @@ router = APIRouter(prefix="/agents")
 #: are far above any real chat and far below anything that would hurt.
 SPEAK_MAX_MESSAGES = 200
 SPEAK_MAX_CONTENT_CHARS = 32000
+#: A pending turn's tool calls, on their way to the page to be rendered
+#: as the approval question. Bounded because they are model output and
+#: land in somebody's browser.
+SPEAK_MAX_PENDING_CALLS = 10
+SPEAK_MAX_PENDING_ARG_CHARS = 2000
 
 #: Long enough to create two models well within one request, short enough
 #: that a leaked value would not matter for long. Never logged or stored.
@@ -437,6 +443,35 @@ class SpeakIn(BaseModel):
         return messages
 
 
+def _pending_for_page(pending) -> dict | None:
+    """Just enough for the page to ask the same question the pipe asks.
+
+    Deliberately NOT the stored conversation or the user_email the pending
+    payload also carries: those are the gateway's own resume state and have
+    no business in a browser. Only the tool names and arguments the person
+    is being asked to approve, bounded, because they are model output.
+    """
+    calls = pending.get("calls") if isinstance(pending, dict) else None
+    if not isinstance(calls, list) or not calls:
+        return None
+    out = []
+    for call in calls[:SPEAK_MAX_PENDING_CALLS]:
+        call = call if isinstance(call, dict) else {}
+        fn = call.get("function")
+        fn = fn if isinstance(fn, dict) else {}
+        name = fn.get("name")
+        args = fn.get("arguments")
+        if not isinstance(args, str):
+            try:
+                args = json.dumps(args if args is not None else {})
+            except (TypeError, ValueError):
+                args = "{}"
+        out.append({"function": {
+            "name": name if isinstance(name, str) else "",
+            "arguments": args[:SPEAK_MAX_PENDING_ARG_CHARS]}})
+    return {"calls": out} if out else None
+
+
 @router.post("/speak")
 async def speak(body: SpeakIn, user: CurrentUser = Depends(current_user)) -> dict:
     """Make one of this person's agents answer, for the page that takes
@@ -449,9 +484,10 @@ async def speak(body: SpeakIn, user: CurrentUser = Depends(current_user)) -> dic
     may run only their own agents. Not /agents/turn, which is internal and
     must stay so.
 
-    The pin is deliberately not written here. The first_only reply already
+    The pin is normally not written here: the first_only reply already
     pinned the last agent in the full list, and a turn for an earlier one
-    must not move it back.
+    must not move it back. The one exception is an agent that stops to ask
+    permission, below.
     """
     agents = await _agents_for(user.email)
     agent = next((a for a in agents if a.get("id") == body.agent_id), None)
@@ -459,6 +495,17 @@ async def speak(body: SpeakIn, user: CurrentUser = Depends(current_user)) -> dic
         raise HTTPException(status_code=403, detail="That is not one of your agents.")
     names = [a.get("name") for a in agents if a.get("name")]
     out = await _turn_for(user.email, agent, body.messages, names)
-    return {"answer": out.get("answer") or "",
-            "notes": [n for n in (out.get("notes") or []) if isinstance(n, str)],
-            "agent": out.get("agent") or {"id": agent["id"], "name": agent.get("name")}}
+    result = {"answer": out.get("answer") or "",
+              "notes": [n for n in (out.get("notes") or []) if isinstance(n, str)],
+              "agent": out.get("agent") or {"id": agent["id"], "name": agent.get("name")}}
+
+    pending = _pending_for_page(out.get("pending"))
+    if pending:
+        # An agent that stopped to ask is the one the person's "yes" has to
+        # reach, and a yes is routed by this chat's pin. Without this the
+        # question is asked by an agent nobody can answer. This is what
+        # chat_id is for: it was required and read by nothing before, which
+        # read like an ownership check that did not exist.
+        await _write_pin(_pin_key(body.chat_id, user.email), agent["id"])
+        result["pending"] = pending
+    return result

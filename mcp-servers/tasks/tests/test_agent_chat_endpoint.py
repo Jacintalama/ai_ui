@@ -508,10 +508,17 @@ async def test_every_reply_carries_the_rendered_text(_wire):
     assert out["rendered"] == "Ada:\nhi\n\nMia:\nhi"
 
 
-async def test_a_pending_approval_stops_the_round(_wire, monkeypatch):
-    """If Ada is waiting on a yes or no, Mia does not take a turn and the
-    page must see no marker, or it would show Mia's reply under Ada's
-    unanswered question. The pin goes to Ada, who is waiting."""
+async def test_a_pending_approval_pauses_the_asker_but_still_names_the_rest(
+        _wire, monkeypatch):
+    """Ada is waiting on a yes or no, so the pin goes to HER rather than to
+    the last agent named, and only her turn runs here.
+
+    Mia is not dropped. Withholding the marker as well as the queue used to
+    lose every other addressed agent for good: "hi team, delete the stale
+    rows" with Ada on Ask had Ada ask her question and Mia never speak and
+    never be mentioned, with nothing anywhere recording that she had been
+    addressed. Pausing Ada is the point; silently losing Mia was not.
+    """
     monkeypatch.setattr(rt, "_run_turn", AsyncMock(return_value={
         "answer": "", "notes": [],
         "pending": {"calls": [{"function": {"name": "send_email"}}],
@@ -519,6 +526,8 @@ async def test_a_pending_approval_stops_the_round(_wire, monkeypatch):
     b = _body("hi team")
     b.first_only = True
     out = await rt.chat(b, x_internal_secret="s")
-    assert out["queue"] == [] and out["marker"] == ""
+    assert out["queue"] == ["agent-m"], "the rest of the round was dropped"
+    assert out["marker"] == "<!-- aiui:turns agent-a,agent-m -->", out["marker"]
+    # The pin is the asker's, not the last named, so a "yes" reaches Ada.
     assert rt._write_pin.await_args.args[1] == "agent-a"
     rt._run_turn.assert_awaited_once()

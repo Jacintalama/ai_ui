@@ -531,20 +531,25 @@ async def chat(body: ChatIn,
         turns = []
         for agent in speakers:
             turns.append(await _turn_for(body.user_email, agent, body.messages, names))
-        # An approval interrupts the round. If the agent that spoke is now
-        # waiting on a yes or no, nobody else takes a turn and the pin goes
-        # to the one who is waiting, so the answer reaches them. The page
-        # sees no marker and does nothing, which is right: the conversation
-        # is waiting on the person, not on the next agent.
+        # An approval interrupts the round for the agent that asked: the
+        # pin goes to the one who is waiting, not to the last one named,
+        # so the person's yes or no reaches them.
+        #
+        # Everybody else still speaks. Withholding the marker here as
+        # well used to drop every other addressed agent for good: "hi
+        # team, delete the stale rows" with Ada on Ask had Ada ask, and
+        # Mia never spoke and was never mentioned. Pausing Ada is the
+        # point; silently losing Mia was not.
         first_pending = bool(turns) and isinstance(turns[0].get("pending"), dict) \
             and bool(turns[0]["pending"].get("calls"))
+        first_only = bool(getattr(body, "first_only", False))
+        queue = [a["id"] for a in named[1:]] if first_only else []
+        ids = [a["id"] for a in named] if queue else []
         if first_pending:
             await _write_pin(key, named[0]["id"])
             return {"turns": turns, "rendered": render_turns(turns),
-                    "queue": [], "marker": ""}
+                    "queue": queue, "marker": turns_marker(ids)}
         await _write_pin(key, named[-1]["id"])
-        queue = [a["id"] for a in named[1:]] if getattr(body, "first_only", False) else []
-        ids = [a["id"] for a in named] if queue else []
         return {"turns": turns, "rendered": render_turns(turns),
                 "queue": queue, "marker": turns_marker(ids)}
 

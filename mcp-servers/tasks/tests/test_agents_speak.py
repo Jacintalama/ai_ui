@@ -101,3 +101,73 @@ async def test_an_oversized_history_is_refused_before_any_agent_runs(client):
     at_bound = {**BODY, "messages": [{"role": "user", "content": "x" * 32000}] * 200}
     r = await client.post("/api/tasks/agents/speak", json=at_bound)
     assert r.status_code == 200
+
+
+# --- An agent that stops to ask -------------------------------------------
+# _turn_for returns the PENDING shape when a tool needs approval: there is no
+# "answer" key at all. The route used to flatten that to answer="", so the
+# page wrote "There was nothing to answer." as the agent's own message. The
+# person saw Mia say that, with no question and no way to approve.
+
+PENDING_TURN = {
+    "notes": [],
+    "agent": {"id": "agent-m", "name": "Mia"},
+    "pending": {
+        "agent_id": "agent-m",
+        "user_email": OWNER,
+        "calls": [{"function": {"name": "send_email",
+                                "arguments": '{"to": "client@example.com"}'}}],
+        "conversation": [{"role": "user", "content": "secret internal state"}],
+    },
+}
+
+
+@pytest.fixture
+def pending_client(client, monkeypatch):
+    monkeypatch.setattr(routes_agents, "_turn_for",
+                        AsyncMock(return_value=dict(PENDING_TURN)))
+    monkeypatch.setattr(routes_agents, "_write_pin", AsyncMock())
+    return client
+
+
+async def test_a_pending_turn_reaches_the_page_as_a_question_not_a_placeholder(
+        pending_client):
+    r = await pending_client.post("/api/tasks/agents/speak", json=BODY)
+    assert r.status_code == 200
+    out = r.json()
+    assert out["pending"]["calls"][0]["function"]["name"] == "send_email", out
+    assert "client@example.com" in out["pending"]["calls"][0]["function"]["arguments"]
+
+
+async def test_the_pending_reply_never_leaks_the_stored_conversation(pending_client):
+    """The pending payload also carries the resume state and the owner's
+    email. That is the gateway's business, not a browser's."""
+    r = await pending_client.post("/api/tasks/agents/speak", json=BODY)
+    out = r.json()
+    assert set(out["pending"]) == {"calls"}, out["pending"]
+    body = r.text
+    assert "secret internal state" not in body
+    assert OWNER not in body
+
+
+async def test_the_agent_that_stopped_to_ask_becomes_the_pinned_one(pending_client):
+    """A person's "yes" is routed by this chat's pin. Without this the
+    question is asked by an agent nobody can answer.
+
+    This is also what chat_id is FOR. It was required and read by nothing,
+    which read like an ownership check that did not exist.
+    """
+    await pending_client.post("/api/tasks/agents/speak", json=BODY)
+    routes_agents._write_pin.assert_awaited_once()
+    key, agent_id = routes_agents._write_pin.await_args.args
+    assert agent_id == "agent-m"
+    assert BODY["chat_id"] in key and OWNER in key, key
+
+
+async def test_an_ordinary_turn_still_moves_no_pin(client, monkeypatch):
+    """The first_only reply already pinned the last agent in the full list.
+    A turn for an earlier one must not move it back."""
+    monkeypatch.setattr(routes_agents, "_write_pin", AsyncMock())
+    r = await client.post("/api/tasks/agents/speak", json=BODY)
+    assert "pending" not in r.json()
+    routes_agents._write_pin.assert_not_awaited()
