@@ -531,6 +531,17 @@ async def chat(body: ChatIn,
         turns = []
         for agent in speakers:
             turns.append(await _turn_for(body.user_email, agent, body.messages, names))
+        # An approval interrupts the round. If the agent that spoke is now
+        # waiting on a yes or no, nobody else takes a turn and the pin goes
+        # to the one who is waiting, so the answer reaches them. The page
+        # sees no marker and does nothing, which is right: the conversation
+        # is waiting on the person, not on the next agent.
+        first_pending = bool(turns) and isinstance(turns[0].get("pending"), dict) \
+            and bool(turns[0]["pending"].get("calls"))
+        if first_pending:
+            await _write_pin(key, named[0]["id"])
+            return {"turns": turns, "rendered": render_turns(turns),
+                    "queue": [], "marker": ""}
         await _write_pin(key, named[-1]["id"])
         queue = [a["id"] for a in named[1:]] if getattr(body, "first_only", False) else []
         ids = [a["id"] for a in named] if queue else []

@@ -17,6 +17,7 @@ requirements: httpx
 # agent set to Read only would still write.
 import json
 import os
+import re
 from typing import Any, Callable, Optional
 
 import httpx
@@ -24,6 +25,12 @@ from pydantic import BaseModel, Field
 
 TASKS_URL = os.environ.get("TASKS_URL", "http://tasks:8210")
 INTERNAL_SECRET = os.environ.get("INTERNAL_CALLBACK_SECRET", "")
+
+#: Only the pipe places a marker. This finds one shaped comment anywhere in
+#: an agent's own words, so it can be stripped before a real marker is
+#: appended, and the page never parses one the agent wrote by accident or by
+#: prompt injection.
+AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
 
 #: Long enough for three rounds of tool use plus the tool calls themselves,
 #: matching the channel budget in agent_runner. A timeout here reads to the
@@ -182,6 +189,10 @@ class Pipe:
         # answers, and the page fetches the rest one at a time as separate
         # messages. An HTML comment renders as nothing.
         marker = out.get("marker") if isinstance(out, dict) else None
+        # Only the pipe places a marker. Anything marker shaped that arrived
+        # inside an agent's own words is stripped first, so the page never
+        # parses one the agent wrote rather than the one the service issued.
+        text = AIUI_TURNS_STRIP_RE.sub("", text).rstrip()
         if isinstance(marker, str) and marker.strip():
             text = text.rstrip() + "\n\n" + marker.strip()
         return text

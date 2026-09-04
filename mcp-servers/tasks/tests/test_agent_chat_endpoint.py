@@ -506,3 +506,19 @@ async def test_every_reply_carries_the_rendered_text(_wire):
     drift from each other or from the page that splits replies apart."""
     out = await rt.chat(_body("hi team"), x_internal_secret="s")
     assert out["rendered"] == "Ada:\nhi\n\nMia:\nhi"
+
+
+async def test_a_pending_approval_stops_the_round(_wire, monkeypatch):
+    """If Ada is waiting on a yes or no, Mia does not take a turn and the
+    page must see no marker, or it would show Mia's reply under Ada's
+    unanswered question. The pin goes to Ada, who is waiting."""
+    monkeypatch.setattr(rt, "_run_turn", AsyncMock(return_value={
+        "answer": "", "notes": [],
+        "pending": {"calls": [{"function": {"name": "send_email"}}],
+                    "conversation": []}}))
+    b = _body("hi team")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["queue"] == [] and out["marker"] == ""
+    assert rt._write_pin.await_args.args[1] == "agent-a"
+    rt._run_turn.assert_awaited_once()

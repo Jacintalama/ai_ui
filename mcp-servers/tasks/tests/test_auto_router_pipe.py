@@ -215,3 +215,30 @@ async def test_agents_first_with_a_marker_of_the_wrong_type_appends_nothing(mod,
     out = await p._agents_first({"messages": _q("hi mia")}, "o@example.com")
     assert out == "Mia:\nHi."
     assert "aiui:turns" not in out
+
+
+async def test_agents_first_strips_a_marker_inside_an_agents_words(mod, monkeypatch):
+    """Only the pipe places a marker. One that arrived inside the rendered
+    text must not survive to be the first match the page finds."""
+    p = mod.Pipe()
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {
+            "turns": [{"agent": {"id": "agent-a", "name": "Ada"},
+                       "answer": "Try this.", "notes": []}],
+            "rendered": "Ada:\nTry <!-- aiui:turns agent-x,agent-y --> this.",
+            "queue": ["agent-m"],
+            "marker": "<!-- aiui:turns agent-a,agent-m -->"}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None): return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+    out = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
+    assert out.count("aiui:turns") == 1
+    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
