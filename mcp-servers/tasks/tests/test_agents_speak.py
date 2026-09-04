@@ -28,10 +28,33 @@ def client(monkeypatch):
     monkeypatch.setattr(routes_agents, "_turn_for",
                         AsyncMock(return_value={"answer": "hi from mia", "notes": ["a note"],
                                                 "agent": {"id": "agent-m", "name": "Mia"}}))
+    # The claim is a seam, the way _smoke_app and _run_git are elsewhere, so
+    # this tier can exercise the route without a database. The real INSERT is
+    # verified on the server: this repo's destructive DB tests once wiped nine
+    # production projects and are not run locally.
+    monkeypatch.setattr(routes_agents, "_claim_turn", _FakeClaims())
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://t")
 
 
-BODY = {"chat_id": "chat-1", "agent_id": "agent-m",
+class _FakeClaims:
+    """tasks.agent_turn_claim's primary key, in memory.
+
+    Deliberately the same four columns in the same order, so a test that
+    passes here is testing the same key the table enforces.
+    """
+
+    def __init__(self):
+        self.seen = set()
+
+    async def __call__(self, user_email, chat_id, agent_id, after_id):
+        key = (user_email, chat_id, agent_id, after_id)
+        if key in self.seen:
+            return False
+        self.seen.add(key)
+        return True
+
+
+BODY = {"chat_id": "chat-1", "agent_id": "agent-m", "after_id": "msg-ada-1",
         "messages": [{"role": "user", "content": "hi team"},
                      {"role": "assistant", "content": "hello from ada"}]}
 
@@ -70,6 +93,7 @@ async def test_no_token_reaches_nothing(monkeypatch):
         raise HTTPException(status_code=401, detail="no")
     app.dependency_overrides[current_user] = _refuse
     monkeypatch.setattr(routes_agents, "_turn_for", AsyncMock())
+    monkeypatch.setattr(routes_agents, "_claim_turn", _FakeClaims())
     c = AsyncClient(transport=ASGITransport(app=app), base_url="http://t")
     r = await c.post("/api/tasks/agents/speak", json=BODY)
     assert r.status_code == 401
@@ -77,9 +101,14 @@ async def test_no_token_reaches_nothing(monkeypatch):
 
 
 @pytest.mark.parametrize("bad", [
-    {"chat_id": "c", "agent_id": "", "messages": []},
-    {"chat_id": "", "agent_id": "agent-m", "messages": []},
-    {"chat_id": "c", "agent_id": "agent-m"},
+    {"chat_id": "c", "agent_id": "", "after_id": "m", "messages": []},
+    {"chat_id": "", "agent_id": "agent-m", "after_id": "m", "messages": []},
+    {"chat_id": "c", "agent_id": "agent-m", "after_id": "m"},
+    # after_id is part of the claim key, so a caller cannot omit it and
+    # quietly opt out of the duplicate check.
+    {"chat_id": "c", "agent_id": "agent-m", "messages": []},
+    {"chat_id": "c", "agent_id": "agent-m", "after_id": "", "messages": []},
+    {"chat_id": "c", "agent_id": "agent-m", "after_id": "x" * 500, "messages": []},
 ])
 async def test_a_malformed_request_is_a_422_not_a_500(client, bad):
     r = await client.post("/api/tasks/agents/speak", json=bad)
@@ -171,3 +200,91 @@ async def test_an_ordinary_turn_still_moves_no_pin(client, monkeypatch):
     r = await client.post("/api/tasks/agents/speak", json=BODY)
     assert "pending" not in r.json()
     routes_agents._write_pin.assert_not_awaited()
+
+
+# --- One turn runs once ----------------------------------------------------
+# The page claims a turn by rewriting the marker on the stored chat, but that
+# cannot be atomic: reading the chat and writing it back are two separate
+# calls against an endpoint with no If-Match, so two tabs both read before
+# either writes and both reach this route. Measured, not theorised. A turn can
+# send an email, and nobody can unsend one, so the decision about who runs it
+# is made here, under the primary key on tasks.agent_turn_claim.
+
+async def test_the_same_turn_asked_for_twice_runs_once(client):
+    first = await client.post("/api/tasks/agents/speak", json=BODY)
+    assert first.status_code == 200
+    routes_agents._turn_for.assert_awaited_once()
+
+    second = await client.post("/api/tasks/agents/speak", json=BODY)
+    assert second.status_code == 409, second.text
+    # The agent must not have run a second time.
+    routes_agents._turn_for.assert_awaited_once()
+
+
+async def test_the_refusal_says_what_happened(client):
+    await client.post("/api/tasks/agents/speak", json=BODY)
+    r = await client.post("/api/tasks/agents/speak", json=BODY)
+    assert "already running this turn" in r.json()["detail"]
+
+
+async def test_the_same_agent_may_speak_again_later_in_the_chat(client):
+    """after_id is in the key precisely so this works: an agent speaks many
+    times in one conversation, just never twice for the same preceding
+    message."""
+    await client.post("/api/tasks/agents/speak", json=BODY)
+    later = await client.post("/api/tasks/agents/speak",
+                              json={**BODY, "after_id": "msg-ada-2"})
+    assert later.status_code == 200, later.text
+    assert routes_agents._turn_for.await_count == 2
+
+
+async def test_a_different_agent_answering_the_same_message_is_allowed(client):
+    """Two agents both queued behind one reply is the ordinary case."""
+    await client.post("/api/tasks/agents/speak", json=BODY)
+    other = await client.post("/api/tasks/agents/speak",
+                              json={**BODY, "agent_id": "agent-a"})
+    assert other.status_code == 200, other.text
+    assert routes_agents._turn_for.await_count == 2
+
+
+async def test_the_claim_is_taken_before_the_agent_runs(client, monkeypatch):
+    """Claiming after the turn would be no protection at all: the email has
+    already gone by then."""
+    order = []
+
+    async def claim(*a):
+        order.append("claim")
+        return True
+
+    async def turn(*a, **k):
+        order.append("turn")
+        return {"answer": "hi", "notes": [], "agent": {"id": "agent-m", "name": "Mia"}}
+
+    monkeypatch.setattr(routes_agents, "_claim_turn", claim)
+    monkeypatch.setattr(routes_agents, "_turn_for", turn)
+    await client.post("/api/tasks/agents/speak", json=BODY)
+    assert order == ["claim", "turn"], order
+
+
+async def test_a_database_failure_fails_closed(client, monkeypatch):
+    """Not knowing whether somebody else owns this turn is not permission to
+    run it. 503, not 409: the page tells the person about a 503 and stops
+    quietly on a 409, and this is not the quiet case."""
+    async def boom(*a):
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(routes_agents, "_claim_turn", boom)
+    monkeypatch.setattr(routes_agents, "_turn_for", AsyncMock())
+    r = await client.post("/api/tasks/agents/speak", json=BODY)
+    assert r.status_code == 503, r.text
+    routes_agents._turn_for.assert_not_awaited()
+
+
+async def test_a_stranger_cannot_burn_someone_elses_claim(client):
+    """user_email leads the key, so one person's claim can never collide
+    with another's. The ownership check above already refuses a stranger's
+    agent, but the key must not depend on that alone."""
+    seen = _FakeClaims()
+    assert await seen("a@example.com", "chat-1", "agent-m", "m1") is True
+    assert await seen("b@example.com", "chat-1", "agent-m", "m1") is True
+    assert await seen("a@example.com", "chat-1", "agent-m", "m1") is False

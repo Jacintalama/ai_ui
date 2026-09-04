@@ -24,10 +24,13 @@ import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from sqlalchemy import text as sql_text
+
 import agent_activity
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import CurrentUser, current_user
+from db import session
 from owui_token import mint_owui_token
 from routes_agent_turn import _agents_for, _pin_key, _turn_for, _write_pin
 
@@ -50,6 +53,9 @@ SPEAK_MAX_CONTENT_CHARS = 32000
 #: A pending turn's tool calls, on their way to the page to be rendered
 #: as the approval question. Bounded because they are model output and
 #: land in somebody's browser.
+#: Ids are uuids and model ids; this is generous and still bounded, since
+#: all three become part of a primary key.
+SPEAK_MAX_ID_CHARS = 200
 SPEAK_MAX_PENDING_CALLS = 10
 SPEAK_MAX_PENDING_ARG_CHARS = 2000
 
@@ -429,8 +435,12 @@ async def list_tools(user: CurrentUser = Depends(current_user)) -> dict:
 
 
 class SpeakIn(BaseModel):
-    chat_id: str = Field(min_length=1)
-    agent_id: str = Field(min_length=1)
+    chat_id: str = Field(min_length=1, max_length=SPEAK_MAX_ID_CHARS)
+    agent_id: str = Field(min_length=1, max_length=SPEAK_MAX_ID_CHARS)
+    #: The message this turn answers: the tail the page claimed against. Part
+    #: of the claim key, so the same agent can speak many times in one chat
+    #: but never twice for the same preceding message.
+    after_id: str = Field(min_length=1, max_length=SPEAK_MAX_ID_CHARS)
     messages: list[dict] = Field(max_length=SPEAK_MAX_MESSAGES)
 
     @field_validator("messages")
@@ -441,6 +451,45 @@ class SpeakIn(BaseModel):
             if isinstance(content, str) and len(content) > SPEAK_MAX_CONTENT_CHARS:
                 raise ValueError("a message is too long")
         return messages
+
+
+async def _claim_turn(user_email: str, chat_id: str, agent_id: str,
+                      after_id: str) -> bool:
+    """Take ownership of one agent's turn. True if we got it.
+
+    False means somebody else already ran, or is running, this exact turn.
+    The primary key on tasks.agent_turn_claim is what decides that: the
+    INSERT is resolved by Postgres under a unique index, so exactly one
+    caller can win and no lock or transaction level is involved.
+
+    This is the ONLY place that can settle it. The page claims a turn by
+    rewriting the marker on the stored chat, but reading and writing that
+    chat are two separate calls against an endpoint with no If-Match, so two
+    tabs both read before either writes and both proceed. Measured, not
+    theorised.
+
+    Raises on a database failure rather than swallowing it, unlike the
+    fire-and-forget bookkeeping in agent_activity. Not knowing whether we own
+    the turn is not the same as owning it, and the cost of guessing wrong is
+    a second email nobody can unsend.
+
+    A claim is never released. See migration 046 for why.
+    """
+    async with session() as s:
+        # Same statement path as the write, so the table cannot grow without
+        # bound and the sweep can never be forgotten.
+        await s.execute(sql_text(
+            "DELETE FROM tasks.agent_turn_claim "
+            "WHERE claimed_at < now() - INTERVAL '24 hours'"))
+        got = (await s.execute(sql_text(
+            "INSERT INTO tasks.agent_turn_claim "
+            "(user_email, chat_id, agent_id, after_id) "
+            "VALUES (:user_email, :chat_id, :agent_id, :after_id) "
+            "ON CONFLICT DO NOTHING RETURNING 1"),
+            {"user_email": user_email, "chat_id": chat_id,
+             "agent_id": agent_id, "after_id": after_id})).first()
+        await s.commit()
+    return got is not None
 
 
 def _pending_for_page(pending) -> dict | None:
@@ -493,6 +542,26 @@ async def speak(body: SpeakIn, user: CurrentUser = Depends(current_user)) -> dic
     agent = next((a for a in agents if a.get("id") == body.agent_id), None)
     if agent is None:
         raise HTTPException(status_code=403, detail="That is not one of your agents.")
+    # Claimed BEFORE the agent runs, and nothing below this line is reached
+    # without winning it. A turn can send an email, so the question "has this
+    # already been run" has to be answered before the tool fires, not after.
+    try:
+        claimed = await _claim_turn(user.email, body.chat_id, body.agent_id,
+                                    body.after_id)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not claim the agent turn", exc_info=True)
+        # Fail closed. Not knowing whether somebody else owns this turn is
+        # not permission to run it. 503 rather than 409 so the page treats it
+        # as a real failure and tells the person, instead of stopping quietly
+        # the way it does when another tab legitimately owns the turn.
+        raise HTTPException(
+            status_code=503,
+            detail="Could not check whether this turn had already been taken.")
+    if not claimed:
+        raise HTTPException(
+            status_code=409,
+            detail="Another tab is already running this turn.")
+
     names = [a.get("name") for a in agents if a.get("name")]
     out = await _turn_for(user.email, agent, body.messages, names)
     result = {"answer": out.get("answer") or "",
