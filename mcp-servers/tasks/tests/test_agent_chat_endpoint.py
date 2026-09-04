@@ -20,6 +20,7 @@ def _body(text, chat_id="chat-1", email="owner@example.com"):
     class B:
         user_email = email
         route_only = False
+        first_only = False
         messages = [{"role": "user", "content": text}]
     b = B()
     b.chat_id = chat_id
@@ -364,6 +365,7 @@ async def test_an_agent_sees_history_without_the_speaker_labels(_wire):
     class B:
         user_email = "ralph@example.com"
         chat_id = "c"
+        first_only = False
         messages = [
             {"role": "user", "content": "hi team"},
             {"role": "assistant", "content": "Ada:\nhello\n\nMia:\nhi there"},
@@ -395,6 +397,69 @@ async def test_route_only_returns_nothing_when_nobody_is_up(_wire, monkeypatch):
     assert out["turns"] == []
     assert out["rendered"] == ""
     rt._answer_as_io.assert_not_awaited()
+
+
+async def test_first_only_runs_one_agent_and_names_the_rest(_wire):
+    """The web page takes turns: the pipe shows the first agent, the page
+    fetches the rest one at a time. So the service runs one and says who
+    is left, in speaking order."""
+    b = _body("hi team")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert [t["agent"]["name"] for t in out["turns"]] == ["Ada"]
+    assert out["queue"] == ["agent-m"]
+    rt._run_turn.assert_awaited_once()
+
+
+async def test_first_only_still_pins_the_last_agent_in_the_full_list(_wire):
+    """A follow up with no name goes to whoever spoke last, and that is
+    still Mia even though only Ada has spoken so far."""
+    b = _body("hi team")
+    b.first_only = True
+    await rt.chat(b, x_internal_secret="s")
+    assert rt._write_pin.await_args.args[1] == "agent-m"
+
+
+async def test_the_marker_names_every_speaker_with_the_author_first(_wire):
+    b = _body("hi team")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["marker"] == "<!-- aiui:turns agent-a,agent-m -->"
+
+
+async def test_one_agent_named_means_no_queue_and_no_marker(_wire):
+    b = _body("hi mia")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["queue"] == []
+    assert out["marker"] == ""
+
+
+async def test_without_first_only_every_agent_still_runs(_wire):
+    """Discord and Telegram never set the flag and must not change."""
+    out = await rt.chat(_body("hi team"), x_internal_secret="s")
+    assert [t["agent"]["name"] for t in out["turns"]] == ["Ada", "Mia"]
+    assert out["queue"] == []
+    assert out["marker"] == ""
+
+
+async def test_every_reply_shape_carries_queue_and_marker(_wire, monkeypatch):
+    """The pipes read both fields off every reply, so every branch must
+    return them, not only the one that fills them."""
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
+    for text in ("what is the weather", "stop"):
+        out = await rt.chat(_body(text), x_internal_secret="s")
+        assert out["queue"] == [] and out["marker"] == "", text
+    b = _body("plain")
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["queue"] == [] and out["marker"] == ""
+
+
+def test_turns_marker_is_one_line_with_ids_only():
+    assert rt.turns_marker(["agent-a", "agent-m"]) == "<!-- aiui:turns agent-a,agent-m -->"
+    assert rt.turns_marker([]) == ""
+    assert rt.turns_marker(["agent-a"]) == ""
 
 
 async def test_route_only_still_wakes_a_named_agent(_wire):

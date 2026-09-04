@@ -254,6 +254,12 @@ class ChatIn(BaseModel):
     #: itself. With it, Auto asks "is anyone named or awake", renders them
     #: if so, and otherwise carries on to its free model as before.
     route_only: bool = False
+    #: The web page takes turns: the pipe shows the first agent's reply and
+    #: the page fetches each further agent itself, so they arrive one after
+    #: another as separate messages. With this set, only the first matched
+    #: agent runs here and the rest come back as `queue`. Discord and
+    #: Telegram send one message per turn already and never set it.
+    first_only: bool = False
 
 
 def _pin_key(chat_id: str, user_email: str) -> str:
@@ -411,6 +417,22 @@ def render_turns(turns) -> str:
     return "\n\n".join(parts)
 
 
+def turns_marker(ids) -> str:
+    """The hidden line that tells the page who answers and in what order.
+
+    Empty unless at least two agents answer, because a single reply needs
+    nothing from the page. Model ids, never names: a name can be renamed
+    under a stored message and an id cannot, and the page hands these ids
+    straight back to /agents/speak. An HTML comment renders as nothing and
+    survives the round trip through the chat's own storage, which is what
+    lets the page find it again after a reload.
+    """
+    ids = [i for i in (ids if isinstance(ids, list) else []) if isinstance(i, str) and i]
+    if len(ids) < 2:
+        return ""
+    return "<!-- aiui:turns %s -->" % ",".join(ids)
+
+
 async def _answer_as_io(user_email: str, messages: list[dict]) -> str:
     """IO speaking for itself, on the base model, as this user.
 
@@ -483,7 +505,7 @@ async def chat(body: ChatIn,
     if agent_routing.wants_release(text):
         await _clear_pin(key)
         turns = [{"agent": None, "answer": RELEASED, "notes": []}]
-        return {"turns": turns, "rendered": render_turns(turns)}
+        return {"turns": turns, "rendered": render_turns(turns), "queue": [], "marker": ""}
 
     agents = await _agents_for(body.user_email)
     named = agent_routing.match_agents(text, agents)
@@ -493,11 +515,15 @@ async def chat(body: ChatIn,
         # who a follow up with no name goes to, so "actually ada, you take
         # this" hands over cleanly even when Mia was also named.
         names = [a.get("name") for a in agents if a.get("name")]
+        speakers = named[:1] if getattr(body, "first_only", False) else named
         turns = []
-        for agent in named:
+        for agent in speakers:
             turns.append(await _turn_for(body.user_email, agent, body.messages, names))
         await _write_pin(key, named[-1]["id"])
-        return {"turns": turns, "rendered": render_turns(turns)}
+        queue = [a["id"] for a in named[1:]] if getattr(body, "first_only", False) else []
+        ids = [a["id"] for a in named] if queue else []
+        return {"turns": turns, "rendered": render_turns(turns),
+                "queue": queue, "marker": turns_marker(ids)}
 
     pinned_id = await _read_pin(key)
     agent = next((a for a in agents if a.get("id") == pinned_id), None)
@@ -513,7 +539,7 @@ async def chat(body: ChatIn,
         # The caller will answer for itself. Saying so with an empty list
         # rather than an IO answer is what keeps the Auto pipe from asking
         # IO, which would ask Auto, which would ask here again.
-        return {"turns": [], "rendered": ""}
+        return {"turns": [], "rendered": "", "queue": [], "marker": ""}
 
     if agent is None:
         # IO speaking for itself. Done here rather than in the pipe because
@@ -525,11 +551,11 @@ async def chat(body: ChatIn,
             logger.warning("the base model did not answer", exc_info=True)
             answer = IO_DOWN
         turns = [{"agent": None, "answer": answer, "notes": []}]
-        return {"turns": turns, "rendered": render_turns(turns)}
+        return {"turns": turns, "rendered": render_turns(turns), "queue": [], "marker": ""}
 
     # A follow up keeps the agent awake. Without this the pin would run out
     # five minutes after the agent was last NAMED, mid conversation.
     names = [a.get("name") for a in agents if a.get("name")]
     turn = await _turn_for(body.user_email, agent, body.messages, names)
     await _write_pin(key, agent["id"])
-    return {"turns": [turn], "rendered": render_turns([turn])}
+    return {"turns": [turn], "rendered": render_turns([turn]), "queue": [], "marker": ""}
