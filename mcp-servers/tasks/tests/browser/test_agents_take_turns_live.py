@@ -6,10 +6,7 @@ WebUI's renderer are all the real ones, because three of this feature's
 load-bearing facts were found only that way and no stub would have shown
 them.
 """
-import asyncio
 import os
-import time
-import uuid
 
 import pytest
 
@@ -49,51 +46,56 @@ async def test_hi_team_becomes_two_messages_one_after_another():
     token = mint_owui_token(uid, ttl_seconds=900)
     async with async_playwright() as pw:
         browser, page = await _page(pw, token)
-        await page.goto(HOST + "/?models=auto_router.auto", wait_until="networkidle")
-        await page.wait_for_timeout(2000)
-        box = page.locator("#chat-input, textarea, [contenteditable='true']").first
-        await box.click()
-        await box.fill("hi team, one short sentence each")
-        await page.keyboard.press("Enter")
+        chat_id = None
+        try:
+            await page.goto(HOST + "/?models=auto_router.auto", wait_until="networkidle")
+            await page.wait_for_timeout(2000)
+            box = page.locator("#chat-input, textarea, [contenteditable='true']").first
+            await box.click()
+            await box.fill("hi team, one short sentence each")
+            await page.keyboard.press("Enter")
 
-        # Ada first, alone.
-        for _ in range(60):
-            await page.wait_for_timeout(1000)
+            # Sample from the moment the message is sent, with no leading
+            # sleep, and keep the whole sequence of counts. "One agent row,
+            # then two" is the property under test, so it has to be OBSERVED
+            # in the samples. Waiting a second and then finding two rows
+            # would pass just as happily if both had arrived together, which
+            # is the bug this test exists to catch.
+            seen = []
+            heads = []
+            for _ in range(240):
+                await page.wait_for_timeout(250)
+                heads = [r["header"] for r in await _rows(page)
+                         if r["header"] and r["header"] not in ("Auto (Free)", "IO")]
+                seen.append(len(heads))
+                if len(heads) >= 2:
+                    break
+            assert 1 in seen, "the first agent was never shown on its own: %r" % seen
+            assert seen.index(1) < len(seen) - 1, "both agents appeared in the same sample"
+            assert heads[:2] == ["Ada", "Mia"], heads
+
+            chat_id = await page.evaluate("location.pathname.split('/c/')[1]")
+
+            # A reload shows the same two rows, from stored data alone.
+            await page.goto(HOST + "/c/" + chat_id, wait_until="networkidle")
+            await page.wait_for_timeout(4000)
             rows = await _rows(page)
-            heads = [r["header"] for r in rows if r["header"]]
-            if len(heads) >= 1 and heads[0] not in ("Auto (Free)", "IO"):
-                break
-        first_seen = time.time()
+            assert [r["header"] for r in rows if r["header"]][:2] == ["Ada", "Mia"], rows
 
-        # Then Mia, as her own row.
-        for _ in range(60):
-            await page.wait_for_timeout(1000)
-            rows = await _rows(page)
-            heads = [r["header"] for r in rows if r["header"]]
-            if len(heads) >= 2:
-                break
-        assert heads[:2] == ["Ada", "Mia"], rows
-        assert time.time() - first_seen >= 1, "the second arrived with the first, not after it"
-
-        chat_id = await page.evaluate("location.pathname.split('/c/')[1]")
-
-        # A reload shows the same two rows, from stored data alone.
-        await page.goto(HOST + "/c/" + chat_id, wait_until="networkidle")
-        await page.wait_for_timeout(4000)
-        rows = await _rows(page)
-        assert [r["header"] for r in rows if r["header"]][:2] == ["Ada", "Mia"], rows
-
-        # The stored chat: first message claimed for Ada, no marker anywhere.
-        async with httpx.AsyncClient(timeout=60) as c:
-            r = await c.get("http://open-webui:8080/api/v1/chats/" + chat_id,
-                            headers={"Authorization": "Bearer " + token})
-            msgs = r.json()["chat"]["history"]["messages"].values()
-        assistants = [m for m in msgs if m["role"] == "assistant"]
-        assert [m["model"] for m in assistants][:2] == ["agent-scout-7d88", "agent-triage-256e"]
-        assert not any("aiui:turns" in (m.get("content") or "") for m in msgs)
-        assert not any((m.get("content") or "").startswith("Ada:") for m in assistants)
-
-        await browser.close()
-        async with httpx.AsyncClient(timeout=60) as c:
-            await c.delete("http://open-webui:8080/api/v1/chats/" + chat_id,
-                           headers={"Authorization": "Bearer " + token})
+            # The stored chat: first message claimed for Ada, no marker anywhere.
+            async with httpx.AsyncClient(timeout=60) as c:
+                r = await c.get("http://open-webui:8080/api/v1/chats/" + chat_id,
+                                headers={"Authorization": "Bearer " + token})
+                msgs = r.json()["chat"]["history"]["messages"].values()
+            assistants = [m for m in msgs if m["role"] == "assistant"]
+            assert [m["model"] for m in assistants][:2] == ["agent-scout-7d88", "agent-triage-256e"]
+            assert not any("aiui:turns" in (m.get("content") or "") for m in msgs)
+            assert not any((m.get("content") or "").startswith("Ada:") for m in assistants)
+        finally:
+            # A failed assertion must not leave a stray chat behind for the
+            # next run to trip over.
+            await browser.close()
+            if chat_id:
+                async with httpx.AsyncClient(timeout=60) as c:
+                    await c.delete("http://open-webui:8080/api/v1/chats/" + chat_id,
+                                   headers={"Authorization": "Bearer " + token})

@@ -322,6 +322,10 @@ def test_the_page_takes_turns_from_the_marker():
     assert "'/api/v1/chats/' + chatId" in section
     assert "aiuiWaitForSavedMarker" in section
     assert "aiuiSoftReload" in section
+    # Driven from the scan, not from the header rewrite. See
+    # test_turn_taking_does_not_depend_on_a_label for why that matters.
+    assert "function aiuiMaybeTakeTurns(" in section
+    assert "aiuiTakeTurns(" not in _js_function(section, "aiuiRewriteAgentHeader")
 
 
 def test_the_page_never_writes_before_the_reply_is_saved():
@@ -336,11 +340,15 @@ def test_the_page_never_writes_before_the_reply_is_saved():
 
 
 def test_a_new_message_is_a_child_of_the_tail_with_the_agent_as_its_model():
+    """The write goes against the copy re-fetched immediately before it, so
+    the parent is that copy's tail. It is still the tail this turn was taken
+    for: test_the_write_is_guarded_against_a_moved_chat pins the two
+    together and abandons the turn when they differ."""
     section = _agent_header_section(_js())
     body = _js_function(section, "aiuiTakeTurns")
-    assert "parentId: tail.id" in body
+    assert "parentId: ftail.id" in body
     assert "model: next" in body
-    assert "history.currentId = newId" in body
+    assert "fh.currentId = newId" in body
 
 
 def test_the_dom_clone_split_is_gone():
@@ -351,3 +359,21 @@ def test_the_dom_clone_split_is_gone():
     assert "aiuiSplitIntoAgentMessages" not in section
     assert "data-aiui-agent-clone" not in section
     assert "aiuiSwapAvatar" not in section
+
+
+def test_turn_taking_does_not_depend_on_a_label():
+    """A reply the page wrote carries no label. If turn taking lived
+    behind the label check, the third agent would never speak."""
+    section = _agent_header_section(_js())
+    rewrite = _js_function(section, "aiuiRewriteAgentHeader")
+    scan = _js_function(section, "aiuiScanAgentNameHeaders")
+    assert "aiuiTakeTurns(" not in rewrite
+    assert "aiuiMaybeTakeTurns(" in scan
+
+
+def test_the_write_is_guarded_against_a_moved_chat():
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "ftail.id !== tail.id" in body
+    assert "m.model === next" in body
+    assert "{ history: fh }" in body

@@ -3057,13 +3057,22 @@
       a.click();
       a.remove();
     }
-    var before = document.querySelectorAll('[id^="message-"]').length;
+    // The count is no use: the list renders at most 8 rows by default, so
+    // in any chat already at that cap the count never grows and every turn
+    // would hard reload after five seconds. The identity of the last row
+    // changes whether or not the count does.
+    function lastRowId() {
+      var rows = document.querySelectorAll('[id^="message-"]');
+      return rows.length ? rows[rows.length - 1].id : '';
+    }
+    var before = lastRowId();
     go('/');
     setTimeout(function () { go('/c/' + chatId); }, 400);
     var tries = 0;
     var timer = setInterval(function () {
       tries++;
-      if (document.querySelectorAll('[id^="message-"]').length > before) { clearInterval(timer); return; }
+      var now = lastRowId();
+      if (now && now !== before) { clearInterval(timer); return; }
       if (tries >= 20) { clearInterval(timer); location.reload(); }
     }, 250);
   }
@@ -3080,6 +3089,11 @@
       });
   }
 
+  // Whatever the caller passes is what gets sent. Every caller passes
+  // { history: ... } and nothing else, on purpose: this route merges the
+  // history but REPLACES title, tags and the flat messages list with
+  // whatever the body carries, so posting a whole fetched chat back would
+  // revert a title the server generated moments ago.
   function aiuiSaveChat(chatId, chat) {
     return fetch('/api/v1/chats/' + chatId, {
       method: 'POST', headers: aiuiAuthHeaders(), body: JSON.stringify({ chat: chat })
@@ -3094,14 +3108,22 @@
   //
   // The marker is read from the STORED content, never from the rendered
   // page: DOMPurify may strip an HTML comment out of what gets rendered.
+  // The backend upserts a finished reply's content and done:true together
+  // before it tells the frontend the reply is done, so done is the signal
+  // that the stored copy is final. Stopping on done rather than on a marker
+  // means an ordinary single-agent reply costs ONE GET instead of twelve,
+  // and a long streamed reply, which is not finished when the observer
+  // first sees it, is still waited out for up to sixty seconds.
   function aiuiWaitForSavedMarker(chatId) {
     var attempt = 0;
     function look() {
       return aiuiFetchChat(chatId).then(function (data) {
         var chain = aiuiChainFromHistory(data.chat.history);
         var tail = chain[chain.length - 1];
-        if (tail && tail.role === 'assistant' && aiuiParseTurns(tail.content)) return data;
-        if (++attempt >= 12) return null;
+        if (tail && tail.role === 'assistant' && tail.done === true) {
+          return aiuiParseTurns(tail.content) ? data : null;
+        }
+        if (++attempt >= 120) return null;
         return new Promise(function (r) { setTimeout(r, 500); }).then(look);
       });
     }
@@ -3109,8 +3131,13 @@
   }
 
   function aiuiSpeak(chatId, agentId, chain) {
-    var messages = chain.map(function (m) {
-      return { role: m.role, content: aiuiStripTurnsMarker(m.content) };
+    // The route caps the chain at 200 messages and each one at 32000
+    // characters. Sending more is a 422 that never clears by itself, so a
+    // long conversation would stop taking turns permanently.
+    var messages = chain.slice(-200).map(function (m) {
+      var content = aiuiStripTurnsMarker(m.content);
+      if (content.length > 32000) content = content.slice(0, 32000);
+      return { role: m.role, content: content };
     });
     return fetch('/api/tasks/agents/speak', {
       method: 'POST', headers: aiuiAuthHeaders(),
@@ -3138,7 +3165,7 @@
       if (!turns || turns.length < 2) {
         // A marker with nobody left to speak. Clean it off and stop.
         tail.content = aiuiStripTurnsMarker(tail.content);
-        return aiuiSaveChat(chatId, chat).then(function () { return null; });
+        return aiuiSaveChat(chatId, { history: history }).then(function () { return null; });
       }
       spoke = turns[0];
       next = turns[1];
@@ -3170,7 +3197,7 @@
         // Not this person's agent any more. Drop it, keep the rest.
         if (rest.length) tail.content += '\n\n<!-- aiui:turns ' + [spoke].concat(rest).join(',') + ' -->';
         aiuiClearTypingLine();
-        return aiuiSaveChat(chatId, chat).then(function () {
+        return aiuiSaveChat(chatId, { history: history }).then(function () {
           if (rest.length) { aiuiTurnsBusy[chatId] = false; aiuiTakeTurns(chatId); }
         });
       }
@@ -3181,35 +3208,46 @@
       if (!answer) answer = 'There was nothing to answer.';
       if (rest.length) answer += '\n\n<!-- aiui:turns ' + [next].concat(rest).join(',') + ' -->';
 
-      var newId = aiuiUuid();
-      history.messages[newId] = {
-        id: newId, parentId: tail.id, childrenIds: [], role: 'assistant',
-        content: answer, model: next, modelName: nextName, modelIdx: 0,
-        done: true, timestamp: Math.floor(Date.now() / 1000)
-      };
-      tail.childrenIds = (tail.childrenIds || []).concat([newId]);
-      history.currentId = newId;
+      return aiuiFetchChat(chatId).then(function (fresh) {
+        // The chat may have moved while the agent was answering. Write
+        // against what is stored NOW, and only if the tail is still the
+        // message this turn was taken for; otherwise the person sent
+        // something and this turn is abandoned, marker left for a retry.
+        var fh = fresh.chat.history;
+        var fchain = aiuiChainFromHistory(fh);
+        var ftail = fchain[fchain.length - 1];
+        if (!ftail || ftail.id !== tail.id) { aiuiClearTypingLine(); return; }
 
-      return aiuiSaveChat(chatId, chat).then(function () {
-        aiuiClearTypingLine();
-        aiuiSoftReload(chatId);
-      }, function () {
-        aiuiTypingLine('could not add ' + nextName + "'s reply");
-        console.warn('[AIUI turns] reply not saved for', next, ':', answer);
+        // Idempotent: the frontend's own save can revert the tail after a
+        // run already wrote this agent's reply. Reuse it, never duplicate.
+        var existing = (ftail.childrenIds || []).map(function (id) { return fh.messages[id]; })
+          .filter(function (m) { return m && m.role === 'assistant' && m.model === next; })[0];
+        var newId = existing ? existing.id : aiuiUuid();
+
+        ftail.content = tail.content;
+        if (ftail.model !== spoke) { ftail.model = spoke; ftail.modelName = tail.modelName; }
+        if (!existing) {
+          fh.messages[newId] = {
+            id: newId, parentId: ftail.id, childrenIds: [], role: 'assistant',
+            content: answer, model: next, modelName: nextName, modelIdx: 0,
+            done: true, timestamp: Math.floor(Date.now() / 1000)
+          };
+          ftail.childrenIds = (ftail.childrenIds || []).concat([newId]);
+        }
+        fh.currentId = newId;
+        return aiuiSaveChat(chatId, { history: fh }).then(function () {
+          aiuiClearTypingLine();
+          aiuiSoftReload(chatId);
+        }, function () {
+          aiuiTypingLine('could not add ' + nextName + "'s reply");
+          console.warn('[AIUI turns] reply not saved for', next, ':', answer);
+        });
       });
     }).catch(function (e) {
       console.warn('[AIUI turns]', e && e.message ? e.message : e);
     }).then(function () {
       aiuiTurnsBusy[chatId] = false;
     });
-  }
-
-  // Is this header span the last reply on the page? Only the tail can carry
-  // a live marker, and a reloaded chat with twenty replies must not fetch
-  // the chat twenty times.
-  function aiuiIsLastReply(span) {
-    var spans = document.querySelectorAll('#response-message-model-name');
-    return spans.length > 0 && spans[spans.length - 1] === span;
   }
 
   function aiuiRewriteAgentHeader(span) {
@@ -3241,17 +3279,42 @@
     }
 
     // One agent per reply now, so the label below always repeats the
-    // header and goes. If this is the last reply, the page also checks
-    // the stored chat for a marker and takes the remaining turns.
+    // header and goes.
+    //
+    // Turn taking is deliberately NOT hung off this function. A reply the
+    // page itself wrote carries no label, so every path above returns
+    // early on it; with the turn taking here, the second agent's message
+    // would never be looked at and a third agent would never speak.
+    // aiuiScanAgentNameHeaders drives it separately.
     if (span.getAttribute('data-aiui-agent-stripped') === '1') return;
     span.setAttribute('data-aiui-agent-stripped', '1');
     aiuiStripLabel(body, scan.labels[0]);
-    if (aiuiIsLastReply(span)) aiuiTakeTurns(aiuiChatIdFromUrl());
+  }
+
+  // Once per reply, once it has stopped changing. The settle check is the
+  // same shape the header rewrite uses, kept separate so the two never
+  // depend on each other.
+  function aiuiMaybeTakeTurns(span) {
+    if (span.getAttribute('data-aiui-turns-checked') === '1') return;
+    var body = aiuiFindReplyBody(span);
+    var sig = String(body ? (body.textContent || '').length : -1);
+    if (span.getAttribute('data-aiui-turns-seen') !== sig) {
+      span.setAttribute('data-aiui-turns-seen', sig);
+      aiuiScheduleSettleScan();
+      return;
+    }
+    span.setAttribute('data-aiui-turns-checked', '1');
+    aiuiTakeTurns(aiuiChatIdFromUrl());
   }
 
   function aiuiScanAgentNameHeaders() {
     var spans = document.querySelectorAll('#response-message-model-name');
     for (var i = 0; i < spans.length; i++) aiuiRewriteAgentHeader(spans[i]);
+    // Turn taking is independent of labels. The last reply may be one the
+    // page itself wrote, which carries no label and a marker for whoever
+    // is next, so it must be looked at regardless of what the header
+    // rewrite found.
+    if (spans.length) aiuiMaybeTakeTurns(spans[spans.length - 1]);
   }
 
   function wireAiuiAgentNameHeaders() {
