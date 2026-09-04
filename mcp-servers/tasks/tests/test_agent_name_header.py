@@ -537,3 +537,61 @@ def test_a_refused_agent_needs_no_write_and_defers_its_next_round():
     assert "aiuiTurnsBusy[chatId] = false;" not in block, (
         "the refused path clears the busy flag itself, so the outer chain "
         "clears it a second time under the recursion")
+
+
+def test_the_turn_is_claimed_server_side_too():
+    """The page's own claim cannot be atomic: reading the chat and writing it
+    back are two calls against an endpoint with no If-Match, so two tabs both
+    read before either writes. The service settles it under a primary key,
+    and the page has to send the key's last column for that to work."""
+    section = _agent_header_section(_js())
+    speak = _js_function(section, "aiuiSpeak")
+    assert "after_id: afterId" in speak, "the claim key's after_id is not sent"
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "aiuiSpeak(chatId, next, chain, tail.id)" in body, (
+        "the tail the page claimed against is not what it claims server side")
+
+
+def test_losing_the_race_is_silent():
+    """A 409 means another tab owns this turn and will write the reply
+    itself. Saying anything would put two notices in one conversation."""
+    section = _agent_header_section(_js())
+    speak = _js_function(section, "aiuiSpeak")
+    assert "r.status === 409" in speak
+    assert "taken: true" in speak
+
+    body = _js_function(section, "aiuiTakeTurns")
+    taken = body.find("if (out.taken)")
+    assert taken != -1, "a 409 is not distinguished from a real failure"
+    block = body[taken:taken + 260]
+    assert "aiuiClearTypingLine()" in block, "the typing line is left behind"
+    assert "aiuiTypingLine(" not in block, "losing the race shows a failure line"
+    assert "aiuiSaveChat(" not in block and "answer" not in block, (
+        "losing the race writes something")
+
+
+def test_an_unreachable_agent_leaves_a_message_that_survives_a_reload():
+    """The turn was claimed, so nothing will ever retry it. The typing line
+    is gone on the next render and says nothing at all after a reload, so a
+    person who looked away would see Ada's answer, no Mia, and no sign that a
+    turn had ever been attempted.
+
+    It has to go through the same write as a real reply, so it is owned by
+    that agent: model, modelName and done are set from the write path below.
+    """
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "unreachable: true" in body, (
+        "a rejected speak does not produce an outcome the write can see")
+
+    branch = body.find("if (out.unreachable)")
+    assert branch != -1, "the unreachable case is not handled"
+    assert "could not be reached" in body
+
+    # It must feed the SAME answer variable the successful path writes, not
+    # just paint a transient line, or it will not be persisted.
+    assert re.search(r"if \(out\.unreachable\) \{\s*(//[^\n]*\n\s*)*answer =",
+                     body), "the unreachable notice never becomes a message"
+    write = body.find("aiuiFetchChat(chatId).then(function (fresh)")
+    assert write != -1 and branch < write, (
+        "the unreachable notice is produced after the write that would store it")

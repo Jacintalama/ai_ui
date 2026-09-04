@@ -3211,7 +3211,7 @@
     return look();
   }
 
-  function aiuiSpeak(chatId, agentId, chain) {
+  function aiuiSpeak(chatId, agentId, chain, afterId) {
     // The route caps the chain at 200 messages and each one at 32000
     // characters. Sending more is a 422 that never clears by itself, so a
     // long conversation would stop taking turns permanently.
@@ -3222,9 +3222,15 @@
     });
     return fetch('/api/tasks/agents/speak', {
       method: 'POST', headers: aiuiAuthHeaders(),
-      body: JSON.stringify({ chat_id: chatId, agent_id: agentId, messages: messages })
+      body: JSON.stringify({ chat_id: chatId, agent_id: agentId,
+                             after_id: afterId, messages: messages })
     }).then(function (r) {
       if (r.status === 403) return { refused: true };
+      // Somebody else owns this exact turn. The service decided it under
+      // a primary key, which is the only place it CAN be decided: the
+      // page's own claim cannot be atomic against a chat endpoint with
+      // no If-Match. Not a failure, and not ours to report.
+      if (r.status === 409) return { taken: true };
       if (!r.ok) throw new Error('speak ' + r.status);
       return r.json();
     });
@@ -3320,18 +3326,28 @@
         tail.content = claimed.content;
         tail.model = claimed.model;
         tail.modelName = claimed.modelName;
-        return aiuiSpeak(chatId, next, chain).then(function (out) {
+        return aiuiSpeak(chatId, next, chain, tail.id).then(function (out) {
           return { out: out };
         }, function () {
           // Claimed and failed. Deliberately NOT retried: the marker no
           // longer names this agent, so a reload will not run it again.
+          // The typing line is for the person watching right now; the real
+          // record is written below, because this one does not survive a
+          // render or a reload.
           aiuiTypingLine(nextName + ' did not answer, and will not be retried');
-          return null;
+          return { out: { unreachable: true } };
         });
       });
     }).then(function (step) {
       if (!step) return;
       var out = step.out;
+
+      if (out.taken) {
+        // Another tab is running this turn. Nothing to say and nothing to
+        // write: it will write the reply itself.
+        aiuiClearTypingLine();
+        return;
+      }
 
       if (out.refused) {
         // Not this person's agent any more. Nothing to write: the claim
@@ -3348,7 +3364,18 @@
 
       var pending = (out.pending && typeof out.pending === 'object') ? out.pending : null;
       var answer;
-      if (pending && Array.isArray(pending.calls) && pending.calls.length) {
+      if (out.unreachable) {
+        // The turn was claimed and then the service could not be reached, so
+        // it will never run and nothing will retry it. This has to be a real
+        // message. The typing line is gone on the next render and says
+        // nothing at all after a reload, so a person who looked away, or who
+        // reloaded, would see Ada's answer, no Mia, and no sign that a turn
+        // had ever been attempted. It is written as that agent's own message,
+        // the same way a successful turn is, so it reads as coming from the
+        // agent that was asked.
+        answer = nextName + ' could not be reached, so this turn did not run.'
+          + ' Ask again if you still want it.';
+      } else if (pending && Array.isArray(pending.calls) && pending.calls.length) {
         // The agent stopped to ask. Show its question, the same one the
         // pipe shows, not the empty-answer placeholder.
         answer = aiuiApprovalQuestion(nextName, pending.calls);
