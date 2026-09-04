@@ -122,3 +122,96 @@ def test_pipe_with_no_messages_returns_a_clear_message(mod):
     pipe.valves.OPENROUTER_API_KEY = "sk-test"
     out = asyncio.run(pipe.pipe({"messages": []}))
     assert out == "No message to answer."
+
+
+async def test_agents_first_sends_first_only_alongside_route_only(mod, monkeypatch):
+    """The page takes turns. This pipe must ask for one agent at a time too,
+    or the service runs everybody and the page finds nothing left to fetch."""
+    p = mod.Pipe()
+    seen = {}
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"turns": [], "rendered": "", "queue": [], "marker": ""}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None):
+            seen.update(json or {}); return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+    await p._agents_first({"messages": _q("hi team")}, "o@example.com")
+    assert seen.get("first_only") is True
+    assert seen.get("route_only") is True
+
+
+async def test_agents_first_appends_the_marker(mod, monkeypatch):
+    p = mod.Pipe()
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {
+            "turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hello.", "notes": []}],
+            "rendered": "Ada:\nHello.", "queue": ["agent-m"],
+            "marker": "<!-- aiui:turns agent-a,agent-m -->"}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None): return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+    out = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
+    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
+    assert "Hello." in out
+    assert out.count("aiui:turns") == 1
+
+
+async def test_agents_first_with_no_marker_appends_nothing(mod, monkeypatch):
+    p = mod.Pipe()
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {
+            "turns": [{"agent": {"id": "agent-m", "name": "Mia"}, "answer": "Hi.", "notes": []}],
+            "rendered": "Mia:\nHi.", "queue": [], "marker": ""}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None): return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+    out = await p._agents_first({"messages": _q("hi mia")}, "o@example.com")
+    assert out == "Mia:\nHi."
+    assert "aiui:turns" not in out
+
+
+async def test_agents_first_with_a_marker_of_the_wrong_type_appends_nothing(mod, monkeypatch):
+    """The shape comes over HTTP and is not ours to trust."""
+    p = mod.Pipe()
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {
+            "turns": [{"agent": {"id": "agent-m", "name": "Mia"}, "answer": "Hi.", "notes": []}],
+            "rendered": "Mia:\nHi.", "queue": [], "marker": ["not", "a", "string"]}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None): return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+    out = await p._agents_first({"messages": _q("hi mia")}, "o@example.com")
+    assert out == "Mia:\nHi."
+    assert "aiui:turns" not in out

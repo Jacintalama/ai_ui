@@ -169,7 +169,7 @@ class Pipe:
                     headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
                     json={"user_email": user_email, "chat_id": chat_id,
                           "messages": body.get("messages") or [],
-                          "route_only": True})
+                          "route_only": True, "first_only": True})
                 if r.status_code != 200:
                     return None
                 data = r.json()
@@ -181,7 +181,12 @@ class Pipe:
         if not isinstance(turns, list) or not turns:
             return None
         rendered = data.get("rendered")
-        return rendered if isinstance(rendered, str) and rendered.strip() else None
+        if not (isinstance(rendered, str) and rendered.strip()):
+            return None
+        marker = data.get("marker")
+        if isinstance(marker, str) and marker.strip():
+            rendered = rendered.rstrip() + "\n\n" + marker.strip()
+        return rendered
 
     def pipes(self) -> list[dict]:
         return [{"id": "auto", "name": "Auto (Free)"}]
