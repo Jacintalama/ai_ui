@@ -104,10 +104,33 @@ async def test_hi_team_becomes_two_messages_one_after_another():
             async with httpx.AsyncClient(timeout=60) as c:
                 r = await c.get("http://open-webui:8080/api/v1/chats/" + chat_id,
                                 headers={"Authorization": "Bearer " + token})
-                msgs = r.json()["chat"]["history"]["messages"].values()
+                stored = r.json()["chat"]
+                msgs = stored["history"]["messages"].values()
             assistants = [m for m in msgs if m["role"] == "assistant"]
-            assert [m["model"] for m in assistants][:2] == ["agent-scout-7d88", "agent-triage-256e"]
-            assert not any("aiui:turns" in (m.get("content") or "") for m in msgs)
+
+            # Agent ids are minted per user as agent-<slug>-<4 hex>, so they
+            # cannot be hardcoded; what must hold is that the two stored
+            # replies are attributed to the two agents whose names the
+            # headers showed, in that order. The old fixture asserted the ids
+            # of the Scout and Triage templates, which no longer exist, while
+            # asserting the headers of the Ada and Mia ones that replaced
+            # them, so it could never have passed.
+            models = [m["model"] for m in assistants][:2]
+            assert len(models) == 2, models
+            assert models[0].startswith("agent-ada-"), models
+            assert models[1].startswith("agent-mia-"), models
+
+            # The page writes {history} and nothing else. Posting the whole
+            # fetched chat back would replace the title Open WebUI generated
+            # moments earlier with whatever the page first read, which right
+            # after a send is the placeholder.
+            title = stored.get("title") or ""
+            assert title and title != "New Chat", repr(title)
+
+            # Every marker is consumed as its turn is claimed, so a drained
+            # queue leaves none behind to re-run on the next reload.
+            assert not any("aiui:turns" in (m.get("content") or "") for m in msgs), (
+                "a marker survived the drained queue and would re-run")
             assert not any((m.get("content") or "").startswith("Ada:") for m in assistants)
         finally:
             # A failed assertion must not leave a stray chat behind for the

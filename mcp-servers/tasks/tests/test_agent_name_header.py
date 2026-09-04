@@ -197,20 +197,29 @@ def test_every_rewrite_is_reached_through_the_known_agent_check():
             "the header is written from something other than the collected "
             "names")
 
-    for name in ("aiuiAgentLabelsIn", "aiuiStripLabel"):
+    for name in ("aiuiAgentLabelsIn", "aiuiStripLabel", "aiuiJoinNames"):
         assert "span.textContent =" not in _js_function(section, name), (
             name + " writes the header outside the gated path")
 
 
-def test_exactly_one_label_is_ever_processed_per_reply():
-    """A pipe reply holds one agent now, so the header names one agent
-    and the single label below it is stripped. The old two-agent path,
-    where labels stayed to say who was who, is gone with the DOM split."""
+def test_a_bubble_holding_two_answers_is_still_named_for_both():
+    """A reply written since first_only shipped holds one agent, so the
+    label below the header always repeats it and goes.
+
+    A bubble stored BEFORE it holds two, and there are real ones in real
+    chats. Naming only the first would head such a message "Ada" while
+    "Mia:" sat in its body, and stripping the one label would delete the
+    only thing saying which answer belonged to whom. So the header joins
+    every name found, and the strip is gated on there being exactly one.
+    """
     section = _agent_header_section(_js())
     rewrite = _js_function(section, "aiuiRewriteAgentHeader")
-    assert "names[0]" in rewrite
-    assert "aiuiJoinNames" not in section
-    assert "aiuiStripLabel(body, scan.labels[0])" in rewrite
+    assert "aiuiJoinNames(names)" in rewrite
+    strip = rewrite.find("aiuiStripLabel(body, scan.labels[0])")
+    guard = rewrite.find("names.length === 1")
+    assert strip != -1 and guard != -1, "the strip or its guard is missing"
+    assert guard < strip, (
+        "a label is removed even when two agents shared the reply")
 
 
 def test_a_label_is_found_past_the_tool_result_panel():
@@ -405,3 +414,126 @@ def test_the_turns_latch_waits_for_a_real_reply():
         "the latch is set before the turn is taken")
     wait = _js_function(section, "aiuiWaitForSavedMarker")
     assert "tail.role !== 'assistant'" in wait
+
+
+def test_a_turn_is_claimed_before_the_agent_runs():
+    """Side effects beat retry.
+
+    Two tabs on one chat both find the same marker. Without a claim both
+    POST /agents/speak and an agent with write tools sends the same email
+    twice. The claim takes the agent out of the STORED marker before it
+    runs, so the loser finds nothing to do, and a claimed turn that fails
+    is not re-run by somebody pressing reload.
+    """
+    section = _agent_header_section(_js())
+    assert "function aiuiClaimTurn(" in section
+
+    claim = _js_function(section, "aiuiClaimTurn")
+    # Compare and swap, not just a write: ours only if the stored marker
+    # still names this agent as next.
+    assert "live[1] !== agentId" in claim, (
+        "the claim does not check the marker still names this agent, so two "
+        "tabs can both believe they won")
+    assert "ftail.id !== tailId" in claim
+
+    body = _js_function(section, "aiuiTakeTurns")
+    claimed = body.find("aiuiClaimTurn(")
+    spoke = body.find("aiuiSpeak(")
+    assert claimed != -1 and spoke != -1
+    assert claimed < spoke, "the agent runs before the turn is claimed"
+
+
+def test_a_claimed_turn_that_fails_is_not_retried():
+    """The marker no longer names the agent, so a reload cannot re-run it.
+    The person is told that rather than being left to expect a retry."""
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "will not be retried" in body
+    assert "a reload can retry" not in body, (
+        "the old promise of an automatic retry is still in the code")
+
+
+def test_the_no_chat_id_path_gives_up():
+    """A Temporary Chat stays on '/' and a shared chat on '/s/<id>', so no
+    chat id ever appears. Nothing on that path can latch and -seen already
+    equals sig, so an unbounded reschedule re-armed the 700ms timer for the
+    life of the tab, for people who own no agents at all."""
+    section = _agent_header_section(_js())
+    maybe = _js_function(section, "aiuiMaybeTakeTurns")
+    assert "data-aiui-turns-tries" in maybe
+    assert re.search(r"if\s*\(\s*tries\s*<\s*\d+\s*\)\s*aiuiScheduleSettleScan\(\)", maybe), (
+        "the no-chat-id path reschedules without a bound")
+
+
+def test_the_hard_fallback_lands_on_the_chat_not_on_whatever_is_open():
+    """If the second synthetic click was dropped the person is sitting on
+    '/', and location.reload() would strand them on a blank new chat."""
+    section = _agent_header_section(_js())
+    soft = _js_function(section, "aiuiSoftReload")
+    assert "location.href = '/c/' + chatId" in soft
+    # The CODE, not the prose: a comment naming the old call is fine, a
+    # surviving call to it is not.
+    code = "\n".join(
+        l for l in soft.split("\n") if not l.strip().startswith("//"))
+    assert "location.reload()" not in code
+
+
+def test_a_leading_label_is_only_stripped_when_it_names_the_agent():
+    """With SHOW_AGENT_NAME off, an answer opening "Here is the plan:" is
+    ordinary content. Stripping any leading Word: line deleted it
+    permanently, in storage, with nothing to undo it."""
+    section = _agent_header_section(_js())
+    strip = _js_function(section, "aiuiStripLeadingLabelText")
+    assert "aiuiAgentNameById[agentId]" in strip
+    assert "toLowerCase()" in strip
+    assert re.search(r"if\s*\(\s*!name\s*\)\s*return content;", strip), (
+        "an unknown agent id must leave the content alone")
+
+
+def test_a_failure_line_does_not_outlive_its_conversation():
+    """"Mia did not answer" is cleared by nothing else, so without this it
+    hangs under whatever conversation is opened next."""
+    section = _agent_header_section(_js())
+    assert "function aiuiDropStaleTypingLine(" in section
+    drop = _js_function(section, "aiuiDropStaleTypingLine")
+    assert "data-aiui-chat" in drop
+    scan = _js_function(section, "aiuiScanAgentNameHeaders")
+    assert "aiuiDropStaleTypingLine()" in scan
+
+
+def test_an_agent_that_stops_to_ask_shows_its_question():
+    """The pending shape has no answer key. Writing the placeholder gave
+    the person a message from Mia reading "There was nothing to answer.",
+    with no question and no way to approve."""
+    section = _agent_header_section(_js())
+    assert "function aiuiApprovalQuestion(" in section
+    q = _js_function(section, "aiuiApprovalQuestion")
+    assert "wants to run:" in q
+    assert "Reply yes to let it, or no to skip." in q
+    body = _js_function(section, "aiuiTakeTurns")
+    ask = body.find("aiuiApprovalQuestion(")
+    placeholder = body.find("There was nothing to answer.")
+    assert ask != -1, "a pending turn never renders its question"
+    assert placeholder != -1 and ask < placeholder, (
+        "the placeholder is reached before the pending question")
+
+
+def test_a_refused_agent_needs_no_write_and_defers_its_next_round():
+    """The claim already took the refused agent out of the stored marker,
+    so there is nothing to save; saving the FIRST fetch's history here also
+    reverted any frontend save that landed in between.
+
+    And the recursion has to wait for the outer chain, which clears the
+    busy flag itself: clearing it early and recursing underneath let a
+    third concurrent run start.
+    """
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    start = body.find("if (out.refused)")
+    assert start != -1
+    block = body[start:start + 700]
+    assert "aiuiSaveChat(" not in block, "the refused path still writes"
+    assert "again = true" in block
+    assert "aiuiTurnsBusy[chatId] = false;" not in block, (
+        "the refused path clears the busy flag itself, so the outer chain "
+        "clears it a second time under the recursion")
