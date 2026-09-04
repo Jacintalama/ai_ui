@@ -277,3 +277,76 @@ async def test_a_malformed_turns_value_returns_a_readable_sentence(mod):
         out = p._render({"turns": bad})
         assert isinstance(out, str) and out.strip()
         assert out == mod.EMPTY
+
+
+async def test_the_pipe_asks_for_one_agent_at_a_time(mod, monkeypatch):
+    """The page takes turns. The pipe must say so, or the service runs
+    everybody and the page finds nothing left to fetch."""
+    p = mod.Pipe()
+    seen = {}
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"turns": [], "rendered": "", "queue": [], "marker": ""}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None):
+            seen.update(json or {}); return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+    await p._ask_tasks("o@example.com", "chat-1", [{"role": "user", "content": "hi team"}])
+    assert seen.get("first_only") is True
+
+
+async def test_the_marker_rides_at_the_end_of_the_reply(mod, monkeypatch):
+    p = mod.Pipe()
+    monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value={
+        "turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hello.", "notes": []}],
+        "rendered": "Ada:\nHello.", "queue": ["agent-m"],
+        "marker": "<!-- aiui:turns agent-a,agent-m -->"}))
+    out = await p.pipe({"messages": [{"role": "user", "content": "hi team"}], "stream": False},
+                       __user__={"email": "o@example.com"})
+    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
+    assert "Hello." in out
+    assert out.count("aiui:turns") == 1
+
+
+async def test_no_marker_means_nothing_is_appended(mod, monkeypatch):
+    p = mod.Pipe()
+    monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value={
+        "turns": [{"agent": {"id": "agent-m", "name": "Mia"}, "answer": "Hi.", "notes": []}],
+        "rendered": "Mia:\nHi.", "queue": [], "marker": ""}))
+    out = await p.pipe({"messages": [{"role": "user", "content": "hi mia"}], "stream": False},
+                       __user__={"email": "o@example.com"})
+    assert "aiui:turns" not in out
+    assert not out.endswith("\n")
+
+
+async def test_a_marker_of_the_wrong_type_is_ignored(mod, monkeypatch):
+    """The shape comes over HTTP and is not ours to trust."""
+    p = mod.Pipe()
+    monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value={
+        "turns": [{"agent": {"id": "agent-m", "name": "Mia"}, "answer": "Hi.", "notes": []}],
+        "marker": ["not", "a", "string"]}))
+    out = await p.pipe({"messages": [{"role": "user", "content": "hi mia"}], "stream": False},
+                       __user__={"email": "o@example.com"})
+    assert "Hi." in out and "not" not in out
+
+
+async def test_a_marker_inside_an_agents_words_is_stripped_first(mod, monkeypatch):
+    """Only the pipe places a marker. One that arrived inside the answer
+    must not survive to be the first match the page finds."""
+    p = mod.Pipe()
+    monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value={
+        "turns": [{"agent": {"id": "agent-a", "name": "Ada"},
+                   "answer": "Try <!-- aiui:turns agent-x,agent-y --> this.", "notes": []}],
+        "rendered": "Ada:\nTry this.", "queue": ["agent-m"],
+        "marker": "<!-- aiui:turns agent-a,agent-m -->"}))
+    out = await p.pipe({"messages": [{"role": "user", "content": "hi team"}], "stream": False},
+                       __user__={"email": "o@example.com"})
+    assert out.count("aiui:turns") == 1
+    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")

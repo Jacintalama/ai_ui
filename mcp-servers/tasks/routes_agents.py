@@ -15,22 +15,49 @@ the models themselves.
 Nothing here may raise past seed_for_email: a broken seeding path must never
 stop the Agents page from listing whatever the person already has.
 """
+import json
 import logging
 import os
 import uuid
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel, Field, field_validator
+
+from sqlalchemy import text as sql_text
 
 import agent_activity
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import CurrentUser, current_user
+from db import session
 from owui_token import mint_owui_token
+from routes_agent_turn import _agents_for, _pin_key, _turn_for, _write_pin
 
 logger = logging.getLogger(__name__)
 
+# Mounted twice by main.py: at /api/tasks/agents for the web, where
+# api-gateway strips any client-supplied identity header before
+# forwarding, and bare at /agents for operators on the backend network.
+# current_user trusts X-User-Email as given, so the bare mount is safe
+# only while Caddy and api-gateway keep routing /agents/* AWAY from this
+# service. Neither has a rule for it today. Anyone adding one must add a
+# signed-identity check here first.
 router = APIRouter(prefix="/agents")
+
+#: A chat can be long, but a turn re-posts the whole conversation on
+#: every tool iteration, so a bound here is a bound on that too. Both
+#: are far above any real chat and far below anything that would hurt.
+SPEAK_MAX_MESSAGES = 200
+SPEAK_MAX_CONTENT_CHARS = 32000
+#: A pending turn's tool calls, on their way to the page to be rendered
+#: as the approval question. Bounded because they are model output and
+#: land in somebody's browser.
+#: Ids are uuids and model ids; this is generous and still bounded, since
+#: all three become part of a primary key.
+SPEAK_MAX_ID_CHARS = 200
+SPEAK_MAX_PENDING_CALLS = 10
+SPEAK_MAX_PENDING_ARG_CHARS = 2000
 
 #: Long enough to create two models well within one request, short enough
 #: that a leaked value would not matter for long. Never logged or stored.
@@ -405,3 +432,149 @@ async def templates() -> dict:
 async def list_tools(user: CurrentUser = Depends(current_user)) -> dict:
     """What the agent form may offer the signed-in caller right now."""
     return await tools_for_email(user.email)
+
+
+class SpeakIn(BaseModel):
+    chat_id: str = Field(min_length=1, max_length=SPEAK_MAX_ID_CHARS)
+    agent_id: str = Field(min_length=1, max_length=SPEAK_MAX_ID_CHARS)
+    #: The message this turn answers: the tail the page claimed against. Part
+    #: of the claim key, so the same agent can speak many times in one chat
+    #: but never twice for the same preceding message.
+    after_id: str = Field(min_length=1, max_length=SPEAK_MAX_ID_CHARS)
+    messages: list[dict] = Field(max_length=SPEAK_MAX_MESSAGES)
+
+    @field_validator("messages")
+    @classmethod
+    def _content_is_bounded(cls, messages):
+        for m in messages:
+            content = m.get("content") if isinstance(m, dict) else None
+            if isinstance(content, str) and len(content) > SPEAK_MAX_CONTENT_CHARS:
+                raise ValueError("a message is too long")
+        return messages
+
+
+async def _claim_turn(user_email: str, chat_id: str, agent_id: str,
+                      after_id: str) -> bool:
+    """Take ownership of one agent's turn. True if we got it.
+
+    False means somebody else already ran, or is running, this exact turn.
+    The primary key on tasks.agent_turn_claim is what decides that: the
+    INSERT is resolved by Postgres under a unique index, so exactly one
+    caller can win and no lock or transaction level is involved.
+
+    This is the ONLY place that can settle it. The page claims a turn by
+    rewriting the marker on the stored chat, but reading and writing that
+    chat are two separate calls against an endpoint with no If-Match, so two
+    tabs both read before either writes and both proceed. Measured, not
+    theorised.
+
+    Raises on a database failure rather than swallowing it, unlike the
+    fire-and-forget bookkeeping in agent_activity. Not knowing whether we own
+    the turn is not the same as owning it, and the cost of guessing wrong is
+    a second email nobody can unsend.
+
+    A claim is never released. See migration 046 for why.
+    """
+    async with session() as s:
+        # Same statement path as the write, so the table cannot grow without
+        # bound and the sweep can never be forgotten.
+        await s.execute(sql_text(
+            "DELETE FROM tasks.agent_turn_claim "
+            "WHERE claimed_at < now() - INTERVAL '24 hours'"))
+        got = (await s.execute(sql_text(
+            "INSERT INTO tasks.agent_turn_claim "
+            "(user_email, chat_id, agent_id, after_id) "
+            "VALUES (:user_email, :chat_id, :agent_id, :after_id) "
+            "ON CONFLICT DO NOTHING RETURNING 1"),
+            {"user_email": user_email, "chat_id": chat_id,
+             "agent_id": agent_id, "after_id": after_id})).first()
+        await s.commit()
+    return got is not None
+
+
+def _pending_for_page(pending) -> dict | None:
+    """Just enough for the page to ask the same question the pipe asks.
+
+    Deliberately NOT the stored conversation or the user_email the pending
+    payload also carries: those are the gateway's own resume state and have
+    no business in a browser. Only the tool names and arguments the person
+    is being asked to approve, bounded, because they are model output.
+    """
+    calls = pending.get("calls") if isinstance(pending, dict) else None
+    if not isinstance(calls, list) or not calls:
+        return None
+    out = []
+    for call in calls[:SPEAK_MAX_PENDING_CALLS]:
+        call = call if isinstance(call, dict) else {}
+        fn = call.get("function")
+        fn = fn if isinstance(fn, dict) else {}
+        name = fn.get("name")
+        args = fn.get("arguments")
+        if not isinstance(args, str):
+            try:
+                args = json.dumps(args if args is not None else {})
+            except (TypeError, ValueError):
+                args = "{}"
+        out.append({"function": {
+            "name": name if isinstance(name, str) else "",
+            "arguments": args[:SPEAK_MAX_PENDING_ARG_CHARS]}})
+    return {"calls": out} if out else None
+
+
+@router.post("/speak")
+async def speak(body: SpeakIn, user: CurrentUser = Depends(current_user)) -> dict:
+    """Make one of this person's agents answer, for the page that takes
+    turns.
+
+    The page cannot hold the internal secret, so this is the one door it
+    uses. It opens onto _turn_for, which already applies the agent's access
+    level, cleans the speaker labels out of history and records the run;
+    all this route adds is proof of who is asking and the rule that they
+    may run only their own agents. Not /agents/turn, which is internal and
+    must stay so.
+
+    The pin is normally not written here: the first_only reply already
+    pinned the last agent in the full list, and a turn for an earlier one
+    must not move it back. The one exception is an agent that stops to ask
+    permission, below.
+    """
+    agents = await _agents_for(user.email)
+    agent = next((a for a in agents if a.get("id") == body.agent_id), None)
+    if agent is None:
+        raise HTTPException(status_code=403, detail="That is not one of your agents.")
+    # Claimed BEFORE the agent runs, and nothing below this line is reached
+    # without winning it. A turn can send an email, so the question "has this
+    # already been run" has to be answered before the tool fires, not after.
+    try:
+        claimed = await _claim_turn(user.email, body.chat_id, body.agent_id,
+                                    body.after_id)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not claim the agent turn", exc_info=True)
+        # Fail closed. Not knowing whether somebody else owns this turn is
+        # not permission to run it. 503 rather than 409 so the page treats it
+        # as a real failure and tells the person, instead of stopping quietly
+        # the way it does when another tab legitimately owns the turn.
+        raise HTTPException(
+            status_code=503,
+            detail="Could not check whether this turn had already been taken.")
+    if not claimed:
+        raise HTTPException(
+            status_code=409,
+            detail="Another tab is already running this turn.")
+
+    names = [a.get("name") for a in agents if a.get("name")]
+    out = await _turn_for(user.email, agent, body.messages, names)
+    result = {"answer": out.get("answer") or "",
+              "notes": [n for n in (out.get("notes") or []) if isinstance(n, str)],
+              "agent": out.get("agent") or {"id": agent["id"], "name": agent.get("name")}}
+
+    pending = _pending_for_page(out.get("pending"))
+    if pending:
+        # An agent that stopped to ask is the one the person's "yes" has to
+        # reach, and a yes is routed by this chat's pin. Without this the
+        # question is asked by an agent nobody can answer. This is what
+        # chat_id is for: it was required and read by nothing before, which
+        # read like an ownership check that did not exist.
+        await _write_pin(_pin_key(body.chat_id, user.email), agent["id"])
+        result["pending"] = pending
+    return result

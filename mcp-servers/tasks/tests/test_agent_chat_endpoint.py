@@ -20,6 +20,7 @@ def _body(text, chat_id="chat-1", email="owner@example.com"):
     class B:
         user_email = email
         route_only = False
+        first_only = False
         messages = [{"role": "user", "content": text}]
     b = B()
     b.chat_id = chat_id
@@ -364,6 +365,7 @@ async def test_an_agent_sees_history_without_the_speaker_labels(_wire):
     class B:
         user_email = "ralph@example.com"
         chat_id = "c"
+        first_only = False
         messages = [
             {"role": "user", "content": "hi team"},
             {"role": "assistant", "content": "Ada:\nhello\n\nMia:\nhi there"},
@@ -397,6 +399,100 @@ async def test_route_only_returns_nothing_when_nobody_is_up(_wire, monkeypatch):
     rt._answer_as_io.assert_not_awaited()
 
 
+async def test_first_only_runs_one_agent_and_names_the_rest(_wire):
+    """The web page takes turns: the pipe shows the first agent, the page
+    fetches the rest one at a time. So the service runs one and says who
+    is left, in speaking order."""
+    b = _body("hi team")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert [t["agent"]["name"] for t in out["turns"]] == ["Ada"]
+    assert out["queue"] == ["agent-m"]
+    rt._run_turn.assert_awaited_once()
+
+
+async def test_first_only_still_pins_the_last_agent_in_the_full_list(_wire):
+    """A follow up with no name goes to whoever spoke last, and that is
+    still Mia even though only Ada has spoken so far."""
+    b = _body("hi team")
+    b.first_only = True
+    await rt.chat(b, x_internal_secret="s")
+    assert rt._write_pin.await_args.args[1] == "agent-m"
+
+
+async def test_the_marker_names_every_speaker_with_the_author_first(_wire):
+    b = _body("hi team")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["marker"] == "<!-- aiui:turns agent-a,agent-m -->"
+
+
+async def test_one_agent_named_means_no_queue_and_no_marker(_wire):
+    b = _body("hi mia")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["queue"] == []
+    assert out["marker"] == ""
+
+
+async def test_without_first_only_every_agent_still_runs(_wire):
+    """Discord and Telegram never set the flag and must not change."""
+    out = await rt.chat(_body("hi team"), x_internal_secret="s")
+    assert [t["agent"]["name"] for t in out["turns"]] == ["Ada", "Mia"]
+    assert out["queue"] == []
+    assert out["marker"] == ""
+
+
+async def test_every_reply_shape_carries_queue_and_marker(_wire, monkeypatch):
+    """The pipes read both fields off every reply, so every branch must
+    return them, not only the one that fills them."""
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
+    for text in ("what is the weather", "stop"):
+        out = await rt.chat(_body(text), x_internal_secret="s")
+        assert out["queue"] == [] and out["marker"] == "", text
+    b = _body("plain")
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["queue"] == [] and out["marker"] == ""
+
+
+def test_turns_marker_is_one_line_with_ids_only():
+    assert rt.turns_marker(["agent-a", "agent-m"]) == "<!-- aiui:turns agent-a,agent-m -->"
+    assert rt.turns_marker([]) == ""
+    assert rt.turns_marker(["agent-a"]) == ""
+
+
+@pytest.mark.parametrize("bad", [
+    "agent-x-->" + "<script>alert(1)</script>",
+    "agent-a,agent-m",
+    "agent-with space",
+    "not-an-agent",
+    "",
+])
+def test_the_marker_refuses_an_id_that_could_break_out_of_the_comment(bad):
+    """The id lands inside an HTML comment on the page. A "-->" would end
+    the comment early; a comma would mis-split. Refuse, do not escape."""
+    assert rt.turns_marker(["agent-a", bad]) == ""
+    assert rt.turns_marker([bad, "agent-a", "agent-m"]) == "<!-- aiui:turns agent-a,agent-m -->"
+
+
+async def test_first_only_is_inert_when_nobody_is_named(_wire, monkeypatch):
+    """The flag is read only on the named branch. Every other return must
+    still carry an empty queue and marker, or a pipe reading them raises."""
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
+    b = _body("what is the weather")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["turns"][0]["agent"] is None
+    assert out["queue"] == [] and out["marker"] == ""
+
+    b = _body("what is the weather")
+    b.first_only = True
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["turns"] == [] and out["queue"] == [] and out["marker"] == ""
+
+
 async def test_route_only_still_wakes_a_named_agent(_wire):
     b = _body("hi mia")
     b.route_only = True
@@ -410,3 +506,28 @@ async def test_every_reply_carries_the_rendered_text(_wire):
     drift from each other or from the page that splits replies apart."""
     out = await rt.chat(_body("hi team"), x_internal_secret="s")
     assert out["rendered"] == "Ada:\nhi\n\nMia:\nhi"
+
+
+async def test_a_pending_approval_pauses_the_asker_but_still_names_the_rest(
+        _wire, monkeypatch):
+    """Ada is waiting on a yes or no, so the pin goes to HER rather than to
+    the last agent named, and only her turn runs here.
+
+    Mia is not dropped. Withholding the marker as well as the queue used to
+    lose every other addressed agent for good: "hi team, delete the stale
+    rows" with Ada on Ask had Ada ask her question and Mia never speak and
+    never be mentioned, with nothing anywhere recording that she had been
+    addressed. Pausing Ada is the point; silently losing Mia was not.
+    """
+    monkeypatch.setattr(rt, "_run_turn", AsyncMock(return_value={
+        "answer": "", "notes": [],
+        "pending": {"calls": [{"function": {"name": "send_email"}}],
+                    "conversation": []}}))
+    b = _body("hi team")
+    b.first_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["queue"] == ["agent-m"], "the rest of the round was dropped"
+    assert out["marker"] == "<!-- aiui:turns agent-a,agent-m -->", out["marker"]
+    # The pin is the asker's, not the last named, so a "yes" reaches Ada.
+    assert rt._write_pin.await_args.args[1] == "agent-a"
+    rt._run_turn.assert_awaited_once()

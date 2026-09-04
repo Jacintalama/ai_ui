@@ -202,22 +202,23 @@ def test_every_rewrite_is_reached_through_the_known_agent_check():
             name + " writes the header outside the gated path")
 
 
-def test_two_agents_in_one_reply_are_both_named():
-    """One request can wake more than one agent, and their answers come back
-    in a single bubble. The header has to name both, and the labels in the
-    body have to stay, because they are the only thing saying which answer
-    belongs to whom."""
+def test_a_bubble_holding_two_answers_is_still_named_for_both():
+    """A reply written since first_only shipped holds one agent, so the
+    label below the header always repeats it and goes.
+
+    A bubble stored BEFORE it holds two, and there are real ones in real
+    chats. Naming only the first would head such a message "Ada" while
+    "Mia:" sat in its body, and stripping the one label would delete the
+    only thing saying which answer belonged to whom. So the header joins
+    every name found, and the strip is gated on there being exactly one.
+    """
     section = _agent_header_section(_js())
-
-    joiner = _js_function(section, "aiuiJoinNames")
-    assert "' and '" in joiner or '" and "' in joiner, (
-        "no way to render more than one name")
-
     rewrite = _js_function(section, "aiuiRewriteAgentHeader")
-    single = rewrite.find("names.length === 1")
-    strip = rewrite.find("aiuiStripLabel(")
-    assert single != -1, "the label is stripped without checking how many "
-    assert single < strip, (
+    assert "aiuiJoinNames(names)" in rewrite
+    strip = rewrite.find("aiuiStripLabel(body, scan.labels[0])")
+    guard = rewrite.find("names.length === 1")
+    assert strip != -1 and guard != -1, "the strip or its guard is missing"
+    assert guard < strip, (
         "a label is removed even when two agents shared the reply")
 
 
@@ -316,3 +317,281 @@ def test_no_dashes_in_the_new_copy():
     # assertion cannot be defeated by accidentally typing the very
     # character it is checking for.
     assert chr(0x2014) not in _js() and chr(0x2013) not in _js()
+
+
+def test_the_page_takes_turns_from_the_marker():
+    """Every further agent's reply is fetched by the page and written into
+    the chat as a real message. That code must read the marker, wait for
+    the save, call the speak route, write through the chat API, and
+    soft navigate. Missing any one of those is a broken feature."""
+    section = _agent_header_section(_js())
+    assert "aiui:turns" in section
+    assert "function aiuiTakeTurns(" in section
+    assert "/api/tasks/agents/speak" in section
+    assert "'/api/v1/chats/' + chatId" in section
+    assert "aiuiWaitForSavedMarker" in section
+    assert "aiuiSoftReload" in section
+    # Driven from the scan, not from the header rewrite. See
+    # test_turn_taking_does_not_depend_on_a_label for why that matters.
+    assert "function aiuiMaybeTakeTurns(" in section
+    assert "aiuiTakeTurns(" not in _js_function(section, "aiuiRewriteAgentHeader")
+
+
+def test_the_page_never_writes_before_the_reply_is_saved():
+    """Open WebUI saves the whole chat after a reply. Writing before that
+    save would have the new message erased by it."""
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    wait = body.find("aiuiWaitForSavedMarker(")
+    save = body.find("aiuiSaveChat(")
+    assert wait != -1 and save != -1
+    assert wait < save, "the chat is written before the wait for the save"
+
+
+def test_a_new_message_is_a_child_of_the_tail_with_the_agent_as_its_model():
+    """The write goes against the copy re-fetched immediately before it, so
+    the parent is that copy's tail. It is still the tail this turn was taken
+    for: test_the_write_is_guarded_against_a_moved_chat pins the two
+    together and abandons the turn when they differ."""
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "parentId: ftail.id" in body
+    assert "model: next" in body
+    assert "fh.currentId = newId" in body
+
+
+def test_the_dom_clone_split_is_gone():
+    """A pipe reply now holds one agent, so the code that cloned rows for
+    two can never run. Leaving it would be a second rendering path for a
+    case that no longer exists."""
+    section = _agent_header_section(_js())
+    assert "aiuiSplitIntoAgentMessages" not in section
+    assert "data-aiui-agent-clone" not in section
+    assert "aiuiSwapAvatar" not in section
+
+
+def test_turn_taking_does_not_depend_on_a_label():
+    """A reply the page wrote carries no label. If turn taking lived
+    behind the label check, the third agent would never speak."""
+    section = _agent_header_section(_js())
+    rewrite = _js_function(section, "aiuiRewriteAgentHeader")
+    scan = _js_function(section, "aiuiScanAgentNameHeaders")
+    assert "aiuiTakeTurns(" not in rewrite
+    assert "aiuiMaybeTakeTurns(" in scan
+    # The empty placeholder is not a reply, and the latch belongs to the
+    # RESULT of the turn, never to the attempt.
+    maybe = _js_function(section, "aiuiMaybeTakeTurns")
+    assert "if (sig === '0') return;" in maybe
+    then = maybe.find(".then(")
+    latch = maybe.find("data-aiui-turns-checked', sig")
+    call = maybe.find("aiuiTakeTurns(")
+    assert then != -1 and latch != -1, "the latch is not set from a callback"
+    assert call < then < latch, (
+        "the latch is set outside the promise callback, so a turn that never "
+        "ran would still latch shut")
+
+
+def test_the_write_is_guarded_against_a_moved_chat():
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "ftail.id !== tail.id" in body
+    assert "m.model === next" in body
+    assert "{ history: fh }" in body
+
+
+def test_the_turns_latch_waits_for_a_real_reply():
+    """The placeholder Open WebUI renders before a reply arrives is empty
+    and stable, so a settle check that accepted it would fire before
+    content, poll against nothing, and latch shut for good. The latch
+    is keyed to the body length and set only after a done tail was
+    examined, so a reply that finishes later is looked at again."""
+    section = _agent_header_section(_js())
+    maybe = _js_function(section, "aiuiMaybeTakeTurns")
+    assert "if (sig === '0') return;" in maybe
+    latch = maybe.find("data-aiui-turns-checked', sig")
+    call = maybe.find("aiuiTakeTurns(")
+    assert latch != -1 and call != -1 and call < latch, (
+        "the latch is set before the turn is taken")
+    wait = _js_function(section, "aiuiWaitForSavedMarker")
+    assert "tail.role !== 'assistant'" in wait
+
+
+def test_a_turn_is_claimed_before_the_agent_runs():
+    """Side effects beat retry.
+
+    Two tabs on one chat both find the same marker. Without a claim both
+    POST /agents/speak and an agent with write tools sends the same email
+    twice. The claim takes the agent out of the STORED marker before it
+    runs, so the loser finds nothing to do, and a claimed turn that fails
+    is not re-run by somebody pressing reload.
+    """
+    section = _agent_header_section(_js())
+    assert "function aiuiClaimTurn(" in section
+
+    claim = _js_function(section, "aiuiClaimTurn")
+    # Compare and swap, not just a write: ours only if the stored marker
+    # still names this agent as next.
+    assert "live[1] !== agentId" in claim, (
+        "the claim does not check the marker still names this agent, so two "
+        "tabs can both believe they won")
+    assert "ftail.id !== tailId" in claim
+
+    body = _js_function(section, "aiuiTakeTurns")
+    claimed = body.find("aiuiClaimTurn(")
+    spoke = body.find("aiuiSpeak(")
+    assert claimed != -1 and spoke != -1
+    assert claimed < spoke, "the agent runs before the turn is claimed"
+
+
+def test_a_claimed_turn_that_fails_is_not_retried():
+    """The marker no longer names the agent, so a reload cannot re-run it.
+    The person is told that rather than being left to expect a retry."""
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "will not be retried" in body
+    assert "a reload can retry" not in body, (
+        "the old promise of an automatic retry is still in the code")
+
+
+def test_the_no_chat_id_path_gives_up():
+    """A Temporary Chat stays on '/' and a shared chat on '/s/<id>', so no
+    chat id ever appears. Nothing on that path can latch and -seen already
+    equals sig, so an unbounded reschedule re-armed the 700ms timer for the
+    life of the tab, for people who own no agents at all."""
+    section = _agent_header_section(_js())
+    maybe = _js_function(section, "aiuiMaybeTakeTurns")
+    assert "data-aiui-turns-tries" in maybe
+    assert re.search(r"if\s*\(\s*tries\s*<\s*\d+\s*\)\s*aiuiScheduleSettleScan\(\)", maybe), (
+        "the no-chat-id path reschedules without a bound")
+
+
+def test_the_hard_fallback_lands_on_the_chat_not_on_whatever_is_open():
+    """If the second synthetic click was dropped the person is sitting on
+    '/', and location.reload() would strand them on a blank new chat."""
+    section = _agent_header_section(_js())
+    soft = _js_function(section, "aiuiSoftReload")
+    assert "location.href = '/c/' + chatId" in soft
+    # The CODE, not the prose: a comment naming the old call is fine, a
+    # surviving call to it is not.
+    code = "\n".join(
+        l for l in soft.split("\n") if not l.strip().startswith("//"))
+    assert "location.reload()" not in code
+
+
+def test_a_leading_label_is_only_stripped_when_it_names_the_agent():
+    """With SHOW_AGENT_NAME off, an answer opening "Here is the plan:" is
+    ordinary content. Stripping any leading Word: line deleted it
+    permanently, in storage, with nothing to undo it."""
+    section = _agent_header_section(_js())
+    strip = _js_function(section, "aiuiStripLeadingLabelText")
+    assert "aiuiAgentNameById[agentId]" in strip
+    assert "toLowerCase()" in strip
+    assert re.search(r"if\s*\(\s*!name\s*\)\s*return content;", strip), (
+        "an unknown agent id must leave the content alone")
+
+
+def test_a_failure_line_does_not_outlive_its_conversation():
+    """"Mia did not answer" is cleared by nothing else, so without this it
+    hangs under whatever conversation is opened next."""
+    section = _agent_header_section(_js())
+    assert "function aiuiDropStaleTypingLine(" in section
+    drop = _js_function(section, "aiuiDropStaleTypingLine")
+    assert "data-aiui-chat" in drop
+    scan = _js_function(section, "aiuiScanAgentNameHeaders")
+    assert "aiuiDropStaleTypingLine()" in scan
+
+
+def test_an_agent_that_stops_to_ask_shows_its_question():
+    """The pending shape has no answer key. Writing the placeholder gave
+    the person a message from Mia reading "There was nothing to answer.",
+    with no question and no way to approve."""
+    section = _agent_header_section(_js())
+    assert "function aiuiApprovalQuestion(" in section
+    q = _js_function(section, "aiuiApprovalQuestion")
+    assert "wants to run:" in q
+    assert "Reply yes to let it, or no to skip." in q
+    body = _js_function(section, "aiuiTakeTurns")
+    ask = body.find("aiuiApprovalQuestion(")
+    placeholder = body.find("There was nothing to answer.")
+    assert ask != -1, "a pending turn never renders its question"
+    assert placeholder != -1 and ask < placeholder, (
+        "the placeholder is reached before the pending question")
+
+
+def test_a_refused_agent_needs_no_write_and_defers_its_next_round():
+    """The claim already took the refused agent out of the stored marker,
+    so there is nothing to save; saving the FIRST fetch's history here also
+    reverted any frontend save that landed in between.
+
+    And the recursion has to wait for the outer chain, which clears the
+    busy flag itself: clearing it early and recursing underneath let a
+    third concurrent run start.
+    """
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    start = body.find("if (out.refused)")
+    assert start != -1
+    block = body[start:start + 700]
+    assert "aiuiSaveChat(" not in block, "the refused path still writes"
+    assert "again = true" in block
+    assert "aiuiTurnsBusy[chatId] = false;" not in block, (
+        "the refused path clears the busy flag itself, so the outer chain "
+        "clears it a second time under the recursion")
+
+
+def test_the_turn_is_claimed_server_side_too():
+    """The page's own claim cannot be atomic: reading the chat and writing it
+    back are two calls against an endpoint with no If-Match, so two tabs both
+    read before either writes. The service settles it under a primary key,
+    and the page has to send the key's last column for that to work."""
+    section = _agent_header_section(_js())
+    speak = _js_function(section, "aiuiSpeak")
+    assert "after_id: afterId" in speak, "the claim key's after_id is not sent"
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "aiuiSpeak(chatId, next, chain, tail.id)" in body, (
+        "the tail the page claimed against is not what it claims server side")
+
+
+def test_losing_the_race_is_silent():
+    """A 409 means another tab owns this turn and will write the reply
+    itself. Saying anything would put two notices in one conversation."""
+    section = _agent_header_section(_js())
+    speak = _js_function(section, "aiuiSpeak")
+    assert "r.status === 409" in speak
+    assert "taken: true" in speak
+
+    body = _js_function(section, "aiuiTakeTurns")
+    taken = body.find("if (out.taken)")
+    assert taken != -1, "a 409 is not distinguished from a real failure"
+    block = body[taken:taken + 260]
+    assert "aiuiClearTypingLine()" in block, "the typing line is left behind"
+    assert "aiuiTypingLine(" not in block, "losing the race shows a failure line"
+    assert "aiuiSaveChat(" not in block and "answer" not in block, (
+        "losing the race writes something")
+
+
+def test_an_unreachable_agent_leaves_a_message_that_survives_a_reload():
+    """The turn was claimed, so nothing will ever retry it. The typing line
+    is gone on the next render and says nothing at all after a reload, so a
+    person who looked away would see Ada's answer, no Mia, and no sign that a
+    turn had ever been attempted.
+
+    It has to go through the same write as a real reply, so it is owned by
+    that agent: model, modelName and done are set from the write path below.
+    """
+    section = _agent_header_section(_js())
+    body = _js_function(section, "aiuiTakeTurns")
+    assert "unreachable: true" in body, (
+        "a rejected speak does not produce an outcome the write can see")
+
+    branch = body.find("if (out.unreachable)")
+    assert branch != -1, "the unreachable case is not handled"
+    assert "could not be reached" in body
+
+    # It must feed the SAME answer variable the successful path writes, not
+    # just paint a transient line, or it will not be persisted.
+    assert re.search(r"if \(out\.unreachable\) \{\s*(//[^\n]*\n\s*)*answer =",
+                     body), "the unreachable notice never becomes a message"
+    write = body.find("aiuiFetchChat(chatId).then(function (fresh)")
+    assert write != -1 and branch < write, (
+        "the unreachable notice is produced after the write that would store it")

@@ -103,6 +103,16 @@ The marker is removed from a message's content when the page claims that
 message, so it never accumulates and a reloaded chat carries no live
 markers once its queue has drained.
 
+The page CLAIMS a turn before running it: it re-reads the stored tail,
+checks the marker still names that agent as the next to speak, removes it,
+and saves, all before calling the service. This is a compare and swap, and
+it is what makes the marker the authority on who runs an agent rather than
+a hint that anyone can act on. Two tabs open on the same chat both find the
+same marker; without the claim both would run the agent, and an agent with
+write tools would send the same email twice. It also decides what happens
+after a failure: a claimed turn is not in the marker any more, so nothing
+retries it.
+
 ### The service
 
 `POST /agents/chat` gains `first_only: bool`. When true, it runs only the
@@ -130,8 +140,14 @@ that chat is opened and settles.
 The page abandons a queue when the tail message is no longer the one it
 found the marker on. The person sent something, or a regenerate replaced
 the reply. The marker they left behind in the abandoned message is
-harmless: it names an agent that has not spoken, and if the person returns
-to that message the queue picks up.
+harmless: it names an agent that has not spoken.
+
+That queue is NOT resumed. The page only ever looks at the tail of the
+current branch, so a marker stranded mid branch is never found again. This
+is deliberate: resuming one would mean speaking into the middle of a
+conversation that has since moved on. An earlier draft of this document
+promised the queue picks up if the person returns to that message; nothing
+implements that and nothing is planned to.
 
 The chat's own API is the only thing the page writes to. `GET
 /api/v1/chats/<id>` returns `{chat: {...}}`; `POST /api/v1/chats/<id>`
@@ -144,15 +160,27 @@ scratch.
 Every failure leaves the chat in a state a person can carry on from.
 
 - The service refuses or times out on a queued agent: the typing line
-  becomes "Mia did not answer", the marker is left in place so a reload
-  can retry, and the queue stops. Nothing is written.
+  becomes "Mia did not answer, and will not be retried" and the queue
+  stops. Nothing is written. The turn was claimed before the agent ran, so
+  the marker no longer names it and a reload will not run it again. Side
+  effects beat retry: an agent that may have half sent something must not
+  be re-run by somebody pressing refresh.
+- The agent stops to ask permission: the page writes the same approval
+  question the pipe writes, naming the tool and its arguments, and the
+  service pins that agent for the chat so the person's yes or no reaches
+  it. The rest of the round still speaks.
+- A queued agent is claimed by another tab first: the loser finds the
+  marker no longer names that agent, clears its typing line and stops
+  without calling the service.
 - The chat write fails: the typing line becomes "could not add Mia's
   reply", nothing navigates, and the reply is not lost, because the page
   logs it to the console under a stable prefix. Retried on the next settle.
-- The soft navigation fails to land, judged by the row count not growing
-  within five seconds: the page reloads the chat the hard way with
-  `location.reload()`. The message is already saved, so the only cost is
-  the flash this design otherwise avoids.
+- The soft navigation fails to land, judged by the last row's id not
+  changing within five seconds: the page goes to `/c/<id>` the hard way.
+  Not `location.reload()`, which reloads whatever the URL is NOW: if the
+  second synthetic click was dropped the person is sitting on `/`, and
+  reloading that strands them on a blank new chat. The message is already
+  saved, so the only cost is the flash this design otherwise avoids.
 - A marker names an agent the person cannot run: the service returns 403,
   the page drops that id and continues with the rest of the queue.
 

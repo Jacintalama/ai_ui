@@ -23,6 +23,12 @@ from pydantic import BaseModel, Field
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+#: Only the pipe places a marker. This finds one shaped comment anywhere in
+#: an agent's own words, so it can be stripped before a real marker is
+#: appended, and the page never parses one the agent wrote by accident or by
+#: prompt injection.
+AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
+
 # ---------------------------------------------------------------------------
 # Routing rules (pure, no I/O, unit tested). pick_category returns one of
 # "coder" / "reasoning" / "general"; the Pipe maps that to a real free model id
@@ -169,7 +175,7 @@ class Pipe:
                     headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
                     json={"user_email": user_email, "chat_id": chat_id,
                           "messages": body.get("messages") or [],
-                          "route_only": True})
+                          "route_only": True, "first_only": True})
                 if r.status_code != 200:
                     return None
                 data = r.json()
@@ -181,7 +187,16 @@ class Pipe:
         if not isinstance(turns, list) or not turns:
             return None
         rendered = data.get("rendered")
-        return rendered if isinstance(rendered, str) and rendered.strip() else None
+        if not (isinstance(rendered, str) and rendered.strip()):
+            return None
+        marker = data.get("marker")
+        # Only the pipe places a marker. Anything marker shaped that arrived
+        # inside an agent's own words is stripped first, so the page never
+        # parses one the agent wrote rather than the one the service issued.
+        rendered = AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip()
+        if isinstance(marker, str) and marker.strip():
+            rendered = rendered.rstrip() + "\n\n" + marker.strip()
+        return rendered
 
     def pipes(self) -> list[dict]:
         return [{"id": "auto", "name": "Auto (Free)"}]

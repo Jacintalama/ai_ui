@@ -2744,6 +2744,7 @@
   // fetched successfully; it just leaves things as they are.
   var AIUI_AGENT_NAMES_TTL_MS = 120000;
   var aiuiAgentNames = new Set();
+  var aiuiAgentNameById = {};
   var aiuiAgentNamesFetchedAt = 0;
   var aiuiAgentNamesFetching = false;
 
@@ -2776,12 +2777,15 @@
     aiuiFetchAgentNamesPage(1, [], 0, 0)
       .then(function (items) {
         var names = new Set();
+        var byId = {};
         for (var i = 0; i < items.length; i++) {
           if (aiuiIsMintedAgent(items[i]) && items[i].name) {
             names.add(String(items[i].name).trim().toLowerCase());
+            byId[items[i].id] = String(items[i].name).trim();
           }
         }
         aiuiAgentNames = names;
+        aiuiAgentNameById = byId;
         aiuiAgentNamesFetching = false;
         // The refresh itself can be what makes a message match for
         // the first time, an agent created mid conversation. Give the
@@ -2902,6 +2906,10 @@
     return result;
   }
 
+  // More than one label in one bubble cannot happen for a reply written
+  // since first_only shipped, but it is exactly what a bubble stored
+  // BEFORE it looks like. Naming only the first would head such a message
+  // "Ada" with "Mia:" still sitting in its body.
   function aiuiJoinNames(names) {
     if (names.length < 2) return names[0] || '';
     return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
@@ -2953,156 +2961,479 @@
 
 
 
-  // ----- One message per agent -----
-  // A pipe returns one reply, so when two agents answer Open WebUI shows
-  // one bubble, and the service cannot split it: every event a pipe can
-  // send acts on the current message, there is none that makes a new one.
-  // So the page makes them. The whole message row is cloned once per extra
-  // agent, avatar column and all, each clone keeps only its own agent's
-  // paragraphs, and the header names that agent. What a person sees is
-  // Ada's message, then Mia's message, which is what Ralph asked for on
-  // 2026-09-04. The action bar stays a single element, moved under the
-  // last one, because a cloned button has no handler behind it.
-  (function injectAgentSplitStyle() {
-    if (document.getElementById('aiui-agent-split')) return;
-    var st = document.createElement('style');
-    st.id = 'aiui-agent-split';
-    st.textContent =
-      '.aiui-agent-avatar{display:inline-flex;align-items:center;justify-content:center;' +
-      'width:2rem;height:2rem;border-radius:9999px;font-size:.75rem;font-weight:700;color:#fff;flex:none}';
-    (document.head || document.documentElement).appendChild(st);
-  })();
+  // ===== Agents take turns =====
+  // A pipe returns one reply and Open WebUI shows it as one message, and
+  // no event a pipe can send makes a second one. So when two agents
+  // answer, the pipe shows the first and hides a marker naming everybody
+  // who answers, in order. This code finds that marker on the last reply,
+  // waits until Open WebUI has saved it, asks the service to run the next
+  // agent, writes the answer into the chat's own history as a new message
+  // that is a child of the last one, and navigates away and back so the
+  // chat loads again and shows it. Then the new tail carries the marker
+  // for whoever is next, and the observer calls back in.
+  //
+  // Two facts this rests on, both checked on the live site 2026-09-04: the
+  // chat renders an assistant message whose parent is another assistant
+  // message as its own row; and a real link click is a SvelteKit soft
+  // navigation, where a synthetic popstate is not.
+  //
+  // A pending approval carries no marker at all: the service withholds it
+  // while the first agent waits to be told whether to send. So this finds
+  // nothing and does nothing, with no special case of its own.
+  var aiuiTurnsBusy = {};
 
-  // The palette the Agents page uses for an agent's initial, keyed off the
-  // name so an agent is the same colour everywhere it appears.
-  var AIUI_AGENT_COLOURS = ['#16a34a', '#db2777', '#2563eb', '#d97706', '#7c3aed', '#0891b2'];
-
-  function aiuiAgentColour(name) {
-    var h = 0;
-    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-    return AIUI_AGENT_COLOURS[h % AIUI_AGENT_COLOURS.length];
+  function aiuiChatIdFromUrl() {
+    var m = /\/c\/([0-9a-f-]{36})/.exec(location.pathname);
+    return m ? m[1] : null;
   }
 
-  function aiuiAgentAvatar(name) {
-    var av = document.createElement('span');
-    av.className = 'aiui-agent-avatar';
-    av.style.background = aiuiAgentColour(name);
-    av.textContent = name.slice(0, 2).toUpperCase();
-    return av;
+  // The LAST marker, not the first. The pipes already strip marker shaped
+  // text out of an agent's own words before appending the real one, but if
+  // one ever slipped through, the real marker is the one appended at the
+  // very end.
+  function aiuiParseTurns(content) {
+    var re = /<!--\s*aiui:turns\s+([^\s>]+)\s*-->/g;
+    var m, last = null;
+    while ((m = re.exec(content || '')) !== null) last = m;
+    if (!last) return null;
+    var ids = last[1].split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    return ids.length ? ids : null;
   }
 
-  // Replace the model's picture in a message row with the agent's initial.
-  function aiuiSwapAvatar(row, name) {
-    var img = row.querySelector('img[alt="model profile"]') || row.querySelector('img');
-    if (img && img.parentNode) img.parentNode.replaceChild(aiuiAgentAvatar(name), img);
+  function aiuiStripTurnsMarker(content) {
+    return String(content || '').replace(/<!--\s*aiui:turns\b[^>]*-->/g, '').replace(/\s+$/, '');
   }
 
-  // The list of child indexes from `root` down to `node`, so the same
-  // element can be found again inside a deep clone of `root`.
-  function aiuiPathTo(root, node) {
-    var path = [];
-    var n = node;
-    while (n && n !== root) {
-      var p = n.parentNode;
-      if (!p) return null;
-      path.unshift(Array.prototype.indexOf.call(p.childNodes, n));
-      n = p;
+  // The label the pipe put at the top, "Ada:" on its own line. Text, not
+  // DOM: this runs on the stored content.
+  //
+  // Only ever removed when it names the agent this message is being claimed
+  // for. Stripping any leading "Word:" line deleted real content whenever
+  // SHOW_AGENT_NAME was off: an answer opening "Here is the plan:" lost
+  // that line permanently, in storage, with nothing to undo it.
+  function aiuiStripLeadingLabelText(content, agentId) {
+    var name = aiuiAgentNameById[agentId];
+    if (!name) return content;
+    var m = /^\s*([A-Za-z0-9 -]{1,40}):[ \t]*\r?\n/.exec(content || '');
+    if (!m || m[1].trim().toLowerCase() !== String(name).trim().toLowerCase()) {
+      return content;
     }
-    return n === root ? path : null;
+    return content.slice(m[0].length);
   }
 
-  function aiuiFollowPath(root, path) {
-    var n = root;
-    for (var i = 0; i < path.length && n; i++) n = n.childNodes[path[i]];
-    return n || null;
-  }
+  // The messages on the current branch, root first. The history is a tree
+  // and currentId names the tail, so walk parents and reverse.
+  // The same question the pipe asks (io_gateway_pipe._approval_question),
+  // rendered the same way: the tool's own name and arguments, never a hand
+  // written phrase per tool. A phrasebook covering 300+ tools would be
+  // wrong somewhere, and where it was wrong is exactly where somebody would
+  // approve the wrong thing.
+  var AIUI_MAX_ARGS_SHOWN = 5;
+  var AIUI_MAX_ARG_CHARS = 120;
 
-  // Remove a leading "Name:" line from the first text of a block, in
-  // whichever of the two shapes the renderer produced it.
-  function aiuiStripLabelFromBlock(block) {
-    var t = aiuiFirstTextNode(block);
-    if (!t) return;
-    var full = t.textContent || '';
-    var line = AIUI_AGENT_NAME_LINE_RE.exec(full);
-    if (line) { t.textContent = full.slice(line[0].length); return; }
-    if (AIUI_AGENT_NAME_BARE_RE.test(full)) {
-      var next = t.nextSibling;
-      if (next && next.nodeType === 1 && next.tagName === 'BR') next.parentNode.removeChild(next);
-      t.parentNode.removeChild(t);
-    }
-  }
-
-  // The message container is the element Open WebUI lays out one message
-  // per, found from the row that carries a message id.
-  function aiuiMessageContainer(span) {
-    var row = span.closest ? span.closest('[id^="message-"]') : null;
-    return row && row.parentElement ? row.parentElement : null;
-  }
-
-  function aiuiSplitIntoAgentMessages(body, labels, holder, span) {
-    if (body.getAttribute('data-aiui-agent-split') === '1') return;
-    body.setAttribute('data-aiui-agent-split', '1');
-
-    var container = aiuiMessageContainer(span);
-    if (!container || !holder || labels.length < 2) return;
-
-    // Where each agent's section starts, as an index into the holder.
-    var starts = [];
-    for (var i = 0; i < labels.length; i++) {
-      var block = labels[i].block === body ? holder.children[0] : labels[i].block;
-      var idx = Array.prototype.indexOf.call(holder.children, block);
-      if (idx < 0) return;   // a shape this code does not understand: leave it alone
-      starts.push(idx);
-    }
-
-    var holderPath = aiuiPathTo(container, holder);
-    var spanPath = aiuiPathTo(container, span);
-    if (!holderPath || !spanPath) return;
-
-    // The action bar is the element after the body inside the content
-    // column. Kept as the one real element, moved to the last message.
-    var actions = body.nextElementSibling;
-    var lastRow = container;
-
-    // Clones first, from the last agent backwards, so inserting each one
-    // directly after the original lands them in speaking order.
-    for (var k = labels.length - 1; k >= 1; k--) {
-      var clone = container.cloneNode(true);
-      var cHolder = aiuiFollowPath(clone, holderPath);
-      var cSpan = aiuiFollowPath(clone, spanPath);
-      if (!cHolder || !cSpan) continue;
-      var from = starts[k];
-      var to = k + 1 < starts.length ? starts[k + 1] : cHolder.children.length;
-      var kids = Array.prototype.slice.call(cHolder.children);
-      for (var j = 0; j < kids.length; j++) {
-        if (j < from || j >= to) cHolder.removeChild(kids[j]);
+  function aiuiApprovalQuestion(name, calls) {
+    var lines = [(name || 'This agent') + ' wants to run:'];
+    var list = Array.isArray(calls) ? calls : [];
+    for (var i = 0; i < list.length; i++) {
+      var call = (list[i] && typeof list[i] === 'object') ? list[i] : {};
+      var fn = (call.function && typeof call.function === 'object') ? call.function : {};
+      var fname = (typeof fn.name === 'string' && fn.name.trim())
+        ? fn.name.trim() : 'an unnamed tool';
+      lines.push('  ' + fname);
+      var args = {};
+      try {
+        args = typeof fn.arguments === 'string'
+          ? JSON.parse(fn.arguments) : (fn.arguments || {});
+      } catch (e) { args = {}; }
+      if (args && typeof args === 'object') {
+        var keys = Object.keys(args).slice(0, AIUI_MAX_ARGS_SHOWN);
+        for (var k = 0; k < keys.length; k++) {
+          lines.push('     ' + keys[k] + ': '
+            + String(args[keys[k]]).slice(0, AIUI_MAX_ARG_CHARS));
+        }
       }
-      aiuiStripLabelFromBlock(cHolder.children[0]);
-      cSpan.textContent = labels[k].name;
-      cSpan.setAttribute('data-aiui-agent-header', '1');
-      cSpan.setAttribute('data-aiui-agent-stripped', '1');
-      // A cloned action bar has no handlers behind its buttons.
-      var cBody = aiuiFollowPath(clone, aiuiPathTo(container, body));
-      if (cBody && cBody.nextElementSibling) cBody.parentNode.removeChild(cBody.nextElementSibling);
-      aiuiSwapAvatar(clone, labels[k].name);
-      clone.setAttribute('data-aiui-agent-clone', '1');
-      container.parentNode.insertBefore(clone, container.nextSibling);
-      if (k === labels.length - 1) lastRow = clone;
     }
+    if (lines.length === 1) lines.push('  something it did not name');
+    lines.push('');
+    lines.push('Reply yes to let it, or no to skip.');
+    return lines.join('\n');
+  }
 
-    // The original keeps the first agent's section only.
-    var origKids = Array.prototype.slice.call(holder.children);
-    for (var m = origKids.length - 1; m >= starts[1]; m--) holder.removeChild(origKids[m]);
-    aiuiStripLabelFromBlock(holder.children[0]);
-    span.textContent = labels[0].name;
-    aiuiSwapAvatar(container, labels[0].name);
-
-    // One real action bar, under the last message where it reads as
-    // belonging to the reply as a whole.
-    if (actions && lastRow !== container) {
-      var lastBody = aiuiFollowPath(lastRow, aiuiPathTo(container, body));
-      if (lastBody && lastBody.parentNode) lastBody.parentNode.insertBefore(actions, lastBody.nextSibling);
+  function aiuiChainFromHistory(history) {
+    var msgs = history && history.messages ? history.messages : {};
+    var id = history ? history.currentId : null;
+    var chain = [];
+    for (var guard = 0; id && msgs[id] && guard < 500; guard++) {
+      chain.unshift(msgs[id]);
+      id = msgs[id].parentId;
     }
+    return chain;
+  }
+
+  function aiuiUuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 3 | 8)).toString(16);
+    });
+  }
+
+  function aiuiTypingLine(text) {
+    var el = document.getElementById('aiui-typing');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'aiui-typing';
+      el.style.cssText = 'padding:.25rem 0 .75rem 3.75rem;opacity:.65;font-size:.9rem;';
+      var rows = document.querySelectorAll('[id^="message-"]');
+      var last = rows.length ? rows[rows.length - 1] : null;
+      var slot = last && last.parentElement ? last.parentElement : null;
+      if (slot && slot.parentElement) slot.parentElement.insertBefore(el, slot.nextSibling);
+      else document.body.appendChild(el);
+    }
+    el.setAttribute('data-aiui-chat', String(aiuiChatIdFromUrl() || ''));
+    el.textContent = text;
+  }
+
+  // The failure lines are the ones nothing else clears: "Mia did not
+  // answer" stays until something removes it, and a chat change is not
+  // something it notices. Without this a foreign line hangs under an
+  // unrelated conversation.
+  function aiuiDropStaleTypingLine() {
+    var el = document.getElementById('aiui-typing');
+    if (!el) return;
+    if (el.getAttribute('data-aiui-chat') !== String(aiuiChatIdFromUrl() || '')) {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+  }
+
+  function aiuiClearTypingLine() {
+    var el = document.getElementById('aiui-typing');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  // SvelteKit intercepts a same-origin link click as a soft navigation.
+  // Away to a fresh chat and back makes the chat component see its id
+  // change and load again: about a second, no flash. If the rows have not
+  // grown in five seconds the message is still saved, so reload the hard
+  // way and accept the flash.
+  function aiuiSoftReload(chatId) {
+    function go(href) {
+      var a = document.createElement('a');
+      a.href = href;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+    // The count is no use: the list renders at most 8 rows by default, so
+    // in any chat already at that cap the count never grows and every turn
+    // would hard reload after five seconds. The identity of the last row
+    // changes whether or not the count does.
+    function lastRowId() {
+      var rows = document.querySelectorAll('[id^="message-"]');
+      return rows.length ? rows[rows.length - 1].id : '';
+    }
+    var before = lastRowId();
+    go('/');
+    setTimeout(function () { go('/c/' + chatId); }, 400);
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      var now = lastRowId();
+      if (now && now !== before) { clearInterval(timer); return; }
+      // NOT location.reload(): if the second synthetic click was dropped
+      // the person is sitting on '/', and reloading that strands them on a
+      // blank new chat instead of their conversation.
+      if (tries >= 20) { clearInterval(timer); location.href = '/c/' + chatId; }
+    }, 250);
+  }
+
+  function aiuiFetchChat(chatId) {
+    return fetch('/api/v1/chats/' + chatId, { headers: aiuiAuthHeaders() })
+      .then(function (r) {
+        if (!r.ok) throw new Error('chat fetch ' + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (!data || !data.chat || !data.chat.history) throw new Error('chat shape');
+        return data;
+      });
+  }
+
+  // Whatever the caller passes is what gets sent. Every caller passes
+  // { history: ... } and nothing else, on purpose: this route merges the
+  // history but REPLACES title, tags and the flat messages list with
+  // whatever the body carries, so posting a whole fetched chat back would
+  // revert a title the server generated moments ago.
+  function aiuiSaveChat(chatId, chat) {
+    return fetch('/api/v1/chats/' + chatId, {
+      method: 'POST', headers: aiuiAuthHeaders(), body: JSON.stringify({ chat: chat })
+    }).then(function (r) {
+      if (!r.ok) throw new Error('chat save ' + r.status);
+    });
+  }
+
+  // Open WebUI saves the whole chat after a reply completes. Anything
+  // written before that save is replaced by it. So wait until the stored
+  // tail is the reply that carries the marker.
+  //
+  // The marker is read from the STORED content, never from the rendered
+  // page: DOMPurify may strip an HTML comment out of what gets rendered.
+  // The backend upserts a finished reply's content and done:true together
+  // before it tells the frontend the reply is done, so done is the signal
+  // that the stored copy is final. Stopping on done rather than on a marker
+  // means an ordinary single-agent reply costs ONE GET, and a long streamed
+  // reply, which is not finished when the observer first sees it, is still
+  // waited out for up to ninety seconds at one look a second.
+  //
+  // Resolves { examined, data }. `examined` says a done assistant tail was
+  // actually read, which is what lets the caller stop asking; `data` is the
+  // chat only when that tail carries a marker. The two are separate because
+  // "finished, nothing to do" and "never got to see it" have to be told
+  // apart: latching on the second would lose the round for good.
+  function aiuiWaitForSavedMarker(chatId) {
+    var attempt = 0;
+    function look() {
+      return aiuiFetchChat(chatId).then(function (data) {
+        var chain = aiuiChainFromHistory(data.chat.history);
+        var tail = chain[chain.length - 1];
+        // A tail that is not an assistant message has nothing to examine:
+        // the last thing in the chat is the person's own message. That is
+        // one GET, not ninety.
+        if (!tail || tail.role !== 'assistant') return { examined: false, data: null };
+        if (tail.done === true) {
+          return { examined: true, data: aiuiParseTurns(tail.content) ? data : null };
+        }
+        if (++attempt >= 90) return { examined: false, data: null };
+        return new Promise(function (r) { setTimeout(r, 1000); }).then(look);
+      });
+    }
+    return look();
+  }
+
+  function aiuiSpeak(chatId, agentId, chain, afterId) {
+    // The route caps the chain at 200 messages and each one at 32000
+    // characters. Sending more is a 422 that never clears by itself, so a
+    // long conversation would stop taking turns permanently.
+    var messages = chain.slice(-200).map(function (m) {
+      var content = aiuiStripTurnsMarker(m.content);
+      if (content.length > 32000) content = content.slice(0, 32000);
+      return { role: m.role, content: content };
+    });
+    return fetch('/api/tasks/agents/speak', {
+      method: 'POST', headers: aiuiAuthHeaders(),
+      body: JSON.stringify({ chat_id: chatId, agent_id: agentId,
+                             after_id: afterId, messages: messages })
+    }).then(function (r) {
+      if (r.status === 403) return { refused: true };
+      // Somebody else owns this exact turn. The service decided it under
+      // a primary key, which is the only place it CAN be decided: the
+      // page's own claim cannot be atomic against a chat endpoint with
+      // no If-Match. Not a failure, and not ours to report.
+      if (r.status === 409) return { taken: true };
+      if (!r.ok) throw new Error('speak ' + r.status);
+      return r.json();
+    });
+  }
+
+  // Resolves true when a done assistant tail was actually examined, marker
+  // or not, and including the abandoned and refused paths; false when the
+  // poll ran out, the chat had nothing to look at, or a turn was already
+  // running. The caller latches only on true, so a reply that finishes
+  // after the poll gave up is still looked at again later.
+  // Claim the turn before running it. Side effects beat retry.
+  //
+  // Two tabs open on the same chat both find the same marker, and without
+  // this both POST /agents/speak, so an agent with write tools sends the
+  // same email twice. Removing the agent from the STORED marker before it
+  // runs makes the claim the thing that decides who runs it, and the loser
+  // finds nothing to do.
+  //
+  // The same property covers failure. A claimed turn that fails is not
+  // retried by a reload, because the marker no longer names it. An agent
+  // that may have half done its work must not be run again by somebody
+  // pressing refresh.
+  //
+  // Compare and swap, not just a write: the turn is only ours if the
+  // stored marker STILL names this agent as the next to speak.
+  function aiuiClaimTurn(chatId, tailId, agentId, spoke, rest) {
+    return aiuiFetchChat(chatId).then(function (fresh) {
+      var fh = fresh.chat.history;
+      var fchain = aiuiChainFromHistory(fh);
+      var ftail = fchain[fchain.length - 1];
+      if (!ftail || ftail.id !== tailId) return null;
+      var live = aiuiParseTurns(ftail.content);
+      if (!live || live[1] !== agentId) return null;
+
+      var body = aiuiStripTurnsMarker(ftail.content);
+      var model = ftail.model;
+      var modelName = ftail.modelName;
+      // Claim the tail for its author too, if the pipe wrote it. A message
+      // the page wrote already carries its agent as its model.
+      if (model !== spoke) {
+        model = spoke;
+        modelName = aiuiAgentNameById[spoke] || spoke;
+        body = aiuiStripLeadingLabelText(body, spoke);
+      }
+      var remaining = [spoke].concat(rest);
+      if (remaining.length > 1) {
+        body += '\n\n<!-- aiui:turns ' + remaining.join(',') + ' -->';
+      }
+      ftail.content = body;
+      ftail.model = model;
+      ftail.modelName = modelName;
+      return aiuiSaveChat(chatId, { history: fh }).then(function () {
+        return { content: body, model: model, modelName: modelName };
+      }, function () { return null; });
+    }, function () { return null; });
+  }
+
+  function aiuiTakeTurns(chatId) {
+    if (!chatId || aiuiTurnsBusy[chatId]) return Promise.resolve(false);
+    aiuiTurnsBusy[chatId] = true;
+
+    var examined = false;
+    var again = false;
+    var chat, history, chain, tail, turns, spoke, next, rest, nextName;
+    return aiuiWaitForSavedMarker(chatId).then(function (outcome) {
+      examined = outcome.examined;
+      var data = outcome.data;
+      if (!data) return null;
+      chat = data.chat;
+      history = chat.history;
+      chain = aiuiChainFromHistory(history);
+      tail = chain[chain.length - 1];
+      turns = aiuiParseTurns(tail.content);
+
+      if (!turns || turns.length < 2) {
+        // A marker with nobody left to speak. Clean it off and stop.
+        tail.content = aiuiStripTurnsMarker(tail.content);
+        return aiuiSaveChat(chatId, { history: history }).then(function () { return null; });
+      }
+      spoke = turns[0];
+      next = turns[1];
+      rest = turns.slice(2);
+      nextName = aiuiAgentNameById[next] || next;
+
+      aiuiTypingLine(nextName + ' is typing');
+      return aiuiClaimTurn(chatId, tail.id, next, spoke, rest).then(function (claimed) {
+        if (!claimed) {
+          // Another tab took this turn, or the chat moved under us. Not
+          // ours to run, and running it anyway is how an email goes twice.
+          aiuiClearTypingLine();
+          return null;
+        }
+        tail.content = claimed.content;
+        tail.model = claimed.model;
+        tail.modelName = claimed.modelName;
+        return aiuiSpeak(chatId, next, chain, tail.id).then(function (out) {
+          return { out: out };
+        }, function () {
+          // Claimed and failed. Deliberately NOT retried: the marker no
+          // longer names this agent, so a reload will not run it again.
+          // The typing line is for the person watching right now; the real
+          // record is written below, because this one does not survive a
+          // render or a reload.
+          aiuiTypingLine(nextName + ' did not answer, and will not be retried');
+          return { out: { unreachable: true } };
+        });
+      });
+    }).then(function (step) {
+      if (!step) return;
+      var out = step.out;
+
+      if (out.taken) {
+        // Another tab is running this turn. Nothing to say and nothing to
+        // write: it will write the reply itself.
+        aiuiClearTypingLine();
+        return;
+      }
+
+      if (out.refused) {
+        // Not this person's agent any more. Nothing to write: the claim
+        // already took this agent out of the stored marker and left the
+        // rest, so the next round runs whoever is left.
+        //
+        // The recursion waits for the outer chain to settle. Clearing the
+        // busy flag here and recursing under a still-running chain let the
+        // outer .then clear it a second time, so a third run could start.
+        aiuiClearTypingLine();
+        if (rest.length) again = true;
+        return;
+      }
+
+      var pending = (out.pending && typeof out.pending === 'object') ? out.pending : null;
+      var answer;
+      if (out.unreachable) {
+        // The turn was claimed and then the service could not be reached, so
+        // it will never run and nothing will retry it. This has to be a real
+        // message. The typing line is gone on the next render and says
+        // nothing at all after a reload, so a person who looked away, or who
+        // reloaded, would see Ada's answer, no Mia, and no sign that a turn
+        // had ever been attempted. It is written as that agent's own message,
+        // the same way a successful turn is, so it reads as coming from the
+        // agent that was asked.
+        answer = nextName + ' could not be reached, so this turn did not run.'
+          + ' Ask again if you still want it.';
+      } else if (pending && Array.isArray(pending.calls) && pending.calls.length) {
+        // The agent stopped to ask. Show its question, the same one the
+        // pipe shows, not the empty-answer placeholder.
+        answer = aiuiApprovalQuestion(nextName, pending.calls);
+      } else {
+        answer = String(out.answer || '').trim();
+        var notes = (out.notes || []).filter(function (n) { return typeof n === 'string'; });
+        if (notes.length) answer = answer ? answer + '\n\n' + notes.join('\n') : notes.join('\n');
+        if (!answer) answer = 'There was nothing to answer.';
+      }
+      if (rest.length) answer += '\n\n<!-- aiui:turns ' + [next].concat(rest).join(',') + ' -->';
+
+      return aiuiFetchChat(chatId).then(function (fresh) {
+        // The chat may have moved while the agent was answering. Write
+        // against what is stored NOW, and only if the tail is still the
+        // message this turn was taken for; otherwise the person sent
+        // something and this turn is abandoned, marker left for a retry.
+        var fh = fresh.chat.history;
+        var fchain = aiuiChainFromHistory(fh);
+        var ftail = fchain[fchain.length - 1];
+        if (!ftail || ftail.id !== tail.id) { aiuiClearTypingLine(); return; }
+
+        // Idempotent: the frontend's own save can revert the tail after a
+        // run already wrote this agent's reply. Reuse it, never duplicate.
+        var existing = (ftail.childrenIds || []).map(function (id) { return fh.messages[id]; })
+          .filter(function (m) { return m && m.role === 'assistant' && m.model === next; })[0];
+        var newId = existing ? existing.id : aiuiUuid();
+
+        // The queue moves onto the new message, which carries the marker
+        // for whoever is left. Clearing it here is what stops a drained
+        // round leaving a live marker on a message that is no longer the
+        // tail: a later branch switch would find it and run an agent that
+        // has already spoken. The claim only removed the agent it ran.
+        ftail.content = aiuiStripTurnsMarker(tail.content);
+        if (ftail.model !== spoke) { ftail.model = spoke; ftail.modelName = tail.modelName; }
+        if (!existing) {
+          fh.messages[newId] = {
+            id: newId, parentId: ftail.id, childrenIds: [], role: 'assistant',
+            content: answer, model: next, modelName: nextName, modelIdx: 0,
+            done: true, timestamp: Math.floor(Date.now() / 1000)
+          };
+          ftail.childrenIds = (ftail.childrenIds || []).concat([newId]);
+        }
+        fh.currentId = newId;
+        return aiuiSaveChat(chatId, { history: fh }).then(function () {
+          aiuiClearTypingLine();
+          aiuiSoftReload(chatId);
+        }, function () {
+          aiuiTypingLine('could not add ' + nextName + "'s reply");
+          console.warn('[AIUI turns] reply not saved for', next, ':', answer);
+        });
+      });
+    }).catch(function (e) {
+      console.warn('[AIUI turns]', e && e.message ? e.message : e);
+    }).then(function () {
+      aiuiTurnsBusy[chatId] = false;
+      if (again) setTimeout(function () { aiuiTakeTurns(chatId); }, 0);
+      return examined;
+    });
   }
 
   function aiuiRewriteAgentHeader(span) {
@@ -3133,21 +3464,75 @@
       return;
     }
 
-    // One agent spoke, so the label below now repeats the header and
-    // goes. With two or more, each agent becomes its own visual message
-    // with a name row of its own, and the raw "Name:" lines go with it.
+    // One agent per reply now, so the label below always repeats the
+    // header and goes.
+    //
+    // Turn taking is deliberately NOT hung off this function. A reply the
+    // page itself wrote carries no label, so every path above returns
+    // early on it; with the turn taking here, the second agent's message
+    // would never be looked at and a third agent would never speak.
+    // aiuiScanAgentNameHeaders drives it separately.
     if (span.getAttribute('data-aiui-agent-stripped') === '1') return;
     span.setAttribute('data-aiui-agent-stripped', '1');
-    if (names.length === 1) {
-      aiuiStripLabel(body, scan.labels[0]);
-    } else {
-      aiuiSplitIntoAgentMessages(body, scan.labels, scan.holder, span);
+    // Only when one agent spoke. In an older bubble holding two answers the
+    // labels are the only thing saying which answer belongs to whom, so
+    // they stay and the header names both.
+    if (names.length === 1) aiuiStripLabel(body, scan.labels[0]);
+  }
+
+  // Once per reply, once it has stopped changing. The settle check is the
+  // same shape the header rewrite uses, kept separate so the two never
+  // depend on each other.
+  //
+  // Open WebUI renders the assistant row with EMPTY content before the
+  // completion request has even returned. That empty body has a stable
+  // length, so a settle check that accepted it would fire about half a
+  // second after send: too early for the chat to have an id yet on a new
+  // chat, and long before the reply is stored. Requiring real text is what
+  // keeps this from checking nothing and latching shut on the result.
+  function aiuiMaybeTakeTurns(span) {
+    var body = aiuiFindReplyBody(span);
+    var sig = String(body ? (body.textContent || '').trim().length : 0);
+    if (sig === '0') return;
+    if (span.getAttribute('data-aiui-turns-checked') === sig) return;
+    if (span.getAttribute('data-aiui-turns-seen') !== sig) {
+      span.setAttribute('data-aiui-turns-seen', sig);
+      aiuiScheduleSettleScan();
+      return;
     }
+    var chatId = aiuiChatIdFromUrl();
+    if (!chatId) {
+      // A Temporary Chat stays on '/' and a shared chat on '/s/<id>', so
+      // there is no chat id and there never will be. Nothing on this path
+      // can latch, and turns-seen already equals sig, so rescheduling
+      // unconditionally re-armed the 700ms timer for the life of the tab:
+      // a full querySelectorAll, body walk and label scan 1.4 times a
+      // second, forever, for people who own no agents at all. A few tries
+      // still covers the real case, a brand new chat whose URL is only set
+      // once the completion request returns.
+      var tries = Number(span.getAttribute('data-aiui-turns-tries') || 0) + 1;
+      span.setAttribute('data-aiui-turns-tries', String(tries));
+      if (tries < 3) aiuiScheduleSettleScan();
+      return;
+    }
+    aiuiTakeTurns(chatId).then(function (examined) {
+      // Latch only once a done tail was actually examined, keyed to the
+      // body length so a reply that finishes later, and is therefore
+      // longer, is looked at again. A poll that ran out, or a chat with
+      // no id yet, is not a check and leaves no latch.
+      if (examined) span.setAttribute('data-aiui-turns-checked', sig);
+    });
   }
 
   function aiuiScanAgentNameHeaders() {
     var spans = document.querySelectorAll('#response-message-model-name');
     for (var i = 0; i < spans.length; i++) aiuiRewriteAgentHeader(spans[i]);
+    aiuiDropStaleTypingLine();
+    // Turn taking is independent of labels. The last reply may be one the
+    // page itself wrote, which carries no label and a marker for whoever
+    // is next, so it must be looked at regardless of what the header
+    // rewrite found.
+    if (spans.length) aiuiMaybeTakeTurns(spans[spans.length - 1]);
   }
 
   function wireAiuiAgentNameHeaders() {
