@@ -234,10 +234,13 @@ async def resume(body: ResumeIn,
 
 
 #: A woken agent stays awake for a week of chatting unless released. Long
-#: because a pin is a preference, not a lock: the cost of it lasting too long
-#: is one "stop", and the cost of it expiring mid-conversation is somebody
-#: wondering why their agent stopped answering.
-PIN_TTL_SECONDS = 60 * 60 * 24 * 7
+#: because a pin is a preference, not a lock. Five minutes of quiet, refreshed
+#: on every reply the agent gives: long enough that a person reading and
+#: typing a follow up never loses their agent, short enough that walking
+#: away and coming back does not hand a new topic to an agent nobody named.
+#: Ralph asked for exactly this on 2026-09-04, after a pinned agent kept
+#: answering a conversation it was no longer part of.
+PIN_TTL_SECONDS = 60 * 5
 
 
 class ChatIn(BaseModel):
@@ -395,19 +398,30 @@ def _turn_failed_sentence(name: str) -> str:
     return "%s could not answer just now. Try again in a moment." % (name or "That agent")
 
 
-async def _turn_for(user_email: str, agent: dict, messages: list[dict]) -> dict:
+async def _turn_for(user_email: str, agent: dict, messages: list[dict],
+                    names=()) -> dict:
     """One rendered turn for a single named agent. Never raises.
 
     Wraps _run_turn so a blown-up tool call in one agent's turn cannot take
     the rest of the message down with it.
+
+    `names` is every agent name this person has. The rendered history
+    carries "Ada:" and "Mia:" lines so a person can see who spoke, and fed
+    back verbatim those lines taught the model the format: it began
+    prefixing its own answers with a name and then inventing whole
+    exchanges between the agents. So the agent sees history with the labels
+    removed, and any label it still echoes at the top of its answer is
+    removed before the real one is added.
     """
+    history = agent_routing.clean_history_for_agent(messages, names)
     try:
-        out = await _run_turn(user_email, agent["id"], messages)
+        out = await _run_turn(user_email, agent["id"], history)
     except Exception:                                       # noqa: BLE001
         logger.warning("agent turn failed for %s", agent.get("id"),
                        exc_info=True)
         out = {"answer": _turn_failed_sentence(agent.get("name")), "notes": []}
     out = dict(out)  # Defensive copy: caller must never get a shared dict modified
+    out["answer"] = agent_routing.strip_leading_labels(out.get("answer"), names)
     out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
     return out
 
@@ -438,9 +452,10 @@ async def chat(body: ChatIn,
         # Naming agents switches rather than stacking: the LAST one named is
         # who a follow up with no name goes to, so "actually ada, you take
         # this" hands over cleanly even when Mia was also named.
+        names = [a.get("name") for a in agents if a.get("name")]
         turns = []
         for agent in named:
-            turns.append(await _turn_for(body.user_email, agent, body.messages))
+            turns.append(await _turn_for(body.user_email, agent, body.messages, names))
         await _write_pin(key, named[-1]["id"])
         return {"turns": turns}
 
@@ -465,4 +480,9 @@ async def chat(body: ChatIn,
             answer = IO_DOWN
         return {"turns": [{"agent": None, "answer": answer, "notes": []}]}
 
-    return {"turns": [await _turn_for(body.user_email, agent, body.messages)]}
+    # A follow up keeps the agent awake. Without this the pin would run out
+    # five minutes after the agent was last NAMED, mid conversation.
+    names = [a.get("name") for a in agents if a.get("name")]
+    turn = await _turn_for(body.user_email, agent, body.messages, names)
+    await _write_pin(key, agent["id"])
+    return {"turns": [turn]}

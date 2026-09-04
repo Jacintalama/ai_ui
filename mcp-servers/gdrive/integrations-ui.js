@@ -2950,6 +2950,72 @@
     }, 700);
   }
 
+
+  // ----- One message per agent, visually -----
+  // A pipe returns one reply, so when two agents answer at once Open WebUI
+  // shows one bubble. Ralph asked (2026-09-04) for each agent to read as
+  // its own message. The service cannot split a reply into two, so the
+  // page does the next best thing: each agent's section gets its own name
+  // row, with the same initial-in-a-circle the Agents page uses, and a
+  // divider above every section after the first. The "Name:" text line
+  // that marked the section is replaced by that row, since it would now
+  // say the same thing twice.
+  (function injectAgentSplitStyle() {
+    if (document.getElementById('aiui-agent-split')) return;
+    var st = document.createElement('style');
+    st.id = 'aiui-agent-split';
+    st.textContent =
+      '.aiui-agent-row{display:flex;align-items:center;gap:.5rem;margin:0 0 .35rem 0;font-weight:600;font-size:.9375rem;line-height:1.25}' +
+      '.aiui-agent-row + *{margin-top:0 !important}' +
+      '.aiui-agent-avatar{display:inline-flex;align-items:center;justify-content:center;' +
+      'width:1.5rem;height:1.5rem;border-radius:9999px;font-size:.7rem;font-weight:700;color:#fff;flex:none}' +
+      '.aiui-agent-section{margin-top:1.1rem;padding-top:.9rem;border-top:1px solid rgba(128,128,128,.25)}';
+    (document.head || document.documentElement).appendChild(st);
+  })();
+
+  // The same palette the Agents page gives an agent's initial, keyed off
+  // the name so an agent is the same colour everywhere it appears.
+  var AIUI_AGENT_COLOURS = ['#16a34a', '#db2777', '#2563eb', '#d97706', '#7c3aed', '#0891b2'];
+
+  function aiuiAgentColour(name) {
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return AIUI_AGENT_COLOURS[h % AIUI_AGENT_COLOURS.length];
+  }
+
+  function aiuiAgentRow(name) {
+    var row = document.createElement('div');
+    row.className = 'aiui-agent-row';
+    var av = document.createElement('span');
+    av.className = 'aiui-agent-avatar';
+    av.style.background = aiuiAgentColour(name);
+    av.textContent = name.slice(0, 2).toUpperCase();
+    var nm = document.createElement('span');
+    nm.textContent = name;
+    row.appendChild(av);
+    row.appendChild(nm);
+    return row;
+  }
+
+  // Turn one multi-agent reply into visually separate messages. Runs once
+  // per reply, after the settle check, so a label that is still streaming
+  // in is never split mid word. Each label's block gets a name row put in
+  // front of it and its "Name:" text removed; every block after the first
+  // also gets the divider. Idempotent through the data attribute.
+  function aiuiSplitIntoAgentMessages(body, labels) {
+    if (body.getAttribute('data-aiui-agent-split') === '1') return;
+    body.setAttribute('data-aiui-agent-split', '1');
+    for (var i = 0; i < labels.length; i++) {
+      var label = labels[i];
+      var block = label.block === body ? label.node.parentNode : label.block;
+      if (!block || !block.parentNode) continue;
+      var row = aiuiAgentRow(label.name);
+      block.parentNode.insertBefore(row, block);
+      if (i > 0) row.classList.add('aiui-agent-section');
+      aiuiStripLabel(body, label);
+    }
+  }
+
   function aiuiRewriteAgentHeader(span) {
     if (!span) return;
     var body = aiuiFindReplyBody(span);
@@ -2979,11 +3045,14 @@
     }
 
     // One agent spoke, so the label below now repeats the header and
-    // goes. With two or more, those labels are the only thing saying
-    // which answer belongs to whom, so they stay.
-    if (names.length === 1 && span.getAttribute('data-aiui-agent-stripped') !== '1') {
-      span.setAttribute('data-aiui-agent-stripped', '1');
+    // goes. With two or more, each agent becomes its own visual message
+    // with a name row of its own, and the raw "Name:" lines go with it.
+    if (span.getAttribute('data-aiui-agent-stripped') === '1') return;
+    span.setAttribute('data-aiui-agent-stripped', '1');
+    if (names.length === 1) {
       aiuiStripLabel(body, scan.labels[0]);
+    } else {
+      aiuiSplitIntoAgentMessages(body, scan.labels);
     }
   }
 

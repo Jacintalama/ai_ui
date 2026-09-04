@@ -127,3 +127,77 @@ def last_user_text(messages) -> str:
         if isinstance(content, str):
             return content
     return ""
+
+
+def _label_line_re(names):
+    """A line that is exactly one of these names and a colon, nothing else.
+    Only KNOWN agent names, so a reply genuinely opening with "Note:" or
+    "Warning:" on its own line is left alone."""
+    cleaned = sorted({str(n).strip() for n in names if str(n).strip()},
+                     key=len, reverse=True)
+    if not cleaned:
+        return None
+    alts = "|".join(re.escape(n) for n in cleaned)
+    return re.compile(r"^[ \t]*(?:%s)[ \t]*:[ \t]*$" % alts,
+                      re.IGNORECASE | re.MULTILINE)
+
+
+def strip_label_lines(text, names) -> str:
+    """Remove every line that is just an agent's name and a colon.
+
+    Rendered replies carry those lines so a person can see who spoke. Fed
+    back to an agent as history, the same lines teach it a format, and it
+    starts prefixing its own answers with a name, or worse, writing whole
+    fake exchanges between the agents. Seen live 2026-09-04: one agent's
+    answer contained a made up reply from the other. So history is cleaned
+    of the labels before an agent sees it, keeping every word that was
+    actually said.
+    """
+    if not isinstance(text, str) or not text:
+        return text if isinstance(text, str) else ""
+    pattern = _label_line_re(names)
+    if pattern is None:
+        return text
+    out = pattern.sub("", text)
+    # Collapse the blank runs the removed lines leave behind, so the
+    # agent does not see a wall of empty lines where labels were.
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
+def strip_leading_labels(text, names) -> str:
+    """Remove label lines from the START of an answer only.
+
+    The defensive half of the same fix: even with clean history a model can
+    echo a name it saw elsewhere, and the renderer is about to add the real
+    label in front of this text. Two labels stacked is exactly what the
+    person saw. Only leading lines go; a name mentioned inside the answer
+    is the agent's own words and stays.
+    """
+    if not isinstance(text, str) or not text:
+        return text if isinstance(text, str) else ""
+    pattern = _label_line_re(names)
+    if pattern is None:
+        return text
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or pattern.match(lines[i])):
+        i += 1
+    return "\n".join(lines[i:]).strip()
+
+
+def clean_history_for_agent(messages, names) -> list:
+    """The conversation as one agent should see it: every assistant turn
+    with the speaker labels removed. User turns are untouched, since a
+    person typing "Mia:" meant to."""
+    cleaned = []
+    if not isinstance(messages, list):
+        return cleaned
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+            m = dict(m)
+            m["content"] = strip_label_lines(m["content"], names)
+        cleaned.append(m)
+    return cleaned

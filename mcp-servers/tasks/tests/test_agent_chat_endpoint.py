@@ -334,3 +334,50 @@ async def test_the_failing_agents_name_appears_in_the_failure_message(_wire):
     mia_turn = turns[0]
     assert mia_turn["agent"]["name"] == "Mia"
     assert "Mia" in mia_turn["answer"], "the failure message must name which agent failed"
+
+
+async def test_the_pin_lasts_five_minutes_of_quiet():
+    """Ralph's ask, 2026-09-04: an agent nobody has talked to for five
+    minutes goes back to sleep, so a new topic is not handed to an agent
+    nobody named. A week was the previous value."""
+    assert rt.PIN_TTL_SECONDS == 300
+
+
+async def test_a_follow_up_keeps_the_agent_awake(_wire):
+    """The five minutes run from the agent's last REPLY, not from the last
+    time it was named. A pin only rewritten on naming would run out mid
+    conversation while a person was still typing to their agent."""
+    await rt.chat(_body("hi mia", chat_id="c"), x_internal_secret="s")
+    rt._write_pin.reset_mock()
+    out = await rt.chat(_body("and what about tomorrow", chat_id="c"),
+                        x_internal_secret="s")
+    assert out["turns"][0]["agent"]["name"] == "Mia"
+    rt._write_pin.assert_awaited_once()
+    assert rt._write_pin.await_args.args[1] == "agent-m"
+
+
+async def test_an_agent_sees_history_without_the_speaker_labels(_wire):
+    """The rendered reply says "Ada:" so a person can see who spoke. The
+    agent must not see that, or it learns the format and starts inventing
+    exchanges between the agents. Seen live 2026-09-04."""
+    class B:
+        user_email = "ralph@example.com"
+        chat_id = "c"
+        messages = [
+            {"role": "user", "content": "hi team"},
+            {"role": "assistant", "content": "Ada:\nhello\n\nMia:\nhi there"},
+            {"role": "user", "content": "mia, how are you"},
+        ]
+    await rt.chat(B(), x_internal_secret="s")
+    sent = rt._run_turn.await_args.args[2]
+    assert sent[1]["content"] == "hello\n\nhi there"
+    assert sent[0]["content"] == "hi team"
+
+
+async def test_an_echoed_label_is_stripped_before_the_real_one_is_added(_wire, monkeypatch):
+    """Even with clean history a model can echo a name. Two labels stacked
+    is what the person saw, so the answer loses any it opens with."""
+    monkeypatch.setattr(rt, "_run_turn",
+                        AsyncMock(return_value={"answer": "Mia:\nMia:\nall good", "notes": []}))
+    out = await rt.chat(_body("hi mia"), x_internal_secret="s")
+    assert out["turns"][0]["answer"] == "all good"
