@@ -305,3 +305,99 @@ async def agent_chat_approve(agent_id: str = Form(...),
     except Exception:                                       # noqa: BLE001
         log.exception("agent chat: could not save after an approval")
     return HTMLResponse(html)
+
+
+@router.get("/tasks/agents/chat/room", include_in_schema=False)
+async def agent_chat_room(user: CurrentUser = Depends(current_user)
+                          ) -> HTMLResponse:
+    s = store.get_session(user.email)
+    return HTMLResponse(render.chips(await _agents_for(user.email), s.room))
+
+
+@router.post("/tasks/agents/chat/room/add", include_in_schema=False)
+async def agent_chat_room_add(agent_id: str = Form(...),
+                              user: CurrentUser = Depends(current_user)
+                              ) -> HTMLResponse:
+    s = store.get_session(user.email)
+    agents = await _agents_for(user.email)
+    # Only your own agents, checked here rather than trusted from the form.
+    # Seating a stranger's agent would run it as you.
+    known = {str(a.get("id")) for a in agents}
+    if agent_id in known and agent_id not in s.room and len(s.room) < MAX_ROOM:
+        s.room.append(agent_id)
+    return HTMLResponse(render.chips(agents, s.room))
+
+
+@router.post("/tasks/agents/chat/room/remove", include_in_schema=False)
+async def agent_chat_room_remove(agent_id: str = Form(...),
+                                 user: CurrentUser = Depends(current_user)
+                                 ) -> HTMLResponse:
+    s = store.get_session(user.email)
+    if agent_id in s.room:
+        s.room.remove(agent_id)
+    return HTMLResponse(render.chips(await _agents_for(user.email), s.room))
+
+
+@router.post("/tasks/agents/chat/new", include_in_schema=False)
+async def agent_chat_new(user: CurrentUser = Depends(current_user)
+                         ) -> HTMLResponse:
+    s = store.get_session(user.email)
+    s.messages.clear()
+    s.pending.clear()
+    s.streaming = False
+    # Detach from the saved row. It stays; this session just stops being about
+    # it, so the next message starts a new conversation rather than appending
+    # to the one that was walked away from.
+    s.chat_id = None
+    # Invalidate any round still running against the old conversation, so its
+    # result is discarded instead of landing in the fresh one.
+    s.generation += 1
+    # The room is deliberately kept: picking the same people again every time
+    # would be the main annoyance of a panel like this.
+    resp = HTMLResponse(render.empty_thread())
+    resp.headers["HX-Trigger"] = "agent-chats-changed"
+    return resp
+
+
+@router.get("/tasks/agents/chat/chats", include_in_schema=False)
+async def agent_chat_chats(user: CurrentUser = Depends(current_user)
+                           ) -> HTMLResponse:
+    s = store.get_session(user.email)
+    return HTMLResponse(
+        render.chat_list(await store.list_chats(user.email), s.chat_id))
+
+
+@router.get("/tasks/agents/chat/chat/{chat_id}", include_in_schema=False)
+async def agent_chat_open(chat_id: str,
+                          user: CurrentUser = Depends(current_user)
+                          ) -> HTMLResponse:
+    row = await store.load_chat(user.email, chat_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such conversation")
+    s = store.get_session(user.email)
+    s.messages = list(row.get("messages") or [])
+    s.room = list(row.get("room") or [])
+    s.pending = dict(row.get("pending") or {})
+    s.chat_id = str(row["id"])
+    s.streaming = False
+    # Anything still running against the previous conversation is now orphaned.
+    s.generation += 1
+    resp = HTMLResponse(render.thread(s.messages))
+    resp.headers["HX-Trigger"] = "agent-chats-changed"
+    return resp
+
+
+@router.delete("/tasks/agents/chat/chat/{chat_id}", include_in_schema=False)
+async def agent_chat_delete(chat_id: str,
+                            user: CurrentUser = Depends(current_user)
+                            ) -> HTMLResponse:
+    await store.delete_chat(user.email, chat_id)
+    s = store.get_session(user.email)
+    if s.chat_id == chat_id:
+        s.messages.clear()
+        s.pending.clear()
+        s.chat_id = None
+        s.streaming = False
+        s.generation += 1
+    return HTMLResponse(
+        render.chat_list(await store.list_chats(user.email), s.chat_id))
