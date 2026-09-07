@@ -533,27 +533,61 @@ def _turn_failed_sentence(name: str) -> str:
 
 
 def _identity_line(agent: dict, names) -> dict:
-    """Tell the agent its own name, once, as a system line.
+    """Who the agent is and how it is expected to work, as one system line.
 
-    The transcript it reads has every speaker label stripped, because those
-    lines taught it to invent exchanges between agents. That fix left it with
-    no way to know which turns were its own or what it is called, so asked
-    "where is Ada", Ada answered that Ada was somebody else.
+    Two faults, both seen live, both fixed here rather than on any one card.
 
-    A system line is not the same hazard as a labelled transcript: it states
-    an identity rather than demonstrating a format, and it says in as many
-    words not to write the name into the answer, which the renderer adds.
+    It did not know its own name. The transcript it reads has every speaker
+    label stripped, because those lines taught it to invent exchanges between
+    agents, and that fix left it with nothing to go on: asked "where is Ada",
+    Ada answered that Ada was somebody else.
+
+    And it would not use what it had. Asked "who has all my app connections"
+    it guessed at a number; asked "do you have any work today" it offered to
+    help rather than looking. It now holds tools that read the person's real
+    account, so the brief says to use them and says that guessing is worse
+    than saying it could not check.
+
+    A system line is not the hazard a labelled transcript is: it states an
+    identity rather than demonstrating a format, and it says in as many words
+    not to write the name into the answer, which the renderer adds.
     """
     me = str(agent.get("name") or agent.get("id") or "this assistant")
     others = [str(n) for n in (names or []) if n and str(n) != me]
-    said = "You are %s, one of this person's own assistants." % me
+
+    said = ["You are %s, one of this person's own assistants." % me]
     if others:
-        said += (" The other assistants they can talk to here are %s. Never "
-                 "answer for them or invent what they said."
-                 % ", ".join(others))
-    said += (" Answer as yourself. Do not put your own name at the start of "
-             "your answer; it is added for you.")
-    return {"role": "system", "content": said}
+        said.append(
+            "The other assistants here are %s. They are software, like you, "
+            "not this person's colleagues: when they say team or everyone "
+            "they mean you and the other assistants, so answer for yourself "
+            "rather than suggesting they go and ask somebody. Never answer "
+            "for them or invent what they said." % ", ".join(others))
+
+    said.append(
+        "You have tools that read this person's real account: their mail, "
+        "files, apps, connections, schedules and saved notes. When they ask "
+        "anything about their own things, use a tool and answer from what it "
+        "returns. Never state a number or a name you have not looked up. "
+        "Never describe what you could do instead of doing it: if you can "
+        "check, check, then say what you found.")
+
+    said.append(
+        "Asked what you do or what you are working on, answer from your own "
+        "instructions in terms of this person's actual work, in a sentence or "
+        "two. Do not describe yourself as an assistant who can help with a "
+        "variety of tasks; they know that already and it tells them nothing.")
+
+    said.append(
+        "Answer, then stop. Do not close with an offer of further help or an "
+        "invitation to let you know. If something is genuinely out of reach, "
+        "say what is missing and what would fix it, rather than apologising.")
+
+    said.append(
+        "Answer as yourself. Do not put your own name at the start of your "
+        "answer; it is added for you.")
+
+    return {"role": "system", "content": " ".join(said)}
 
 
 async def _turn_for(user_email: str, agent: dict, messages: list[dict],
