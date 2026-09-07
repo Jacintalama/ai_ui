@@ -169,6 +169,31 @@ def test_the_working_line_names_the_agent(monkeypatch):
     assert "Ada is working" in body
 
 
+def test_an_abandoned_round_does_not_unlock_a_newer_one(monkeypatch):
+    """The real defect this guards: New chat bumps generation while a round
+    is in flight, a fresh send re-claims the room (streaming = True again),
+    and the OLD round's finally must leave that newer claim alone. Clearing
+    streaming unconditionally would let a third send through onto a session a
+    second round already owns: two rounds of tool-running agents at once.
+    """
+    app, mod, _ = _app(monkeypatch)
+    s = _seat(mod, ["agent-a"])
+
+    async def turn(email, agent, messages, names=()):
+        # Mid-round: New chat bumps the generation and a fresh send re-claims
+        # the session, exactly as the New chat route will.
+        s.generation += 1
+        s.streaming = True
+        return {"answer": "Ada here", "notes": [],
+                "agent": {"id": "agent-a", "name": "Ada"}}
+
+    monkeypatch.setattr(mod, "_turn_for", turn)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "hi"}, headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    assert s.streaming is True, "the abandoned round cleared a newer claim"
+
+
 def test_history_for_round_keeps_only_real_turns():
     import routes_agent_chat as mod
     got = mod._history_for_round([

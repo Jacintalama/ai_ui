@@ -188,7 +188,13 @@ async def agent_chat_stream(request: Request,
                 except Exception:                           # noqa: BLE001
                     log.exception("agent chat: could not save conversation %s",
                                   s.chat_id)
-            s.streaming = False
+            # Only clear the flag if this round still owns this generation.
+            # New chat can bump s.generation and let a fresh send re-claim
+            # streaming while this round is still unwinding; clearing it
+            # unconditionally would drop that newer claim's double-submit
+            # guard and let a third send run a round concurrently with it.
+            if s.generation == my_generation:
+                s.streaming = False
             yield {"event": "close", "data": ""}
 
     return EventSourceResponse(gen())
