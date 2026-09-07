@@ -128,7 +128,10 @@ it does not run. A refusal still appends a tool result, because every held
 `tool_call` needs a matching tool message before the next completion.
 
 An approval that is never answered is not a failure state. It sits in the
-conversation until answered or until the conversation is deleted.
+conversation until answered or until the conversation is deleted. That is why
+the held payload is a column on the conversation row (`pending`) and not only an
+in-memory value: a service restart must not turn an unanswered question into a
+dead button.
 
 ## Storage
 
@@ -141,6 +144,7 @@ CREATE TABLE IF NOT EXISTS tasks.agent_chats (
   title      TEXT NOT NULL DEFAULT 'New chat',
   messages   JSONB NOT NULL DEFAULT '[]'::jsonb,
   room       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  pending    JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
