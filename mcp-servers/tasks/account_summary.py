@@ -114,12 +114,17 @@ async def summarise(email: str) -> dict:
     crashes is not.
     """
     if not email:
-        return {"connected": [], "not_connected": []}
+        return {"connected": [], "not_connected": [], "agents": []}
     try:
         connected_ids = await _connected_providers(email)
     except Exception:                                       # noqa: BLE001
         logger.warning("could not read what is connected", exc_info=True)
-        return {"connected": [], "not_connected": []}
+        # Not "nothing is connected": we could not tell. Falling through would
+        # list all eleven providers as unconnected and have the assistant
+        # offer to connect Gmail to somebody who already has it. The agents
+        # half is independent and still worth answering.
+        return {"connected": [], "not_connected": [],
+                "agents": await _own_agents(email)}
 
     connected, missing = [], []
     for pid in ALL_PROVIDER_IDS:
@@ -127,4 +132,49 @@ async def summarise(email: str) -> dict:
             connected.append({"id": pid, "label": _label_for(pid)})
         else:
             missing.append(connect_hint(pid))
-    return {"connected": connected, "not_connected": missing}
+    return {"connected": connected, "not_connected": missing,
+            "agents": await _own_agents(email)}
+
+
+#: How an access level reads to the person who picked it. The form calls them
+#: Read only, With access, and All access, so these have to agree with it.
+_ACCESS_LABEL = {
+    "read": "read only",
+    "ask": "can act, but asks first",
+    "all": "full access",
+}
+
+
+async def _own_agents(email: str) -> list:
+    """This person's assistants and the access each was given.
+
+    Here rather than in a tool of its own because the only existing tool that
+    knows about agents is the one that runs them, and an agent inside a turn
+    must never reach that: it would start a round inside a round while its
+    owner waits on the outer one. Reporting is safe; running is not.
+
+    Never raises, like everything else in this module.
+    """
+    try:
+        import agent_access
+        from routes_agent_turn import _agents_for
+        listed = await _agents_for(email)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not list this person's agents", exc_info=True)
+        return []
+    out = []
+    for agent in listed if isinstance(listed, list) else []:
+        if not isinstance(agent, dict):
+            continue
+        meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
+        level = agent_access.level_of(meta)
+        tools = meta.get("toolIds")
+        out.append({
+            "name": str(agent.get("name") or agent.get("id") or "an agent"),
+            # None is not "read only": it means nobody ever chose, which is
+            # worth saying plainly so the owner can go and choose.
+            "access": _ACCESS_LABEL.get(level, "not set, so it only reads"),
+            "model": str(agent.get("base_model_id") or ""),
+            "tools": len(tools) if isinstance(tools, list) else 0,
+        })
+    return out

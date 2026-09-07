@@ -87,6 +87,12 @@ READ_METHODS: frozenset[str] = frozenset({
     # really does only inspect, and it exists in this repo (mcp-proxy).
     "check_my_access",
     "whoami",
+    # Pinned because the verb rule has no opinion: "my" and "account" are
+    # neither, so the name falls through to the write default. It reads a
+    # summary of what this person has connected and changes nothing, and
+    # refusing it left a read only agent telling its owner it had no access
+    # to their account, which was both wrong and alarming.
+    "my_account",
     # Pinned because the verb rule has no opinion here, not because it
     # disagrees: neither "propose" nor "change" is a write verb, so this
     # name falls through to the default, and the default is write. It

@@ -145,3 +145,22 @@ TWO_PART_PREFIX_READS = [
 @pytest.mark.parametrize("name", TWO_PART_PREFIX_READS)
 def test_two_part_server_prefix_reads_are_not_writes(name):
     assert is_write_tool(name) is False
+
+
+# my_account reads a summary of what this person has connected. It splits into
+# "my" and "account", neither of which is a known read verb, so it fell through
+# to the write default and a read only agent was refused a read. Live, that
+# looked like both agents telling their owner they had no access to their own
+# account.
+
+def test_my_account_is_a_read():
+    assert is_write_tool("my_account") is False
+
+
+def test_pinning_a_name_does_not_widen_to_its_relatives():
+    """The pin is an exact name match and it runs AFTER the mutating-verb
+    veto, so a destructive method that merely contains the pinned words is
+    still a write."""
+    assert is_write_tool("delete_my_account") is True
+    assert is_write_tool("my_account_delete") is True
+    assert is_write_tool("reset_my_account") is True

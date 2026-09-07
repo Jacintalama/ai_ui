@@ -32,12 +32,15 @@ class Tools:
 
     async def my_account(self, __user__: dict = {}) -> str:
         """
-        Check which apps the user has connected to this platform, and which
-        they have not. Call this whenever the user asks about connecting an
-        app, asks what they have connected, or asks why an agent cannot
-        reach their mail, files, or a connected service. Call it before
-        offering to connect anything, so the answer is about what they
-        actually have.
+        Check this person's own setup: which apps they have connected and
+        which they have not, and which assistants they have with the access
+        each one was given.
+
+        Call this whenever they ask what is connected, what tools or apps
+        they have, what assistants or agents they have, who can do what, who
+        is read only, or why an assistant cannot reach their mail, files or
+        a connected service. Call it before offering to connect anything, so
+        the answer is about what they actually have rather than a guess.
         """
         email = (__user__ or {}).get("email") or ""
         if not email:
@@ -87,6 +90,20 @@ class Tools:
                                      % (link, m.get("where") or "that app's settings"))
                     else:
                         lines.append("  %s  (opens a login)" % link)
+            agents = data.get("agents")
+            agents = agents if isinstance(agents, list) else []
+            if agents:
+                lines.append("")
+                lines.append("Their assistants, and the access each was given:")
+                for a in agents:
+                    if not isinstance(a, dict):
+                        continue
+                    lines.append("  %s: %s, thinks with %s, %s tools"
+                                 % (a.get("name", "an agent"),
+                                    a.get("access", "not set"),
+                                    a.get("model") or "the default model",
+                                    a.get("tools", 0)))
+
             return "\n".join(lines)
         except Exception:                                   # noqa: BLE001
             # Never include the exception text: an httpx error carries the
