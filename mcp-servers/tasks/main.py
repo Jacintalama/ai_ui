@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from db import init_db
 from routes_account import router as account_router
+from routes_agent_chat import router as agent_chat_router
 from routes_agent_turn import router as agent_turn_router
 from routes_agents import router as agents_router
 from routes_aiuibuilder import router as aiuibuilder_router
@@ -129,6 +130,7 @@ app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(agents_router)  # /agents, operator path
 app.include_router(agents_router, prefix="/api/tasks")  # /api/tasks/agents, web path
 app.include_router(agent_turn_router)  # /agents/turn — internal only (X-Internal-Secret)
+app.include_router(agent_chat_router)  # /tasks/agents/chat, the panel
 app.include_router(account_router)  # /account — internal only (X-Internal-Secret)
 app.include_router(code_router)  # /code, internal only (X-Internal-Secret)
 app.include_router(discord_links_router)  # /discord-links — system path (X-Internal-Secret)

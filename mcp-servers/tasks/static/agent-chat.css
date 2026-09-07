@@ -1,0 +1,106 @@
+/* The agent chat panel. Sits in the space the card grid already leaves: the
+   page wrapper is 1640px while .grid caps at 792px. */
+.agents-layout {
+  display: grid; gap: 24px; align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+}
+.agents-main { min-width: 0; }
+
+.agent-panel {
+  position: sticky; top: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  min-width: 0; max-height: calc(100vh - 32px);
+  padding: 16px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border);
+}
+.ap-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ap-head h2 { margin: 0; font-size: 15px; }
+.achips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 4px 10px; border-radius: 999px; font-size: 12.5px; cursor: pointer;
+  background: transparent; color: var(--text-2);
+  border: 1px solid var(--border-2);
+}
+.chip.in { background: transparent; color: var(--accent); border-color: var(--accent); }
+.ap-thread { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.am { display: flex; gap: 10px; }
+.am.user { justify-content: flex-end; }
+.am.user .ab {
+  max-width: 80%; padding: 8px 12px; border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, .10); white-space: pre-wrap;
+}
+.aav {
+  flex: 0 0 26px; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px;
+  background: rgba(255, 255, 255, .10);
+}
+.abody { min-width: 0; }
+.awho { font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+.atext { white-space: pre-wrap; overflow-wrap: anywhere; }
+.am.note { font-size: 12.5px; color: var(--text-2); font-style: italic; }
+.aworking { font-size: 12.5px; color: var(--text-2); }
+.acalls { margin: 6px 0; padding-left: 18px; font-size: 12.5px; }
+.aargs { color: var(--text-2); overflow-wrap: anywhere; }
+.aactions { display: flex; gap: 8px; margin-top: 6px; }
+
+/* A bubble that streamed in and one replayed from a saved conversation have
+   to be indistinguishable. Replayed bubbles are flex children of .ap-thread
+   and take its 12px gap; streamed ones land inside .alive, two levels down,
+   so the same spacing is set up again here. Empty wrappers are hidden rather
+   than left in place, or a round that has not started yet leaves two gaps
+   under the last message. */
+.astream, .alive { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.awork { min-width: 0; }
+.astream:empty, .alive:empty, .awork:empty { display: none; }
+
+/* The invitation, before anything has been asked. */
+.aempty { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+
+/* An agent waiting on a yes or a no. Set apart, because it is the one bubble
+   that is asking the person for something rather than telling them. */
+.awaiting .abody {
+  padding: 8px 10px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border-2);
+}
+
+/* Rendered markdown inside an answer. The bubble is a column of text, so the
+   first and last blocks must not push the avatar out of line. */
+.atext.md > :first-child { margin-top: 0; }
+.atext.md > :last-child { margin-bottom: 0; }
+/* Only once marked has actually run. Until then the raw text still needs
+   pre-wrap, or a page where the vendored scripts failed to load shows every
+   answer as one unbroken paragraph. */
+.atext.md.done { white-space: normal; }
+.atext.md p { margin: 0 0 8px; }
+.atext.md ul, .atext.md ol { margin: 0 0 8px; padding-left: 20px; }
+.atext.md pre {
+  margin: 0 0 8px; padding: 8px 10px; overflow-x: auto;
+  border-radius: var(--radius); background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.atext.md code { font-size: 12px; }
+.atext.md a { color: var(--accent); }
+
+.ap-composer { display: flex; gap: 8px; }
+.ap-composer input {
+  flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius);
+  background: rgba(255, 255, 255, .06); color: inherit;
+  border: 1px solid var(--border);
+}
+.ap-history h3 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); font-weight: 600; }
+.achatlist { display: flex; flex-direction: column; gap: 2px; max-height: 168px; overflow-y: auto; }
+.achatrow { display: flex; align-items: center; gap: 4px; }
+.achatopen {
+  flex: 1; min-width: 0; text-align: left; padding: 5px 8px; border-radius: var(--radius);
+  background: transparent; color: inherit; border: 0; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px;
+}
+.achatrow.active .achatopen { background: rgba(255, 255, 255, .08); }
+.achatdel { background: transparent; border: 0; color: var(--text-2); cursor: pointer; }
+.asidenote { font-size: 12.5px; color: var(--text-2); }
+
+/* Below this width the cards want the whole row, so the panel goes under. */
+@media (max-width: 1180px) {
+  .agents-layout { grid-template-columns: 1fr; }
+  .agent-panel { position: static; max-height: none; }
+}

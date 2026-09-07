@@ -392,6 +392,13 @@
   .form-error:empty { margin-top: 0; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
 </style>
+<script src="/tasks/static/vendor/htmx.min.js"></script>
+<script src="/tasks/static/vendor/sse.js"></script>
+<!-- Agent answers are markdown. marked renders it; DOMPurify sanitizes the
+     result before it is inserted, because it is model output. -->
+<script src="/tasks/static/vendor/marked.min.js"></script>
+<script src="/tasks/static/vendor/purify.min.js"></script>
+<link rel="stylesheet" href="/tasks/static/agent-chat.css">
 </head>
 <body>
   <div class="topbar">
@@ -429,6 +436,9 @@
   <div class="container">
     <!-- The pane bar above already says "AI Agents / Assistants you build
          yourself", so the icon and heading here just said it a second time. -->
+
+<div class="agents-layout">
+<div class="agents-main">
 
     <div class="error box" id="page-error" hidden></div>
 
@@ -516,6 +526,36 @@
       <h2>Start from a template</h2>
     </div>
     <div class="grid" id="template-gallery"></div>
+</div><!-- .agents-main -->
+
+<aside class="agent-panel" id="agent-panel">
+  <div class="ap-head">
+    <h2>Chat with your agents</h2>
+    <button class="btn" type="button" hx-post="/tasks/agents/chat/new"
+            hx-target="#agent-thread" hx-swap="innerHTML">New chat</button>
+  </div>
+  <div class="achips" id="agent-room" hx-get="/tasks/agents/chat/room"
+       hx-trigger="load" hx-swap="outerHTML"></div>
+  <div class="ap-thread" id="agent-thread">
+    <div class="aempty">Pick who is in the room, then ask.
+      Each agent answers in its own message.</div>
+  </div>
+  <form class="ap-composer" hx-post="/tasks/agents/chat/send"
+        hx-target="#agent-thread" hx-swap="beforeend"
+        hx-on::after-request="this.reset()">
+    <input type="text" name="message" autocomplete="off"
+           placeholder="Ask the room something">
+    <button class="btn primary" type="submit">Send</button>
+  </form>
+  <div class="ap-history">
+    <h3>Earlier</h3>
+    <p class="asidenote" id="agent-chatlist"
+       hx-get="/tasks/agents/chat/chats"
+       hx-trigger="load, agent-chats-changed from:body"
+       hx-swap="outerHTML">Loading...</p>
+  </div>
+</aside>
+</div><!-- .agents-layout -->
 
     <!-- Connecting an app used to mean leaving for a chat window and finding
          it in the plus menu. The tools an agent can use are decided here, so
@@ -1766,5 +1806,6 @@
     });
   })();
   </script>
+<script src="/tasks/static/agent-chat.js"></script>
 </body>
 </html>

@@ -49,19 +49,28 @@ def _capture_outgoing(monkeypatch):
         content = b"ok"
         headers = _Headers({"content-type": "application/json"})
 
+        async def aread(self):
+            return self.content
+
+        async def aclose(self):
+            return None
+
+    # The gateway opens the response before reading it, so that a Server-Sent
+    # Events body can be handed on as it arrives. This double follows that
+    # shape; what it is here to capture, the outgoing headers, is unchanged.
     class _Client:
         def __init__(self, **kwargs):
             pass
 
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def request(self, **kwargs):
+        def build_request(self, **kwargs):
             captured.update(kwargs)
             return _Resp()
+
+        async def send(self, request, stream=False):
+            return _Resp()
+
+        async def aclose(self):
+            return None
 
     monkeypatch.setattr(main.httpx, "AsyncClient", _Client)
     return main, captured
