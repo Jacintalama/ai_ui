@@ -180,35 +180,36 @@ REFUSED_BY_OWNER = "Refused: the owner did not approve this action"
 _RESUMABLE = frozenset({agent_access.MODE_ASK, agent_access.MODE_FULL})
 
 
-@router.post("/turn/resume")
-async def resume(body: ResumeIn,
-                 x_internal_secret: str = Header(default="")) -> dict:
+async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
+                       calls: list[dict], approved: bool) -> dict:
     """Continue a turn that stopped to ask.
+
+    Split out of the route so callers inside this process (the agent chat
+    panel) can resume without an HTTP hop and without holding the internal
+    secret, the same way the Fusion page calls fusion_engine directly.
 
     The access level is READ AGAIN here rather than trusted from when the
     question was asked. Between the two there is a window in which the agent
     can be edited or deleted, and somebody who has second thoughts and turns
     an agent down to read only has turned it down.
     """
-    _require_internal(x_internal_secret)
-    token, tools, level = await _resolve_agent(body.user_email, body.agent_id)
+    token, tools, level = await _resolve_agent(user_email, agent_id)
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
     if mode not in _RESUMABLE:
         return {"answer": "This agent is set to read only now, so I did not "
                           "run that.", "notes": []}
 
-    convo = list(body.conversation)
-    for call in body.calls:
+    convo = list(conversation)
+    for call in calls:
         call = call if isinstance(call, dict) else {}
         fn = call.get("function")
         fn = fn if isinstance(fn, dict) else {}
         raw_name = fn.get("name")
         name = raw_name.strip() if isinstance(raw_name, str) else ""
-        if body.approved:
+        if approved:
             # tools, not anything the caller sent: same rule as the turn
             # endpoint, and the reason execute_tool_call takes this argument.
-            result = await execute_tool_call(call, body.user_email,
-                                             tools or None)
+            result = await execute_tool_call(call, user_email, tools or None)
         else:
             result = (REFUSED_BY_OWNER + ", so " + (name or "that tool")
                       + " was not run.")
@@ -218,12 +219,12 @@ async def resume(body: ResumeIn,
                       "name": name, "content": result})
 
     run_id = await agent_activity.start_run(
-        body.agent_id, body.user_email, agent_activity.SOURCE_CHANNEL)
+        agent_id, user_email, agent_activity.SOURCE_CHANNEL)
     outcome = "failed"
     try:
         answer, notes = await _chat(
-            token=token, model=body.agent_id, messages=convo,
-            tool_ids=tools or None, user_email=body.user_email,
+            token=token, model=agent_id, messages=convo,
+            tool_ids=tools or None, user_email=user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
                 level, None, agent_access.SURFACE_CHANNEL),
@@ -233,9 +234,24 @@ async def resume(body: ResumeIn,
         return {"answer": answer, "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING
-        return _pending_payload(body.user_email, body.agent_id, err)
+        return _pending_payload(user_email, agent_id, err)
     finally:
         await agent_activity.finish_run(run_id, outcome)
+
+
+@router.post("/turn/resume")
+async def resume(body: ResumeIn,
+                 x_internal_secret: str = Header(default="")) -> dict:
+    """Continue a turn that stopped to ask. Internal only.
+
+    The work is in _resume_turn so in-process callers can reach it without
+    holding the internal secret.
+    """
+    _require_internal(x_internal_secret)
+    return await _resume_turn(user_email=body.user_email,
+                              agent_id=body.agent_id,
+                              conversation=body.conversation,
+                              calls=body.calls, approved=body.approved)
 
 
 #: A woken agent stays awake for a week of chatting unless released. Long

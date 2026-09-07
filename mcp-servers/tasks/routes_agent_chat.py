@@ -19,7 +19,7 @@ from sse_starlette.sse import EventSourceResponse
 import agent_chat_render as render
 import agent_chat_store as store
 from auth import CurrentUser, current_user
-from routes_agent_turn import _agents_for, _turn_for
+from routes_agent_turn import _agents_for, _resume_turn, _turn_for
 from routes_agents import _pending_for_page
 
 log = logging.getLogger(__name__)
@@ -56,6 +56,22 @@ def _drop(messages: list[dict], marker: dict) -> None:
         if m is marker:
             del messages[i]
             return
+
+
+def _clear_awaiting(messages: list[dict], agent_id: str) -> None:
+    """Take the question off the stored message once it has been answered, so
+    a replayed conversation does not offer Yes and No on something already
+    decided."""
+    for m in messages:
+        if m.get("agent_id") == agent_id and m.get("awaiting"):
+            m.pop("awaiting", None)
+
+
+def _name_for(agent_id: str, agents: list[dict]) -> str:
+    for a in agents:
+        if str(a.get("id")) == agent_id:
+            return str(a.get("name") or agent_id)
+    return agent_id
 
 
 async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
@@ -198,3 +214,59 @@ async def agent_chat_stream(request: Request,
             yield {"event": "close", "data": ""}
 
     return EventSourceResponse(gen())
+
+
+@router.post("/tasks/agents/chat/approve", include_in_schema=False)
+async def agent_chat_approve(agent_id: str = Form(...),
+                             approved: str = Form(...),
+                             user: CurrentUser = Depends(current_user)
+                             ) -> HTMLResponse:
+    """Answer one agent's request to run a tool.
+
+    The question lives in the asker's own session, so there is nothing to look
+    up by id and nothing a stranger can address. The held conversation goes
+    from here straight into _resume_turn without ever having been in a browser.
+    """
+    s = store.get_session(user.email)
+    pending = s.pending.pop(agent_id, None)
+    if not isinstance(pending, dict) or not pending.get("calls"):
+        return HTMLResponse(render.note(
+            "That question is no longer waiting for an answer."))
+    # Belt and braces. The payload names who was asked; the session is already
+    # per person, so these can only disagree if something upstream changed.
+    if pending.get("user_email") and pending["user_email"] != user.email:
+        log.warning("agent chat: refused an approval from the wrong person")
+        return HTMLResponse(render.note(
+            "That question is no longer waiting for an answer."))
+
+    yes = (approved or "").strip().lower() in ("yes", "true", "1", "on")
+    agents = await _agents_for(user.email)
+    name = _name_for(agent_id, agents)
+    out = await _resume_turn(user_email=user.email, agent_id=agent_id,
+                             conversation=list(pending.get("conversation") or []),
+                             calls=list(pending.get("calls") or []),
+                             approved=yes)
+    answer = out.get("answer") or ""
+    _clear_awaiting(s.messages, agent_id)
+
+    raw_pending = out.get("pending")
+    page_pending = (_pending_for_page(raw_pending)
+                    if isinstance(raw_pending, dict) else None)
+    if page_pending:
+        # It asked again. Same rules: hold the payload, show the calls.
+        s.pending[agent_id] = raw_pending
+        s.messages.append({"role": "assistant", "agent_id": agent_id,
+                           "agent_name": name, "content": answer,
+                           "awaiting": page_pending})
+        html = ((render.agent_bubble(name, answer) if answer else "")
+                + render.approval_bubble(name, agent_id, page_pending["calls"]))
+    else:
+        s.messages.append({"role": "assistant", "agent_id": agent_id,
+                           "agent_name": name, "content": answer})
+        html = render.agent_bubble(name, answer)
+
+    try:
+        await store.save_chat(user.email, s)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not save after an approval")
+    return HTMLResponse(html)
