@@ -373,8 +373,17 @@ async def test_an_agent_sees_history_without_the_speaker_labels(_wire):
         ]
     await rt.chat(B(), x_internal_secret="s")
     sent = rt._run_turn.await_args.args[2]
-    assert sent[1]["content"] == "hello\n\nhi there"
-    assert sent[0]["content"] == "hi team"
+    # A system line telling the agent its own name rides in front now,
+    # because stripping the labels also left it with no way to know what
+    # it is called.
+    assert sent[0]["role"] == "system" and "You are " in sent[0]["content"]
+    said = [m for m in sent if m["role"] != "system"]
+    assert said[0]["content"] == "hi team"
+    assert said[1]["content"] == "hello\n\nhi there"
+    # The point of the test: no name survives anywhere in the transcript
+    # it reads, however the turns are numbered.
+    transcript = "\n".join(m["content"] for m in said)
+    assert "Ada" not in transcript and "Mia" not in transcript
 
 
 async def test_an_echoed_label_is_stripped_before_the_real_one_is_added(_wire, monkeypatch):

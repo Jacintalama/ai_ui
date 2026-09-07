@@ -70,6 +70,38 @@ class ResumeIn(BaseModel):
     approved: bool
 
 
+#: An agent must not reach the tool that runs agents. It is already inside a
+#: turn, so calling it would start a round inside a round, and the person is
+#: waiting on the outer one.
+_TOOLS_AN_AGENT_MAY_NOT_HAVE = frozenset({"agents"})
+
+
+async def _every_tool_for(user_email: str) -> list[str]:
+    """Every tool this person can use, whatever any one agent was ticked for.
+
+    An agent that cannot answer "which apps have I connected" guesses, and a
+    guess about somebody's own account reads as a lie. The access level still
+    decides what it may DO with any of them: this widens what it can reach,
+    not what it may change without asking.
+
+    Imported inside the function because routes_agents imports this module,
+    and at module level that is a cycle.
+    """
+    try:
+        from routes_agents import tools_for_email
+        listed = await tools_for_email(user_email)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not list this person's tools", exc_info=True)
+        return []
+    items = listed.get("tools") if isinstance(listed, dict) else listed
+    out = []
+    for item in items if isinstance(items, list) else []:
+        tool_id = item.get("id") if isinstance(item, dict) else item
+        if isinstance(tool_id, str) and tool_id not in _TOOLS_AN_AGENT_MAY_NOT_HAVE:
+            out.append(tool_id)
+    return out
+
+
 async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
     """(token, the agent's own tool ids, its access level).
 
@@ -94,8 +126,15 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
                 detail="could not check that agent just now")
         raise HTTPException(status_code=404, detail="no such agent")
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
-    tools = meta.get("toolIds")
-    tools = [t for t in tools if isinstance(t, str)] if isinstance(tools, list) else []
+    own = meta.get("toolIds")
+    own = [t for t in own if isinstance(t, str)] if isinstance(own, list) else []
+    # Everything this person can reach, not only what this agent was ticked
+    # for. Its own list stays in front so an explicitly granted tool is never
+    # lost if the wider read comes back short.
+    tools = list(own)
+    for tool_id in await _every_tool_for(user_email):
+        if tool_id not in tools:
+            tools.append(tool_id)
     return token, tools, agent_access.level_of(meta)
 
 
@@ -493,6 +532,30 @@ def _turn_failed_sentence(name: str) -> str:
     return "%s could not answer just now. Try again in a moment." % (name or "That agent")
 
 
+def _identity_line(agent: dict, names) -> dict:
+    """Tell the agent its own name, once, as a system line.
+
+    The transcript it reads has every speaker label stripped, because those
+    lines taught it to invent exchanges between agents. That fix left it with
+    no way to know which turns were its own or what it is called, so asked
+    "where is Ada", Ada answered that Ada was somebody else.
+
+    A system line is not the same hazard as a labelled transcript: it states
+    an identity rather than demonstrating a format, and it says in as many
+    words not to write the name into the answer, which the renderer adds.
+    """
+    me = str(agent.get("name") or agent.get("id") or "this assistant")
+    others = [str(n) for n in (names or []) if n and str(n) != me]
+    said = "You are %s, one of this person's own assistants." % me
+    if others:
+        said += (" The other assistants they can talk to here are %s. Never "
+                 "answer for them or invent what they said."
+                 % ", ".join(others))
+    said += (" Answer as yourself. Do not put your own name at the start of "
+             "your answer; it is added for you.")
+    return {"role": "system", "content": said}
+
+
 async def _turn_for(user_email: str, agent: dict, messages: list[dict],
                     names=()) -> dict:
     """One rendered turn for a single named agent. Never raises.
@@ -508,7 +571,8 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
     removed, and any label it still echoes at the top of its answer is
     removed before the real one is added.
     """
-    history = agent_routing.clean_history_for_agent(messages, names)
+    history = ([_identity_line(agent, names)]
+               + agent_routing.clean_history_for_agent(messages, names))
     try:
         out = await _run_turn(user_email, agent["id"], history)
     except Exception:                                       # noqa: BLE001

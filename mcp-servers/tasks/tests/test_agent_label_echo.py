@@ -137,3 +137,38 @@ def test_the_rendered_reply_survives_a_round_trip_through_cleaning():
     assert "Mia" not in cleaned[1]["content"]
     assert "hello there" in cleaned[1]["content"]
     assert "hi back" in cleaned[1]["content"]
+
+
+# An agent that does not know its own name is worse than one with no history:
+# asked "where is Ada", Ada answered that Ada was somebody else. The labels
+# are stripped from what it reads, so the name has to arrive some other way.
+
+def test_an_agent_is_told_its_own_name():
+    from routes_agent_turn import _identity_line
+    line = _identity_line({"id": "agent-a", "name": "Ada"}, ["Ada", "Mia"])
+    assert line["role"] == "system"
+    assert "You are Ada" in line["content"]
+    assert "Mia" in line["content"], "it should know who else is here"
+    assert "Ada, Mia" not in line["content"], "it must not be listed as its own peer"
+
+
+def test_the_identity_line_forbids_the_two_things_that_went_wrong():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    # Writing another agent's reply is the invented-exchange bug.
+    assert "Never answer for them" in said
+    # Prefixing its own name is the double-label bug; the renderer adds it.
+    assert "Do not put your own name at the start" in said
+
+
+def test_an_only_agent_is_not_told_about_company_it_does_not_have():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada"])["content"]
+    assert "You are Ada" in said
+    assert "other assistants" not in said
+
+
+def test_an_agent_with_no_name_still_gets_a_line():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "agent-x"}, [])["content"]
+    assert "agent-x" in said
