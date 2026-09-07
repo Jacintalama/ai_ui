@@ -180,6 +180,131 @@ def test_deleting_your_own_conversation(monkeypatch):
     assert rows == {}
 
 
+def test_a_reset_mid_round_does_not_pollute_the_new_conversation(monkeypatch):
+    """Review defect: _run_round captures history once but was writing into
+    s.messages / s.pending fresh on every loop iteration, and _turn_for is a
+    real outbound call, so the event loop can service another request from
+    the same person while one agent's turn is in flight. Clicking New chat
+    between two agents' turns must not let the later agent's answer land in
+    the conversation that was just started.
+
+    Calls the real agent_chat_new route coroutine directly (not through
+    TestClient, which cannot safely reenter itself mid-request) so this
+    drives the actual interleave rather than reimplementing the reset.
+    """
+    app, mod, _ = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/room/add", data={"agent_id": "agent-a"},
+           headers=_hdr())
+    c.post("/tasks/agents/chat/room/add", data={"agent_id": "agent-m"},
+           headers=_hdr())
+
+    async def turn(email, agent, messages, names=()):
+        if agent["id"] == "agent-a":
+            # Mid-round: an ordinary click of New chat lands between Ada's
+            # turn and Mia's.
+            await mod.agent_chat_new(user=mod.CurrentUser(email=EMAIL))
+        return {"answer": f'{agent["name"]} here', "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]}}
+
+    monkeypatch.setattr(mod, "_turn_for", turn)
+    c.post("/tasks/agents/chat/send", data={"message": "hi team"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+
+    s = mod.store.get_session(EMAIL)
+    # The fresh conversation New chat started stays empty. Both Ada's and
+    # Mia's answers belong to the round that was abandoned, and neither may
+    # land here.
+    assert s.messages == []
+    assert s.pending == {}
+    # New chat keeps the room, so it should still hold both agents.
+    assert s.room == ["agent-a", "agent-m"]
+
+
+def test_a_broken_chats_listing_degrades_to_the_empty_list(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+
+    async def boom(email):
+        raise RuntimeError("database is unreachable")
+
+    monkeypatch.setattr(mod.store, "list_chats", boom)
+    r = TestClient(app).get("/tasks/agents/chat/chats", headers=_hdr())
+    assert r.status_code == 200
+    assert "No saved conversations yet" in r.text
+
+
+def test_a_broken_open_leaves_the_session_alone(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/room/add", data={"agent_id": "agent-a"},
+           headers=_hdr())
+    c.post("/tasks/agents/chat/send", data={"message": "keep me"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    before = mod.store.get_session(EMAIL)
+    before_messages = list(before.messages)
+    before_chat_id = before.chat_id
+
+    async def boom(email, chat_id):
+        raise RuntimeError("database is unreachable")
+
+    monkeypatch.setattr(mod.store, "load_chat", boom)
+    r = c.get("/tasks/agents/chat/chat/some-other-id", headers=_hdr())
+    assert r.status_code == 200
+    assert "could not be opened" in r.text
+    s = mod.store.get_session(EMAIL)
+    assert s.messages == before_messages
+    assert s.chat_id == before_chat_id
+
+
+def test_a_broken_delete_leaves_the_row_and_the_session_alone(monkeypatch):
+    app, mod, rows = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/room/add", data={"agent_id": "agent-a"},
+           headers=_hdr())
+    c.post("/tasks/agents/chat/send", data={"message": "keep me"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    before = mod.store.get_session(EMAIL)
+    before_messages = list(before.messages)
+    before_chat_id = before.chat_id
+    assert before_chat_id == "chat-1"
+
+    async def boom(email, chat_id):
+        raise RuntimeError("database is unreachable")
+
+    monkeypatch.setattr(mod.store, "delete_chat", boom)
+    r = c.delete("/tasks/agents/chat/chat/chat-1", headers=_hdr())
+    assert r.status_code == 200
+    assert "could not be deleted" in r.text
+    assert "chat-1" in rows, "the row is gone even though delete raised"
+    s = mod.store.get_session(EMAIL)
+    assert s.messages == before_messages
+    assert s.chat_id == before_chat_id
+
+
+def test_a_broken_listing_after_a_successful_delete_still_degrades(monkeypatch):
+    app, mod, rows = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/room/add", data={"agent_id": "agent-a"},
+           headers=_hdr())
+    c.post("/tasks/agents/chat/send", data={"message": "bye"}, headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+
+    async def boom(email):
+        raise RuntimeError("database is unreachable")
+
+    monkeypatch.setattr(mod.store, "list_chats", boom)
+    r = c.delete("/tasks/agents/chat/chat/chat-1", headers=_hdr())
+    assert r.status_code == 200
+    assert "No saved conversations yet" in r.text
+    # The delete itself must still have gone through even though the listing
+    # that follows it could not.
+    assert rows == {}
+    assert mod.store.get_session(EMAIL).chat_id is None
+
+
 def test_deleting_the_open_conversation_clears_streaming(monkeypatch):
     """Regression test for a defect a prior review caught: new and open both
     clear streaming when they bump generation, but delete did not. Left

@@ -87,6 +87,17 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # agent. See the module docstring of routes_agent_turn for what happens
     # when agents read each other's labelled replies.
     history = _history_for_round(s.messages)
+    # Bound once, alongside history, and written to for the rest of the round
+    # instead of going through s. each time. _turn_for is a real outbound
+    # call, so the event loop can service another request from the same
+    # person while one is in flight. New chat and Delete now replace
+    # s.messages / s.pending with fresh objects rather than clearing them in
+    # place, precisely so that a round keeps appending into the buffer it
+    # started with: a reset mid-round detaches this round's buffer, it does
+    # not redirect it into whatever conversation is open by the time the
+    # round finishes.
+    messages = s.messages
+    pending = s.pending
 
     for agent_id in list(s.room):
         if request is not None and await request.is_disconnected():
@@ -95,7 +106,7 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         if agent is None:
             line = ("An agent that was in this room no longer exists, "
                     "so it was skipped.")
-            s.messages.append({"role": "note", "content": line})
+            messages.append({"role": "note", "content": line})
             yield {"event": "message", "data": render.note(line)}
             continue
 
@@ -111,10 +122,10 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             # Hold the full payload server side: it carries the held
             # conversation and the owner's email, neither of which belongs in
             # a browser. The browser gets the calls only.
-            s.pending[agent_id] = raw_pending
-            s.messages.append({"role": "assistant", "agent_id": agent_id,
-                               "agent_name": name, "content": answer,
-                               "awaiting": page_pending})
+            pending[agent_id] = raw_pending
+            messages.append({"role": "assistant", "agent_id": agent_id,
+                             "agent_name": name, "content": answer,
+                             "awaiting": page_pending})
             if answer:
                 yield {"event": "message",
                        "data": render.agent_bubble(name, answer)}
@@ -125,8 +136,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             # point; silently losing everybody else is not.
             continue
 
-        s.messages.append({"role": "assistant", "agent_id": agent_id,
-                           "agent_name": name, "content": answer})
+        messages.append({"role": "assistant", "agent_id": agent_id,
+                         "agent_name": name, "content": answer})
         yield {"event": "message", "data": render.agent_bubble(name, answer)}
 
     yield {"event": "working", "data": ""}
@@ -342,8 +353,12 @@ async def agent_chat_room_remove(agent_id: str = Form(...),
 async def agent_chat_new(user: CurrentUser = Depends(current_user)
                          ) -> HTMLResponse:
     s = store.get_session(user.email)
-    s.messages.clear()
-    s.pending.clear()
+    # Replaced, not cleared in place. A round still running when New chat is
+    # clicked keeps the object it was bound to in _run_round; a fresh list
+    # and dict here detach that round from this session instead of it
+    # continuing to append into the conversation being started now.
+    s.messages = []
+    s.pending = {}
     s.streaming = False
     # Detach from the saved row. It stays; this session just stops being about
     # it, so the next message starts a new conversation rather than appending
@@ -363,15 +378,27 @@ async def agent_chat_new(user: CurrentUser = Depends(current_user)
 async def agent_chat_chats(user: CurrentUser = Depends(current_user)
                            ) -> HTMLResponse:
     s = store.get_session(user.email)
-    return HTMLResponse(
-        render.chat_list(await store.list_chats(user.email), s.chat_id))
+    try:
+        chats = await store.list_chats(user.email)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not list conversations for %s",
+                      user.email)
+        chats = []
+    return HTMLResponse(render.chat_list(chats, s.chat_id))
 
 
 @router.get("/tasks/agents/chat/chat/{chat_id}", include_in_schema=False)
 async def agent_chat_open(chat_id: str,
                           user: CurrentUser = Depends(current_user)
                           ) -> HTMLResponse:
-    row = await store.load_chat(user.email, chat_id)
+    try:
+        row = await store.load_chat(user.email, chat_id)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not load conversation %s", chat_id)
+        # Session left untouched: a database hiccup must not knock somebody
+        # out of the conversation they were already in.
+        return HTMLResponse(render.note(
+            "That conversation could not be opened just now."))
     if row is None:
         raise HTTPException(status_code=404, detail="no such conversation")
     s = store.get_session(user.email)
@@ -391,13 +418,30 @@ async def agent_chat_open(chat_id: str,
 async def agent_chat_delete(chat_id: str,
                             user: CurrentUser = Depends(current_user)
                             ) -> HTMLResponse:
-    await store.delete_chat(user.email, chat_id)
+    try:
+        await store.delete_chat(user.email, chat_id)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not delete conversation %s", chat_id)
+        # Session left untouched too: if the delete raised, the row is still
+        # there, so nothing about what this session has open should change.
+        return HTMLResponse(render.note(
+            "That conversation could not be deleted just now."))
     s = store.get_session(user.email)
     if s.chat_id == chat_id:
-        s.messages.clear()
-        s.pending.clear()
+        # Replaced, not cleared in place. See _run_round and agent_chat_new
+        # for why: a round still running against this conversation keeps the
+        # object it was bound to, and a fresh list and dict here detach it
+        # instead of it continuing to append into a conversation that no
+        # longer exists.
+        s.messages = []
+        s.pending = {}
         s.chat_id = None
         s.streaming = False
         s.generation += 1
-    return HTMLResponse(
-        render.chat_list(await store.list_chats(user.email), s.chat_id))
+    try:
+        chats = await store.list_chats(user.email)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not list conversations for %s",
+                      user.email)
+        chats = []
+    return HTMLResponse(render.chat_list(chats, s.chat_id))
