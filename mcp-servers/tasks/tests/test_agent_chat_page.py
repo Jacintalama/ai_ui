@@ -36,8 +36,8 @@ def test_the_page_loads_the_panel_styles_and_script():
 
 def test_the_panel_has_the_targets_the_fragments_swap_into():
     html = _page()
-    for target in ('id="agent-panel"', 'id="agent-room"', 'id="agent-thread"',
-                   'id="agent-chatlist"'):
+    for target in ('id="agent-panel"', 'id="agent-thread"',
+                   'id="ap-clear"', 'id="ap-clear-overlay"'):
         assert target in html, target
 
 
@@ -99,7 +99,6 @@ def test_the_panel_styles_cover_the_classes_it_renders():
     """A streamed bubble lives inside .alive, which is not a flex child of
     .ap-thread, so without a rule it loses the gap a replayed bubble has."""
     css = _styles()
-    for cls in (".aempty", ".astream", ".alive", ".awork", ".awaiting",
-                ".achatlist"):
+    for cls in (".aempty", ".astream", ".alive", ".awork", ".awaiting"):
         assert cls in css, cls
     assert "var(--panel)" not in css, "that token does not exist on this page"

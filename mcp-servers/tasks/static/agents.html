@@ -531,33 +531,23 @@
 <aside class="agent-panel" id="agent-panel">
   <div class="ap-head">
     <h2>Chat with your agents</h2>
-    <div class="ap-head-actions">
-      <!-- Earlier conversations used to sit under the composer, which pushed
-           the input up the panel and put a list where a reply belongs. They
-           live behind this now, so the composer stays at the bottom. -->
-      <button class="btn" type="button" id="ap-history-toggle"
-              aria-expanded="false" aria-controls="ap-history">Earlier</button>
-      <button class="btn" type="button" hx-post="/tasks/agents/chat/new"
-              hx-target="#agent-thread" hx-swap="innerHTML">New chat</button>
-    </div>
+    <!-- One permanent room. Nobody is seated and nothing is listed: every
+         agent hears every message, and this is the same conversation you
+         left. Clearing it is the only destructive thing here, so it is the
+         only thing that asks first. -->
+    <button class="btn" type="button" id="ap-clear">Clear</button>
   </div>
-  <div class="ap-history" id="ap-history" hidden>
-    <p class="asidenote" id="agent-chatlist"
-       hx-get="/tasks/agents/chat/chats"
-       hx-trigger="load, agent-chats-changed from:body"
-       hx-swap="outerHTML">Loading...</p>
-  </div>
-  <div class="achips" id="agent-room" hx-get="/tasks/agents/chat/room"
-       hx-trigger="load" hx-swap="outerHTML"></div>
-  <div class="ap-thread" id="agent-thread">
-    <div class="aempty">Pick who is in the room, then ask.
-      Each agent answers in its own message.</div>
+  <div class="ap-thread" id="agent-thread"
+       hx-get="/tasks/agents/chat/thread" hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="aempty">Ask anything. Every agent hears it, and the ones
+      with something to say answer. Name one and only they reply.</div>
   </div>
   <form class="ap-composer" hx-post="/tasks/agents/chat/send"
         hx-target="#agent-thread" hx-swap="beforeend"
         hx-on::after-request="this.reset()">
     <input type="text" name="message" autocomplete="off"
-           placeholder="Ask the room something">
+           placeholder="Ask your agents something">
     <button class="btn primary" type="submit">Send</button>
   </form>
 </aside>
@@ -566,6 +556,21 @@
     <!-- Connecting an app used to mean leaving for a chat window and finding
          it in the plus menu. The tools an agent can use are decided here, so
          this is where connecting them belongs. -->
+    <div class="modal-overlay" id="ap-clear-overlay" hidden>
+      <div class="modal" id="ap-clear-modal" role="dialog" aria-modal="true"
+           aria-labelledby="ap-clear-title">
+        <h2 id="ap-clear-title">Clear this conversation?</h2>
+        <p class="lead">Your agents lose everything said here, including the
+          notes they keep of it. Your agents themselves are not touched.</p>
+        <div class="form-actions">
+          <button class="btn" type="button" id="ap-clear-cancel">Cancel</button>
+          <button class="btn quiet-danger" type="button" id="ap-clear-confirm"
+                  hx-post="/tasks/agents/chat/clear"
+                  hx-target="#agent-thread" hx-swap="innerHTML">Clear</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="connections-overlay" hidden>
       <div class="modal" id="connections-panel">
         <h2>Connections</h2>

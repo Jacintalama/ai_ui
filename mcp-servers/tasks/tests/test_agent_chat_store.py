@@ -13,17 +13,17 @@ def test_a_session_is_private_to_one_person():
     store._SESSIONS.clear()
     a = store.get_session("a@example.com")
     b = store.get_session("b@example.com")
-    a.room.append("agent-a")
+    a.summary = "what we agreed"
     a.messages.append({"role": "user", "content": "hi"})
-    assert b.room == []
+    assert b.summary == ""
     assert b.messages == []
 
 
 def test_get_session_returns_the_same_object_for_one_person():
     store._SESSIONS.clear()
     first = store.get_session("same@example.com")
-    first.room.append("agent-a")
-    assert store.get_session("same@example.com").room == ["agent-a"]
+    first.summary = "kept"
+    assert store.get_session("same@example.com").summary == "kept"
 
 
 def test_sweep_drops_only_the_idle_session():

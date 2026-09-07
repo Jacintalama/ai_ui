@@ -52,26 +52,19 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
     return app, routes_agent_chat, seen
 
 
-def _seat(mod, room):
-    s = mod.store.get_session(EMAIL)
-    s.room = list(room)
-    return s
+def _seat(mod, room=()):
+    """There is no room to seat any more: every agent hears every message.
+
+    Kept as the tests' way of reaching the session, and it now only says
+    which agents exist by leaving that to the _app fixture.
+    """
+    return mod.store.get_session(EMAIL)
 
 
 def test_send_requires_identity(monkeypatch):
     app, _, _ = _app(monkeypatch)
     r = TestClient(app).post("/tasks/agents/chat/send", data={"message": "hi"})
     assert r.status_code == 401
-
-
-def test_send_with_an_empty_room_asks_you_to_pick_someone(monkeypatch):
-    app, mod, _ = _app(monkeypatch)
-    _seat(mod, [])
-    c = TestClient(app)
-    r = c.post("/tasks/agents/chat/send", data={"message": "hi"}, headers=_hdr())
-    assert r.status_code == 200
-    assert "Pick at least one agent" in r.text
-    assert mod.store.get_session(EMAIL).messages == []
 
 
 def test_send_records_the_message_and_opens_a_stream(monkeypatch):
@@ -115,8 +108,9 @@ def test_a_reconnecting_stream_does_not_re_run_the_round(monkeypatch):
     c = TestClient(app)
     c.post("/tasks/agents/chat/send", data={"message": "hi"}, headers=_hdr())
     c.get("/tasks/agents/chat/stream", headers=_hdr())
+    after_one_round = len(seen)
     again = c.get("/tasks/agents/chat/stream", headers=_hdr())
-    assert len(seen) == 1, "the reconnect re-ran the round"
+    assert len(seen) == after_one_round, "the reconnect re-ran the round"
     assert "am agent" not in again.text
 
 
@@ -128,45 +122,26 @@ def test_a_stream_with_nothing_to_answer_just_closes(monkeypatch):
     assert "event: close" in r.text
 
 
-def test_an_agent_that_no_longer_exists_is_skipped_and_the_round_goes_on(
-        monkeypatch):
-    app, mod, seen = _app(monkeypatch)
-    _seat(mod, ["agent-gone", "agent-m"])
-    c = TestClient(app)
-    c.post("/tasks/agents/chat/send", data={"message": "hi"}, headers=_hdr())
-    body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
-    assert [t["agent"] for t in seen] == ["agent-m"]
-    assert "no longer exists" in body
-    assert "Mia here" in body
-
-
-def test_a_whole_room_that_cannot_be_listed_says_so_once(monkeypatch):
-    """_agents_for returns nothing on ANY doubt, a listing cut short
-    included. That used to put the same sentence in the thread once per
-    seated agent: four identical notes and no answers."""
-    async def none_at_all(email):
-        return []
-
-    app, mod, seen = _app(monkeypatch)
-    monkeypatch.setattr(mod, "_agents_for", none_at_all)
-    _seat(mod, ["agent-a", "agent-m", "agent-x", "agent-y"])
+def test_a_person_with_no_agents_is_told_so(monkeypatch):
+    """_agents_for returns nothing on any doubt, an upstream listing cut
+    short included, so this is also what a hiccup looks like."""
+    app, mod, seen = _app(monkeypatch, agents=())
+    _seat(mod)
     c = TestClient(app)
     c.post("/tasks/agents/chat/send", data={"message": "hi"}, headers=_hdr())
     body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
     assert seen == []
-    assert body.count("were in this room") == 1, body
-    assert "4 agents" in body
+    assert body.count("no agents yet") == 1, body
 
 
-def test_the_skip_note_survives_a_reload(monkeypatch):
-    """Persisted on purpose, so it has to be drawn on the way back too."""
-    app, mod, _ = _app(monkeypatch)
-    _seat(mod, ["agent-gone", "agent-m"])
+def test_that_note_survives_a_reload(monkeypatch):
+    app, mod, _ = _app(monkeypatch, agents=())
+    _seat(mod)
     c = TestClient(app)
     c.post("/tasks/agents/chat/send", data={"message": "hi"}, headers=_hdr())
     c.get("/tasks/agents/chat/stream", headers=_hdr())
     replayed = mod.render.thread(mod.store.get_session(EMAIL).messages)
-    assert "no longer exists" in replayed
+    assert "no agents yet" in replayed
 
 
 def test_a_failed_agent_does_not_take_the_round_down(monkeypatch):
@@ -222,50 +197,58 @@ def test_an_abandoned_round_does_not_unlock_a_newer_one(monkeypatch):
     assert s.streaming is True, "the abandoned round cleared a newer claim"
 
 
-def test_a_long_conversation_is_not_re_sent_in_full_every_round():
-    """Every agent in the room is billed for the whole history, every time.
-    A room of four adds four answers per message, so uncapped this grows
-    without bound and costs a multiple of itself on a 3.8GB box."""
+def test_a_conversation_that_fits_is_sent_whole():
+    """The room is permanent. Nothing is dropped while it still fits, or an
+    agent forgets what was agreed this morning for no reason."""
     import routes_agent_chat as mod
-    long_chat = []
+    turns = []
     for i in range(60):
-        long_chat.append({"role": "user", "content": f"ask {i}"})
-        long_chat.append({"role": "assistant", "content": f"answer {i}"})
-    got = mod._history_for_round(long_chat)
-    assert len(got) == mod.MAX_HISTORY_MESSAGES
-    # The recent end is what is kept, and the oldest is gone.
-    assert got[-1] == {"role": "assistant", "content": "answer 59"}
-    assert {"role": "user", "content": "ask 0"} not in got
+        turns.append({"role": "user", "content": "ask %d" % i})
+        turns.append({"role": "assistant", "agent_name": "Ada",
+                      "content": "answer %d" % i})
+    got = mod._history_for_round(turns)
+    assert len(got) == 120
+    assert got[0]["content"] == "ask 0"
+
+
+def test_a_conversation_that_does_not_fit_keeps_the_recent_end():
+    import routes_agent_chat as mod
+    big = "x" * 2000
+    turns = [{"role": "user", "content": big} for _ in range(40)]
+    turns.append({"role": "user", "content": "the newest question"})
+    got = mod._history_for_round(turns)
+    assert mod._weight(got) <= mod.HISTORY_BUDGET_CHARS + len(big)
+    assert got[-1]["content"] == "the newest question"
 
 
 def test_the_message_being_answered_is_never_the_one_dropped():
-    """The round exists to answer the newest message, so the window widens
-    to reach it rather than cutting it off."""
     import routes_agent_chat as mod
-    messages = [{"role": "assistant", "content": f"answer {i}"}
-                for i in range(mod.MAX_HISTORY_MESSAGES + 5)]
-    messages.insert(0, {"role": "user", "content": "the only question"})
-    got = mod._history_for_round(messages)
-    assert got[0] == {"role": "user", "content": "the only question"}
-    assert len(got) == len(messages)
+    turns = [{"role": "assistant", "content": "x" * 30000},
+             {"role": "user", "content": "answer me"}]
+    got = mod._history_for_round(turns)
+    assert got[-1]["content"] == "answer me"
 
 
-def test_a_capped_history_is_still_the_same_for_every_agent(monkeypatch):
-    """The cap must not become a per-agent decision: agents reading
-    different histories is the crack the no-cross-talk rule closes."""
+def test_the_summary_rides_in_front_of_the_recent_turns():
+    import routes_agent_chat as mod
+    got = mod._history_for_round(
+        [{"role": "user", "content": "now"}], summary="we agreed on blue")
+    assert len(got) == 2
+    assert "we agreed on blue" in got[0]["content"]
+    assert got[0]["role"] == "assistant"
+    assert got[-1]["content"] == "now"
+
+
+def test_every_agent_still_gets_the_identical_history(monkeypatch):
     app, mod, seen = _app(monkeypatch)
-    s = _seat(mod, ["agent-a", "agent-m"])
-    for i in range(40):
-        s.messages.append({"role": "user", "content": f"ask {i}"})
-        s.messages.append({"role": "assistant", "content": f"answer {i}"})
+    _seat(mod)
     c = TestClient(app)
-    c.post("/tasks/agents/chat/send", data={"message": "hi team"},
-           headers=_hdr())
-    c.get("/tasks/agents/chat/stream", headers=_hdr())
-    assert len(seen) == 2
-    assert seen[0]["messages"] == seen[1]["messages"]
-    assert len(seen[0]["messages"]) == mod.MAX_HISTORY_MESSAGES
-    assert seen[0]["messages"][-1] == {"role": "user", "content": "hi team"}
+    for i in range(6):
+        c.post("/tasks/agents/chat/send", data={"message": "m%d" % i},
+               headers=_hdr())
+        c.get("/tasks/agents/chat/stream", headers=_hdr())
+    last_two = seen[-2:]
+    assert last_two[0]["messages"] == last_two[1]["messages"]
 
 
 def test_history_for_round_keeps_only_real_turns():

@@ -20,8 +20,6 @@ def _fragments():
         render.note("something happened"),
         render.stream_block(),
         render.empty_thread(),
-        render.chips([{"id": "agent-a", "name": "Ada"}], ["agent-a"]),
-        render.chat_list([{"id": "c1", "title": "About the invoices"}], "c1"),
         render.thread([{"role": "user", "content": "hi"},
                        {"role": "assistant", "agent_name": "Ada",
                         "content": "hello"}]),
@@ -77,12 +75,6 @@ def test_stream_block_closes_the_connection_and_has_both_targets():
     assert 'sse-swap="working"' in html
 
 
-def test_chips_mark_who_is_in_the_room():
-    html = render.chips([{"id": "agent-a", "name": "Ada"},
-                         {"id": "agent-m", "name": "Mia"}], ["agent-a"])
-    assert html.count("chip") >= 2
-    assert "chip in" in html
-
 
 def test_an_approval_is_addressed_by_its_question_not_by_its_agent():
     """Two questions from one agent must be two elements the page can tell
@@ -121,7 +113,7 @@ def test_a_note_the_round_stored_is_drawn_on_the_way_back():
 def test_round_bookkeeping_still_draws_as_nothing():
     html = render.thread([{"role": "round", "content": ""}])
     # Nothing to show, so the empty state is what a person gets.
-    assert "Pick who is in the room" in html
+    assert "Every agent hears it" in html
 
 
 # The panel's avatars are ported from the agent cards so a person recognises

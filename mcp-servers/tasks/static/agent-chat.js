@@ -98,25 +98,41 @@
     settle();
   });
 
-  // Earlier conversations open from the header rather than living under the
-  // composer, so the input keeps the bottom of the panel. Opening one closes
-  // the list again: you asked for that conversation, not for the list.
-  var historyToggle = document.getElementById("ap-history-toggle");
-  var historyPanel = document.getElementById("ap-history");
+  // Clearing is the only destructive thing in the panel, so it is the only
+  // thing that asks first. The page's own overlay, not the browser's confirm
+  // box: that dialog cannot be styled and looks like a warning from 2005.
+  var clearBtn = document.getElementById("ap-clear");
+  var overlay = document.getElementById("ap-clear-overlay");
+  var cancelBtn = document.getElementById("ap-clear-cancel");
+  var confirmBtn = document.getElementById("ap-clear-confirm");
 
-  function showHistory(open) {
-    if (!historyPanel || !historyToggle) return;
-    historyPanel.hidden = !open;
-    historyToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  function showClear(open) {
+    if (!overlay) return;
+    overlay.hidden = !open;
+    if (open && cancelBtn) { cancelBtn.focus(); }
+    else if (clearBtn) { clearBtn.focus(); }
   }
 
-  if (historyToggle) {
-    historyToggle.addEventListener("click", function () {
-      showHistory(historyPanel.hidden);
+  if (clearBtn) {
+    clearBtn.addEventListener("click", function () { showClear(true); });
+  }
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", function () { showClear(false); });
+  }
+  if (overlay) {
+    // Clicking the backdrop cancels. Clicking the dialog itself must not.
+    overlay.addEventListener("click", function (e) {
+      if (e.target === overlay) { showClear(false); }
     });
   }
-
-  document.body.addEventListener("click", function (e) {
-    if (e.target.closest && e.target.closest(".achatopen")) { showHistory(false); }
+  if (confirmBtn) {
+    // htmx does the post; this only takes the dialog away once it lands, so
+    // a failed clear leaves the dialog up rather than pretending it worked.
+    confirmBtn.addEventListener("htmx:afterRequest", function (e) {
+      if (e.detail && e.detail.successful) { showClear(false); }
+    });
+  }
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && overlay && !overlay.hidden) { showClear(false); }
   });
 })();

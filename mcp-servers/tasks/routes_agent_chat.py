@@ -20,22 +20,46 @@ from sse_starlette.sse import EventSourceResponse
 import agent_chat_render as render
 import agent_chat_store as store
 from auth import CurrentUser, current_user
-from routes_agent_turn import _agents_for, _resume_turn, _turn_for
+import agent_access
+import agent_routing
+from agent_runner import CHANNEL_HTTP_TIMEOUT_SECONDS, _chat
+from routes_agent_turn import (_agents_for, _resolve_agent,
+                               _resume_turn, _turn_for)
 from routes_agents import _pending_for_page
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-#: Agents run one at a time, so a room is a queue. Four is already a slow round.
-MAX_ROOM = 4
+#: Roughly how much conversation a round hands each agent, in characters.
+#: Everything fits until it does not: the point of one permanent room is that
+#: an agent still knows what was said this morning. When the conversation
+#: outgrows this, the oldest part is summarised rather than thrown away, so
+#: the words go but the sense stays.
+HISTORY_BUDGET_CHARS = 24000
 
-#: How many messages of the conversation a round hands each agent.
-#: A room of four adds four assistant messages for every one you send, and
-#: every agent in the next round is billed for all of them, so an afternoon's
-#: conversation quietly costs several times itself on a 3.8GB box. Recent
-#: turns are what an answer needs; the rest is paid for and unread.
-MAX_HISTORY_MESSAGES = 20
+#: How much of the budget a summary is allowed to take back.
+SUMMARY_BUDGET_CHARS = 4000
+
+#: What an agent says when it has nothing to add. A pass costs one model call
+#: and produces no bubble, which is the price of everybody listening.
+PASS_TOKEN = "PASS"
+
+#: Given to an agent nobody named. Everyone hears every message; only the ones
+#: with something worth saying answer.
+PASS_INSTRUCTION = (
+    "You are one of several assistants in this room, and the message above was "
+    "not addressed to you by name. Everyone heard it. Answer if you can "
+    "genuinely help with it, or if you know something about it the others "
+    "would miss. If you have nothing worth saying, reply with exactly PASS and "
+    "nothing else.")
+
+#: Asked of one agent when the conversation outgrows the budget.
+SUMMARY_INSTRUCTION = (
+    "Summarise the conversation above for your own future reference. Keep what "
+    "was decided, what the person asked for, any names, numbers and "
+    "commitments, and anything still open. Drop pleasantries. Write it as "
+    "notes, not as a reply to anybody.")
 
 
 def _ask_id() -> str:
@@ -50,16 +74,12 @@ def _ask_id() -> str:
     return uuid.uuid4().hex
 
 
-def _history_for_round(messages: list[dict]) -> list[dict]:
-    """The conversation every agent in this round sees. Built ONCE.
+def _turns_of(messages: list[dict]) -> list[dict]:
+    """The conversation as a model should see it: role and content only.
 
-    Role and content only: agent_id and agent_name are ours, for drawing the
-    bubbles, and mean nothing to a model. Empty turns are dropped because empty
-    content is rejected upstream. Bookkeeping roles fall out here too.
-
-    Capped at MAX_HISTORY_MESSAGES, oldest dropped first, because otherwise a
-    long conversation is re-sent in full to every agent in the room on every
-    message you send.
+    agent_id and agent_name are ours, for drawing the bubbles, and mean
+    nothing to a model. Empty turns are dropped because empty content is
+    rejected upstream, and bookkeeping roles fall out here too.
     """
     out = []
     for m in messages or []:
@@ -67,14 +87,54 @@ def _history_for_round(messages: list[dict]) -> list[dict]:
         content = (m.get("content") or "").strip()
         if role in ("user", "assistant") and content:
             out.append({"role": role, "content": content})
-    first = max(0, len(out) - MAX_HISTORY_MESSAGES)
-    # The message being answered is the whole point of the round, so the
-    # window widens to reach it rather than ever cutting it off.
-    newest_user = max((i for i, m in enumerate(out) if m["role"] == "user"),
+    return out
+
+
+def _weight(turns: list[dict]) -> int:
+    return sum(len(t.get("content") or "") for t in turns)
+
+
+def _split_for_budget(turns: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(what to summarise, what to send verbatim).
+
+    Walks back from the newest turn, keeping whole turns until the budget is
+    spent. The message being answered is the point of the round, so it is
+    never on the wrong side of the split however long it is.
+    """
+    if _weight(turns) <= HISTORY_BUDGET_CHARS:
+        return [], list(turns)
+    keep: list[dict] = []
+    spent = 0
+    for turn in reversed(turns):
+        cost = len(turn.get("content") or "")
+        if keep and spent + cost > HISTORY_BUDGET_CHARS:
+            break
+        keep.append(turn)
+        spent += cost
+    keep.reverse()
+    older = turns[:len(turns) - len(keep)]
+    # Widen to the newest user message if the split landed above it.
+    newest_user = max((i for i, t in enumerate(turns) if t["role"] == "user"),
                       default=None)
-    if newest_user is not None:
-        first = min(first, newest_user)
-    return out[first:]
+    if newest_user is not None and newest_user < len(older):
+        keep = turns[newest_user:]
+        older = turns[:newest_user]
+    return older, keep
+
+
+def _history_for_round(messages: list[dict], summary: str = "") -> list[dict]:
+    """The conversation every agent in this round sees. Built ONCE.
+
+    A summary of everything older rides in front as an ordinary assistant
+    turn, because that is a shape every backend accepts and it reads to the
+    model as something already known rather than as an instruction.
+    """
+    _, keep = _split_for_budget(_turns_of(messages))
+    if not summary:
+        return keep
+    head = {"role": "assistant",
+            "content": "Notes on everything said earlier:\n" + summary}
+    return [head] + keep
 
 
 def _drop(messages: list[dict], marker: dict) -> None:
@@ -102,20 +162,101 @@ def _clear_awaiting(messages: list[dict], ask_id: str) -> None:
             m.pop("awaiting", None)
 
 
-def _skipped_line(count: int) -> str:
-    """One sentence for however many of the room could not be found."""
-    if count == 1:
-        return ("An agent that was in this room no longer exists, "
-                "so it was skipped.")
-    return (f"{count} agents that were in this room no longer exist, "
-            "so they were skipped.")
-
-
 def _name_for(agent_id: str, agents: list[dict]) -> str:
     for a in agents:
         if str(a.get("id")) == agent_id:
             return str(a.get("name") or agent_id)
     return agent_id
+
+
+def _is_pass(answer: str) -> bool:
+    """An agent declining to speak.
+
+    Generous about the shape because models are: a bare PASS, a PASS with a
+    full stop, a PASS in quotes. Anything longer is an answer that happens to
+    contain the word.
+    """
+    stripped = (answer or "").strip().strip('."\'').upper()
+    return stripped == PASS_TOKEN
+
+
+def _speakers_for(text: str, agents: list[dict]) -> tuple[list[dict], bool]:
+    """Who answers this message, and whether they are allowed to pass.
+
+    Naming an agent is how you ask one of them something: the named ones
+    answer, and they answer because you asked, so they may not pass. Naming
+    nobody is the ordinary case, and then everybody in the room hears it and
+    each decides for itself whether it has anything to add.
+
+    match_agents is the same routing the channels use, so asking for Mia in
+    the panel and asking for Mia in Discord pick the same agent.
+    """
+    named = agent_routing.match_agents(text, agents)
+    if named:
+        return named, False
+    return list(agents), True
+
+
+def _last_speaker(messages: list[dict], agents: list[dict]) -> dict | None:
+    """The agent that answered most recently, if it is still one of these.
+
+    Used only when everybody passed. Carrying on with whoever was already
+    talking is a better guess than always falling back to the same one.
+    """
+    by_id = {str(a.get("id")): a for a in agents}
+    for m in reversed(messages or []):
+        if m.get("role") == "assistant" and m.get("agent_id") in by_id:
+            return by_id[str(m["agent_id"])]
+    return None
+
+
+async def _summarise(email: str, agent: dict, turns: list[dict]) -> str:
+    """Fold the oldest turns into notes the room keeps.
+
+    Runs with tools off and a single iteration: this is a reading job, and a
+    summariser that could send an email is a summariser that one day does.
+    Never raises. A conversation that cannot be summarised is one that gets
+    trimmed instead, which is worse but not broken.
+    """
+    if not turns:
+        return ""
+    try:
+        token, _tools, _level = await _resolve_agent(email, agent["id"])
+        answer, _notes = await _chat(
+            token=token, model=agent["id"],
+            messages=list(turns) + [{"role": "user",
+                                     "content": SUMMARY_INSTRUCTION}],
+            tool_ids=None, user_email=email,
+            tool_mode=agent_access.MODE_READ_ONLY,
+            refusal_reason="summarising does not run tools",
+            max_iterations=1, timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("agent chat: could not summarise the older turns",
+                       exc_info=True)
+        return ""
+    return (answer or "").strip()[:SUMMARY_BUDGET_CHARS]
+
+
+async def _keep_within_budget(email: str, s: store.RoomSession,
+                              agents: list[dict]) -> None:
+    """Summarise the oldest turns once the conversation outgrows the budget.
+
+    Called before the round rather than after, so the agents answering this
+    message are the ones reading the notes. The summary replaces nothing on
+    screen: the person keeps the whole conversation, the agents get the notes
+    plus the recent turns.
+    """
+    turns = _turns_of(s.messages)
+    older, _keep = _split_for_budget(turns)
+    if not older or not agents:
+        return
+    previous = ("Notes so far:\n" + s.summary + "\n\n") if s.summary else ""
+    fresh = await _summarise(email, agents[0],
+                             [{"role": "assistant", "content": previous}] + older
+                             if previous else older)
+    if fresh:
+        s.summary = fresh
+        s.summarised_upto = len(turns) - len(_keep)
 
 
 async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
@@ -125,12 +266,16 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     Agents run one at a time, never in parallel: a turn can run tools and this
     box has 3.8GB of RAM.
     """
-    by_id = {str(a.get("id")): a for a in agents}
     names = [a.get("name") for a in agents if a.get("name")]
+    # Who speaks is decided from the message, not from a room the person had
+    # to build first. Name an agent and only that agent answers; name nobody
+    # and everybody hears it and decides for itself.
+    asked = agent_routing.last_user_text(s.messages)
+    speakers, may_pass = _speakers_for(asked, agents)
     # Built once, before the first agent runs, and handed unchanged to every
     # agent. See the module docstring of routes_agent_turn for what happens
     # when agents read each other's labelled replies.
-    history = _history_for_round(s.messages)
+    history = _history_for_round(s.messages, s.summary)
     # Bound once, alongside history, and written to for the rest of the round
     # instead of going through s. each time. _turn_for is a real outbound
     # call, so the event loop can service another request from the same
@@ -143,24 +288,28 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     messages = s.messages
     pending = s.pending
 
-    # Counted, not announced one by one. _agents_for returns nothing on any
-    # doubt, a listing cut short included, so an upstream hiccup used to put
-    # the same sentence in the thread once per seated agent and no answers at
-    # all. The spec asks for it once.
-    skipped = 0
+    # An agent that heard the message and had nothing to add. Counted so the
+    # round can tell "nobody had anything" from "nobody was asked".
+    passed = 0
 
-    for agent_id in list(s.room):
+    for agent in list(speakers):
         if request is not None and await request.is_disconnected():
             break
-        agent = by_id.get(agent_id)
-        if agent is None:
-            skipped += 1
-            continue
-
+        agent_id = str(agent.get("id") or "")
         name = str(agent.get("name") or agent_id)
         yield {"event": "working", "data": render.working(name)}
-        out = await _turn_for(email, agent, history, names)
+        turn_history = history
+        if may_pass:
+            turn_history = history + [{"role": "user",
+                                       "content": PASS_INSTRUCTION}]
+        out = await _turn_for(email, agent, turn_history, names)
         answer = out.get("answer") or ""
+
+        if may_pass and _is_pass(answer) and not out.get("pending"):
+            # It listened and had nothing to say. No bubble, nothing stored:
+            # a pass should leave no trace except the cost of asking.
+            passed += 1
+            continue
 
         raw_pending = out.get("pending")
         page_pending = (_pending_for_page(raw_pending)
@@ -194,12 +343,60 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                          "agent_name": name, "content": answer})
         yield {"event": "message", "data": render.agent_bubble(name, answer)}
 
-    if skipped:
-        line = _skipped_line(skipped)
+    if speakers and passed == len(speakers):
+        # Everybody passed, which leaves the person talking to an empty room.
+        # Ask the one who spoke last, or the first, and this time without the
+        # option of passing. One extra call, and only in this case.
+        fallback = _last_speaker(s.messages, speakers) or speakers[0]
+        name = str(fallback.get("name") or fallback.get("id") or "")
+        yield {"event": "working", "data": render.working(name)}
+        out = await _turn_for(email, fallback, history, names)
+        answer = out.get("answer") or ""
+        if answer and not _is_pass(answer):
+            messages.append({"role": "assistant",
+                             "agent_id": str(fallback.get("id") or ""),
+                             "agent_name": name, "content": answer})
+            yield {"event": "message", "data": render.agent_bubble(name, answer)}
+        else:
+            # It passed again even without being offered the option. Say so
+            # rather than leave the room silent: a person who typed something
+            # and got nothing back cannot tell that from a broken panel.
+            line = "Nobody had anything to add to that."
+            messages.append({"role": "note", "content": line})
+            yield {"event": "message", "data": render.note(line)}
+
+    if not agents:
+        line = ("You have no agents yet. Make one and it will hear the next "
+                "thing you say.")
         messages.append({"role": "note", "content": line})
         yield {"event": "message", "data": render.note(line)}
 
     yield {"event": "working", "data": ""}
+
+
+async def _hydrate(email: str, s: store.RoomSession) -> None:
+    """Load this person's one conversation into a session that has none.
+
+    The room is permanent, so a reload, a new tab or a service restart should
+    put somebody back where they were rather than in front of an empty panel
+    holding a conversation the database still has.
+
+    Only ever fills an empty session: a session with messages in it is the
+    working copy and is ahead of the row.
+    """
+    if s.chat_id is not None or s.messages:
+        return
+    try:
+        row = await store.newest_chat(email)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not load the conversation")
+        return
+    if not row:
+        return
+    s.chat_id = str(row["id"])
+    s.messages = list(row.get("messages") or [])
+    s.pending = dict(row.get("pending") or {})
+    s.summary = str(row.get("summary") or "")
 
 
 @router.post("/tasks/agents/chat/send", include_in_schema=False)
@@ -210,9 +407,7 @@ async def agent_chat_send(message: str = Form(...),
     if not body:
         raise HTTPException(status_code=400, detail="empty message")
     s = store.get_session(user.email)
-    if not s.room:
-        return HTMLResponse(render.note(
-            "Pick at least one agent first, then ask again."))
+    await _hydrate(user.email, s)
     if s.streaming:
         return HTMLResponse(render.note(
             "Still answering, one moment. If it ever stays stuck, New chat "
@@ -220,9 +415,10 @@ async def agent_chat_send(message: str = Form(...),
 
     s.messages.append({"role": "user", "content": body})
     s.streaming = True
-    # First message of an unsaved conversation: write the row now so it appears
-    # in the list immediately. Best effort, because a database problem must not
-    # cost somebody their turn; the conversation simply stays unsaved.
+    # First message ever: write the row now rather than at the end of the
+    # round, so a browser that closes mid-answer still has the question.
+    # Best effort, because a database problem must not cost somebody their
+    # turn; the conversation simply stays unsaved.
     if s.chat_id is None:
         try:
             s.chat_id = await store.create_chat(
@@ -260,6 +456,9 @@ async def agent_chat_stream(request: Request,
         s.messages.append(claim)
         try:
             agents = await _agents_for(user.email)
+            # Before the round, so the agents answering this message are the
+            # ones reading the notes.
+            await _keep_within_budget(user.email, s, agents)
             async for event in _run_round(user.email, s, agents, request):
                 yield event
         finally:
@@ -393,130 +592,43 @@ async def agent_chat_approve(ask_id: str = Form(...),
     return HTMLResponse(html)
 
 
-@router.get("/tasks/agents/chat/room", include_in_schema=False)
-async def agent_chat_room(user: CurrentUser = Depends(current_user)
-                          ) -> HTMLResponse:
+@router.get("/tasks/agents/chat/thread", include_in_schema=False)
+async def agent_chat_thread(user: CurrentUser = Depends(current_user)
+                            ) -> HTMLResponse:
+    """The conversation so far.
+
+    The panel asks for this on load. There is one room and it is permanent,
+    so opening the page mid-conversation should show the conversation.
+    """
     s = store.get_session(user.email)
-    return HTMLResponse(render.chips(await _agents_for(user.email), s.room))
+    await _hydrate(user.email, s)
+    return HTMLResponse(render.thread(s.messages))
 
 
-@router.post("/tasks/agents/chat/room/add", include_in_schema=False)
-async def agent_chat_room_add(agent_id: str = Form(...),
-                              user: CurrentUser = Depends(current_user)
-                              ) -> HTMLResponse:
+@router.post("/tasks/agents/chat/clear", include_in_schema=False)
+async def agent_chat_clear(user: CurrentUser = Depends(current_user)
+                           ) -> HTMLResponse:
+    """Empty the room and start again.
+
+    The row is kept and emptied rather than deleted, so there stays exactly
+    one conversation per person and nothing has to decide which of two is
+    the real one.
+    """
     s = store.get_session(user.email)
-    agents = await _agents_for(user.email)
-    # Only your own agents, checked here rather than trusted from the form.
-    # Seating a stranger's agent would run it as you.
-    known = {str(a.get("id")) for a in agents}
-    if agent_id in known and agent_id not in s.room and len(s.room) < MAX_ROOM:
-        s.room.append(agent_id)
-    return HTMLResponse(render.chips(agents, s.room))
-
-
-@router.post("/tasks/agents/chat/room/remove", include_in_schema=False)
-async def agent_chat_room_remove(agent_id: str = Form(...),
-                                 user: CurrentUser = Depends(current_user)
-                                 ) -> HTMLResponse:
-    s = store.get_session(user.email)
-    if agent_id in s.room:
-        s.room.remove(agent_id)
-    return HTMLResponse(render.chips(await _agents_for(user.email), s.room))
-
-
-@router.post("/tasks/agents/chat/new", include_in_schema=False)
-async def agent_chat_new(user: CurrentUser = Depends(current_user)
-                         ) -> HTMLResponse:
-    s = store.get_session(user.email)
-    # Replaced, not cleared in place. A round still running when New chat is
-    # clicked keeps the object it was bound to in _run_round; a fresh list
-    # and dict here detach that round from this session instead of it
-    # continuing to append into the conversation being started now.
+    await _hydrate(user.email, s)
+    # Replaced, never cleared in place: a round still running holds these
+    # objects and must keep writing into the ones it started with rather
+    # than into the fresh conversation.
     s.messages = []
     s.pending = {}
+    s.summary = ""
+    s.summarised_upto = 0
     s.streaming = False
-    # Detach from the saved row. It stays; this session just stops being about
-    # it, so the next message starts a new conversation rather than appending
-    # to the one that was walked away from.
-    s.chat_id = None
-    # Invalidate any round still running against the old conversation, so its
-    # result is discarded instead of landing in the fresh one.
+    # Invalidate any round still running against what was just emptied.
     s.generation += 1
-    # The room is deliberately kept: picking the same people again every time
-    # would be the main annoyance of a panel like this.
-    resp = HTMLResponse(render.empty_thread())
-    resp.headers["HX-Trigger"] = "agent-chats-changed"
-    return resp
-
-
-@router.get("/tasks/agents/chat/chats", include_in_schema=False)
-async def agent_chat_chats(user: CurrentUser = Depends(current_user)
-                           ) -> HTMLResponse:
-    s = store.get_session(user.email)
-    try:
-        chats = await store.list_chats(user.email)
-    except Exception:                                       # noqa: BLE001
-        log.exception("agent chat: could not list conversations for %s",
-                      user.email)
-        chats = []
-    return HTMLResponse(render.chat_list(chats, s.chat_id))
-
-
-@router.get("/tasks/agents/chat/chat/{chat_id}", include_in_schema=False)
-async def agent_chat_open(chat_id: str,
-                          user: CurrentUser = Depends(current_user)
-                          ) -> HTMLResponse:
-    try:
-        row = await store.load_chat(user.email, chat_id)
-    except Exception:                                       # noqa: BLE001
-        log.exception("agent chat: could not load conversation %s", chat_id)
-        # Session left untouched: a database hiccup must not knock somebody
-        # out of the conversation they were already in.
-        return HTMLResponse(render.note(
-            "That conversation could not be opened just now."))
-    if row is None:
-        raise HTTPException(status_code=404, detail="no such conversation")
-    s = store.get_session(user.email)
-    s.messages = list(row.get("messages") or [])
-    s.room = list(row.get("room") or [])
-    s.pending = dict(row.get("pending") or {})
-    s.chat_id = str(row["id"])
-    s.streaming = False
-    # Anything still running against the previous conversation is now orphaned.
-    s.generation += 1
-    resp = HTMLResponse(render.thread(s.messages))
-    resp.headers["HX-Trigger"] = "agent-chats-changed"
-    return resp
-
-
-@router.delete("/tasks/agents/chat/chat/{chat_id}", include_in_schema=False)
-async def agent_chat_delete(chat_id: str,
-                            user: CurrentUser = Depends(current_user)
-                            ) -> HTMLResponse:
-    try:
-        await store.delete_chat(user.email, chat_id)
-    except Exception:                                       # noqa: BLE001
-        log.exception("agent chat: could not delete conversation %s", chat_id)
-        # Session left untouched too: if the delete raised, the row is still
-        # there, so nothing about what this session has open should change.
-        return HTMLResponse(render.note(
-            "That conversation could not be deleted just now."))
-    s = store.get_session(user.email)
-    if s.chat_id == chat_id:
-        # Replaced, not cleared in place. See _run_round and agent_chat_new
-        # for why: a round still running against this conversation keeps the
-        # object it was bound to, and a fresh list and dict here detach it
-        # instead of it continuing to append into a conversation that no
-        # longer exists.
-        s.messages = []
-        s.pending = {}
-        s.chat_id = None
-        s.streaming = False
-        s.generation += 1
-    try:
-        chats = await store.list_chats(user.email)
-    except Exception:                                       # noqa: BLE001
-        log.exception("agent chat: could not list conversations for %s",
-                      user.email)
-        chats = []
-    return HTMLResponse(render.chat_list(chats, s.chat_id))
+    if s.chat_id:
+        try:
+            await store.save_chat(user.email, s)
+        except Exception:                                   # noqa: BLE001
+            log.exception("agent chat: could not save after clearing")
+    return HTMLResponse(render.empty_thread())
