@@ -172,3 +172,39 @@ def test_an_agent_with_no_name_still_gets_a_line():
     from routes_agent_turn import _identity_line
     said = _identity_line({"id": "agent-x"}, [])["content"]
     assert "agent-x" in said
+
+
+# The brief also has to make an agent WORK. Asked "who has all my app
+# connections" it guessed a number; asked "do you have any work today" it
+# offered to help rather than looking. Both were seen live.
+
+def test_the_brief_says_to_use_the_tools_rather_than_describe_them():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert "use a tool and answer from what it returns" in said
+    assert "Never state a number or a name you have not looked up" in said
+    assert "instead of doing it" in said
+
+
+def test_the_brief_says_the_others_are_software_not_colleagues():
+    """Mia read "hi team what is your task today" as a question about human
+    colleagues and suggested asking them."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert "not this person's colleagues" in said
+    assert "team or everyone they mean you" in said
+
+
+def test_the_brief_bans_the_boilerplate_that_was_actually_said():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada"])["content"]
+    assert "help with a variety of tasks" in said, "the exact non-answer given"
+    assert "Do not close with an offer of further help" in said
+
+
+def test_the_brief_stays_short_enough_to_send_every_turn():
+    """It rides in front of every turn for every agent, so it is paid for on
+    every message. A page of rules would cost more than it saves."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert len(said) < 1400, len(said)
