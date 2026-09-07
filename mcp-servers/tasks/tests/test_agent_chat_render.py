@@ -122,3 +122,43 @@ def test_round_bookkeeping_still_draws_as_nothing():
     html = render.thread([{"role": "round", "content": ""}])
     # Nothing to show, so the empty state is what a person gets.
     assert "Pick who is in the room" in html
+
+
+# The panel's avatars are ported from the agent cards so a person recognises
+# the same mark in both places. If these drift, Ada is green on her card and
+# some other colour two inches to the right in the panel.
+
+def test_the_avatar_letters_match_the_cards():
+    assert render._initials("Ada") == "AD"
+    assert render._initials("Mia") == "MI"
+    assert render._initials("Research Bot") == "RB"
+    assert render._initials("") == "AI"
+    assert render._initials(None) == "AI"
+
+
+def test_the_avatar_hue_matches_the_pages_algorithm():
+    """Recomputed here the way static/agents.html does it, rather than
+    hardcoding an answer, so this fails if either side changes."""
+    def js_avatar_hue(name):
+        h = 0
+        for ch in name:
+            h = (h * 31 + ord(ch)) % 360
+        return h
+
+    for name in ("Ada", "Mia", "Scout", "Triage", ""):
+        assert render._hue(name) == js_avatar_hue(name), name
+
+
+def test_an_agent_bubble_carries_its_own_colour_and_letters():
+    html = render.agent_bubble("Ada", "hello")
+    assert "linear-gradient" in html
+    assert f"hsl({render._hue('Ada')} 58% 46%)" in html
+    assert ">AD<" in html
+    assert "\n" not in html
+
+
+def test_an_approval_bubble_carries_the_same_mark():
+    html = render.approval_bubble("Mia", "ask-1", CALLS)
+    assert "linear-gradient" in html
+    assert ">MI<" in html
+    assert "\n" not in html
