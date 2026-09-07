@@ -37,8 +37,13 @@ def agent_bubble(name: str, content: str) -> str:
             '</div></div>')
 
 
-def approval_bubble(name: str, agent_id: str, calls: list[dict]) -> str:
+def approval_bubble(name: str, ask_id: str, calls: list[dict]) -> str:
     """An agent that stopped to ask permission.
+
+    Identified by the question, not by the agent. One agent can be waiting on
+    two answers at once, and two bubbles carrying the same id would have htmx
+    resolve both Yes buttons to the first of them, so answering the second
+    question would swap the first one away.
 
     Handed only the calls, never the whole pending payload: that also carries
     the held conversation and the owner's email, and neither belongs in a
@@ -52,7 +57,7 @@ def approval_bubble(name: str, agent_id: str, calls: list[dict]) -> str:
         args_txt = esc(str(fn.get("arguments") or ""))
         items.append(f'<li><code>{name_txt}</code> '
                      f'<span class="aargs">{args_txt}</span></li>')
-    aid = esc(agent_id)
+    aid = esc(ask_id)
     return (f'<div class="am agent awaiting" id="await-{aid}">'
             f'<div class="aav">{_initial(name)}</div>'
             '<div class="abody">'
@@ -62,11 +67,11 @@ def approval_bubble(name: str, agent_id: str, calls: list[dict]) -> str:
             '<div class="aactions">'
             '<button class="btn primary" type="button" '
             'hx-post="/tasks/agents/chat/approve" '
-            f'hx-vals=\'{{"agent_id": "{aid}", "approved": "yes"}}\' '
+            f'hx-vals=\'{{"ask_id": "{aid}", "approved": "yes"}}\' '
             f'hx-target="#await-{aid}" hx-swap="outerHTML">Yes</button>'
             '<button class="btn" type="button" '
             'hx-post="/tasks/agents/chat/approve" '
-            f'hx-vals=\'{{"agent_id": "{aid}", "approved": "no"}}\' '
+            f'hx-vals=\'{{"ask_id": "{aid}", "approved": "no"}}\' '
             f'hx-target="#await-{aid}" hx-swap="outerHTML">No</button>'
             '</div></div></div>')
 
@@ -167,8 +172,10 @@ def chat_list(chats: list[dict], active_id: str | None) -> str:
 def thread(messages: list[dict]) -> str:
     """A saved conversation replayed.
 
-    Roles other than user and assistant are the round bookkeeping (see
-    routes_agent_chat) and render as nothing.
+    Roles other than user, assistant and note are the round bookkeeping (see
+    routes_agent_chat) and render as nothing. Notes ARE drawn, because a round
+    stores them on purpose: a skipped agent said out loud while the round ran
+    and then gone on reload leaves a conversation that no longer makes sense.
     """
     out = []
     for m in messages or []:
@@ -176,12 +183,16 @@ def thread(messages: list[dict]) -> str:
         content = m.get("content") or ""
         if role == "user":
             out.append(user_bubble(content))
+        elif role == "note":
+            if content:
+                out.append(note(content))
         elif role == "assistant":
             name = str(m.get("agent_name") or "Agent")
             if content:
                 out.append(agent_bubble(name, content))
             awaiting = m.get("awaiting")
             if isinstance(awaiting, dict) and awaiting.get("calls"):
-                out.append(approval_bubble(name, str(m.get("agent_id") or ""),
+                out.append(approval_bubble(name,
+                                           str(awaiting.get("ask_id") or ""),
                                            awaiting["calls"]))
     return "".join(out) if out else empty_thread()

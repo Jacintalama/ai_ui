@@ -5,6 +5,7 @@ server: the browser is handed tool names and arguments, and hands back an id
 and an answer.
 """
 import importlib
+import re
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -69,14 +70,22 @@ def _asking_turn(who="agent-a"):
     return turn
 
 
-def _ask(app, room=("agent-a", "agent-m")):
+def _ask(app, room=("agent-a", "agent-m"), message="email the boss"):
     c = TestClient(app)
     import routes_agent_chat as mod
     mod.store.get_session(EMAIL).room = list(room)
-    c.post("/tasks/agents/chat/send", data={"message": "email the boss"},
+    c.post("/tasks/agents/chat/send", data={"message": message},
            headers=_hdr())
     body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
     return c, body
+
+
+def _questions(mod):
+    """The ids of the questions waiting for an answer, oldest first.
+
+    One per question, not one per agent: the same agent can be waiting on two.
+    """
+    return list(mod.store.get_session(EMAIL).pending)
 
 
 def test_the_question_reaches_the_page_with_both_answers(monkeypatch):
@@ -109,7 +118,8 @@ def test_yes_resumes_only_that_agent(monkeypatch):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     c, _ = _ask(app)
     r = c.post("/tasks/agents/chat/approve",
-               data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+               data={"ask_id": _questions(mod)[0], "approved": "yes"},
+               headers=_hdr())
     assert r.status_code == 200
     assert len(resumed) == 1
     assert resumed[0]["agent_id"] == "agent-a"
@@ -122,7 +132,8 @@ def test_no_refuses_and_says_so(monkeypatch):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     c, _ = _ask(app)
     r = c.post("/tasks/agents/chat/approve",
-               data={"agent_id": "agent-a", "approved": "no"}, headers=_hdr())
+               data={"ask_id": _questions(mod)[0], "approved": "no"},
+               headers=_hdr())
     assert resumed[0]["approved"] is False
     assert "did not run that" in r.text
 
@@ -130,10 +141,11 @@ def test_no_refuses_and_says_so(monkeypatch):
 def test_answering_twice_does_not_run_it_twice(monkeypatch):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     c, _ = _ask(app)
+    spent = _questions(mod)[0]
     c.post("/tasks/agents/chat/approve",
-           data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+           data={"ask_id": spent, "approved": "yes"}, headers=_hdr())
     again = c.post("/tasks/agents/chat/approve",
-                   data={"agent_id": "agent-a", "approved": "yes"},
+                   data={"ask_id": spent, "approved": "yes"},
                    headers=_hdr())
     assert len(resumed) == 1
     assert "no longer waiting" in again.text
@@ -143,7 +155,8 @@ def test_answering_a_question_nobody_asked_does_nothing(monkeypatch):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     c = TestClient(app)
     r = c.post("/tasks/agents/chat/approve",
-               data={"agent_id": "agent-m", "approved": "yes"}, headers=_hdr())
+               data={"ask_id": "a-question-nobody-asked", "approved": "yes"},
+               headers=_hdr())
     assert resumed == []
     assert "no longer waiting" in r.text
 
@@ -152,7 +165,7 @@ def test_someone_elses_session_cannot_answer_your_question(monkeypatch):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     c, _ = _ask(app)
     r = c.post("/tasks/agents/chat/approve",
-               data={"agent_id": "agent-a", "approved": "yes"},
+               data={"ask_id": _questions(mod)[0], "approved": "yes"},
                headers=_hdr("stranger@example.com"))
     assert resumed == []
     assert "no longer waiting" in r.text
@@ -162,7 +175,8 @@ def test_an_answered_question_leaves_the_thread(monkeypatch):
     app, mod, _ = _app(monkeypatch, _asking_turn())
     c, _ = _ask(app)
     c.post("/tasks/agents/chat/approve",
-           data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+           data={"ask_id": _questions(mod)[0], "approved": "yes"},
+           headers=_hdr())
     replayed = mod.render.thread(mod.store.get_session(EMAIL).messages)
     assert ">Yes<" not in replayed
     assert "Sent it." in replayed
@@ -179,9 +193,10 @@ def test_asking_again_holds_the_raw_payload_but_shows_only_the_page_shape(
     monkeypatch.setattr(mod, "_resume_turn", resume_turn)
     c, _ = _ask(app)
     r = c.post("/tasks/agents/chat/approve",
-               data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+               data={"ask_id": _questions(mod)[0], "approved": "yes"},
+               headers=_hdr())
     # The raw payload, id and all, is held server side for the next resume.
-    held = mod.store.get_session(EMAIL).pending["agent-a"]
+    held = mod.store.get_session(EMAIL).pending[_questions(mod)[0]]
     assert held["calls"][0]["id"] == "call-1"
     # The id never reaches the page. Only the page-shaped calls do.
     assert "call-1" not in r.text
@@ -197,11 +212,12 @@ def test_a_failed_resume_clears_the_question_and_does_not_restore_it(
     monkeypatch.setattr(mod, "_resume_turn", resume_turn)
     c, _ = _ask(app)
     r = c.post("/tasks/agents/chat/approve",
-               data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+               data={"ask_id": _questions(mod)[0], "approved": "yes"},
+               headers=_hdr())
     assert r.status_code == 200
     assert "no longer waiting" in r.text
     s = mod.store.get_session(EMAIL)
-    assert "agent-a" not in s.pending
+    assert s.pending == {}
     assert not any(m.get("agent_id") == "agent-a" and m.get("awaiting")
                    for m in s.messages)
 
@@ -211,6 +227,69 @@ def test_a_click_mid_round_does_not_run_two_turns_at_once(monkeypatch):
     c, _ = _ask(app)
     mod.store.get_session(EMAIL).streaming = True
     r = c.post("/tasks/agents/chat/approve",
-               data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+               data={"ask_id": _questions(mod)[0], "approved": "yes"},
+               headers=_hdr())
     assert resumed == []
     assert ">Yes<" in r.text and ">No<" in r.text
+
+
+# --- one agent, two questions --------------------------------------------
+# Nothing stops a second message going out while the first question is still
+# unanswered, so the same agent can be waiting on two answers. Keyed by the
+# agent, the second question overwrote the first: a held conversation thrown
+# away without anybody being told, and two bubbles on the page carrying the
+# same id, so htmx sent the second one's Yes at the first one's element.
+
+def test_two_questions_from_one_agent_get_their_own_ids(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+    _ask(app, room=("agent-a",), message="email the boss")
+    _ask(app, room=("agent-a",), message="and the other one too")
+    ids = _questions(mod)
+    assert len(ids) == 2, "the second question replaced the first"
+    assert ids[0] != ids[1]
+
+
+def test_the_page_can_tell_two_questions_from_one_agent_apart(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+    _ask(app, room=("agent-a",), message="email the boss")
+    _ask(app, room=("agent-a",), message="and the other one too")
+    html = mod.render.thread(mod.store.get_session(EMAIL).messages)
+    ids = re.findall(r'id="(await-[^"]+)"', html)
+    assert len(ids) == 2, ids
+    assert len(set(ids)) == 2, "both Yes buttons point at the same element"
+
+
+def test_answering_the_second_question_leaves_the_first_alone(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    _ask(app, room=("agent-a",), message="email the boss")
+    c, _ = _ask(app, room=("agent-a",), message="and the other one too")
+    first, second = _questions(mod)
+
+    r = c.post("/tasks/agents/chat/approve",
+               data={"ask_id": second, "approved": "yes"}, headers=_hdr())
+    assert r.status_code == 200
+    assert len(resumed) == 1
+    # The agent is still resolved, from the payload rather than the form.
+    assert resumed[0]["agent_id"] == "agent-a"
+
+    s = mod.store.get_session(EMAIL)
+    assert list(s.pending) == [first], "the unanswered question was lost"
+    still_asked = [m for m in s.messages
+                   if isinstance(m.get("awaiting"), dict)]
+    assert len(still_asked) == 1
+    assert still_asked[0]["awaiting"]["ask_id"] == first
+
+
+def test_the_first_question_can_still_be_answered_afterwards(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    _ask(app, room=("agent-a",), message="email the boss")
+    c, _ = _ask(app, room=("agent-a",), message="and the other one too")
+    first, second = _questions(mod)
+    c.post("/tasks/agents/chat/approve",
+           data={"ask_id": second, "approved": "yes"}, headers=_hdr())
+    r = c.post("/tasks/agents/chat/approve",
+               data={"ask_id": first, "approved": "no"}, headers=_hdr())
+    assert len(resumed) == 2
+    assert resumed[1]["approved"] is False
+    assert "did not run that" in r.text
+    assert mod.store.get_session(EMAIL).pending == {}

@@ -11,6 +11,7 @@ stream per turn. All routes sit under /tasks, already routed to this service
 end to end, so nothing outside this service changes.
 """
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -29,6 +30,25 @@ router = APIRouter()
 #: Agents run one at a time, so a room is a queue. Four is already a slow round.
 MAX_ROOM = 4
 
+#: How many messages of the conversation a round hands each agent.
+#: A room of four adds four assistant messages for every one you send, and
+#: every agent in the next round is billed for all of them, so an afternoon's
+#: conversation quietly costs several times itself on a 3.8GB box. Recent
+#: turns are what an answer needs; the rest is paid for and unread.
+MAX_HISTORY_MESSAGES = 20
+
+
+def _ask_id() -> str:
+    """A name for one question an agent asked.
+
+    Not the agent's id. The same agent can be waiting on two answers at once
+    if a second message goes out while the first question is unanswered, and
+    keying on the agent would have the second overwrite the first: a held
+    conversation discarded without anybody being told, and two Yes buttons on
+    the page pointing at the same element.
+    """
+    return uuid.uuid4().hex
+
 
 def _history_for_round(messages: list[dict]) -> list[dict]:
     """The conversation every agent in this round sees. Built ONCE.
@@ -36,6 +56,10 @@ def _history_for_round(messages: list[dict]) -> list[dict]:
     Role and content only: agent_id and agent_name are ours, for drawing the
     bubbles, and mean nothing to a model. Empty turns are dropped because empty
     content is rejected upstream. Bookkeeping roles fall out here too.
+
+    Capped at MAX_HISTORY_MESSAGES, oldest dropped first, because otherwise a
+    long conversation is re-sent in full to every agent in the room on every
+    message you send.
     """
     out = []
     for m in messages or []:
@@ -43,7 +67,14 @@ def _history_for_round(messages: list[dict]) -> list[dict]:
         content = (m.get("content") or "").strip()
         if role in ("user", "assistant") and content:
             out.append({"role": role, "content": content})
-    return out
+    first = max(0, len(out) - MAX_HISTORY_MESSAGES)
+    # The message being answered is the whole point of the round, so the
+    # window widens to reach it rather than ever cutting it off.
+    newest_user = max((i for i, m in enumerate(out) if m["role"] == "user"),
+                      default=None)
+    if newest_user is not None:
+        first = min(first, newest_user)
+    return out[first:]
 
 
 def _drop(messages: list[dict], marker: dict) -> None:
@@ -58,13 +89,26 @@ def _drop(messages: list[dict], marker: dict) -> None:
             return
 
 
-def _clear_awaiting(messages: list[dict], agent_id: str) -> None:
-    """Take the question off the stored message once it has been answered, so
-    a replayed conversation does not offer Yes and No on something already
-    decided."""
+def _clear_awaiting(messages: list[dict], ask_id: str) -> None:
+    """Take one answered question off the stored message, so a replayed
+    conversation does not offer Yes and No on something already decided.
+
+    Matched on the question, not on the agent: an agent with two questions
+    outstanding must not have both of them cleared by one answer.
+    """
     for m in messages:
-        if m.get("agent_id") == agent_id and m.get("awaiting"):
+        awaiting = m.get("awaiting")
+        if isinstance(awaiting, dict) and awaiting.get("ask_id") == ask_id:
             m.pop("awaiting", None)
+
+
+def _skipped_line(count: int) -> str:
+    """One sentence for however many of the room could not be found."""
+    if count == 1:
+        return ("An agent that was in this room no longer exists, "
+                "so it was skipped.")
+    return (f"{count} agents that were in this room no longer exist, "
+            "so they were skipped.")
 
 
 def _name_for(agent_id: str, agents: list[dict]) -> str:
@@ -99,15 +143,18 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     messages = s.messages
     pending = s.pending
 
+    # Counted, not announced one by one. _agents_for returns nothing on any
+    # doubt, a listing cut short included, so an upstream hiccup used to put
+    # the same sentence in the thread once per seated agent and no answers at
+    # all. The spec asks for it once.
+    skipped = 0
+
     for agent_id in list(s.room):
         if request is not None and await request.is_disconnected():
             break
         agent = by_id.get(agent_id)
         if agent is None:
-            line = ("An agent that was in this room no longer exists, "
-                    "so it was skipped.")
-            messages.append({"role": "note", "content": line})
-            yield {"event": "message", "data": render.note(line)}
+            skipped += 1
             continue
 
         name = str(agent.get("name") or agent_id)
@@ -122,15 +169,22 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             # Hold the full payload server side: it carries the held
             # conversation and the owner's email, neither of which belongs in
             # a browser. The browser gets the calls only.
-            pending[agent_id] = raw_pending
+            #
+            # Keyed by the question, not by the agent. One agent can be
+            # waiting on two answers at once, and keying by the agent would
+            # have the second question quietly replace the first.
+            ask_id = _ask_id()
+            pending[ask_id] = raw_pending
+            awaiting = dict(page_pending)
+            awaiting["ask_id"] = ask_id
             messages.append({"role": "assistant", "agent_id": agent_id,
                              "agent_name": name, "content": answer,
-                             "awaiting": page_pending})
+                             "awaiting": awaiting})
             if answer:
                 yield {"event": "message",
                        "data": render.agent_bubble(name, answer)}
             yield {"event": "message",
-                   "data": render.approval_bubble(name, agent_id,
+                   "data": render.approval_bubble(name, ask_id,
                                                   page_pending["calls"])}
             # And on to the next agent. Pausing the one that asked is the
             # point; silently losing everybody else is not.
@@ -139,6 +193,11 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         messages.append({"role": "assistant", "agent_id": agent_id,
                          "agent_name": name, "content": answer})
         yield {"event": "message", "data": render.agent_bubble(name, answer)}
+
+    if skipped:
+        line = _skipped_line(skipped)
+        messages.append({"role": "note", "content": line})
+        yield {"event": "message", "data": render.note(line)}
 
     yield {"event": "working", "data": ""}
 
@@ -155,7 +214,9 @@ async def agent_chat_send(message: str = Form(...),
         return HTMLResponse(render.note(
             "Pick at least one agent first, then ask again."))
     if s.streaming:
-        return HTMLResponse(render.note("Still answering, one moment."))
+        return HTMLResponse(render.note(
+            "Still answering, one moment. If it ever stays stuck, New chat "
+            "starts a fresh one."))
 
     s.messages.append({"role": "user", "content": body})
     s.streaming = True
@@ -228,21 +289,23 @@ async def agent_chat_stream(request: Request,
 
 
 @router.post("/tasks/agents/chat/approve", include_in_schema=False)
-async def agent_chat_approve(agent_id: str = Form(...),
+async def agent_chat_approve(ask_id: str = Form(...),
                              approved: str = Form(...),
                              user: CurrentUser = Depends(current_user)
                              ) -> HTMLResponse:
     """Answer one agent's request to run a tool.
 
-    The question lives in the asker's own session, so there is nothing to look
-    up by id and nothing a stranger can address. The held conversation goes
-    from here straight into _resume_turn without ever having been in a browser.
+    Addressed by the question, not by the agent, because one agent can have
+    two questions outstanding. The question lives in the asker's own session,
+    so there is nothing a stranger can address. The held conversation goes
+    from here straight into _resume_turn without ever having been in a
+    browser.
     """
     s = store.get_session(user.email)
     # Looked up, not popped: a stranger's click or a click mid round must not
     # discard the real owner's still-pending question, so nothing is taken
     # off the session until both of those are ruled out.
-    pending = s.pending.get(agent_id)
+    pending = s.pending.get(ask_id)
     if not isinstance(pending, dict) or not pending.get("calls"):
         return HTMLResponse(render.note(
             "That question is no longer waiting for an answer."))
@@ -254,8 +317,12 @@ async def agent_chat_approve(agent_id: str = Form(...),
         return HTMLResponse(render.note(
             "That question is no longer waiting for an answer."))
 
+    # Which agent asked is still needed: to name the speaker, and to resume
+    # the right one. It is read off the held payload rather than taken from
+    # the form, so a browser cannot point an answer at a different agent.
+    agent_id = str(pending.get("agent_id") or "")
     agents = await _agents_for(user.email)
-    name = _name_for(agent_id, agents)
+    name = _name_for(agent_id, agents) or "Agent"
 
     if s.streaming:
         # Another agent in this round is still running. Agents run one at a
@@ -263,16 +330,19 @@ async def agent_chat_approve(agent_id: str = Form(...),
         # 3.8GB of RAM. Leave the question in place and hand back the same
         # buttons rather than a bare note, or hx-swap would replace them and
         # the person could never answer once the round finished.
+        busy = render.note("The others are still answering. Try again in a "
+                           "moment.")
         page_pending = _pending_for_page(pending)
+        if not page_pending:
+            return HTMLResponse(busy)
         return HTMLResponse(
-            render.note("The others are still answering. Try again in a "
-                        "moment.")
-            + render.approval_bubble(name, agent_id, page_pending["calls"]))
+            busy + render.approval_bubble(name, ask_id,
+                                          page_pending["calls"]))
 
-    s.pending.pop(agent_id, None)
+    s.pending.pop(ask_id, None)
     # Cleared here, before the resume runs, so a reload shows no stale Yes
     # and No whatever _resume_turn does next.
-    _clear_awaiting(s.messages, agent_id)
+    _clear_awaiting(s.messages, ask_id)
 
     yes = (approved or "").strip().lower() in ("yes", "true", "1", "on")
     try:
@@ -299,13 +369,18 @@ async def agent_chat_approve(agent_id: str = Form(...),
     page_pending = (_pending_for_page(raw_pending)
                     if isinstance(raw_pending, dict) else None)
     if page_pending:
-        # It asked again. Same rules: hold the payload, show the calls.
-        s.pending[agent_id] = raw_pending
+        # It asked again. Same rules, and a new question, so a new id: the
+        # one just answered is spent.
+        next_ask = _ask_id()
+        s.pending[next_ask] = raw_pending
+        awaiting = dict(page_pending)
+        awaiting["ask_id"] = next_ask
         s.messages.append({"role": "assistant", "agent_id": agent_id,
                            "agent_name": name, "content": answer,
-                           "awaiting": page_pending})
+                           "awaiting": awaiting})
         html = ((render.agent_bubble(name, answer) if answer else "")
-                + render.approval_bubble(name, agent_id, page_pending["calls"]))
+                + render.approval_bubble(name, next_ask,
+                                         page_pending["calls"]))
     else:
         s.messages.append({"role": "assistant", "agent_id": agent_id,
                            "agent_name": name, "content": answer})
