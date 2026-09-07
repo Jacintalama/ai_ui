@@ -73,7 +73,6 @@ def _asking_turn(who="agent-a"):
 def _ask(app, room=("agent-a", "agent-m"), message="email the boss"):
     c = TestClient(app)
     import routes_agent_chat as mod
-    mod.store.get_session(EMAIL).room = list(room)
     c.post("/tasks/agents/chat/send", data={"message": message},
            headers=_hdr())
     body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text

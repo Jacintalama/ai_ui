@@ -29,8 +29,13 @@ class RoomSession:
     """One person's working copy of an agent-panel conversation."""
 
     messages: list[dict] = field(default_factory=list)
-    #: Agent ids in speaking order. The room, not every agent they own.
-    room: list[str] = field(default_factory=list)
+    #: Notes standing in for the turns that no longer fit the budget. The
+    #: room is permanent, so an agent has to keep knowing what was agreed
+    #: this morning after the words themselves have been folded away.
+    summary: str = ""
+    #: How many turns the summary already covers, so the same ones are not
+    #: summarised again on every message.
+    summarised_upto: int = 0
     #: agent_id -> the held payload from routes_agent_turn._pending_payload.
     #: Server side only: it carries the held conversation and the owner's
     #: email, neither of which may ever reach a browser.
@@ -83,11 +88,11 @@ async def create_chat(email: str, title: str, s: RoomSession) -> str:
     async with session() as db:
         await db.execute(
             text("INSERT INTO tasks.agent_chats "
-                 "(id, user_email, title, messages, room, pending) "
+                 "(id, user_email, title, messages, summary, pending) "
                  "VALUES (:id, :email, :title, CAST(:messages AS JSONB), "
-                 "CAST(:room AS JSONB), CAST(:pending AS JSONB))"),
+                 ":summary, CAST(:pending AS JSONB))"),
             {"id": chat_id, "email": email, "title": title,
-             "messages": json.dumps(s.messages), "room": json.dumps(s.room),
+             "messages": json.dumps(s.messages), "summary": s.summary,
              "pending": json.dumps(s.pending)})
         await db.commit()
     return chat_id
@@ -105,13 +110,30 @@ async def save_chat(email: str, s: RoomSession) -> None:
         await db.execute(
             text("UPDATE tasks.agent_chats "
                  "SET messages = CAST(:messages AS JSONB), "
-                 "room = CAST(:room AS JSONB), "
+                 "summary = :summary, "
                  "pending = CAST(:pending AS JSONB), updated_at = now() "
                  "WHERE id = :id AND user_email = :email"),
-            {"messages": json.dumps(s.messages), "room": json.dumps(s.room),
+            {"messages": json.dumps(s.messages), "summary": s.summary,
              "pending": json.dumps(s.pending), "id": s.chat_id,
              "email": email})
         await db.commit()
+
+
+async def newest_chat(email: str) -> dict | None:
+    """This person's conversation.
+
+    The panel keeps one permanent room rather than a list, so there is only
+    ever one row that matters. Ordered anyway, because a database that once
+    held two should hand back the one still being used rather than whichever
+    it happened to find.
+    """
+    async with session() as db:
+        row = (await db.execute(
+            text("SELECT id, title, messages, summary, pending "
+                 "FROM tasks.agent_chats WHERE user_email = :email "
+                 "ORDER BY updated_at DESC LIMIT 1"),
+            {"email": email})).mappings().first()
+    return dict(row) if row else None
 
 
 async def list_chats(email: str) -> list[dict]:
@@ -126,7 +148,7 @@ async def list_chats(email: str) -> list[dict]:
 async def load_chat(email: str, chat_id: str) -> dict | None:
     async with session() as db:
         row = (await db.execute(
-            text("SELECT id, title, messages, room, pending "
+            text("SELECT id, title, messages, summary, pending "
                  "FROM tasks.agent_chats WHERE id = :id AND user_email = :email"),
             {"id": chat_id, "email": email})).mappings().first()
     return dict(row) if row else None

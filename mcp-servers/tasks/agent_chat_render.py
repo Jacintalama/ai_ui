@@ -139,66 +139,9 @@ def stream_block() -> str:
 
 
 def empty_thread() -> str:
-    return ('<div class="aempty">Pick who is in the room, then ask. '
-            'Each agent answers in its own message.</div>')
-
-
-def chips(agents: list[dict], room: list[str]) -> str:
-    """Who is available and who is in the room.
-
-    Replaces itself (hx-swap outerHTML into #agent-room), so it carries its own
-    id.
-    """
-    if not agents:
-        return ('<div class="achips" id="agent-room">'
-                '<span class="asidenote">You have no agents yet. '
-                'Make one and it will show up here.</span></div>')
-    out = []
-    for a in agents:
-        aid = esc(str(a.get("id") or ""))
-        name = esc(str(a.get("name") or a.get("id") or ""))
-        inroom = str(a.get("id")) in (room or [])
-        cls = "chip in" if inroom else "chip"
-        url = ("/tasks/agents/chat/room/remove" if inroom
-               else "/tasks/agents/chat/room/add")
-        out.append(f'<button class="{cls}" type="button" hx-post="{url}" '
-                   f'hx-vals=\'{{"agent_id": "{aid}"}}\' '
-                   'hx-target="#agent-room" hx-swap="outerHTML">'
-                   f'{name}</button>')
-    return f'<div class="achips" id="agent-room">{"".join(out)}</div>'
-
-
-#: This fragment replaces itself, so it has to carry its own hx-get and
-#: hx-trigger. Without them the first swap installs an element that is no
-#: longer listening, and the list goes deaf for the rest of the page's life.
-#: The Fusion sidebar had exactly that bug.
-_CHATLIST_HX = ('id="agent-chatlist" hx-get="/tasks/agents/chat/chats" '
-                'hx-trigger="load, agent-chats-changed from:body" '
-                'hx-swap="outerHTML"')
-
-
-def chat_list(chats: list[dict], active_id: str | None) -> str:
-    if not chats:
-        return (f'<p class="asidenote" {_CHATLIST_HX}>No saved conversations '
-                'yet.</p>')
-    rows = []
-    for c in chats:
-        cid = esc(str(c.get("id") or ""))
-        title = esc(str(c.get("title") or "New chat"))
-        active = " active" if str(c.get("id")) == active_id else ""
-        rows.append(
-            f'<div class="achatrow{active}">'
-            f'<button class="achatopen" type="button" '
-            f'hx-get="/tasks/agents/chat/chat/{cid}" '
-            f'hx-target="#agent-thread" hx-swap="innerHTML" '
-            f'title="{title}">{title}</button>'
-            f'<button class="achatdel" type="button" '
-            f'hx-delete="/tasks/agents/chat/chat/{cid}" '
-            f'hx-target="#agent-chatlist" hx-swap="outerHTML" '
-            f'hx-confirm="Delete this conversation?" '
-            f'title="Delete">&times;</button>'
-            '</div>')
-    return f'<div class="achatlist" {_CHATLIST_HX}>{"".join(rows)}</div>'
+    return ('<div class="aempty">Ask anything. Every agent hears it, and '
+            'the ones with something to say answer. Name one and only they '
+            'reply.</div>')
 
 
 def thread(messages: list[dict]) -> str:
