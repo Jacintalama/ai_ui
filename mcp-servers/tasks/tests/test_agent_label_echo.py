@@ -71,3 +71,69 @@ def test_nothing_here_ever_raises(bad):
     assert ar.strip_label_lines(bad, NAMES) == ""
     assert ar.strip_leading_labels(bad, NAMES) == ""
     assert ar.clean_history_for_agent(bad, NAMES) == []
+
+
+# The rendered reply now puts the name in bold on its own line rather than
+# "Ada:" in plain text, because Open WebUI shows one tool reply as exactly one
+# message and the only thing left to fix was whether that message reads as two
+# speakers. Everything above must hold for the new shape too, and for the old
+# one, since a live conversation can contain both.
+
+def test_the_rendered_reply_names_each_speaker_in_bold():
+    from routes_agent_turn import render_turns
+    out = render_turns([
+        {"agent": {"id": "a", "name": "Ada"}, "answer": "hello there"},
+        {"agent": {"id": "m", "name": "Mia"}, "answer": "hi back"},
+    ])
+    assert out == "**Ada**\n\nhello there\n\n**Mia**\n\nhi back"
+    assert "Ada:" not in out and "Mia:" not in out
+
+
+def test_a_turn_with_no_agent_is_still_shown_bare():
+    from routes_agent_turn import render_turns
+    assert render_turns([{"agent": None, "answer": "just me"}]) == "just me"
+
+
+def test_the_bold_labels_are_removed_from_history_and_words_are_kept():
+    rendered = "**Ada**\n\nhello there\n\n**Mia**\n\nhi back"
+    assert ar.strip_label_lines(rendered, NAMES) == "hello there\n\nhi back"
+
+
+def test_history_from_before_the_format_changed_is_still_cleaned():
+    """A conversation that started on the old renderer holds old lines above
+    new ones. An agent must see neither."""
+    mixed = "Ada:\nolder turn\n\n**Mia**\n\nnewer turn"
+    assert ar.strip_label_lines(mixed, NAMES) == "older turn\n\nnewer turn"
+
+
+def test_an_answer_that_opens_with_a_bold_label_loses_it():
+    assert ar.strip_leading_labels("**Ada**\n\nmy answer", NAMES) == "my answer"
+
+
+def test_bold_text_that_is_not_an_agent_name_is_kept():
+    """Only known agent names are labels. An agent writing **Note** or
+    **Summary** as a heading is writing, not labelling."""
+    assert ar.strip_label_lines("**Note**\n\nkeep this", NAMES) == "**Note**\n\nkeep this"
+    assert ar.strip_leading_labels("**Summary**\n\nkeep this", NAMES) == "**Summary**\n\nkeep this"
+
+
+def test_a_bold_name_inside_a_sentence_is_the_agents_own_words():
+    kept = "I checked with **Ada** and she agrees"
+    assert ar.strip_label_lines(kept, NAMES) == kept
+
+
+def test_the_rendered_reply_survives_a_round_trip_through_cleaning():
+    """The whole point, end to end: what a person reads carries the names,
+    and what the next agent reads carries none of them."""
+    from routes_agent_turn import render_turns
+    rendered = render_turns([
+        {"agent": {"id": "a", "name": "Ada"}, "answer": "hello there"},
+        {"agent": {"id": "m", "name": "Mia"}, "answer": "hi back"},
+    ])
+    history = [{"role": "user", "content": "hi team"},
+               {"role": "assistant", "content": rendered}]
+    cleaned = ar.clean_history_for_agent(history, NAMES)
+    assert "Ada" not in cleaned[1]["content"]
+    assert "Mia" not in cleaned[1]["content"]
+    assert "hello there" in cleaned[1]["content"]
+    assert "hi back" in cleaned[1]["content"]

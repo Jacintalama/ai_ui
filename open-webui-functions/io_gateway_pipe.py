@@ -137,7 +137,7 @@ class Pipe:
             answer = (answer + "\n\n" + note_text) if answer else note_text
         answer = answer or EMPTY
         if self.valves.SHOW_AGENT_NAME:
-            return "%s:\n%s" % (name, answer)
+            return "**%s**\n\n%s" % (name, answer)
         return answer
 
     def _render(self, out) -> str:

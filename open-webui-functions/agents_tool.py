@@ -66,7 +66,7 @@ class Tools:
             note_text = "\n".join(notes)
             answer = (answer + "\n\n" + note_text) if answer else note_text
         answer = answer or EMPTY_TURN
-        return "%s:\n%s" % (name, answer)
+        return "**%s**\n\n%s" % (name, answer)
 
     async def ask_agents(self, message: str, __user__: dict = {},
                          __chat_id__: str = "") -> str:
