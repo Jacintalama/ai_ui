@@ -42,6 +42,45 @@
 .acalls { margin: 6px 0; padding-left: 18px; font-size: 12.5px; }
 .aargs { color: var(--text-2); overflow-wrap: anywhere; }
 .aactions { display: flex; gap: 8px; margin-top: 6px; }
+
+/* A bubble that streamed in and one replayed from a saved conversation have
+   to be indistinguishable. Replayed bubbles are flex children of .ap-thread
+   and take its 12px gap; streamed ones land inside .alive, two levels down,
+   so the same spacing is set up again here. Empty wrappers are hidden rather
+   than left in place, or a round that has not started yet leaves two gaps
+   under the last message. */
+.astream, .alive { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.awork { min-width: 0; }
+.astream:empty, .alive:empty, .awork:empty { display: none; }
+
+/* The invitation, before anything has been asked. */
+.aempty { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+
+/* An agent waiting on a yes or a no. Set apart, because it is the one bubble
+   that is asking the person for something rather than telling them. */
+.awaiting .abody {
+  padding: 8px 10px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border-2);
+}
+
+/* Rendered markdown inside an answer. The bubble is a column of text, so the
+   first and last blocks must not push the avatar out of line. */
+.atext.md > :first-child { margin-top: 0; }
+.atext.md > :last-child { margin-bottom: 0; }
+/* Only once marked has actually run. Until then the raw text still needs
+   pre-wrap, or a page where the vendored scripts failed to load shows every
+   answer as one unbroken paragraph. */
+.atext.md.done { white-space: normal; }
+.atext.md p { margin: 0 0 8px; }
+.atext.md ul, .atext.md ol { margin: 0 0 8px; padding-left: 20px; }
+.atext.md pre {
+  margin: 0 0 8px; padding: 8px 10px; overflow-x: auto;
+  border-radius: var(--radius); background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.atext.md code { font-size: 12px; }
+.atext.md a { color: var(--accent); }
+
 .ap-composer { display: flex; gap: 8px; }
 .ap-composer input {
   flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius);
@@ -49,6 +88,7 @@
   border: 1px solid var(--border);
 }
 .ap-history h3 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); font-weight: 600; }
+.achatlist { display: flex; flex-direction: column; gap: 2px; max-height: 168px; overflow-y: auto; }
 .achatrow { display: flex; align-items: center; gap: 4px; }
 .achatopen {
   flex: 1; min-width: 0; text-align: left; padding: 5px 8px; border-radius: var(--radius);

@@ -394,6 +394,10 @@
 </style>
 <script src="/tasks/static/vendor/htmx.min.js"></script>
 <script src="/tasks/static/vendor/sse.js"></script>
+<!-- Agent answers are markdown. marked renders it; DOMPurify sanitizes the
+     result before it is inserted, because it is model output. -->
+<script src="/tasks/static/vendor/marked.min.js"></script>
+<script src="/tasks/static/vendor/purify.min.js"></script>
 <link rel="stylesheet" href="/tasks/static/agent-chat.css">
 </head>
 <body>
