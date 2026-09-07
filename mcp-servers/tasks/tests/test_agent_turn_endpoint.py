@@ -59,7 +59,9 @@ async def test_the_endpoint_resolves_the_agents_own_tools(monkeypatch):
     out = await rt.turn(_body(), x_internal_secret="s")
 
     assert out == {"answer": "done", "notes": []}
-    assert seen["tool_ids"] == ["gmail"]
+    # Its own tool comes first, and the rest is what its owner can reach.
+    assert seen["tool_ids"][0] == "gmail"
+    assert "scheduler" not in seen["tool_ids"]
     assert seen["user_email"] == "owner@example.com"
 
 
@@ -83,7 +85,12 @@ async def test_a_spoofed_tool_ids_on_the_request_body_is_ignored(monkeypatch):
     body.tool_ids = ["gmail", "scheduler", "server:mcp-proxy"]
 
     await rt.turn(body, x_internal_secret="s")
-    assert seen["tool_ids"] == ["gmail"]
+    # The list is wider now: an agent reaches everything its owner has, so a
+    # bare equality check would only be testing the fixture. What matters is
+    # unchanged and asserted directly: its own tool is there, and nothing the
+    # caller named got in.
+    assert seen["tool_ids"][0] == "gmail", "its own tool, resolved from the agent"
+    assert "scheduler" not in seen["tool_ids"], "the caller named this; it must not appear"
 
 
 @pytest.mark.parametrize("access,expected", [

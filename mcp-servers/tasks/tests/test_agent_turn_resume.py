@@ -187,7 +187,9 @@ async def test_the_tools_are_still_resolved_here_not_taken_from_the_caller(
     monkeypatch.setattr(rt, "execute_tool_call", ex)
 
     await rt.resume(_body(approved=True), x_internal_secret="s")
-    assert ex.await_args.args[2] == ["gmail"]
+    # An agent reaches everything its owner has now, so its own tool leads
+    # the list rather than being the whole of it.
+    assert ex.await_args.args[2][0] == "gmail"
 
 
 async def test_a_spoofed_tool_ids_on_the_request_body_is_ignored(monkeypatch):
@@ -210,7 +212,11 @@ async def test_a_spoofed_tool_ids_on_the_request_body_is_ignored(monkeypatch):
     body.tool_ids = ["gmail", "scheduler", "server:mcp-proxy"]
 
     await rt.resume(body, x_internal_secret="s")
-    assert ex.await_args.args[2] == ["gmail"]
+    # Wider list, same guarantee: derived from the agent and its owner, never
+    # from the body. scheduler can delete anybody's cron and is not installed
+    # here, so it can only appear if a spoof got through.
+    assert ex.await_args.args[2][0] == "gmail"
+    assert "scheduler" not in ex.await_args.args[2]
 
 
 async def test_the_run_is_recorded_as_a_channel_run(monkeypatch):
