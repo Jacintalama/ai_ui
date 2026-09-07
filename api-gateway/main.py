@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 import jwt
 import asyncpg
 from fastapi import FastAPI, Request, HTTPException, Response, APIRouter
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 
 # =============================================================================
@@ -307,6 +307,63 @@ def timeout_for(backend_url: str) -> httpx.Timeout:
     return httpx.Timeout(connect=10.0, read=read, write=30.0, pool=30.0)
 
 
+#: Header names that belong to one hop and must not be forwarded. Content-Length
+#: joins them on a streamed response only, where the length is not known yet.
+_HOP_BY_HOP = ["transfer-encoding", "connection", "keep-alive"]
+
+
+def is_event_stream(response: httpx.Response) -> bool:
+    """Is this upstream body a live Server-Sent Events stream?
+
+    The one thing buffering actually breaks. Everything else is happy to be
+    read in full, so the passthrough below is scoped to this and nothing more.
+    """
+    content_type = response.headers.get("content-type") or ""
+    return content_type.split(";")[0].strip().lower() == "text/event-stream"
+
+
+def stream_through(client: httpx.AsyncClient, upstream: httpx.Response) -> StreamingResponse:
+    """Hand a Server-Sent Events body on as each piece of it arrives.
+
+    Reading the whole body first, which is what the gateway used to do for
+    every response, turns a stream into a single delivery at the end: an
+    agent panel's bubbles all appear at once when the last agent finishes,
+    and the "working" line that says who is answering is written and cleared
+    inside the same payload, so nobody ever sees it.
+
+    The client stays open until the last chunk has gone out. It cannot be
+    closed when this function returns, because the body is still being read
+    after that.
+    """
+    async def body():
+        try:
+            # Raw, so what the browser receives is byte for byte what the
+            # backend sent, whatever Content-Encoding says.
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            try:
+                await upstream.aclose()
+            finally:
+                await client.aclose()
+
+    streamed = StreamingResponse(
+        body(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type")
+    )
+    # Same header handling as the buffered path, including multiple Set-Cookie
+    # values, minus Content-Length: there is no length to promise.
+    for key, value in upstream.headers.multi_items():
+        if key.lower() in _HOP_BY_HOP or key.lower() == "content-length":
+            continue
+        if key.lower() == "set-cookie":
+            streamed.headers.append(key, value)
+        elif key.lower() not in [h.lower() for h in streamed.headers.keys()]:
+            streamed.headers[key] = value
+    return streamed
+
+
 async def forward_request(request: Request, backend_url: str, backend_path: str, extra_headers: dict) -> Response:
     """Forward request to backend service."""
     url = f"{backend_url}{backend_path}"
@@ -338,13 +395,32 @@ async def forward_request(request: Request, backend_url: str, backend_path: str,
 
     logger.debug(f"Forwarding {request.method} -> {url}")
 
-    async with httpx.AsyncClient(timeout=timeout_for(backend_url), follow_redirects=False) as client:
-        response = await client.request(
-            method=request.method,
-            url=url,
-            headers=headers,
-            content=body
+    # Opened without reading the body, so the content type can be looked at
+    # first. A Server-Sent Events body is handed on chunk by chunk; every
+    # other body is read here in full and takes exactly the path it always
+    # took, with the same headers and the same Response object.
+    client = httpx.AsyncClient(timeout=timeout_for(backend_url), follow_redirects=False)
+    try:
+        response = await client.send(
+            client.build_request(
+                method=request.method,
+                url=url,
+                headers=headers,
+                content=body
+            ),
+            stream=True
         )
+    except BaseException:
+        await client.aclose()
+        raise
+
+    if is_event_stream(response):
+        return stream_through(client, response)
+
+    try:
+        # The bytes the old client.request() call read for us. Everything
+        # below this line is the unchanged path.
+        await response.aread()
 
         # Build response headers, properly handling multiple Set-Cookie headers
         # httpx.Headers is a multi-dict, but FastAPI Response needs special handling
@@ -373,6 +449,9 @@ async def forward_request(request: Request, backend_url: str, backend_path: str,
                 fastapi_response.headers[key] = value
 
         return fastapi_response
+    finally:
+        await response.aclose()
+        await client.aclose()
 
 
 # =============================================================================
