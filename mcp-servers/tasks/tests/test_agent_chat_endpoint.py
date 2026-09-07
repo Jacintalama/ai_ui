@@ -359,7 +359,7 @@ async def test_a_follow_up_keeps_the_agent_awake(_wire):
 
 
 async def test_an_agent_sees_history_without_the_speaker_labels(_wire):
-    """The rendered reply says "Ada:" so a person can see who spoke. The
+    """The rendered reply says "**Ada**" so a person can see who spoke. The
     agent must not see that, or it learns the format and starts inventing
     exchanges between the agents. Seen live 2026-09-04."""
     class B:
@@ -368,7 +368,7 @@ async def test_an_agent_sees_history_without_the_speaker_labels(_wire):
         first_only = False
         messages = [
             {"role": "user", "content": "hi team"},
-            {"role": "assistant", "content": "Ada:\nhello\n\nMia:\nhi there"},
+            {"role": "assistant", "content": "**Ada**\n\nhello\n\n**Mia**\n\nhi there"},
             {"role": "user", "content": "mia, how are you"},
         ]
     await rt.chat(B(), x_internal_secret="s")
@@ -381,7 +381,7 @@ async def test_an_echoed_label_is_stripped_before_the_real_one_is_added(_wire, m
     """Even with clean history a model can echo a name. Two labels stacked
     is what the person saw, so the answer loses any it opens with."""
     monkeypatch.setattr(rt, "_run_turn",
-                        AsyncMock(return_value={"answer": "Mia:\nMia:\nall good", "notes": []}))
+                        AsyncMock(return_value={"answer": "**Mia**\n\n**Mia**\n\nall good", "notes": []}))
     out = await rt.chat(_body("hi mia"), x_internal_secret="s")
     assert out["turns"][0]["answer"] == "all good"
 
@@ -498,14 +498,14 @@ async def test_route_only_still_wakes_a_named_agent(_wire):
     b.route_only = True
     out = await rt.chat(b, x_internal_secret="s")
     assert out["turns"][0]["agent"]["name"] == "Mia"
-    assert out["rendered"] == "Mia:\nhi"
+    assert out["rendered"] == "**Mia**\n\nhi"
 
 
 async def test_every_reply_carries_the_rendered_text(_wire):
     """Two pipes show these turns. One renderer here, so they cannot
     drift from each other or from the page that splits replies apart."""
     out = await rt.chat(_body("hi team"), x_internal_secret="s")
-    assert out["rendered"] == "Ada:\nhi\n\nMia:\nhi"
+    assert out["rendered"] == "**Ada**\n\nhi\n\n**Mia**\n\nhi"
 
 
 async def test_a_pending_approval_pauses_the_asker_but_still_names_the_rest(

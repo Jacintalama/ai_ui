@@ -531,8 +531,21 @@
 <aside class="agent-panel" id="agent-panel">
   <div class="ap-head">
     <h2>Chat with your agents</h2>
-    <button class="btn" type="button" hx-post="/tasks/agents/chat/new"
-            hx-target="#agent-thread" hx-swap="innerHTML">New chat</button>
+    <div class="ap-head-actions">
+      <!-- Earlier conversations used to sit under the composer, which pushed
+           the input up the panel and put a list where a reply belongs. They
+           live behind this now, so the composer stays at the bottom. -->
+      <button class="btn" type="button" id="ap-history-toggle"
+              aria-expanded="false" aria-controls="ap-history">Earlier</button>
+      <button class="btn" type="button" hx-post="/tasks/agents/chat/new"
+              hx-target="#agent-thread" hx-swap="innerHTML">New chat</button>
+    </div>
+  </div>
+  <div class="ap-history" id="ap-history" hidden>
+    <p class="asidenote" id="agent-chatlist"
+       hx-get="/tasks/agents/chat/chats"
+       hx-trigger="load, agent-chats-changed from:body"
+       hx-swap="outerHTML">Loading...</p>
   </div>
   <div class="achips" id="agent-room" hx-get="/tasks/agents/chat/room"
        hx-trigger="load" hx-swap="outerHTML"></div>
@@ -547,13 +560,6 @@
            placeholder="Ask the room something">
     <button class="btn primary" type="submit">Send</button>
   </form>
-  <div class="ap-history">
-    <h3>Earlier</h3>
-    <p class="asidenote" id="agent-chatlist"
-       hx-get="/tasks/agents/chat/chats"
-       hx-trigger="load, agent-chats-changed from:body"
-       hx-swap="outerHTML">Loading...</p>
-  </div>
 </aside>
 </div><!-- .agents-layout -->
 

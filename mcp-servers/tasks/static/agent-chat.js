@@ -97,4 +97,26 @@
     if (work) { work.innerHTML = ""; }
     settle();
   });
+
+  // Earlier conversations open from the header rather than living under the
+  // composer, so the input keeps the bottom of the panel. Opening one closes
+  // the list again: you asked for that conversation, not for the list.
+  var historyToggle = document.getElementById("ap-history-toggle");
+  var historyPanel = document.getElementById("ap-history");
+
+  function showHistory(open) {
+    if (!historyPanel || !historyToggle) return;
+    historyPanel.hidden = !open;
+    historyToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  if (historyToggle) {
+    historyToggle.addEventListener("click", function () {
+      showHistory(historyPanel.hidden);
+    });
+  }
+
+  document.body.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest(".achatopen")) { showHistory(false); }
+  });
 })();

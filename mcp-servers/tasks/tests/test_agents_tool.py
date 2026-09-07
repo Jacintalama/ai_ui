@@ -80,8 +80,8 @@ async def test_two_turns_render_both_names_in_order(tool):
     out = await tool.ask_agents("hi mia and ada",
                                 __user__={"email": "owner@example.com"})
 
-    mia_pos = out.find("Mia:")
-    ada_pos = out.find("Ada:")
+    mia_pos = out.find("**Mia**")
+    ada_pos = out.find("**Ada**")
     assert mia_pos != -1 and ada_pos != -1
     assert mia_pos < ada_pos, "Mia was named first and must render first"
     assert "Nothing urgent" in out

@@ -130,16 +130,24 @@ def last_user_text(messages) -> str:
 
 
 def _label_line_re(names):
-    """A line that is exactly one of these names and a colon, nothing else.
+    """A line that is exactly one of these names, nothing else.
+
+    Two shapes are matched. The rendered reply used to put "Ada:" on its own
+    line and now puts "**Ada**", so a live conversation can hold both: the
+    turns from before the format changed sit above the turns from after, and
+    an agent must see neither.
+
     Only KNOWN agent names, so a reply genuinely opening with "Note:" or
-    "Warning:" on its own line is left alone."""
+    "Warning:" on its own line is left alone.
+    """
     cleaned = sorted({str(n).strip() for n in names if str(n).strip()},
                      key=len, reverse=True)
     if not cleaned:
         return None
     alts = "|".join(re.escape(n) for n in cleaned)
-    return re.compile(r"^[ \t]*(?:%s)[ \t]*:[ \t]*$" % alts,
-                      re.IGNORECASE | re.MULTILINE)
+    return re.compile(
+        r"^[ \t]*(?:(?:%s)[ \t]*:|\*\*(?:%s)\*\*)[ \t]*$" % (alts, alts),
+        re.IGNORECASE | re.MULTILINE)
 
 
 def strip_label_lines(text, names) -> str:

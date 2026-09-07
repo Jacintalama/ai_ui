@@ -15,8 +15,40 @@ def esc(s: str) -> str:
     return html.escape(s or "")
 
 
-def _initial(name: str) -> str:
-    return esc((name or "?").strip()[:1].upper())
+def _initials(name: str) -> str:
+    """The same two letters the agent's card shows.
+
+    Ported from `initials` in static/agents.html rather than invented, so a
+    person recognises the same mark in the panel that they picked from the
+    cards. A one-letter mark here and a two-letter mark there read as two
+    different agents.
+    """
+    parts = [p for p in str(name or "").strip().split() if p]
+    if not parts:
+        return "AI"
+    if len(parts) == 1:
+        return esc(parts[0][:2].upper())
+    return esc((parts[0][0] + parts[-1][0]).upper())
+
+
+def _hue(name: str) -> int:
+    """Ported from `avatarHue` in static/agents.html, character for character.
+
+    Every avatar being the same colour made two agents tell apart only by
+    their letters. This must stay identical to the page's version or Ada is
+    green on her card and some other colour two inches to the right.
+    """
+    h = 0
+    for ch in str(name or ""):
+        h = (h * 31 + ord(ch)) % 360
+    return h
+
+
+def _avatar(name: str) -> str:
+    h = _hue(name)
+    return (f'<div class="aav" style="background:linear-gradient(150deg,'
+            f'hsl({h} 58% 46%),hsl({(h + 26) % 360} 58% 34%))">'
+            f'{_initials(name)}</div>')
 
 
 def user_bubble(text: str) -> str:
@@ -30,7 +62,7 @@ def agent_bubble(name: str, content: str) -> str:
     because the panel draws the bubbles itself.
     """
     return ('<div class="am agent">'
-            f'<div class="aav">{_initial(name)}</div>'
+            f'{_avatar(name)}'
             '<div class="abody">'
             f'<div class="awho">{esc(name)}</div>'
             f'<div class="atext md">{esc(content)}</div>'
@@ -59,7 +91,7 @@ def approval_bubble(name: str, ask_id: str, calls: list[dict]) -> str:
                      f'<span class="aargs">{args_txt}</span></li>')
     aid = esc(ask_id)
     return (f'<div class="am agent awaiting" id="await-{aid}">'
-            f'<div class="aav">{_initial(name)}</div>'
+            f'{_avatar(name)}'
             '<div class="abody">'
             f'<div class="awho">{esc(name)}</div>'
             f'<div class="atext">{esc(name)} wants to run:</div>'

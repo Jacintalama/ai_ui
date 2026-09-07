@@ -413,10 +413,16 @@ def render_turns(turns) -> str:
     """The reply as a person reads it: each agent's answer under its name,
     a blank line between agents, a turn with no agent shown bare.
 
-    One renderer, here, because two pipes now show these turns and the
-    page splits a reply back into per-agent messages by exactly this
-    shape: a line that is the agent's name and a colon, then the answer.
-    A second copy of this in a pipe would drift from the page's parser.
+    The name is bold markdown on its own line rather than "Ada:" in plain
+    text. Open WebUI renders one tool reply as exactly one message and
+    nothing can change that, so when two agents answer, the only thing left
+    to fix is whether that one message READS as two speakers. Flat text did
+    not; a bold heading above each answer does.
+
+    Whatever this emits, agent_routing must be able to strip back out: the
+    same lines fed to an agent as history taught it to invent whole
+    exchanges between agents. See _label_line_re, which matches this shape
+    and the older one.
     """
     parts = []
     for turn in turns if isinstance(turns, list) else []:
@@ -434,7 +440,7 @@ def render_turns(turns) -> str:
             parts.append(answer)
         else:
             name = agent.get("name") or agent.get("id") or "Agent"
-            parts.append("%s:\n%s" % (name, answer))
+            parts.append("**%s**\n\n%s" % (name, answer))
     return "\n\n".join(parts)
 
 
