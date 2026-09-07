@@ -228,26 +228,61 @@ async def agent_chat_approve(agent_id: str = Form(...),
     from here straight into _resume_turn without ever having been in a browser.
     """
     s = store.get_session(user.email)
-    pending = s.pending.pop(agent_id, None)
+    # Looked up, not popped: a stranger's click or a click mid round must not
+    # discard the real owner's still-pending question, so nothing is taken
+    # off the session until both of those are ruled out.
+    pending = s.pending.get(agent_id)
     if not isinstance(pending, dict) or not pending.get("calls"):
         return HTMLResponse(render.note(
             "That question is no longer waiting for an answer."))
-    # Belt and braces. The payload names who was asked; the session is already
-    # per person, so these can only disagree if something upstream changed.
+    # Belt and braces, checked before anything is popped. The payload names
+    # who was asked; the session is already per person, so these can only
+    # disagree if something upstream changed.
     if pending.get("user_email") and pending["user_email"] != user.email:
         log.warning("agent chat: refused an approval from the wrong person")
         return HTMLResponse(render.note(
             "That question is no longer waiting for an answer."))
 
-    yes = (approved or "").strip().lower() in ("yes", "true", "1", "on")
     agents = await _agents_for(user.email)
     name = _name_for(agent_id, agents)
-    out = await _resume_turn(user_email=user.email, agent_id=agent_id,
-                             conversation=list(pending.get("conversation") or []),
-                             calls=list(pending.get("calls") or []),
-                             approved=yes)
-    answer = out.get("answer") or ""
+
+    if s.streaming:
+        # Another agent in this round is still running. Agents run one at a
+        # time, never in parallel: a turn can run tools and this box has
+        # 3.8GB of RAM. Leave the question in place and hand back the same
+        # buttons rather than a bare note, or hx-swap would replace them and
+        # the person could never answer once the round finished.
+        page_pending = _pending_for_page(pending)
+        return HTMLResponse(
+            render.note("The others are still answering. Try again in a "
+                        "moment.")
+            + render.approval_bubble(name, agent_id, page_pending["calls"]))
+
+    s.pending.pop(agent_id, None)
+    # Cleared here, before the resume runs, so a reload shows no stale Yes
+    # and No whatever _resume_turn does next.
     _clear_awaiting(s.messages, agent_id)
+
+    yes = (approved or "").strip().lower() in ("yes", "true", "1", "on")
+    try:
+        out = await _resume_turn(
+            user_email=user.email, agent_id=agent_id,
+            conversation=list(pending.get("conversation") or []),
+            calls=list(pending.get("calls") or []), approved=yes)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: resume failed for %s", agent_id)
+        try:
+            await store.save_chat(user.email, s)
+        except Exception:                                   # noqa: BLE001
+            log.exception("agent chat: could not save after a failed "
+                          "approval")
+        # The pending stays popped. On a timeout the tool may already have
+        # run, so putting the question back and offering Yes again could run
+        # it a second time. Failing closed here is deliberate, not a bug.
+        return HTMLResponse(render.note(
+            "That could not be completed, so it is no longer waiting for "
+            "an answer."))
+    answer = out.get("answer") or ""
 
     raw_pending = out.get("pending")
     page_pending = (_pending_for_page(raw_pending)

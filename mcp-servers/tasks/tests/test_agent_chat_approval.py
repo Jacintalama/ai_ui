@@ -166,3 +166,51 @@ def test_an_answered_question_leaves_the_thread(monkeypatch):
     replayed = mod.render.thread(mod.store.get_session(EMAIL).messages)
     assert ">Yes<" not in replayed
     assert "Sent it." in replayed
+
+
+def test_asking_again_holds_the_raw_payload_but_shows_only_the_page_shape(
+        monkeypatch):
+    async def resume_turn(user_email, agent_id, conversation, calls, approved):
+        return {"answer": "One more check first.", "notes": [],
+                "pending": {"agent_id": agent_id, "user_email": EMAIL,
+                            "calls": CALLS, "conversation": HELD}}
+
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+    monkeypatch.setattr(mod, "_resume_turn", resume_turn)
+    c, _ = _ask(app)
+    r = c.post("/tasks/agents/chat/approve",
+               data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+    # The raw payload, id and all, is held server side for the next resume.
+    held = mod.store.get_session(EMAIL).pending["agent-a"]
+    assert held["calls"][0]["id"] == "call-1"
+    # The id never reaches the page. Only the page-shaped calls do.
+    assert "call-1" not in r.text
+    assert "send_email" in r.text
+
+
+def test_a_failed_resume_clears_the_question_and_does_not_restore_it(
+        monkeypatch):
+    async def resume_turn(user_email, agent_id, conversation, calls, approved):
+        raise RuntimeError("boom")
+
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+    monkeypatch.setattr(mod, "_resume_turn", resume_turn)
+    c, _ = _ask(app)
+    r = c.post("/tasks/agents/chat/approve",
+               data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+    assert r.status_code == 200
+    assert "no longer waiting" in r.text
+    s = mod.store.get_session(EMAIL)
+    assert "agent-a" not in s.pending
+    assert not any(m.get("agent_id") == "agent-a" and m.get("awaiting")
+                   for m in s.messages)
+
+
+def test_a_click_mid_round_does_not_run_two_turns_at_once(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, _ = _ask(app)
+    mod.store.get_session(EMAIL).streaming = True
+    r = c.post("/tasks/agents/chat/approve",
+               data={"agent_id": "agent-a", "approved": "yes"}, headers=_hdr())
+    assert resumed == []
+    assert ">Yes<" in r.text and ">No<" in r.text
