@@ -1,0 +1,66 @@
+/* The agent chat panel. Sits in the space the card grid already leaves: the
+   page wrapper is 1640px while .grid caps at 792px. */
+.agents-layout {
+  display: grid; gap: 24px; align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+}
+.agents-main { min-width: 0; }
+
+.agent-panel {
+  position: sticky; top: 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  min-width: 0; max-height: calc(100vh - 32px);
+  padding: 16px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border);
+}
+.ap-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ap-head h2 { margin: 0; font-size: 15px; }
+.achips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 4px 10px; border-radius: 999px; font-size: 12.5px; cursor: pointer;
+  background: transparent; color: var(--text-2);
+  border: 1px solid var(--border-2);
+}
+.chip.in { background: transparent; color: var(--accent); border-color: var(--accent); }
+.ap-thread { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.am { display: flex; gap: 10px; }
+.am.user { justify-content: flex-end; }
+.am.user .ab {
+  max-width: 80%; padding: 8px 12px; border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, .10); white-space: pre-wrap;
+}
+.aav {
+  flex: 0 0 26px; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12px;
+  background: rgba(255, 255, 255, .10);
+}
+.abody { min-width: 0; }
+.awho { font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+.atext { white-space: pre-wrap; overflow-wrap: anywhere; }
+.am.note { font-size: 12.5px; color: var(--text-2); font-style: italic; }
+.aworking { font-size: 12.5px; color: var(--text-2); }
+.acalls { margin: 6px 0; padding-left: 18px; font-size: 12.5px; }
+.aargs { color: var(--text-2); overflow-wrap: anywhere; }
+.aactions { display: flex; gap: 8px; margin-top: 6px; }
+.ap-composer { display: flex; gap: 8px; }
+.ap-composer input {
+  flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius);
+  background: rgba(255, 255, 255, .06); color: inherit;
+  border: 1px solid var(--border);
+}
+.ap-history h3 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); font-weight: 600; }
+.achatrow { display: flex; align-items: center; gap: 4px; }
+.achatopen {
+  flex: 1; min-width: 0; text-align: left; padding: 5px 8px; border-radius: var(--radius);
+  background: transparent; color: inherit; border: 0; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px;
+}
+.achatrow.active .achatopen { background: rgba(255, 255, 255, .08); }
+.achatdel { background: transparent; border: 0; color: var(--text-2); cursor: pointer; }
+.asidenote { font-size: 12.5px; color: var(--text-2); }
+
+/* Below this width the cards want the whole row, so the panel goes under. */
+@media (max-width: 1180px) {
+  .agents-layout { grid-template-columns: 1fr; }
+  .agent-panel { position: static; max-height: none; }
+}
