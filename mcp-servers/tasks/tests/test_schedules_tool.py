@@ -12,6 +12,8 @@ call onto that person.
 import importlib.util
 import json
 import os
+from unittest import mock
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -536,6 +538,108 @@ async def test_the_caller_lookup_never_raises_on_a_shape_it_did_not_expect(
     assert tool._email(supplied) == ""
     out = await tool.list_my_schedules(__user__=supplied)
     assert isinstance(out, str) and out
+
+
+# ------------------------------------------------- the whole chain, for real
+
+@respx.mock
+async def test_an_agents_own_id_reaches_the_tool_through_the_real_chain():
+    """The defect this closes: _run_native handed a native tool __user__ and
+    nothing else, so __model__ was always {}, _agent_id_from always answered
+    None, and every schedule an agent made ran through the plain executor
+    instead of as the agent, without its persona or its connected tools.
+
+    Both real paths go through that one function, so this was true of the
+    agent chat panel and of scheduled runs alike. The older test passed only
+    because it called create_schedule directly with __model__ supplied, which
+    is the same defect shape this branch already fixed once: an assertion
+    about behaviour no production caller can reach.
+
+    So this one starts where production starts. agent_runner._chat, a fake
+    Open WebUI asking for the tool, the real tool source, and a real request
+    on the wire."""
+    import agent_runner
+
+    source = open(TOOL_PATH, encoding="utf-8").read()
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    route = respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=CREATED))
+
+    asked = {"name": "Morning inbox", "cron_expr": "0 8 * * *",
+             "prompt": "say what needs a reply"}
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload)
+        if len(posts) == 1:
+            return {"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "create_schedule",
+                              "arguments": json.dumps(asked)}}]}}]}
+        return {"choices": [{"message": {"content": "That is on for eight."}}]}
+
+    with mock.patch.object(agent_runner, "_post_chat", new=fake_post), \
+         mock.patch("agent_tools._load_native_tool_source",
+                    new=AsyncMock(return_value=source)), \
+         mock.patch.dict(os.environ, {"TASKS_URL": BASE}):
+        answer, notes = await agent_runner._chat(
+            token="t", model="agent-research-assistant-0001",
+            messages=[{"role": "user",
+                       "content": "check my inbox every morning at eight"}],
+            tool_ids=["schedules"], user_email="owner@example.com",
+            tool_mode="full")
+
+    assert route.called, "the tool never called /schedules"
+    body = json.loads(route.calls[0].request.read())
+    assert body["agent_id"] == "agent-research-assistant-0001", \
+        "the schedule would run through the executor, not as the agent"
+    sent = route.calls[0].request
+    assert sent.headers["X-User-Email"] == "owner@example.com"
+    assert "x-cron-secret" not in {k.lower() for k in sent.headers}
+    assert answer == "That is on for eight."
+    assert notes == []
+
+
+@respx.mock
+async def test_the_chain_cannot_be_talked_into_naming_a_different_agent():
+    """__model__ is set after the model's own arguments, so a tool call that
+    names it is overwritten rather than obeyed. A model that could choose the
+    agent id could make a schedule run as an agent its owner did not pick."""
+    import agent_runner
+
+    source = open(TOOL_PATH, encoding="utf-8").read()
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    route = respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=CREATED))
+
+    asked = {"name": "n", "cron_expr": "0 8 * * *", "prompt": "p",
+             "__model__": {"id": "agent-somebody-elses-9999"}}
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload)
+        if len(posts) == 1:
+            return {"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "create_schedule",
+                              "arguments": json.dumps(asked)}}]}}]}
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    with mock.patch.object(agent_runner, "_post_chat", new=fake_post), \
+         mock.patch("agent_tools._load_native_tool_source",
+                    new=AsyncMock(return_value=source)), \
+         mock.patch.dict(os.environ, {"TASKS_URL": BASE}):
+        await agent_runner._chat(
+            token="t", model="agent-research-assistant-0001",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=["schedules"], user_email="owner@example.com",
+            tool_mode="full")
+
+    body = json.loads(route.calls[0].request.read())
+    assert body["agent_id"] == "agent-research-assistant-0001"
+    assert "9999" not in json.dumps(body)
 
 
 # ---------------------------------------------------------------- installing

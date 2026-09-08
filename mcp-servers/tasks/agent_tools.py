@@ -226,8 +226,23 @@ def _filter_supported_kwargs(method, params: dict) -> dict:
     return {key: value for key, value in params.items() if key in accepted}
 
 
+def _declares(method, name: str) -> bool:
+    """Does `method` accept this keyword argument by name?
+
+    True for a method that declares **kwargs, on the same reasoning as
+    _filter_supported_kwargs: it accepts anything.
+    """
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return True
+    return name in parameters
+
+
 async def _run_native(source: str, method_name: str, params: dict,
-                       user_email: str) -> str:
+                       user_email: str, agent_id: str | None = None) -> str:
     namespace: dict = {}
     exec(compile(source, "<owui_tool>", "exec"), namespace)   # noqa: S102
     tools_cls = namespace.get("Tools")
@@ -242,6 +257,19 @@ async def _run_native(source: str, method_name: str, params: dict,
     # Identity always comes from the caller, never from the model's
     # arguments -- set last so nothing supplied above can override it.
     call_kwargs["__user__"] = {"email": user_email}
+    # Which agent is running, for the tools that ask for it. Open WebUI's own
+    # runner passes __model__ the same way, and a tool such as `schedules`
+    # needs it to make a schedule that runs AS the agent rather than through
+    # the plain executor. Same ordering rule and same reason as __user__: a
+    # model that could name the agent id in its own arguments could make
+    # something run as an agent its owner did not choose.
+    #
+    # Unlike __user__ it is passed only to a method that declares it. Every
+    # native tool takes __user__; only schedules_tool takes __model__, and
+    # handing it to a method without the parameter is a TypeError that kills
+    # the call.
+    if agent_id and _declares(method, "__model__"):
+        call_kwargs["__model__"] = {"id": agent_id}
 
     # Most native tools are async, but some (excel_creator, executive_
     # dashboard) are plain `def`. Awaiting a plain return value raises, so
@@ -255,6 +283,7 @@ async def _run_native(source: str, method_name: str, params: dict,
 async def execute_tool_call(
     tool_call: dict, user_email: str,
     allowed_native_tools: list[str] | None = None,
+    agent_id: str | None = None,
 ) -> str:
     """Run one tool call as `user_email` and return a string for the model.
 
@@ -263,6 +292,12 @@ async def execute_tool_call(
     a native method that belongs to a tool it was never given -- see
     _load_native_tool_source. Leave it None (the default) to keep the old,
     unscoped lookup.
+
+    `agent_id` is WHICH agent is running, reaching a native tool as
+    __model__. Both real paths into this function know it -- the chat panel
+    and a scheduled run both call agent_runner._chat with model=agent_id --
+    and without it a tool that wants to act as the agent has nothing to act
+    as. Left None by callers that are not an agent.
 
     Never raises. A tool that fails returns its failure as the tool result so
     the agent can say what went wrong, which is far more useful to the owner
@@ -330,7 +365,8 @@ async def execute_tool_call(
         if name.isidentifier():
             source = await _load_native_tool_source(name, allowed_native_tools)
         if source:
-            return await _run_native(source, name, params, user_email)
+            return await _run_native(source, name, params, user_email,
+                                     agent_id)
 
         response = await _post_json(
             _proxy_url() + "/meta/call_tool",
