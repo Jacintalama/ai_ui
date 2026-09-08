@@ -547,6 +547,12 @@
 </div><!-- .agents-main -->
 
 <aside class="agent-panel" id="agent-panel">
+  <!-- Drag to give the conversation more room, or the agents more. A button
+       rather than a div so it is reachable by keyboard, which is also why it
+       takes arrow keys below. -->
+  <button class="ap-resize" id="ap-resize" type="button" role="separator"
+          aria-orientation="vertical" aria-label="Resize the agents column"
+          title="Drag to resize"></button>
   <div class="ap-head">
     <h2>Chat with your agents</h2>
     <!-- One permanent room. Nobody is seated and nothing is listed: every

@@ -102,3 +102,29 @@ def test_the_panel_styles_cover_the_classes_it_renders():
     for cls in (".aempty", ".astream", ".alive", ".awork", ".awaiting"):
         assert cls in css, cls
     assert "var(--panel)" not in css, "that token does not exist on this page"
+
+
+# The divider between the conversation and the agents. A width somebody drags
+# and loses on the next visit is worse than one they cannot change at all.
+
+def test_the_columns_can_be_resized_and_the_width_is_remembered():
+    page, js, css = _page(), _script(), _styles()
+    assert 'id="ap-resize"' in page
+    assert "--agents-width" in css, "the column width has to be a variable"
+    assert "--agents-width" in js, "and the script has to write it"
+    assert "localStorage" in js and "aiui-agents-width" in js
+
+
+def test_the_divider_is_reachable_without_a_mouse():
+    """A drag handle nobody can tab to is not a control."""
+    page, js = _page(), _script()
+    assert "<button" in page.split('id="ap-resize"')[0].rsplit("<", 1)[0] + "<button" \
+        or 'class="ap-resize"' in page
+    assert "ArrowLeft" in js and "ArrowRight" in js
+    assert 'aria-label="Resize the agents column"' in page
+
+
+def test_the_width_is_clamped_so_a_column_cannot_be_dragged_away():
+    js = _script()
+    assert "MIN_AGENTS" in js and "MAX_AGENTS" in js
+    assert "Math.max" in js and "Math.min" in js

@@ -8,7 +8,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import agent_activity
-from agent_activity import STALE_AFTER, _shape
+from agent_activity import (STALE_AFTER_CHANNEL, STALE_AFTER_SCHEDULE,
+                            _shape)
 
 NOW = datetime(2026, 8, 28, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -33,28 +34,62 @@ def test_a_finished_run_reads_as_idle_with_how_long_it_took():
     assert out["last_duration_seconds"] == 8
 
 
-def test_an_abandoned_run_is_not_shown_as_working_forever():
+@pytest.mark.parametrize("source,cut_off", [
+    ("schedule", STALE_AFTER_SCHEDULE),
+    ("channel", STALE_AFTER_CHANNEL),
+])
+def test_an_abandoned_run_is_not_shown_as_working_forever(source, cut_off):
     """A process that dies mid run never writes its finish. Saying "working"
     for the rest of time is a lie the card can never recover from, and this
     codebase already wedged run-now once on exactly that."""
-    out = _shape(_row(NOW - STALE_AFTER - timedelta(minutes=1)), NOW)
+    out = _shape(_row(NOW - cut_off - timedelta(minutes=1), source=source), NOW)
     assert out["state"] == "idle"
     assert out["last_status"] == "failed"
 
 
-def test_a_slow_but_healthy_run_is_still_working():
+@pytest.mark.parametrize("source,cut_off", [
+    ("schedule", STALE_AFTER_SCHEDULE),
+    ("channel", STALE_AFTER_CHANNEL),
+])
+def test_a_slow_but_healthy_run_is_still_working(source, cut_off):
     """The agent loop can legitimately take many minutes. The stale cut off
     has to sit above its worst case or a working agent gets called dead."""
-    out = _shape(_row(NOW - STALE_AFTER + timedelta(minutes=1)), NOW)
+    out = _shape(_row(NOW - cut_off + timedelta(minutes=1), source=source), NOW)
     assert out["state"] == "working"
 
 
-def test_the_stale_cut_off_clears_the_loops_own_worst_case():
-    # MAX_TOOL_ITERATIONS completions of up to HTTP_TIMEOUT_SECONDS each.
-    from agent_runner import HTTP_TIMEOUT_SECONDS, MAX_TOOL_ITERATIONS
-    worst = timedelta(seconds=HTTP_TIMEOUT_SECONDS * MAX_TOOL_ITERATIONS)
-    assert STALE_AFTER > worst, (
-        "a healthy long run would be reported as failed")
+def test_a_chat_run_gives_up_sooner_than_a_scheduled_one():
+    """Somebody is watching the card while a chat turn runs, and an agent
+    still claiming to work ten minutes after they asked it something is not
+    working. Nobody watches a schedule in real time."""
+    assert STALE_AFTER_CHANNEL < STALE_AFTER_SCHEDULE
+    at_eleven = NOW - timedelta(minutes=11)
+    assert _shape(_row(at_eleven, source="channel"), NOW)["state"] == "idle"
+    assert _shape(_row(at_eleven, source="schedule"), NOW)["state"] == "working"
+
+
+def test_each_cut_off_clears_the_worst_case_of_its_own_path():
+    """One number cannot be honest about both paths: a scheduled run may take
+    twenty minutes of model time before a tool has run, while a chat turn is
+    bounded at about three."""
+    from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
+                              CHANNEL_MAX_TOOL_ITERATIONS,
+                              HTTP_TIMEOUT_SECONDS, MAX_TOOL_ITERATIONS)
+    worst_schedule = timedelta(
+        seconds=HTTP_TIMEOUT_SECONDS * MAX_TOOL_ITERATIONS)
+    worst_channel = timedelta(
+        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS * CHANNEL_MAX_TOOL_ITERATIONS)
+    assert STALE_AFTER_SCHEDULE > worst_schedule, (
+        "a healthy long schedule would be reported as failed")
+    assert STALE_AFTER_CHANNEL > worst_channel, (
+        "a healthy long chat turn would be reported as failed")
+
+
+def test_an_unknown_source_is_treated_as_a_chat_run():
+    """The shorter cut-off is the safer default for anything watched, and a
+    source this module does not recognise is not a schedule."""
+    out = _shape(_row(NOW - timedelta(minutes=11), source="something-new"), NOW)
+    assert out["state"] == "idle"
 
 
 def test_a_failed_run_says_so_rather_than_hiding_it():

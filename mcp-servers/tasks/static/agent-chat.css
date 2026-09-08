@@ -11,7 +11,10 @@
      agent cards stay first in the document. They are what a screen reader
      and the keyboard should reach first, and they are what the page is
      called. */
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  /* The agents column is draggable, so its width is a variable the
+     script writes and remembers. The fallback is what a first visit
+     gets. */
+  grid-template-columns: minmax(0, 1fr) var(--agents-width, 340px);
 }
 .agents-main { min-width: 0; }
 
@@ -159,3 +162,29 @@
 }
 .atext.md pre code { background: none; border: 0; padding: 0; }
 .atext.md a { color: var(--accent); }
+
+/* The drag handle between the conversation and the agents. It lives in the
+   24px gap rather than taking width of its own, so nothing moves when it
+   appears, and it is a child of the panel because the panel is the only one
+   of the two columns that is positioned. */
+.ap-resize {
+  position: absolute; top: 0; bottom: 0; right: -13px; width: 14px;
+  cursor: col-resize; z-index: 3; background: transparent;
+  border: 0; padding: 0;
+}
+.ap-resize::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 6px; width: 2px;
+  border-radius: 2px; background: transparent; transition: background .12s;
+}
+.ap-resize:hover::after,
+.ap-resize:focus-visible::after,
+.agents-layout.ap-dragging .ap-resize::after { background: var(--accent); }
+.ap-resize:focus-visible { outline: none; }
+/* While dragging, the pointer owns the page: without this every text node it
+   crosses gets selected and the drag looks broken. */
+.agents-layout.ap-dragging { user-select: none; cursor: col-resize; }
+
+@media (max-width: 1180px) {
+  /* One column, so there is nothing to drag between. */
+  .ap-resize { display: none; }
+}

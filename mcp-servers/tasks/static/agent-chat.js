@@ -135,4 +135,76 @@
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && overlay && !overlay.hidden) { showClear(false); }
   });
+
+  // Drag the divider to trade width between the conversation and the agents.
+  // The width belongs to the person, not the session, so it is remembered
+  // per browser. localStorage can throw outright in a private window, hence
+  // the guards: a panel that will not open because a preference could not be
+  // read would be a poor trade for remembering a width.
+  var WIDTH_KEY = "aiui-agents-width";
+  var MIN_AGENTS = 260;
+  var MAX_AGENTS = 640;
+  var layout = document.querySelector(".agents-layout");
+  var grip = document.getElementById("ap-resize");
+
+  function clampWidth(px) {
+    return Math.max(MIN_AGENTS, Math.min(MAX_AGENTS, Math.round(px)));
+  }
+
+  function applyWidth(px, remember) {
+    if (!layout) return;
+    var width = clampWidth(px);
+    layout.style.setProperty("--agents-width", width + "px");
+    if (grip) { grip.setAttribute("aria-valuenow", String(width)); }
+    if (!remember) return;
+    try { localStorage.setItem(WIDTH_KEY, String(width)); } catch (e) {}
+  }
+
+  (function restoreWidth() {
+    var saved = null;
+    try { saved = localStorage.getItem(WIDTH_KEY); } catch (e) {}
+    var px = parseInt(saved, 10);
+    if (px > 0) { applyWidth(px, false); }
+  })();
+
+  if (grip && layout) {
+    grip.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      // Pointer capture, so the drag survives the cursor leaving the handle
+      // and crossing the iframe's own edges.
+      grip.setPointerCapture(e.pointerId);
+      layout.classList.add("ap-dragging");
+    });
+
+    grip.addEventListener("pointermove", function (e) {
+      if (!layout.classList.contains("ap-dragging")) return;
+      // The agents column is the right one, so its width is whatever is left
+      // between the pointer and the layout's right edge.
+      applyWidth(layout.getBoundingClientRect().right - e.clientX, false);
+    });
+
+    function stop(e) {
+      if (!layout.classList.contains("ap-dragging")) return;
+      layout.classList.remove("ap-dragging");
+      try { grip.releasePointerCapture(e.pointerId); } catch (err) {}
+      // Written once, at the end, rather than on every pointermove.
+      applyWidth(layout.getBoundingClientRect().right - e.clientX, true);
+    }
+    grip.addEventListener("pointerup", stop);
+    grip.addEventListener("pointercancel", stop);
+
+    // A drag handle nobody can reach without a mouse is not a control.
+    grip.addEventListener("keydown", function (e) {
+      var step = e.shiftKey ? 48 : 16;
+      var current = grip.getBoundingClientRect().right;
+      var now = layout.getBoundingClientRect().right - current;
+      if (e.key === "ArrowLeft") { applyWidth(now + step, true); }
+      else if (e.key === "ArrowRight") { applyWidth(now - step, true); }
+      else { return; }
+      e.preventDefault();
+    });
+
+    // Double click resets, because a dragged panel is easy to lose.
+    grip.addEventListener("dblclick", function () { applyWidth(340, true); });
+  }
 })();
