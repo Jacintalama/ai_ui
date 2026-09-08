@@ -335,3 +335,65 @@ def test_the_install_script_never_writes_a_secret_into_the_valves():
     assert "INTERNAL_CALLBACK_SECRET" not in body
     assert "schedules_tool.py" in body, "it must read the tool source"
     assert '"id": "schedules"' in body or "'id': 'schedules'" in body
+
+
+def test_the_install_script_refreshes_an_existing_tool():
+    """When the tool already exists, the script must call update, not create.
+    Create returns 200 with null when the id is taken, which would silently
+    skip the real install. The script checks if the tool exists first by
+    calling GET /api/v1/tools/id/schedules, then picks the endpoint by that."""
+    import pathlib
+    from unittest import mock
+
+    script_path = pathlib.Path(__file__).resolve().parents[3] / "scripts" \
+        / "insert_schedules_tool.py"
+
+    calls = []
+
+    def mock_urlopen(request, timeout=30):
+        """Simulate the API: tool exists, so GET succeeds and update is called."""
+        from unittest.mock import MagicMock
+        url = request.full_url
+        method = request.get_method()
+        calls.append((method, url))
+
+        response = MagicMock()
+        response.status = 200
+        response.__enter__ = MagicMock(return_value=response)
+        response.__exit__ = MagicMock(return_value=None)
+
+        if method == "GET" and "/id/schedules" in url and "valves" not in url:
+            # GET /api/v1/tools/id/schedules -> tool exists
+            response.read.return_value = b"{}"
+        elif method == "POST" and "/id/schedules/update" in url:
+            # POST /api/v1/tools/id/schedules/update -> update called (correct)
+            response.read.return_value = b'{"id": "schedules"}'
+        elif method == "POST" and "/tools/create" in url:
+            # POST /api/v1/tools/create -> should NOT be called
+            raise AssertionError("Should call update for existing tool, not create")
+        elif method == "POST" and "/valves/update" in url:
+            # POST /api/v1/tools/id/schedules/valves/update
+            response.read.return_value = b"{}"
+        else:
+            response.read.return_value = b"{}"
+
+        return response
+
+    # Mock the environment and urllib
+    with mock.patch.dict(os.environ, {"OPENWEBUI_API_KEY": "test-key"}):
+        with mock.patch("urllib.request.urlopen", side_effect=mock_urlopen):
+            # Import the script and run it (this executes the module-level code)
+            spec = importlib.util.spec_from_file_location(
+                "insert_schedules_tool_test", script_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+    # Verify GET was called to check existence
+    get_calls = [url for method, url in calls if method == "GET"]
+    assert any("/id/schedules" in url for url in get_calls), \
+        "Should call GET to check if tool exists"
+
+    # Verify update was called (not create)
+    post_calls = [url for method, url in calls if method == "POST"]
+    update_calls = [u for u in post_calls if "/update" in u and "valves" not in u]
+    assert update_calls, "Should call update endpoint when tool exists"

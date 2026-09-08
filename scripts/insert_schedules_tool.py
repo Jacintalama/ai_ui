@@ -43,14 +43,18 @@ def call(path, payload=None, method="POST"):
         return e.code, json.loads(e.read() or "{}")
 
 
+# /api/v1/tools/create returns 200 with null body when the id is taken, so pick
+# the endpoint by what is already there instead of by the response.
+existing_status, _ = call("/api/v1/tools/id/schedules", method="GET")
+endpoint = ("/api/v1/tools/id/schedules/update" if existing_status == 200
+            else "/api/v1/tools/create")
+
 body = {"id": "schedules", "name": "Schedules", "content": src,
         "meta": {"description": "See and manage your own scheduled runs"},
         "access_control": None}
-status, out = call("/api/v1/tools/create", body)
-if status != 200:
-    status, out = call("/api/v1/tools/id/schedules/update", body)
-print("tool upsert:", status)
-if status != 200:
+status, out = call(endpoint, body)
+print("tool", "update" if endpoint.endswith("update") else "create", "->", status)
+if status != 200 or not out:
     sys.exit(f"tool upsert failed: {out}")
 
 valves = {"tasks_url": "http://tasks:8210", "timeout_seconds": 30}
