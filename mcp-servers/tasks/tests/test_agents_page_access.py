@@ -37,10 +37,25 @@ def test_the_scope_is_stated_on_the_form():
     assert re.search(r"always has full access", page)
 
 
-def test_a_new_agent_defaults_to_asking():
+def test_a_new_agent_defaults_to_read_only():
+    """The narrowest level, not the middle one. A new agent should be able to
+    look things up and tell you, and be unable to touch anything until its
+    owner widens it deliberately."""
     page = _page()
-    assert re.search(r'value="ask"[^>]*checked', page), (
-        "the middle level is the default for a new agent")
+    assert re.search(r'value="read"[^>]*checked', page), (
+        "read only is the default for a new agent")
+    assert not re.search(r'value="ask"[^>]*checked', page)
+    assert not re.search(r'value="all"[^>]*checked', page)
+    assert 'setAccess(agent ? ((agent.meta && agent.meta.access) || "")' in page
+    assert '"read");' in page, "the new-agent branch picks read"
+
+
+def test_every_level_says_what_it_means():
+    """Three bare labels made the control that decides what an agent may do
+    to somebody's mail the least explained thing on the page."""
+    page = _page()
+    for said in ("Changes nothing", "asks you first", "without asking"):
+        assert said in page, said
 
 
 def test_the_level_is_written_into_meta():

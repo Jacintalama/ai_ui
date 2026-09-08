@@ -303,6 +303,14 @@
     padding: 10px 12px; color: var(--text); font-size: 13px; outline: none;
     font-family: inherit; }
   .modal textarea { resize: vertical; line-height: 1.55; }
+  /* The browser's own arrow is a different grey in a different place from
+     everything else in this modal. */
+  .modal select {
+    appearance: none; -webkit-appearance: none; padding-right: 34px;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b8b8c0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 11px center;
+    background-size: 15px; cursor: pointer; }
+  .modal select:focus { border-color: var(--accent); }
   .hint { color: var(--muted); font-size: 11px; margin-top: 5px; }
   .switch { display: flex; align-items: center; gap: 9px; margin-top: 16px;
             cursor: pointer; }
@@ -319,11 +327,21 @@
     border-width: 0 2px 2px 0; transform: rotate(42deg);
   }
   .switch span { font-size: 13px; }
-  .access { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 2px; }
-  .access .radio { display: flex; align-items: center; gap: 9px;
-                   font-size: 13.5px; cursor: pointer; }
-  .access .radio em { color: var(--muted); font-style: normal;
-                      font-size: 12.5px; }
+  .access { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px; }
+  /* Three bare radios read as one undifferentiated block, and this is the
+     control that decides what an agent may do to somebody's mail. Each
+     option is its own row you can see is chosen, and says what it means. */
+  .access .radio { display: flex; align-items: flex-start; gap: 9px;
+                   font-size: 13.5px; cursor: pointer; padding: 9px 11px;
+                   border: 1px solid var(--border); border-radius: var(--radius);
+                   background: var(--surface-2); transition: border-color .12s; }
+  .access .radio:hover { border-color: var(--border-2); }
+  .access .radio:has(input:checked) {
+    border-color: var(--accent); background: rgba(124, 140, 255, 0.08); }
+  .access .radio input { margin-top: 2px; flex: 0 0 auto;
+                         accent-color: var(--accent); }
+  .access .radio em { display: block; color: var(--muted); font-style: normal;
+                      font-size: 12px; margin-top: 2px; line-height: 1.45; }
   /* Seven bare checkboxes in three columns were the least confident thing on
      the page, and the tools are the most interesting thing an agent has.
      Tiles, with the same glyphs the card shows, so the two views agree.
@@ -603,16 +621,19 @@
         <label>Access</label>
         <div class="access" id="agent-access">
           <label class="radio">
-            <input type="radio" name="agent-access" value="read">
-            <span>Read only</span>
+            <input type="radio" name="agent-access" value="read" checked>
+            <span>Read only
+              <em>Looks things up and tells you. Changes nothing.</em></span>
           </label>
           <label class="radio">
-            <input type="radio" name="agent-access" value="ask" checked>
-            <span>With access <em>asks before it changes anything</em></span>
+            <input type="radio" name="agent-access" value="ask">
+            <span>With access
+              <em>Can act, but asks you first every time.</em></span>
           </label>
           <label class="radio">
             <input type="radio" name="agent-access" value="all">
-            <span>All access</span>
+            <span>All access
+              <em>Acts without asking. Sends email, deletes things.</em></span>
           </label>
         </div>
         <div class="hint" id="access-hint">Applies in your chat channels and
@@ -1496,11 +1517,12 @@
       // An existing agent with no level shows nothing selected, because it
       // genuinely has no level and pretending otherwise would write one.
       setAccess(agent ? ((agent.meta && agent.meta.access) || "")
-                      : "ask");
+                      : "read");
       document.getElementById("access-hint").textContent =
         (agent && !(agent.meta && agent.meta.access))
-          ? ("Not set yet, so this agent works as it always has. Pick one to "
-             + "control what it may do. Web chat here always has full access.")
+          ? ("No level chosen yet. In your chat channels that means read "
+             + "only, but a scheduled run set to full access can still act. "
+             + "Pick one to settle it. Web chat here always has full access.")
           : ("Applies in your chat channels and scheduled runs. Web chat here "
              + "always has full access.");
       formError("");

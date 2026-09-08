@@ -2,13 +2,23 @@
    page wrapper is 1640px while .grid caps at 792px. */
 .agents-layout {
   display: grid; gap: 24px; align-items: stretch;
-  /* Agents get a column, not the page. The card grid was written for a
-     full-width layout, two abreast under a 792px cap, which left the
-     conversation with whatever was spare. The overrides below narrow the
-     cards to one per row so the chat can have the rest. */
-  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
+  /* The conversation is the thing being used, so it leads. Agents keep a
+     column rather than the page: the card grid was written for a full-width
+     layout, two abreast under a 792px cap, which left the chat with whatever
+     was spare. The overrides below narrow the cards to one per row.
+
+     The columns are assigned rather than reordered in the markup, so the
+     agent cards stay first in the document. They are what a screen reader
+     and the keyboard should reach first, and they are what the page is
+     called. */
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
 }
 .agents-main { min-width: 0; }
+
+@media (min-width: 1181px) {
+  .agents-main { grid-column: 2; grid-row: 1; }
+  .agent-panel { grid-column: 1; grid-row: 1; }
+}
 
 /* Only while the two columns exist. Below the breakpoint the panel drops
    under the cards and they want the full width back. */

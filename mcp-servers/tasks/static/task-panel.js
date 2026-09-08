@@ -1385,20 +1385,11 @@
         "position:fixed;top:0;right:0;bottom:0;left:" + meas.edge + "px;" +
         "z-index:35;background:#0b0b0b;overflow:hidden;display:none;";
 
-      const close = document.createElement("button");
-      close.type = "button";
-      close.setAttribute("aria-label", "Close");
-      close.textContent = "×";
-      close.style.cssText =
-        "position:absolute;top:10px;right:16px;z-index:2;width:32px;height:32px;" +
-        "border:0;border-radius:8px;cursor:pointer;font-size:22px;line-height:1;" +
-        "background:rgba(255,255,255,.08);color:#e5e5e5;";
-      close.addEventListener("mouseenter", () => { close.style.background = "rgba(255,255,255,.16)"; });
-      close.addEventListener("mouseleave", () => { close.style.background = "rgba(255,255,255,.08)"; });
-      close.addEventListener("click", closeAiuiEmbed);
-      // Appended before the frames, but it is positioned with a z-index so it
-      // still paints above them.
-      wrap.appendChild(close);
+      // No close button. It sat over the top right corner of every feature
+      // page, which is where those pages put their own controls, and it was
+      // covering them. The pane is a place you are, not a dialog you dismiss:
+      // Escape leaves it, and so does clicking any link, including every
+      // other entry in the sidebar. Both are wired below.
       document.body.appendChild(wrap);
 
       const isOpen = () => wrap.hasAttribute("data-open");
@@ -1433,8 +1424,9 @@
         //
         // A link leaves the page, so the pane should not cover where it went.
         // A button is chrome — sidebar collapse, theme toggle — and pressing
-        // one is not a request to abandon the work surface. The X and Escape
-        // remain the deliberate ways out.
+        // one is not a request to abandon the work surface. Escape and any real
+        // navigation remain the deliberate ways out; there is no close
+        // button any more.
         if (!t.closest || !t.closest('a[href]')) return;
         closeAiuiEmbed();
       }, true);
