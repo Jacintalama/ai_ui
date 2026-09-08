@@ -97,7 +97,8 @@ def browser():
         b.close()
 
 
-PANE_URLS = ["/cronjobs", "/app-builder", "/video-generation", "/channel"]
+PANE_URLS = ["/cronjobs", "/app-builder", "/video-generation", "/channel",
+             "/ai-agents"]
 
 
 @pytest.mark.parametrize("url_path", PANE_URLS)

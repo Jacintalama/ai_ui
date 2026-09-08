@@ -219,12 +219,16 @@ def test_switching_features_does_not_close_the_pane(page):
 
 
 def test_closing_keeps_the_loaded_pages_for_next_time(page):
+    """Escape, not an X. The pane's close button was removed on 2026-09-08:
+    it sat on every feature page and Ralph asked for it gone. Escape and
+    following a link are the exits now, and this drives the one that is a
+    deliberate dismissal rather than a navigation."""
     _load(page, "sidebar_nonadmin.html")
     page.locator("[data-aiui-cron-jobs]").click()
     page.wait_for_selector(OPEN_PANE, timeout=4000)
-    page.locator(f"{PANE} button[aria-label='Close']").click()
+    page.keyboard.press("Escape")
     page.wait_for_timeout(200)
-    assert page.locator(OPEN_PANE).count() == 0, "close did not hide the pane"
+    assert page.locator(OPEN_PANE).count() == 0, "Escape did not hide the pane"
     assert page.locator(f"{PANE} iframe").count() == 1, \
         "close destroyed the loaded page, so reopening would load it again"
 
@@ -237,8 +241,9 @@ def test_clicking_a_normal_sidebar_link_still_closes_the_pane(page):
     the sidebar mid-build lost a running preview and an unsent prompt, and
     landed on a blank chat (reported with a screenshot).
 
-    The anti-trap intent is kept and is not weakened: the X and Escape are both
-    exits and both are tested. What changed is the discriminator — a LINK
+    The anti-trap intent is kept and is not weakened: following a link and
+    Escape are both exits and both are tested. What changed is the
+    discriminator: a LINK
     navigates, so the pane should not cover where it went; a BUTTON is chrome,
     and pressing one is not a request to abandon the work surface.
     """

@@ -25,7 +25,8 @@
   // below reopen the pane and put the feature URL back. Only a direct arrival
   // pays the extra load. Kept in sync with NAV_ENTRIES by
   // tests/test_feature_pages_embed.py::test_every_pane_url_is_rescued.
-  const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation", "/channel"];
+  const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation",
+                          "/channel", "/ai-agents"];
   const AIUI_PENDING_KEY = "__aiuiOpenPath";
 
   // Set the moment we decide to bounce. location.replace() does NOT stop this
@@ -1285,6 +1286,12 @@
         label: "AI Agents",
         title: "AI Agents: build an assistant with your own instructions",
         href: "/tasks/agents",
+        // What the ADDRESS BAR shows while this is open. Plural, matching the
+        // sidebar label, and hyphenated like the page it names. Caddy must
+        // NOT answer it: a reload has to reach the SPA so the pane can
+        // reopen, which is what test_caddy_does_not_answer_the_feature_url_
+        // itself pins.
+        urlPath: "/ai-agents",
         embed: true,
         // robot glyph: a head with two eyes and an antenna
         setIcon: (svg) => {
