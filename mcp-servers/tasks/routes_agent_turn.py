@@ -248,7 +248,10 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
         if approved:
             # tools, not anything the caller sent: same rule as the turn
             # endpoint, and the reason execute_tool_call takes this argument.
-            result = await execute_tool_call(call, user_email, tools or None)
+            # agent_id goes with it so a tool that acts as the agent still
+            # knows which agent this is on the resumed half of the turn.
+            result = await execute_tool_call(call, user_email, tools or None,
+                                             agent_id)
         else:
             result = (REFUSED_BY_OWNER + ", so " + (name or "that tool")
                       + " was not run.")

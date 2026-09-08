@@ -208,7 +208,15 @@ async def _chat(token: str, model: str, messages: list[dict],
                 # tool_ids scopes which native tools this agent is even
                 # allowed to run, not only which ones the model was told
                 # about -- see execute_tool_call.
-                result = await execute_tool_call(call, user_email, tool_ids)
+                #
+                # `model` IS the agent id on every caller of this function
+                # (a schedule passes sched.agent_id, the chat panel and the
+                # turn endpoint pass agent_id), so it is what a tool acting
+                # as the agent has to be handed. Without it __model__ is
+                # always empty and a schedule an agent makes cannot run as
+                # that agent.
+                result = await execute_tool_call(call, user_email, tool_ids,
+                                                 model)
             if isinstance(result, str) and len(result) > TOOL_RESULT_EXCERPT_CHARS:
                 result = (
                     result[:TOOL_RESULT_EXCERPT_CHARS]

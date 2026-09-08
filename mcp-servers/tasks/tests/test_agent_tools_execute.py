@@ -352,3 +352,101 @@ MALFORMED_CALLS = [
 async def test_a_malformed_tool_call_returns_a_string_instead_of_raising(call):
     out = await execute_tool_call(call, "owner@example.com")
     assert isinstance(out, str) and out
+# --------------------------------------------------- which agent is running
+
+async def test_a_tool_that_asks_which_agent_is_running_is_told():
+    """__model__ is how a native tool learns which agent this is. Without it
+    a tool that acts as the agent -- schedules, which makes a schedule that
+    runs as that agent -- has nothing to act as, and quietly falls back."""
+    source = (
+        "class Tools:\n"
+        "    async def create_schedule(self, name='', __user__=None,"
+        " __model__=None):\n"
+        "        return 'as:' + ((__model__ or {}).get('id') or 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("create_schedule"), "owner@example.com",
+            None, "agent-research-assistant-0001")
+    assert out == "as:agent-research-assistant-0001"
+
+
+async def test_a_model_supplied_agent_id_is_overwritten_not_obeyed():
+    """Same rule and same ordering as __user__: identity is set after the
+    model's own arguments. A model that could name the agent could make
+    something run as an agent its owner did not choose."""
+    source = (
+        "class Tools:\n"
+        "    async def create_schedule(self, __user__=None, __model__=None):\n"
+        "        return 'as:' + ((__model__ or {}).get('id') or 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("create_schedule",
+                  {"__model__": {"id": "agent-somebody-else-9999"}}),
+            "owner@example.com", None, "agent-research-assistant-0001")
+    assert out == "as:agent-research-assistant-0001"
+
+
+async def test_a_tool_that_does_not_ask_for_the_agent_is_left_alone():
+    """Every native tool takes __user__; only schedules takes __model__.
+    Passing it to a method without the parameter would be a TypeError, so
+    this is the check that the plumbing did not break the other tools."""
+    source = (
+        "class Tools:\n"
+        "    async def list_unread_emails(self, max_results=15, __user__=None):\n"
+        "        return 'seen-by:' + (__user__ or {}).get('email', 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("list_unread_emails"), "owner@example.com",
+            None, "agent-research-assistant-0001")
+    assert out == "seen-by:owner@example.com"
+
+
+async def test_a_plain_def_tool_still_runs_when_an_agent_is_named():
+    """excel_creator and executive_dashboard are plain `def`, and neither
+    declares __model__."""
+    source = (
+        "class Tools:\n"
+        "    def build_workbook(self, __user__=None):\n"
+        "        return 'built-for:' + (__user__ or {}).get('email', 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("build_workbook"), "owner@example.com",
+            None, "agent-research-assistant-0001")
+    assert out == "built-for:owner@example.com"
+
+
+async def test_no_agent_named_leaves_the_default_in_place():
+    """A caller that is not an agent passes nothing, and a tool's own default
+    stands rather than being handed an empty id."""
+    source = (
+        "class Tools:\n"
+        "    async def create_schedule(self, __user__=None, __model__='keep'):\n"
+        "        return 'model:' + str(__model__)\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(_call("create_schedule"),
+                                      "owner@example.com")
+    assert out == "model:keep"
+
+
+async def test_a_kwargs_tool_is_handed_the_agent_too():
+    source = (
+        "class Tools:\n"
+        "    async def create_schedule(self, **kwargs):\n"
+        "        return 'as:' + (kwargs.get('__model__') or {}).get('id', 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("create_schedule"), "owner@example.com",
+            None, "agent-research-assistant-0001")
+    assert out == "as:agent-research-assistant-0001"
