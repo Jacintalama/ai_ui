@@ -318,3 +318,20 @@ async def test_creating_with_no_id_in_the_reply_does_not_claim_success(tool):
                                      prompt="p", __user__=OWNER)
     assert isinstance(out, str) and out
     assert "did not name" in out.lower()
+
+
+# ---------------------------------------------------------------- installing
+
+def test_the_install_script_never_writes_a_secret_into_the_valves():
+    """Every other insert script sends internal_secret. This tool has no
+    field for one, and sending it would either be dropped or, worse,
+    accepted by a future edit that added the field back."""
+    import pathlib
+    script = pathlib.Path(__file__).resolve().parents[3] / "scripts" \
+        / "insert_schedules_tool.py"
+    assert script.exists(), script
+    body = script.read_text(encoding="utf-8")
+    assert "internal_secret" not in body
+    assert "INTERNAL_CALLBACK_SECRET" not in body
+    assert "schedules_tool.py" in body, "it must read the tool source"
+    assert '"id": "schedules"' in body or "'id': 'schedules'" in body
