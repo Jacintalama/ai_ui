@@ -1011,3 +1011,63 @@ def test_awake_is_still_green_but_does_not_pulse(page):
     animation = dot.evaluate("el => getComputedStyle(el).animationName")
     assert colour == "rgb(74, 222, 128)", colour
     assert animation == "none", animation
+
+
+# --- the edit form is two columns on a wide screen -------------------------
+
+# Ralph asked for a wider modal to make room for a list of skills. Width on
+# its own is not the point: one column of fields in a 980px box just makes the
+# eye travel further, so the fields reflow into two.
+
+def _box(page, sel):
+    return page.locator(sel).bounding_box()
+
+
+def test_the_agent_form_is_wider_than_the_other_dialogs(page):
+    """Scoped to this one form. .modal is shared with Connections and the
+    clear-confirm dialog, and widening those would be a regression nobody
+    asked for."""
+    _open_form(page)
+    form = _box(page, "#agent-form")
+    assert form["width"] > 800, form["width"]
+    page.locator("#agent-cancel").click()
+    page.locator("#open-connections").click()
+    page.wait_for_selector("#connections-panel", state="visible")
+    assert _box(page, "#connections-panel")["width"] < 700
+
+
+def test_the_settings_sit_beside_the_instructions_not_below_them(page):
+    """Two columns: who the agent is on the left, what it can do on the right.
+    Checked by geometry rather than by class name, because a grid that never
+    applied would still carry the class."""
+    _open_form(page)
+    name = _box(page, "#agent-name")
+    model = _box(page, "#agent-base")
+    assert model["x"] > name["x"] + name["width"] - 1, (
+        "the model field is not in a second column")
+    assert model["y"] < name["y"] + 200, (
+        "the second column starts far below the first, so it is not beside it")
+
+
+def test_a_narrow_window_puts_it_back_to_one_column(page):
+    """A phone gets the single column it had. Two 440px columns do not fit and
+    would either overflow the screen or shrink both fields to nothing."""
+    page.set_viewport_size({"width": 700, "height": 1000})
+    _open_form(page)
+    name = _box(page, "#agent-name")
+    model = _box(page, "#agent-base")
+    assert model["y"] > name["y"], "the fields did not stack"
+    assert abs(model["x"] - name["x"]) < 2, "they are still side by side"
+    page.set_viewport_size({"width": 1500, "height": 1000})
+
+
+def test_every_field_is_still_reachable_after_the_reflow(page):
+    """The reflow moves markup. A field that ended up outside the form, or
+    hidden behind the grid, would break saving without breaking anything a
+    layout test looks at."""
+    _open_form(page)
+    for sel in ("#agent-name", "#agent-role", "#agent-instructions",
+                "#agent-base", "#use-my-apps", "#native-tools",
+                "#agent-save", "#agent-cancel"):
+        assert page.locator("#agent-form " + sel).count() == 1, sel
+    assert page.locator("#agent-form input[name='agent-access']").count() == 3
