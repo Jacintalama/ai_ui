@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import agent_activity
-from agent_activity import (STALE_AFTER_CHANNEL, STALE_AFTER_SCHEDULE,
-                            _shape)
+from agent_activity import (AWAKE_FOR, STALE_AFTER_CHANNEL,
+                            STALE_AFTER_SCHEDULE, _shape)
 
 NOW = datetime(2026, 8, 28, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -25,13 +25,67 @@ def test_a_run_in_flight_reads_as_working_with_its_elapsed_time():
     assert out["running_for_seconds"] == 14
 
 
-def test_a_finished_run_reads_as_idle_with_how_long_it_took():
+def test_a_finished_run_reads_as_awake_with_how_long_it_took():
+    """Ralph asked for this looking at a card that said Idle one second after
+    Ada answered him. An agent he just spoke to is not idle; it is awake and
+    it stays awake for a while."""
     out = _shape(_row(NOW - timedelta(seconds=30),
                       finished=NOW - timedelta(seconds=22),
                       status="completed"), NOW)
-    assert out["state"] == "idle"
+    assert out["state"] == "awake"
     assert out["last_status"] == "completed"
     assert out["last_duration_seconds"] == 8
+
+
+def test_an_agent_left_alone_long_enough_goes_idle():
+    out = _shape(_row(NOW - AWAKE_FOR - timedelta(minutes=2),
+                      finished=NOW - AWAKE_FOR - timedelta(minutes=1),
+                      status="completed"), NOW)
+    assert out["state"] == "idle"
+
+
+def test_the_clock_runs_from_the_END_of_the_run_not_the_start():
+    """A twenty minute scheduled run that finished a moment ago is awake. Off
+    started_at it would be called idle the instant it finished, which is the
+    bug being fixed, just harder to see."""
+    out = _shape(_row(NOW - timedelta(minutes=20),
+                      finished=NOW - timedelta(seconds=5),
+                      status="completed"), NOW)
+    assert out["state"] == "awake"
+
+
+def test_talking_again_puts_it_back_to_awake():
+    """The reset is not special code: each turn writes its own run row and the
+    card reads the newest one. This pins that the newest row is all it takes,
+    so nobody later adds a "first seen" field thinking one is needed."""
+    stale = _shape(_row(NOW - AWAKE_FOR - timedelta(minutes=5),
+                        finished=NOW - AWAKE_FOR - timedelta(minutes=4),
+                        status="completed"), NOW)
+    assert stale["state"] == "idle"
+    fresh = _shape(_row(NOW - timedelta(seconds=3), finished=NOW,
+                        status="completed"), NOW)
+    assert fresh["state"] == "awake"
+
+
+@pytest.mark.parametrize("status", ["failed", "waiting"])
+def test_a_run_that_needs_a_person_never_reads_as_awake(status):
+    """Failed and Needs approval are red because they want you. Ten minutes of
+    green over the top of either would hide the one thing worth seeing."""
+    out = _shape(_row(NOW - timedelta(seconds=30), finished=NOW,
+                      status=status), NOW)
+    assert out["state"] == "idle"
+    assert out["last_status"] == status
+
+
+def test_a_run_still_in_flight_is_working_not_merely_awake():
+    """Working outranks awake: the pulse means it is thinking right now, and
+    an in-flight run must not be flattened into "used recently"."""
+    out = _shape(_row(NOW - timedelta(seconds=5)), NOW)
+    assert out["state"] == "working"
+
+
+def test_awake_is_the_ten_minutes_ralph_asked_for():
+    assert AWAKE_FOR == timedelta(minutes=10)
 
 
 @pytest.mark.parametrize("source,cut_off", [

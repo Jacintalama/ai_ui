@@ -967,3 +967,47 @@ def test_search_finds_an_agent_by_its_role(page):
     shown = [e.get_attribute("data-agent-id")
              for e in page.locator("#my-agents [data-agent-id]").all()]
     assert shown == ["agent-mine-a1b2"]
+
+
+# --- awake ----------------------------------------------------------------
+
+# Ralph, watching a card say Idle a second after Ada answered him: "they idle
+# even though its not 10minutes yet". Awake is the state between working and
+# resting, and it is what somebody looking at the card actually wants.
+
+def test_a_recently_used_agent_reads_as_awake(page):
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "awake", "last_status": "completed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 2, "source": "channel"}})
+    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
+    assert "Awake" in text
+    assert "Idle" not in text
+    assert "took 2s" in text
+
+
+def test_the_dot_is_green_when_the_agent_is_awake(page):
+    """Green like Working, because both mean the agent is with you. The pulse
+    is what separates them: Working is thinking right now."""
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "awake", "last_status": "completed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 2, "source": "channel"}})
+    klass = _dot_state(page)
+    assert "awake" in klass
+    assert "idle" not in klass and "blocked" not in klass
+
+
+def test_awake_is_still_green_but_does_not_pulse(page):
+    """The pulse is reserved for a run in flight. An agent that pulsed for ten
+    minutes after every answer would make the one signal that means "it is
+    thinking right now" mean nothing."""
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "awake", "last_status": "completed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 2, "source": "channel"}})
+    dot = page.locator('[data-activity-for="agent-mine-a1b2"] .dot')
+    colour = dot.evaluate("el => getComputedStyle(el).backgroundColor")
+    animation = dot.evaluate("el => getComputedStyle(el).animationName")
+    assert colour == "rgb(74, 222, 128)", colour
+    assert animation == "none", animation

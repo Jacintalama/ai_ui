@@ -178,6 +178,12 @@
   .card-activity.working { color: #4ade80; }
   .card-activity.working .dot { background: #4ade80;
                                 animation: livePulse 1.6s ease-in-out infinite; }
+  /* Awake: used recently, not running anything this second. Green like
+     working, because both mean the agent is with you, and NOT pulsing,
+     because the pulse is the one signal that means it is thinking right
+     now. Pulsing for ten minutes after every answer would spend it. */
+  .card-activity.awake { color: #4ade80; }
+  .card-activity.awake .dot { background: #4ade80; }
   .card-activity.idle .dot { background: #fbbf24; }
   .card-activity.blocked .dot { background: #f87171; }
   @keyframes livePulse {
@@ -1194,7 +1200,14 @@
         // it is waiting on a person, which is the same kind of stuck as a
         // failure, so it reads red rather than amber.
         var blocked = a.last_status === "failed" || a.last_status === "waiting";
-        el.classList.add(blocked ? "blocked" : "idle");
+        // Awake sits between working and idle: the last run finished, and it
+        // finished recently enough that the person still thinks of this agent
+        // as with them. The server decides how recent that is and never sends
+        // "awake" for a run that failed or is waiting on an answer, so the
+        // blocked check still wins here.
+        var resting = blocked ? "blocked"
+          : (a.state === "awake" ? "awake" : "idle");
+        el.classList.add(resting);
         var bits = [];
         if (a.last_run_at) bits.push("used " + ago(a.last_run_at));
         if (a.last_duration_seconds !== null
@@ -1202,7 +1215,8 @@
           bits.push("took " + secs(a.last_duration_seconds));
         }
         var word = a.last_status === "failed" ? "Failed"
-          : a.last_status === "waiting" ? "Needs approval" : "Idle";
+          : a.last_status === "waiting" ? "Needs approval"
+          : resting === "awake" ? "Awake" : "Idle";
         el.innerHTML = '<span class="dot"></span><span>' + word
           + (bits.length ? " \u00b7 " + esc(bits.join(", ")) : "") + "</span>";
       }

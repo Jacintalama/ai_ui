@@ -1,9 +1,13 @@
 """Whether an agent is working right now, and how long its last run took.
 
 An agent is not a service that is up or down: it is asleep until something
-asks it to do a thing. So "online" here means a run is in flight, and the
-useful companion to that is how long the last one took, which is the only
-honest signal that the thing is doing real work rather than nothing.
+asks it to do a thing. So there are three live states, not two. It is
+WORKING while a run is actually in flight, AWAKE for a while after one
+finishes, and IDLE once it has been left alone long enough. The middle one
+exists because a card that said "Idle" one second after Ada answered a
+question was answering the wrong question: nobody watching wants to know
+whether a request is in flight this instant, they want to know whether the
+agent they just spoke to is still with them.
 
 Recording is deliberately fire and forget. An agent run must never fail
 because the bookkeeping around it failed, so every function here swallows its
@@ -38,6 +42,20 @@ STALE_AFTER_CHANNEL = timedelta(minutes=10)
 #: the other direction. Nobody is watching a schedule in real time, so the
 #: cost of waiting is nothing.
 STALE_AFTER_SCHEDULE = timedelta(minutes=45)
+
+#: How long after a run finishes an agent still counts as awake. Reset by
+#: every new run, which needs no code: each turn writes its own row and the
+#: card reads the newest one per agent, so talking to an agent moves the
+#: clock by definition.
+#:
+#: Deliberately its own constant rather than a second use of
+#: STALE_AFTER_CHANNEL, which happens to hold the same ten minutes today.
+#: That one answers "how long may an unfinished run keep claiming to work
+#: before we call it dead", which is a question about failure. This one
+#: answers "how long does somebody still think of this agent as with them",
+#: which is a question about attention. They are equal by coincidence, and
+#: tying them together would move one the next time the other is tuned.
+AWAKE_FOR = timedelta(minutes=10)
 
 SOURCE_SCHEDULE = "schedule"
 SOURCE_CHANNEL = "channel"
@@ -114,7 +132,16 @@ def _shape(row, now: datetime) -> dict:
                 "last_run_at": started.isoformat(),
                 "source": row["source"]}
 
-    return {"state": "idle",
+    # Measured from the END of the run, not the start: a twenty minute
+    # schedule that finished a moment ago is as awake as a two second chat
+    # turn, and off started_at it would be called idle the instant it
+    # finished.
+    #
+    # Only a run that COMPLETED. Failed and waiting are drawn red because
+    # they want a person, and ten minutes of green over the top of either
+    # would hide the one thing on the card worth seeing.
+    awake = (row["status"] == "completed" and now - finished <= AWAKE_FOR)
+    return {"state": "awake" if awake else "idle",
             "last_status": row["status"],
             "last_run_at": started.isoformat(),
             "last_duration_seconds": max(
