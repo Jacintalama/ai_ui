@@ -2,9 +2,35 @@
    page wrapper is 1640px while .grid caps at 792px. */
 .agents-layout {
   display: grid; gap: 24px; align-items: stretch;
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 700px);
+  /* Agents get a column, not the page. The card grid was written for a
+     full-width layout, two abreast under a 792px cap, which left the
+     conversation with whatever was spare. The overrides below narrow the
+     cards to one per row so the chat can have the rest. */
+  grid-template-columns: minmax(280px, 380px) minmax(0, 1fr);
 }
 .agents-main { min-width: 0; }
+
+/* Only while the two columns exist. Below the breakpoint the panel drops
+   under the cards and they want the full width back. */
+@media (min-width: 1181px) {
+  /* One card per row, and no cap: the column is the cap now. */
+  .agents-main .grid {
+    grid-template-columns: 1fr; max-width: none; gap: 12px;
+  }
+  .agents-main .card { padding: 14px; }
+  .agents-main .avatar { width: 30px; height: 30px; border-radius: 8px; }
+  .agents-main .card-title { font-size: 14px; }
+
+  /* The heading row holds a search box and two buttons side by side, which
+     does not fit a 380px column. Let it wrap, and give the search the width
+     it needs rather than the fixed one it grows to on focus. */
+  .agents-main .section-head { flex-wrap: wrap; gap: 10px; }
+  .agents-main .section-head .tools { width: 100%; flex-wrap: wrap; }
+  .agents-main .search-wrap { flex: 1 1 100%; }
+  .agents-main .search-wrap input,
+  .agents-main .search-wrap input:focus { width: 100%; }
+  .agents-main .section-head .btn { flex: 1 1 auto; }
+}
 
 .agent-panel {
   position: sticky; top: 16px;
