@@ -250,8 +250,8 @@ async def test_two_turns_render_both_names_in_order(mod, monkeypatch):
         {"messages": [{"role": "user", "content": "hi mia and ada, are you there?"}]},
         __user__={"email": "owner@example.com"})
 
-    mia_pos = out.find("Mia:")
-    ada_pos = out.find("Ada:")
+    mia_pos = out.find("**Mia**")
+    ada_pos = out.find("**Ada**")
     assert mia_pos != -1 and ada_pos != -1
     assert mia_pos < ada_pos, "Mia was named first and must render first"
     assert "Nothing urgent" in out
@@ -266,7 +266,7 @@ def test_a_single_turn_renders_exactly_as_before(mod):
     out = p._render({"turns": [{
         "agent": {"id": "agent-m", "name": "Mia"},
         "answer": "Four unread.", "notes": []}]})
-    assert out == "Mia:\nFour unread."
+    assert out == "**Mia**\n\nFour unread."
 
 
 async def test_a_malformed_turns_value_returns_a_readable_sentence(mod):
