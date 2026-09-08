@@ -26,6 +26,7 @@ from sqlalchemy import select
 import agent_access
 import agent_activity
 import agent_routing
+import agent_skills
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                           CHANNEL_MAX_TOOL_ITERATIONS,
                           CHAT_TOKEN_TTL_SECONDS, _chat, _list_agents,
@@ -639,7 +640,15 @@ def _identity_line(agent: dict, names) -> dict:
         "Answer as yourself. Do not put your own name at the start of your "
         "answer; it is added for you.")
 
-    return {"role": "system", "content": " ".join(said)}
+    content = " ".join(said)
+    # Appended, never in place of the above. The brief exists because an agent
+    # did not know its own name; a skill adds a job to that, it does not
+    # replace who is doing it. Joined with a blank line rather than a space
+    # because a skill is a markdown document, not another sentence.
+    chosen = agent_skills.brief_for(agent.get("meta"))
+    if chosen:
+        content += "\n\n" + chosen
+    return {"role": "system", "content": content}
 
 
 async def _turn_for(user_email: str, agent: dict, messages: list[dict],

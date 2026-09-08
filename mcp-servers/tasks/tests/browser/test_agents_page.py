@@ -44,7 +44,7 @@ MODELS = [
      "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You research things carefully."},
      "meta": {"description": "mine", "toolIds": ["server:mcp-proxy"],
-              "role": "Project manager"},
+              "role": "Project manager", "skillIds": ["daily-standup"]},
      "access_grants": [], "is_active": True, "write_access": True,
      "created_at": 2, "updated_at": 2,
      "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
@@ -188,6 +188,8 @@ def page(browser, tmp_path):
             body = {"activity": {}}
         elif "/agents/seed" in url:
             body = {"seeded": False, "created": 0}
+        elif "/agents/skills" in url:
+            body = {"skills": SKILLS}
         elif "/agents/tools" in url:
             body = {"tools": [
                 {"id": t, "label": t, "connected": True, "connect_url": ""}
@@ -1071,3 +1073,78 @@ def test_every_field_is_still_reachable_after_the_reflow(page):
                 "#agent-save", "#agent-cancel"):
         assert page.locator("#agent-form " + sel).count() == 1, sel
     assert page.locator("#agent-form input[name='agent-access']").count() == 3
+
+
+# --- skills ---------------------------------------------------------------
+
+# A skill is ready-made instructions for one job. The list sits full width
+# under the two columns, because a skill is only pickable when its name and
+# what it does fit on one line.
+
+SKILLS = [
+    {"name": "inbox-triage", "tools": ["gmail"],
+     "description": "Sort unread mail into what needs a reply today. Use when "
+                    "asked about email."},
+    {"name": "daily-standup", "tools": ["server:mcp-proxy"],
+     "description": "What moved, what is stuck, what is due. Use when asked "
+                    "for a standup."},
+]
+
+
+def test_the_form_lists_the_skills_with_what_they_do(page):
+    _open_form(page)
+    block = page.locator("#agent-skills")
+    assert block.count() == 1, "there is no skills list on the form"
+    text = block.inner_text()
+    assert "inbox-triage" in text
+    assert "Sort unread mail" in text, (
+        "the name is there but not what it does, so it cannot be chosen")
+
+
+def test_ticking_a_skill_saves_it_on_the_agent(page):
+    _fill(page, name="Researcher", instructions="Research carefully.")
+    page.check("#skill-inbox-triage")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["meta"]["skillIds"] == ["inbox-triage"]
+
+
+def test_an_agent_with_no_skills_writes_no_skill_list(page):
+    """Same rule as the role and the access level: an agent with none must
+    look exactly as it did before this existed."""
+    _fill(page, name="Researcher", instructions="Research carefully.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert "skillIds" not in json.loads(page.sent[-1]["body"])["meta"]
+
+
+def test_edit_shows_which_skills_the_agent_already_has(page):
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.is_checked("#skill-daily-standup")
+    assert not page.is_checked("#skill-inbox-triage")
+
+
+def test_a_new_form_does_not_inherit_the_last_agents_skills(page):
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.locator("#agent-cancel").click()
+    _open_form(page)
+    assert not page.is_checked("#skill-daily-standup")
+
+
+def test_the_skills_sit_below_both_columns_not_inside_one(page):
+    """Full width. Squeezed into half, a person would be choosing from names
+    alone, which is the thing the description exists to prevent."""
+    _open_form(page)
+    skills = _box(page, "#agent-skills")
+    name = _box(page, "#agent-name")
+    model = _box(page, "#agent-base")
+    assert skills["y"] > name["y"], "the skills are above the fields"
+    assert skills["width"] > (model["x"] + model["width"] - name["x"]) * 0.9, (
+        "the skills list is not full width")
+
+
+def test_the_card_shows_the_skills_an_agent_has(page):
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    assert "daily-standup" in card.inner_text()

@@ -163,6 +163,15 @@
      left padding, which exists to sit tight against an icon. */
   .card-tools .chip.model { color: var(--muted); font-variant-numeric: tabular-nums;
                             padding-left: 9px; }
+  /* Skills get their own row above the tools. What an agent knows how to do
+     is now the more interesting fact about it than what it can reach, and
+     the tools row already carries the connected-apps chip and the model. */
+  .card-skills { display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+                 margin-top: 12px; }
+  .card-skills .chip { display: inline-flex; align-items: center; gap: 5px;
+                       padding: 4px 9px; color: var(--accent);
+                       border-color: rgba(124,140,255,0.28);
+                       background: rgba(124,140,255,0.10); }
   /* Awake or asleep, and how long the last one took. An agent is not a
      service that is up or down: it sleeps until something asks it to work,
      so "working" means a run is actually in flight right now. */
@@ -319,6 +328,26 @@
   #agent-form .form-cols {
     display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px;
     align-items: start; }
+  /* Full width under both columns. A skill is pickable only when its name
+     and what it does fit on one line; in half the width a person would be
+     choosing from names alone. Scrolls rather than growing, because this
+     list gets longer and the modal must not run off the screen. */
+  .skill-list { display: flex; flex-direction: column; gap: 6px;
+                max-height: 220px; overflow-y: auto; margin-top: 6px;
+                padding-right: 4px; }
+  .skill-list .skill { display: flex; align-items: flex-start; gap: 10px;
+                       padding: 9px 11px; cursor: pointer;
+                       border: 1px solid var(--border);
+                       border-radius: var(--radius); font-size: 13px; }
+  .skill-list .skill:hover { border-color: var(--border-2); }
+  .skill-list .skill:has(input:checked) {
+    border-color: var(--accent); background: rgba(124,140,255,0.07); }
+  .skill-list .skill input { margin-top: 2px; flex: 0 0 auto; }
+  .skill-list .skill-name { font-weight: 600; }
+  .skill-list .skill-what { display: block; color: var(--muted);
+                            margin-top: 2px; line-height: 1.5; }
+  .skill-list .skill-needs { color: var(--accent); }
+  .skill-empty { color: var(--muted); font-size: 12px; margin-top: 6px; }
   /* The first label in a column carries the same top margin as any other,
      which leaves the two columns starting at different heights. */
   #agent-form .form-col > :first-child { margin-top: 0; }
@@ -705,6 +734,12 @@
         </div>
         </div>
 
+        <label for="agent-skills">Skills</label>
+        <div class="hint">Ready-made instructions for one kind of job. Tick one
+          and the agent follows it whenever that job comes up, instead of
+          working it out each time.</div>
+        <div class="skill-list" id="agent-skills"></div>
+
         <div class="form-error" id="form-error"></div>
         <div class="form-actions">
           <button class="btn" type="button" id="agent-cancel">Cancel</button>
@@ -840,6 +875,28 @@
     }
 
 
+    // Which skills this agent has been given. Same shape and same defence
+    // as roleOf: it comes off a model row, so it can be absent or not a list.
+    function skillsOf(m) {
+      var ids = m && m.meta ? m.meta.skillIds : null;
+      if (!Array.isArray(ids)) return [];
+      return ids.filter(function (i) { return typeof i === "string" && i; });
+    }
+
+    // Three, then a count. The same ceiling the tools row uses, for the same
+    // reason: a card is a summary, and eight chips is a list.
+    function skillChips(ids) {
+      var out = "";
+      for (var i = 0; i < ids.length && i < 3; i++) {
+        out += '<span class="chip">' + esc(ids[i]) + "</span>";
+      }
+      if (ids.length > 3) {
+        out += '<span class="chip more">+' + (ids.length - 3) + " more</span>";
+      }
+      return out;
+    }
+
+
     function toolChips(m) {
       var ids = (m.meta && m.meta.toolIds) || [];
       if (!ids.length) return '<span class="chip none">No tools</span>';
@@ -871,6 +928,7 @@
       // agents predate the field, so the model id keeps the subtitle line
       // whenever there is no role rather than leaving a gap.
       var role = roleOf(m);
+      var skills = skillsOf(m);
       el.innerHTML =
         '<div class="card-head">' +
           '<div class="avatar" style="background:linear-gradient(150deg,'
@@ -891,6 +949,8 @@
         '<div class="card-activity" data-activity-for="' + esc(m.id) + '">'
           + "</div>" +
         '<div class="card-sys">' + esc(preview(sys, 132)) + "</div>" +
+        (skills.length ? '<div class="card-skills">' + skillChips(skills)
+                       + "</div>" : "") +
         // The model id when the role took its line. Demoted, not dropped:
         // which model an agent runs on is what you look at when one of them
         // is being slow or expensive.
@@ -921,6 +981,7 @@
       if (!q) return true;
       return (String(m.name || "").toLowerCase().indexOf(q) !== -1
               || roleOf(m).toLowerCase().indexOf(q) !== -1
+              || skillsOf(m).join(" ").toLowerCase().indexOf(q) !== -1
               || instructionsOf(m).toLowerCase().indexOf(q) !== -1);
     }
 
@@ -1519,6 +1580,59 @@
     // this setting keeps its "no opinion" state. Returning a default here
     // would write a level onto every agent the first time somebody edited
     // its name, and silently drop a full schedule to read only.
+    // The skill library, fetched once. It ships with the server and is the
+    // same list for everybody, so there is nothing per-user to refresh.
+    var SKILL_LIST = [];
+
+    async function loadSkills() {
+      var wrap = document.getElementById("agent-skills");
+      try {
+        var body = await getJson("/api/tasks/agents/skills");
+        SKILL_LIST = (body && body.skills) || [];
+      } catch (e) {
+        SKILL_LIST = [];
+      }
+      if (!SKILL_LIST.length) {
+        // Said out loud rather than left as an empty box. An empty list looks
+        // identical to a list that failed to load.
+        wrap.innerHTML = '<div class="skill-empty">No skills are available '
+          + "on this server yet.</div>";
+        return;
+      }
+      wrap.innerHTML = "";
+      SKILL_LIST.forEach(function (s) {
+        var needs = (s.tools || []).map(function (t) {
+          return TOOL_LABELS[t] || t;
+        }).join(", ");
+        var l = document.createElement("label");
+        l.className = "skill";
+        l.innerHTML = '<input type="checkbox" id="skill-' + esc(s.name) + '">'
+          + "<span><span class=\"skill-name\">" + esc(s.name) + "</span>"
+          + '<span class="skill-what">' + esc(s.description)
+          + (needs ? ' <span class="skill-needs">Needs ' + esc(needs)
+                     + ".</span>" : "")
+          + "</span></span>";
+        wrap.appendChild(l);
+      });
+    }
+
+    function chosenSkills() {
+      var out = [];
+      SKILL_LIST.forEach(function (s) {
+        var cb = document.getElementById("skill-" + s.name);
+        if (cb && cb.checked) out.push(s.name);
+      });
+      return out;
+    }
+
+    function setSkills(ids) {
+      SKILL_LIST.forEach(function (s) {
+        var cb = document.getElementById("skill-" + s.name);
+        if (cb) cb.checked = ids.indexOf(s.name) !== -1;
+      });
+    }
+
+
     function chosenAccess() {
       var picked = document.querySelector(
         'input[name="agent-access"]:checked');
@@ -1545,6 +1659,9 @@
       // not store an empty one: meta is rewritten whole on every save, so
       // omitting the key is what makes "cleared" stick.
       if (f.role) meta.role = f.role;
+      // Only when there are any, for the same reason as the role: an agent
+      // with none has to look exactly as it did before this existed.
+      if (f.skillIds && f.skillIds.length) meta.skillIds = f.skillIds;
       // Only when a level is actually selected. See chosenAccess: an agent
       // with no level behaves exactly as it did before this setting existed,
       // and an unrelated edit must not quietly give it one.
@@ -1592,6 +1709,7 @@
       // form and forgotten here carries the last agent's value into the next
       // one, which is how the access radios went wrong once already.
       document.getElementById("agent-role").value = agent ? roleOf(agent) : "";
+      setSkills(agent ? skillsOf(agent) : []);
       document.getElementById("agent-instructions").value =
         agent && agent.params ? (agent.params.system || "") : "";
       var tools = (agent && agent.meta && agent.meta.toolIds) || [];
@@ -1685,7 +1803,7 @@
 
       var body = buildAgentBody({
         id: editingId || newAgentId(name), name: name,
-        baseModel: baseModel, role: role,
+        baseModel: baseModel, role: role, skillIds: chosenSkills(),
         instructions: instructions, toolIds: chosenTools(),
         access: chosenAccess(),
         accessGrants: (existing && existing.access_grants) || []
@@ -1798,6 +1916,7 @@
       // Carried like the tools and the base model. A copy of a project
       // manager is a project manager.
       document.getElementById("agent-role").value = roleOf(agent);
+      setSkills(skillsOf(agent));
       // Carry the base model across too. openForm(null) leaves the dropdown on
       // whichever model happens to be first, which on this platform can be a
       // pipe that is not tool capable, so a duplicated Inbox Triage would
@@ -1934,7 +2053,7 @@
     // list refresh (existing tests call it directly after a save/delete), so
     // seed() is only ever reached from this one bootstrap line -- it runs
     // once per page load, not once per list refresh.
-    Promise.all([seed().then(load), loadTools()]).then(function () {
+    Promise.all([seed().then(load), loadTools(), loadSkills()]).then(function () {
       window.__aiuiAgents.ready = true;
       watchActivity();
     });

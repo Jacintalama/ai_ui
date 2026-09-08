@@ -18,3 +18,4 @@ playwright>=1.40.0
 python-docx
 reportlab
 python-pptx
+PyYAML>=6.0

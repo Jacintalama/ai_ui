@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text as sql_text
 
 import agent_activity
+import agent_skills
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import CurrentUser, current_user
@@ -412,6 +413,18 @@ async def activity(user: CurrentUser = Depends(current_user)) -> dict:
     not another person's agent working.
     """
     return {"activity": await agent_activity.activity_for(user.email)}
+
+
+@router.get("/skills")
+async def skills() -> dict:
+    """The ready-made skills an agent can be given.
+
+    No caller identity, like /templates: these ship with the image and are the
+    same list for everybody. Descriptions only, never the instructions
+    themselves, which are large and are the agent's business rather than the
+    browser's.
+    """
+    return {"skills": agent_skills.catalogue()}
 
 
 @router.get("/templates")
