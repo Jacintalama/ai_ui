@@ -50,3 +50,35 @@ def test_no_template_carries_an_access_grant():
     """Nothing seeded may be shared. Each copy belongs to one person."""
     for t in TEMPLATES:
         assert "access_grants" not in t
+
+
+# The role is what the card shows under the name and what the agent is told it
+# does. A new account should start with one rather than a blank line.
+
+ROLE_MAX_CHARS = 32
+
+
+@pytest.mark.parametrize("t", TEMPLATES, ids=lambda t: t["slug"])
+def test_every_template_names_a_role_the_form_would_accept(t):
+    assert t["role"].strip(), t["slug"]
+    assert len(t["role"]) <= ROLE_MAX_CHARS, t["role"]
+
+
+def test_the_role_is_carried_into_the_created_agent():
+    """It rides in meta beside toolIds. If _body_for dropped it, every seeded
+    agent would arrive roleless and only a hand edit would fix it."""
+    from routes_agents import _body_for
+    body = _body_for(TEMPLATES[0], "agent-ada-0001")
+    assert body["meta"]["role"] == TEMPLATES[0]["role"]
+
+
+async def test_the_templates_endpoint_hands_the_role_to_the_page():
+    """The page prefills the form from this response. A role that exists in
+    TEMPLATES but never crosses the wire would leave "Use this template"
+    producing a roleless agent, which is the one place a role is guaranteed
+    to be right."""
+    from routes_agents import templates as templates_endpoint
+    out = await templates_endpoint()
+    by_slug = {t["slug"]: t for t in out["templates"]}
+    assert by_slug["ada"]["role"] == "Project manager"
+    assert by_slug["mia"]["role"] == "Receptionist"

@@ -148,7 +148,13 @@ def _body_for(template: dict, agent_id: str) -> dict:
         "id": agent_id,
         "name": template["name"],
         "base_model_id": _default_model(),
-        "meta": {"toolIds": template["tool_ids"]},
+        # role rides beside toolIds because that is where the page reads
+        # it from. A template with no role writes no key rather than an
+        # empty one: an empty string is a role somebody chose to clear,
+        # and the card and the brief both read it as "none" anyway.
+        "meta": ({"toolIds": template["tool_ids"], "role": template["role"]}
+                 if template.get("role")
+                 else {"toolIds": template["tool_ids"]}),
         "params": {"system": template["instructions"]},
         "access_grants": [],
         "is_active": True,
@@ -422,7 +428,7 @@ async def templates() -> dict:
     person sees what they are making.
     """
     return {"templates": [
-        {"slug": t["slug"], "name": t["name"],
+        {"slug": t["slug"], "name": t["name"], "role": t.get("role", ""),
          "instructions": t["instructions"], "tool_ids": list(t["tool_ids"])}
         for t in TEMPLATES
     ]}

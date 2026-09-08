@@ -535,6 +535,37 @@ def _turn_failed_sentence(name: str) -> str:
     return "%s could not answer just now. Try again in a moment." % (name or "That agent")
 
 
+#: A role is typed by the owner into a form whose input caps at 32. This cap
+#: is the brief's own defence, not the form's: meta comes off a database row
+#: that Open WebUI's model API writes, so nothing here can assume the form was
+#: the last thing to touch it.
+ROLE_MAX_CHARS = 40
+
+
+def _role_of(agent: dict) -> str:
+    """The agent's job, ready to drop into the middle of a sentence.
+
+    Empty when there is none, which is the ordinary case: every agent that
+    existed before the field did has no role, and the field is optional.
+
+    Typed into a form a role arrives capitalised, and "You are Ada, this
+    person's Project manager" reads as a proper noun. So the first letter is
+    lowered, EXCEPT when the first word is an initialism, because "qa lead"
+    and "hr assistant" are worse than the capital they fix.
+    """
+    meta = agent.get("meta")
+    role = meta.get("role") if isinstance(meta, dict) else None
+    if not isinstance(role, str):
+        return ""
+    role = " ".join(role.split())[:ROLE_MAX_CHARS].strip()
+    if not role:
+        return ""
+    first = role.split(" ", 1)[0]
+    if len(first) > 1 and first.isupper():
+        return role
+    return role[0].lower() + role[1:]
+
+
 def _identity_line(agent: dict, names) -> dict:
     """Who the agent is and how it is expected to work, as one system line.
 
@@ -558,7 +589,9 @@ def _identity_line(agent: dict, names) -> dict:
     me = str(agent.get("name") or agent.get("id") or "this assistant")
     others = [str(n) for n in (names or []) if n and str(n) != me]
 
-    said = ["You are %s, one of this person's own assistants." % me]
+    role = _role_of(agent)
+    said = ["You are %s, this person's %s." % (me, role) if role
+            else "You are %s, one of this person's own assistants." % me]
     if others:
         said.append(
             "The other assistants here are %s. They are software, like you, "

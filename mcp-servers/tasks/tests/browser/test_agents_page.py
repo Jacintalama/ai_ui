@@ -43,7 +43,8 @@ MODELS = [
     {"id": "agent-mine-a1b2", "name": "Researcher",
      "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You research things carefully."},
-     "meta": {"description": "mine", "toolIds": ["server:mcp-proxy"]},
+     "meta": {"description": "mine", "toolIds": ["server:mcp-proxy"],
+              "role": "Project manager"},
      "access_grants": [], "is_active": True, "write_access": True,
      "created_at": 2, "updated_at": 2,
      "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
@@ -66,6 +67,7 @@ MODELS = [
      # list endpoint blanks params for anyone without write access and that is
      # every user except its owner. Task 8 writes both.
      "meta": {"description": "platform", "toolIds": [],
+              "role": "Meeting notes",
               "agent_instructions": "You summarise meetings."},
      "access_grants": [{"principal_type": "user", "principal_id": "*",
                         "permission": "read"}],
@@ -85,7 +87,9 @@ MODELS = [
     {"id": "agent-hostile-e5f6", "name": HOSTILE_NAME,
      "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": HOSTILE_NAME},
-     "meta": {"description": "hostile", "toolIds": []},
+     # A hostile ROLE as well as a hostile name: the role is free text the
+     # owner types, and it goes through the same innerHTML as the name.
+     "meta": {"description": "hostile", "toolIds": [], "role": HOSTILE_NAME},
      "access_grants": [], "is_active": True, "write_access": False,
      "created_at": 4, "updated_at": 4,
      "user": {"id": ME, "name": "Me", "email": "me@example.com"}},
@@ -852,3 +856,114 @@ def test_an_agent_that_never_ran_wears_no_state_colour(page):
     _activity(page, {})
     klass = _dot_state(page)
     assert "idle" not in klass and "blocked" not in klass         and "working" not in klass
+
+
+# --- the role -------------------------------------------------------------
+
+# Ralph asked for this looking at his own two cards: a name and a model id
+# tell you nothing about what an agent is for. The role is typed by the owner,
+# shows under the name, and reaches the agent's brief.
+
+def test_a_card_shows_the_role_under_the_name(page):
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    assert card.locator(".card-role").inner_text() == "Project manager"
+    assert card.locator(".card-heading .card-model").count() == 0, (
+        "the model id should give up the subtitle line to the role")
+
+
+def test_the_model_is_still_on_the_card_when_a_role_took_its_line(page):
+    """Demoted, not deleted. Which model an agent runs on is what you look at
+    when one of them is being slow or stupid."""
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    assert "gpt-4o-mini" in card.inner_text()
+
+
+def test_an_agent_with_no_role_still_shows_its_model(page):
+    """Every agent that existed before this field has no role. Their cards
+    must not lose a line, or the change looks like breakage."""
+    card = page.locator('#my-agents [data-agent-id="agent-mine-second-c5d6"]')
+    assert card.locator(".card-role").count() == 0
+    assert card.locator(".card-heading .card-model").inner_text() == "gpt-4o-mini"
+
+
+def test_a_hostile_role_is_shown_as_text_not_run(page):
+    card = page.locator('[data-agent-id="agent-hostile-e5f6"]')
+    role = card.locator(".card-role")
+    assert not page.evaluate("window.__pwned"), "the role executed"
+    assert role.inner_text() == HOSTILE_NAME
+    assert role.locator("img").count() == 0
+
+
+def test_a_saved_agent_sends_its_role(page):
+    _fill(page, name="Researcher", instructions="Research carefully.")
+    page.fill("#agent-role", "Project manager")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["meta"]["role"] == "Project manager"
+
+
+def test_leaving_the_role_blank_writes_no_role(page):
+    """Optional means optional. An empty string stored as a role would read
+    back as a role somebody chose, and the brief would interpolate nothing
+    into a sentence built to hold something."""
+    _fill(page, name="Researcher", instructions="Research carefully.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert "role" not in json.loads(page.sent[-1]["body"])["meta"]
+
+
+def test_clearing_the_role_on_an_edit_removes_it(page):
+    _open = page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]')
+    _open.click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.fill("#agent-role", "")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert "role" not in json.loads(page.sent[-1]["body"])["meta"]
+
+
+def test_edit_loads_the_existing_role(page):
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.input_value("#agent-role") == "Project manager"
+
+
+def test_a_new_form_does_not_inherit_the_last_agents_role(page):
+    """openForm fills every field from the agent or blanks it. A field added
+    to the form and forgotten here carries the previous agent's value into a
+    new one, which is how the access radios broke once already."""
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.locator("#agent-cancel").click()
+    _open_form(page)
+    assert page.input_value("#agent-role") == ""
+
+
+def test_the_role_field_caps_what_can_be_typed(page):
+    _open_form(page)
+    assert page.get_attribute("#agent-role", "maxlength") == "32"
+
+
+def test_duplicating_an_agent_carries_its_role(page):
+    """A copy of a project manager is a project manager. Every other field on
+    this form is carried across; a role left behind would be the one thing
+    silently lost."""
+    # Driven directly, the same way test_duplicate_carries_the_tools_across
+    # does: the page lists only your own agents now, so the Duplicate button
+    # has no card to sit on.
+    page.evaluate(
+        "() => window.__aiuiAgents.duplicate("
+        "  window.__aiuiAgents.state.agents.find("
+        "    a => a.id === 'agent-shared-c3d4'))")
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.input_value("#agent-role") == "Meeting notes"
+
+
+def test_search_finds_an_agent_by_its_role(page):
+    """The role is now the most human thing on the card, so it is the word
+    somebody will type when they cannot remember which one is which."""
+    page.fill("#agent-search", "project manager")
+    page.wait_for_timeout(200)
+    shown = [e.get_attribute("data-agent-id")
+             for e in page.locator("#my-agents [data-agent-id]").all()]
+    assert shown == ["agent-mine-a1b2"]

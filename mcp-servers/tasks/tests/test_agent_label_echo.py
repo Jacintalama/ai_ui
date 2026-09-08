@@ -230,3 +230,51 @@ def test_the_brief_points_at_the_remembering_tool():
     from routes_agent_turn import _identity_line
     said = _identity_line({"id": "a", "name": "Ada"}, ["Ada"])["content"]
     assert "tool for remembering" in said
+
+
+# A role is a job, not a caption. It is typed by the owner on the card, and if
+# it only ever reached the card it would be decoration: asked what she does,
+# Ada would still answer as a generic assistant. So it arrives in the brief.
+
+def test_an_agent_is_told_its_role():
+    from routes_agent_turn import _identity_line
+    said = _identity_line(
+        {"id": "a", "name": "Ada", "meta": {"role": "Project manager"}},
+        ["Ada", "Mia"])["content"]
+    assert "You are Ada, this person's project manager." in said
+
+
+def test_a_role_is_lower_cased_but_an_initialism_is_left_alone():
+    """Typed into a form, a role arrives capitalised ("Project manager"), and
+    it is interpolated mid sentence where a capital reads as a proper noun.
+    Lower-casing the first letter fixes that, but blanket .lower() would turn
+    QA lead into qa lead."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line(
+        {"id": "a", "name": "Ada", "meta": {"role": "QA lead"}}, ["Ada"])["content"]
+    assert "You are Ada, this person's QA lead." in said
+
+
+def test_an_agent_with_no_role_keeps_the_line_it_had():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada"])["content"]
+    assert "You are Ada, one of this person's own assistants." in said
+    assert "this person's ." not in said
+    assert "None" not in said
+
+
+def test_a_junk_role_is_ignored_rather_than_pasted_into_the_brief():
+    """meta comes from a database row that a model-facing API writes, so the
+    value is not guaranteed to be a short string, or a string at all."""
+    from routes_agent_turn import _identity_line
+    for junk in (123, [], {"a": 1}, "", "   "):
+        said = _identity_line(
+            {"id": "a", "name": "Ada", "meta": {"role": junk}}, ["Ada"])["content"]
+        assert "You are Ada, one of this person's own assistants." in said
+
+
+def test_a_long_role_is_cut_rather_than_allowed_to_run_the_brief():
+    from routes_agent_turn import _identity_line
+    said = _identity_line(
+        {"id": "a", "name": "Ada", "meta": {"role": "x" * 500}}, ["Ada"])["content"]
+    assert "x" * 200 not in said

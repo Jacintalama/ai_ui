@@ -153,6 +153,16 @@
   /* The model an agent thinks with is the second thing you want to know and
      the card never showed it. Quiet, because it is reference, not identity. */
   .card-model { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  /* The role takes the line the model id used to have, so it is the thing
+     you read after the name. Slightly stronger than .card-model because it
+     is the more useful of the two, and clipped rather than wrapped: a long
+     role must not push the card's own layout around. */
+  .card-role { font-size: 12px; color: var(--text); opacity: 0.75;
+               white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* No glyph on this one, so it does not want .card-tools .chip's smaller
+     left padding, which exists to sit tight against an icon. */
+  .card-tools .chip.model { color: var(--muted); font-variant-numeric: tabular-nums;
+                            padding-left: 9px; }
   /* Awake or asleep, and how long the last one took. An agent is not a
      service that is up or down: it sleeps until something asks it to work,
      so "working" means a run is actually in flight right now. */
@@ -616,6 +626,13 @@
         <div class="hint">One word, so you can call it by name in a sentence.
           Say "hi Jack, are you there" in a chat and Jack answers.</div>
 
+        <label for="agent-role">Role</label>
+        <input id="agent-role" type="text" maxlength="32" autocomplete="off"
+               placeholder="Project manager">
+        <div class="hint">What they do, in two or three words. It shows on the
+          card and the agent is told it, so it answers as that rather than as
+          an assistant in general. Leave it blank if you would rather not.</div>
+
         <label for="agent-instructions">Instructions</label>
         <textarea id="agent-instructions" rows="7"
                   placeholder="Tell it what to do and how to answer. Plain sentences."></textarea>
@@ -780,6 +797,15 @@
       executive_dashboard: "Dashboard", remember: "Memory"
     };
 
+    // meta.role is written by this page and read back off the model row, so
+    // it can be absent, blank, or not a string at all. Trimmed here so the
+    // card and the saved body agree on what counts as "no role".
+    function roleOf(m) {
+      var role = m && m.meta ? m.meta.role : null;
+      return typeof role === "string" ? role.trim() : "";
+    }
+
+
     function toolChips(m) {
       var ids = (m.meta && m.meta.toolIds) || [];
       if (!ids.length) return '<span class="chip none">No tools</span>';
@@ -807,6 +833,10 @@
       var shared = isShared(m);
       var hue = avatarHue(m.name);
       var model = m.base_model_id || "";
+      // What this agent is for, in the owner's own words. Optional, and most
+      // agents predate the field, so the model id keeps the subtitle line
+      // whenever there is no role rather than leaving a gap.
+      var role = roleOf(m);
       el.innerHTML =
         '<div class="card-head">' +
           '<div class="avatar" style="background:linear-gradient(150deg,'
@@ -816,7 +846,9 @@
             // Only the name goes in here. A test asserts this text equals the
             // agent's name exactly, and it is also the XSS surface.
             '<div class="card-title">' + esc(m.name) + "</div>" +
-            (model ? '<div class="card-model">' + esc(model) + "</div>" : "") +
+            (role
+              ? '<div class="card-role">' + esc(role) + "</div>"
+              : (model ? '<div class="card-model">' + esc(model) + "</div>" : "")) +
           "</div>" +
           (shared
             ? '<span class="tag"><span class="dot"></span>Shared with everyone</span>'
@@ -825,7 +857,13 @@
         '<div class="card-activity" data-activity-for="' + esc(m.id) + '">'
           + "</div>" +
         '<div class="card-sys">' + esc(preview(sys, 132)) + "</div>" +
-        '<div class="card-tools">' + toolChips(m) + "</div>" +
+        // The model id when the role took its line. Demoted, not dropped:
+        // which model an agent runs on is what you look at when one of them
+        // is being slow or expensive.
+        '<div class="card-tools">' + toolChips(m)
+          + (role && model
+              ? '<span class="chip model">' + esc(model) + "</span>" : "")
+          + "</div>" +
         '<div class="card-foot">' +
         (mine
           ? '<button class="btn sm" type="button" data-act="edit">Edit</button>' +
@@ -848,6 +886,7 @@
       var q = (state.query || "").trim().toLowerCase();
       if (!q) return true;
       return (String(m.name || "").toLowerCase().indexOf(q) !== -1
+              || roleOf(m).toLowerCase().indexOf(q) !== -1
               || instructionsOf(m).toLowerCase().indexOf(q) !== -1);
     }
 
@@ -903,6 +942,7 @@
       if (!t) return;
       openForm(null);
       document.getElementById("agent-name").value = t.name;
+      document.getElementById("agent-role").value = t.role || "";
       var ta = document.getElementById("agent-instructions");
       ta.value = t.instructions;
       ta.dispatchEvent(new Event("input"));
@@ -1459,6 +1499,10 @@
       var meta = { description: f.instructions.slice(0, 120),
                    toolIds: f.toolIds,
                    agent_instructions: f.instructions };
+      // Only when there is one. Clearing the field has to REMOVE the role,
+      // not store an empty one: meta is rewritten whole on every save, so
+      // omitting the key is what makes "cleared" stick.
+      if (f.role) meta.role = f.role;
       // Only when a level is actually selected. See chosenAccess: an agent
       // with no level behaves exactly as it did before this setting existed,
       // and an unrelated edit must not quietly give it one.
@@ -1502,6 +1546,10 @@
       document.getElementById("form-title").textContent =
         agent ? "Edit agent" : "New agent";
       document.getElementById("agent-name").value = agent ? agent.name : "";
+      // Blanked for a new agent, not left as it was. A field added to the
+      // form and forgotten here carries the last agent's value into the next
+      // one, which is how the access radios went wrong once already.
+      document.getElementById("agent-role").value = agent ? roleOf(agent) : "";
       document.getElementById("agent-instructions").value =
         agent && agent.params ? (agent.params.system || "") : "";
       var tools = (agent && agent.meta && agent.meta.toolIds) || [];
@@ -1554,6 +1602,7 @@
 
     async function save() {
       var name = document.getElementById("agent-name").value.trim();
+      var role = document.getElementById("agent-role").value.trim();
       var instructions = document.getElementById("agent-instructions").value.trim();
       if (!name) return formError("Give the agent a name.");
       // One word, because the name is how you reach the agent in a chat: the
@@ -1594,7 +1643,7 @@
 
       var body = buildAgentBody({
         id: editingId || newAgentId(name), name: name,
-        baseModel: baseModel,
+        baseModel: baseModel, role: role,
         instructions: instructions, toolIds: chosenTools(),
         access: chosenAccess(),
         accessGrants: (existing && existing.access_grants) || []
@@ -1704,6 +1753,9 @@
         if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
       });
       setAccess((agent.meta && agent.meta.access) || "ask");
+      // Carried like the tools and the base model. A copy of a project
+      // manager is a project manager.
+      document.getElementById("agent-role").value = roleOf(agent);
       // Carry the base model across too. openForm(null) leaves the dropdown on
       // whichever model happens to be first, which on this platform can be a
       // pipe that is not tool capable, so a duplicated Inbox Triage would
@@ -1831,7 +1883,8 @@
 
     window.__aiuiAgents = { load: load, render: render, state: state,
                             isAgent: isAgent, buildAgentBody: buildAgentBody,
-                            openForm: openForm, ready: false };
+                            openForm: openForm, duplicate: duplicate,
+                            ready: false };
     // Seeding must finish before the list loads, so a first-time visitor's
     // brand new copies are in the very first render rather than needing a
     // reload to appear. Tool tiles are independent of both and load
