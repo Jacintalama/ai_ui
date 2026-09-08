@@ -129,7 +129,8 @@ class Tools:
         sending it as agent_id would make a schedule that can never run. Only
         an id shaped like one this platform mints is passed on.
         """
-        model_id = str((__model__ or {}).get("id") or "")
+        model = __model__ if isinstance(__model__, dict) else {}
+        model_id = str(model.get("id") or "")
         return model_id if model_id.startswith("agent-") else None
 
     async def create_schedule(self, name: str, cron_expr: str, prompt: str,
@@ -167,7 +168,11 @@ class Tools:
         if not isinstance(data, dict) or not data.get("id"):
             return "Your schedule may not have been made: the reply did not name one."
 
-        said = "Done. " + self._describe(data) + "."
+        # The create endpoint replies with only {"id": ...}, nothing else.
+        # Describe what was actually made from what was actually sent, not
+        # from fields read off that bare reply and defaulted to nothing.
+        made = dict(body, id=data["id"], enabled=True)
+        said = "Done. " + self._describe(made) + "."
         if zone and not detected:
             said += (" I used %s, because I have no timezone recorded for you. "
                      "Tell me your zone if that is wrong." % zone)

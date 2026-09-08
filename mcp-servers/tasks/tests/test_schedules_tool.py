@@ -246,22 +246,30 @@ async def test_a_broken_timezone_read_still_creates_the_schedule(tool):
     assert "down" not in out
 
 
-@pytest.mark.parametrize("method,verb,path", [
-    ("enable_schedule", "POST", "/schedules/sch-1/enable"),
-    ("disable_schedule", "POST", "/schedules/sch-1/disable"),
-    ("delete_schedule", "DELETE", "/schedules/sch-1"),
-    ("trigger_schedule_now", "POST", "/schedules/sch-1/run-now"),
+@pytest.mark.parametrize("method,verb,path,response,done", [
+    ("enable_schedule", "POST", "/schedules/sch-1/enable",
+     {"status": "enabled"}, "turned back on"),
+    ("disable_schedule", "POST", "/schedules/sch-1/disable",
+     {"status": "disabled"}, "turned off"),
+    ("delete_schedule", "DELETE", "/schedules/sch-1",
+     {"status": "deleted"}, "deleted"),
+    ("trigger_schedule_now", "POST", "/schedules/sch-1/run-now",
+     {"status": "dispatched"}, "started now"),
 ])
 @respx.mock
 async def test_each_write_hits_its_own_endpoint_as_the_caller(
-        tool, method, verb, path):
+        tool, method, verb, path, response, done):
+    """The four endpoints really reply with a status dict, not a schedule,
+    so that is what is mocked here: this exercises the sentence a person
+    actually gets, not the dead branch that reads an id off a row that never
+    comes back."""
     route = respx.request(verb, BASE + path).mock(
-        return_value=httpx.Response(200, json=ROW))
+        return_value=httpx.Response(200, json=response))
     out = await getattr(tool, method)("sch-1", __user__=OWNER)
     sent = route.calls[0].request
     assert sent.headers["X-User-Email"] == "owner@example.com"
     assert "x-cron-secret" not in {k.lower() for k in sent.headers}
-    assert isinstance(out, str) and out
+    assert out == "Done, %s." % done
 
 
 @pytest.mark.parametrize("method", [
@@ -272,3 +280,41 @@ async def test_no_email_stops_every_write_before_it_calls(tool, method):
     """No respx mock: a call would error the test rather than pass it."""
     out = await getattr(tool, method)("sch-1", __user__={})
     assert isinstance(out, str) and out
+
+
+@respx.mock
+async def test_creating_reports_the_schedule_actually_made_not_the_bare_id_reply(tool):
+    """POST /schedules returns only {"id": ...} for real, nothing else. The
+    reply has to describe the schedule as it was actually made (from what
+    was sent), not from fields read off that bare response and defaulted
+    away, which would wrongly tell a person their new schedule is off."""
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json={"id": "sch-9"}))
+    out = await tool.create_schedule(
+        name="Morning inbox", cron_expr="0 8 * * *",
+        prompt="what needs a reply", __user__=OWNER)
+    assert "Morning inbox" in out
+    assert "0 8 * * *" in out
+    assert "currently on" in out
+    assert "sch-9" in out
+
+
+async def test_creating_with_no_email_does_not_call(tool):
+    """No respx mock: a call would error the test rather than pass it."""
+    out = await tool.create_schedule(name="n", cron_expr="0 8 * * *",
+                                     prompt="p", __user__={})
+    assert isinstance(out, str) and out
+
+
+@respx.mock
+async def test_creating_with_no_id_in_the_reply_does_not_claim_success(tool):
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json={}))
+    out = await tool.create_schedule(name="n", cron_expr="0 8 * * *",
+                                     prompt="p", __user__=OWNER)
+    assert isinstance(out, str) and out
+    assert "did not name" in out.lower()
