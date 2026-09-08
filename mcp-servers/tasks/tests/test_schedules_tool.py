@@ -10,6 +10,7 @@ email alone, and tasks.routes_schedules._resolve_caller then forces every
 call onto that person.
 """
 import importlib.util
+import json
 import os
 
 import httpx
@@ -113,3 +114,161 @@ async def test_no_email_does_nothing_at_all(tool):
     rather than pass."""
     out = await tool.list_my_schedules(__user__={})
     assert "could not tell" in out.lower() or "who" in out.lower()
+
+
+# ------------------------------------------------------------------- writing
+
+# The names have to classify correctly under the real safety gate, because
+# that gate is what stops a read-only agent changing anything. Getting this
+# wrong is not theoretical: my_account was classified as a write for a day
+# because "my" and "account" are neither kind of verb, and a read-only agent
+# was refused a read.
+
+def test_every_method_classifies_the_way_the_spec_says():
+    from agent_tools import is_write_tool
+    assert is_write_tool("list_my_schedules") is False
+    for name in ("create_schedule", "enable_schedule", "disable_schedule",
+                 "delete_schedule", "trigger_schedule_now"):
+        assert is_write_tool(name) is True, name
+
+
+def test_the_run_now_method_is_a_write_on_purpose_not_by_default():
+    """run_schedule_now contains no verb the classifier knows, so it would
+    land on the default and be right by accident. trigger is on the write
+    list, so the name carries the meaning."""
+    from agent_tools import is_write_tool
+    assert is_write_tool("run_schedule_now") is True, "the default, by accident"
+    assert is_write_tool("trigger_schedule_now") is True, "the verb, on purpose"
+    tool_methods = [m for m in dir(_load().Tools) if not m.startswith("_")]
+    assert "trigger_schedule_now" in tool_methods
+    assert "run_schedule_now" not in tool_methods
+
+
+@respx.mock
+async def test_creating_sends_the_persons_own_timezone(tool):
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "source": "browser",
+                   "detected": True}))
+    route = respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=dict(ROW, tz="Europe/London")))
+    out = await tool.create_schedule(
+        name="Morning inbox", cron_expr="0 8 * * *",
+        prompt="what needs a reply", __user__=OWNER)
+    body = json.loads(route.calls[0].request.read())
+    assert body["tz"] == "Europe/London"
+    assert "Europe/London" in out
+
+
+@respx.mock
+async def test_an_undetected_timezone_is_disclosed_not_hidden(tool):
+    """A schedule an hour off looks like it worked, so the zone used has to
+    be a sentence somebody can correct."""
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Asia/Manila", "source": "default",
+                   "detected": False}))
+    respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=dict(ROW, tz="Asia/Manila")))
+    out = await tool.create_schedule(
+        name="Morning inbox", cron_expr="0 8 * * *", prompt="hi",
+        __user__=OWNER)
+    assert "Asia/Manila" in out
+    assert "no timezone" in out.lower() or "did not" in out.lower()
+
+
+@respx.mock
+async def test_a_schedule_an_agent_makes_runs_as_that_agent(tool):
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    route = respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=ROW))
+    await tool.create_schedule(
+        name="n", cron_expr="0 8 * * *", prompt="p", __user__=OWNER,
+        __model__={"id": "agent-research-assistant-0001"})
+    body = json.loads(route.calls[0].request.read())
+    assert body["agent_id"] == "agent-research-assistant-0001"
+
+
+@respx.mock
+async def test_a_plain_model_is_not_passed_off_as_an_agent(tool):
+    """agent_id has to be one of this person's agents. gpt-5 is not one, and
+    sending it would make a schedule that can never run."""
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    route = respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=ROW))
+    await tool.create_schedule(
+        name="n", cron_expr="0 8 * * *", prompt="p", __user__=OWNER,
+        __model__={"id": "gpt-5"})
+    body = json.loads(route.calls[0].request.read())
+    assert body.get("agent_id") is None
+
+
+@respx.mock
+async def test_creating_never_lets_the_caller_name_the_owner(tool):
+    """The endpoint overwrites it anyway. Not sending it means the tool does
+    not depend on that."""
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    route = respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=ROW))
+    await tool.create_schedule(name="n", cron_expr="0 8 * * *", prompt="p",
+                               __user__=OWNER)
+    sent = route.calls[0].request
+    assert sent.headers["X-User-Email"] == "owner@example.com"
+    assert "x-cron-secret" not in {k.lower() for k in sent.headers}
+    assert "user_email" not in sent.read().decode()
+
+
+@respx.mock
+async def test_a_failed_create_does_not_claim_a_schedule_exists(tool):
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(500, json={"detail": "nope"}))
+    out = await tool.create_schedule(name="n", cron_expr="0 8 * * *",
+                                     prompt="p", __user__=OWNER)
+    assert "could not" in out.lower()
+    assert "scheduled" not in out.lower() or "not" in out.lower()
+    assert BASE not in out
+
+
+@respx.mock
+async def test_a_broken_timezone_read_still_creates_the_schedule(tool):
+    """Not knowing the zone is a reason to say which one was used, not a
+    reason to refuse the whole request."""
+    respx.get(BASE + "/prefs/timezone").mock(
+        side_effect=httpx.ConnectError("down"))
+    route = respx.post(BASE + "/schedules").mock(
+        return_value=httpx.Response(201, json=ROW))
+    out = await tool.create_schedule(name="n", cron_expr="0 8 * * *",
+                                     prompt="p", __user__=OWNER)
+    assert route.called
+    assert "down" not in out
+
+
+@pytest.mark.parametrize("method,verb,path", [
+    ("enable_schedule", "POST", "/schedules/sch-1/enable"),
+    ("disable_schedule", "POST", "/schedules/sch-1/disable"),
+    ("delete_schedule", "DELETE", "/schedules/sch-1"),
+    ("trigger_schedule_now", "POST", "/schedules/sch-1/run-now"),
+])
+@respx.mock
+async def test_each_write_hits_its_own_endpoint_as_the_caller(
+        tool, method, verb, path):
+    route = respx.request(verb, BASE + path).mock(
+        return_value=httpx.Response(200, json=ROW))
+    out = await getattr(tool, method)("sch-1", __user__=OWNER)
+    sent = route.calls[0].request
+    assert sent.headers["X-User-Email"] == "owner@example.com"
+    assert "x-cron-secret" not in {k.lower() for k in sent.headers}
+    assert isinstance(out, str) and out
+
+
+@pytest.mark.parametrize("method", [
+    "enable_schedule", "disable_schedule", "delete_schedule",
+    "trigger_schedule_now",
+])
+async def test_no_email_stops_every_write_before_it_calls(tool, method):
+    """No respx mock: a call would error the test rather than pass it."""
+    out = await getattr(tool, method)("sch-1", __user__={})
+    assert isinstance(out, str) and out

@@ -104,3 +104,134 @@ class Tools:
         for row in data:
             lines.append("  " + self._describe(row))
         return "\n".join(lines)
+
+    # --------------------------------------------------------------- writing
+
+    async def _timezone_for(self, email: str):
+        """(zone, detected) for this person.
+
+        /prefs/timezone always returns a zone plus a `detected` flag, so a
+        caller never has to know what the platform default is. A failed read
+        is not a reason to refuse a schedule, only a reason to say which zone
+        was used.
+        """
+        ok, data = await self._call("GET", "/prefs/timezone", email)
+        if not ok or not isinstance(data, dict):
+            return "", False
+        zone = data.get("timezone")
+        return (str(zone) if zone else ""), bool(data.get("detected"))
+
+    def _agent_id_from(self, __model__: dict):
+        """The agent making this call, when the caller IS an agent.
+
+        A schedule an agent creates should run as that agent. But this tool
+        is on every model, and "gpt-5" is not one of this person's agents:
+        sending it as agent_id would make a schedule that can never run. Only
+        an id shaped like one this platform mints is passed on.
+        """
+        model_id = str((__model__ or {}).get("id") or "")
+        return model_id if model_id.startswith("agent-") else None
+
+    async def create_schedule(self, name: str, cron_expr: str, prompt: str,
+                              __user__: dict = {}, __model__: dict = {}) -> str:
+        """
+        Put something on this person's schedule, so it runs by itself from
+        now on.
+
+        Call this when they ask for something to happen regularly or at a
+        set time: "check my inbox every morning at eight", "remind me on
+        Fridays", "run this every hour".
+
+        :param name: A short name they will recognise on their Cron Jobs
+            page, e.g. "Morning inbox".
+        :param cron_expr: Five-field cron. "0 8 * * *" is every day at eight
+            in the morning. "0 9 * * 1" is nine on Mondays. "0 * * * *" is
+            hourly.
+        :param prompt: What should happen when it runs, written as an
+            instruction, e.g. "list my unread email and say what needs a
+            reply today".
+        """
+        email = self._email(__user__)
+        if not email:
+            return "I could not tell whose schedule this is, so I did not make one."
+
+        zone, detected = await self._timezone_for(email)
+        body = {"name": name, "cron_expr": cron_expr, "prompt": prompt,
+                "agent_id": self._agent_id_from(__model__)}
+        if zone:
+            body["tz"] = zone
+
+        ok, data = await self._call("POST", "/schedules", email, body)
+        if not ok:
+            return "I could not put that on your schedule just now, so nothing was made."
+        if not isinstance(data, dict) or not data.get("id"):
+            return "Your schedule may not have been made: the reply did not name one."
+
+        said = "Done. " + self._describe(data) + "."
+        if zone and not detected:
+            said += (" I used %s, because I have no timezone recorded for you. "
+                     "Tell me your zone if that is wrong." % zone)
+        said += (" The result will appear on your Cron Jobs page, since this "
+                 "was not made from a chat channel.")
+        return said
+
+    async def enable_schedule(self, schedule_id: str,
+                              __user__: dict = {}) -> str:
+        """
+        Turn one of this person's schedules back on, so it runs again.
+
+        Call list_my_schedules first if you do not already have the id.
+        """
+        return await self._simple_write(
+            "POST", "/schedules/%s/enable" % schedule_id, __user__,
+            "turned back on")
+
+    async def disable_schedule(self, schedule_id: str,
+                               __user__: dict = {}) -> str:
+        """
+        Turn one of this person's schedules off, leaving it in place so it
+        can be turned back on later. Prefer this to deleting when they say
+        pause, stop for now, or hold off.
+
+        Call list_my_schedules first if you do not already have the id.
+        """
+        return await self._simple_write(
+            "POST", "/schedules/%s/disable" % schedule_id, __user__,
+            "turned off")
+
+    async def delete_schedule(self, schedule_id: str,
+                              __user__: dict = {}) -> str:
+        """
+        Delete one of this person's schedules for good. This cannot be
+        undone, so prefer disable_schedule unless they clearly want it gone.
+
+        Call list_my_schedules first if you do not already have the id.
+        """
+        return await self._simple_write(
+            "DELETE", "/schedules/%s" % schedule_id, __user__, "deleted")
+
+    async def trigger_schedule_now(self, schedule_id: str,
+                                   __user__: dict = {}) -> str:
+        """
+        Run one of this person's schedules right now, without waiting for
+        its next scheduled time. Leaves the schedule itself unchanged.
+
+        Call list_my_schedules first if you do not already have the id.
+        """
+        return await self._simple_write(
+            "POST", "/schedules/%s/run-now" % schedule_id, __user__,
+            "started now")
+
+    async def _simple_write(self, method: str, path: str, __user__: dict,
+                            done: str) -> str:
+        """The four one-line writes, which differ only in verb, path and the
+        word used to report success."""
+        email = self._email(__user__)
+        if not email:
+            return "I could not tell whose schedule that is, so I left it alone."
+        ok, data = await self._call(method, path, email)
+        if not ok:
+            return "I could not change that schedule just now, so nothing happened."
+        if isinstance(data, dict) and data.get("id"):
+            return "Done, %s: %s." % (done, self._describe(data))
+        return "Done, %s." % done
