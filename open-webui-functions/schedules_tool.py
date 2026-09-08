@@ -29,6 +29,12 @@ from pydantic import BaseModel, Field
 
 
 class Tools:
+    #: What routes_schedules.CreateScheduleIn falls back to when a create
+    #: names no zone. Sent explicitly when this person's own zone cannot be
+    #: read, so the zone they are told about is the zone that was actually
+    #: sent, rather than one this tool guessed the server would pick.
+    FALLBACK_TZ = "Asia/Manila"
+
     class Valves(BaseModel):
         tasks_url: str = Field(
             default=os.environ.get("TASKS_URL", "http://tasks:8210"))
@@ -43,9 +49,12 @@ class Tools:
         """Who is asking, from Open WebUI rather than from a parameter.
 
         Never a method argument: a model that could name the user could act
-        as another one.
+        as another one. Never raises either: __user__ arrives from another
+        process's plumbing, so it is not always the dict it is annotated as,
+        and every method here has to return a sentence.
         """
-        return ((__user__ or {}).get("email") or "").strip()
+        user = __user__ if isinstance(__user__, dict) else {}
+        return str(user.get("email") or "").strip()
 
     def _schedule_path(self, schedule_id, suffix: str = "") -> str:
         """The path for one schedule, or "" when the id is not an id.
@@ -86,10 +95,33 @@ class Tools:
                     method, url,
                     headers={"X-User-Email": email},
                     json=json_body)
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    return False, self._refusal(response)
                 return True, (response.json() if response.content else {})
         except Exception:                                   # noqa: BLE001
             return False, "I could not reach your schedules just now."
+
+    def _refusal(self, response) -> str:
+        """What the server said, when it said something a person can act on.
+
+        The ten-schedule cap and the fifteen-minute interval floor are
+        refusals with a reason, and collapsing them into one shrug is the
+        difference between an agent explaining a limit and an agent looking
+        broken.
+
+        Only below 500, and only a string `detail`: a 500 body is where an
+        unhandled exception surfaces, while a `detail` under that is a
+        sentence this service wrote on purpose. Neither carries the request
+        URL, which is the thing that must never come back out of here.
+        """
+        if response.status_code < 500:
+            try:
+                detail = response.json().get("detail")
+            except Exception:                               # noqa: BLE001
+                detail = None
+            if isinstance(detail, str) and detail.strip():
+                return detail.strip()
+        return "I could not reach your schedules just now."
 
     def _describe(self, row: dict) -> str:
         """One schedule as a person reads it, not as the API returns it."""
@@ -137,12 +169,13 @@ class Tools:
     # --------------------------------------------------------------- writing
 
     async def _timezone_for(self, email: str):
-        """(zone, detected) for this person.
+        """(zone, detected) for this person, or ("", False) when unknown.
 
         /prefs/timezone always returns a zone plus a `detected` flag, so a
-        caller never has to know what the platform default is. A failed read
-        is not a reason to refuse a schedule, only a reason to say which zone
-        was used.
+        caller never has to know what the platform default is. A read that
+        fails, or answers with no zone in it, is not a reason to refuse a
+        schedule. It is a reason to say which zone was used instead, and the
+        empty string here is what tells create_schedule to say it.
         """
         ok, data = await self._call("GET", "/prefs/timezone", email)
         if not ok or not isinstance(data, dict):
@@ -186,14 +219,19 @@ class Tools:
             return "I could not tell whose schedule this is, so I did not make one."
 
         zone, detected = await self._timezone_for(email)
+        known = bool(zone)
+        if not known:
+            # The read failed, or answered with nothing usable. Either way
+            # the zone is not this person's, so name the one that will apply
+            # and send it, instead of letting the server default decide in
+            # silence. A schedule an hour off looks like it worked.
+            zone = self.FALLBACK_TZ
         body = {"name": name, "cron_expr": cron_expr, "prompt": prompt,
-                "agent_id": self._agent_id_from(__model__)}
-        if zone:
-            body["tz"] = zone
+                "tz": zone, "agent_id": self._agent_id_from(__model__)}
 
         ok, data = await self._call("POST", "/schedules", email, body)
         if not ok:
-            return "I could not put that on your schedule just now, so nothing was made."
+            return "Nothing was scheduled: " + data
         if not isinstance(data, dict) or not data.get("id"):
             return "Your schedule may not have been made: the reply did not name one."
 
@@ -202,7 +240,10 @@ class Tools:
         # from fields read off that bare reply and defaulted to nothing.
         made = dict(body, id=data["id"], enabled=True)
         said = "Done. " + self._describe(made) + "."
-        if zone and not detected:
+        if not known:
+            said += (" I could not read your timezone, so I used %s. "
+                     "Tell me your zone if that is wrong." % zone)
+        elif not detected:
             said += (" I used %s, because I have no timezone recorded for you. "
                      "Tell me your zone if that is wrong." % zone)
         said += (" The result will appear on your Cron Jobs page, since this "
@@ -270,7 +311,7 @@ class Tools:
                     "anything. Call list_my_schedules to see the real ones.")
         ok, data = await self._call(method, path, email)
         if not ok:
-            return "I could not change that schedule just now, so nothing happened."
+            return "I did not change that schedule: " + data
         if isinstance(data, dict) and data.get("id"):
             return "Done, %s: %s." % (done, self._describe(data))
         return "Done, %s." % done

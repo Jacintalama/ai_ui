@@ -46,13 +46,34 @@ def tool():
 #: never produce.
 SID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 
+#: Exactly what routes_schedules._serialize returns, field for field. A
+#: trimmed mock made the "does the tool leak the API's shape" assertions
+#: below vacuous: they cannot catch user_email being printed if the row they
+#: are given has no user_email in it.
 ROW = {
-    "id": "sch-1", "name": "Morning inbox", "cron_expr": "0 8 * * *",
-    "tz": "Europe/London", "prompt": "what needs a reply",
-    "enabled": True, "last_run_status": "ok",
-    "delivery_channel_id": None, "delivery_platform": "discord",
-    "kind": "agent", "agent_id": None, "tool_mode": None,
+    "id": SID,
+    "user_email": "owner@example.com",
+    "name": "Morning inbox",
+    "cron_expr": "0 8 * * *",
+    "tz": "Europe/London",
+    "persona": "",
+    "prompt": "what needs a reply",
+    "enabled": True,
+    "last_run_at": "2026-09-08T08:00:00+00:00",
+    "last_run_status": "ok",
+    "last_result": "Three emails need a reply.",
+    "last_result_at": "2026-09-08T08:00:12+00:00",
+    "delivery_channel_id": None,
+    "delivery_platform": "discord",
+    "kind": "agent",
+    "agent_id": None,
+    "tool_mode": None,
 }
+
+#: What POST /schedules really replies with. It returns {"id": ...} and
+#: nothing else, so mocking a whole row there would test a shape the server
+#: never sends.
+CREATED = {"id": SID}
 
 
 def test_the_valves_have_nowhere_to_put_a_secret(tool):
@@ -83,6 +104,8 @@ async def test_a_schedule_reads_back_as_a_sentence_not_a_dump(tool):
     assert "Europe/London" in out
     assert "on" in out.lower()
     assert "user_email" not in out, "that is the API's shape, not a person's"
+    assert ROW["user_email"] not in out, "nor is the owner's address"
+    assert ROW["last_result"] not in out, "a whole past run is not a listing"
 
 
 @respx.mock
@@ -156,7 +179,7 @@ async def test_creating_sends_the_persons_own_timezone(tool):
         200, json={"timezone": "Europe/London", "source": "browser",
                    "detected": True}))
     route = respx.post(BASE + "/schedules").mock(
-        return_value=httpx.Response(201, json=dict(ROW, tz="Europe/London")))
+        return_value=httpx.Response(201, json=CREATED))
     out = await tool.create_schedule(
         name="Morning inbox", cron_expr="0 8 * * *",
         prompt="what needs a reply", __user__=OWNER)
@@ -173,7 +196,7 @@ async def test_an_undetected_timezone_is_disclosed_not_hidden(tool):
         200, json={"timezone": "Asia/Manila", "source": "default",
                    "detected": False}))
     respx.post(BASE + "/schedules").mock(
-        return_value=httpx.Response(201, json=dict(ROW, tz="Asia/Manila")))
+        return_value=httpx.Response(201, json=CREATED))
     out = await tool.create_schedule(
         name="Morning inbox", cron_expr="0 8 * * *", prompt="hi",
         __user__=OWNER)
@@ -186,7 +209,7 @@ async def test_a_schedule_an_agent_makes_runs_as_that_agent(tool):
     respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
         200, json={"timezone": "Europe/London", "detected": True}))
     route = respx.post(BASE + "/schedules").mock(
-        return_value=httpx.Response(201, json=ROW))
+        return_value=httpx.Response(201, json=CREATED))
     await tool.create_schedule(
         name="n", cron_expr="0 8 * * *", prompt="p", __user__=OWNER,
         __model__={"id": "agent-research-assistant-0001"})
@@ -201,7 +224,7 @@ async def test_a_plain_model_is_not_passed_off_as_an_agent(tool):
     respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
         200, json={"timezone": "Europe/London", "detected": True}))
     route = respx.post(BASE + "/schedules").mock(
-        return_value=httpx.Response(201, json=ROW))
+        return_value=httpx.Response(201, json=CREATED))
     await tool.create_schedule(
         name="n", cron_expr="0 8 * * *", prompt="p", __user__=OWNER,
         __model__={"id": "gpt-5"})
@@ -216,7 +239,7 @@ async def test_creating_never_lets_the_caller_name_the_owner(tool):
     respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
         200, json={"timezone": "Europe/London", "detected": True}))
     route = respx.post(BASE + "/schedules").mock(
-        return_value=httpx.Response(201, json=ROW))
+        return_value=httpx.Response(201, json=CREATED))
     await tool.create_schedule(name="n", cron_expr="0 8 * * *", prompt="p",
                                __user__=OWNER)
     sent = route.calls[0].request
@@ -239,17 +262,28 @@ async def test_a_failed_create_does_not_claim_a_schedule_exists(tool):
 
 
 @respx.mock
-async def test_a_broken_timezone_read_still_creates_the_schedule(tool):
+async def test_a_broken_timezone_read_is_disclosed_not_hidden(tool):
     """Not knowing the zone is a reason to say which one was used, not a
-    reason to refuse the whole request."""
+    reason to refuse the whole request, and not a reason to say nothing.
+
+    The failure mode this closes: with the read down, no tz was sent, the
+    server quietly defaulted to Asia/Manila, and the person was told their
+    schedule was made without a zone named anywhere. A schedule an hour off
+    looks like it worked, so the fallback has to be sent explicitly and said
+    out loud."""
     respx.get(BASE + "/prefs/timezone").mock(
         side_effect=httpx.ConnectError("down"))
     route = respx.post(BASE + "/schedules").mock(
-        return_value=httpx.Response(201, json=ROW))
+        return_value=httpx.Response(201, json=CREATED))
     out = await tool.create_schedule(name="n", cron_expr="0 8 * * *",
                                      prompt="p", __user__=OWNER)
     assert route.called
+    body = json.loads(route.calls[0].request.read())
+    assert body["tz"] == "Asia/Manila", "the zone said has to be the zone sent"
+    assert "Asia/Manila" in out, "the zone that applies has to be named"
+    assert "could not read your timezone" in out.lower()
     assert "down" not in out
+    assert BASE not in out
 
 
 @pytest.mark.parametrize("method,verb,suffix,response,done", [
@@ -296,14 +330,14 @@ async def test_creating_reports_the_schedule_actually_made_not_the_bare_id_reply
     respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
         200, json={"timezone": "Europe/London", "detected": True}))
     respx.post(BASE + "/schedules").mock(
-        return_value=httpx.Response(201, json={"id": "sch-9"}))
+        return_value=httpx.Response(201, json=CREATED))
     out = await tool.create_schedule(
         name="Morning inbox", cron_expr="0 8 * * *",
         prompt="what needs a reply", __user__=OWNER)
     assert "Morning inbox" in out
     assert "0 8 * * *" in out
     assert "currently on" in out
-    assert "sch-9" in out
+    assert SID in out
 
 
 async def test_creating_with_no_email_does_not_call(tool):
@@ -418,6 +452,90 @@ async def test_an_id_in_another_uuid_spelling_is_normalised_not_echoed(tool):
     out = await tool.delete_schedule("{" + SID.upper() + "}", __user__=OWNER)
     assert route.called
     assert out == "Done, deleted."
+
+
+# --------------------------------------------------- what the server refused
+
+@respx.mock
+async def test_a_refusal_the_server_explains_is_relayed(tool):
+    """A person who hit the ten-schedule cap cannot learn that from "I could
+    not reach your schedules just now". The endpoint already wrote the
+    sentence, so say it."""
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    respx.post(BASE + "/schedules").mock(return_value=httpx.Response(
+        400, json={"detail": "You already have 10 schedules. "
+                             "Delete one before adding another."}))
+    out = await tool.create_schedule(name="n", cron_expr="0 8 * * *",
+                                     prompt="p", __user__=OWNER)
+    assert "10 schedules" in out
+    assert "Delete one before adding another." in out
+    assert BASE not in out
+
+
+@respx.mock
+async def test_the_interval_floor_is_relayed_too(tool):
+    respx.get(BASE + "/prefs/timezone").mock(return_value=httpx.Response(
+        200, json={"timezone": "Europe/London", "detected": True}))
+    respx.post(BASE + "/schedules").mock(return_value=httpx.Response(
+        400, json={"detail": "Schedules must be at least 15 minutes apart."}))
+    out = await tool.create_schedule(name="n", cron_expr="* * * * *",
+                                     prompt="p", __user__=OWNER)
+    assert "15 minutes" in out
+    assert BASE not in out
+
+
+@respx.mock
+async def test_a_write_relays_what_the_server_said(tool):
+    respx.post(BASE + "/schedules/" + SID + "/enable").mock(
+        return_value=httpx.Response(404, json={"detail": "not found"}))
+    out = await tool.enable_schedule(SID, __user__=OWNER)
+    assert "not found" in out
+    assert "Done" not in out
+    assert BASE not in out
+
+
+@respx.mock
+async def test_a_server_error_is_never_relayed_verbatim(tool):
+    """A 500 body is where an unhandled exception surfaces, and this project
+    has leaked a credential through error text once. Below 500 is a sentence
+    the service wrote on purpose; 500 and up is not."""
+    leak = "asyncpg.connect('postgres://user:hunter2@db:5432') failed"
+    respx.get(BASE + "/schedules").mock(
+        return_value=httpx.Response(500, json={"detail": leak}))
+    out = await tool.list_my_schedules(__user__=OWNER)
+    assert leak not in out
+    assert "hunter2" not in out
+    assert BASE not in out
+    assert isinstance(out, str) and out
+
+
+@respx.mock
+async def test_a_refusal_that_is_not_a_string_detail_is_not_relayed(tool):
+    """FastAPI's own validation errors put a LIST of objects in detail. That
+    is the API's shape, not a sentence, so it does not get read out."""
+    respx.get(BASE + "/schedules").mock(return_value=httpx.Response(
+        422, json={"detail": [{"loc": ["body", "cron_expr"],
+                               "msg": "field required"}]}))
+    out = await tool.list_my_schedules(__user__=OWNER)
+    assert "loc" not in out
+    assert isinstance(out, str) and out
+
+
+# -------------------------------------------------------------- who is asking
+
+@pytest.mark.parametrize("supplied", [None, "owner@example.com", 7, [], ""])
+async def test_the_caller_lookup_never_raises_on_a_shape_it_did_not_expect(
+        tool, supplied):
+    """__user__ arrives from another process's plumbing, so it is not always
+    the dict it is annotated as. _email is the sibling of _agent_id_from,
+    which already guards this; a bare .get on a string is an AttributeError
+    out of a method whose whole contract is that it returns a sentence.
+
+    No respx mock: a request would error the test rather than pass it."""
+    assert tool._email(supplied) == ""
+    out = await tool.list_my_schedules(__user__=supplied)
+    assert isinstance(out, str) and out
 
 
 # ---------------------------------------------------------------- installing
