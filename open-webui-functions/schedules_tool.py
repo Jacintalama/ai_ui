@@ -16,7 +16,13 @@ requirements: httpx
 # So this tool sends the caller's email and nothing else. The dangerous path,
 # the one that can delete somebody else's schedules, needs a credential this
 # file does not have and has no field to store.
+#
+# That argument only holds while every call this tool makes lands on
+# /schedules. See _schedule_path: an id the model chose is put into a path,
+# and httpx resolves dot segments before sending, so an unchecked id is a way
+# to call some OTHER endpoint of the tasks service as this person.
 import os
+import uuid
 
 import httpx
 from pydantic import BaseModel, Field
@@ -40,6 +46,29 @@ class Tools:
         as another one.
         """
         return ((__user__ or {}).get("email") or "").strip()
+
+    def _schedule_path(self, schedule_id, suffix: str = "") -> str:
+        """The path for one schedule, or "" when the id is not an id.
+
+        This is the one place an id the model chose becomes a URL, and the
+        check is not politeness. httpx resolves dot segments before sending,
+        so "../connections/github" would leave /schedules entirely and, with
+        this person's own X-User-Email attached, delete a different thing of
+        theirs through an endpoint this tool does not declare. The endpoint
+        that enforces scoping never gets a chance to help, because traversal
+        changes WHICH endpoint is asked.
+
+        Schedule ids are UUIDs. routes_schedules parses every one of them
+        with uuid.UUID, so a value that is not a UUID was never a valid id,
+        and refusing it here also stops a hallucinated id turning into a 500
+        on the tasks service. Rebuilt from the parsed value rather than
+        echoed, so only the canonical form is ever put in a path.
+        """
+        try:
+            parsed = uuid.UUID(str(schedule_id))
+        except Exception:                                   # noqa: BLE001
+            return ""
+        return "/schedules/" + str(parsed) + suffix
 
     async def _call(self, method: str, path: str, email: str,
                     json_body: dict = None):
@@ -188,8 +217,7 @@ class Tools:
         Call list_my_schedules first if you do not already have the id.
         """
         return await self._simple_write(
-            "POST", "/schedules/%s/enable" % schedule_id, __user__,
-            "turned back on")
+            "POST", schedule_id, "/enable", __user__, "turned back on")
 
     async def disable_schedule(self, schedule_id: str,
                                __user__: dict = {}) -> str:
@@ -201,8 +229,7 @@ class Tools:
         Call list_my_schedules first if you do not already have the id.
         """
         return await self._simple_write(
-            "POST", "/schedules/%s/disable" % schedule_id, __user__,
-            "turned off")
+            "POST", schedule_id, "/disable", __user__, "turned off")
 
     async def delete_schedule(self, schedule_id: str,
                               __user__: dict = {}) -> str:
@@ -213,7 +240,7 @@ class Tools:
         Call list_my_schedules first if you do not already have the id.
         """
         return await self._simple_write(
-            "DELETE", "/schedules/%s" % schedule_id, __user__, "deleted")
+            "DELETE", schedule_id, "", __user__, "deleted")
 
     async def trigger_schedule_now(self, schedule_id: str,
                                    __user__: dict = {}) -> str:
@@ -224,16 +251,23 @@ class Tools:
         Call list_my_schedules first if you do not already have the id.
         """
         return await self._simple_write(
-            "POST", "/schedules/%s/run-now" % schedule_id, __user__,
-            "started now")
+            "POST", schedule_id, "/run-now", __user__, "started now")
 
-    async def _simple_write(self, method: str, path: str, __user__: dict,
-                            done: str) -> str:
-        """The four one-line writes, which differ only in verb, path and the
-        word used to report success."""
+    async def _simple_write(self, method: str, schedule_id: str, suffix: str,
+                            __user__: dict, done: str) -> str:
+        """The four one-line writes, which differ only in verb, path suffix
+        and the word used to report success.
+
+        The id is checked here, before any path exists, because this is the
+        single place all four of them build one.
+        """
         email = self._email(__user__)
         if not email:
             return "I could not tell whose schedule that is, so I left it alone."
+        path = self._schedule_path(schedule_id, suffix)
+        if not path:
+            return ("That is not one of your schedule ids, so I did not touch "
+                    "anything. Call list_my_schedules to see the real ones.")
         ok, data = await self._call(method, path, email)
         if not ok:
             return "I could not change that schedule just now, so nothing happened."

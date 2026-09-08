@@ -40,6 +40,12 @@ def tool():
     return t
 
 
+#: A real schedule id. They are UUIDs: routes_schedules parses every one of
+#: them with uuid.UUID, and the tool refuses anything else before it builds a
+#: path, so a mock id like "sch-1" would exercise a value production can
+#: never produce.
+SID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
 ROW = {
     "id": "sch-1", "name": "Morning inbox", "cron_expr": "0 8 * * *",
     "tz": "Europe/London", "prompt": "what needs a reply",
@@ -246,26 +252,25 @@ async def test_a_broken_timezone_read_still_creates_the_schedule(tool):
     assert "down" not in out
 
 
-@pytest.mark.parametrize("method,verb,path,response,done", [
-    ("enable_schedule", "POST", "/schedules/sch-1/enable",
-     {"status": "enabled"}, "turned back on"),
-    ("disable_schedule", "POST", "/schedules/sch-1/disable",
-     {"status": "disabled"}, "turned off"),
-    ("delete_schedule", "DELETE", "/schedules/sch-1",
-     {"status": "deleted"}, "deleted"),
-    ("trigger_schedule_now", "POST", "/schedules/sch-1/run-now",
-     {"status": "dispatched"}, "started now"),
+@pytest.mark.parametrize("method,verb,suffix,response,done", [
+    ("enable_schedule", "POST", "/enable", {"status": "enabled"},
+     "turned back on"),
+    ("disable_schedule", "POST", "/disable", {"status": "disabled"},
+     "turned off"),
+    ("delete_schedule", "DELETE", "", {"status": "deleted"}, "deleted"),
+    ("trigger_schedule_now", "POST", "/run-now", {"status": "dispatched"},
+     "started now"),
 ])
 @respx.mock
 async def test_each_write_hits_its_own_endpoint_as_the_caller(
-        tool, method, verb, path, response, done):
+        tool, method, verb, suffix, response, done):
     """The four endpoints really reply with a status dict, not a schedule,
     so that is what is mocked here: this exercises the sentence a person
     actually gets, not the dead branch that reads an id off a row that never
     comes back."""
-    route = respx.request(verb, BASE + path).mock(
+    route = respx.request(verb, BASE + "/schedules/" + SID + suffix).mock(
         return_value=httpx.Response(200, json=response))
-    out = await getattr(tool, method)("sch-1", __user__=OWNER)
+    out = await getattr(tool, method)(SID, __user__=OWNER)
     sent = route.calls[0].request
     assert sent.headers["X-User-Email"] == "owner@example.com"
     assert "x-cron-secret" not in {k.lower() for k in sent.headers}
@@ -278,7 +283,7 @@ async def test_each_write_hits_its_own_endpoint_as_the_caller(
 ])
 async def test_no_email_stops_every_write_before_it_calls(tool, method):
     """No respx mock: a call would error the test rather than pass it."""
-    out = await getattr(tool, method)("sch-1", __user__={})
+    out = await getattr(tool, method)(SID, __user__={})
     assert isinstance(out, str) and out
 
 
@@ -318,6 +323,101 @@ async def test_creating_with_no_id_in_the_reply_does_not_claim_success(tool):
                                      prompt="p", __user__=OWNER)
     assert isinstance(out, str) and out
     assert "did not name" in out.lower()
+
+
+# --------------------------------------------------- the id is not a free path
+
+# Every id-taking method puts a value the MODEL chose into a URL, and httpx
+# resolves dot segments before it sends. So an id of "../connections/github"
+# does not ask for a schedule called that: it leaves /schedules entirely and
+# asks a different endpoint of the tasks service, with this person's own
+# X-User-Email attached, which is all that endpoint authenticates on.
+#
+# delete_schedule is the worst of the four because nothing follows the id, so
+# it is a general "DELETE any path on this service as this person" primitive:
+# DELETE /connections/github drops their GitHub credential, and
+# DELETE /vercel/connect drops their Vercel token. Both then report
+# "Done, deleted."
+#
+# It is same-user only, so it is not a cross-tenant hole. It is still the
+# vector agent_access names: an agent doing something its owner did not
+# intend, at the prompting of text it read somewhere else. And it defeats the
+# argument this whole tool rests on, because "the endpoint enforces the
+# scoping" cannot apply to an endpoint that was never meant to be called.
+#
+# So these assert on the REQUESTS MADE, not on the sentence returned. A
+# refusal sentence with the request already sent would pass a
+# sentence-shaped assertion and still have deleted the credential.
+
+_ESCAPES = [
+    "../connections/github",
+    "../../graph/mine/prebuild",
+    "..%2fconnections%2fgithub",
+    "sch-1",
+    "",
+    None,
+    {"id": "x"},
+]
+
+
+@pytest.mark.parametrize("method", [
+    "enable_schedule", "disable_schedule", "delete_schedule",
+    "trigger_schedule_now",
+])
+@pytest.mark.parametrize("bad_id", _ESCAPES)
+@respx.mock
+async def test_an_id_that_is_not_a_schedule_id_sends_no_request_at_all(
+        tool, method, bad_id):
+    """A catch-all route on purpose, answering anything with a success.
+
+    Leaving respx unrouted is NOT enough: an unmatched request raises inside
+    the client, the tool catches it like any other transport failure, and the
+    test then passes on code that really did try to leave. Routing everything
+    means a request that escapes is recorded and succeeds, so the assertion
+    below is about what was SENT rather than about what came back."""
+    anything = respx.route().mock(
+        return_value=httpx.Response(200, json={"status": "deleted"}))
+    out = await getattr(tool, method)(bad_id, __user__=OWNER)
+    assert not anything.called, "a request was made for %r" % (bad_id,)
+    assert len(respx.calls) == 0, "a request was made for %r" % (bad_id,)
+    assert isinstance(out, str) and out
+    assert "Done" not in out, "it must not report a change it did not make"
+
+
+@respx.mock
+async def test_deleting_through_a_traversal_never_reaches_connections(tool):
+    """The concrete one. If this ever regresses, the person loses their
+    ClickUp, Trello, GitHub, Notion or n8n credential and is told it worked."""
+    connections = respx.delete(BASE + "/connections/github").mock(
+        return_value=httpx.Response(200, json={"status": "deleted"}))
+    vercel = respx.delete(BASE + "/vercel/connect").mock(
+        return_value=httpx.Response(200, json={"status": "deleted"}))
+    out = await tool.delete_schedule("../connections/github", __user__=OWNER)
+    assert not connections.called
+    assert not vercel.called
+    assert len(respx.calls) == 0
+    assert "Done, deleted" not in out
+
+
+@respx.mock
+async def test_a_real_id_still_goes_through(tool):
+    """The guard has to refuse the escape without refusing the feature."""
+    route = respx.delete(BASE + "/schedules/" + SID).mock(
+        return_value=httpx.Response(200, json={"status": "deleted"}))
+    out = await tool.delete_schedule(SID, __user__=OWNER)
+    assert route.called
+    assert out == "Done, deleted."
+
+
+@respx.mock
+async def test_an_id_in_another_uuid_spelling_is_normalised_not_echoed(tool):
+    """uuid.UUID accepts braces, urn: and no hyphens at all. The path is
+    rebuilt from the parsed value, so only the canonical form is ever sent."""
+    route = respx.delete(BASE + "/schedules/" + SID).mock(
+        return_value=httpx.Response(200, json={"status": "deleted"}))
+    out = await tool.delete_schedule("{" + SID.upper() + "}", __user__=OWNER)
+    assert route.called
+    assert out == "Done, deleted."
 
 
 # ---------------------------------------------------------------- installing
