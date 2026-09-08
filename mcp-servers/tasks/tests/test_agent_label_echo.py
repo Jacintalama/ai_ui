@@ -204,7 +204,29 @@ def test_the_brief_bans_the_boilerplate_that_was_actually_said():
 
 def test_the_brief_stays_short_enough_to_send_every_turn():
     """It rides in front of every turn for every agent, so it is paid for on
-    every message. A page of rules would cost more than it saves."""
+    every message. A page of rules would cost more than it saves.
+
+    Raised from 1400 to 2100 when the repetition rules went in: an agent
+    re-printing a list it had already printed, after being told it was not
+    needed, was worth more than the tokens the instruction costs. Raise this
+    again only for something that has actually gone wrong in front of
+    somebody, not for a rule that seems like a good idea."""
     from routes_agent_turn import _identity_line
     said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
-    assert len(said) < 1400, len(said)
+    assert len(said) < 2100, len(said)
+
+
+def test_the_brief_says_not_to_repeat_itself():
+    """Seen live: a whole inbox digest, then "no need to reply on that", then
+    "Got it", then the identical digest again on the next question."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada"])["content"]
+    assert "Do not say again what you have already said" in said
+    assert "that settles it" in said
+    assert "Answer the question they actually asked" in said
+
+
+def test_the_brief_points_at_the_remembering_tool():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada"])["content"]
+    assert "tool for remembering" in said
