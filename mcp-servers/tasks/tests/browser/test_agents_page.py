@@ -1082,23 +1082,30 @@ def test_every_field_is_still_reachable_after_the_reflow(page):
 # what it does fit on one line.
 
 SKILLS = [
-    {"name": "inbox-triage", "tools": ["gmail"],
+    {"name": "inbox-triage", "tools": ["gmail"], "tags": ["email", "triage"],
      "description": "Sort unread mail into what needs a reply today. Use when "
                     "asked about email."},
     {"name": "daily-standup", "tools": ["server:mcp-proxy"],
+     "tags": ["planning", "reporting"],
      "description": "What moved, what is stuck, what is due. Use when asked "
                     "for a standup."},
+    {"name": "write-a-document", "tools": ["documents"],
+     "tags": ["documents", "writing"],
+     "description": "Produce a real Word or PDF file. Use when asked for a "
+                    "report or a letter."},
 ]
 
 
-def test_the_form_lists_the_skills_with_what_they_do(page):
+def test_the_form_lists_every_skill_the_server_offers(page):
+    """Names only. What each one does is one click away and is covered by the
+    browsing tests further down; this one is about the list existing and
+    being complete, which is what a failed fetch would break."""
     _open_form(page)
     block = page.locator("#agent-skills")
     assert block.count() == 1, "there is no skills list on the form"
-    text = block.inner_text()
-    assert "inbox-triage" in text
-    assert "Sort unread mail" in text, (
-        "the name is there but not what it does, so it cannot be chosen")
+    shown = [e.get_attribute("data-skill")
+             for e in page.locator("#agent-skills .skill").all()]
+    assert shown == [s["name"] for s in SKILLS], shown
 
 
 def test_ticking_a_skill_saves_it_on_the_agent(page):
@@ -1148,3 +1155,99 @@ def test_the_skills_sit_below_both_columns_not_inside_one(page):
 def test_the_card_shows_the_skills_an_agent_has(page):
     card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
     assert "daily-standup" in card.inner_text()
+
+
+# --- browsing the skills --------------------------------------------------
+
+# Ralph, after seeing the marketplace: "name only and then if they click it
+# will show the description". Ten names fit on a screen where ten
+# descriptions do not, and the list has to still work at a hundred.
+
+def _skill_row(page, name):
+    return page.locator('[data-skill="%s"]' % name)
+
+
+def test_a_row_shows_the_name_not_the_description(page):
+    _open_form(page)
+    row = _skill_row(page, "inbox-triage")
+    assert "inbox-triage" in row.inner_text()
+    assert not row.locator(".skill-what").is_visible(), (
+        "the description is open before anybody asked for it")
+
+
+def test_clicking_the_name_shows_what_it_does(page):
+    _open_form(page)
+    row = _skill_row(page, "inbox-triage")
+    row.locator(".skill-open").click()
+    assert row.locator(".skill-what").is_visible()
+    assert "Sort unread mail" in row.inner_text()
+    assert "Gmail" in row.inner_text(), "it does not say which tool it needs"
+
+
+def test_reading_a_skill_does_not_give_it_to_the_agent(page):
+    """The one thing this layout must never do. Two targets on one row, and
+    the wrong one silently changing an agent's behaviour would be worse than
+    the wall of text it replaced."""
+    _open_form(page)
+    _skill_row(page, "inbox-triage").locator(".skill-open").click()
+    assert not page.is_checked("#skill-inbox-triage")
+
+
+def test_ticking_a_skill_does_not_open_it(page):
+    _open_form(page)
+    page.check("#skill-inbox-triage")
+    assert not _skill_row(page, "inbox-triage").locator(
+        ".skill-what").is_visible()
+
+
+def test_only_one_skill_is_open_at_a_time(page):
+    """Otherwise reading four of them rebuilds the wall of text this replaced."""
+    _open_form(page)
+    _skill_row(page, "inbox-triage").locator(".skill-open").click()
+    _skill_row(page, "daily-standup").locator(".skill-open").click()
+    assert _skill_row(page, "daily-standup").locator(".skill-what").is_visible()
+    assert not _skill_row(page, "inbox-triage").locator(
+        ".skill-what").is_visible()
+
+
+def test_a_tag_filters_the_list(page):
+    _open_form(page)
+    page.locator('[data-tag="email"]').click()
+    assert _skill_row(page, "inbox-triage").is_visible()
+    assert not _skill_row(page, "daily-standup").is_visible()
+
+
+def test_the_tag_says_how_many_it_has(page):
+    _open_form(page)
+    assert "1" in page.locator('[data-tag="email"]').inner_text()
+    assert "3" in page.locator('[data-tag=""]').inner_text(), "no All count"
+
+
+def test_searching_matches_name_description_and_tag(page):
+    _open_form(page)
+    for term, expected in [("triage", "inbox-triage"),
+                           ("unread mail", "inbox-triage"),
+                           ("reporting", "daily-standup")]:
+        page.fill("#skill-search", term)
+        page.wait_for_timeout(120)
+        assert _skill_row(page, expected).is_visible(), term
+
+
+def test_a_search_that_matches_nothing_says_so(page):
+    _open_form(page)
+    page.fill("#skill-search", "zzzznothing")
+    page.wait_for_timeout(120)
+    assert page.locator("#skill-none").is_visible()
+
+
+def test_a_hidden_skill_is_still_saved(page):
+    """Filtering is a view. A skill ticked and then filtered out of sight must
+    not quietly come off the agent, which is exactly what reading the checked
+    boxes out of the DOM would do if the row were removed rather than hidden."""
+    _fill(page, name="Researcher", instructions="Research carefully.")
+    page.check("#skill-inbox-triage")
+    page.fill("#skill-search", "standup")
+    page.wait_for_timeout(120)
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["meta"]["skillIds"] == ["inbox-triage"]

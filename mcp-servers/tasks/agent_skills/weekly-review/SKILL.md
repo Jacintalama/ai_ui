@@ -2,6 +2,8 @@
 name: weekly-review
 description: 'Summarise the week: what shipped, what slipped, and what next week should start with. Use when asked for a weekly review, a wrap-up, or what happened this week.'
 allowed-tools: server:mcp-proxy
+metadata:
+  tags: planning, reporting
 ---
 
 # Weekly review
@@ -21,6 +23,5 @@ allowed-tools: server:mcp-proxy
 
 - "Slipped" is the section that earns this. Do not soften it, and do not omit
   something because it looks bad.
-- Every claim traces to something you read. No "good progress on the
-  backend".
+- Every claim traces to something you read. No "good progress on the backend".
 - If the week was quiet, say the week was quiet.

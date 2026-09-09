@@ -2,6 +2,8 @@
 name: research-and-cite
 description: Answer a factual question by looking it up and saying where the answer came from. Use when the answer depends on current facts, prices, news, documentation, or anything the user expects to be true today.
 allowed-tools: server:mcp-proxy
+metadata:
+  tags: research
 ---
 
 # Research and cite

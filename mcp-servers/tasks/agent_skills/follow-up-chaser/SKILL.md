@@ -2,6 +2,8 @@
 name: follow-up-chaser
 description: Find messages the user sent that nobody answered, so nothing goes quiet unnoticed. Use when asked what is waiting, what has gone quiet, who has not replied, or what needs chasing.
 allowed-tools: gmail
+metadata:
+  tags: email, triage
 ---
 
 # Chase what went quiet
@@ -10,7 +12,7 @@ allowed-tools: gmail
 
 1. `search_emails` for mail they sent in the last 30 days.
 2. For each, check whether a later message in the same thread came back.
-3. Report only the ones with no answer, oldest silence first.
+3. Report only the ones with no answer, longest silence first.
 
 ## Rules
 

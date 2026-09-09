@@ -52,7 +52,34 @@ MAX_SKILL_CHARS = 4000
 #: budget in routes_agent_chat comfortably intact.
 MAX_TOTAL_CHARS = 8000
 
+#: How many of the skills that did not fit get named. Naming all of them was
+#: fine at ten and became the largest thing in the prompt at forty.
+NAMED_WHEN_DROPPED = 5
+
 _CACHE: dict | None = None
+
+
+def _tags_from(meta: dict) -> list:
+    """What this skill is about, for the filter chips and the search box.
+
+    They live under `metadata`, which the Agent Skills spec defines as a free
+    map of string to string. Putting them there rather than inventing a
+    top-level key keeps these valid skills that another runtime can read.
+
+    Everything about the shape is defensive: `metadata` is optional, every
+    skill written before tags existed has none, and the value is whatever
+    somebody typed. A tag list is a nice-to-have, so nothing here may be a
+    reason for a skill not to load.
+    """
+    data = meta.get("metadata")
+    raw = data.get("tags") if isinstance(data, dict) else None
+    if isinstance(raw, list):
+        parts = [str(t) for t in raw]
+    elif isinstance(raw, str):
+        parts = raw.split(",")
+    else:
+        return []
+    return [t for t in (p.strip().lower() for p in parts) if t]
 
 
 def _parse(text: str, folder: str) -> dict | None:
@@ -79,6 +106,7 @@ def _parse(text: str, folder: str) -> dict | None:
             "folder": folder,
             "description": " ".join(description.split()),
             "tools": tools.split() if isinstance(tools, str) else [],
+            "tags": _tags_from(meta),
             "body": body.strip(),
         }
     except Exception:                                       # noqa: BLE001
@@ -130,7 +158,7 @@ def catalogue() -> list:
     every page load for nothing.
     """
     return [{"name": s["name"], "description": s["description"],
-             "tools": list(s["tools"])}
+             "tools": list(s["tools"]), "tags": list(s["tags"])}
             for s in sorted(load_all().values(), key=lambda s: s["name"])]
 
 
@@ -182,8 +210,15 @@ def brief_for(meta) -> str:
         parts.append(block)
         used += len(block)
     if dropped:
+        # Named, but not all of them. With forty skills in the library this
+        # note grew longer than the budget it exists to protect, which a test
+        # caught: an apology for cutting that is itself the biggest thing in
+        # the prompt is worse than the cut.
+        shown = dropped[:NAMED_WHEN_DROPPED]
+        rest = len(dropped) - len(shown)
+        names = ", ".join(shown) + (" and %d more" % rest if rest else "")
         parts.append(
             "\n\nThese skills are also yours but were not included this time, "
             "because there was not room: %s. Say so if one of them is what "
-            "was being asked for." % ", ".join(dropped))
+            "was being asked for." % names)
     return "".join(parts)

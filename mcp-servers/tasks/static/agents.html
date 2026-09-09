@@ -335,18 +335,44 @@
   .skill-list { display: flex; flex-direction: column; gap: 6px;
                 max-height: 220px; overflow-y: auto; margin-top: 6px;
                 padding-right: 4px; }
-  .skill-list .skill { display: flex; align-items: flex-start; gap: 10px;
-                       padding: 9px 11px; cursor: pointer;
-                       border: 1px solid var(--border);
+  .skill-list .skill { border: 1px solid var(--border);
                        border-radius: var(--radius); font-size: 13px; }
   .skill-list .skill:hover { border-color: var(--border-2); }
   .skill-list .skill:has(input:checked) {
     border-color: var(--accent); background: rgba(124,140,255,0.07); }
-  .skill-list .skill input { margin-top: 2px; flex: 0 0 auto; }
-  .skill-list .skill-name { font-weight: 600; }
-  .skill-list .skill-what { display: block; color: var(--muted);
-                            margin-top: 2px; line-height: 1.5; }
-  .skill-list .skill-needs { color: var(--accent); }
+  /* The checkbox and the name are separate targets on purpose. Reading what
+     a skill does must never be able to give it to an agent, and a label
+     wrapping the whole row would do exactly that. */
+  .skill-row { display: flex; align-items: center; gap: 10px;
+               padding: 8px 11px; }
+  .skill-row input { flex: 0 0 auto; margin: 0; }
+  .skill-open { flex: 1; display: flex; align-items: center; gap: 10px;
+                background: none; border: 0; padding: 0; cursor: pointer;
+                color: var(--text); font: inherit; text-align: left;
+                min-width: 0; }
+  .skill-name { font-weight: 600; white-space: nowrap; }
+  .skill-tagline { flex: 1; color: var(--muted); font-size: 11.5px;
+                   text-align: right; white-space: nowrap; overflow: hidden;
+                   text-overflow: ellipsis; }
+  .skill-chev { color: var(--muted); flex: 0 0 auto;
+                transition: transform 0.15s ease; }
+  .skill-open[aria-expanded="true"] .skill-chev { transform: rotate(90deg); }
+  .skill-what { color: var(--text-2); line-height: 1.55;
+                padding: 0 11px 10px 40px; }
+  .skill-needs { color: var(--accent); }
+  /* Search and the tag chips. The chips carry counts because a tag with
+     nothing behind it is worse than no tag. */
+  .skill-controls { display: flex; flex-direction: column; gap: 8px;
+                    margin-top: 6px; }
+  .skill-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag-chip { background: var(--surface-2); border: 1px solid var(--border);
+              border-radius: 999px; padding: 3px 10px; font-size: 11.5px;
+              color: var(--text-2); cursor: pointer; font-family: inherit; }
+  .tag-chip:hover { border-color: var(--border-2); color: var(--text); }
+  .tag-chip[aria-pressed="true"] {
+    border-color: var(--accent); color: var(--accent);
+    background: rgba(124,140,255,0.10); }
+  .tag-chip .n { opacity: 0.6; margin-left: 4px; }
   .skill-empty { color: var(--muted); font-size: 12px; margin-top: 6px; }
   /* The first label in a column carries the same top margin as any other,
      which leaves the two columns starting at different heights. */
@@ -737,8 +763,14 @@
         <label for="agent-skills">Skills</label>
         <div class="hint">Ready-made instructions for one kind of job. Tick one
           and the agent follows it whenever that job comes up, instead of
-          working it out each time.</div>
+          working it out each time. Click a name to see what it does.</div>
+        <div class="skill-controls">
+          <input id="skill-search" type="search" autocomplete="off"
+                 placeholder="Search skills" aria-label="Search skills">
+          <div class="skill-tags" id="skill-tags"></div>
+        </div>
         <div class="skill-list" id="agent-skills"></div>
+        <div class="skill-empty" id="skill-none" hidden>Nothing matches that.</div>
 
         <div class="form-error" id="form-error"></div>
         <div class="form-actions">
@@ -1584,6 +1616,8 @@
     // same list for everybody, so there is nothing per-user to refresh.
     var SKILL_LIST = [];
 
+    var skillFilter = { tag: "", query: "" };
+
     async function loadSkills() {
       var wrap = document.getElementById("agent-skills");
       try {
@@ -1601,19 +1635,102 @@
       }
       wrap.innerHTML = "";
       SKILL_LIST.forEach(function (s) {
+        var tags = s.tags || [];
         var needs = (s.tools || []).map(function (t) {
           return TOOL_LABELS[t] || t;
         }).join(", ");
-        var l = document.createElement("label");
-        l.className = "skill";
-        l.innerHTML = '<input type="checkbox" id="skill-' + esc(s.name) + '">'
-          + "<span><span class=\"skill-name\">" + esc(s.name) + "</span>"
-          + '<span class="skill-what">' + esc(s.description)
-          + (needs ? ' <span class="skill-needs">Needs ' + esc(needs)
-                     + ".</span>" : "")
-          + "</span></span>";
-        wrap.appendChild(l);
+        var row = document.createElement("div");
+        row.className = "skill";
+        row.setAttribute("data-skill", s.name);
+        row.setAttribute("data-tags", tags.join(" "));
+        // Everything the search looks at, lower-cased once here rather than
+        // on every keystroke across forty rows.
+        row.setAttribute("data-text",
+          (s.name + " " + s.description + " " + tags.join(" ")).toLowerCase());
+        row.innerHTML =
+          '<div class="skill-row">' +
+            '<input type="checkbox" id="skill-' + esc(s.name) + '">' +
+            '<button type="button" class="skill-open" aria-expanded="false">' +
+              '<span class="skill-name">' + esc(s.name) + "</span>" +
+              '<span class="skill-tagline">' + esc(tags.join(" \u00b7 "))
+                + "</span>" +
+              '<span class="skill-chev">\u203a</span>' +
+            "</button>" +
+          "</div>" +
+          '<div class="skill-what" hidden>' + esc(s.description)
+            + (needs ? ' <span class="skill-needs">Needs ' + esc(needs)
+                       + ".</span>" : "")
+            + "</div>";
+        wrap.appendChild(row);
       });
+      drawSkillTags();
+      wrap.addEventListener("click", onSkillClick);
+      document.getElementById("skill-search")
+        .addEventListener("input", function (e) {
+          skillFilter.query = e.target.value.trim().toLowerCase();
+          applySkillFilter();
+        });
+      document.getElementById("skill-tags")
+        .addEventListener("click", function (e) {
+          var chip = e.target.closest("[data-tag]");
+          if (!chip) return;
+          skillFilter.tag = chip.getAttribute("data-tag");
+          drawSkillTags();
+          applySkillFilter();
+        });
+    }
+
+    // Only one open at a time. Four open rows rebuild the wall of text this
+    // layout replaced.
+    function onSkillClick(e) {
+      var btn = e.target.closest(".skill-open");
+      if (!btn) return;
+      var row = btn.closest(".skill");
+      var what = row.querySelector(".skill-what");
+      var opening = what.hidden;
+      document.querySelectorAll("#agent-skills .skill-what").forEach(
+        function (el) { el.hidden = true; });
+      document.querySelectorAll("#agent-skills .skill-open").forEach(
+        function (el) { el.setAttribute("aria-expanded", "false"); });
+      what.hidden = !opening;
+      btn.setAttribute("aria-expanded", opening ? "true" : "false");
+    }
+
+    function drawSkillTags() {
+      var counts = {};
+      SKILL_LIST.forEach(function (s) {
+        (s.tags || []).forEach(function (t) {
+          counts[t] = (counts[t] || 0) + 1;
+        });
+      });
+      var wrap = document.getElementById("skill-tags");
+      var html = chipHtml("", "All", SKILL_LIST.length);
+      Object.keys(counts).sort().forEach(function (t) {
+        html += chipHtml(t, t, counts[t]);
+      });
+      wrap.innerHTML = html;
+    }
+
+    function chipHtml(tag, label, n) {
+      return '<button type="button" class="tag-chip" data-tag="' + esc(tag)
+        + '" aria-pressed="' + (skillFilter.tag === tag) + '">'
+        + esc(label) + '<span class="n">' + n + "</span></button>";
+    }
+
+    // Rows are HIDDEN, never removed. A skill ticked and then filtered out of
+    // sight must still be saved, and reading the checked boxes out of a
+    // rebuilt list would silently drop it.
+    function applySkillFilter() {
+      var shown = 0;
+      document.querySelectorAll("#agent-skills .skill").forEach(function (row) {
+        var tags = (row.getAttribute("data-tags") || "").split(" ");
+        var okTag = !skillFilter.tag || tags.indexOf(skillFilter.tag) !== -1;
+        var okText = !skillFilter.query
+          || (row.getAttribute("data-text") || "").indexOf(skillFilter.query) !== -1;
+        row.hidden = !(okTag && okText);
+        if (!row.hidden) shown++;
+      });
+      document.getElementById("skill-none").hidden = shown > 0;
     }
 
     function chosenSkills() {

@@ -1,19 +1,21 @@
 ---
 name: spreadsheet
-description: Build or edit a real spreadsheet file when the deliverable is a spreadsheet. Use when asked for a spreadsheet, an xlsx, a table to download, a budget, or a tracker.
+description: Build a real spreadsheet file when the deliverable is a spreadsheet. Use when asked for a spreadsheet, an xlsx, a table to download, a budget or a tracker.
 allowed-tools: excel_creator
+metadata:
+  tags: data, documents
 ---
 
 # Spreadsheet work
 
-Use when the thing they want to end up with is a file. Not when they want
-numbers in a chat answer.
+Use when the thing they want to end up with is a file, not numbers in a chat
+answer.
 
 ## Steps
 
 1. Get the shape straight first: what the columns are, what one row means.
    Ask only if that is genuinely unclear.
-2. Build it with the spreadsheet tool.
+2. Build it with `create_excel`, or `create_simple_excel` for a plain table.
 3. Say what you made, what is in it, and hand back the download.
 
 ## Rules

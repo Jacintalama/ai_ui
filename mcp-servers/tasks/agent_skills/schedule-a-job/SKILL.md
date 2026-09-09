@@ -2,6 +2,8 @@
 name: schedule-a-job
 description: Set up a recurring job that runs as this agent on a schedule. Use when asked to do something every day, every week, at a certain time, on a schedule, or as a recurring reminder.
 allowed-tools: schedules
+metadata:
+  tags: automation, planning
 ---
 
 # Schedule a recurring job
@@ -21,5 +23,5 @@ allowed-tools: schedules
   it has to stand alone. "Do that" will do nothing in a week.
 - Their timezone, not the server's. Check before assuming.
 - Before making a second schedule that sounds like an existing one,
-  `list_schedules` and ask whether they meant to replace it.
+  `list_my_schedules` and ask whether they meant to replace it.
 - Describe what you asked for, never what a create response echoed back.

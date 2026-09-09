@@ -78,7 +78,7 @@ def test_the_catalogue_carries_no_bodies():
     large, and shipping ten of them to a page that draws checkboxes would put
     the whole library in every page load."""
     for row in agent_skills.catalogue():
-        assert set(row) == {"name", "description", "tools"}
+        assert set(row) == {"name", "description", "tools", "tags"}
 
 
 # --- choosing them --------------------------------------------------------
@@ -136,7 +136,12 @@ def test_a_dropped_skill_is_said_out_loud_rather_than_silently_cut(monkeypatch):
     every = [s["name"] for s in agent_skills.catalogue()]
     out = agent_skills.brief_for({"skillIds": every})
     assert "not included" in out.lower()
-    assert "weekly-review" in out, "the dropped ones are not even named"
+    # Some are named and the rest are counted. Naming every one of forty was
+    # the flaw the cap test found; naming none would be the silent cut this
+    # test exists to prevent.
+    named = [n for n in every if n in out.split("not included")[-1]]
+    assert named, "the dropped ones are not named at all"
+    assert len(named) <= agent_skills.NAMED_WHEN_DROPPED + 1
 
 
 def test_the_first_chosen_skills_are_the_ones_that_survive_the_cap(monkeypatch):
@@ -226,3 +231,68 @@ def test_pyyaml_is_a_declared_dependency():
     reqs = (pathlib.Path(__file__).resolve().parents[1]
             / "requirements.txt").read_text(encoding="utf-8").lower()
     assert "yaml" in reqs
+
+
+# --- tags -----------------------------------------------------------------
+
+# Tags ride in `metadata`, which the Agent Skills spec defines as a free map
+# of string to string, so these stay valid skills another runtime can read
+# rather than a fork of the format with an invented top-level key.
+
+def test_every_skill_carries_at_least_one_tag():
+    for skill in agent_skills.load_all().values():
+        assert skill["tags"], skill["name"]
+
+
+def test_tags_come_back_as_a_list_not_a_string():
+    """The page filters on them and the search joins them. A bare string
+    would silently match on substrings of other tags."""
+    for skill in agent_skills.load_all().values():
+        assert isinstance(skill["tags"], list)
+        assert all(isinstance(t, str) and t == t.strip() for t in skill["tags"])
+
+
+def test_the_catalogue_carries_the_tags():
+    rows = agent_skills.catalogue()
+    assert rows and all("tags" in r for r in rows)
+    assert any("email" in r["tags"] for r in rows)
+
+
+def test_a_skill_with_no_metadata_still_loads():
+    """Every skill written before tags existed had none, and the spec makes
+    metadata optional. A missing key must mean no tags, not no skill."""
+    parsed = agent_skills._parse(
+        "---\nname: x\ndescription: does a thing. Use when asked.\n---\nbody",
+        "x")
+    assert parsed is not None
+    assert parsed["tags"] == []
+
+
+def test_junk_metadata_does_not_take_the_skill_down():
+    for junk in ("metadata: 5", "metadata:\n  tags: 7", "metadata: [1,2]"):
+        parsed = agent_skills._parse(
+            "---\nname: x\ndescription: d. Use when asked.\n%s\n---\nbody"
+            % junk, "x")
+        assert parsed is not None, junk
+        assert parsed["tags"] == [], junk
+
+
+def test_the_library_is_worth_browsing():
+    """Ralph asked for more, and a tag filter with one entry per tag is not a
+    filter. This is the floor, not a target."""
+    every = agent_skills.load_all()
+    tags = {t for s in every.values() for t in s["tags"]}
+    assert len(every) >= 40, len(every)
+    assert len(tags) >= 8, sorted(tags)
+
+
+def test_the_note_about_dropped_skills_cannot_outgrow_the_budget(monkeypatch):
+    """Found by the cap test the moment the library went from ten skills to
+    forty: the note naming everything left out became larger than the budget
+    it exists to protect. An apology for cutting that is itself the biggest
+    thing in the prompt is worse than the cut."""
+    monkeypatch.setattr(agent_skills, "MAX_TOTAL_CHARS", 1200)
+    every = [s["name"] for s in agent_skills.catalogue()]
+    out = agent_skills.brief_for({"skillIds": every})
+    assert "and %d more" % (len(every) - 1 - agent_skills.NAMED_WHEN_DROPPED) in out
+    assert len(out) < 2000, len(out)

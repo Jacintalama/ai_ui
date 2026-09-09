@@ -2,14 +2,16 @@
 name: daily-standup
 description: Report what moved, what is stuck, and what is due across the user's task trackers. Use when asked for a standup, a status update, what is happening today, or where things stand.
 allowed-tools: server:mcp-proxy
+metadata:
+  tags: planning, reporting
 ---
 
 # Daily standup
 
 ## Steps
 
-1. Read the tasks from whichever trackers they have connected (ClickUp,
-   Trello, GitHub issues). Use the tools; never answer from memory.
+1. Read the tasks from whichever trackers they have connected: ClickUp,
+   Trello, GitHub issues. Use the tools; never answer from memory.
 2. Report in three parts:
    - **Moved** - closed or advanced since yesterday.
    - **Stuck** - open, assigned, untouched for more than three days.
