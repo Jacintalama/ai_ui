@@ -332,9 +332,9 @@
      and what it does fit on one line; in half the width a person would be
      choosing from names alone. Scrolls rather than growing, because this
      list gets longer and the modal must not run off the screen. */
-  .skill-list { display: flex; flex-direction: column; gap: 6px;
-                max-height: 220px; overflow-y: auto; margin-top: 6px;
-                padding-right: 4px; }
+  .skill-list { display: flex; flex-direction: column; gap: 4px;
+                max-height: min(52vh, 460px); overflow-y: auto;
+                margin-top: 6px; padding-right: 4px; }
   .skill-list .skill { border: 1px solid var(--border);
                        border-radius: var(--radius); font-size: 13px; }
   .skill-list .skill:hover { border-color: var(--border-2); }
@@ -343,19 +343,18 @@
   /* The checkbox and the name are separate targets on purpose. Reading what
      a skill does must never be able to give it to an agent, and a label
      wrapping the whole row would do exactly that. */
-  .skill-row { display: flex; align-items: center; gap: 10px;
-               padding: 8px 11px; }
+  .skill-row { display: flex; align-items: center; gap: 9px;
+               padding: 7px 11px; }
   .skill-row input { flex: 0 0 auto; margin: 0; }
-  .skill-open { flex: 1; display: flex; align-items: center; gap: 10px;
+  .skill-open { flex: 1; display: flex; align-items: baseline; gap: 9px;
                 background: none; border: 0; padding: 0; cursor: pointer;
                 color: var(--text); font: inherit; text-align: left;
                 min-width: 0; }
   .skill-name { font-weight: 600; white-space: nowrap; }
-  .skill-tagline { flex: 1; color: var(--muted); font-size: 11.5px;
-                   text-align: right; white-space: nowrap; overflow: hidden;
-                   text-overflow: ellipsis; }
-  .skill-chev { color: var(--muted); flex: 0 0 auto;
-                transition: transform 0.15s ease; }
+  .skill-tagline { color: var(--muted); font-size: 11px; white-space: nowrap;
+                   overflow: hidden; text-overflow: ellipsis; }
+  .skill-chev { color: var(--muted); flex: 0 0 auto; margin-left: auto;
+                padding-left: 10px; transition: transform 0.15s ease; }
   .skill-open[aria-expanded="true"] .skill-chev { transform: rotate(90deg); }
   .skill-what { color: var(--text-2); line-height: 1.55;
                 padding: 0 11px 10px 40px; }
@@ -364,10 +363,12 @@
      nothing behind it is worse than no tag. */
   .skill-controls { display: flex; flex-direction: column; gap: 8px;
                     margin-top: 6px; }
-  .skill-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .skill-tags { display: flex; flex-wrap: wrap; gap: 5px;
+                max-height: 56px; overflow-y: auto; }
   .tag-chip { background: var(--surface-2); border: 1px solid var(--border);
-              border-radius: 999px; padding: 3px 10px; font-size: 11.5px;
-              color: var(--text-2); cursor: pointer; font-family: inherit; }
+              border-radius: 999px; padding: 2px 9px; font-size: 11px;
+              color: var(--text-2); cursor: pointer; font-family: inherit;
+              white-space: nowrap; }
   .tag-chip:hover { border-color: var(--border-2); color: var(--text); }
   .tag-chip[aria-pressed="true"] {
     border-color: var(--accent); color: var(--accent);
@@ -771,6 +772,7 @@
         </div>
         <div class="skill-list" id="agent-skills"></div>
         <div class="skill-empty" id="skill-none" hidden>Nothing matches that.</div>
+        <div class="hint" id="skill-count"></div>
 
         <div class="form-error" id="form-error"></div>
         <div class="form-actions">
@@ -1664,7 +1666,9 @@
         wrap.appendChild(row);
       });
       drawSkillTags();
+      applySkillFilter();
       wrap.addEventListener("click", onSkillClick);
+      wrap.addEventListener("change", applySkillFilter);
       document.getElementById("skill-search")
         .addEventListener("input", function (e) {
           skillFilter.query = e.target.value.trim().toLowerCase();
@@ -1731,6 +1735,14 @@
         if (!row.hidden) shown++;
       });
       document.getElementById("skill-none").hidden = shown > 0;
+      // Said out loud, because with a filter on and a scroller the list gives
+      // no other clue how much of the library is currently hidden.
+      var ticked = chosenSkills().length;
+      document.getElementById("skill-count").textContent =
+        (shown === SKILL_LIST.length
+           ? SKILL_LIST.length + " skills"
+           : shown + " of " + SKILL_LIST.length + " skills")
+        + (ticked ? " · " + ticked + " chosen" : "");
     }
 
     function chosenSkills() {

@@ -1251,3 +1251,20 @@ def test_a_hidden_skill_is_still_saved(page):
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     assert json.loads(page.sent[-1]["body"])["meta"]["skillIds"] == ["inbox-triage"]
+
+
+def test_the_list_says_how_much_of_it_you_are_seeing(page):
+    """With a scroller and a filter, nothing else tells you the library is
+    bigger than the rows on screen."""
+    _open_form(page)
+    assert "3 skills" in page.locator("#skill-count").inner_text()
+    page.fill("#skill-search", "triage")
+    page.wait_for_timeout(150)
+    assert "1 of 3" in page.locator("#skill-count").inner_text()
+
+
+def test_the_count_says_how_many_are_chosen(page):
+    _open_form(page)
+    page.check("#skill-inbox-triage")
+    page.wait_for_timeout(120)
+    assert "1 chosen" in page.locator("#skill-count").inner_text()
