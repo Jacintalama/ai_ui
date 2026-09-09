@@ -110,16 +110,91 @@ async def _list_agents(token: str) -> tuple[list[dict], bool]:
     return out, True
 
 
+#: What Open WebUI says when its in-memory model list is behind the database.
+#: A derived model whose base changed is still routed as whatever its base was
+#: when the cache was built, so it goes looking for a pipe function by the new
+#: base's name and does not find one. Seen live on 2026-09-08 as
+#: "Function not found: gpt-4o-mini" after two agents were moved between
+#: models: every turn 400ed until somebody opened the site in a browser, which
+#: calls /api/models and rebuilds it.
+_STALE_MODEL_DETAIL = "Function not found"
+
+
+def _is_stale_model_cache(response) -> bool:
+    """True when this 400 means the model list needs rebuilding.
+
+    Deliberately narrow. The repair below costs a whole extra completion, so
+    it fires on this one signature at this one status and nothing near it: a
+    500 carrying the same words is the server being broken, not a cache being
+    behind, and retrying would only bill for the same failure twice.
+    """
+    if response.status_code != 400:
+        return False
+    try:
+        detail = (response.json() or {}).get("detail")
+    except Exception:                                       # noqa: BLE001
+        # Not everything that answers this URL is Open WebUI. A proxy or a
+        # gateway failing returns HTML, and .json() raises on it.
+        return False
+    return isinstance(detail, str) and _STALE_MODEL_DETAIL in detail
+
+
+async def _post_once(client, payload: dict, token: str):
+    """The request itself. A seam, so the retry above it is testable."""
+    return await client.post(
+        f"{_base_url()}/api/chat/completions",
+        headers={"Authorization": f"Bearer {token}",
+                 "Content-Type": "application/json"},
+        json=payload)
+
+
+async def _refresh_models(client, token: str) -> None:
+    """Make Open WebUI rebuild the model list it answers chats from.
+
+    GET /api/models is what the browser calls on every page load, and it is
+    what silently fixed this for weeks. Nothing else does: this service reads
+    models through /api/v1/models/list, which comes off the database and
+    leaves the cache exactly as stale as it found it.
+    """
+    r = await client.get(f"{_base_url()}/api/models",
+                         headers={"Authorization": f"Bearer {token}"})
+    r.raise_for_status()
+
+
 async def _post_chat(payload: dict, token: str,
                      timeout: float = HTTP_TIMEOUT_SECONDS) -> dict:
     """One completion. Split out so the loop above it can be tested without
-    a model, and so there is one place that knows the wire format."""
+    a model, and so there is one place that knows the wire format.
+
+    Retries exactly once, and only for a stale model cache. A model that
+    genuinely does not exist answers the same way every time, and this sits
+    inside a loop that runs up to MAX_TOOL_ITERATIONS times, so anything
+    keener than once would multiply the cost of a failing run.
+    """
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(
-            f"{_base_url()}/api/chat/completions",
-            headers={"Authorization": f"Bearer {token}",
-                     "Content-Type": "application/json"},
-            json=payload)
+        r = await _post_once(client, payload, token)
+        if _is_stale_model_cache(r):
+            logger.warning(
+                "the model list looked stale, rebuilding it and trying again")
+            try:
+                await _refresh_models(client, token)
+                r = await _post_once(client, payload, token)
+            except Exception:                               # noqa: BLE001
+                # The repair is not the job. If it fails, fall through and
+                # let the completion's own failure be the one raised, rather
+                # than replacing it with an error from the thing that was
+                # trying to help.
+                logger.warning("could not rebuild the model list",
+                               exc_info=True)
+        if r.status_code >= 400:
+            # The body, before raise_for_status throws it away. It is Open
+            # WebUI's own sentence and is the only thing that says WHY;
+            # without it the log holds a stack trace and a status code, which
+            # is what made this take four probes against production to find.
+            # The token is in a header, never in the URL or the body, so
+            # nothing here can leak it.
+            logger.error("chat completion failed: %s %s",
+                         r.status_code, (r.text or "")[:300])
         r.raise_for_status()
         return r.json()
 
