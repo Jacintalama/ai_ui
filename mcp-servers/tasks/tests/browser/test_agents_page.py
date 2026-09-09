@@ -1268,3 +1268,59 @@ def test_the_count_says_how_many_are_chosen(page):
     page.check("#skill-inbox-triage")
     page.wait_for_timeout(120)
     assert "1 chosen" in page.locator("#skill-count").inner_text()
+
+
+# --- compact cards ---------------------------------------------------------
+
+# The cap is 25 agents, and Ralph is right that agents building agents makes
+# that reachable rather than theoretical. At the old height 25 cards was about
+# 8,000 pixels of scrolling in a single column.
+
+def test_a_card_is_short_enough_to_scan_a_screenful(page):
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    box = card.bounding_box()
+    assert box["height"] < 240, box["height"]
+
+
+def test_the_name_and_role_share_a_line(page):
+    """The role is two or three words. Giving it a line of its own costs
+    twenty pixels a card for nothing."""
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    name = card.locator(".card-title").bounding_box()
+    role = card.locator(".card-role").bounding_box()
+    assert role["x"] > name["x"] + name["width"] - 1, "the role is not beside the name"
+    assert abs(role["y"] - name["y"]) < 8, "they are on different lines"
+
+
+def test_skills_and_tools_share_one_row(page):
+    """Two rows each with a minimum height, for an agent that usually has
+    three chips in total."""
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    skill = card.locator(".chip.skill").first.bounding_box()
+    tool = card.locator(".card-chips .chip:not(.skill):not(.model)").first.bounding_box()
+    assert abs(skill["y"] - tool["y"]) < 30, (skill, tool)
+
+
+def test_the_card_still_says_what_the_agent_is_for(page):
+    """The one thing not worth compacting away. With ten agents this line is
+    how you tell them apart, and a card of name plus chips makes you open
+    every one to remember what it does."""
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    assert "You research things carefully" in card.locator(".card-sys").inner_text()
+
+
+def test_everything_that_was_on_the_card_is_still_on_it(page):
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    text = card.inner_text()
+    for want in ("Researcher", "Project manager", "daily-standup",
+                 "gpt-4o-mini", "Edit"):
+        assert want in text, want
+
+
+def test_no_emoji_on_the_card(page):
+    """Ralph asked for none. The tool glyphs are inline SVG and the skill
+    chips are plain text, and this keeps it that way."""
+    card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
+    text = card.inner_text()
+    assert not any(ord(ch) > 0x2100 for ch in text), \
+        [ch for ch in text if ord(ch) > 0x2100]
