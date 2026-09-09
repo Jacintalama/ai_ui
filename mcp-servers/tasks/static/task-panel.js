@@ -26,7 +26,7 @@
   // pays the extra load. Kept in sync with NAV_ENTRIES by
   // tests/test_feature_pages_embed.py::test_every_pane_url_is_rescued.
   const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation",
-                          "/channel", "/ai-agents"];
+                          "/channel", "/ai-agents", "/graph"];
   const AIUI_PENDING_KEY = "__aiuiOpenPath";
 
   // Set the moment we decide to bounce. location.replace() does NOT stop this
@@ -1265,6 +1265,11 @@
         label: "Graph",
         title: "Graph: your personal knowledge graph, built from your chats",
         href: "/tasks/graph",
+        // The last embedded feature with no address. Opening it left the bar
+        // describing whatever page you came from, so the graph could not be
+        // linked to or reloaded. Caddy must not answer this path: a reload
+        // has to reach the SPA so the pane can reopen.
+        urlPath: "/graph",
         // Open inside the OWUI shell (keep the sidebar, swap only the
         // right-hand content area) instead of a full-window navigation.
         embed: true,

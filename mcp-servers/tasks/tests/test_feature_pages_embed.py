@@ -35,6 +35,7 @@ EMBEDDED = {
     "Cron Jobs": ("/tasks/static/cron.html", "/cronjobs"),
     "Channels": ("/tasks/gateway/channels", "/channel"),
     "AI Agents": ("/tasks/agents", "/ai-agents"),
+    "Graph": ("/tasks/graph", "/graph"),
 }
 
 

@@ -95,7 +95,10 @@ class Tools:
                     method, url,
                     headers={"X-User-Email": email},
                     json=json_body)
-                if response.status_code >= 400:
+                # Not `>= 400`. A 301 or a 302 is not success, and reading
+                # one as success would have this tell somebody their schedule
+                # was deleted when the request never arrived anywhere.
+                if not response.is_success:
                     return False, self._refusal(response)
                 return True, (response.json() if response.content else {})
         except Exception:                                   # noqa: BLE001
