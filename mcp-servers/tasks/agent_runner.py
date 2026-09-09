@@ -199,6 +199,29 @@ async def _post_chat(payload: dict, token: str,
         return r.json()
 
 
+#: The free-model router reports exhaustion by answering HTTP 200 with its
+#: complaint as the assistant's content, so nothing downstream can tell it
+#: from a real answer. Both halves are required: its own prefix appears on
+#: successful routes too, where it names the model it picked and is useful.
+_ROUTER_PREFIX = "[auto-router]"
+_ROUTER_GAVE_UP = "rate-limited or failed"
+
+#: What to say instead. The raw text names a model the person never chose and
+#: an HTTP status code, neither of which tells them the one thing that would
+#: fix it: their agent is on Auto (Free), which shares a pool that runs out.
+ROUTER_EXHAUSTED = (
+    "The free models are all busy right now, so this agent could not answer. "
+    "It is set to Auto (Free), which shares a pool of free models that runs "
+    "out. Choosing a specific model on the agent's card fixes this.")
+
+
+def _router_gave_up(content) -> bool:
+    """True when the free router answered with its own failure."""
+    if not isinstance(content, str):
+        return False
+    return _ROUTER_PREFIX in content and _ROUTER_GAVE_UP in content
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
@@ -248,6 +271,11 @@ async def _chat(token: str, model: str, messages: list[dict],
         content = (message.get("content") or "").strip()
 
         if not calls:
+            if _router_gave_up(content):
+                # A 200 carrying a failure. Said in words the owner can act
+                # on, rather than passing through a model name they never
+                # chose and an HTTP status code.
+                return ROUTER_EXHAUSTED, notes
             return content, notes
 
         convo.append({"role": "assistant", "content": content,

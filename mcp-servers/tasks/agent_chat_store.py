@@ -41,6 +41,12 @@ class RoomSession:
     #: email, neither of which may ever reach a browser.
     pending: dict[str, dict] = field(default_factory=dict)
     streaming: bool = False
+    #: Messages typed while a round was running. The round drains them when it
+    #: finishes, so exactly one round ever runs, and nobody is told to wait.
+    #: They are NOT in `messages` yet: the running round is appending answers
+    #: as it goes, and putting an unanswered question in the middle of that
+    #: would interleave it into a reply still being written.
+    queued: list[str] = field(default_factory=list)
     last_used: float = field(default_factory=time.time)
     #: The saved conversation this session is working on, or None before the
     #: first message has been sent.

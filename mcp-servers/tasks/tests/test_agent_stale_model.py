@@ -167,3 +167,65 @@ async def test_the_token_is_never_written_to_the_log(monkeypatch, caplog):
         with pytest.raises(httpx.HTTPStatusError):
             await agent_runner._post_chat({"model": "m"}, "sekrit-token")
     assert "sekrit-token" not in caplog.text
+
+
+# --- the free router answering 200 with a failure ---------------------------
+
+# Ralph set Ada to Auto (Free) and she stopped replying. Every OpenRouter
+# model works, with and without tools; the free ROUTER is a lottery across
+# models that are constantly rate limited, and it reports that by returning
+# HTTP 200 with an error sentence as the assistant's content. Nothing
+# downstream can tell that from an answer, which is why the same cause showed
+# sometimes as raw router text and sometimes as "could not answer".
+
+ROUTER_FAIL = ("[auto-router] every free model was rate-limited or failed. "
+               "Last: google/gemma-4-26b-a4b-it:free -> 429: {\"error\": ...}")
+
+
+def test_the_routers_own_failure_is_recognised():
+    assert agent_runner._router_gave_up(ROUTER_FAIL)
+
+
+def test_a_normal_answer_is_not_mistaken_for_it():
+    for ok in ("OK.", "", "Here are your unread emails:",
+               "I could not reach the rate-limited service you asked about",
+               "[auto-router] routed to nvidia/nemotron-3-super-120b-a12b:free"):
+        assert not agent_runner._router_gave_up(ok), ok
+
+
+def test_a_non_string_answer_does_not_blow_up():
+    for junk in (None, 5, [], {}):
+        assert not agent_runner._router_gave_up(junk)
+
+
+async def test_an_exhausted_router_answers_in_words_a_person_can_act_on(
+        monkeypatch):
+    """The raw text names a model nobody chose and a status code. The person
+    needs to know it is their model setting and that changing it fixes it."""
+    async def router_failed(payload, token, timeout=None):
+        return {"choices": [{"message": {"content": ROUTER_FAIL}}]}
+
+    monkeypatch.setattr(agent_runner, "_post_chat", router_failed)
+    answer, notes = await agent_runner._chat(
+        token="t", model="agent-1", messages=[{"role": "user", "content": "hi"}],
+        tool_ids=None, user_email="who@example.com", tool_mode="read_only")
+    low = (answer + " ".join(notes)).lower()
+    assert "free" in low
+    assert "model" in low
+    assert "429" not in low, "the status code helps nobody"
+    assert "gemma" not in low, "it names a model they never chose"
+
+
+async def test_a_working_router_answer_is_left_alone(monkeypatch):
+    """It succeeds most of the time, and its footer saying which model it
+    picked is genuinely useful."""
+    good = "OK.\n\n*Auto-routed to the free general model `nemotron`.*"
+
+    async def router_ok(payload, token, timeout=None):
+        return {"choices": [{"message": {"content": good}}]}
+
+    monkeypatch.setattr(agent_runner, "_post_chat", router_ok)
+    answer, _notes = await agent_runner._chat(
+        token="t", model="agent-1", messages=[{"role": "user", "content": "hi"}],
+        tool_ids=None, user_email="who@example.com", tool_mode="read_only")
+    assert answer == good

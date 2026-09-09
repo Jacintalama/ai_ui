@@ -374,6 +374,15 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     yield {"event": "working", "data": ""}
 
 
+def _take_queued(s: store.RoomSession):
+    """The next message typed while the agents were answering, or None.
+
+    Removes what it returns. Leaving it in place would have the same question
+    answered on every round for the rest of the session.
+    """
+    return s.queued.pop(0) if s.queued else None
+
+
 async def _hydrate(email: str, s: store.RoomSession) -> None:
     """Load this person's one conversation into a session that has none.
 
@@ -409,9 +418,13 @@ async def agent_chat_send(message: str = Form(...),
     s = store.get_session(user.email)
     await _hydrate(user.email, s)
     if s.streaming:
-        return HTMLResponse(render.note(
-            "Still answering, one moment. If it ever stays stuck, New chat "
-            "starts a fresh one."))
+        # Kept, not refused. The round in flight drains this when it finishes,
+        # so there is still only ever one round, and no stream block is
+        # returned: a second EventSource would claim a round of its own and
+        # run two at once, which is what the single-round guard exists to
+        # prevent.
+        s.queued.append(body)
+        return HTMLResponse(render.user_bubble(body))
 
     s.messages.append({"role": "user", "content": body})
     s.streaming = True
@@ -456,11 +469,33 @@ async def agent_chat_stream(request: Request,
         s.messages.append(claim)
         try:
             agents = await _agents_for(user.email)
-            # Before the round, so the agents answering this message are the
-            # ones reading the notes.
-            await _keep_within_budget(user.email, s, agents)
-            async for event in _run_round(user.email, s, agents, request):
-                yield event
+            while True:
+                # Before the round, so the agents answering this message are
+                # the ones reading the notes.
+                await _keep_within_budget(user.email, s, agents)
+                async for event in _run_round(user.email, s, agents, request):
+                    yield event
+
+                # Anything typed while that was running gets answered now, on
+                # this same connection. One round at a time still holds; the
+                # queue only changes whether a message waits or is refused.
+                if s.generation != my_generation:
+                    break
+                if request is not None and await request.is_disconnected():
+                    break
+                nxt = _take_queued(s)
+                if nxt is None:
+                    break
+                # The claim moves to the top again. Between rounds the tail is
+                # an assistant message, and appending a user message would put
+                # "user" back on the tail, which is exactly the shape a
+                # reconnecting EventSource reads as "nobody has answered this
+                # yet" and would run a second round for.
+                _drop(s.messages, claim)
+                s.messages.append({"role": "user", "content": nxt})
+                s.messages.append(claim)
+                # No bubble is emitted: the send that queued this already
+                # returned one and the browser has drawn it.
         finally:
             still_ours = (s.generation == my_generation
                           and any(m is claim for m in s.messages))
@@ -621,6 +656,9 @@ async def agent_chat_clear(user: CurrentUser = Depends(current_user)
     # than into the fresh conversation.
     s.messages = []
     s.pending = {}
+    # Emptied with everything else. A message typed into the conversation that
+    # was just cleared must not be answered inside the new one.
+    s.queued = []
     s.summary = ""
     s.summarised_upto = 0
     s.streaming = False
